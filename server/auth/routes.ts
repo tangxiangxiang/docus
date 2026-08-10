@@ -189,13 +189,23 @@ authRoutes.post('/logout', (c) => {
   const csrf = csrfError(c, runtime, false)
   if (csrf) return csrf
   const rawToken = selectSessionToken(parseCookies(c), runtime.config)
+  let logoutError: unknown = null
   try {
     runtime.service.logout(rawToken)
-  } catch {
-    // Logout is deliberately idempotent. Cookie cleanup still happens when
-    // the session row is already missing or the token is stale.
+  } catch (error) {
+    // Missing, expired, revoked, and invalid sessions are handled as normal
+    // no-ops by the service. An actual storage failure must remain visible to
+    // the client rather than being reported as a successful server revoke.
+    logoutError = error
   }
-  clearSessionCookies(c)
+  try {
+    clearSessionCookies(c)
+  } catch {
+    // Cookie cleanup is best effort even when the underlying revoke failed.
+  }
+  if (logoutError !== null) {
+    return jsonError(c, 503, 'Authentication is temporarily unavailable.', 'auth-unavailable')
+  }
   noStore(c)
   return c.body(null, 204)
 })

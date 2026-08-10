@@ -42,4 +42,42 @@ describe('authentication rate limiter', () => {
     limiter.reset('admin')
     expect(limiter.size).toBe(0)
   })
+
+  it('reports a read-only remaining penalty instead of restarting cooldown', () => {
+    let now = 1_700_000_000_000
+    const limiter = new AuthRateLimiter({
+      now: () => now,
+      windowMs: 10,
+      threshold: 2,
+      baseRetryMs: 100,
+      maxDelayMs: 100,
+    })
+    expect(limiter.recordFailure('setup').retryAfterMs).toBe(0)
+    expect(limiter.recordFailure('setup').retryAfterMs).toBe(100)
+    now += 40
+    expect(limiter.retryAfter('setup')).toBe(60)
+    now += 10
+    // The window has elapsed, but the configured penalty is still active.
+    expect(limiter.retryAfter('setup')).toBe(50)
+    now += 50
+    expect(limiter.retryAfter('setup')).toBe(0)
+  })
+
+  it('does not carry setup cooldown state across a new runtime limiter', () => {
+    let now = 1_700_000_000_000
+    const options = {
+      now: () => now,
+      threshold: 1,
+      baseRetryMs: 100,
+      maxDelayMs: 100,
+    }
+    const firstRuntime = new AuthRateLimiter(options)
+    expect(firstRuntime.recordFailure('setup').retryAfterMs).toBe(100)
+    expect(firstRuntime.retryAfter('setup')).toBe(100)
+
+    const restartedRuntime = new AuthRateLimiter(options)
+    expect(restartedRuntime.retryAfter('setup')).toBe(0)
+    now += 101
+    expect(firstRuntime.retryAfter('setup')).toBe(0)
+  })
 })

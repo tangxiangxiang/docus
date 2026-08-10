@@ -9,8 +9,10 @@ import {
 } from './kdfGuard.js'
 import {
   AuthRateLimiter,
+  SETUP_BASE_RETRY_MS,
   SETUP_FAILURE_THRESHOLD,
   SETUP_FAILURE_WINDOW_MS,
+  SETUP_MAX_DELAY_MS,
   SETUP_MAX_BUCKETS,
   type RateLimiterOptions,
 } from './rateLimit.js'
@@ -56,6 +58,8 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
       ...options.rateLimiterOptions,
       windowMs: Math.min(options.rateLimiterOptions?.windowMs ?? SETUP_FAILURE_WINDOW_MS, SETUP_FAILURE_WINDOW_MS),
       threshold: Math.min(options.rateLimiterOptions?.threshold ?? SETUP_FAILURE_THRESHOLD, SETUP_FAILURE_THRESHOLD),
+      baseRetryMs: Math.min(options.rateLimiterOptions?.baseRetryMs ?? SETUP_BASE_RETRY_MS, SETUP_MAX_DELAY_MS),
+      maxDelayMs: Math.min(options.rateLimiterOptions?.maxDelayMs ?? SETUP_MAX_DELAY_MS, SETUP_MAX_DELAY_MS),
       maxBuckets: Math.min(options.rateLimiterOptions?.maxBuckets ?? SETUP_MAX_BUCKETS, SETUP_MAX_BUCKETS),
     })
   const kdfGuard = options.kdfGuard ?? defaultKdfGuard

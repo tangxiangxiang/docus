@@ -1,15 +1,17 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import app from '../index.js'
-import { createSession, findSessionByRawToken } from '../auth/session.js'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import app, { __setMetadataDbForTesting } from '../index.js'
+import { createSession, findSessionByRawToken, revokeSession } from '../auth/session.js'
 import {
   closeAuthTestContext,
   cookieFromResponse,
   countRows,
   createAuthTestContext,
+  TEST_SETUP_TOKEN,
   jsonRequest,
   type AuthTestContext,
 } from './helpers/auth.js'
 import { resetAuthRuntimeForTesting } from '../auth/runtime.js'
+import type { KdfGuard } from '../auth/kdfGuard.js'
 
 let context: AuthTestContext
 
@@ -21,7 +23,7 @@ afterEach(() => {
   closeAuthTestContext(context)
 })
 
-async function setupOwner(token = 'phase-2-test-token'): Promise<{ cookie: string; body: any; response: Response }> {
+async function setupOwner(token = TEST_SETUP_TOKEN): Promise<{ cookie: string; body: any; response: Response }> {
   const response = await app.fetch(jsonRequest('/api/auth/setup', {
     method: 'POST',
     origin: context.runtime.config.publicOrigin,
@@ -44,7 +46,7 @@ describe('Phase 2 auth routes', () => {
       authenticated: true,
       user: { id: 1, username: 'admin' },
     })
-    expect(JSON.stringify(created.body)).not.toContain('phase-2-test-token')
+    expect(JSON.stringify(created.body)).not.toContain(TEST_SETUP_TOKEN)
     expect(created.response.headers.get('set-cookie')).toMatch(/docus_session=/)
     expect(created.response.headers.get('set-cookie')).toMatch(/HttpOnly/)
     expect(created.response.headers.get('set-cookie')).toMatch(/SameSite=Lax/)
@@ -96,7 +98,7 @@ describe('Phase 2 auth routes', () => {
     const requests = [1, 2].map(() => app.fetch(jsonRequest('/api/auth/setup', {
       method: 'POST',
       origin: context.runtime.config.publicOrigin,
-      body: { bootstrapToken: 'phase-2-test-token', username: 'admin', password: 'correct horse battery staple' },
+      body: { bootstrapToken: TEST_SETUP_TOKEN, username: 'admin', password: 'correct horse battery staple' },
     })))
     const responses = await Promise.all(requests)
     expect(responses.map((response) => response.status).sort()).toEqual([201, 409])
@@ -112,9 +114,32 @@ describe('Phase 2 auth routes', () => {
     const created = await setupOwner(token)
     expect(created.response.status).toBe(201)
     expect(context.logs).toHaveLength(1)
-    const authRows = context.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'auth_%'").all() as Array<{ name: string }>
-    const serialized = JSON.stringify(authRows)
+    const tables = context.db.prepare(`
+      SELECT name FROM sqlite_master
+      WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+      ORDER BY name
+    `).all() as Array<{ name: string }>
+    const serialized = JSON.stringify(tables.map(({ name }) => ({
+      name,
+      rows: context.db.prepare(`SELECT * FROM "${name.replaceAll('"', '""')}"`).all(),
+    })))
     expect(serialized).not.toContain(token)
+    expect(serialized).not.toContain(created.cookie.slice(created.cookie.indexOf('=') + 1))
+    expect(serialized).not.toContain('correct horse battery staple')
+    expect(context.logs.join('\n')).not.toContain('correct horse battery staple')
+  })
+
+  it('does not log explicit setup, password, session, or cookie secrets', async () => {
+    const created = await setupOwner()
+    const rawToken = created.cookie.slice(created.cookie.indexOf('=') + 1)
+    const tokenHash = findSessionByRawToken(context.db, rawToken).session?.tokenHash
+    expect(tokenHash).toBeDefined()
+    expect(context.logs).toEqual([])
+    expect(context.logs.join('\n')).not.toContain(TEST_SETUP_TOKEN)
+    expect(context.logs.join('\n')).not.toContain('correct horse battery staple')
+    expect(context.logs.join('\n')).not.toContain(rawToken)
+    expect(context.logs.join('\n')).not.toContain(tokenHash!)
+    expect(context.logs.join('\n')).not.toContain(created.cookie)
   })
 
   it('uses identical generic public failures for wrong, unknown, and disabled owners', async () => {
@@ -194,6 +219,47 @@ describe('Phase 2 auth routes', () => {
     expect(noCookieLogout.status).toBe(204)
   })
 
+  it('keeps stale and already-revoked sessions idempotent', async () => {
+    const created = await setupOwner()
+    const rawToken = created.cookie.slice(created.cookie.indexOf('=') + 1)
+    expect(revokeSession(context.db, rawToken)).toBe(true)
+
+    const revoked = await app.fetch(jsonRequest('/api/auth/logout', {
+      method: 'POST',
+      origin: context.runtime.config.publicOrigin,
+      cookie: created.cookie,
+    }))
+    expect(revoked.status).toBe(204)
+
+    context.db.prepare('DELETE FROM auth_sessions').run()
+    const stale = await app.fetch(jsonRequest('/api/auth/logout', {
+      method: 'POST',
+      origin: context.runtime.config.publicOrigin,
+      cookie: created.cookie,
+    }))
+    expect(stale.status).toBe(204)
+  })
+
+  it('does not report logout success when server-side revoke fails', async () => {
+    const created = await setupOwner()
+    context.db.close()
+
+    const failed = await app.fetch(jsonRequest('/api/auth/logout', {
+      method: 'POST',
+      origin: context.runtime.config.publicOrigin,
+      cookie: created.cookie,
+    }))
+    expect(failed.status).toBe(503)
+    expect(await failed.json()).toEqual({
+      error: 'Authentication is temporarily unavailable.',
+      code: 'auth-unavailable',
+    })
+    const setCookies = (failed.headers as Headers & { getSetCookie?: () => string[] }).getSetCookie?.()
+      ?? [failed.headers.get('set-cookie') ?? '']
+    expect(setCookies.join('\n')).toContain('__Host-docus_session=')
+    expect(setCookies.join('\n')).toContain('docus_session=')
+  })
+
   it('never accepts the alternate secure cookie in a local HTTP profile', async () => {
     await setupOwner()
     const created = createSession(context.db, 1, { now: Date.now() })
@@ -221,7 +287,7 @@ describe('Phase 2 auth routes', () => {
     const mismatch = await app.fetch(jsonRequest('/api/auth/setup', {
       method: 'POST',
       origin: 'https://evil.example',
-      body: { bootstrapToken: 'phase-2-test-token', username: 'admin', password: 'correct horse battery staple' },
+      body: { bootstrapToken: TEST_SETUP_TOKEN, username: 'admin', password: 'correct horse battery staple' },
     }))
     expect(mismatch.status).toBe(403)
     expect(await mismatch.json()).toMatchObject({ code: 'csrf-origin-mismatch' })
@@ -229,7 +295,7 @@ describe('Phase 2 auth routes', () => {
     const crossSite = jsonRequest('/api/auth/setup', {
       method: 'POST',
       origin: context.runtime.config.publicOrigin,
-      body: { bootstrapToken: 'phase-2-test-token', username: 'admin', password: 'correct horse battery staple' },
+      body: { bootstrapToken: TEST_SETUP_TOKEN, username: 'admin', password: 'correct horse battery staple' },
     })
     crossSite.headers.set('Sec-Fetch-Site', 'cross-site')
     const crossSiteResponse = await app.fetch(crossSite)
@@ -240,10 +306,83 @@ describe('Phase 2 auth routes', () => {
       method: 'POST',
       origin: context.runtime.config.publicOrigin,
       contentType: '',
-      body: { bootstrapToken: 'phase-2-test-token', username: 'admin', password: 'correct horse battery staple' },
+      body: { bootstrapToken: TEST_SETUP_TOKEN, username: 'admin', password: 'correct horse battery staple' },
     }))
     expect(missingType.status).toBe(415)
     expect(await missingType.json()).toMatchObject({ code: 'invalid-content-type' })
+  })
+
+  it('gates setup-token verification during an active cooldown', async () => {
+    closeAuthTestContext(context)
+    let now = 1_700_000_000_000
+    context = createAuthTestContext({
+      now: () => now,
+      rateLimiterOptions: {
+        now: () => now,
+        threshold: 2,
+        baseRetryMs: 100,
+        maxDelayMs: 100,
+      },
+    })
+    const invalidRequest = () => app.fetch(jsonRequest('/api/auth/setup', {
+      method: 'POST',
+      origin: context.runtime.config.publicOrigin,
+      body: { bootstrapToken: `${TEST_SETUP_TOKEN}-wrong`, username: 'admin', password: 'correct horse battery staple' },
+    }))
+    expect((await invalidRequest()).status).toBe(401)
+    expect((await invalidRequest()).status).toBe(429)
+
+    const verify = vi.spyOn(context.runtime.bootstrap, 'verify')
+    const blocked = await app.fetch(jsonRequest('/api/auth/setup', {
+      method: 'POST',
+      origin: context.runtime.config.publicOrigin,
+      body: { bootstrapToken: TEST_SETUP_TOKEN, username: 'admin', password: 'correct horse battery staple' },
+    }))
+    expect(blocked.status).toBe(429)
+    expect(verify).not.toHaveBeenCalled()
+    verify.mockRestore()
+
+    now += 101
+    const created = await setupOwner()
+    expect(created.response.status).toBe(201)
+    expect(context.runtime.setupLimiter.retryAfter('setup')).toBe(0)
+    expect(context.runtime.setupLimiter.size).toBe(0)
+  })
+
+  it('uses the same injected KDF guard for setup, known login, and dummy login', async () => {
+    closeAuthTestContext(context)
+    let calls = 0
+    const instrumentedGuard = {
+      run: (..._args: unknown[]) => {
+        calls += 1
+        return Promise.resolve(Buffer.alloc(32))
+      },
+    } as unknown as KdfGuard
+    context = createAuthTestContext({ kdfGuard: instrumentedGuard })
+
+    const setup = await setupOwner()
+    expect(setup.response.status).toBe(201)
+    expect(calls).toBe(1)
+
+    const login = (username: string, password: string) => app.fetch(jsonRequest('/api/auth/login', {
+      method: 'POST',
+      origin: context.runtime.config.publicOrigin,
+      body: { username, password },
+    }))
+    expect((await login('admin', 'correct horse battery staple')).status).toBe(200)
+    expect((await login('unknown', 'wrong password')).status).toBe(401)
+    expect(calls).toBe(3)
+  })
+
+  it('keeps existing application APIs anonymous while auth enforcement is off', async () => {
+    __setMetadataDbForTesting(context.db)
+    try {
+      const tree = await app.fetch(new Request('http://localhost/api/tree'))
+      expect(tree.status).toBe(200)
+      expect(await tree.json()).not.toHaveProperty('code', 'auth-session-required')
+    } finally {
+      __setMetadataDbForTesting(null)
+    }
   })
 
   it('keeps the existing anonymous health response and handles an uninitialized auth runtime safely', async () => {

@@ -1,8 +1,11 @@
 import Database from 'better-sqlite3'
 import { applyMigrations } from '../../db.js'
 import { parsePublicOrigin, type AuthConfig } from '../../auth/config.js'
+import type { KdfGuard } from '../../auth/kdfGuard.js'
 import { createAuthRuntime, installAuthRuntimeForTesting, resetAuthRuntimeForTesting, type AuthRuntime } from '../../auth/runtime.js'
 import type { RateLimiterOptions } from '../../auth/rateLimit.js'
+
+export const TEST_SETUP_TOKEN = 'phase-2-test-token-0123456789abcdef'
 
 export type AuthTestContext = {
   readonly db: Database.Database
@@ -18,6 +21,7 @@ export function createAuthTestContext(options: {
   logger?: (message: string) => void
   rateLimiterOptions?: RateLimiterOptions
   fallbackBootstrap?: boolean
+  kdfGuard?: KdfGuard
 } = {}): AuthTestContext {
   const db = new Database(':memory:')
   db.pragma('foreign_keys = ON')
@@ -32,13 +36,14 @@ export function createAuthTestContext(options: {
     config,
     env: options.fallbackBootstrap
       ? {}
-      : { DOCUS_SETUP_TOKEN: options.setupToken ?? 'phase-2-test-token' },
+      : { DOCUS_SETUP_TOKEN: options.setupToken ?? TEST_SETUP_TOKEN },
     logger: (message) => {
       logs.push(message)
       options.logger?.(message)
     },
     now: options.now,
     rateLimiterOptions: options.rateLimiterOptions,
+    kdfGuard: options.kdfGuard,
   })
   installAuthRuntimeForTesting(runtime)
   return { db, runtime, logs }

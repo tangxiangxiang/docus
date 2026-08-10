@@ -6,6 +6,8 @@ export const AUTH_BASE_RETRY_MS = 1_000
 export const SETUP_FAILURE_WINDOW_MS = 60 * 1000
 export const SETUP_FAILURE_THRESHOLD = 3
 export const SETUP_MAX_BUCKETS = 64
+export const SETUP_BASE_RETRY_MS = AUTH_BASE_RETRY_MS
+export const SETUP_MAX_DELAY_MS = AUTH_MAX_DELAY_MS
 
 export type RateLimiterOptions = {
   readonly windowMs?: number
@@ -25,6 +27,7 @@ type Bucket = {
   failures: number
   firstFailureAt: number
   lastFailureAt: number
+  blockedUntil: number
 }
 
 function positiveInteger(name: string, value: number): number {
@@ -62,10 +65,10 @@ export class AuthRateLimiter {
 
   recordFailure(key: string, at = this.now()): FailureRecord {
     this.prune(at)
-    const normalizedKey = typeof key === 'string' && key.length > 0 ? key : '<invalid>'
+    const normalizedKey = this.normalizeKey(key)
     let bucket = this.buckets.get(normalizedKey)
-    if (!bucket || at - bucket.firstFailureAt >= this.windowMs) {
-      bucket = { failures: 0, firstFailureAt: at, lastFailureAt: at }
+    if (!bucket || (at - bucket.firstFailureAt >= this.windowMs && bucket.blockedUntil <= at)) {
+      bucket = { failures: 0, firstFailureAt: at, lastFailureAt: at, blockedUntil: 0 }
       this.buckets.set(normalizedKey, bucket)
     }
     bucket.failures += 1
@@ -73,20 +76,45 @@ export class AuthRateLimiter {
     this.enforceBound(at)
 
     const exponent = Math.max(0, bucket.failures - this.threshold)
-    const retryAfterMs = bucket.failures >= this.threshold
+    const newlyCalculatedDelayMs = bucket.failures >= this.threshold
       ? Math.min(this.maxDelayMs, this.baseRetryMs * 2 ** exponent)
       : 0
-    return { failures: bucket.failures, retryAfterMs }
+    if (newlyCalculatedDelayMs > 0) {
+      bucket.blockedUntil = Math.max(bucket.blockedUntil, at + newlyCalculatedDelayMs)
+    } else if (bucket.blockedUntil <= at) {
+      bucket.blockedUntil = 0
+    }
+    return {
+      failures: bucket.failures,
+      retryAfterMs: Math.max(0, bucket.blockedUntil - at),
+    }
   }
 
   reset(key: string): void {
-    this.buckets.delete(key)
+    this.buckets.delete(this.normalizeKey(key))
+  }
+
+  /**
+   * Return the remaining penalty without changing the bucket. This is used by
+   * the setup-token path as a real admission gate; login deliberately does
+   * not use it before password verification.
+   */
+  retryAfter(key: string, at = this.now()): number {
+    const bucket = this.buckets.get(this.normalizeKey(key))
+    if (!bucket) return 0
+    return Math.max(0, bucket.blockedUntil - at)
   }
 
   prune(at = this.now()): void {
     for (const [key, bucket] of this.buckets) {
-      if (at - bucket.lastFailureAt >= this.windowMs) this.buckets.delete(key)
+      if (at - bucket.lastFailureAt >= this.windowMs && bucket.blockedUntil <= at) {
+        this.buckets.delete(key)
+      }
     }
+  }
+
+  private normalizeKey(key: string): string {
+    return typeof key === 'string' && key.length > 0 ? key : '<invalid>'
   }
 
   private enforceBound(at: number): void {

@@ -163,6 +163,8 @@ export class AuthService {
     if (this.ownerExists()) {
       throw new AuthServiceError('already-initialized', 409, 'Docus is already initialized.')
     }
+    const setupRetryAfterMs = this.setupLimiter.retryAfter('setup', this.now())
+    if (setupRetryAfterMs > 0) throw retryAfterError(setupRetryAfterMs)
     if (typeof input.username !== 'string' || typeof input.password !== 'string') {
       throw new AuthServiceError('validation-error', 400, 'Bootstrap token, username, and password are required.')
     }

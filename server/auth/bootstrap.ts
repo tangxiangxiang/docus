@@ -1,6 +1,8 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import type { Database as DatabaseT } from 'better-sqlite3'
 
+export const MIN_EXPLICIT_BOOTSTRAP_TOKEN_BYTES = 32
+
 export type AuthLogger = (message: string) => void
 
 export type BootstrapStateOptions = {
@@ -37,12 +39,17 @@ export class BootstrapState {
 
     const explicit = options.explicitToken
     if (typeof explicit === 'string' && explicit.length > 0) {
+      if (Buffer.byteLength(explicit, 'utf8') < MIN_EXPLICIT_BOOTSTRAP_TOKEN_BYTES) {
+        throw new RangeError('DOCUS_SETUP_TOKEN must contain at least 32 UTF-8 bytes.')
+      }
       return new BootstrapState(explicit, options.logger ?? console.log)
     }
 
     const bytes = options.randomTokenBytes ?? 32
-    if (!Number.isInteger(bytes) || bytes < 32) {
-      throw new RangeError('fallback bootstrap token must contain at least 32 random bytes')
+    if (!Number.isInteger(bytes) || bytes < MIN_EXPLICIT_BOOTSTRAP_TOKEN_BYTES) {
+      throw new RangeError(
+        `fallback bootstrap token must contain at least ${MIN_EXPLICIT_BOOTSTRAP_TOKEN_BYTES} random bytes`,
+      )
     }
     const fallback = randomBytes(bytes).toString('base64url')
     const state = new BootstrapState(fallback, options.logger ?? console.log)
