@@ -10,10 +10,12 @@ import { useAuth } from './composables/useAuth'
 import { isAuthApiError } from './composables/useAuth'
 import { shouldShowNormalChrome } from './lib/auth-chrome'
 import { useI18n } from './composables/useI18n'
+import { ensureVaultIdentity, getVaultIdentityState } from './lib/vault-identity'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuth()
+const vaultIdentity = getVaultIdentityState()
 const { t } = useI18n()
 /* Vault routes AND dev previews both set `fullWidth: true` so the
    navbar sits at its shorter height. But only vault routes should
@@ -25,15 +27,24 @@ const { t } = useI18n()
 const isVault = computed(() =>
   route.meta.fullWidth === true
   && !route.path.startsWith('/__')
-  && auth.state.value === 'authenticated',
+  && auth.state.value === 'authenticated'
+  && vaultIdentity.state.value === 'ready',
 )
 const isPublicDevPreview = computed(() => route.meta.publicDevPreview === true)
 const showNormalChrome = computed(() => shouldShowNormalChrome(
   auth.state.value,
   route.meta.authPage === true,
   isPublicDevPreview.value,
+  !route.meta.workspace || vaultIdentity.state.value === 'ready',
 ))
-const showRoutedContent = computed(() => isPublicDevPreview.value || auth.state.value !== 'unknown')
+const identityLoading = computed(() => auth.state.value === 'authenticated'
+  && route.meta.workspace
+  && (vaultIdentity.state.value === 'unknown' || vaultIdentity.state.value === 'loading'))
+const identityFailure = computed(() => auth.state.value === 'authenticated'
+  && route.meta.workspace
+  && vaultIdentity.state.value === 'error')
+const showRoutedContent = computed(() => isPublicDevPreview.value
+  || (auth.state.value !== 'unknown' && (!route.meta.workspace || vaultIdentity.state.value === 'ready')))
 const authLoading = computed(() => auth.hydrating.value || (auth.state.value === 'unknown' && !auth.hydrationError.value))
 const authFailureMessage = computed(() => {
   if (!auth.hydrationError.value) return ''
@@ -44,6 +55,14 @@ const authFailureMessage = computed(() => {
 async function retryAuth(): Promise<void> {
   const nextState = await auth.refreshStatus()
   if (nextState !== 'unknown') await router.replace(route.fullPath || '/vault')
+}
+async function retryVaultIdentity(): Promise<void> {
+  try {
+    await ensureVaultIdentity()
+    await router.replace(route.fullPath || '/vault')
+  } catch {
+    // Keep the retry surface visible; the next click starts a new request.
+  }
 }
 
 /* The vault uses an internal scrollable surface (FileTree, Editor,
@@ -97,6 +116,13 @@ provide(VaultViewModeKey, { mode: viewMode, set: setViewMode, toggle: toggleView
   >
     <div class="auth-bootstrap-card">
       <p v-if="authLoading">{{ t('auth.loading') }}</p>
+      <template v-else-if="identityLoading">
+        <p>{{ t('auth.vault_identity_loading') }}</p>
+      </template>
+      <template v-else-if="identityFailure">
+        <p>{{ t('auth.vault_identity_unavailable') }}</p>
+        <button type="button" @click="retryVaultIdentity">{{ t('auth.retry') }}</button>
+      </template>
       <template v-else>
         <p>{{ authFailureMessage }}</p>
         <button type="button" @click="retryAuth">{{ t('auth.retry') }}</button>

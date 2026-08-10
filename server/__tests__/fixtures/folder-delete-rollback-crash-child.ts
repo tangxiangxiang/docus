@@ -24,6 +24,7 @@ if (!vault || !dbPath) {
 const { setContentDir } = await import('../../paths.js')
 const { applyMigrations } = await import('../../db.js')
 const { default: app, __setMetadataDbForTesting } = await import('../../index.js')
+const { createAuthenticatedTestContext, withAuthCookie } = await import('../helpers/auth.js')
 const {
   __setCreateOnlyMoveHooksForTesting,
   __setDirectoryMoveStrategyOverrideForTesting,
@@ -35,6 +36,7 @@ setContentDir(vault)
 const database = new Database(dbPath)
 applyMigrations(database)
 __setMetadataDbForTesting(database)
+const auth = createAuthenticatedTestContext({ db: database })
 
 __setDirectoryMoveStrategyOverrideForTesting('replayable-move')
 __setFolderRaceHooksForTesting({ failDeleteRemoval: true })
@@ -44,8 +46,8 @@ __setCreateOnlyMoveHooksForTesting({
     : undefined,
 })
 
-const response = await app.fetch(new Request(`http://localhost/api/folders/gone?recursive=true`, {
+const response = await app.fetch(withAuthCookie(auth, new Request(`http://localhost/api/folders/gone?recursive=true`, {
   method: 'DELETE',
-}))
+})))
 console.error(`child completed without crashing (status=${response.status})`)
 process.exit(1)

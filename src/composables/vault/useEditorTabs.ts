@@ -32,6 +32,9 @@ import { createServerDocumentPathResolver } from './draft-recovery/serverDocumen
 export { __setVaultIdForTesting } from './editor-tabs/useTabPersistence'
 
 export function useEditorTabs(opts: {
+  /** Required by production VaultView; the fallback is only for legacy
+   * composable unit harnesses that exercise tab behavior without a router. */
+  vaultId?: string
   selectPanel: (panel: SidePanel) => void
   /* Wired into the Cmd/Ctrl+E shortcut to toggle between edit and read
      mode. Accepted as a callback (not looked up globally) for the same
@@ -83,10 +86,9 @@ export function useEditorTabs(opts: {
   // before the user can refresh.
   const {
     vaultId,
-    resolveVaultId,
     persist: persistOpenTabs,
     dispose: disposeTabPersistence,
-  } = useTabPersistence(tabs, activePath)
+  } = useTabPersistence(tabs, activePath, opts.vaultId ?? null)
   setPersist(persistOpenTabs)
 
   const draftPersistence = opts.draftPersistence ?? createUnsavedDraftPersistence({
@@ -294,13 +296,11 @@ export function useEditorTabs(opts: {
     window.addEventListener('online', handleOnline)
     await refresh()
     if (disposed) return
-    // Resolve the vault id once and cache it for the persist watcher.
-    // The cache lifetime is the page session — a refresh re-fetches,
-    // but for the duration of one mount the id is stable.
-    const vaultId = await resolveVaultId()
-    if (disposed) return
-
-    const saved = readPersistedTabs(vaultId)
+    // VaultView is mounted only after the protected identity gate has
+    // resolved a non-null authoritative id. Read that already-resolved
+    // value directly; tab persistence has no network or late identity
+    // resolution step of its own.
+    const saved = readPersistedTabs(vaultId.value)
     if (saved && saved.paths.length > 0) {
       const missing: string[] = []
       const toRestore = saved.paths.slice(0, TAB_HARD_LIMIT)

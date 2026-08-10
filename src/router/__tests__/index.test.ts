@@ -15,10 +15,15 @@ const auth = useAuth()
 beforeEach(() => {
   auth.resetAuthForTesting()
   vi.mocked(getAuthStatus).mockReset()
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ vaultId: 'test-vault' }), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  })))
 })
 
 afterEach(() => {
   auth.resetAuthForTesting()
+  vi.unstubAllGlobals()
 })
 
 describe('authentication router guard', () => {

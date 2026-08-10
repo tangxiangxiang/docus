@@ -959,7 +959,17 @@ describe('real subprocess crash + startup recovery', () => {
 
       const server = spawn(process.execPath, [TSX_CLI, path.join(REPO_ROOT, 'server', 'prod.ts')], {
         cwd: workdir,
-        env: { ...process.env, VAULT_DIR: restartVault, PORT: '0', HOST: '127.0.0.1' },
+        env: {
+          ...process.env,
+          VAULT_DIR: restartVault,
+          PORT: '0',
+          HOST: '127.0.0.1',
+          // The production entry now enforces the application boundary. Keep
+          // this restart probe on the real setup/session path rather than
+          // weakening the middleware for a crash-recovery test.
+          DOCUS_PUBLIC_ORIGIN: 'http://127.0.0.1:3000',
+          DOCUS_SETUP_TOKEN: 'restart-test-bootstrap-token-0123456789',
+        },
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: process.platform !== 'win32',
         windowsHide: true,
@@ -987,7 +997,25 @@ describe('real subprocess crash + startup recovery', () => {
           })
         })
 
-        const response = await fetch(`http://127.0.0.1:${port}/api/posts/crash-note`)
+        const setup = await fetch(`http://127.0.0.1:${port}/api/auth/setup`, {
+          method: 'POST',
+          headers: {
+            Origin: 'http://127.0.0.1:3000',
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            bootstrapToken: 'restart-test-bootstrap-token-0123456789',
+            username: 'restart-owner',
+            password: 'restart-owner-password-123456789',
+          }),
+        })
+        expect(setup.status).toBe(201)
+        const setCookie = setup.headers.get('set-cookie')
+        expect(setCookie).toBeTruthy()
+        const sessionCookie = setCookie!.split(';', 1)[0]
+        const response = await fetch(`http://127.0.0.1:${port}/api/posts/crash-note`, {
+          headers: { Cookie: sessionCookie },
+        })
         expect(response.status).toBe(200)
         const body = await response.json() as { raw: string }
         expect(body.raw).toBe('# replacement\n')

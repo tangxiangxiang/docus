@@ -26,6 +26,7 @@ if (!vault || !dbPath) {
 const { setContentDir } = await import('../../paths.js')
 const { applyMigrations } = await import('../../db.js')
 const { default: app, __setMetadataDbForTesting } = await import('../../index.js')
+const { createAuthenticatedTestContext, withAuthCookie } = await import('../helpers/auth.js')
 const {
   __setCreateOnlyMoveHooksForTesting,
   __setDirectoryMoveStrategyOverrideForTesting,
@@ -36,6 +37,7 @@ setContentDir(vault)
 const database = new Database(dbPath)
 applyMigrations(database)
 __setMetadataDbForTesting(database)
+const auth = createAuthenticatedTestContext({ db: database })
 
 // Exercise the Windows journaled protocol through the real route on
 // every platform: the override makes the route PERSIST strategy
@@ -96,11 +98,11 @@ if (reversePoint === 'reverse-journal-remove') {
 
 __setCreateOnlyMoveHooksForTesting(hooks as any)
 
-const response = await app.fetch(new Request('http://localhost/api/folders/proj', {
+const response = await app.fetch(withAuthCookie(auth, new Request('http://localhost/api/folders/proj', {
   method: 'PATCH',
   headers: { 'content-type': 'application/json' },
   body: JSON.stringify({ newPath: 'ren' }),
-}))
+})))
 // Reaching this line means the crash hook never fired.
 console.error(`child completed without crashing (status=${response.status})`)
 process.exit(1)

@@ -64,19 +64,15 @@ describe('app mounts /api/ai', () => {
   })
 
   it('GET /api/ai/health on the parent app also works (sanity)', async () => {
-    // The original /api/health route is preserved — this just
-    // guards against a mounting mistake that breaks the parent.
-    // The body now also carries `vaultId` (a 12-char hash of the
-    // content dir) so the client can scope per-vault persistent
-    // state. We only assert ok + vaultId shape here; the exact
-    // value depends on where the test runs from.
+    // The liveness route remains public after the application boundary;
+    // stable vault identity is intentionally covered by the protected
+    // /api/vault/identity test in auth-middleware.test.ts.
     const req = new Request('http://localhost/api/health')
     const r = await app.fetch(req)
     expect(r.status).toBe(200)
-    const body = await r.json() as { ok: boolean; vaultId: string }
+    const body = await r.json() as { ok: boolean; vaultId?: string }
     expect(body.ok).toBe(true)
-    expect(typeof body.vaultId).toBe('string')
-    expect(body.vaultId.length).toBe(12)
+    expect(body).not.toHaveProperty('vaultId')
   })
 })
 

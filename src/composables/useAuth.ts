@@ -15,6 +15,7 @@ import {
   subscribeAuthSessionRequired,
   type AuthSessionRequiredEvent,
 } from '../lib/auth-session'
+import { resetVaultIdentity } from '../lib/vault-identity'
 
 export type AuthState = 'unknown' | 'setup-required' | 'unauthenticated' | 'authenticated'
 
@@ -46,6 +47,7 @@ function applyStatus(status: AuthStatusResponse): void {
 
 function beginTransition(): number {
   generation = advanceAuthSessionGeneration()
+  resetVaultIdentity()
   hydrationPromise = null
   hydrating.value = false
   hydrationError.value = null
@@ -126,6 +128,7 @@ function onSessionRequired(event: AuthSessionRequiredEvent): void {
   // the newly authenticated state when its body is observed later.
   if (event.generation !== generation || state.value !== 'authenticated') return
   generation = advanceAuthSessionGeneration()
+  resetVaultIdentity()
   hydrationPromise = null
   state.value = 'unauthenticated'
   user.value = null
@@ -157,6 +160,7 @@ function onSessionExpired(listener: SessionExpiredListener): () => void {
 
 export function resetAuthForTesting(): void {
   generation = advanceAuthSessionGeneration()
+  resetVaultIdentity()
   hydrationPromise = null
   state.value = 'unknown'
   user.value = null

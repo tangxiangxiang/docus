@@ -1944,22 +1944,20 @@ describe('useEditorTabs — tab persistence', () => {
 
 // --- tab persistence: vault isolation -------------------------------------
 //
-// When the server reports a vault id, the tab persistence key is
-// scoped by it (`docus:tabs:v1:<vaultId>`). Multiple vaults sharing
-// the same browser shouldn't see each other's tabs. When the server
-// doesn't report an id, the bare key is used — no regression.
+// Production VaultView supplies the protected vault identity before the
+// composable mounts. These unit harnesses also keep a legacy null-id case so
+// the persistence helper remains independently testable.
 
 describe('useEditorTabs — vault-scoped persistence', () => {
   beforeEach(() => {
     localStorage.clear()
   })
 
-  it('uses the bare key when no vault id is reported', async () => {
+  it('uses the bare key in a legacy harness with no supplied vault id', async () => {
     __setVaultIdForTesting(null)
     vi.stubGlobal('fetch', stubFetch({
       'GET /api/tree': () => [],
       'GET /api/posts': () => [],
-      'GET /api/health': () => ({ ok: true /* no vaultId */ }),
     }))
     const h = await setup()
     await flushPromises()
@@ -1970,12 +1968,11 @@ describe('useEditorTabs — vault-scoped persistence', () => {
     expect(localStorage.getItem('docus:tabs:v1:vault-1234')).toBeNull()
   })
 
-  it('scopes the persistence key by vault id from /api/health', async () => {
+  it('scopes the persistence key by the supplied authoritative vault id', async () => {
     __setVaultIdForTesting('vault-1234')
     vi.stubGlobal('fetch', stubFetch({
       'GET /api/tree': () => [],
       'GET /api/posts': () => [],
-      'GET /api/health': () => ({ ok: true, vaultId: 'vault-1234' }),
     }))
     const h = await setup()
     await flushPromises()
@@ -2520,9 +2517,6 @@ describe('useEditorTabs — round-6 restore-failure race vs reopen', () => {
       if (url === '/api/tree' || url === '/api/posts') {
         return { ok: true, status: 200, json: async () => [] }
       }
-      if (url === '/api/health') {
-        return { ok: true, status: 200, json: async () => ({}) }
-      }
       const path = url.match(/\/api\/posts\/(.+)$/)![1]!
       if (path !== 'english-subject') throw new Error(`Unexpected getPost: ${path}`)
       openCount++
@@ -2591,9 +2585,6 @@ describe('useEditorTabs — round-6 restore-failure race vs reopen', () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       if (url === '/api/tree' || url === '/api/posts') {
         return { ok: true, status: 200, json: async () => [] }
-      }
-      if (url === '/api/health') {
-        return { ok: true, status: 200, json: async () => ({}) }
       }
       openCount++
       return {

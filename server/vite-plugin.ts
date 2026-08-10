@@ -52,7 +52,11 @@ export function serverPlugin(): Plugin {
           if (method !== 'GET' && method !== 'HEAD' && req.readable) {
             const chunks: Buffer[] = []
             for await (const chunk of req) chunks.push(chunk as Buffer)
-            body = Buffer.concat(chunks)
+            // Keep truly bodyless mutations bodyless. Constructing a Request
+            // with Buffer.alloc(0) creates an empty ReadableStream, which the
+            // auth boundary would otherwise classify as a JSON body and
+            // reject a normal DELETE without Content-Type.
+            if (chunks.length > 0) body = Buffer.concat(chunks)
           }
           const fetchReq = new Request(url, {
             method,

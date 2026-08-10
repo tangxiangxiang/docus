@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory, type RouteLocationNormalized } from 'vue-router'
 import { useAuth } from '../composables/useAuth'
 import { safeInternalRedirect } from '../lib/auth-redirect'
+import { ensureVaultIdentity } from '../lib/vault-identity'
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -103,7 +104,18 @@ router.beforeEach(async (to) => {
     if (state === 'unauthenticated') {
       return { name: 'login', query: { redirect: intendedRedirect(to) } }
     }
-    if (state === 'authenticated') return true
+    if (state === 'authenticated') {
+      try {
+        await ensureVaultIdentity()
+        return true
+      } catch {
+        // Keep the intended workspace route in the URL while the App shell
+        // exposes the recoverable identity retry surface. A 401 is observed
+        // by authFetch and transitions auth to unauthenticated; in that case
+        // the shared session-expiry observer owns the redirect.
+        return auth.state.value !== 'unauthenticated'
+      }
+    }
   }
   return true
 })

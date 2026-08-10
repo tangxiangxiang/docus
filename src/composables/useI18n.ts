@@ -40,6 +40,8 @@ const STRINGS: Strings = {
   'auth.loading': { zh: '正在检查登录状态…', en: 'Checking authentication…' },
   'auth.retry': { zh: '重试', en: 'Retry' },
   'auth.unavailable': { zh: '认证服务暂时不可用，请稍后重试。', en: 'Authentication is temporarily unavailable. Try again later.' },
+  'auth.vault_identity_loading': { zh: '正在加载 Vault…', en: 'Loading vault…' },
+  'auth.vault_identity_unavailable': { zh: 'Vault 身份暂时不可用。', en: 'Vault identity is temporarily unavailable.' },
   'auth.welcome_back': { zh: '欢迎回来', en: 'Welcome back' },
   'auth.sign_in_description': { zh: '登录你的 Docus 工作区。', en: 'Sign in to your Docus workspace.' },
   'auth.sign_in': { zh: '登录', en: 'Sign in' },

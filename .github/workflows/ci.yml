@@ -74,6 +74,15 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Verify browser-facing Docker origin wiring
+        shell: bash
+        run: |
+          set -euo pipefail
+          custom="$(DOCS_PORT=43123 docker compose config)"
+          grep -F 'DOCUS_PUBLIC_ORIGIN: http://127.0.0.1:43123' <<<"$custom"
+          explicit="$(DOCS_PORT=43123 DOCUS_PUBLIC_ORIGIN=https://docus.example.com docker compose config)"
+          grep -F 'DOCUS_PUBLIC_ORIGIN: https://docus.example.com' <<<"$explicit"
+
       - name: Build production image
         run: docker build . -t docus-ci-smoke
 
@@ -81,7 +90,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          container_id="$(docker run -d --tmpfs /app/data:rw,mode=1777 --tmpfs /app/src/content:rw,mode=1777 -p 127.0.0.1:18080:3000 docus-ci-smoke)"
+          container_id="$(docker run -d --tmpfs /app/data:rw,mode=1777 --tmpfs /app/src/content:rw,mode=1777 -e DOCUS_PUBLIC_ORIGIN=http://127.0.0.1:18080 -p 127.0.0.1:18080:3000 docus-ci-smoke)"
           cleanup() {
             docker rm -f "$container_id" >/dev/null 2>&1 || true
           }

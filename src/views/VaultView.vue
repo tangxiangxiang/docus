@@ -93,6 +93,7 @@ import {
 } from '../components/vault/workspaceTabActions'
 import StatusBar from '../components/vault/StatusBar.vue'
 import CommandPalette from '../components/vault/CommandPalette.vue'
+import { requireVaultId } from '../lib/vault-identity'
 
 // Monaco is the heaviest client dependency. Load it only when edit mode
 // actually mounts an editor, keeping navigation/read-only startup lean.
@@ -245,6 +246,7 @@ const draftPersistence = createUnsavedDraftPersistence({
     void refreshRecoveryAfterFamilySettle(settlement)
   },
 })
+const authoritativeVaultId = requireVaultId()
 let lifecycleCreateFile: DocumentLifecycle['createFile'] | null = null
 const {
   tree, vaultId, posts, tabs, activePath, activeTab, activeSize,
@@ -258,6 +260,7 @@ const {
   reorderOpenDocuments,
   applyLifecycleReferenceWrites,
 } = useEditorTabs({
+  vaultId: authoritativeVaultId,
   selectPanel,
   toggleViewMode: () => viewModeApi?.toggle(),
   fileChanges,

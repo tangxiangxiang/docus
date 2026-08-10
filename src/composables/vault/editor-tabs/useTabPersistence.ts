@@ -52,8 +52,8 @@ function writePersistedTabs(tabs: Tab[], active: string | null, vaultId: string 
  * Synchronous + debounced tab-set persistence.
  *
  * Returns:
- *   - `vaultId` / `resolveVaultId`: fetches and caches the vault id
- *     used to scope the localStorage key.
+ *   - `vaultId`: the already-resolved authoritative identity supplied by
+ *     the workspace gate.
  *   - `persist`: a SYNCHRONOUS writer. Every close / rename /
  *     restore-failure mutation calls this so a page refresh before
  *     the debounce flushes cannot resurrect a closed tab. This is
@@ -62,21 +62,15 @@ function writePersistedTabs(tabs: Tab[], active: string | null, vaultId: string 
  *   - the debounced watcher is wired internally; callers don't need
  *     to touch it.
  */
-export function useTabPersistence(tabs: Ref<Tab[]>, activePath: Ref<string | null>) {
-  const vaultId = ref<string | null>(null)
-  let vaultIdPromise: Promise<string | null> | null = null
+export function useTabPersistence(
+  tabs: Ref<Tab[]>,
+  activePath: Ref<string | null>,
+  authoritativeVaultId: string | null = null,
+) {
+  const vaultId = ref<string | null>(
+    vaultIdOverrideForTesting ? vaultIdOverrideForTesting.value : authoritativeVaultId,
+  )
   let disposed = false
-
-  function fetchVaultId(): Promise<string | null> {
-    if (vaultIdOverrideForTesting) return Promise.resolve(vaultIdOverrideForTesting.value)
-    if (!vaultIdPromise) {
-      vaultIdPromise = fetch('/api/health')
-        .then((response) => response.json() as Promise<{ vaultId?: string }>)
-        .then((payload) => payload.vaultId ?? null)
-        .catch(() => null)
-    }
-    return vaultIdPromise
-  }
 
   function persist(): void {
     writePersistedTabs(tabs.value, activePath.value, vaultId.value)
@@ -94,11 +88,6 @@ export function useTabPersistence(tabs: Ref<Tab[]>, activePath: Ref<string | nul
     window.addEventListener('beforeunload', persist)
   }
 
-  async function resolveVaultId(): Promise<string | null> {
-    vaultId.value = await fetchVaultId()
-    return vaultId.value
-  }
-
   function dispose(): void {
     if (disposed) return
     persist()
@@ -109,7 +98,7 @@ export function useTabPersistence(tabs: Ref<Tab[]>, activePath: Ref<string | nul
     }
   }
 
-  return { vaultId, resolveVaultId, persist, dispose }
+  return { vaultId, persist, dispose }
 }
 
 export function __setVaultIdForTesting(vaultId: string | null): void {

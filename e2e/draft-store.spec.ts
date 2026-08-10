@@ -3121,7 +3121,7 @@ test('E2E-10: a blocked upgrade preserves seeded records and recovers into adopt
     const { hashDraftBaseline } = await import(
       '/src/composables/vault/draft-recovery/draftHash.ts'
     )
-    const health = await (await fetch('/api/health')).json() as { vaultId: string }
+    const identity = await (await fetch('/api/vault/identity')).json() as { vaultId: string }
     const post = await (await fetch(`/api/posts/${target.path}`)).json() as {
       raw: string
       mtime: number
@@ -3131,7 +3131,7 @@ test('E2E-10: a blocked upgrade preserves seeded records and recovers into adopt
     // disk bytes, so after the upgrade it must flow into adoption.
     const oldDraft = {
       version: 1,
-      vaultId: health.vaultId,
+      vaultId: identity.vaultId,
       documentId: post.metadata.id,
       documentPath: target.path,
       content: `${post.raw}\n${target.seededLine}`,

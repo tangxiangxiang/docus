@@ -31,6 +31,12 @@ services:
       NODE_ENV: production
       PORT: "3000"
       HOST: "0.0.0.0"
+      # DOCUS_PUBLIC_ORIGIN is the browser-facing security authority. The
+      # container listener stays 0.0.0.0:3000; the default follows the host
+      # published port so same-origin mutation checks work with DOCS_PORT.
+      DOCUS_PUBLIC_ORIGIN: ${DOCUS_PUBLIC_ORIGIN:-http://127.0.0.1:${DOCS_PORT:-3000}}
+      DOCUS_SETUP_TOKEN: ${DOCUS_SETUP_TOKEN:-}
+      DOCUS_AUTH_REVOKE_SESSIONS_ON_START: ${DOCUS_AUTH_REVOKE_SESSIONS_ON_START:-0}
       # 容器内部需要监听所有接口,但宿主机端口默认只绑定 localhost。
       DOCUS_MASTER_KEY: ${DOCUS_MASTER_KEY:-}
       DOCUS_MASTER_KEY_FILE: ${DOCUS_MASTER_KEY_FILE:-}

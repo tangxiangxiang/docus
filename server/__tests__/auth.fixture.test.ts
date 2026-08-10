@@ -74,7 +74,8 @@ describe('authenticated application test fixture', () => {
     __setMetadataDbForTesting(db)
     try {
       const anonymous = await app.fetch(new Request('http://localhost/api/tree'))
-      expect(anonymous.status).toBe(200)
+      expect(anonymous.status).toBe(401)
+      expect(await anonymous.json()).toEqual({ error: 'Authentication required.', code: 'auth-session-required' })
 
       const response = await app.fetch(authenticatedRequest(context, '/api/tree', { method: 'GET' }))
       expect(response.status).toBe(200)

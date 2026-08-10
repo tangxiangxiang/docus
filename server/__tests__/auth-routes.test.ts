@@ -374,12 +374,12 @@ describe('Phase 2 auth routes', () => {
     expect(calls).toBe(3)
   })
 
-  it('keeps existing application APIs anonymous while auth enforcement is off', async () => {
+  it('requires a Docus session for existing application APIs after the cutover', async () => {
     __setMetadataDbForTesting(context.db)
     try {
       const tree = await app.fetch(new Request('http://localhost/api/tree'))
-      expect(tree.status).toBe(200)
-      expect(await tree.json()).not.toHaveProperty('code', 'auth-session-required')
+      expect(tree.status).toBe(401)
+      expect(await tree.json()).toEqual({ error: 'Authentication required.', code: 'auth-session-required' })
     } finally {
       __setMetadataDbForTesting(null)
     }
@@ -388,7 +388,7 @@ describe('Phase 2 auth routes', () => {
   it('keeps the existing anonymous health response and handles an uninitialized auth runtime safely', async () => {
     const health = await app.fetch(new Request('http://localhost/api/health'))
     expect(health.status).toBe(200)
-    expect(await health.json()).toMatchObject({ ok: true, vaultId: expect.any(String) })
+    expect(await health.json()).toEqual({ ok: true })
 
     closeAuthTestContext(context)
     const status = await app.fetch(new Request('http://localhost/api/auth/status'))

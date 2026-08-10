@@ -199,10 +199,10 @@ test('E2E-5 recovery content view: browser-local draft with no disk block', asyn
   const slug = `inbox/e2e-ai-r5-${RUN_ID}`
   const name = slug.split('/').pop()!
   const { documentId } = await createDoc(request, slug, `${name} on disk.\n`, createdPaths)
-  const health = await (await request.get('/api/health')).json()
+  const identity = await (await request.get('/api/vault/identity')).json()
   const draftBody = `E2E5_DRAFT_${RUN_ID}`
   await seedRecoveryDraft(page, {
-    vaultId: health.vaultId,
+    vaultId: identity.vaultId,
     documentId,
     documentPath: slug,
     content: draftBody,
@@ -236,10 +236,10 @@ test('E2E-6 recovery diff view: draft and disk sides from one snapshot', async (
   const slug = `inbox/e2e-ai-r6-${RUN_ID}`
   const name = slug.split('/').pop()!
   const doc = await createDoc(request, slug, `${name} on disk.\n`, createdPaths)
-  const health = await (await request.get('/api/health')).json()
+  const identity = await (await request.get('/api/vault/identity')).json()
   const draftBody = `E2E6_DRAFT_${RUN_ID}`
   await seedRecoveryDraft(page, {
-    vaultId: health.vaultId,
+    vaultId: identity.vaultId,
     documentId: doc.documentId,
     documentPath: slug,
     content: draftBody,
@@ -273,10 +273,10 @@ test('E2E-7 recovery beats the route: deep-linked document does not win', async 
   const slug = `inbox/e2e-ai-r7-${RUN_ID}`
   const name = slug.split('/').pop()!
   const { documentId } = await createDoc(request, slug, `${name} on disk.\n`, createdPaths)
-  const health = await (await request.get('/api/health')).json()
+  const identity = await (await request.get('/api/vault/identity')).json()
   const draftBody = `E2E7_DRAFT_${RUN_ID}`
   await seedRecoveryDraft(page, {
-    vaultId: health.vaultId,
+    vaultId: identity.vaultId,
     documentId,
     documentPath: slug,
     content: draftBody,
