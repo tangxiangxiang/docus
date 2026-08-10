@@ -51,7 +51,7 @@ test('real setup and login UI paths establish the Phase 2 session', async ({ pag
   expect(JSON.stringify(browserStorage)).not.toContain('browser-owner-password-strong-123')
 
   // Test preparation uses the browser context boundary directly; no product
-  // Logout UI is introduced by Phase 6.
+  // No Logout UI is introduced in Phase 6; Phase 7 owns the complete logout transition.
   await context.clearCookies()
   expect((await page.request.get('/api/vault/identity')).status()).toBe(401)
   await page.goto('/vault')
