@@ -1,3 +1,5 @@
+import { authFetch } from './auth-session'
+
 export interface PostSummary {
   path: string            // e.g. "hello-world" or "notes/draft" or "archive/2024/old" — relative to src/content/, no implicit prefix
   title: string
@@ -102,8 +104,12 @@ export interface FrontmatterMutationResult {
 async function jsonOrThrow<T>(r: Response): Promise<T> {
   if (!r.ok) {
     // See ai-api.ts: no error-body schema, cast to the shape we read.
-    const body = (await r.json().catch(() => ({ error: r.statusText }))) as { error?: string }
-    throw Object.assign(new Error(body.error || r.statusText || `HTTP ${r.status}`), { status: r.status, body })
+    const body = (await r.json().catch(() => ({ error: r.statusText }))) as { error?: string; code?: string }
+    throw Object.assign(new Error(body.error || r.statusText || `HTTP ${r.status}`), {
+      status: r.status,
+      body,
+      code: body.code,
+    })
   }
   return r.json() as Promise<T>
 }
@@ -114,23 +120,23 @@ function splat(path: string): string {
 }
 
 export async function getTree(): Promise<TreeNode[]> {
-  return jsonOrThrow<TreeNode[]>(await fetch('/api/tree'))
+  return jsonOrThrow<TreeNode[]>(await authFetch('/api/tree'))
 }
 
 export async function listPosts(): Promise<PostSummary[]> {
-  return jsonOrThrow<PostSummary[]>(await fetch('/api/posts'))
+  return jsonOrThrow<PostSummary[]>(await authFetch('/api/posts'))
 }
 
 export async function getFileStates(paths: string[]): Promise<Array<{
   path: string; exists: boolean; mtime: number; size: number
 }>> {
-  return jsonOrThrow(await fetch('/api/files/state', {
+  return jsonOrThrow(await authFetch('/api/files/state', {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ paths }),
   }))
 }
 
 export async function getPost(path: string): Promise<PostDetail> {
-  return jsonOrThrow<PostDetail>(await fetch('/api/posts/' + splat(path)))
+  return jsonOrThrow<PostDetail>(await authFetch('/api/posts/' + splat(path)))
 }
 
 function isSavePostConflictPayload(value: unknown): value is SavePostConflictPayload {
@@ -152,7 +158,7 @@ export async function savePost(
   raw: string,
   baseRaw: string,
 ): Promise<SavePostResult> {
-  const response = await fetch('/api/posts/' + splat(path), {
+  const response = await authFetch('/api/posts/' + splat(path), {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ raw, baseRaw } satisfies SavePostInput),
@@ -174,7 +180,7 @@ export interface RecoverPostResult {
 }
 
 export async function recoverPost(path: string, raw: string): Promise<RecoverPostResult> {
-  return jsonOrThrow(await fetch('/api/recover/' + splat(path), {
+  return jsonOrThrow(await authFetch('/api/recover/' + splat(path), {
     method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ raw }),
   }))
 }
@@ -186,7 +192,7 @@ export async function recoverPost(path: string, raw: string): Promise<RecoverPos
  *  exists server-side (404); any other failure throws so callers can
  *  fail closed instead of trusting a stale path. */
 export async function getDocumentMetadataById(id: string): Promise<DocumentMetadata | null> {
-  const response = await fetch(`/api/metadata/documents/${encodeURIComponent(id)}`)
+  const response = await authFetch(`/api/metadata/documents/${encodeURIComponent(id)}`)
   if (response.status === 404) return null
   return jsonOrThrow<DocumentMetadata>(response)
 }
@@ -195,7 +201,7 @@ export async function updateDocumentMetadata(
   path: string,
   input: UpdateDocumentMetadata,
 ): Promise<DocumentMetadata> {
-  return jsonOrThrow<DocumentMetadata>(await fetch('/api/metadata/documents/' + splat(path), {
+  return jsonOrThrow<DocumentMetadata>(await authFetch('/api/metadata/documents/' + splat(path), {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
@@ -208,11 +214,11 @@ export async function getMetadataMigrationStatus(): Promise<{
   failures: Array<{ path: string; error: string }>
   cleanedPaths: string[]
 }> {
-  return jsonOrThrow(await fetch('/api/metadata/migration'))
+  return jsonOrThrow(await authFetch('/api/metadata/migration'))
 }
 
 export async function cleanDocumentFrontmatter(paths: string[]): Promise<FrontmatterMutationResult> {
-  return jsonOrThrow(await fetch('/api/metadata/cleanup', {
+  return jsonOrThrow(await authFetch('/api/metadata/cleanup', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ paths, confirm: 'REMOVE_FRONTMATTER' }),
@@ -223,7 +229,7 @@ export async function restoreDocumentFrontmatter(
   paths: string[],
   mode: 'canonical' | 'original' = 'original',
 ): Promise<FrontmatterMutationResult> {
-  return jsonOrThrow(await fetch('/api/metadata/restore', {
+  return jsonOrThrow(await authFetch('/api/metadata/restore', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ paths, mode, confirm: 'RESTORE_FRONTMATTER' }),
@@ -231,7 +237,7 @@ export async function restoreDocumentFrontmatter(
 }
 
 export async function getFrontmatterCleanupPreview(): Promise<FrontmatterCleanupPreview> {
-  return jsonOrThrow(await fetch('/api/metadata/cleanup/preview'))
+  return jsonOrThrow(await authFetch('/api/metadata/cleanup/preview'))
 }
 
 export async function exportDocumentFrontmatter(
@@ -240,42 +246,42 @@ export async function exportDocumentFrontmatter(
 ): Promise<string> {
   const query = new URLSearchParams({ path, mode })
   const result = await jsonOrThrow<{ frontmatter: string }>(
-    await fetch('/api/metadata/export?' + query.toString()),
+    await authFetch('/api/metadata/export?' + query.toString()),
   )
   return result.frontmatter
 }
 
 export async function createPost(input: { path: string; title?: string }): Promise<PostSummary> {
-  return jsonOrThrow<PostSummary>(await fetch('/api/posts', {
+  return jsonOrThrow<PostSummary>(await authFetch('/api/posts', {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
   }))
 }
 
 export async function patchPost(srcPath: string, body: { name?: string; targetPath?: string; updateReferences?: boolean }): Promise<PostSummary> {
-  return jsonOrThrow<PostSummary>(await fetch('/api/posts/' + splat(srcPath), {
+  return jsonOrThrow<PostSummary>(await authFetch('/api/posts/' + splat(srcPath), {
     method: 'PATCH', headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   }))
 }
 
 export async function getRenameImpact(path: string, recursive = false): Promise<{ path: string; count: number; sources: string[] }> {
-  return jsonOrThrow(await fetch('/api/links/rename-impact?path=' + encodeURIComponent(path) + (recursive ? '&recursive=true' : '')))
+  return jsonOrThrow(await authFetch('/api/links/rename-impact?path=' + encodeURIComponent(path) + (recursive ? '&recursive=true' : '')))
 }
 
 export async function deletePost(path: string): Promise<{ ok: true }> {
-  return jsonOrThrow<{ ok: true }>(await fetch('/api/posts/' + splat(path), { method: 'DELETE' }))
+  return jsonOrThrow<{ ok: true }>(await authFetch('/api/posts/' + splat(path), { method: 'DELETE' }))
 }
 
 export async function createFolder(path: string): Promise<{ path: string }> {
-  return jsonOrThrow<{ path: string }>(await fetch('/api/folders', {
+  return jsonOrThrow<{ path: string }>(await authFetch('/api/folders', {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ path }),
   }))
 }
 
 export async function renameFolder(srcPath: string, newPath: string, updateReferences = false): Promise<{ path: string; moved: string[]; updatedReferences?: Array<{ path: string; raw: string; mtime: number }> }> {
-  return jsonOrThrow<{ path: string; moved: string[]; updatedReferences?: Array<{ path: string; raw: string; mtime: number }> }>(await fetch('/api/folders/' + splat(srcPath), {
+  return jsonOrThrow<{ path: string; moved: string[]; updatedReferences?: Array<{ path: string; raw: string; mtime: number }> }>(await authFetch('/api/folders/' + splat(srcPath), {
     method: 'PATCH', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ newPath, updateReferences }),
   }))
@@ -283,7 +289,7 @@ export async function renameFolder(srcPath: string, newPath: string, updateRefer
 
 export async function deleteFolder(path: string, recursive: boolean): Promise<{ deleted: string[] }> {
   const url = '/api/folders/' + splat(path) + (recursive ? '?recursive=true' : '')
-  return jsonOrThrow<{ deleted: string[] }>(await fetch(url, { method: 'DELETE' }))
+  return jsonOrThrow<{ deleted: string[] }>(await authFetch(url, { method: 'DELETE' }))
 }
 
 // --- Link index (bi-directional links) ---
@@ -310,11 +316,11 @@ export interface BacklinkRecord {
 }
 
 export async function getLinkIndexSnapshot(): Promise<LinkIndexSnapshot> {
-  return jsonOrThrow<LinkIndexSnapshot>(await fetch('/api/links/index'))
+  return jsonOrThrow<LinkIndexSnapshot>(await authFetch('/api/links/index'))
 }
 
 export async function getBacklinks(path: string): Promise<BacklinkRecord[]> {
   return jsonOrThrow<BacklinkRecord[]>(
-    await fetch('/api/backlinks?path=' + encodeURIComponent(path)),
+    await authFetch('/api/backlinks?path=' + encodeURIComponent(path)),
   )
 }

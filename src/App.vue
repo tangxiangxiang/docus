@@ -1,13 +1,19 @@
 <script setup lang="ts">
 import { computed, provide, ref, watchEffect } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import NavBar from './components/NavBar.vue'
 import ToastHost from './components/ToastHost.vue'
 import ConfirmHost from './components/ConfirmHost.vue'
 import PromptHost from './components/PromptHost.vue'
 import { VaultViewModeKey, type VaultViewMode } from './composables/vault/viewMode'
+import { useAuth } from './composables/useAuth'
+import { isAuthApiError } from './composables/useAuth'
+import { useI18n } from './composables/useI18n'
 
 const route = useRoute()
+const router = useRouter()
+const auth = useAuth()
+const { t } = useI18n()
 /* Vault routes AND dev previews both set `fullWidth: true` so the
    navbar sits at its shorter height. But only vault routes should
    lock the outer scroll — the dev previews (/__icon-preview,
@@ -16,8 +22,24 @@ const route = useRoute()
    `/__` path prefix is the marker; adding new dev previews
    under that prefix automatically inherits the correct behavior. */
 const isVault = computed(() =>
-  route.meta.fullWidth === true && !route.path.startsWith('/__'),
+  route.meta.fullWidth === true
+  && !route.path.startsWith('/__')
+  && auth.state.value === 'authenticated',
 )
+const isPublicDevPreview = computed(() => route.meta.publicDevPreview === true)
+const showNormalChrome = computed(() => !route.meta.authPage && (isPublicDevPreview.value || auth.state.value !== 'unknown'))
+const showRoutedContent = computed(() => isPublicDevPreview.value || auth.state.value !== 'unknown')
+const authLoading = computed(() => auth.hydrating.value || (auth.state.value === 'unknown' && !auth.hydrationError.value))
+const authFailureMessage = computed(() => {
+  if (!auth.hydrationError.value) return ''
+  return isAuthApiError(auth.hydrationError.value)
+    ? auth.hydrationError.value.message
+    : t('auth.unavailable')
+})
+async function retryAuth(): Promise<void> {
+  const nextState = await auth.refreshStatus()
+  if (nextState !== 'unknown') await router.replace(route.fullPath || '/vault')
+}
 
 /* The vault uses an internal scrollable surface (FileTree, Editor,
    Preview). It must NOT let the outer document scroll, otherwise
@@ -61,8 +83,22 @@ provide(VaultViewModeKey, { mode: viewMode, set: setViewMode, toggle: toggleView
 </script>
 
 <template>
-  <NavBar :is-vault="isVault" @open-search="onOpenSearch" />
-  <RouterView v-slot="{ Component, route: r }">
+  <NavBar v-if="showNormalChrome" :is-vault="isVault" @open-search="onOpenSearch" />
+  <section
+    v-if="!showRoutedContent"
+    class="auth-bootstrap-surface"
+    role="status"
+    aria-live="polite"
+  >
+    <div class="auth-bootstrap-card">
+      <p v-if="authLoading">{{ t('auth.loading') }}</p>
+      <template v-else>
+        <p>{{ authFailureMessage }}</p>
+        <button type="button" @click="retryAuth">{{ t('auth.retry') }}</button>
+      </template>
+    </div>
+  </section>
+  <RouterView v-else v-slot="{ Component, route: r }">
     <!-- Do not key the wrapper on r.fullPath. The key on <main> caused
          VaultView to re-mount on every route change (e.g. /vault ->
          /vault/inbox/markdown-syntax), which reset the tabs ref to []

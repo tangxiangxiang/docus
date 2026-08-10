@@ -3,6 +3,7 @@
 // imports them via `from '../../src/lib/ai-api.js'` and the
 // components import them from this file.
 import type { AiLiveContextSnapshot } from '../composables/vault/aiLiveContext'
+import { authFetch } from './auth-session'
 
 export interface Session {
   id: number
@@ -164,23 +165,23 @@ function jsonBody(body: unknown): RequestInit {
 }
 
 export async function listSessions(): Promise<Session[]> {
-  return jsonOrThrow<Session[]>(await fetch('/api/ai/sessions', { method: 'GET' }))
+  return jsonOrThrow<Session[]>(await authFetch('/api/ai/sessions', { method: 'GET' }))
 }
 
 export async function createSession(): Promise<Session> {
-  return jsonOrThrow<Session>(await fetch('/api/ai/sessions', { method: 'POST' }))
+  return jsonOrThrow<Session>(await authFetch('/api/ai/sessions', { method: 'POST' }))
 }
 
 export async function renameSession(id: number, title: string): Promise<Session> {
-  return jsonOrThrow<Session>(await fetch(`/api/ai/sessions/${id}`, { method: 'PATCH', ...jsonBody({ title }) }))
+  return jsonOrThrow<Session>(await authFetch(`/api/ai/sessions/${id}`, { method: 'PATCH', ...jsonBody({ title }) }))
 }
 
 export async function deleteSession(id: number): Promise<{ ok: true }> {
-  return jsonOrThrow<{ ok: true }>(await fetch(`/api/ai/sessions/${id}`, { method: 'DELETE' }))
+  return jsonOrThrow<{ ok: true }>(await authFetch(`/api/ai/sessions/${id}`, { method: 'DELETE' }))
 }
 
 export async function listMessages(sessionId: number): Promise<Message[]> {
-  return jsonOrThrow<Message[]>(await fetch(`/api/ai/sessions/${sessionId}/messages`, { method: 'GET' }))
+  return jsonOrThrow<Message[]>(await authFetch(`/api/ai/sessions/${sessionId}/messages`, { method: 'GET' }))
 }
 
 export async function appendMessage(
@@ -188,11 +189,11 @@ export async function appendMessage(
   role: 'user' | 'assistant',
   content: string,
 ): Promise<Message> {
-  return jsonOrThrow<Message>(await fetch(`/api/ai/sessions/${sessionId}/messages`, { method: 'POST', ...jsonBody({ role, content }) }))
+  return jsonOrThrow<Message>(await authFetch(`/api/ai/sessions/${sessionId}/messages`, { method: 'POST', ...jsonBody({ role, content }) }))
 }
 
 export async function getActiveSession(): Promise<ActiveSession> {
-  return jsonOrThrow<ActiveSession>(await fetch('/api/ai/active', { method: 'GET' }))
+  return jsonOrThrow<ActiveSession>(await authFetch('/api/ai/active', { method: 'GET' }))
 }
 
 // Backwards-compat shim: existing call sites use getActiveSessionId()
@@ -204,16 +205,16 @@ export async function getActiveSessionId(): Promise<number | null> {
 }
 
 export async function setActiveSessionId(sessionId: number | null): Promise<number | null> {
-  const r = await jsonOrThrow<{ sessionId: number | null }>(await fetch('/api/ai/active', { method: 'PUT', ...jsonBody({ sessionId }) }))
+  const r = await jsonOrThrow<{ sessionId: number | null }>(await authFetch('/api/ai/active', { method: 'PUT', ...jsonBody({ sessionId }) }))
   return r.sessionId
 }
 
 export async function getAiSettings(): Promise<AiSettings> {
-  return jsonOrThrow<AiSettings>(await fetch('/api/ai/settings', { method: 'GET' }))
+  return jsonOrThrow<AiSettings>(await authFetch('/api/ai/settings', { method: 'GET' }))
 }
 
 export async function getAiCredentialStatus(): Promise<AiCredentialStatus> {
-  return jsonOrThrow<AiCredentialStatus>(await fetch('/api/ai/settings/credential-status', { method: 'GET' }))
+  return jsonOrThrow<AiCredentialStatus>(await authFetch('/api/ai/settings/credential-status', { method: 'GET' }))
 }
 
 export async function saveAiSettings(input: {
@@ -222,7 +223,7 @@ export async function saveAiSettings(input: {
   baseURL?: string
   model?: string
 }): Promise<AiSettings> {
-  return jsonOrThrow<AiSettings>(await fetch('/api/ai/settings', {
+  return jsonOrThrow<AiSettings>(await authFetch('/api/ai/settings', {
     method: 'PUT',
     ...jsonBody(input),
   }))
@@ -230,7 +231,7 @@ export async function saveAiSettings(input: {
 
 export async function clearAiApiKey(provider?: AiProvider): Promise<{ cleared: true; provider: AiProvider }> {
   const query = provider ? `?provider=${encodeURIComponent(provider)}` : ''
-  return jsonOrThrow<{ cleared: true; provider: AiProvider }>(await fetch(`/api/ai/settings/key${query}`, { method: 'DELETE' }))
+  return jsonOrThrow<{ cleared: true; provider: AiProvider }>(await authFetch(`/api/ai/settings/key${query}`, { method: 'DELETE' }))
 }
 
 export async function testAiConnection(
@@ -242,7 +243,7 @@ export async function testAiConnection(
   },
   signal?: AbortSignal,
 ): Promise<AiConnectionTestResult> {
-  return jsonOrThrow<AiConnectionTestResult>(await fetch('/api/ai/settings/test-connection', {
+  return jsonOrThrow<AiConnectionTestResult>(await authFetch('/api/ai/settings/test-connection', {
     method: 'POST',
     ...jsonBody(input),
     signal,
@@ -253,7 +254,7 @@ export async function suggestSlug(input: {
   input: string
   kind: 'file' | 'folder'
 }): Promise<{ slug: string }> {
-  return jsonOrThrow<{ slug: string }>(await fetch('/api/ai/slug', {
+  return jsonOrThrow<{ slug: string }>(await authFetch('/api/ai/slug', {
     method: 'POST',
     ...jsonBody(input),
   }))
@@ -265,7 +266,7 @@ export async function suggestCommitMessage(input: {
   diffText?: string
   language?: 'zh' | 'en'
 }, signal?: AbortSignal): Promise<{ message: string }> {
-  return jsonOrThrow<{ message: string }>(await fetch('/api/ai/commit-message', {
+  return jsonOrThrow<{ message: string }>(await authFetch('/api/ai/commit-message', {
     method: 'POST',
     ...jsonBody(input),
     signal,
@@ -278,7 +279,7 @@ export async function suggestSummary(input: {
   language?: 'zh' | 'en'
   documentId?: string
 }, signal?: AbortSignal): Promise<{ summary: string }> {
-  return jsonOrThrow<{ summary: string }>(await fetch('/api/ai/summary', {
+  return jsonOrThrow<{ summary: string }>(await authFetch('/api/ai/summary', {
     method: 'POST',
     ...jsonBody(input),
     signal,
@@ -294,7 +295,7 @@ export async function* streamChat(
   req: ChatRequest,
   signal?: AbortSignal,
 ): AsyncGenerator<ChatEvent> {
-  const res = await fetch('/api/ai/chat', {
+  const res = await authFetch('/api/ai/chat', {
     method: 'POST',
     ...jsonBody(req),
     signal,

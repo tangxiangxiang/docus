@@ -7,6 +7,8 @@
 // here too — see git.ts and diff.ts, which re-export what they
 // need).
 
+import { authFetch } from './auth-session'
+
 export interface Capability {
   gitAvailable: boolean
   repoInitialized: boolean
@@ -115,7 +117,7 @@ async function readJson<T>(r: Response, fallback: string): Promise<T> {
 }
 
 export async function getCapability(): Promise<Capability> {
-  const r = await fetch('/api/history/capability')
+  const r = await authFetch('/api/history/capability')
   return readJson<Capability>(r, 'getCapability failed')
 }
 
@@ -128,7 +130,7 @@ export async function getStatus(): Promise<{ dirty: StatusEntry[]; available: bo
      available" EmptyState — throwing here would surface a useless
      "getStatus failed: 503" in the History panel's error slot and
      hide the actual reason from the user. */
-  const r = await fetch('/api/history/status')
+  const r = await authFetch('/api/history/status')
   const body = await r.json().catch(() => null) as {
     dirty?: unknown
     available?: unknown
@@ -166,7 +168,7 @@ export async function getLog(opts: { path?: string; limit?: number } = {}): Prom
   const q = new URLSearchParams()
   if (opts.path) q.set('path', opts.path)
   if (opts.limit !== undefined) q.set('limit', String(opts.limit))
-  const r = await fetch(`/api/history/log?${q.toString()}`)
+  const r = await authFetch(`/api/history/log?${q.toString()}`)
   return readJson(r, 'getLog failed')
 }
 
@@ -174,7 +176,7 @@ export async function getLog(opts: { path?: string; limit?: number } = {}): Prom
 
 export async function getFileAt(path: string, ref: string): Promise<{ path: string; ref: string; content: string }> {
   const q = new URLSearchParams({ path, ref })
-  const r = await fetch(`/api/history/file?${q.toString()}`)
+  const r = await authFetch(`/api/history/file?${q.toString()}`)
   return readJson(r, `getFileAt ${path}@${ref} failed`)
 }
 
@@ -182,7 +184,7 @@ export async function getFileAt(path: string, ref: string): Promise<{ path: stri
 
 export async function getDiff(path: string, oldRef: string, newRef: string): Promise<{ path: string; oldRef: string; newRef: string; diff: FileDiff }> {
   const q = new URLSearchParams({ path, old: oldRef, new: newRef })
-  const r = await fetch(`/api/history/diff?${q.toString()}`)
+  const r = await authFetch(`/api/history/diff?${q.toString()}`)
   return readJson(r, `getDiff ${path} failed`)
 }
 
@@ -213,7 +215,7 @@ export interface IndexRepairTransaction {
 export type ContentHashes = Record<string, string | null>
 
 export async function getContentHashes(paths: string[]): Promise<ContentHashes> {
-  const r = await fetch('/api/history/content-hashes', {
+  const r = await authFetch('/api/history/content-hashes', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ paths }),
@@ -227,7 +229,7 @@ export async function createCommit(
   message: string,
   expected: ContentHashes,
 ): Promise<CommitResult> {
-  const r = await fetch('/api/history/commits', {
+  const r = await authFetch('/api/history/commits', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ paths, message, expected }),
@@ -236,7 +238,7 @@ export async function createCommit(
 }
 
 export async function getIndexRepairStatus(): Promise<IndexRepairTransaction[]> {
-  const r = await fetch('/api/history/repair-status')
+  const r = await authFetch('/api/history/repair-status')
   const result = await readJson<{ transactions: IndexRepairTransaction[] }>(
     r,
     'getIndexRepairStatus failed',
@@ -252,7 +254,7 @@ export interface RepairIndexResult {
 }
 
 export async function repairIndex(token: string): Promise<RepairIndexResult> {
-  const r = await fetch('/api/history/repair-index', {
+  const r = await authFetch('/api/history/repair-index', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ token }),
@@ -261,7 +263,7 @@ export async function repairIndex(token: string): Promise<RepairIndexResult> {
 }
 
 export async function discardIndexRepair(token: string): Promise<void> {
-  const r = await fetch('/api/history/repair-index/discard', {
+  const r = await authFetch('/api/history/repair-index/discard', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ token }),
@@ -279,7 +281,7 @@ export interface DropCommitResult {
 }
 
 export async function dropCommit(sha: string): Promise<DropCommitResult> {
-  const r = await fetch('/api/history/drop', {
+  const r = await authFetch('/api/history/drop', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ sha }),
@@ -307,7 +309,7 @@ export interface RestoreFileResult {
 }
 
 export async function restoreFile(path: string, ref: string): Promise<RestoreFileResult> {
-  const r = await fetch('/api/history/restore', {
+  const r = await authFetch('/api/history/restore', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ path, ref }),
