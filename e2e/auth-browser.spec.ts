@@ -12,10 +12,20 @@ test('real setup and login UI paths establish the Phase 2 session', async ({ pag
   await page.goto('/vault')
   await expect(page).toHaveURL(/\/setup(?:\?|$)/)
   await expect(page.locator('.navbar')).toHaveCount(0)
+  await expect(page.locator('#setup-token')).toBeFocused()
+  await expect(page.locator('#setup-token-help')).toContainText('DOCUS_SETUP_TOKEN')
+  await expect(page.getByRole('button', { name: /logout|sign out/i })).toHaveCount(0)
+  await expect(page.getByRole('link', { name: /logout|sign out/i })).toHaveCount(0)
 
   await page.locator('#setup-token').fill(SETUP_TOKEN)
   await page.locator('#setup-username').fill('browser-owner')
   await page.locator('#setup-password').fill('browser-owner-password-strong-123')
+  await page.locator('#setup-confirm-password').fill('different-password')
+  await page.locator('#setup-confirm-password').press('Enter')
+  await expect(page.locator('#setup-confirm-error')).toBeVisible()
+  await expect(page.locator('#setup-confirm-password')).toBeFocused()
+  expect(setupBody).toBeNull()
+
   await page.locator('#setup-confirm-password').fill('browser-owner-password-strong-123')
   await page.locator('.auth-submit').click()
   expect(setupBody).toEqual({
@@ -41,12 +51,21 @@ test('real setup and login UI paths establish the Phase 2 session', async ({ pag
   expect(JSON.stringify(browserStorage)).not.toContain('browser-owner-password-strong-123')
 
   // Test preparation uses the browser context boundary directly; no product
-  // Logout UI is introduced by Phase 4.
+  // Logout UI is introduced by Phase 6.
   await context.clearCookies()
   expect((await page.request.get('/api/vault/identity')).status()).toBe(401)
   await page.goto('/vault')
   await expect(page).toHaveURL(/\/login(?:\?|$)/)
   await expect(page.locator('.navbar')).toHaveCount(0)
+  await expect(page.locator('#login-username')).toBeFocused()
+  await expect(page.getByRole('button', { name: /logout|sign out/i })).toHaveCount(0)
+  await expect(page.getByRole('link', { name: /logout|sign out/i })).toHaveCount(0)
+
+  await page.locator('#login-username').fill('browser-owner')
+  await page.locator('#login-password').fill('wrong-password')
+  await page.locator('.auth-submit').click()
+  await expect(page.locator('[role="alert"]')).toContainText(/Invalid username or password\.|用户名或密码错误。?/)
+  await expect(page.locator('#login-username')).toBeFocused()
 
   await page.locator('#login-username').fill('browser-owner')
   await page.locator('#login-password').fill('browser-owner-password-strong-123')
@@ -61,4 +80,12 @@ test('real setup and login UI paths establish the Phase 2 session', async ({ pag
   await expect(page).toHaveURL(/\/vault(?:$|\?)/)
   await expect(page.locator('.auth-page')).toHaveCount(0)
   await expect(page.locator('.vault')).toBeVisible({ timeout: 15_000 })
+
+  await page.goto('/login?redirect=https%3A%2F%2Fevil.example')
+  await expect(page).toHaveURL(/\/vault(?:$|\?)/)
+  await expect(page).not.toHaveURL(/evil\.example/)
+  await expect(page.locator('.auth-page')).toHaveCount(0)
+  await page.goto('/setup?redirect=%2Fvault%2Finbox%2Fnote')
+  await expect(page).toHaveURL(/\/vault\/inbox\/note(?:$|\?)/)
+  await expect(page.locator('.auth-page')).toHaveCount(0)
 })

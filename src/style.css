@@ -264,7 +264,7 @@ hr {
    workspace navbar or controls. */
 .auth-page {
   display: grid;
-  min-height: calc(100vh - 40px);
+  min-height: 100vh;
   box-sizing: border-box;
   place-items: center;
   padding: 32px 20px;
@@ -318,6 +318,12 @@ hr {
   font-size: 0.8rem;
   font-weight: 600;
 }
+.auth-help {
+  margin: -1px 0 0;
+  color: var(--text-muted);
+  font-size: 0.73rem;
+  line-height: 1.45;
+}
 .auth-field input {
   width: 100%;
   box-sizing: border-box;
@@ -332,7 +338,11 @@ hr {
 }
 .auth-field input:hover:not(:disabled) { border-color: var(--accent); }
 .auth-field input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent); }
+.auth-field input[aria-invalid="true"] {
+  border-color: color-mix(in srgb, #b42318 70%, var(--border));
+}
 .auth-field input:disabled { opacity: 0.65; }
+.auth-form[aria-busy="true"] .auth-submit { cursor: wait; }
 .auth-error {
   margin: 0;
   color: #b42318;
@@ -387,6 +397,12 @@ hr {
   cursor: pointer;
 }
 .auth-bootstrap-card button:hover { border-color: var(--accent); color: var(--accent); }
+.auth-bootstrap-card button:disabled { cursor: wait; opacity: 0.65; }
+
+@media (max-width: 420px) {
+  .auth-page { padding: 20px 12px; }
+  .auth-card { padding: 22px 18px; }
+}
 
 /* NavBar (frosted glass) — token-driven so light/dark follow data-theme.
    Uses --bg-soft (a slightly lighter wash than the page background) so

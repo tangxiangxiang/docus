@@ -1,4 +1,4 @@
-import { createRouter, createWebHistory, type RouteLocationNormalized } from 'vue-router'
+import { createRouter, createWebHistory, type RouteLocationNormalized, type RouteLocationRaw } from 'vue-router'
 import { useAuth } from '../composables/useAuth'
 import { safeInternalRedirect } from '../lib/auth-redirect'
 import { ensureVaultIdentity } from '../lib/vault-identity'
@@ -69,10 +69,24 @@ function intendedRedirect(route: RouteLocationNormalized): string {
   return safeInternalRedirect(route.fullPath, '/vault')
 }
 
-function authRouteTarget(route: RouteLocationNormalized, name: 'login' | 'setup') {
+function authRouteTarget(route: RouteLocationNormalized, name: 'login' | 'setup'): true | RouteLocationRaw {
   const redirect = safeInternalRedirect(route.query.redirect, '')
-  return redirect
-    ? { name, query: { redirect } }
+  const query: Record<string, string> = {}
+  if (redirect) query.redirect = redirect
+  // Keep the informational expiry notice while normalizing away every other
+  // auth-page query value. The notice is never treated as an error or a
+  // redirect target and is consumed by the LoginView after the next login.
+  if (name === 'login' && route.query.reason === 'expired') query.reason = 'expired'
+
+  const currentKeys = Object.keys(route.query)
+  const targetKeys = Object.keys(query)
+  const alreadyNormalized = route.name === name
+    && currentKeys.length === targetKeys.length
+    && targetKeys.every((key) => route.query[key] === query[key])
+  if (alreadyNormalized) return true
+
+  return Object.keys(query).length > 0
+    ? { name, query }
     : { name }
 }
 
@@ -86,10 +100,10 @@ router.beforeEach(async (to) => {
 
   if (to.meta.authPage) {
     if (state === 'setup-required') {
-      return to.name === 'setup' ? true : authRouteTarget(to, 'setup')
+      return authRouteTarget(to, 'setup')
     }
     if (state === 'unauthenticated') {
-      return to.name === 'login' ? true : authRouteTarget(to, 'login')
+      return authRouteTarget(to, 'login')
     }
     if (state === 'authenticated') {
       return safeInternalRedirect(to.query.redirect, '/vault')

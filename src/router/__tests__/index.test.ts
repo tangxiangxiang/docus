@@ -72,4 +72,36 @@ describe('authentication router guard', () => {
     expect(router.currentRoute.value.name).toBe('vault')
     expect(router.currentRoute.value.fullPath).toBe('/vault')
   })
+
+  it('normalizes auth-page query values without dropping the expiry notice', async () => {
+    vi.mocked(getAuthStatus).mockResolvedValue({ authenticated: false, setupRequired: false })
+
+    await router.push('/login?reason=expired&redirect=https%3A%2F%2Fevil.example&extra=ignored')
+
+    expect(router.currentRoute.value.name).toBe('login')
+    expect(router.currentRoute.value.query).toEqual({ reason: 'expired' })
+  })
+
+  it('redirects authenticated setup visits to a safe deep route and consumes the query', async () => {
+    vi.mocked(getAuthStatus).mockResolvedValue({
+      authenticated: true,
+      setupRequired: false,
+      user: { id: 1, username: 'owner' },
+    })
+
+    await router.push('/setup?redirect=%2Fvault%2Finbox%2Fnote%3Fview%3Dread%23section')
+
+    expect(router.currentRoute.value.name).toBe('vault-doc')
+    expect(router.currentRoute.value.fullPath).toBe('/vault/inbox/note?view=read#section')
+    expect(router.currentRoute.value.query.redirect).toBeUndefined()
+  })
+
+  it('keeps setup-required users on the setup page with only a validated redirect', async () => {
+    vi.mocked(getAuthStatus).mockResolvedValue({ authenticated: false, setupRequired: true })
+
+    await router.push('/login?redirect=https%3A%2F%2Fevil.example&extra=ignored')
+
+    expect(router.currentRoute.value.name).toBe('setup')
+    expect(router.currentRoute.value.query).toEqual({})
+  })
 })

@@ -16,10 +16,13 @@ const username = ref('')
 const password = ref('')
 const confirmPassword = ref('')
 const error = ref('')
+const errorCode = ref<string | undefined>()
 const confirmError = ref('')
 const tokenInput = ref<HTMLInputElement | null>(null)
+const confirmInput = ref<HTMLInputElement | null>(null)
 
 function errorText(value: unknown): string {
+  errorCode.value = value instanceof AuthApiError ? value.code : undefined
   if (!(value instanceof AuthApiError)) return t('auth.unavailable')
   if (value.code === 'bootstrap-invalid') return t('auth.bootstrap_invalid')
   if (value.code === 'already-initialized') return t('auth.already_initialized')
@@ -35,9 +38,12 @@ function errorText(value: unknown): string {
 async function submit(): Promise<void> {
   if (auth.submitting.value) return
   error.value = ''
+  errorCode.value = undefined
   confirmError.value = ''
   if (password.value !== confirmPassword.value) {
     confirmError.value = t('auth.password_mismatch')
+    await nextTick()
+    confirmInput.value?.focus()
     return
   }
   try {
@@ -78,7 +84,7 @@ onMounted(() => tokenInput.value?.focus())
       <h1 id="setup-title">{{ t('auth.setup_title') }}</h1>
       <p class="auth-subtitle">{{ t('auth.setup_description') }}</p>
 
-      <form class="auth-form" @submit.prevent="submit">
+      <form class="auth-form" :aria-busy="auth.submitting.value" @submit.prevent="submit">
         <div class="auth-field">
           <label for="setup-token">{{ t('auth.bootstrap_token') }}</label>
           <input
@@ -90,9 +96,10 @@ onMounted(() => tokenInput.value?.focus())
             autocomplete="off"
             required
             :disabled="auth.submitting.value"
-            :aria-invalid="Boolean(error)"
-            aria-describedby="setup-error"
+            :aria-invalid="errorCode === 'bootstrap-invalid' ? 'true' : undefined"
+            :aria-describedby="errorCode === 'bootstrap-invalid' ? 'setup-token-help setup-error' : 'setup-token-help'"
           />
+          <p id="setup-token-help" class="auth-help">{{ t('auth.bootstrap_token_help') }}</p>
         </div>
         <div class="auth-field">
           <label for="setup-username">{{ t('auth.username') }}</label>
@@ -104,8 +111,6 @@ onMounted(() => tokenInput.value?.focus())
             autocomplete="username"
             required
             :disabled="auth.submitting.value"
-            :aria-invalid="Boolean(error)"
-            aria-describedby="setup-error"
           />
         </div>
         <div class="auth-field">
@@ -118,22 +123,21 @@ onMounted(() => tokenInput.value?.focus())
             autocomplete="new-password"
             required
             :disabled="auth.submitting.value"
-            :aria-invalid="Boolean(error)"
-            aria-describedby="setup-error"
           />
         </div>
         <div class="auth-field">
           <label for="setup-confirm-password">{{ t('auth.confirm_password') }}</label>
           <input
             id="setup-confirm-password"
+            ref="confirmInput"
             v-model="confirmPassword"
             name="confirmPassword"
             type="password"
             autocomplete="new-password"
             required
             :disabled="auth.submitting.value"
-            :aria-invalid="Boolean(confirmError)"
-            aria-describedby="setup-confirm-error"
+            :aria-invalid="confirmError ? 'true' : undefined"
+            :aria-describedby="confirmError ? 'setup-confirm-error' : undefined"
           />
         </div>
         <p v-if="confirmError" id="setup-confirm-error" class="auth-error" role="alert">{{ confirmError }}</p>

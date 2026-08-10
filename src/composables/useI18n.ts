@@ -51,6 +51,10 @@ const STRINGS: Strings = {
   'auth.password': { zh: '密码', en: 'Password' },
   'auth.confirm_password': { zh: '确认密码', en: 'Confirm password' },
   'auth.bootstrap_token': { zh: 'Bootstrap Token', en: 'Bootstrap token' },
+  'auth.bootstrap_token_help': {
+    zh: '填写部署者配置的 DOCUS_SETUP_TOKEN；若未配置，请填写服务器首次启动时一次性打印的 fallback Token。该 Token 不会再次显示。',
+    en: 'Enter the operator-provided DOCUS_SETUP_TOKEN, or the one-time fallback token printed by the server on first start when it is not configured. It cannot be shown again.',
+  },
   'auth.setup_title': { zh: '设置此 Docus 实例', en: 'Set up this Docus instance' },
   'auth.setup_description': { zh: '此账户控制此 Docus 实例的访问权限。', en: 'This account controls access to this Docus instance.' },
   'auth.create_owner': { zh: '创建所有者账户', en: 'Create owner' },

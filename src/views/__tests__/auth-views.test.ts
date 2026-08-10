@@ -101,6 +101,7 @@ describe('LoginView', () => {
     await wrapper.get('form').trigger('submit')
     await nextTick()
     expect(mocks.auth.login).toHaveBeenCalledOnce()
+    expect(wrapper.get('form').attributes('aria-busy')).toBe('true')
     expect(wrapper.get('.auth-submit').attributes('disabled')).toBeDefined()
     resolveLogin?.()
   })
@@ -120,6 +121,26 @@ describe('LoginView', () => {
     await wrapper.get('form').trigger('submit')
     await flushPromises()
     expect(wrapper.get('[role="alert"]').text()).toContain('12')
+    expect(wrapper.get('#login-username').attributes('aria-invalid')).toBeUndefined()
+    expect(wrapper.get('#login-password').attributes('aria-invalid')).toBeUndefined()
+
+    mocks.auth.login.mockRejectedValueOnce(error('auth-rate-limited'))
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('稍后重试')
+  })
+
+  it('keeps expiry informational and presents unavailable errors safely', async () => {
+    mocks.route.query = { reason: 'expired' }
+    mocks.auth.login.mockRejectedValue(new AuthApiError('database detail', 503, { code: 'auth-unavailable' }))
+    const wrapper = mountLogin()
+    expect(wrapper.get('[role="status"]').text()).toContain('会话已过期')
+
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('认证服务暂时不可用')
+    expect(wrapper.get('[role="alert"]').text()).not.toContain('database detail')
+    expect(wrapper.get('#login-username').attributes('aria-describedby')).toBeUndefined()
   })
 
   it('uses a safe fallback for malicious redirects and generic failures', async () => {
@@ -139,6 +160,14 @@ describe('LoginView', () => {
 })
 
 describe('SetupView', () => {
+  it('focuses the bootstrap token and explains its operator/fallback source', () => {
+    const wrapper = mountSetup()
+    expect(document.activeElement).toBe(wrapper.get('#setup-token').element)
+    expect(wrapper.get('#setup-token-help').text()).toContain('DOCUS_SETUP_TOKEN')
+    expect(wrapper.get('#setup-token-help').text()).not.toContain('bootstrap-secret')
+    expect(wrapper.text()).not.toMatch(/logout|sign out/i)
+  })
+
   it('validates password confirmation without a network request', async () => {
     const wrapper = mountSetup()
     await fill(wrapper, '#setup-password', 'secret').trigger('input')
@@ -148,6 +177,7 @@ describe('SetupView', () => {
     expect(mocks.auth.setup).not.toHaveBeenCalled()
     expect(wrapper.get('#setup-confirm-error').text()).toContain('两次输入的密码不一致')
     expect(wrapper.get('#setup-confirm-password').attributes('aria-invalid')).toBe('true')
+    expect(document.activeElement).toBe(wrapper.get('#setup-confirm-password').element)
   })
 
   it('sends only bootstrapToken, username, and password, then restores a deep link', async () => {
@@ -168,6 +198,9 @@ describe('SetupView', () => {
     })
     expect(JSON.stringify(mocks.auth.setup.mock.calls[0]?.[0])).not.toContain('confirmPassword')
     expect(mocks.router.replace).toHaveBeenCalledWith('/vault/inbox/note?view=read#section')
+    expect((wrapper.get('#setup-token').element as HTMLInputElement).value).toBe('')
+    expect((wrapper.get('#setup-password').element as HTMLInputElement).value).toBe('')
+    expect((wrapper.get('#setup-confirm-password').element as HTMLInputElement).value).toBe('')
   })
 
   it('shows bootstrap-invalid and rate-limit errors', async () => {
@@ -176,11 +209,33 @@ describe('SetupView', () => {
     await wrapper.get('form').trigger('submit')
     await flushPromises()
     expect(wrapper.get('[role="alert"]').text()).toContain('Bootstrap Token 无效')
+    expect(document.activeElement).toBe(wrapper.get('#setup-token').element)
+    expect(wrapper.get('#setup-token').attributes('aria-invalid')).toBe('true')
 
     mocks.auth.setup.mockRejectedValueOnce(error('auth-rate-limited', 429, 10))
     await wrapper.get('form').trigger('submit')
     await flushPromises()
     expect(wrapper.get('[role="alert"]').text()).toContain('10')
+    expect(wrapper.get('#setup-token').attributes('aria-invalid')).toBeUndefined()
+
+    mocks.auth.setup.mockRejectedValueOnce(error('auth-unavailable', 503))
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('认证服务暂时不可用')
+  })
+
+  it('keeps owner creation controls busy while the request is pending', async () => {
+    let resolveSetup: (() => void) | undefined
+    mocks.auth.setup.mockImplementation(() => {
+      mocks.auth.submitting.value = true
+      return new Promise<void>((resolve) => { resolveSetup = resolve })
+    })
+    const wrapper = mountSetup()
+    await wrapper.get('form').trigger('submit')
+    await nextTick()
+    expect(wrapper.get('form').attributes('aria-busy')).toBe('true')
+    expect(wrapper.get('.auth-submit').attributes('disabled')).toBeDefined()
+    resolveSetup?.()
   })
 
   it('re-resolves already-initialized setup instead of getting stuck', async () => {

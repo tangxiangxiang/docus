@@ -7,7 +7,6 @@ import ConfirmHost from './components/ConfirmHost.vue'
 import PromptHost from './components/PromptHost.vue'
 import { VaultViewModeKey, type VaultViewMode } from './composables/vault/viewMode'
 import { useAuth } from './composables/useAuth'
-import { isAuthApiError } from './composables/useAuth'
 import { shouldShowNormalChrome } from './lib/auth-chrome'
 import { useI18n } from './composables/useI18n'
 import { ensureVaultIdentity, getVaultIdentityState } from './lib/vault-identity'
@@ -47,11 +46,10 @@ const showRoutedContent = computed(() => isPublicDevPreview.value
   || (auth.state.value !== 'unknown' && (!route.meta.workspace || vaultIdentity.state.value === 'ready')))
 const authLoading = computed(() => auth.hydrating.value || (auth.state.value === 'unknown' && !auth.hydrationError.value))
 const authFailureMessage = computed(() => {
-  if (!auth.hydrationError.value) return ''
-  return isAuthApiError(auth.hydrationError.value)
-    ? auth.hydrationError.value.message
-    : t('auth.unavailable')
+  return auth.hydrationError.value ? t('auth.unavailable') : ''
 })
+const bootstrapBusy = computed(() => authLoading.value || identityLoading.value)
+const bootstrapFailure = computed(() => Boolean(authFailureMessage.value || identityFailure.value))
 async function retryAuth(): Promise<void> {
   const nextState = await auth.refreshStatus()
   if (nextState !== 'unknown') await router.replace(route.fullPath || '/vault')
@@ -110,21 +108,21 @@ provide(VaultViewModeKey, { mode: viewMode, set: setViewMode, toggle: toggleView
   <NavBar v-if="showNormalChrome" :is-vault="isVault" @open-search="onOpenSearch" />
   <section
     v-if="!showRoutedContent"
-    class="auth-bootstrap-surface"
-    role="status"
+    :class="['auth-bootstrap-surface', { 'is-error': bootstrapFailure }]"
+    :aria-busy="bootstrapBusy"
     aria-live="polite"
   >
     <div class="auth-bootstrap-card">
-      <p v-if="authLoading">{{ t('auth.loading') }}</p>
+      <p v-if="authLoading" role="status">{{ t('auth.loading') }}</p>
       <template v-else-if="identityLoading">
-        <p>{{ t('auth.vault_identity_loading') }}</p>
+        <p role="status">{{ t('auth.vault_identity_loading') }}</p>
       </template>
       <template v-else-if="identityFailure">
-        <p>{{ t('auth.vault_identity_unavailable') }}</p>
+        <p role="alert">{{ t('auth.vault_identity_unavailable') }}</p>
         <button type="button" @click="retryVaultIdentity">{{ t('auth.retry') }}</button>
       </template>
       <template v-else>
-        <p>{{ authFailureMessage }}</p>
+        <p role="alert">{{ authFailureMessage }}</p>
         <button type="button" @click="retryAuth">{{ t('auth.retry') }}</button>
       </template>
     </div>

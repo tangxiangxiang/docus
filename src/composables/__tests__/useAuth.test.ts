@@ -78,6 +78,23 @@ describe('useAuth singleton coordinator', () => {
     expect(auth.user.value).toEqual({ id: 1, username: 'owner' })
   })
 
+  it('does not leave the form busy after a newer auth transition supersedes a login', async () => {
+    let resolveLogin: ((value: { authenticated: true; user: { id: number; username: string } }) => void) | undefined
+    vi.mocked(loginApi).mockImplementation(() => new Promise((resolve) => { resolveLogin = resolve }))
+
+    const pendingLogin = auth.login({ username: 'owner', password: 'secret' })
+    expect(auth.submitting.value).toBe(true)
+
+    vi.mocked(getAuthStatus).mockResolvedValue({ authenticated: false, setupRequired: true })
+    await expect(auth.refreshStatus()).resolves.toBe('setup-required')
+    expect(auth.submitting.value).toBe(false)
+
+    resolveLogin?.({ authenticated: true, user: { id: 1, username: 'owner' } })
+    await pendingLogin
+    expect(auth.submitting.value).toBe(false)
+    expect(auth.state.value).toBe('setup-required')
+  })
+
   it('moves to authenticated after setup and clears an earlier expiry marker', async () => {
     vi.mocked(getAuthStatus).mockResolvedValue({ authenticated: false, setupRequired: true })
     await auth.ensureHydrated()

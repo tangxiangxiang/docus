@@ -50,6 +50,10 @@ function beginTransition(): number {
   resetVaultIdentity()
   hydrationPromise = null
   hydrating.value = false
+  // A newer auth transition owns the presentation state. If an older
+  // login/setup request resolves later, its generation guard must not leave
+  // the form permanently disabled.
+  submitting.value = false
   hydrationError.value = null
   return generation
 }

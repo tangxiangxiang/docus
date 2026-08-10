@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { AuthApiError } from '../lib/auth-api'
 import { safeInternalRedirect } from '../lib/auth-redirect'
@@ -14,9 +14,13 @@ const { t } = useI18n()
 const username = ref('')
 const password = ref('')
 const error = ref('')
+const errorCode = ref<string | undefined>()
 const usernameInput = ref<HTMLInputElement | null>(null)
 
+const credentialError = computed(() => errorCode.value === 'invalid-credentials')
+
 function errorText(value: unknown): string {
+  errorCode.value = value instanceof AuthApiError ? value.code : undefined
   if (!(value instanceof AuthApiError)) return t('auth.unavailable')
   if (value.code === 'invalid-credentials') return t('auth.invalid_credentials')
   if (value.code === 'auth-rate-limited') {
@@ -35,6 +39,7 @@ function redirectTarget(): string {
 async function submit(): Promise<void> {
   if (auth.submitting.value) return
   error.value = ''
+  errorCode.value = undefined
   try {
     await auth.login({ username: username.value, password: password.value })
     password.value = ''
@@ -59,7 +64,7 @@ onMounted(() => usernameInput.value?.focus())
       <p v-if="route.query.reason === 'expired'" class="auth-notice" role="status">
         {{ t('auth.session_expired') }}
       </p>
-      <form class="auth-form" @submit.prevent="submit">
+      <form class="auth-form" :aria-busy="auth.submitting.value" @submit.prevent="submit">
         <div class="auth-field">
           <label for="login-username">{{ t('auth.username') }}</label>
           <input
@@ -71,8 +76,8 @@ onMounted(() => usernameInput.value?.focus())
             autocomplete="username"
             required
             :disabled="auth.submitting.value"
-            :aria-invalid="Boolean(error)"
-            aria-describedby="login-error"
+            :aria-invalid="credentialError ? 'true' : undefined"
+            :aria-describedby="credentialError ? 'login-error' : undefined"
           />
         </div>
         <div class="auth-field">
@@ -85,8 +90,8 @@ onMounted(() => usernameInput.value?.focus())
             autocomplete="current-password"
             required
             :disabled="auth.submitting.value"
-            :aria-invalid="Boolean(error)"
-            aria-describedby="login-error"
+            :aria-invalid="credentialError ? 'true' : undefined"
+            :aria-describedby="credentialError ? 'login-error' : undefined"
           />
         </div>
         <p v-if="error" id="login-error" class="auth-error" role="alert">{{ error }}</p>
