@@ -44,7 +44,7 @@ function answerConfirm(ok: boolean) {
   confirmResolve = null
 }
 
-import { useEditorTabs, __setVaultIdForTesting } from '../useEditorTabs'
+import { useEditorTabs, __setVaultIdForTesting, resetTabPersistenceForTesting } from '../useEditorTabs'
 import EditorTabs from '../../../components/vault/EditorTabs.vue'
 import { deriveDocumentSavePresentation } from '../editor-tabs/savePresentation'
 import { createVaultFileChanges, type VaultFileChanges } from '../context/fileChanges'
@@ -131,7 +131,7 @@ function setup(): Promise<Harness> {
         const selectPanel = vi.fn()
         const toggleViewMode = vi.fn()
         const fileChanges = createVaultFileChanges()
-        const api = useEditorTabs({ selectPanel, toggleViewMode, fileChanges })
+        const api = useEditorTabs({ vaultId: 'test-vault', selectPanel, toggleViewMode, fileChanges })
         captured = { ...(api as unknown as Omit<Harness, 'selectPanel' | 'toggleViewMode' | 'fileChanges' | 'unmount'>), selectPanel, toggleViewMode, fileChanges, unmount: () => {} }
         return () => h('div')
       },
@@ -264,6 +264,7 @@ describe('useEditorTabs', () => {
 
   afterEach(() => {
     resetMarkdownModelsForTesting()
+    resetTabPersistenceForTesting()
     useI18n().setLocale('zh')
     vi.restoreAllMocks()
     vi.useRealTimers()
@@ -334,7 +335,7 @@ describe('useEditorTabs', () => {
     expect(h.tabs.value.map((tab) => tab.path)).toEqual(['c', 'a', 'b'])
     expect(h.tabs.value.every((tab) => tab === identities.get(tab.path))).toBe(true)
     expect(h.activePath.value).toBe(active)
-    expect(JSON.parse(localStorage.getItem('docus:tabs:v1')!).paths).toEqual(['c', 'a', 'b'])
+    expect(JSON.parse(localStorage.getItem('docus:tabs:v1:test-vault')!).paths).toEqual(['c', 'a', 'b'])
     expect(h.reorderOpenDocuments(['c', 'a', 'b'])).toBe(false)
     expect(h.reorderOpenDocuments(['c', 'a'])).toBe(false)
     expect(h.reorderOpenDocuments(['c', 'a', 'unknown'])).toBe(false)
@@ -1362,7 +1363,7 @@ describe('useEditorTabs — file-change bus', () => {
 
     expect(h.tabs.value.map((tab) => tab.path)).toEqual(['order-b', 'order-x', 'order-c'])
     expect(h.activePath.value).toBe('order-c')
-    expect(JSON.parse(localStorage.getItem('docus:tabs:v1')!).paths)
+    expect(JSON.parse(localStorage.getItem(PERSIST_KEY)!).paths)
       .toEqual(['order-b', 'order-x', 'order-c'])
     h.unmount()
   })
@@ -1381,7 +1382,7 @@ describe('useEditorTabs — file-change bus', () => {
     await h.openPost('cancel-c')
     expect(h.tabs.value.map((tab) => tab.path)).toEqual(['cancel-b', 'cancel-a', 'cancel-c'])
     h.onEditorChange('cancel-a', 'A dirty')
-    const before = localStorage.getItem('docus:tabs:v1')
+    const before = localStorage.getItem(PERSIST_KEY)
 
     h.fileChanges.publish({ path: 'cancel-x', kind: 'rename', oldPath: 'cancel-a', newRaw: 'X' })
     await Promise.resolve()
@@ -1390,7 +1391,7 @@ describe('useEditorTabs — file-change bus', () => {
     await flushPromises()
 
     expect(h.tabs.value.map((tab) => tab.path)).toEqual(['cancel-b', 'cancel-a', 'cancel-c'])
-    expect(localStorage.getItem('docus:tabs:v1')).toBe(before)
+    expect(localStorage.getItem(PERSIST_KEY)).toBe(before)
     h.unmount()
   })
 
@@ -1458,7 +1459,7 @@ describe('useEditorTabs — file-change bus', () => {
     expect(JSON.parse(localStorage.getItem('docus:tabs:v1:dirty-target-rename')!).paths)
       .toEqual(['dirty-target-x'])
     h.unmount()
-    __setVaultIdForTesting(null)
+    resetTabPersistenceForTesting()
   })
 
   it('restores a no-body external rename at the source position after loading the target', async () => {
@@ -1653,7 +1654,7 @@ describe('useEditorTabs — file-change bus', () => {
     expect(JSON.parse(localStorage.getItem('docus:tabs:v1:async-rename-order')!).paths)
       .toEqual(['order-load-c', 'order-load-x', 'order-load-b'])
     h.unmount()
-    __setVaultIdForTesting(null)
+    resetTabPersistenceForTesting()
   })
 
   it('does not close or reorder the source when a newer event supersedes rename confirmation', async () => {
@@ -1728,7 +1729,7 @@ describe('useEditorTabs — file-change bus', () => {
 // returns [] for tree/posts and throws for anything else, so each
 // test here overrides it with per-path getPost handlers.
 
-const PERSIST_KEY = 'docus:tabs:v1'
+const PERSIST_KEY = 'docus:tabs:v1:test-vault'
 
 function stubFetchForPaths(paths: Record<string, unknown>): void {
   vi.stubGlobal('fetch', stubFetch({
@@ -1913,7 +1914,7 @@ describe('useEditorTabs — tab persistence', () => {
       setup() {
         const selectPanel = vi.fn()
         const toggleViewMode = vi.fn()
-        const api = useEditorTabs({ selectPanel, toggleViewMode, fileChanges: createVaultFileChanges() })
+        const api = useEditorTabs({ vaultId: 'test-vault', selectPanel, toggleViewMode, fileChanges: createVaultFileChanges() })
         captured = { ...(api as unknown as Omit<Harness, 'selectPanel' | 'toggleViewMode'>), selectPanel, toggleViewMode }
         return () => h('div')
       },
@@ -1945,16 +1946,15 @@ describe('useEditorTabs — tab persistence', () => {
 // --- tab persistence: vault isolation -------------------------------------
 //
 // Production VaultView supplies the protected vault identity before the
-// composable mounts. These unit harnesses also keep a legacy null-id case so
-// the persistence helper remains independently testable.
+// composable mounts. Unit harnesses use an explicit deterministic identity.
 
 describe('useEditorTabs — vault-scoped persistence', () => {
   beforeEach(() => {
     localStorage.clear()
   })
 
-  it('uses the bare key in a legacy harness with no supplied vault id', async () => {
-    __setVaultIdForTesting(null)
+  it('uses the scoped key in the default test harness identity', async () => {
+    resetTabPersistenceForTesting()
     vi.stubGlobal('fetch', stubFetch({
       'GET /api/tree': () => [],
       'GET /api/posts': () => [],
@@ -1964,7 +1964,7 @@ describe('useEditorTabs — vault-scoped persistence', () => {
     await h.openPost('inbox/a')
     await flushPromises()
     await new Promise((r) => setTimeout(r, 150))
-    expect(localStorage.getItem('docus:tabs:v1')).toBeTruthy()
+    expect(localStorage.getItem('docus:tabs:v1:test-vault')).toBeTruthy()
     expect(localStorage.getItem('docus:tabs:v1:vault-1234')).toBeNull()
   })
 
@@ -1980,7 +1980,7 @@ describe('useEditorTabs — vault-scoped persistence', () => {
     await flushPromises()
     await new Promise((r) => setTimeout(r, 150))
     expect(localStorage.getItem('docus:tabs:v1:vault-1234')).toBeTruthy()
-    expect(localStorage.getItem('docus:tabs:v1')).toBeNull()
+    expect(localStorage.getItem('docus:tabs:v1:test-vault')).toBeNull()
   })
 })
 
@@ -2009,10 +2009,10 @@ describe('useEditorTabs — round-4 async-title reactivity', () => {
     localStorage.clear()
     toastCalls.length = 0
     confirmResolve = null
-    __setVaultIdForTesting(null)
+    resetTabPersistenceForTesting()
   })
   afterEach(() => {
-    __setVaultIdForTesting(null)
+    resetTabPersistenceForTesting()
   })
 
   it('single open: strip title flips to the async title the moment getPost resolves', async () => {
@@ -2109,10 +2109,10 @@ describe('useEditorTabs — round-4 synchronous persistence', () => {
     localStorage.clear()
     toastCalls.length = 0
     confirmResolve = null
-    __setVaultIdForTesting(null)
+    resetTabPersistenceForTesting()
   })
   afterEach(() => {
-    __setVaultIdForTesting(null)
+    resetTabPersistenceForTesting()
   })
 
   function readPersisted(): { paths: string[]; active: string | null } | null {
@@ -2296,6 +2296,7 @@ function mountWorkspaceTabsDom(): Promise<DomHarness> {
         const selectPanel = vi.fn()
         const toggleViewMode = vi.fn()
         const api = useEditorTabs({
+          vaultId: 'test-vault',
           selectPanel,
           toggleViewMode,
           fileChanges: createVaultFileChanges(),
@@ -2358,10 +2359,10 @@ describe('useEditorTabs — round-5 real-DOM async-title reactivity', () => {
     localStorage.clear()
     toastCalls.length = 0
     confirmResolve = null
-    __setVaultIdForTesting(null)
+    resetTabPersistenceForTesting()
   })
   afterEach(() => {
-    __setVaultIdForTesting(null)
+    resetTabPersistenceForTesting()
     document.querySelectorAll('.tab-context-menu').forEach((el) => el.remove())
     document.querySelectorAll('.tab-tooltip').forEach((el) => el.remove())
   })
@@ -2503,10 +2504,10 @@ describe('useEditorTabs — round-6 restore-failure race vs reopen', () => {
     localStorage.clear()
     toastCalls.length = 0
     confirmResolve = null
-    __setVaultIdForTesting(null)
+    resetTabPersistenceForTesting()
   })
   afterEach(() => {
-    __setVaultIdForTesting(null)
+    resetTabPersistenceForTesting()
   })
 
   it('a same-path tab reopened while the old restore is pending survives the old restore failure', async () => {

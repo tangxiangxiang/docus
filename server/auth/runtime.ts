@@ -70,6 +70,7 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
     setupLimiter,
     kdfGuard,
     now: options.now,
+    sessionLastSeenUpdateIntervalMs: options.config.sessionLastSeenUpdateIntervalMs,
   })
   const runtime: AuthRuntime = {
     db: options.db,

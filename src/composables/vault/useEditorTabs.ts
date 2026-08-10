@@ -29,12 +29,14 @@ import {
   type UnsavedDraftPersistence,
 } from './draft-recovery/useUnsavedDraftPersistence'
 import { createServerDocumentPathResolver } from './draft-recovery/serverDocumentResolver'
-export { __setVaultIdForTesting } from './editor-tabs/useTabPersistence'
+export {
+  __setVaultIdForTesting,
+  resetTabPersistenceForTesting,
+} from './editor-tabs/useTabPersistence'
 
 export function useEditorTabs(opts: {
-  /** Required by production VaultView; the fallback is only for legacy
-   * composable unit harnesses that exercise tab behavior without a router. */
-  vaultId?: string
+  /** Authoritative identity resolved before VaultView mounts. */
+  vaultId: string
   selectPanel: (panel: SidePanel) => void
   /* Wired into the Cmd/Ctrl+E shortcut to toggle between edit and read
      mode. Accepted as a callback (not looked up globally) for the same
@@ -88,7 +90,7 @@ export function useEditorTabs(opts: {
     vaultId,
     persist: persistOpenTabs,
     dispose: disposeTabPersistence,
-  } = useTabPersistence(tabs, activePath, opts.vaultId ?? null)
+  } = useTabPersistence(tabs, activePath, opts.vaultId)
   setPersist(persistOpenTabs)
 
   const draftPersistence = opts.draftPersistence ?? createUnsavedDraftPersistence({

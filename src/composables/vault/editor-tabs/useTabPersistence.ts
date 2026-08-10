@@ -6,7 +6,7 @@ const TAB_PERSIST_KEY = 'docus:tabs:v1'
 const TAB_PERSIST_MAX = 20
 const TAB_PERSIST_DEBOUNCE_MS = 100
 
-let vaultIdOverrideForTesting: { value: string | null } | null = null
+let vaultIdOverrideForTesting: string | undefined
 
 export interface PersistedTabs {
   v: number
@@ -14,11 +14,14 @@ export interface PersistedTabs {
   active: string | null
 }
 
-function storageKey(vaultId: string | null): string {
-  return vaultId ? `${TAB_PERSIST_KEY}:${vaultId}` : TAB_PERSIST_KEY
+function storageKey(vaultId: string): string {
+  if (typeof vaultId !== 'string' || vaultId.length === 0) {
+    throw new Error('Vault identity is required for tab persistence.')
+  }
+  return `${TAB_PERSIST_KEY}:${vaultId}`
 }
 
-export function readPersistedTabs(vaultId: string | null): PersistedTabs | null {
+export function readPersistedTabs(vaultId: string): PersistedTabs | null {
   let raw: string | null
   try { raw = localStorage.getItem(storageKey(vaultId)) } catch { return null }
   if (!raw) return null
@@ -37,7 +40,7 @@ export function readPersistedTabs(vaultId: string | null): PersistedTabs | null 
   return null
 }
 
-function writePersistedTabs(tabs: Tab[], active: string | null, vaultId: string | null) {
+function writePersistedTabs(tabs: Tab[], active: string | null, vaultId: string) {
   try {
     const data: PersistedTabs = {
       v: 1,
@@ -65,11 +68,12 @@ function writePersistedTabs(tabs: Tab[], active: string | null, vaultId: string 
 export function useTabPersistence(
   tabs: Ref<Tab[]>,
   activePath: Ref<string | null>,
-  authoritativeVaultId: string | null = null,
+  authoritativeVaultId: string,
 ) {
-  const vaultId = ref<string | null>(
-    vaultIdOverrideForTesting ? vaultIdOverrideForTesting.value : authoritativeVaultId,
-  )
+  const vaultId = ref<string>(vaultIdOverrideForTesting ?? authoritativeVaultId)
+  // Keep the production path fail-closed even if a JavaScript caller bypasses
+  // the TypeScript contract with an empty value.
+  storageKey(vaultId.value)
   let disposed = false
 
   function persist(): void {
@@ -101,10 +105,10 @@ export function useTabPersistence(
   return { vaultId, persist, dispose }
 }
 
-export function __setVaultIdForTesting(vaultId: string | null): void {
-  vaultIdOverrideForTesting = { value: vaultId }
+export function __setVaultIdForTesting(vaultId: string): void {
+  vaultIdOverrideForTesting = vaultId
 }
 
 export function resetTabPersistenceForTesting(): void {
-  vaultIdOverrideForTesting = null
+  vaultIdOverrideForTesting = undefined
 }

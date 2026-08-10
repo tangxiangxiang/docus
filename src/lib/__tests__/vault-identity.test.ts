@@ -42,4 +42,18 @@ describe('protected vault identity coordinator', () => {
     await expect(ensureVaultIdentity()).resolves.toBe('abc123def456')
     expect(getVaultIdentityState().state.value).toBe('ready')
   })
+
+  it('does not let a response from before reset repopulate identity state', async () => {
+    let resolve!: (response: Response) => void
+    authFetch.mockReturnValueOnce(new Promise<Response>((r) => { resolve = r }))
+    const pending = ensureVaultIdentity()
+
+    resetVaultIdentityForTesting()
+    resolve(new Response(JSON.stringify({ vaultId: 'stale-vault-id' }), { status: 200 }))
+    await expect(pending).resolves.toBe('stale-vault-id')
+
+    expect(getVaultIdentityState().state.value).toBe('unknown')
+    expect(getVaultIdentityState().vaultId.value).toBeNull()
+    expect(() => requireVaultId()).toThrow('Vault identity must be resolved')
+  })
 })

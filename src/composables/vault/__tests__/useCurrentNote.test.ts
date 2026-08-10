@@ -202,7 +202,7 @@ describe('useCurrentNote — live tab integration', () => {
     const Parent = defineComponent({
       setup() {
         const fileChanges = createVaultFileChanges()
-        editorApi = useEditorTabs({ selectPanel: () => {}, toggleViewMode: () => {}, fileChanges })
+        editorApi = useEditorTabs({ vaultId: 'test-vault', selectPanel: () => {}, toggleViewMode: () => {}, fileChanges })
         provideVaultContext(createVaultContext({
           vaultId: editorApi.vaultId,
           fileChanges,

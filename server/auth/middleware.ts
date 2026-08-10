@@ -62,6 +62,19 @@ export const authBoundary: MiddlewareHandler = async (c, next) => {
     return jsonError(c, 401, 'Authentication required.', 'auth-session-required')
   }
 
+  // Reuse the lookup result already produced by status(); maintenance must
+  // never perform a second raw-token lookup. A valid status without its
+  // session record is an internal consistency failure, not an invitation to
+  // continue into the protected handler.
+  if (!status.session || status.session.status !== 'valid' || !status.session.session) {
+    return jsonError(c, 503, 'Authentication is temporarily unavailable.', 'auth-unavailable')
+  }
+  try {
+    runtime.service.maintainAuthenticatedSession(status.session.session)
+  } catch {
+    return jsonError(c, 503, 'Authentication is temporarily unavailable.', 'auth-unavailable')
+  }
+
   // Keep the context deliberately safe and minimal. Existing handlers do
   // not depend on it yet; it is the future owner-identity seam.
   c.set('authUser', { id: status.user.id, username: status.user.username })

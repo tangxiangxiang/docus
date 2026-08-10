@@ -14,11 +14,15 @@ import {
 } from './password.js'
 import {
   createSession,
+  deleteExpiredSessions,
   findSessionByRawToken,
   revokeSession,
+  touchSessionLastSeen,
   type CreatedSession,
+  type AuthSessionRecord,
   type SessionLookupResult,
 } from './session.js'
+import { SESSION_LAST_SEEN_UPDATE_INTERVAL_MS } from './config.js'
 import { AuthRateLimiter } from './rateLimit.js'
 
 // Generated once from non-credential random material at the approved
@@ -66,7 +70,16 @@ export type AuthServiceDependencies = {
   readonly kdfGuard: KdfGuard
   readonly now?: () => number
   readonly dummyPasswordHash?: string
+  readonly sessionLastSeenUpdateIntervalMs?: number
+  readonly sessionPruneIntervalMs?: number
 }
+
+/**
+ * Expired-session cleanup is request-triggered housekeeping, not a scheduler.
+ * Keeping it process-local prevents every authenticated request from issuing a
+ * database DELETE while still allowing active instances to remove stale rows.
+ */
+export const SESSION_EXPIRED_PRUNE_INTERVAL_MS = 30 * 60 * 1000
 
 type OwnerRow = {
   id: number
@@ -123,6 +136,10 @@ export class AuthService {
   readonly kdfGuard: KdfGuard
   readonly now: () => number
   readonly dummyPasswordHash: string
+  readonly sessionLastSeenUpdateIntervalMs: number
+  readonly sessionPruneIntervalMs: number
+  private lastExpiredSessionPruneAt = Number.NEGATIVE_INFINITY
+  private expiredSessionPruneScheduled = false
 
   constructor(dependencies: AuthServiceDependencies) {
     this.db = dependencies.db
@@ -132,6 +149,10 @@ export class AuthService {
     this.kdfGuard = dependencies.kdfGuard
     this.now = dependencies.now ?? Date.now
     this.dummyPasswordHash = dependencies.dummyPasswordHash ?? DUMMY_PASSWORD_HASH
+    this.sessionLastSeenUpdateIntervalMs = dependencies.sessionLastSeenUpdateIntervalMs
+      ?? SESSION_LAST_SEEN_UPDATE_INTERVAL_MS
+    this.sessionPruneIntervalMs = dependencies.sessionPruneIntervalMs
+      ?? SESSION_EXPIRED_PRUNE_INTERVAL_MS
   }
 
   ownerExists(): boolean {
@@ -152,6 +173,49 @@ export class AuthService {
       return { authenticated: false, setupRequired: false, session }
     }
     return { authenticated: true, setupRequired: false, user: safeUser(owner), session }
+  }
+
+  /**
+   * Maintain an already-authenticated session without performing another raw
+   * token lookup. A due last_seen update is authentication-critical: if the
+   * row can no longer be updated, the middleware must stop before the handler.
+   * Expired-row pruning is deliberately best effort and throttled per runtime.
+   */
+  maintainAuthenticatedSession(session: AuthSessionRecord): void {
+    const now = this.now()
+    if (now - session.lastSeenAt >= this.sessionLastSeenUpdateIntervalMs) {
+      const touched = touchSessionLastSeen(
+        this.db,
+        session.id,
+        now,
+        this.sessionLastSeenUpdateIntervalMs,
+      )
+      if (!touched) throw new Error('authenticated session maintenance failed')
+    }
+
+    this.maybePruneExpiredSessions(now)
+  }
+
+  /**
+   * Schedule throttled housekeeping outside the authentication/handler
+   * decision. The gate advances before the deferred write so concurrent
+   * requests cannot enqueue unbounded DELETE work.
+   */
+  maybePruneExpiredSessions(now = this.now()): void {
+    if (this.expiredSessionPruneScheduled
+      || now - this.lastExpiredSessionPruneAt < this.sessionPruneIntervalMs) return
+    this.lastExpiredSessionPruneAt = now
+    this.expiredSessionPruneScheduled = true
+    queueMicrotask(() => {
+      this.expiredSessionPruneScheduled = false
+      try {
+        deleteExpiredSessions(this.db, now)
+      } catch {
+        // Housekeeping must not turn an otherwise authenticated request into
+        // a user-visible failure. Authentication lookup/touch errors are
+        // handled separately by the caller.
+      }
+    })
   }
 
   async setup(input: {
