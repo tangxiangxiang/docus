@@ -35,6 +35,12 @@ import {
   cleanupHistoryTempRepo,
   describeHistoryIntegration,
 } from './helpers/historyIntegration.js'
+import {
+  closeAuthTestContext,
+  createAuthenticatedTestContext,
+  withAuthCookie,
+  type AuthenticatedTestContext,
+} from './helpers/auth.js'
 
 type Deferred<T = void> = {
   promise: Promise<T>
@@ -74,6 +80,7 @@ const originalContentDir = path.resolve(process.cwd(), 'src/content')
 
 let vault: string
 let db: Database.Database
+let auth: AuthenticatedTestContext
 
 async function write(rel: string, raw: string): Promise<void> {
   const absolute = path.join(vault, rel)
@@ -93,11 +100,11 @@ async function commit(paths: string[], message: string): Promise<historyGit.Comm
 }
 
 function request(method: string, requestPath: string, body?: unknown): Promise<Response> {
-  return app.fetch(new Request(`http://localhost${requestPath}`, {
+  return app.fetch(withAuthCookie(auth, new Request(`http://localhost${requestPath}`, {
     method,
     headers: body === undefined ? undefined : { 'content-type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
-  }))
+  })))
 }
 
 function folderMove(from: string, to: string): Promise<Response> {
@@ -161,6 +168,7 @@ beforeEach(async () => {
   db = new Database(':memory:')
   db.pragma('foreign_keys = ON')
   applyMigrations(db)
+  auth = createAuthenticatedTestContext({ db })
   setContentDir(vault)
   setRepoRootForTesting(vault)
   __setMetadataDbForTesting(db)
@@ -180,6 +188,7 @@ afterEach(async () => {
   __resetGitCapabilityForTesting()
   __resetLinkIndexForTesting()
   setContentDir(originalContentDir)
+  closeAuthTestContext(auth)
   db.close()
   await cleanupHistoryTempRepo(vault)
 })

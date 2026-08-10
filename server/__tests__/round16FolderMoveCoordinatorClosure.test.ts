@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import os from 'node:os'
 import path from 'node:path'
 
-import app, { __setMetadataDbForTesting } from '../index'
+import mountedApp, { __setMetadataDbForTesting } from '../index'
 import { recoverInterruptedOperations } from '../crashRecovery'
 import { applyMigrations } from '../db'
 import {
@@ -26,6 +26,12 @@ import {
   terminateProcessTree,
   waitForChildClose,
 } from './helpers/crashProcessTree'
+import {
+  closeAuthTestContext,
+  createAuthenticatedTestContext,
+  withAuthCookie,
+  type AuthenticatedTestContext,
+} from './helpers/auth'
 
 const TSX_CLI = fileURLToPath(import.meta.resolve('tsx/cli'))
 const DELETE_PREPARED_CHILD = path.join(
@@ -37,6 +43,7 @@ const DELETE_PREPARED_CHILD = path.join(
 let vault: string
 let originalContentDir: string
 let db: Database.Database
+let auth: AuthenticatedTestContext
 // The folder-delete prepared-rollback fixture deliberately exits with
 // process.exit(93) WITHOUT calling database.close() — the test exists to
 // prove durable recovery across an abrupt process termination. The child
@@ -65,6 +72,7 @@ beforeEach(async () => {
   db = new Database(':memory:')
   db.pragma('foreign_keys = ON')
   applyMigrations(db)
+  auth = createAuthenticatedTestContext({ db })
   __setMetadataDbForTesting(db)
   setContentDir(vault)
   __resetLinkIndexForTesting()
@@ -82,6 +90,7 @@ afterEach(async () => {
   __setDirectoryMoveStrategyOverrideForTesting(null)
   __setFolderRaceHooksForTesting(null)
   __setMetadataDbForTesting(null)
+  closeAuthTestContext(auth)
   db.close()
   setContentDir(originalContentDir)
   __resetLinkIndexForTesting()
@@ -109,11 +118,11 @@ async function patchFolder(
   destination = 'ren',
   updateReferences = false,
 ): Promise<Response> {
-  return app.fetch(new Request(`http://localhost/api/folders/${source}`, {
+  return mountedApp.fetch(withAuthCookie(auth, new Request(`http://localhost/api/folders/${source}`, {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ newPath: destination, updateReferences }),
-  }))
+  })))
 }
 
 async function readOnlyV4Journal(): Promise<{
@@ -348,7 +357,7 @@ describe('Round-16 reverse final verification', () => {
   it('retains the rollback journal when the restored directory inode is externally replaced', async () => {
     await seedFolder()
     await fs.writeFile(path.join(vault, 'ref.md'), 'see [[proj/a]]\n')
-    await app.fetch(new Request('http://localhost/api/links/index'))
+    await mountedApp.fetch(withAuthCookie(auth, new Request('http://localhost/api/links/index')))
     const replacementStash = path.join(vault, 'restored-owned-a.md')
     __setFolderRaceHooksForTesting({
       afterRenamePlanBuilt: async () => {

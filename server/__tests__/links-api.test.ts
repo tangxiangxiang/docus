@@ -4,12 +4,12 @@
 // exercised end-to-end (the splitter routes, gray-matter parsing,
 // etc.). We never mock getIndex — it is the real singleton, but
 // reset in beforeEach to point at the temp dir.
-import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, afterAll, beforeAll, vi } from 'vitest'
 import Database from 'better-sqlite3'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import app, { __setMetadataDbForTesting } from '../index'
+import mountedApp, { __setMetadataDbForTesting } from '../index'
 import { setContentDir } from '../paths.js'
 import { __resetLinkIndexForTesting } from '../linkIndex.js'
 import { applyMigrations } from '../db.js'
@@ -22,12 +22,27 @@ import {
 import { __setFolderRaceHooksForTesting } from '../routes/folders.js'
 import { __setCreateOnlyMoveHooksForTesting, __setDirectoryMoveStrategyOverrideForTesting } from '../documentFileLifecycle.js'
 import { __setPostRenameRaceHooksForTesting } from '../routes/posts.js'
+import {
+  closeAuthTestContext,
+  createAuthenticatedTestContext,
+  withAuthCookie,
+  type AuthenticatedTestContext,
+} from './helpers/auth.js'
 
 let sandbox: string
 let originalContentDir: string
 const db = new Database(':memory:')
 db.pragma('foreign_keys = ON')
 applyMigrations(db)
+let auth: AuthenticatedTestContext
+
+function fetchApp(request: Request): Promise<Response> {
+  return mountedApp.fetch(withAuthCookie(auth, request))
+}
+
+beforeAll(() => {
+  auth = createAuthenticatedTestContext({ db })
+})
 
 beforeEach(async () => {
   db.exec('DELETE FROM documents; DELETE FROM tags;')
@@ -50,10 +65,13 @@ afterEach(async () => {
   __resetLinkIndexForTesting()
 })
 
-afterAll(() => db.close())
+afterAll(() => {
+  closeAuthTestContext(auth)
+  db.close()
+})
 
 async function get(urlPath: string) {
-  return app.fetch(new Request(`http://localhost${urlPath}`))
+  return fetchApp(new Request(`http://localhost${urlPath}`))
 }
 
 describe('GET /api/links/index', () => {
@@ -92,7 +110,7 @@ describe('rename reference updates', () => {
     const impact = await get('/api/links/rename-impact?path=b')
     expect(await impact.json()).toEqual({ path: 'b', count: 1, sources: ['a'] })
 
-    const renamed = await app.fetch(new Request('http://localhost/api/posts/b', {
+    const renamed = await fetchApp(new Request('http://localhost/api/posts/b', {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name: 'renamed-b', updateReferences: true }),
@@ -127,7 +145,7 @@ describe('rename reference updates', () => {
       return originalRename(from, to)
     })
     try {
-      const renamed = await app.fetch(new Request('http://localhost/api/posts/b', {
+      const renamed = await fetchApp(new Request('http://localhost/api/posts/b', {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ name: 'renamed-b', updateReferences: true }),
@@ -159,7 +177,7 @@ describe('rename reference updates', () => {
       },
     })
     try {
-      const renamed = await app.fetch(new Request('http://localhost/api/posts/b', {
+      const renamed = await fetchApp(new Request('http://localhost/api/posts/b', {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ name: 'renamed-b', updateReferences: true }),
@@ -189,7 +207,7 @@ describe('write routes update the index', () => {
     // in the seed, so it's also there).
     await fs.writeFile(path.join(sandbox, 'c.md'), '# c', 'utf8')
     __resetLinkIndexForTesting()  // re-scan with c present
-    const put = await app.fetch(new Request('http://localhost/api/posts/c', {
+    const put = await fetchApp(new Request('http://localhost/api/posts/c', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ raw: '# c\nsee [[a]]', baseRaw: '# c' }),
@@ -204,7 +222,7 @@ describe('write routes update the index', () => {
   it('DELETE drops the source AND cleans dangling references from other files', async () => {
     // b links to a. Delete a. The forward entry for b should also lose
     // its link to a (since a no longer exists).
-    const del = await app.fetch(new Request('http://localhost/api/posts/a', { method: 'DELETE' }))
+    const del = await fetchApp(new Request('http://localhost/api/posts/a', { method: 'DELETE' }))
     expect(del.status).toBe(200)
 
     // backlinks for a should be empty now
@@ -228,7 +246,7 @@ describe('write routes update the index', () => {
     __resetLinkIndexForTesting()  // re-scan
 
     // Rename 'notes/draft' -> 'notes/draft2'.
-    const r = await app.fetch(new Request('http://localhost/api/posts/notes/draft', {
+    const r = await fetchApp(new Request('http://localhost/api/posts/notes/draft', {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name: 'draft2' }),
@@ -249,7 +267,7 @@ describe('write routes update the index', () => {
   })
 
   it('POST /api/posts registers the new file in the index', async () => {
-    const r = await app.fetch(new Request('http://localhost/api/posts', {
+    const r = await fetchApp(new Request('http://localhost/api/posts', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ path: 'fresh', title: 'Fresh' }),
@@ -270,7 +288,7 @@ describe('write routes update the index', () => {
     __resetLinkIndexForTesting()
 
     // Rename the folder.
-    const r = await app.fetch(new Request('http://localhost/api/folders/notes', {
+    const r = await fetchApp(new Request('http://localhost/api/folders/notes', {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ newPath: 'renamed' }),
@@ -302,7 +320,7 @@ describe('write routes update the index', () => {
     })
     await lockStarted
 
-    const request = app.fetch(new Request('http://localhost/api/folders/notes', {
+    const request = fetchApp(new Request('http://localhost/api/folders/notes', {
       method: 'PATCH', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ newPath: 'renamed' }),
     }))
@@ -322,7 +340,7 @@ describe('write routes update the index', () => {
     await fs.writeFile(path.join(sandbox, 'source.md'), 'see [[notes/target]]', 'utf8')
     __resetLinkIndexForTesting()
 
-    const response = await app.fetch(new Request('http://localhost/api/folders/notes', {
+    const response = await fetchApp(new Request('http://localhost/api/folders/notes', {
       method: 'PATCH', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ newPath: 'renamed', updateReferences: true }),
     }))
@@ -362,7 +380,7 @@ describe('write routes update the index', () => {
       return originalRename(from, to)
     })
     try {
-      const response = await app.fetch(new Request('http://localhost/api/folders/notes', {
+      const response = await fetchApp(new Request('http://localhost/api/folders/notes', {
         method: 'PATCH', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ newPath: 'renamed', updateReferences: true }),
       }))
@@ -392,7 +410,7 @@ describe('write routes update the index', () => {
       },
     })
     try {
-      const response = await app.fetch(new Request('http://localhost/api/folders/notes', {
+      const response = await fetchApp(new Request('http://localhost/api/folders/notes', {
         method: 'PATCH', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ newPath: 'renamed', updateReferences: true }),
       }))
@@ -436,7 +454,7 @@ describe('write routes update the index', () => {
       failJournalFlip: true,
     })
     try {
-      const response = await app.fetch(new Request('http://localhost/api/folders/notes', {
+      const response = await fetchApp(new Request('http://localhost/api/folders/notes', {
         method: 'PATCH', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ newPath: 'renamed', updateReferences: true }),
       }))
@@ -478,7 +496,7 @@ describe('write routes update the index', () => {
     const before = snapshotDocumentMetadataDatabase(db)
     const rename = vi.spyOn(fs, 'rename').mockRejectedValueOnce(new Error('injected folder rename failure'))
     try {
-      const response = await app.fetch(new Request('http://localhost/api/folders/notes', {
+      const response = await fetchApp(new Request('http://localhost/api/folders/notes', {
         method: 'PATCH', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ newPath: 'renamed' }),
       }))
@@ -494,7 +512,7 @@ describe('write routes update the index', () => {
     await fs.writeFile(path.join(sandbox, 'notes', 'b.md'), '# b', 'utf8')
     __resetLinkIndexForTesting()
 
-    const r = await app.fetch(new Request('http://localhost/api/folders/notes?recursive=true', {
+    const r = await fetchApp(new Request('http://localhost/api/folders/notes?recursive=true', {
       method: 'DELETE',
     }))
     expect(r.status).toBe(200)
@@ -526,7 +544,7 @@ describe('write routes update the index', () => {
       return originalRm(target, options)
     })
     try {
-      const response = await app.fetch(new Request('http://localhost/api/folders/notes?recursive=true', { method: 'DELETE' }))
+      const response = await fetchApp(new Request('http://localhost/api/folders/notes?recursive=true', { method: 'DELETE' }))
       expect(response.status).toBe(500)
       expect(await fs.readFile(path.join(sandbox, 'notes', 'a.md'), 'utf8')).toBe('# a')
       expect(snapshotDocumentMetadataDatabase(db)).toEqual(before)
@@ -557,7 +575,7 @@ describe('write routes update the index', () => {
       return originalRm(target, options)
     })
     try {
-      const response = await app.fetch(new Request('http://localhost/api/folders/gone?recursive=true', { method: 'DELETE' }))
+      const response = await fetchApp(new Request('http://localhost/api/folders/gone?recursive=true', { method: 'DELETE' }))
       expect(response.status).toBe(500)
       // The new generation keeps its bytes; the old identity must NOT
       // be bound to it.
@@ -576,12 +594,12 @@ describe('write routes update the index', () => {
     await fs.mkdir(path.join(sandbox, 'archive', 'organized'), { recursive: true })
 
     for (const folder of ['inbox', 'literature', 'archive', 'archive/organized']) {
-      const rename = await app.fetch(new Request(`http://localhost/api/folders/${folder}`, {
+      const rename = await fetchApp(new Request(`http://localhost/api/folders/${folder}`, {
         method: 'PATCH', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ newPath: `${path.posix.dirname(folder)}/renamed`.replace(/^\.\//, '') }),
       }))
       expect(rename.status, folder).toBe(422)
-      const remove = await app.fetch(new Request(`http://localhost/api/folders/${folder}?recursive=true`, {
+      const remove = await fetchApp(new Request(`http://localhost/api/folders/${folder}?recursive=true`, {
         method: 'DELETE',
       }))
       expect(remove.status, folder).toBe(422)
@@ -609,7 +627,7 @@ describe('folder lifecycle vs concurrent membership changes (structure lock)', (
     let createResponse: Promise<Response> | null = null
     __setFolderRaceHooksForTesting({
       afterRenameRecheck: async () => {
-        createResponse = app.fetch(new Request('http://localhost/api/posts', {
+        createResponse = fetchApp(new Request('http://localhost/api/posts', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ path: 'notes/created-during', title: 'X' }),
@@ -620,7 +638,7 @@ describe('folder lifecycle vs concurrent membership changes (structure lock)', (
       },
     })
     try {
-      const rename = await app.fetch(new Request('http://localhost/api/folders/notes', {
+      const rename = await fetchApp(new Request('http://localhost/api/folders/notes', {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ newPath: 'renamed' }),
@@ -649,7 +667,7 @@ describe('folder lifecycle vs concurrent membership changes (structure lock)', (
     let createResponse: Promise<Response> | null = null
     __setFolderRaceHooksForTesting({
       afterDeleteRecheck: async () => {
-        createResponse = app.fetch(new Request('http://localhost/api/posts', {
+        createResponse = fetchApp(new Request('http://localhost/api/posts', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ path: 'gone/created-during', title: 'X' }),
@@ -660,7 +678,7 @@ describe('folder lifecycle vs concurrent membership changes (structure lock)', (
       },
     })
     try {
-      const del = await app.fetch(new Request('http://localhost/api/folders/gone?recursive=true', {
+      const del = await fetchApp(new Request('http://localhost/api/folders/gone?recursive=true', {
         method: 'DELETE',
       }))
       expect(del.status).toBe(200)
@@ -711,7 +729,7 @@ describe('REST rename vs a concurrent backlink added after the footprint check',
         // its save holds only its own document lock and proceeds while
         // the rename holds all of its locks. It adds a link to the
         // rename source AFTER the footprint check has passed.
-        putResponse = await app.fetch(new Request('http://localhost/api/posts/late-b', {
+        putResponse = await fetchApp(new Request('http://localhost/api/posts/late-b', {
           method: 'PUT',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ raw: '# b\nnow links [[src]]', baseRaw: '# b\nno links' }),
@@ -720,7 +738,7 @@ describe('REST rename vs a concurrent backlink added after the footprint check',
       },
     })
     try {
-      const rename = await app.fetch(new Request('http://localhost/api/posts/src', {
+      const rename = await fetchApp(new Request('http://localhost/api/posts/src', {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ name: 'renamed', updateReferences: true }),
@@ -755,7 +773,7 @@ describe('round 5: rename destinations are create-only (external writer wins)', 
       },
     })
     try {
-      const renamed = await app.fetch(new Request('http://localhost/api/posts/b', {
+      const renamed = await fetchApp(new Request('http://localhost/api/posts/b', {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ name: 'renamed-b', updateReferences: true }),
@@ -785,7 +803,7 @@ describe('round 5: rename destinations are create-only (external writer wins)', 
       },
     })
     try {
-      const response = await app.fetch(new Request('http://localhost/api/folders/notes', {
+      const response = await fetchApp(new Request('http://localhost/api/folders/notes', {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ newPath: 'renamed' }),
@@ -818,7 +836,7 @@ describe('round 5: rename destinations are create-only (external writer wins)', 
       },
     })
 
-    const response = await app.fetch(new Request('http://localhost/api/folders/notes', {
+    const response = await fetchApp(new Request('http://localhost/api/folders/notes', {
       method: 'PATCH', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ newPath: 'renamed' }),
     }))
@@ -855,7 +873,7 @@ describe('round 5: rename rollback never overwrites a re-used source path', () =
       },
     })
     try {
-      const renamed = await app.fetch(new Request('http://localhost/api/posts/b', {
+      const renamed = await fetchApp(new Request('http://localhost/api/posts/b', {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ name: 'renamed-b', updateReferences: true }),
@@ -895,7 +913,7 @@ describe('round 5: rename rollback never overwrites a re-used source path', () =
       },
     })
     try {
-      const response = await app.fetch(new Request('http://localhost/api/folders/notes', {
+      const response = await fetchApp(new Request('http://localhost/api/folders/notes', {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ newPath: 'renamed', updateReferences: true }),
@@ -950,7 +968,7 @@ describe('round 5: folder delete rollback gates metadata on a create-only restor
       return originalMkdir(target, options)
     })
     try {
-      const response = await app.fetch(new Request('http://localhost/api/folders/gone?recursive=true', {
+      const response = await fetchApp(new Request('http://localhost/api/folders/gone?recursive=true', {
         method: 'DELETE',
       }))
       expect(response.status).toBe(500)
@@ -994,7 +1012,7 @@ describe('round 5: a failed-delete path reuse refreshes the link index', () => {
       throw Object.assign(new Error('injected staged unlink failure'), { code: 'EIO' })
     })
     try {
-      const response = await app.fetch(new Request('http://localhost/api/posts/reuse-note', { method: 'DELETE' }))
+      const response = await fetchApp(new Request('http://localhost/api/posts/reuse-note', { method: 'DELETE' }))
       expect(response.status).toBe(500)
       // Fresh identity for the re-used path (round-4 contract)...
       const metadata = getDocumentMetadata(db, 'reuse-note')

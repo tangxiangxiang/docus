@@ -26,14 +26,21 @@ import {
   type FolderMoveJournalEntry,
   type FolderMoveJournalV4,
 } from '../folderMoveTransaction'
-import app, { __setMetadataDbForTesting } from '../index'
+import mountedApp, { __setMetadataDbForTesting } from '../index'
 import { __resetLinkIndexForTesting } from '../linkIndex'
 import { setContentDir } from '../paths'
 import { __setFolderRaceHooksForTesting } from '../routes/folders'
+import {
+  closeAuthTestContext,
+  createAuthenticatedTestContext,
+  withAuthCookie,
+  type AuthenticatedTestContext,
+} from './helpers/auth'
 
 let vault: string
 let originalContentDir: string
 let db: Database.Database
+let auth: AuthenticatedTestContext
 
 const INTEGRATION_TEST_TIMEOUT = 30_000
 const INTEGRATION_HOOK_TIMEOUT = 30_000
@@ -51,6 +58,7 @@ beforeEach(async () => {
   db = new Database(':memory:')
   db.pragma('foreign_keys = ON')
   applyMigrations(db)
+  auth = createAuthenticatedTestContext({ db })
   __setMetadataDbForTesting(db)
   setContentDir(vault)
   __resetLinkIndexForTesting()
@@ -69,6 +77,7 @@ afterEach(async () => {
   __setDirectoryMoveStrategyOverrideForTesting(null)
   __setFolderRaceHooksForTesting(null)
   __setMetadataDbForTesting(null)
+  closeAuthTestContext(auth)
   db.close()
   setContentDir(originalContentDir)
   __resetLinkIndexForTesting()
@@ -132,15 +141,15 @@ async function seedRenameGraph(): Promise<void> {
     ) VALUES ('proj-a-id', 'embedding-hash', 'test', ?, 4)
   `).run(Buffer.from([1, 2, 3]))
   insertMigration('proj/missing', 'proj/missing')
-  await app.fetch(new Request('http://localhost/api/links/index'))
+  await mountedApp.fetch(withAuthCookie(auth, new Request('http://localhost/api/links/index')))
 }
 
 async function patchFolder(): Promise<Response> {
-  const request = app.fetch(new Request('http://localhost/api/folders/proj', {
+  const request = mountedApp.fetch(withAuthCookie(auth, new Request('http://localhost/api/folders/proj', {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ newPath: 'ren', updateReferences: true }),
-  }))
+  })))
   inFlightFolderRequests.add(request)
   request.finally(() => {
     inFlightFolderRequests.delete(request)
@@ -335,7 +344,7 @@ describe('Round-17 durable reverse metadata intent', () => {
       title: 'Project B',
       updatedAt: 5,
     })
-    await app.fetch(new Request('http://localhost/api/links/index'))
+    await mountedApp.fetch(withAuthCookie(auth, new Request('http://localhost/api/links/index')))
     __setFolderRaceHooksForTesting({
       afterRenamePlanBuilt: async () => {
         await fs.writeFile(path.join(vault, 'ref.md'), 'external reference save\n')

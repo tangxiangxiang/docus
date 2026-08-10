@@ -4,6 +4,7 @@ import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import app, { __setMetadataDbForTesting } from '../index.js'
+import { __resetLinkIndexForTesting } from '../linkIndex.js'
 import { setContentDir } from '../paths.js'
 import { hashSessionToken } from '../auth/session.js'
 import {
@@ -19,6 +20,7 @@ let vault: string | undefined
 
 afterEach(async () => {
   __setMetadataDbForTesting(null)
+  __resetLinkIndexForTesting()
   if (vault) await fs.rm(vault, { recursive: true, force: true })
   if (originalContentDir) setContentDir(originalContentDir)
   vault = undefined
@@ -65,6 +67,7 @@ describe('authenticated application test fixture', () => {
     vault = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-auth-fixture-'))
     await fs.writeFile(path.join(vault, 'fixture.md'), '# Fixture\n')
     setContentDir(vault)
+    __resetLinkIndexForTesting()
 
     const db = new Database(':memory:')
     const context = createAuthenticatedTestContext({ db })
@@ -87,6 +90,9 @@ describe('authenticated application test fixture', () => {
       const ai = await app.fetch(authenticatedRequest(context, '/api/ai/sessions', { method: 'GET' }))
       expect(ai.status).toBe(200)
       expect(await ai.json()).toEqual([])
+      const links = await app.fetch(authenticatedRequest(context, '/api/links/index', { method: 'GET' }))
+      expect(links.status).toBe(200)
+      expect(await links.json()).toMatchObject({ paths: expect.arrayContaining(['fixture', 'fixture-note']) })
       expect(context.db).toBe(db)
     } finally {
       closeAuthTestContext(context)

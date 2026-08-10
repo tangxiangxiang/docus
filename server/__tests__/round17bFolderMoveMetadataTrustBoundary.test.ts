@@ -29,14 +29,21 @@ import {
   type FolderMoveSnapshotRestoreDisposition,
   type SerializedMetadataSnapshot,
 } from '../folderMoveTransaction'
-import app, { __setMetadataDbForTesting } from '../index'
+import mountedApp, { __setMetadataDbForTesting } from '../index'
 import { __resetLinkIndexForTesting } from '../linkIndex'
 import { setContentDir } from '../paths'
 import { __setFolderRaceHooksForTesting } from '../routes/folders'
+import {
+  closeAuthTestContext,
+  createAuthenticatedTestContext,
+  withAuthCookie,
+  type AuthenticatedTestContext,
+} from './helpers/auth'
 
 let vault: string
 let db: Database.Database
 let originalContentDir: string
+let auth: AuthenticatedTestContext
 
 beforeEach(async () => {
   originalContentDir = path.resolve(process.cwd(), 'src/content')
@@ -44,6 +51,7 @@ beforeEach(async () => {
   db = new Database(':memory:')
   db.pragma('foreign_keys = ON')
   applyMigrations(db)
+  auth = createAuthenticatedTestContext({ db })
   __setMetadataDbForTesting(db)
   setContentDir(vault)
   __resetLinkIndexForTesting()
@@ -55,6 +63,7 @@ afterEach(async () => {
   __setCreateOnlyMoveHooksForTesting(null)
   __setDirectoryMoveStrategyOverrideForTesting(null)
   __setMetadataDbForTesting(null)
+  closeAuthTestContext(auth)
   db.close()
   setContentDir(originalContentDir)
   __resetLinkIndexForTesting()
@@ -512,7 +521,7 @@ describe('Round-17B metadata CAS read/write closure', () => {
       '',
     ].join('\n'))
     await fs.writeFile(path.join(vault, 'ref.md'), 'see [[proj/a]]\n')
-    await app.fetch(new Request('http://localhost/api/links/index'))
+    await mountedApp.fetch(withAuthCookie(auth, new Request('http://localhost/api/links/index')))
     __setFolderRaceHooksForTesting({
       afterRenamePlanBuilt: async () => {
         await fs.writeFile(
@@ -522,7 +531,7 @@ describe('Round-17B metadata CAS read/write closure', () => {
       },
     })
 
-    const response = await app.fetch(new Request(
+    const response = await mountedApp.fetch(withAuthCookie(auth, new Request(
       'http://localhost/api/folders/proj',
       {
         method: 'PATCH',
@@ -532,7 +541,7 @@ describe('Round-17B metadata CAS read/write closure', () => {
           updateReferences: true,
         }),
       },
-    ))
+    )))
 
     expect(response.status).toBe(409)
     expect(await fs.readFile(path.join(vault, 'proj', 'a.md'), 'utf8'))
