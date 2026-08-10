@@ -12,6 +12,9 @@ export default defineConfig({
   testIgnore: [
     'draft-store.spec.ts',
     'draft-file-transactions.spec.ts',
+    // The auth browser smoke owns a fresh singleton-owner database and runs
+    // in its dedicated config. Shared-fixture suites must not race it.
+    'auth-browser.spec.ts',
     // Pixel baselines are verified in the dedicated macOS visual job.
     'markdown-visual.spec.ts',
   ],

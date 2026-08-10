@@ -18,6 +18,7 @@
     "test:watch": "vitest",
     "test:e2e": "node node_modules/@playwright/test/cli.js test",
     "test:e2e:draft-store": "node node_modules/@playwright/test/cli.js test --config=playwright.draft-store.config.ts",
+    "test:e2e:auth": "node node_modules/@playwright/test/cli.js test --config=playwright.auth.config.ts",
     "lint:icons": "tsx scripts/icon-lint.ts --allow-file=src/components/MarkMap.vue --allow-file=src/components/Mermaid.vue",
     "lint:icons:strict": "tsx scripts/icon-lint.ts --strict --allow-file=src/components/MarkMap.vue --allow-file=src/components/Mermaid.vue"
   },

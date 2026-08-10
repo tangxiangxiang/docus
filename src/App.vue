@@ -8,6 +8,7 @@ import PromptHost from './components/PromptHost.vue'
 import { VaultViewModeKey, type VaultViewMode } from './composables/vault/viewMode'
 import { useAuth } from './composables/useAuth'
 import { isAuthApiError } from './composables/useAuth'
+import { shouldShowNormalChrome } from './lib/auth-chrome'
 import { useI18n } from './composables/useI18n'
 
 const route = useRoute()
@@ -27,7 +28,11 @@ const isVault = computed(() =>
   && auth.state.value === 'authenticated',
 )
 const isPublicDevPreview = computed(() => route.meta.publicDevPreview === true)
-const showNormalChrome = computed(() => !route.meta.authPage && (isPublicDevPreview.value || auth.state.value !== 'unknown'))
+const showNormalChrome = computed(() => shouldShowNormalChrome(
+  auth.state.value,
+  route.meta.authPage === true,
+  isPublicDevPreview.value,
+))
 const showRoutedContent = computed(() => isPublicDevPreview.value || auth.state.value !== 'unknown')
 const authLoading = computed(() => auth.hydrating.value || (auth.state.value === 'unknown' && !auth.hydrationError.value))
 const authFailureMessage = computed(() => {

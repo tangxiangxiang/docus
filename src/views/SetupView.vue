@@ -33,6 +33,7 @@ function errorText(value: unknown): string {
 }
 
 async function submit(): Promise<void> {
+  if (auth.submitting.value) return
   error.value = ''
   confirmError.value = ''
   if (password.value !== confirmPassword.value) {
@@ -89,6 +90,8 @@ onMounted(() => tokenInput.value?.focus())
             autocomplete="off"
             required
             :disabled="auth.submitting.value"
+            :aria-invalid="Boolean(error)"
+            aria-describedby="setup-error"
           />
         </div>
         <div class="auth-field">
@@ -101,6 +104,8 @@ onMounted(() => tokenInput.value?.focus())
             autocomplete="username"
             required
             :disabled="auth.submitting.value"
+            :aria-invalid="Boolean(error)"
+            aria-describedby="setup-error"
           />
         </div>
         <div class="auth-field">
@@ -113,6 +118,8 @@ onMounted(() => tokenInput.value?.focus())
             autocomplete="new-password"
             required
             :disabled="auth.submitting.value"
+            :aria-invalid="Boolean(error)"
+            aria-describedby="setup-error"
           />
         </div>
         <div class="auth-field">
@@ -130,7 +137,7 @@ onMounted(() => tokenInput.value?.focus())
           />
         </div>
         <p v-if="confirmError" id="setup-confirm-error" class="auth-error" role="alert">{{ confirmError }}</p>
-        <p v-if="error" class="auth-error" role="alert">{{ error }}</p>
+        <p v-if="error" id="setup-error" class="auth-error" role="alert">{{ error }}</p>
         <button class="auth-submit" type="submit" :disabled="auth.submitting.value">
           {{ auth.submitting.value ? t('auth.creating_owner') : t('auth.create_owner') }}
         </button>

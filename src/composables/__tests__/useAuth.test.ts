@@ -7,7 +7,7 @@ vi.mock('../../lib/auth-api', () => ({
 }))
 
 import { getAuthStatus, login as loginApi, setupOwner as setupApi } from '../../lib/auth-api'
-import { observeAuthSessionResponse } from '../../lib/auth-session'
+import { captureAuthSessionGeneration, observeAuthSessionResponse } from '../../lib/auth-session'
 import { useAuth } from '../useAuth'
 
 const auth = useAuth()
@@ -41,6 +41,17 @@ describe('useAuth singleton coordinator', () => {
     expect(auth.user.value).toEqual({ id: 3, username: 'owner' })
   })
 
+  it('keeps a generic hydration failure unknown and allows an explicit retry', async () => {
+    vi.mocked(getAuthStatus).mockRejectedValueOnce(new Error('network down'))
+    await expect(auth.ensureHydrated()).resolves.toBe('unknown')
+    expect(auth.state.value).toBe('unknown')
+    expect(auth.hydrationError.value).toBeInstanceOf(Error)
+
+    vi.mocked(getAuthStatus).mockResolvedValueOnce({ authenticated: false, setupRequired: true })
+    await expect(auth.refreshStatus()).resolves.toBe('setup-required')
+    expect(auth.state.value).toBe('setup-required')
+  })
+
   it('does not let late hydration overwrite a successful login', async () => {
     let resolveStatus: ((value: { authenticated: false; setupRequired: false }) => void) | undefined
     vi.mocked(getAuthStatus).mockImplementation(() => new Promise((resolve) => { resolveStatus = resolve }))
@@ -51,6 +62,48 @@ describe('useAuth singleton coordinator', () => {
     await hydration
     expect(auth.state.value).toBe('authenticated')
     expect(auth.user.value).toEqual({ id: 1, username: 'owner' })
+  })
+
+  it('does not let a failed login overwrite the existing authenticated state', async () => {
+    vi.mocked(getAuthStatus).mockResolvedValue({
+      authenticated: true,
+      setupRequired: false,
+      user: { id: 1, username: 'owner' },
+    })
+    await auth.ensureHydrated()
+    vi.mocked(loginApi).mockRejectedValue(new Error('invalid credentials'))
+
+    await expect(auth.login({ username: 'owner', password: 'wrong' })).rejects.toThrow('invalid credentials')
+    expect(auth.state.value).toBe('authenticated')
+    expect(auth.user.value).toEqual({ id: 1, username: 'owner' })
+  })
+
+  it('moves to authenticated after setup and clears an earlier expiry marker', async () => {
+    vi.mocked(getAuthStatus).mockResolvedValue({ authenticated: false, setupRequired: true })
+    await auth.ensureHydrated()
+    vi.mocked(setupApi).mockResolvedValue({ authenticated: true, user: { id: 1, username: 'owner' } })
+
+    await auth.setup({ bootstrapToken: 'bootstrap', username: 'owner', password: 'secret' })
+
+    expect(auth.state.value).toBe('authenticated')
+    expect(auth.user.value).toEqual({ id: 1, username: 'owner' })
+    expect(auth.sessionExpired.value).toBe(false)
+  })
+
+  it('does not let an old-generation expiry event invalidate a newer login', async () => {
+    vi.mocked(getAuthStatus).mockResolvedValue({ authenticated: false, setupRequired: false })
+    await auth.ensureHydrated()
+    const oldGeneration = captureAuthSessionGeneration()
+    vi.mocked(loginApi).mockResolvedValue({ authenticated: true, user: { id: 1, username: 'owner' } })
+    await auth.login({ username: 'owner', password: 'secret' })
+
+    await observeAuthSessionResponse(
+      new Response(JSON.stringify({ code: 'auth-session-required' }), { status: 401 }),
+      oldGeneration,
+    )
+
+    expect(auth.state.value).toBe('authenticated')
+    expect(auth.sessionExpired.value).toBe(false)
   })
 
   it('transitions once for the Docus-owned expiry response', async () => {

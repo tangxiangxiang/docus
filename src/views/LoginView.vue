@@ -33,6 +33,7 @@ function redirectTarget(): string {
 }
 
 async function submit(): Promise<void> {
+  if (auth.submitting.value) return
   error.value = ''
   try {
     await auth.login({ username: username.value, password: password.value })
@@ -70,6 +71,8 @@ onMounted(() => usernameInput.value?.focus())
             autocomplete="username"
             required
             :disabled="auth.submitting.value"
+            :aria-invalid="Boolean(error)"
+            aria-describedby="login-error"
           />
         </div>
         <div class="auth-field">
@@ -82,9 +85,11 @@ onMounted(() => usernameInput.value?.focus())
             autocomplete="current-password"
             required
             :disabled="auth.submitting.value"
+            :aria-invalid="Boolean(error)"
+            aria-describedby="login-error"
           />
         </div>
-        <p v-if="error" class="auth-error" role="alert">{{ error }}</p>
+        <p v-if="error" id="login-error" class="auth-error" role="alert">{{ error }}</p>
         <button class="auth-submit" type="submit" :disabled="auth.submitting.value">
           {{ auth.submitting.value ? t('auth.signing_in') : t('auth.sign_in') }}
         </button>

@@ -97,7 +97,9 @@ router.beforeEach(async (to) => {
   }
 
   if (to.meta.workspace) {
-    if (state === 'setup-required') return authRouteTarget(to, 'setup')
+    if (state === 'setup-required') {
+      return { name: 'setup', query: { redirect: intendedRedirect(to) } }
+    }
     if (state === 'unauthenticated') {
       return { name: 'login', query: { redirect: intendedRedirect(to) } }
     }
