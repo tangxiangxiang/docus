@@ -9,17 +9,22 @@ import app, { __setMetadataDbForTesting } from '../index'
 import { CONTENT_DIR } from '../paths'
 import { applyMigrations } from '../db'
 import { deleteDocumentMetadata, getDocumentMetadata, snapshotDocumentMetadataDatabase } from '../documentMetadata'
+import { closeAuthTestContext, createAuthenticatedTestContext, type AuthenticatedTestContext } from './helpers/auth'
 
 const TEST_PATH = 'post-smoke'
 const TEST_ABS = path.join(CONTENT_DIR, 'post-smoke.md')
 const db = new Database(':memory:')
 db.pragma('foreign_keys = ON')
 applyMigrations(db)
+let auth: AuthenticatedTestContext
 
 async function call(method: string, urlPath: string, body?: unknown) {
   const req = new Request(`http://localhost${urlPath}`, {
     method,
-    headers: body ? { 'content-type': 'application/json' } : undefined,
+    headers: {
+      ...(body ? { 'content-type': 'application/json' } : {}),
+      Cookie: auth.cookie,
+    },
     body: body ? JSON.stringify(body) : undefined,
   })
   return app.fetch(req)
@@ -27,9 +32,13 @@ async function call(method: string, urlPath: string, body?: unknown) {
 
 const today = new Date().toISOString().slice(0, 10)
 
-beforeAll(() => __setMetadataDbForTesting(db))
+beforeAll(() => {
+  __setMetadataDbForTesting(db)
+  auth = createAuthenticatedTestContext({ db })
+})
 
 afterAll(async () => {
+  closeAuthTestContext(auth)
   __setMetadataDbForTesting(null)
   await fs.rm(TEST_ABS, { force: true })
   db.close()

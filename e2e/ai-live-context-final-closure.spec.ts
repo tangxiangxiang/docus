@@ -76,7 +76,7 @@
 // buffer were ever overwritten, the Monaco/raw assertions fail; if
 // the autosave did not really 409, its captured status fails; if the
 // confirm never fired, its visibility assertion fails.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './fixtures/auth'
 import {
   type AnyRecord,
   appendEditorText,

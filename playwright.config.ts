@@ -2,7 +2,10 @@ import { defineConfig, devices } from '@playwright/test'
 import os from 'node:os'
 import path from 'node:path'
 
-process.env.DOCUS_DRAFT_E2E_VAULT ??= path.join(os.tmpdir(), 'docus-draft-e2e-vault')
+process.env.DOCUS_DRAFT_E2E_VAULT = path.join(os.tmpdir(), 'docus-e2e-vault-4174')
+process.env.DOCUS_E2E_DB_PATH = path.join(os.tmpdir(), 'docus-e2e-db-4174', 'data', 'docus.db')
+process.env.DOCUS_PUBLIC_ORIGIN = 'http://127.0.0.1:4174'
+process.env.DOCUS_SETUP_TOKEN = 'docus-e2e-setup-token-0123456789abcdef'
 
 export default defineConfig({
   testDir: './e2e',
@@ -25,7 +28,9 @@ export default defineConfig({
     // to be called here"). Matches the draft-store config's npm exec.
     command: `"${process.execPath}" scripts/start-draft-e2e.mjs 4174`,
     url: 'http://127.0.0.1:4174/__markdown-test?mode=reading',
-    reuseExistingServer: true,
+    // Auth fixture setup mutates the server owner/session state. Never attach
+    // it to an arbitrary developer-owned process already listening on 4174.
+    reuseExistingServer: false,
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
 })

@@ -33,18 +33,22 @@ vi.mock('../ai/chat', async (importOriginal) => {
 
 import app from '../index'
 import { applyMigrations } from '../db'
+import { closeAuthTestContext, createAuthenticatedTestContext, withAuthCookie, type AuthenticatedTestContext } from './helpers/auth'
 
 const originalMasterKey = process.env.DOCUS_MASTER_KEY
 process.env.DOCUS_MASTER_KEY = '11'.repeat(32)
+let auth: AuthenticatedTestContext
 
 beforeEach(() => {
   process.env.DOCUS_MASTER_KEY = '11'.repeat(32)
   const db = new Database(':memory:')
   applyMigrations(db)
   testDbRef.value = db
+  auth = createAuthenticatedTestContext({ db })
 })
 
 afterEach(() => {
+  closeAuthTestContext(auth)
   testDbRef.value?.close()
   testDbRef.value = null
   if (originalMasterKey === undefined) delete process.env.DOCUS_MASTER_KEY
@@ -53,7 +57,7 @@ afterEach(() => {
 
 describe('app mounts /api/ai', () => {
   it('GET /api/ai/sessions reaches the AI sub-router (returns 200 + [])', async () => {
-    const req = new Request('http://localhost/api/ai/sessions')
+    const req = withAuthCookie(auth, new Request('http://localhost/api/ai/sessions'))
     const r = await app.fetch(req)
     expect(r.status).toBe(200)
     expect(await r.json()).toEqual([])
@@ -87,19 +91,19 @@ describe('app mounts /api/ai/chat', () => {
 
   it('POST /api/ai/chat returns a text/event-stream response', async () => {
     // Seed DB-backed API key — settings live entirely in the DB now.
-    await app.fetch(new Request('http://localhost/api/ai/settings', {
+    await app.fetch(withAuthCookie(auth, new Request('http://localhost/api/ai/settings', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ apiKey: 'sk-ant-test-key' }),
-    }))
+    })))
     // Create a session first.
-    const created = await app.fetch(new Request('http://localhost/api/ai/sessions', { method: 'POST' }))
+    const created = await app.fetch(withAuthCookie(auth, new Request('http://localhost/api/ai/sessions', { method: 'POST' })))
     const { id } = await created.json() as { id: number }
-    const r = await app.fetch(new Request('http://localhost/api/ai/chat', {
+    const r = await app.fetch(withAuthCookie(auth, new Request('http://localhost/api/ai/chat', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ sessionId: id, content: 'hi' }),
-    }))
+    })))
     expect(r.status).toBe(200)
     expect(r.headers.get('content-type')).toMatch(/text\/event-stream/)
     const text = await r.text()

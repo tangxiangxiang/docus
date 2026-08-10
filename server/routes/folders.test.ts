@@ -18,10 +18,12 @@ import { recoverInterruptedOperations } from '../crashRecovery'
 import app, { __setMetadataDbForTesting } from '../index'
 import { __resetLinkIndexForTesting } from '../linkIndex'
 import { setContentDir } from '../paths'
+import { closeAuthTestContext, createAuthenticatedTestContext, withAuthCookie, type AuthenticatedTestContext } from '../__tests__/helpers/auth'
 
 let vault: string
 let originalContentDir: string
 let db: Database.Database
+let auth: AuthenticatedTestContext
 
 beforeEach(async () => {
   originalContentDir = path.resolve(process.cwd(), 'src/content')
@@ -29,6 +31,7 @@ beforeEach(async () => {
   db = new Database(':memory:')
   db.pragma('foreign_keys = ON')
   applyMigrations(db)
+  auth = createAuthenticatedTestContext({ db })
   __setMetadataDbForTesting(db)
   setContentDir(vault)
   __resetLinkIndexForTesting()
@@ -41,6 +44,7 @@ afterEach(async () => {
   __setCreateOnlyMoveHooksForTesting(null)
   __setDirectoryMoveStrategyOverrideForTesting(null)
   __setMetadataDbForTesting(null)
+  closeAuthTestContext(auth)
   db.close()
   setContentDir(originalContentDir)
   __resetLinkIndexForTesting()
@@ -58,11 +62,11 @@ describe('folder route v4 coordinator', () => {
       updatedAt: 1,
     })
 
-    const response = await app.fetch(new Request('http://localhost/api/folders/proj', {
+    const response = await app.fetch(withAuthCookie(auth, new Request('http://localhost/api/folders/proj', {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ newPath: 'ren' }),
-    }))
+    })))
 
     expect(response.status).toBe(200)
     expect(await fs.readFile(path.join(vault, 'ren', 'a.md'), 'utf8')).toBe('# a\n')
@@ -101,11 +105,11 @@ describe.runIf(platformDirectoryMoveStrategy === 'replayable-move')(
         },
       })
 
-      const response = await app.fetch(new Request('http://localhost/api/folders/proj', {
+      const response = await app.fetch(withAuthCookie(auth, new Request('http://localhost/api/folders/proj', {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ newPath: 'ren' }),
-      }))
+      })))
 
       expect(response.status).toBe(500)
       expect(interrupted).toBe(true)

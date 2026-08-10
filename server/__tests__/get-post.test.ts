@@ -15,6 +15,7 @@ import os from 'node:os'
 import app, { __setMetadataDbForTesting } from '../index'
 import { applyMigrations } from '../db'
 import { deleteDocumentMetadata, saveDocumentMetadata } from '../documentMetadata'
+import { closeAuthTestContext, createAuthenticatedTestContext, type AuthenticatedTestContext } from './helpers/auth'
 
 // `tmpRoot` is referenced inside the mock factory, which vitest hoists
 // above this assignment — but the factory is a function that runs
@@ -34,6 +35,7 @@ const FIXTURE_PATH = 'inbox/markdown-syntax'
 const db = new Database(':memory:')
 db.pragma('foreign_keys = ON')
 applyMigrations(db)
+let auth: AuthenticatedTestContext
 const FIXTURE_BODY = [
   '---',
   'title: Markdown syntax quick reference',
@@ -51,8 +53,15 @@ const FIXTURE_BODY = [
   '',
 ].join('\n')
 
-beforeAll(() => __setMetadataDbForTesting(db))
-afterAll(() => { __setMetadataDbForTesting(null); db.close() })
+beforeAll(() => {
+  __setMetadataDbForTesting(db)
+  auth = createAuthenticatedTestContext({ db })
+})
+afterAll(() => {
+  closeAuthTestContext(auth)
+  __setMetadataDbForTesting(null)
+  db.close()
+})
 
 beforeEach(async () => {
   deleteDocumentMetadata(db, FIXTURE_PATH)
@@ -67,7 +76,7 @@ afterEach(async () => {
 })
 
 async function get(urlPath: string) {
-  const req = new Request(`http://localhost${urlPath}`)
+  const req = new Request(`http://localhost${urlPath}`, { headers: { Cookie: auth.cookie } })
   return app.fetch(req)
 }
 

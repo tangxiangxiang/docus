@@ -16,11 +16,13 @@ import os from 'node:os'
 import app, { __setMetadataDbForTesting } from '../index'
 import { applyMigrations } from '../db'
 import { getDocumentMetadata, saveDocumentMetadata } from '../documentMetadata'
+import { closeAuthTestContext, createAuthenticatedTestContext, type AuthenticatedTestContext } from './helpers/auth'
 
 let tmpRoot: string
 const db = new Database(':memory:')
 db.pragma('foreign_keys = ON')
 applyMigrations(db)
+let auth: AuthenticatedTestContext
 vi.mock('../paths.js', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../paths.js')>()
   return {
@@ -32,19 +34,20 @@ vi.mock('../paths.js', async (importOriginal) => {
 async function patch(urlPath: string, body: unknown) {
   const req = new Request(`http://localhost${urlPath}`, {
     method: 'PATCH',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', Cookie: auth.cookie },
     body: JSON.stringify(body),
   })
   return app.fetch(req)
 }
 
 async function del(urlPath: string) {
-  const req = new Request(`http://localhost${urlPath}`, { method: 'DELETE' })
+  const req = new Request(`http://localhost${urlPath}`, { method: 'DELETE', headers: { Cookie: auth.cookie } })
   return app.fetch(req)
 }
 
 beforeEach(async () => {
-  db.exec('DELETE FROM documents; DELETE FROM tags;')
+  db.exec('DELETE FROM documents; DELETE FROM tags; DELETE FROM auth_sessions; DELETE FROM auth_instance; DELETE FROM users;')
+  auth = createAuthenticatedTestContext({ db })
   __setMetadataDbForTesting(db)
   tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-patch-archive-test-'))
   await fs.mkdir(path.join(tmpRoot, 'inbox'), { recursive: true })
@@ -63,6 +66,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  closeAuthTestContext(auth)
   __setMetadataDbForTesting(null)
   await fs.rm(tmpRoot, { recursive: true, force: true })
 })

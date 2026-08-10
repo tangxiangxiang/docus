@@ -12,6 +12,7 @@ import {
   snapshotDocumentMetadataDatabase,
 } from '../documentMetadata'
 import type { SavePostResult } from '../../src/lib/api'
+import { closeAuthTestContext, createAuthenticatedTestContext, type AuthenticatedTestContext } from './helpers/auth'
 
 const TEST_PATH = 'put-smoke.md'
 const TEST_ABS = path.join(CONTENT_DIR, 'put-smoke.md')
@@ -20,11 +21,15 @@ const UPDATED_BODY = '---\ntitle: smoke\n---\n\nupdated content\n'
 const db = new Database(':memory:')
 db.pragma('foreign_keys = ON')
 applyMigrations(db)
+let auth: AuthenticatedTestContext
 
 async function call(method: string, urlPath: string, body?: unknown) {
   const req = new Request(`http://localhost${urlPath}`, {
     method,
-    headers: body ? { 'content-type': 'application/json' } : undefined,
+    headers: {
+      ...(body ? { 'content-type': 'application/json' } : {}),
+      Cookie: auth.cookie,
+    },
     body: body ? JSON.stringify(body) : undefined,
   })
   return app.fetch(req)
@@ -33,11 +38,13 @@ async function call(method: string, urlPath: string, body?: unknown) {
 describe('PUT /api/posts/* (Task 7 smoke)', () => {
   beforeAll(async () => {
     __setMetadataDbForTesting(db)
+    auth = createAuthenticatedTestContext({ db })
     await fs.mkdir(CONTENT_DIR, { recursive: true })
     await fs.writeFile(TEST_ABS, ORIGINAL, 'utf8')
   })
 
   afterAll(async () => {
+    closeAuthTestContext(auth)
     __setMetadataDbForTesting(null)
     await fs.rm(TEST_ABS, { force: true })
     db.close()

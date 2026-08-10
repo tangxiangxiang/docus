@@ -7,19 +7,28 @@ import app, { __setMetadataDbForTesting } from '../index'
 import { applyMigrations } from '../db'
 import { getDocumentMetadata, moveDocumentMetadata, saveDocumentMetadata } from '../documentMetadata'
 import { migrateVaultMetadata } from '../metadataMigration'
+import { closeAuthTestContext, createAuthenticatedTestContext, type AuthenticatedTestContext } from './helpers/auth'
 
 let root: string
 const db = new Database(':memory:')
 db.pragma('foreign_keys = ON')
 applyMigrations(db)
+let auth: AuthenticatedTestContext
 
 vi.mock('../paths.js', async (importOriginal) => {
   const original = await importOriginal<typeof import('../paths.js')>()
   return { ...original, filePathFor: (documentPath: string) => path.join(root, `${documentPath}.md`) }
 })
 
-beforeAll(() => __setMetadataDbForTesting(db))
-afterAll(() => { __setMetadataDbForTesting(null); db.close() })
+beforeAll(() => {
+  __setMetadataDbForTesting(db)
+  auth = createAuthenticatedTestContext({ db })
+})
+afterAll(() => {
+  closeAuthTestContext(auth)
+  __setMetadataDbForTesting(null)
+  db.close()
+})
 
 beforeEach(async () => {
   db.exec('DELETE FROM documents; DELETE FROM tags;')
@@ -32,7 +41,7 @@ afterEach(async () => fs.rm(root, { recursive: true, force: true }))
 async function patch(documentPath: string, body: unknown) {
   return app.fetch(new Request(`http://localhost/api/metadata/documents/${documentPath}`, {
     method: 'PATCH',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', Cookie: auth.cookie },
     body: JSON.stringify(body),
   }))
 }
@@ -40,7 +49,7 @@ async function patch(documentPath: string, body: unknown) {
 async function post(urlPath: string, body: unknown) {
   return app.fetch(new Request(`http://localhost${urlPath}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', Cookie: auth.cookie },
     body: JSON.stringify(body),
   }))
 }
@@ -94,7 +103,7 @@ describe('PATCH /api/metadata/documents/*', () => {
 
 describe('GET /api/metadata/documents/:id', () => {
   async function getById(id: string) {
-    return app.fetch(new Request(`http://localhost/api/metadata/documents/${id}`))
+    return app.fetch(new Request(`http://localhost/api/metadata/documents/${id}`, { headers: { Cookie: auth.cookie } }))
   }
 
   it('returns the current metadata by stable id, with a version token', async () => {

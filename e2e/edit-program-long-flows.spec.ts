@@ -46,7 +46,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 
 const E2E_VAULT = process.env.DOCUS_DRAFT_E2E_VAULT ?? path.join('src', 'content')
-import { expect, test } from '@playwright/test'
+import { expect, test } from './fixtures/auth'
 import {
   type AnyRecord,
   appendEditorText,

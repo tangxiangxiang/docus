@@ -50,6 +50,7 @@ import {
   describeHistoryIntegration,
   HISTORY_GIT_INTEGRATION_TIMEOUT_MS,
 } from './helpers/historyIntegration.js'
+import { closeAuthTestContext, createAuthenticatedTestContext, type AuthenticatedTestContext } from './helpers/auth.js'
 
 // runChat now dispatches through ChatBackend. Tests don't need the
 // real AnthropicBackend — a stub that re-implements the small
@@ -115,6 +116,7 @@ const R2 = `EPC_RENAME_R2_${RUN}\n`
 
 let contentDir: string
 let db: InstanceType<typeof Database>
+let auth: AuthenticatedTestContext
 let consoleSpies: ReturnType<typeof vi.spyOn>[]
 
 function allSentinels(): string[] {
@@ -124,7 +126,10 @@ function allSentinels(): string[] {
 async function call(method: string, urlPath: string, body?: unknown) {
   const req = new Request(`http://localhost${urlPath}`, {
     method,
-    headers: body ? { 'content-type': 'application/json' } : undefined,
+    headers: {
+      ...(body ? { 'content-type': 'application/json' } : {}),
+      Cookie: auth.cookie,
+    },
     body: body ? JSON.stringify(body) : undefined,
   })
   return trackRequest(app.fetch(req))
@@ -225,6 +230,7 @@ beforeEach(async () => {
   db = new Database(':memory:')
   db.pragma('foreign_keys = ON')
   applyMigrations(db)
+  auth = createAuthenticatedTestContext({ db })
   __setMetadataDbForTesting(db)
   vi.mocked(streamClaude).mockClear()
   consoleSpies = [
@@ -251,6 +257,7 @@ afterEach(async () => {
   inFlightRequests.clear()
 
   for (const spy of consoleSpies) spy.mockRestore()
+  closeAuthTestContext(auth)
   __setMetadataDbForTesting(null)
   __resetRepoRootForTesting()
   __resetGitCapabilityForTesting()

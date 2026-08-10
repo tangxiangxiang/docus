@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { expect, test } from '@playwright/test'
+import { expect, test } from './fixtures/auth'
 
 const DATABASE_NAME = 'docus-draft-recovery'
 // The draft-store Playwright config serves this vault directory, so tests

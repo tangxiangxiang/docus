@@ -14,8 +14,15 @@ import Database, { type Database as DatabaseT } from 'better-sqlite3'
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 
-const DATA_DIR = path.resolve(process.cwd(), 'data')
-const DB_PATH = path.join(DATA_DIR, 'docus.db')
+// Browser integration harnesses may provide an explicitly isolated database
+// path. This is intentionally a narrow test-runner seam: production keeps
+// the historical process.cwd()/data/docus.db location, while E2E servers can
+// create real owners/sessions without touching a developer's database.
+const configuredDbPath = process.env.DOCUS_E2E_DB_PATH?.trim()
+const DB_PATH = configuredDbPath
+  ? path.resolve(configuredDbPath)
+  : path.resolve(process.cwd(), 'data', 'docus.db')
+const DATA_DIR = path.dirname(DB_PATH)
 // import.meta.dirname resolves to the directory of THIS source file
 // at runtime, which is server/ — so server/migrations/ is found
 // regardless of where vite/tsx was launched from.
@@ -63,6 +70,7 @@ export function applyMigrations(db: DatabaseT) {
 }
 
 let _db: DatabaseT | null = null
+let _testDbOverride: DatabaseT | null = null
 
 /**
  * Lazily open the on-disk DB. First call ensures data/ exists, opens
@@ -70,6 +78,7 @@ let _db: DatabaseT | null = null
  * runner. Subsequent calls return the same instance.
  */
 export function getDb(): DatabaseT {
+  if (_testDbOverride) return _testDbOverride
   if (_db) return _db
   ensureDataDir()
   _db = new Database(DB_PATH)
@@ -77,6 +86,15 @@ export function getDb(): DatabaseT {
   _db.pragma('foreign_keys = ON')
   applyMigrations(_db)
   return _db
+}
+
+/**
+ * Test-only database injection for mounted application fixtures. It changes
+ * only which SQLite connection the existing handlers read/write; migrations,
+ * auth/session semantics, and production path resolution remain untouched.
+ */
+export function __setDbForTesting(db: DatabaseT | null): void {
+  _testDbOverride = db
 }
 
 /**
@@ -88,6 +106,7 @@ export function getDb(): DatabaseT {
  * `fs.rm(DATA_DIR, { recursive: true, force: true })` as well.
  */
 export function __resetDbForTesting(): void {
+  _testDbOverride = null
   if (_db) {
     _db.close()
     _db = null

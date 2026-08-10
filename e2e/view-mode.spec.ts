@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './fixtures/auth'
 
 /* Control is accepted by both the vault handler and Monaco in Chromium on
    every CI host, avoiding a Node-host/browser-platform mismatch. */

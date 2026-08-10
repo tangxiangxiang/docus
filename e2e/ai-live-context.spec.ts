@@ -14,7 +14,7 @@
 //
 // Helpers live in ./helpers/edit-program.ts — ONE shared semantics for
 // every Edit Program spec (see that module's header).
-import { expect, test } from '@playwright/test'
+import { expect, test } from './fixtures/auth'
 import {
   type AnyRecord,
   clearDraftDatabase,
