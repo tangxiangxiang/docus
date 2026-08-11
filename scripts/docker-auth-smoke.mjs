@@ -24,7 +24,6 @@ if (Buffer.byteLength(setupToken, 'utf8') < 32) {
 let sequence = 0
 let currentContainer = null
 let dataDir
-let contentDir
 
 async function docker(args, label) {
   try {
@@ -63,8 +62,8 @@ async function startContainer(revokeSessionsOnStart) {
     '-e', `DOCUS_PUBLIC_ORIGIN=${origin}`,
     '-e', `DOCUS_SETUP_TOKEN=${setupToken}`,
     '-e', `DOCUS_AUTH_REVOKE_SESSIONS_ON_START=${revokeSessionsOnStart ? '1' : '0'}`,
+    '--tmpfs', '/app/src/content:rw,mode=1777',
     '-v', `${dataDir}:/app/data`,
-    '-v', `${contentDir}:/app/src/content`,
     '-p', `127.0.0.1:${port}:3000`,
     image,
   ], 'container start')
@@ -266,13 +265,10 @@ async function loginAgain() {
 async function run() {
   const root = await mkdtemp(path.join(os.tmpdir(), 'docus-docker-auth-smoke-'))
   dataDir = path.join(root, 'data')
-  contentDir = path.join(root, 'content')
   await mkdir(dataDir, { recursive: true })
-  await mkdir(contentDir, { recursive: true })
   // The production image runs as uid 1000; the CI-owned temporary directories
   // must be writable without changing the image's non-root runtime contract.
   await chmod(dataDir, 0o777)
-  await chmod(contentDir, 0o777)
   const cookies = []
   try {
     await startContainer(false)
