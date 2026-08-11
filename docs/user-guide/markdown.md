@@ -13,6 +13,7 @@ Docus renders Markdown with `markdown-it` and supports the core syntax plus:
 - automatic links;
 - Wiki links;
 - Obsidian-style callouts;
+- KaTeX inline and block math;
 - Mermaid and Markmap fences.
 
 ## Callouts
@@ -38,6 +39,28 @@ The canonical types are `note`, `info`, `tip`, `success`, `question`,
 such as `caution`, `done`, `hint`, and `error` are normalized to their
 canonical type. Unknown types use the `note` appearance. Foldable callouts
 (`+` / `-` markers) are not enabled.
+
+## Mathematics
+
+Docus renders math with KaTeX. Use single dollar delimiters for an inline
+formula:
+
+```md
+Euler's identity is $e^{i\pi}+1=0$.
+```
+
+Use a `$$` block for a display formula:
+
+```md
+$$
+\int_0^1 x^2\,dx = \frac{1}{3}
+$$
+```
+
+Inline formulas stay on one line. Dollars in code spans/fences and escaped
+dollars such as `\$100` remain literal text. KaTeX supports a high-performance
+subset of LaTeX math syntax; this build does not provide MathJax, equation
+numbering, or user-defined global macros.
 
 ## Links Between Notes
 

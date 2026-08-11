@@ -12,6 +12,8 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(article.locator('.callout-note')).toBeVisible()
     await expect(article.locator('.callout-warning')).toBeVisible()
     await expect(article.locator('.callout-success')).toBeVisible()
+    await expect(article.locator('.math-inline .katex')).toBeVisible()
+    await expect(article.locator('.math-block .katex-display')).toBeVisible()
     await expect(article.locator('.mermaid-svg > svg')).toBeVisible()
     await expect(article.locator('svg.markmap-svg')).toBeVisible()
     await expect(page.locator('html')).toHaveAttribute('data-theme', theme)

@@ -54,6 +54,8 @@ export const MARKDOWN_SLASH_COMMANDS: readonly MarkdownSlashCommand[] = [
   { label: 'task', detail: '任务列表', insertText: '- [ ] ${1:Task}' },
   { label: 'quote', detail: '引用', insertText: '> ${1:Quote}' },
   { label: 'callout', detail: '提示块', insertText: '> [!note] ${1:Title}\n> ${2:Content}' },
+  { label: 'inline math', detail: '行内公式', insertText: '$${1:x + y}$' },
+  { label: 'math block', detail: '块级公式', insertText: '$$\n${1:E = mc^2}\n$$' },
   { label: 'code block', detail: '代码块', insertText: '```$1\n$2\n```' },
   { label: 'mermaid', detail: 'Mermaid 图表', insertText: '```mermaid\n${1:graph TD\n  A --> B}\n```' },
   { label: 'markmap', detail: 'Markmap 思维导图', insertText: '```markmap\n# ${1:Topic}\n- ${2:Branch}\n```' },

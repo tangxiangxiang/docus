@@ -4621,6 +4621,32 @@ main.container.auth-page-shell {
 .article .task-list-item input[type='checkbox'] { margin-right: 0.4em; }
 .article ul.contains-task-list { padding-left: 1.2em; }
 
+/* ---------- Math (KaTeX post-mount placeholders) ----------
+   Markdown emits only safe, encoded placeholders. KaTeX adds its own
+   markup after DOMPurify has finished, so these rules intentionally cover
+   only the article-level layout and error fallback. The official KaTeX
+   stylesheet is bundled from `katex/dist/katex.min.css`. */
+.article .math-inline {
+  display: inline;
+  color: inherit;
+}
+.article .math-block {
+  display: block;
+  max-width: 100%;
+  margin: 1.2em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  text-align: center;
+  color: inherit;
+}
+.article .math-inline .katex,
+.article .math-block .katex { color: inherit; }
+.article .math-block .katex-display { margin: 0; }
+.article .math-mount.math-error {
+  color: var(--vs-danger, #d73a49);
+  white-space: pre-wrap;
+}
+
 /* ---------- Callouts (Obsidian-style admonitions) ----------
    Callout markup is emitted by src/lib/callouts.ts as ordinary div/span
    elements, so it stays inside the existing sanitizer boundary. Keep the

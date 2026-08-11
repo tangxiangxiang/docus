@@ -39,7 +39,12 @@ describe('Monaco Markdown helpers', () => {
     expect(filterMarkdownSlashCommands('callout')).toEqual([
       { label: 'callout', detail: '提示块', insertText: '> [!note] ${1:Title}\n> ${2:Content}' },
     ])
-    expect(filterMarkdownSlashCommands('')).toHaveLength(12)
+    expect(filterMarkdownSlashCommands('math').map((item) => item.label)).toEqual(['inline math', 'math block'])
+    expect(filterMarkdownSlashCommands('公式')).toEqual([
+      { label: 'inline math', detail: '行内公式', insertText: '$${1:x + y}$' },
+      { label: 'math block', detail: '块级公式', insertText: '$$\n${1:E = mc^2}\n$$' },
+    ])
+    expect(filterMarkdownSlashCommands('')).toHaveLength(14)
   })
 
   it('extracts preview-compatible heading anchors and ignores fenced code', () => {

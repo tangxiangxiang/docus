@@ -3,6 +3,7 @@ import { nextTick, ref, toRef, watch } from 'vue'
 import { useMarkdownRender, type Heading } from '../../composables/vault/useMarkdownRender'
 import { useMarkmapMount } from '../../composables/useMarkmapMount'
 import { useMermaidMount } from '../../composables/useMermaidMount'
+import { useMathMount } from '../../composables/useMathMount'
 import { useVaultContext } from '../../composables/vault/context/useVaultContext'
 import type { Resolver as WikiResolver } from '../../lib/wikiLinks'
 
@@ -21,6 +22,7 @@ const articleEl = ref<HTMLElement | null>(null)
 const vaultContext = useVaultContext()
 useMarkmapMount(articleEl)
 useMermaidMount(articleEl)
+useMathMount(articleEl)
 
 watch(headings, (value) => emit('update:headings', value), { immediate: true })
 watch([html, articleEl], async () => {
