@@ -38,8 +38,11 @@ describe('AccountMenu', () => {
     await wrapper.vm.$nextTick()
     expect(button.attributes('aria-expanded')).toBe('true')
     expect(wrapper.get('[data-testid="account-menu"]').text()).toContain('xiangxiang')
-    expect(wrapper.get('[data-testid="account-logout"]').text()).toContain('Log out')
-    expect(document.activeElement).toBe(wrapper.get('[data-testid="account-logout"]').element)
+    const logout = wrapper.get('[data-testid="account-logout"]')
+    expect(logout.text()).toContain('Log out')
+    expect(logout.attributes('role')).toBe('menuitem')
+    expect(logout.attributes('tabindex')).toBe('-1')
+    expect(document.activeElement).toBe(logout.element)
 
     await button.trigger('click')
     expect(wrapper.find('[data-testid="account-menu"]').exists()).toBe(false)

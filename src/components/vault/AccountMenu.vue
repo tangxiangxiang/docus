@@ -162,6 +162,7 @@ onBeforeUnmount(() => {
         type="button"
         class="account-menu-item"
         role="menuitem"
+        tabindex="-1"
         :disabled="props.logoutBusy"
         :aria-busy="props.logoutBusy || undefined"
         data-testid="account-logout"
