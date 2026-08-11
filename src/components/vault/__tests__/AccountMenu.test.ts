@@ -35,28 +35,89 @@ describe('AccountMenu', () => {
     expect(wrapper.find('[data-testid="account-menu"]').exists()).toBe(false)
 
     await button.trigger('click')
+    await wrapper.vm.$nextTick()
     expect(button.attributes('aria-expanded')).toBe('true')
     expect(wrapper.get('[data-testid="account-menu"]').text()).toContain('xiangxiang')
     expect(wrapper.get('[data-testid="account-logout"]').text()).toContain('Log out')
+    expect(document.activeElement).toBe(wrapper.get('[data-testid="account-logout"]').element)
 
     await button.trigger('click')
     expect(wrapper.find('[data-testid="account-menu"]').exists()).toBe(false)
   })
 
-  it('closes on outside pointer and Escape, returning focus to the account button', async () => {
+  it('closes on outside pointer without restoring trigger focus', async () => {
     const wrapper = mountAccount()
     const button = wrapper.get('[data-testid="account-button"]')
 
     await button.trigger('click')
+    await wrapper.vm.$nextTick()
     document.dispatchEvent(new Event('pointerdown'))
     await wrapper.vm.$nextTick()
     expect(wrapper.find('[data-testid="account-menu"]').exists()).toBe(false)
+    expect(document.activeElement).not.toBe(button.element)
+  })
+
+  it('closes on Escape and returns focus to the account button', async () => {
+    const wrapper = mountAccount()
+    const button = wrapper.get('[data-testid="account-button"]')
 
     await button.trigger('click')
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await wrapper.vm.$nextTick()
+    const logout = wrapper.get('[data-testid="account-logout"]')
+    expect(document.activeElement).toBe(logout.element)
+
+    logout.element.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'Escape',
+      bubbles: true,
+      cancelable: true,
+    }))
     await wrapper.vm.$nextTick()
     expect(wrapper.find('[data-testid="account-menu"]').exists()).toBe(false)
     expect(document.activeElement).toBe(button.element)
+  })
+
+  it.each(['ArrowDown', 'ArrowUp', 'Home', 'End'])(
+    'handles %s within the menu without losing focus',
+    async (key) => {
+      const wrapper = mountAccount()
+      const button = wrapper.get('[data-testid="account-button"]')
+
+      await button.trigger('click')
+      await wrapper.vm.$nextTick()
+      const logout = wrapper.get('[data-testid="account-logout"]')
+      const event = new KeyboardEvent('keydown', {
+        key,
+        bubbles: true,
+        cancelable: true,
+      })
+
+      logout.element.dispatchEvent(event)
+
+      expect(event.defaultPrevented).toBe(true)
+      expect(document.activeElement).toBe(logout.element)
+      expect(wrapper.find('[data-testid="account-menu"]').exists()).toBe(true)
+    },
+  )
+
+  it('closes on Tab without trapping or restoring focus', async () => {
+    const wrapper = mountAccount()
+    const button = wrapper.get('[data-testid="account-button"]')
+
+    await button.trigger('click')
+    await wrapper.vm.$nextTick()
+    const logout = wrapper.get('[data-testid="account-logout"]')
+    const event = new KeyboardEvent('keydown', {
+      key: 'Tab',
+      bubbles: true,
+      cancelable: true,
+    })
+
+    logout.element.dispatchEvent(event)
+    await wrapper.vm.$nextTick()
+
+    expect(event.defaultPrevented).toBe(false)
+    expect(wrapper.find('[data-testid="account-menu"]').exists()).toBe(false)
+    expect(document.activeElement).not.toBe(button.element)
   })
 
   it('emits a logout intent without making an authentication request', async () => {
