@@ -193,6 +193,38 @@ describe('markdown render()', () => {
     expect(htmlB).not.toContain('vault-a/note')
   })
 
+  it('keeps the major extensions intact in one sanitized render', async () => {
+    const resolver: WikiResolver = (ref) => ({ target: `notes/${ref}` })
+    const html = await render([
+      '# Integration',
+      '',
+      '> [!info] Formula',
+      '> [[math-note]] explains **$E = mc^2$**.',
+      '>',
+      '> - [x] Reviewed',
+      '> - [ ] Follow up',
+      '',
+      '==Important== and a footnote.[^one]',
+      '',
+      '$$',
+      '\\int_0^1 x^2\\,dx',
+      '$$',
+      '',
+      '[^one]: Reference.',
+    ].join('\n'), { resolver })
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+
+    expect(doc.querySelector('h1')?.textContent).toContain('Integration')
+    expect(doc.querySelector('.callout-info')).not.toBeNull()
+    expect(doc.querySelector('.callout-info a.wiki-link')?.getAttribute('href')).toBe('/vault/notes/math-note')
+    expect(doc.querySelector('.callout-info strong .math-inline')).not.toBeNull()
+    expect(doc.querySelector('.callout-info ul.contains-task-list')).not.toBeNull()
+    expect(doc.querySelector('.callout-info input[checked]')).not.toBeNull()
+    expect(doc.querySelector('mark')?.textContent).toBe('Important')
+    expect(doc.querySelector('section.footnotes')).not.toBeNull()
+    expect(doc.querySelector('.math-block')).not.toBeNull()
+  })
+
   it('preserves task-list labels and checkbox state after sanitization', async () => {
     const html = await render('- [x] Done\n- [ ] Todo')
     const doc = new DOMParser().parseFromString(html, 'text/html')
@@ -332,6 +364,24 @@ describe('markdown render()', () => {
     expect(html).not.toMatch(/<iframe\b/i)
     expect(html).not.toMatch(/\son\w+\s*=/i)
     expect(html).not.toMatch(/javascript:/i)
+  })
+
+  it('keeps only Docus data attributes and strips forged internal attributes', async () => {
+    const html = await render([
+      '<div class="math-mount math-inline" data-content="safe" data-target="note" data-evil="123" data-onclick="alert(1)">safe</div>',
+      '<span data-anchor="heading" data-content="also-safe" data-evil="456">text</span>',
+    ].join('\n'))
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const div = doc.querySelector('div.math-mount')
+    const span = doc.querySelector('span')
+
+    expect(div?.getAttribute('data-content')).toBe('safe')
+    expect(div?.getAttribute('data-target')).toBe('note')
+    expect(div?.hasAttribute('data-evil')).toBe(false)
+    expect(div?.hasAttribute('data-onclick')).toBe(false)
+    expect(span?.getAttribute('data-anchor')).toBe('heading')
+    expect(span?.getAttribute('data-content')).toBe('also-safe')
+    expect(span?.hasAttribute('data-evil')).toBe(false)
   })
 
   it('preserves raw <br> inside table cells', async () => {

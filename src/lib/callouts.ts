@@ -120,10 +120,16 @@ function transformCallouts(state: StateCore): void {
     if (!marker) continue
 
     const meta: CalloutMeta = { type: marker.type, title: marker.title }
-    open.meta = { callout: meta }
+    // Preserve metadata added by another core rule. `Token.meta` is a
+    // shared extension point in markdown-it; replacing it would silently
+    // discard unrelated plugin state when callouts are transformed.
+    open.meta = { ...open.meta, callout: meta }
 
     const closeIndex = findMatchingBlockquoteClose(tokens, index)
-    if (closeIndex !== -1) tokens[closeIndex].meta = { callout: meta }
+    if (closeIndex !== -1) {
+      const close = tokens[closeIndex]
+      close.meta = { ...close.meta, callout: meta }
+    }
 
     stripMarker(inline, marker)
     if (inline.children?.length === 0) {
@@ -182,4 +188,3 @@ export function calloutPlugin(md: MarkdownIt): void {
     return '</div>\n</div>\n'
   }
 }
-

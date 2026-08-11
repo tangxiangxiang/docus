@@ -121,7 +121,9 @@ const ALLOWED_MARKDOWN_DATA_ATTRS = new Set([
   'data-target',
 ])
 
-function sanitizeMarkdownHtml(html: string): string {
+export type MarkdownSanitizer = (html: string) => string
+
+export function createMarkdownSanitizer(): MarkdownSanitizer {
   // DOMPurify's ESM default export is a factory when the module is evaluated
   // without a DOM (for example, before Vitest installs jsdom). Creating the
   // instance lazily keeps the same code safe in the browser and test runtime.
@@ -137,7 +139,11 @@ function sanitizeMarkdownHtml(html: string): string {
       data.keepAttr = ALLOWED_MARKDOWN_DATA_ATTRS.has(data.attrName)
     }
   })
-  return purifier.sanitize(html, MARKDOWN_SANITIZE_CONFIG)
+  return (html: string) => purifier.sanitize(html, MARKDOWN_SANITIZE_CONFIG)
+}
+
+export function sanitizeMarkdownHtml(html: string): string {
+  return createMarkdownSanitizer()(html)
 }
 
 /* URL-encode the markmap / mermaid source before putting it in a data

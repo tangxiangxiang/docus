@@ -1,9 +1,36 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
+import MarkdownIt from 'markdown-it'
 import { render } from '../markdown'
+import { calloutPlugin } from '../callouts'
 import type { Resolver as WikiResolver } from '../wikiLinks'
 
 describe('Markdown callouts', () => {
+  it('preserves metadata supplied by another markdown-it core rule', () => {
+    const md = new MarkdownIt()
+    let seenOpenMeta: Record<string, unknown> | undefined
+    let seenCloseMeta: Record<string, unknown> | undefined
+    md.use(calloutPlugin)
+    md.core.ruler.before('docus-callouts', 'test-callout-meta', (state) => {
+      for (const token of state.tokens) {
+        if (token.type === 'blockquote_open' || token.type === 'blockquote_close') {
+          token.meta = { fromOtherPlugin: true }
+        }
+      }
+    })
+    md.core.ruler.after('docus-callouts', 'capture-callout-meta', (state) => {
+      const open = state.tokens.find((token) => token.type === 'blockquote_open')
+      const close = state.tokens.find((token) => token.type === 'blockquote_close')
+      seenOpenMeta = open?.meta
+      seenCloseMeta = close?.meta
+    })
+
+    md.render('> [!note]\n> content')
+
+    expect(seenOpenMeta).toMatchObject({ fromOtherPlugin: true, callout: { type: 'note' } })
+    expect(seenCloseMeta).toMatchObject({ fromOtherPlugin: true, callout: { type: 'note' } })
+  })
+
   it('renders a basic callout with its default title and content wrapper', async () => {
     const html = await render('> [!note]\n> Hello')
     const doc = new DOMParser().parseFromString(html, 'text/html')

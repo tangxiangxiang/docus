@@ -139,6 +139,11 @@ export function useMermaidMount(articleEl: Ref<HTMLElement | null>) {
     observer?.disconnect()
     observer = null
     cancelScheduledMount()
+    // The article ref can temporarily become null while the component stays
+    // mounted (for example during a v-if/document switch). Unmount widgets
+    // immediately instead of keeping Vue apps alive on a detached tree until
+    // the next article is attached or the owner component is destroyed.
+    unmountOrphans()
   }
 
   /* `watch(articleEl, ...)` doesn't fire on innerHTML re-renders —

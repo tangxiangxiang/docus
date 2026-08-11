@@ -56,16 +56,26 @@ import { useTheme } from '../../composables/useTheme'
 interface MarkmapTestCounters {
   createCalls: SVGSVGElement[]
   createOptions: Array<Record<string, unknown>>
+  createRoots: unknown[]
   destroyCalls: number[]
   setOptionsCalls: Array<Record<string, unknown>>
+  transformRoot?: MarkmapTestNode
+}
+interface MarkmapTestNode {
+  content: string
+  children: MarkmapTestNode[]
 }
 const g = globalThis as typeof globalThis & { __markmapTest?: MarkmapTestCounters }
-g.__markmapTest = { createCalls: [], createOptions: [], destroyCalls: [], setOptionsCalls: [] }
+g.__markmapTest = { createCalls: [], createOptions: [], createRoots: [], destroyCalls: [], setOptionsCalls: [] }
 
 vi.mock('markmap-lib', () => ({
   Transformer: class {
     transform() {
-      return { root: { content: 'root', children: [] }, features: {} }
+      const t = (globalThis as typeof globalThis & { __markmapTest?: MarkmapTestCounters }).__markmapTest
+      return {
+        root: t?.transformRoot ?? { content: 'root', children: [] },
+        features: {},
+      }
     }
     getUsedAssets() { return { styles: '', scripts: '' } }
   },
@@ -73,11 +83,12 @@ vi.mock('markmap-lib', () => ({
 
 vi.mock('markmap-view', () => ({
   Markmap: {
-    create(svg: SVGSVGElement, opts?: Record<string, unknown>) {
+    create(svg: SVGSVGElement, opts?: Record<string, unknown>, root?: unknown) {
       const t = (globalThis as typeof globalThis & { __markmapTest?: MarkmapTestCounters }).__markmapTest
       if (t) {
         t.createCalls.push(svg)
         t.createOptions.push({ ...(opts ?? {}) })
+        t.createRoots.push(root)
       }
       return {
         destroy() {
@@ -174,8 +185,10 @@ beforeEach(() => {
   if (t) {
     t.createCalls.length = 0
     t.createOptions.length = 0
+    t.createRoots.length = 0
     t.destroyCalls.length = 0
     t.setOptionsCalls.length = 0
+    t.transformRoot = undefined
   }
 })
 
@@ -439,6 +452,30 @@ describe('MarkMap hidden host teardown', () => {
        destroyed one. The user sees the diagram again, this time
        with the host's real dimensions. */
     expect(g.__markmapTest!.createCalls.length).toBe(2)
+
+    unmount()
+  })
+})
+
+describe('MarkMap post-mount HTML boundary', () => {
+  it('sanitizes transformed node HTML before Markmap receives it', async () => {
+    g.__markmapTest!.transformRoot = {
+      content: '<img src="x" onerror="alert(1)"><script>alert(1)</script>',
+      children: [{
+        content: '<a href="javascript:alert(1)">run</a><svg onload="alert(1)">x</svg>',
+        children: [],
+      }],
+    }
+
+    const { unmount } = mountStandalone()
+    await settle()
+
+    expect(g.__markmapTest!.createRoots).toHaveLength(1)
+    const root = g.__markmapTest!.createRoots[0] as MarkmapTestNode
+    expect(root.content).not.toMatch(/<script\b|onerror=|onload=/i)
+    expect(root.children[0].content).not.toMatch(/javascript:|<svg\b/i)
+    expect(root.content).toContain('<img')
+    expect(root.children[0].content).toContain('run')
 
     unmount()
   })

@@ -114,6 +114,10 @@ export function useMarkmapMount(articleEl: Ref<HTMLElement | null>) {
   function detachObserver() {
     observer?.disconnect()
     observer = null
+    // `articleEl` may be null during a document switch while this composable
+    // itself remains mounted. Tear down orphaned widget apps at that point so
+    // they cannot keep observing or rendering a detached tree.
+    unmountOrphans()
   }
 
   /* `watch(articleEl, ...)` doesn't fire on innerHTML re-renders —

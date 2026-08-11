@@ -46,9 +46,10 @@ if (typeof window !== 'undefined') {
   })
 }
 
-import { createApp, h, defineComponent } from 'vue'
+import { createApp, h, defineComponent, ref } from 'vue'
 import Mermaid from '../Mermaid.vue'
 import { useTheme } from '../../composables/useTheme'
+import { __testing__ as mermaidRuntimeTesting } from '../../lib/mermaidRuntime'
 
 /* Counters that survive across the dynamic import() inside
    Mermaid.vue. We bump them from the mocked module factory. The
@@ -67,6 +68,8 @@ interface MermaidTestCounters {
      sequence for the retry test. */
   overrideSvg: string | string[] | null
   bindFunctionCalls: number
+  deferRenders: boolean
+  renderWaiters: Array<{ resolve: () => void; code: string }>
 }
 interface SvgPanZoomInstanceSpy {
   destroy: ReturnType<typeof vi.fn>
@@ -99,6 +102,8 @@ g.__mermaidTest = {
   renderCalls: [],
   overrideSvg: null,
   bindFunctionCalls: 0,
+  deferRenders: false,
+  renderWaiters: [],
 }
 g.__svgPanZoomTest = {
   constructCalls: [],
@@ -117,6 +122,11 @@ vi.mock('mermaid', () => ({
       const t = (globalThis as typeof globalThis & { __mermaidTest?: MermaidTestCounters }).__mermaidTest
       if (!t) return { svg: '', bindFunctions() { /* */ } }
       t.renderCalls.push({ id, code })
+      if (t.deferRenders) {
+        await new Promise<void>((resolve) => {
+          t.renderWaiters.push({ resolve, code })
+        })
+      }
       const override = t.overrideSvg
       let svg: string
       if (Array.isArray(override)) {
@@ -201,12 +211,15 @@ async function settle(rounds = 5) {
 }
 
 beforeEach(() => {
+  mermaidRuntimeTesting.reset()
   const t = g.__mermaidTest
   if (t) {
     t.initializeCalls.length = 0
     t.renderCalls.length = 0
     t.overrideSvg = null
     t.bindFunctionCalls = 0
+    t.deferRenders = false
+    t.renderWaiters.length = 0
   }
   const pt = g.__svgPanZoomTest
   if (pt) pt.constructCalls.length = 0
@@ -384,6 +397,48 @@ describe('Mermaid NaN-detection fallback', () => {
     expect(g.__mermaidTest!.bindFunctionCalls).toBe(1)
 
     unmount()
+  })
+})
+
+describe('Mermaid render cancellation', () => {
+  it('does not let an older async render overwrite newer Markdown content', async () => {
+    const source = ref('graph TD\n  A --> B')
+    g.__mermaidTest!.deferRenders = true
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const app = createApp(defineComponent({
+      setup() { return () => h(Mermaid, { code: source.value }) },
+    }))
+    app.mount(host)
+    const container = host.querySelector<HTMLElement>('.mermaid-svg')!
+    stubLayout(container, 800)
+
+    const deadline = Date.now() + 2000
+    while (g.__mermaidTest!.renderWaiters.length < 1 && Date.now() < deadline) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 10))
+    }
+    expect(g.__mermaidTest!.renderWaiters).toHaveLength(1)
+
+    source.value = 'graph TD\n  B --> C'
+    await new Promise<void>((resolve) => setTimeout(resolve, 50))
+    // The second component render is queued behind the first Mermaid pass,
+    // but its generation is already newer. Resolving the old pass must
+    // therefore discard its SVG before the queued pass starts.
+    g.__mermaidTest!.renderWaiters[0].resolve()
+    while (g.__mermaidTest!.renderWaiters.length < 2 && Date.now() < deadline) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 10))
+    }
+    expect(g.__mermaidTest!.renderWaiters).toHaveLength(2)
+
+    // Now allow the current request to paint the new source.
+    g.__mermaidTest!.renderWaiters[1].resolve()
+    await settle()
+
+    expect(host.querySelector('svg[data-mock-svg]')?.textContent).toContain('B --> C')
+    expect(host.querySelector('svg[data-mock-svg]')?.textContent).not.toContain('A --> B')
+
+    app.unmount()
+    host.remove()
   })
 })
 

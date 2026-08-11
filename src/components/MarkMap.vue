@@ -17,6 +17,7 @@
 
 import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useTheme } from '../composables/useTheme'
+import { createMarkdownSanitizer, type MarkdownSanitizer } from '../lib/markdown'
 
 const props = defineProps<{
   /** Source markdown the Transformer should parse. */
@@ -77,6 +78,7 @@ let mm: MmInstance | null = null
    onto the same svg. */
 let mountPromise: Promise<void> | null = null
 let pendingRemount = false
+let disposed = false
 
 /* Two layout gates on top of the isConnected check (see inside
    mountMarkmap). The d3 force layout that markmap kicks off reads
@@ -153,6 +155,7 @@ function teardownInstance() {
 }
 
 async function mountMarkmap() {
+  if (disposed) return
   if (mountPromise) {
     /* Another mount is in flight; queue a follow-up so the *latest*
        theme wins instead of whichever finishes first. */
@@ -202,13 +205,20 @@ async function mountMarkmap() {
          has been detached. The new widget for the next document
          will get its own mountMarkmap call from its own onMounted;
          this one is finished. */
-      if (!svg.isConnected) return
+      if (disposed || !svg.isConnected) return
       const transformer = new Transformer()
       const { root, features } = transformer.transform(props.content)
+      // Markmap renders each node's HTML with innerHTML inside an SVG
+      // foreignObject. The main Markdown DOMPurify pass cannot see that
+      // decoded fence content, so sanitize the transformed tree before it
+      // reaches the post-mount renderer. Reuse the exact Markdown policy;
+      // this keeps raw HTML useful while preserving the app's script/style/
+      // event-handler/URL boundary.
+      sanitizeMarkmapTree(root, createMarkdownSanitizer())
       const { styles, scripts } = transformer.getUsedAssets(features)
       if (styles) loadCSS(styles)
       if (scripts) loadJS(scripts, { getMarkmap: () => ({ Markmap, deriveOptions }) })
-      if (!svg.isConnected) return
+      if (disposed || !svg.isConnected) return
       mm = Markmap.create(svg, {
         autoFit: true,
         color: colorForNode,
@@ -228,6 +238,16 @@ async function mountMarkmap() {
       void mountMarkmap()
     }
   }
+}
+
+interface MarkmapNode {
+  content: string
+  children: MarkmapNode[]
+}
+
+function sanitizeMarkmapTree(node: MarkmapNode, sanitize: MarkdownSanitizer): void {
+  node.content = sanitize(node.content)
+  for (const child of node.children) sanitizeMarkmapTree(child, sanitize)
 }
 
 onMounted(() => {
@@ -311,6 +331,7 @@ function toggleLock() {
 }
 
 onBeforeUnmount(() => {
+  disposed = true
   if (rafId) { cancelAnimationFrame(rafId); rafId = 0 }
   resizeObserver?.disconnect()
   resizeObserver = null

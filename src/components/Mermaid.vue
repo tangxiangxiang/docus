@@ -7,10 +7,9 @@
 // from the docus `useTheme` composable instead of polling the
 // `dark` class on <html> — docus themes via `data-theme` and we
 // already have a reactive `theme` ref for it. mermaid itself is
-// async (it lazy-loads per-diagram-type layout engines on first
-// render), so we dynamic-import the module once and keep a
-// per-component `isDark` flag for the latest theme handed to
-// `mermaid.initialize`.
+// async (it lazy-loads per-diagram-type layout engines); the shared
+// runtime serializes its process-global configuration while each
+// widget keeps only its own DOM/lifecycle state.
 //
 // We deliberately do NOT use mermaid's `run()` global API — it
 // looks for `.mermaid` selectors in the document and re-renders
@@ -30,6 +29,7 @@
 
 import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useTheme } from '../composables/useTheme'
+import { runMermaidExclusive } from '../lib/mermaidRuntime'
 
 const props = defineProps<{
   /** Source mermaid syntax the renderer should parse. */
@@ -54,18 +54,10 @@ const isFullscreen = ref(false)
    drag is gated, not explicit button presses. */
 const isLocked = ref(true)
 
-/* Per-instance cache so each widget only triggers the dynamic
-   import once. The browser's module loader also caches by URL,
-   so the actual cost on subsequent imports (different widget, or
-   HMR after this instance is destroyed) is negligible — just a
-   microtask. `mermaid` is typed loosely because the published
-   typings don't surface all of the d.ts we use. */
-let mermaidModule: { default: MermaidNS } | null = null
-let mermaidRenderCount = 0
-
 /* svg-pan-zoom: lazy-loaded only when the first diagram actually
-   renders, so the library stays out of the main bundle. The
-   shape mirrors `mermaidModule` — dynamic import → `{ default: fn }`.
+   renders, so the library stays out of the main bundle. The runtime
+   cache is shared by the Mermaid widgets; only the active
+   svg-pan-zoom instance remains component-local.
 
    We track the active instance because re-renders happen on
    theme toggle, code edit, and ResizeObserver ticks. svg-pan-zoom
@@ -119,46 +111,7 @@ let panZoomInstance: SvgPanZoomInstance | null = null
    discarded instead of binding a pan/zoom instance to a
    detached element. */
 let renderGeneration = 0
-
-/* `mermaid.initialize` mutates a process-global config object.
-   `mermaid.render()` reads from that same global on every call.
-   The init+render pair inside one render() pass is synchronous
-   (render() itself returns a Promise that resolves after the
-   layout completes), but the gap between the two is NOT — there
-   are no awaits between initialize and render in the loop body,
-   so a single widget can't race itself. The race we care about
-   is between TWO widgets: A.initialize({theme:'dark'}) runs,
-   the awaited `mermaid.render` inside A's pass suspends while
-   mermaid's d3 layout computes, B.initialize({theme:'light'})
-   runs during A's suspension, A's render resumes and reads the
-   now-light global config and produces a light svg into a
-   dark-themed widget.
-
-   We can't synchronously pin the config for the duration of
-   the async render — mermaid's API doesn't expose a per-call
-   config — so we minimize the window. The fingerprint gate
-   below keeps us from calling initialize() unnecessarily: when
-   the same widget re-renders (theme toggle, code edit) into
-   the same theme, we don't re-init at all, which is most of
-   the time. The probe-then-restore dance in the NaN retry
-   loop below also touches initialize and has to bypass the
-   gate on purpose, so the gate is not a perfect fix — but it
-   removes the dominant case (every render() re-initializing
-   to the same value). */
-let lastInitKey = ''
-
-interface MermaidRenderResult { svg: string; bindFunctions?: (el: HTMLElement) => void }
-interface MermaidNS {
-  initialize: (config: Record<string, unknown>) => void
-  render: (id: string, code: string) => Promise<MermaidRenderResult | string>
-}
-
-async function getMermaid(): Promise<MermaidNS> {
-  if (!mermaidModule) {
-    mermaidModule = await import('mermaid')
-  }
-  return mermaidModule.default
-}
+let disposed = false
 
 async function getSvgPanZoom(): Promise<SvgPanZoomFn> {
   if (!panZoomModule) {
@@ -223,7 +176,7 @@ function scheduleRender() {
 }
 
 async function render() {
-  if (!containerRef.value) return
+  if (disposed || !containerRef.value) return
   if (!hasNonZeroSize()) return
   /* Bump the generation at the top of every render so any
      pending getSvgPanZoom() callback from a previous render can
@@ -246,125 +199,42 @@ async function render() {
       new Promise<void>((r) => setTimeout(r, 500)),
     ])
   }
+  if (disposed || myGen !== renderGeneration || !containerRef.value) return
   try {
-    const mermaid = await getMermaid()
-    const targetTheme = theme.value === 'dark' ? 'dark' : 'default'
-    const initKey = `${targetTheme}|strict`
-    /* Skip the global re-init when the fingerprint hasn't
-       changed. mermaid.initialize is process-global; calling it
-       unnecessarily just slows things down and (more
-       importantly) races with sibling widgets' inits — see
-       lastInitKey's declaration for the full story. */
-    if (lastInitKey !== initKey) {
-      mermaid.initialize({
-        startOnLoad: false,
-        theme: targetTheme,
-        securityLevel: 'strict',
-      })
-      lastInitKey = initKey
-    }
-    /* mermaid needs a unique id per render — it appends to
-       `dompurify`-scrubbed nodes and the previous `<svg id="...">`
-       still being in the document would collide. Date.now() is
-       fine because we only ever have a handful of widgets. */
-
-    /* NaN retry: mermaid's internal d3 simulation sometimes
-       produces `<g transform="translate(NaN,NaN) …">` on a
-       bad RNG roll. Re-rendering with the same id / theme /
-       code does NOT reseed the layout — d3 picks the same
-       initial positions and NaNs out identically. The actual
-       thing that shakes the seed loose is a different theme:
-       mermaid rebuilds the layout config for the new theme
-       and d3 starts from a fresh deterministic seed. We try
-       the user's target theme first, and on NaN cycle
-       through a small theme list so the retries genuinely
-       differ. The final accepted render is in the user's
-       target theme because we re-initialize with that theme
-       once a clean svg lands (and the global lastInitKey is
-       restored so the next render() on this widget sees the
-       expected fingerprint).
-
-       Filter targetTheme out of the probe list: a retry must
-       never re-use the target theme's layout config, or the
-       d3 seed is the same as attempt 0 and the NaN reproduces.
-       Light mode (targetTheme='default') keeps all three
-       candidates ['base','dark','neutral']; dark mode
-       (targetTheme='dark') shrinks to ['base','neutral']. */
-    const ALL_PROBE_THEMES = ['base', 'dark', 'neutral'] as const
-    const PROBE_THEMES = ALL_PROBE_THEMES.filter((t) => t !== targetTheme)
-    let svg = ''
-    let bindFns: ((el: HTMLElement) => void) | undefined
-    const MAX_ATTEMPTS = 3
-    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-      /* First attempt: target theme. Subsequent attempts:
-         probe themes in rotation, each one a different seed. */
-      const themeForAttempt =
-        attempt === 0
-          ? targetTheme
-          : PROBE_THEMES[(attempt - 1) % PROBE_THEMES.length]
-      /* Each attempt needs mermaid to use a fresh layout seed.
-         attempt=0 is the target theme, which we just initialized
-         above — calling initialize again here is wasted work and
-         also confuses the test that counts initialize calls
-         (a render pass on a clean widget would emit two
-         identical initialize calls for the same theme). On
-         attempt > 0 we always re-initialize because the probe
-         theme is different from the one the preceding init set
-         (and from each other across attempts). The lastInitKey
-         short-circuit from the top-of-function init is bypassed
-         by writing lastInitKey here. */
-      if (attempt > 0) {
-        mermaid.initialize({
-          startOnLoad: false,
-          theme: themeForAttempt,
-          securityLevel: 'strict',
-        })
-        lastInitKey = `${themeForAttempt}|strict`
-      }
-      const id = `mermaid-${++mermaidRenderCount}-${Date.now()}-${attempt}`
-      const result = await mermaid.render(id, props.code)
-      const attemptSvg = typeof result === 'string' ? result : result.svg
-      /* Only adopt bindFns from a CLEAN attempt. Earlier code
-         overwrote bindFns on every iteration, which had two
-         failure modes: (1) a clean first attempt with
-         bindFns followed by a NaN second attempt would
-         attach the first attempt's bindFns to the broken
-         second-attempt svg; (2) a clean first attempt with
-         bindFns followed by a clean second attempt without
-         bindFns would clobber the good ones. Bind functions
-         only when the svg we're keeping is the one bindFns
-         targets. */
-      if (!/translate\(NaN/.test(attemptSvg)) {
-        svg = attemptSvg
-        if (typeof result === 'object' && result.bindFunctions) {
-          bindFns = result.bindFunctions
+    const rendered = await runMermaidExclusive(async (mermaid, runtime) => {
+      if (disposed || myGen !== renderGeneration || !containerRef.value) return null
+      const targetTheme = theme.value === 'dark' ? 'dark' : 'default'
+      runtime.initialize(targetTheme)
+      const allProbeThemes = ['base', 'dark', 'neutral'] as const
+      const probeThemes = allProbeThemes.filter((candidate) => candidate !== targetTheme)
+      let svg = ''
+      let bindFns: ((el: HTMLElement) => void) | undefined
+      try {
+        for (let attempt = 0; attempt < 3; attempt++) {
+          if (disposed || myGen !== renderGeneration || !containerRef.value) return null
+          const themeForAttempt = attempt === 0
+            ? targetTheme
+            : probeThemes[(attempt - 1) % probeThemes.length]
+          if (attempt > 0) runtime.initialize(themeForAttempt)
+          const result = await mermaid.render(runtime.nextId(attempt), props.code)
+          if (disposed || myGen !== renderGeneration || !containerRef.value) return null
+          const attemptSvg = typeof result === 'string' ? result : result.svg
+          if (/translate\(NaN/.test(attemptSvg)) continue
+          svg = attemptSvg
+          if (typeof result === 'object' && result.bindFunctions) bindFns = result.bindFunctions
+          break
         }
-        /* Restore the user-facing theme before we exit, so a
-           subsequent render() pass on this widget (theme
-           toggle, code edit) sees lastInitKey === initKey and
-           skips a redundant init. */
-        if (themeForAttempt !== targetTheme) {
-          mermaid.initialize({
-            startOnLoad: false,
-            theme: targetTheme,
-            securityLevel: 'strict',
-          })
-          lastInitKey = initKey
-        }
-        break
+        return { svg, bindFns }
+      } finally {
+        // Probe themes are implementation details; leave the shared Mermaid
+        // configuration on the document's actual theme for the next widget.
+        runtime.initialize(targetTheme)
       }
-    }
+    })
+    if (disposed || myGen !== renderGeneration || !containerRef.value) return
+    const svg = rendered?.svg ?? ''
+    const bindFns = rendered?.bindFns
     if (!svg || /translate\(NaN/.test(svg)) {
-      /* Restore target theme even on total failure, so the
-         global state doesn't end up stuck on a probe theme. */
-      if (lastInitKey !== initKey) {
-        mermaid.initialize({
-          startOnLoad: false,
-          theme: targetTheme,
-          securityLevel: 'strict',
-        })
-        lastInitKey = initKey
-      }
       renderError.value = '图表布局异常：容器未正确布局或图表含无效字符，请稍后重试'
       /* Leave the container empty so the broken svg never
          reaches the parser. */
@@ -451,7 +321,7 @@ async function render() {
            `panZoomInstance` with an instance bound to a detached
            svg, and the earlier one (if any) would leak. */
         if (!containerRef.value) return
-        if (myGen !== renderGeneration) return
+        if (disposed || myGen !== renderGeneration) return
         panZoomInstance = svgPanZoom(svgEl as SVGSVGElement, {
           zoomEnabled: true,
           /* We render our own toolbar (zoom-in / zoom-out / reset /
@@ -564,6 +434,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  disposed = true
+  renderGeneration += 1
   if (rafId) { cancelAnimationFrame(rafId); rafId = 0 }
   resizeObserver?.disconnect()
   resizeObserver = null
@@ -583,42 +455,6 @@ onBeforeUnmount(() => {
     void document.exitFullscreen().catch(() => { /* user denied; harmless */ })
   }
 })
-
-/* HMR teardown. When this module is replaced (vite picks up an
-   edit to Mermaid.vue during dev), the module-level state
-   (`mermaidModule`, `panZoomModule`, `mermaidRenderCount`,
-   `lastInitKey`) is reset to its initial values automatically
-   because the module is re-evaluated. But the dynamic
-   `import('mermaid')` and `import('svg-pan-zoom')` resolve
-   against the OLD module's chunk URL — old components still
-   mounted at HMR time hold references to the old mermaid
-   instance, while new components get the new one. mermaid
-   keeps its config in module-level state inside its own
-   module, so the two instances don't see each other's
-   initialize() calls. The result: a stale mermaid instance
-   keeps drawing with its old theme while a freshly-mounted
-   widget's render path initializes the new instance and
-   draws with the new theme.
-
-   The cheapest correct fix: blow away mermaid's internal
-   state at HMR time so the next initialize() call gets a
-   clean slate. mermaid doesn't expose a "reset" API, but
-   `lastInitKey` (which we control) gates our own initialize
-   calls, so resetting it to '' forces the next render to
-   re-init. For the deeper mermaid-side cleanup we just
-   null the module-level cache; the next getMermaid()
-   dynamic import re-resolves through vite's module graph,
-   which under HMR returns the FRESH module, not the old
-   one. The trade-off is the cost of one extra dynamic
-   import per widget after each HMR — acceptable in dev. */
-if (import.meta.hot) {
-  import.meta.hot.dispose(() => {
-    mermaidModule = null
-    panZoomModule = null
-    mermaidRenderCount = 0
-    lastInitKey = ''
-  })
-}
 
 /* Theme flip → re-render so the diagram re-tints. We go through
    scheduleRender so the render is gated on a non-zero size —
