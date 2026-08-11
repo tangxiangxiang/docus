@@ -74,35 +74,43 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
       - name: Verify browser-facing Docker origin wiring
         shell: bash
         run: |
           set -euo pipefail
+          default="$(docker compose config)"
+          grep -F 'host_ip: 127.0.0.1' <<<"$default"
+          grep -F 'published: "3000"' <<<"$default"
+          grep -F 'target: 3000' <<<"$default"
+          grep -F 'DOCUS_PUBLIC_ORIGIN: http://127.0.0.1:3000' <<<"$default"
           custom="$(DOCS_PORT=43123 docker compose config)"
           grep -F 'DOCUS_PUBLIC_ORIGIN: http://127.0.0.1:43123' <<<"$custom"
+          grep -F 'host_ip: 127.0.0.1' <<<"$custom"
+          grep -F 'published: "43123"' <<<"$custom"
+          grep -F 'target: 3000' <<<"$custom"
+          widened="$(DOCUS_BIND_ADDRESS=0.0.0.0 DOCS_PORT=43123 docker compose config)"
+          grep -F 'host_ip: 0.0.0.0' <<<"$widened"
+          grep -F 'published: "43123"' <<<"$widened"
+          grep -F 'target: 3000' <<<"$widened"
+          grep -F 'DOCUS_PUBLIC_ORIGIN: http://127.0.0.1:43123' <<<"$widened"
           explicit="$(DOCS_PORT=43123 DOCUS_PUBLIC_ORIGIN=https://docus.example.com docker compose config)"
           grep -F 'DOCUS_PUBLIC_ORIGIN: https://docus.example.com' <<<"$explicit"
 
       - name: Build production image
         run: docker build . -t docus-ci-smoke
 
-      - name: Start image and check health endpoint
+      - name: Run packaged authentication smoke
         shell: bash
         run: |
           set -euo pipefail
-          container_id="$(docker run -d --tmpfs /app/data:rw,mode=1777 --tmpfs /app/src/content:rw,mode=1777 -e DOCUS_PUBLIC_ORIGIN=http://127.0.0.1:18080 -p 127.0.0.1:18080:3000 docus-ci-smoke)"
-          cleanup() {
-            docker rm -f "$container_id" >/dev/null 2>&1 || true
-          }
-          trap cleanup EXIT
-          for attempt in $(seq 1 45); do
-            if curl --fail --silent --show-error http://127.0.0.1:18080/api/health; then
-              exit 0
-            fi
-            sleep 1
-          done
-          docker logs "$container_id"
-          exit 1
+          DOCKER_IMAGE=docus-ci-smoke \
+            DOCKER_PORT=18080 \
+            npm run test:deployment-auth
 
   auth-browser:
     runs-on: ubuntu-latest

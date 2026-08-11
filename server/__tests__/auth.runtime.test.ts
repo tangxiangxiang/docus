@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import Database from 'better-sqlite3'
+import { copyFile, mkdtemp, rm } from 'node:fs/promises'
 import { statSync } from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { applyMigrations } from '../db.js'
 import { parsePublicOrigin } from '../auth/config.js'
@@ -10,6 +12,7 @@ import { defaultKdfGuard } from '../auth/kdfGuard.js'
 import { SETUP_MAX_DELAY_MS } from '../auth/rateLimit.js'
 
 const databases: Database.Database[] = []
+const temporaryRoots: string[] = []
 
 function newDb(): Database.Database {
   const db = new Database(':memory:')
@@ -31,8 +34,9 @@ function seedOwner(db: Database.Database): void {
   `).run(now, now)
 }
 
-afterEach(() => {
+afterEach(async () => {
   for (const db of databases.splice(0)) if (db.open) db.close()
+  for (const root of temporaryRoots.splice(0)) await rm(root, { recursive: true, force: true })
 })
 
 describe('authentication runtime', () => {
@@ -49,8 +53,79 @@ describe('authentication runtime', () => {
     expect(runtime.service.ownerExists()).toBe(true)
     expect(findSessionByRawToken(db, first.rawToken).status).toBe('revoked')
     expect(findSessionByRawToken(db, second.rawToken).status).toBe('revoked')
+    const firstRevokedAt = findSessionByRawToken(db, first.rawToken).session?.revokedAt
+    createAuthRuntime({
+      db,
+      config,
+      now: () => 1_700_000_000_500,
+    })
+    expect(findSessionByRawToken(db, first.rawToken).session?.revokedAt).toBe(firstRevokedAt)
     expect(db.prepare('SELECT COUNT(*) AS count FROM users').get()).toEqual({ count: 1 })
     expect(db.prepare('SELECT COUNT(*) AS count FROM auth_instance').get()).toEqual({ count: 1 })
+  })
+
+  it('preserves a valid session across a restart when startup revocation is disabled', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'docus-auth-restart-'))
+    temporaryRoots.push(root)
+    const dbPath = path.join(root, 'docus.db')
+    const firstDb = new Database(dbPath)
+    firstDb.pragma('foreign_keys = ON')
+    applyMigrations(firstDb)
+    seedOwner(firstDb)
+    const created = createSession(firstDb, 1, { now: 1_700_000_000_000 })
+    firstDb.pragma('wal_checkpoint(TRUNCATE)')
+    firstDb.close()
+
+    const restartedDb = new Database(dbPath)
+    databases.push(restartedDb)
+    const runtime = createAuthRuntime({
+      db: restartedDb,
+      config: { ...parsePublicOrigin('http://127.0.0.1:3000'), revokeSessionsOnStart: false },
+      now: () => 1_700_000_000_500,
+    })
+    expect(runtime.service.status(created.rawToken)).toMatchObject({
+      authenticated: true,
+      user: { id: 1, username: 'admin' },
+      session: { status: 'valid' },
+    })
+  })
+
+  it('invalidates restored sessions without deleting the owner or domain data', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'docus-auth-restore-'))
+    temporaryRoots.push(root)
+    const sourcePath = path.join(root, 'source.db')
+    const restoredPath = path.join(root, 'restored.db')
+    const sourceDb = new Database(sourcePath)
+    sourceDb.pragma('foreign_keys = ON')
+    applyMigrations(sourceDb)
+    seedOwner(sourceDb)
+    sourceDb.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run('restore-marker', 'preserve-me')
+    const created = createSession(sourceDb, 1, { now: 1_700_000_000_000 })
+    sourceDb.pragma('wal_checkpoint(TRUNCATE)')
+    sourceDb.close()
+    await copyFile(sourcePath, restoredPath)
+
+    const restoredDb = new Database(restoredPath)
+    databases.push(restoredDb)
+    const runtime = createAuthRuntime({
+      db: restoredDb,
+      config: { ...parsePublicOrigin('http://127.0.0.1:3000'), revokeSessionsOnStart: true },
+      now: () => 1_700_000_000_500,
+    })
+
+    expect(runtime.service.status(created.rawToken)).toMatchObject({
+      authenticated: false,
+      session: { status: 'revoked' },
+    })
+    expect(restoredDb.prepare('SELECT owner_user_id FROM auth_instance WHERE id = 1').get()).toEqual({ owner_user_id: 1 })
+    expect(restoredDb.prepare('SELECT username FROM users WHERE id = 1').get()).toEqual({ username: 'admin' })
+    expect(restoredDb.prepare('SELECT value FROM settings WHERE key = ?').get('restore-marker')).toEqual({ value: 'preserve-me' })
+
+    const fresh = createSession(restoredDb, 1, { now: 1_700_000_000_500 })
+    expect(runtime.service.status(fresh.rawToken)).toMatchObject({
+      authenticated: true,
+      session: { status: 'valid' },
+    })
   })
 
   it('keeps the process-wide KDF guard shared and does not create runtime state at import time', () => {

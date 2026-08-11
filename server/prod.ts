@@ -20,12 +20,13 @@ import {
   acquireVaultWriterOwnership,
   installVaultWriterShutdownHandlers,
 } from './vaultWriterOwnership.ts'
-import { resolveServerHost } from './prodConfig.ts'
+import { resolveAuthOrigin, resolveServerHost } from './prodConfig.ts'
 import { loadAuthConfig } from './auth/config.ts'
 import { initializeAuthRuntime } from './auth/runtime.ts'
 
 const PORT = Number(process.env.PORT ?? 3000)
 const HOST = resolveServerHost()
+const AUTH_ORIGIN = resolveAuthOrigin(process.env, PORT, HOST)
 const DIST_DIR = path.resolve(process.cwd(), 'dist')
 
 // Cached index.html so the SPA fallback is cheap on every navigation.
@@ -66,10 +67,9 @@ try {
   // Authentication is intentionally initialized as a narrow dependency seam
   // in Phase 2. The global application boundary remains disabled until the
   // later atomic cutover; auth routes can still use this runtime safely.
-  const authOrigin = process.env.DOCUS_PUBLIC_ORIGIN ?? `http://127.0.0.1:${PORT}`
   initializeAuthRuntime({
     db: getDb(),
-    config: loadAuthConfig({ ...process.env, DOCUS_PUBLIC_ORIGIN: authOrigin }),
+    config: loadAuthConfig({ ...process.env, DOCUS_PUBLIC_ORIGIN: AUTH_ORIGIN }),
     env: process.env,
   })
 
