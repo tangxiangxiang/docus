@@ -678,6 +678,19 @@ export interface GenerateTextOpts {
 
 export interface GenerateTextResult {
   text: string
+  finishReason: 'stop' | 'length' | 'other'
+}
+
+function normalizeOpenAiFinishReason(reason: unknown): GenerateTextResult['finishReason'] {
+  if (reason === 'stop') return 'stop'
+  if (reason === 'length') return 'length'
+  return 'other'
+}
+
+function normalizeAnthropicFinishReason(reason: unknown): GenerateTextResult['finishReason'] {
+  if (reason === 'max_tokens') return 'length'
+  if (reason === 'end_turn' || reason === 'stop_sequence') return 'stop'
+  return 'other'
 }
 
 export async function generateText(opts: GenerateTextOpts): Promise<GenerateTextResult> {
@@ -699,8 +712,15 @@ export async function generateText(opts: GenerateTextOpts): Promise<GenerateText
       if (opts.signal?.aborted) throw new ChatError('aborted')
       throw new ChatError('llm-error', safeProviderErrorMessage(err, cfg.apiKey))
     }
-    const text = response.choices?.[0]?.message?.content ?? ''
-    return { text }
+    const choice = response.choices?.[0]
+    const message = choice?.message
+    const text = typeof message?.content === 'string' ? message.content : ''
+    return {
+      text,
+      finishReason: message
+        ? normalizeOpenAiFinishReason(choice?.finish_reason)
+        : 'other',
+    }
   }
   // Anthropic (default)
   const client = new Anthropic(cfg.baseURL ? { apiKey: cfg.apiKey, baseURL: cfg.baseURL } : { apiKey: cfg.apiKey })
@@ -721,5 +741,5 @@ export async function generateText(opts: GenerateTextOpts): Promise<GenerateText
     .filter((b): b is Anthropic.TextBlock => b.type === 'text')
     .map((b) => b.text)
     .join('')
-  return { text }
+  return { text, finishReason: normalizeAnthropicFinishReason(response.stop_reason) }
 }

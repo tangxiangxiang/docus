@@ -9,6 +9,7 @@ import { applyMigrations } from '../db'
 import { saveAiSettings } from '../ai/settings'
 import { ChatError } from '../ai/errors'
 import { AiConnectionError, clearChatBackendCache, generateText, getChatBackend, probeAiConnection } from '../ai/llm'
+import { generateSlug } from '../ai/slug'
 import * as sessions from '../ai/sessions'
 import * as messages from '../ai/messages'
 import { runChat } from '../ai/chat'
@@ -488,6 +489,37 @@ describe('OpenAI-compatible HTTP protocol', () => {
     expect(server.requests[0].body.max_completion_tokens).toBeUndefined()
     expect(server.requests[1].body.max_tokens).toBeUndefined()
     expect(server.requests[1].body.max_completion_tokens).toBe(123)
+  })
+
+  it('retries a null length-limited slug response through the real HTTP wire path', async () => {
+    let semanticAttempt = 0
+    server = await startFakeOpenAiServer((_request, response) => {
+      semanticAttempt += 1
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({
+        choices: [{
+          index: 0,
+          message: {
+            role: 'assistant',
+            content: semanticAttempt === 1 ? null : 'first-principles',
+          },
+          finish_reason: semanticAttempt === 1 ? 'length' : 'stop',
+        }],
+      }))
+    })
+    saveAiSettings(db, {
+      provider: 'openai',
+      apiKey: 'test-api-key',
+      baseURL: `${server.baseURL}/v1`,
+      model: 'test-model',
+    })
+
+    await expect(generateSlug({ input: '第一性原理', kind: 'file' }))
+      .resolves.toBe('first-principles')
+    expect(server.requests).toHaveLength(2)
+    expect(server.requests[0].url).toBe('/v1/chat/completions')
+    expect(server.requests[0].body.max_tokens).toBe(256)
+    expect(server.requests[1].body.max_tokens).toBe(512)
   })
 
   it('returns a stable diagnostic when the provider rejects tools', async () => {
