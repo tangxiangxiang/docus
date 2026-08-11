@@ -79,8 +79,17 @@ onMounted(() => tokenInput.value?.focus())
 
 <template>
   <section class="auth-page" aria-labelledby="setup-title">
+    <div class="auth-page-brand" aria-label="Docus">
+      <img
+        class="auth-page-brand-logo"
+        src="/logo-48.png"
+        alt=""
+        aria-hidden="true"
+        data-testid="auth-logo"
+      />
+      <span class="auth-page-brand-wordmark">Docus</span>
+    </div>
     <div class="auth-card">
-      <p class="auth-brand">Docus</p>
       <h1 id="setup-title">{{ t('auth.setup_title') }}</h1>
       <p class="auth-subtitle">{{ t('auth.setup_description') }}</p>
 

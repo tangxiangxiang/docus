@@ -155,7 +155,10 @@ provide(VaultViewModeKey, { mode: viewMode, set: setViewMode, toggle: toggleView
          itself is keyed by the router, and re-mounting on every
          navigation is what we explicitly want to avoid. -->
     <main
-      :class="['container', { 'full-width': r.meta.fullWidth }]"
+      :class="['container', {
+        'full-width': r.meta.fullWidth,
+        'auth-page-shell': r.meta.authPage === true,
+      }]"
       :style="{ '--navbar-h': isVault ? '36px' : '56px' }"
       :inert="auth.transitionKind.value !== null || undefined"
       :aria-busy="auth.transitionKind.value !== null || undefined"

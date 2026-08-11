@@ -72,6 +72,13 @@ afterEach(() => {
 })
 
 describe('LoginView', () => {
+  it('does not ask the browser to remember the username', () => {
+    const wrapper = mountLogin()
+
+    expect(wrapper.get('form').attributes('autocomplete')).toBe('off')
+    expect(wrapper.get('#login-username').attributes('autocomplete')).toBe('off')
+  })
+
   it('submits username and password, including Enter/form submission', async () => {
     mocks.auth.login.mockResolvedValue({ authenticated: true, user: { id: 1, username: 'owner' } })
     mocks.route.query = { redirect: '/vault/a?view=read#section' }
@@ -95,6 +102,17 @@ describe('LoginView', () => {
     await fill(wrapper, '#login-username', 'owner').trigger('input')
     await fill(wrapper, '#login-password', 'secret').trigger('input')
     await flushPromises()
+    const logo = wrapper.get('[data-testid="auth-logo"]')
+    expect(logo.attributes('src')).toBe('/logo-48.png')
+    expect(logo.attributes('alt')).toBe('')
+    expect(logo.attributes('aria-hidden')).toBe('true')
+    expect(logo.attributes('tabindex')).toBeUndefined()
+    const authPage = wrapper.get('.auth-page')
+    const authBrand = wrapper.get('.auth-page-brand')
+    expect(authBrand.attributes('aria-label')).toBe('Docus')
+    expect(wrapper.get('.auth-page-brand-wordmark').text()).toBe('Docus')
+    expect(authBrand.element.parentElement).toBe(authPage.element)
+    expect(wrapper.get('.auth-card').find('.auth-page-brand').exists()).toBe(false)
     expect(document.activeElement).toBe(wrapper.get('#login-username').element)
 
     await wrapper.get('form').trigger('submit')
@@ -162,6 +180,17 @@ describe('LoginView', () => {
 describe('SetupView', () => {
   it('focuses the bootstrap token and explains its operator/fallback source', () => {
     const wrapper = mountSetup()
+    const logo = wrapper.get('[data-testid="auth-logo"]')
+    expect(logo.attributes('src')).toBe('/logo-48.png')
+    expect(logo.attributes('alt')).toBe('')
+    expect(logo.attributes('aria-hidden')).toBe('true')
+    expect(logo.attributes('tabindex')).toBeUndefined()
+    const authPage = wrapper.get('.auth-page')
+    const authBrand = wrapper.get('.auth-page-brand')
+    expect(authBrand.attributes('aria-label')).toBe('Docus')
+    expect(wrapper.get('.auth-page-brand-wordmark').text()).toBe('Docus')
+    expect(authBrand.element.parentElement).toBe(authPage.element)
+    expect(wrapper.get('.auth-card').find('.auth-page-brand').exists()).toBe(false)
     expect(document.activeElement).toBe(wrapper.get('#setup-token').element)
     expect(wrapper.get('#setup-token-help').text()).toContain('DOCUS_SETUP_TOKEN')
     expect(wrapper.get('#setup-token-help').text()).not.toContain('bootstrap-secret')

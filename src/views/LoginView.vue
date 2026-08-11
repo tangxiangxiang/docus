@@ -56,15 +56,24 @@ onMounted(() => usernameInput.value?.focus())
 
 <template>
   <section class="auth-page" aria-labelledby="login-title">
+    <div class="auth-page-brand" aria-label="Docus">
+      <img
+        class="auth-page-brand-logo"
+        src="/logo-48.png"
+        alt=""
+        aria-hidden="true"
+        data-testid="auth-logo"
+      />
+      <span class="auth-page-brand-wordmark">Docus</span>
+    </div>
     <div class="auth-card">
-      <p class="auth-brand">Docus</p>
       <h1 id="login-title">{{ t('auth.welcome_back') }}</h1>
       <p class="auth-subtitle">{{ t('auth.sign_in_description') }}</p>
 
       <p v-if="route.query.reason === 'expired'" class="auth-notice" role="status">
         {{ t('auth.session_expired') }}
       </p>
-      <form class="auth-form" :aria-busy="auth.submitting.value" @submit.prevent="submit">
+      <form class="auth-form" autocomplete="off" :aria-busy="auth.submitting.value" @submit.prevent="submit">
         <div class="auth-field">
           <label for="login-username">{{ t('auth.username') }}</label>
           <input
@@ -73,7 +82,7 @@ onMounted(() => usernameInput.value?.focus())
             v-model="username"
             name="username"
             type="text"
-            autocomplete="username"
+            autocomplete="off"
             required
             :disabled="auth.submitting.value"
             :aria-invalid="credentialError ? 'true' : undefined"

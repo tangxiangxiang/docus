@@ -263,11 +263,35 @@ hr {
    landing page. The auth route deliberately does not render the normal
    workspace navbar or controls. */
 .auth-page {
+  position: relative;
   display: grid;
   min-height: 100vh;
   box-sizing: border-box;
   place-items: center;
   padding: 32px 20px;
+}
+.auth-page-brand {
+  position: fixed;
+  top: 6px;
+  left: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.auth-page-brand-logo {
+  display: block;
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+.auth-page-brand-wordmark {
+  font-family: ui-rounded, "SF Pro Rounded", "Avenir Next", var(--sans);
+  color: var(--text-h);
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 0.005em;
+  line-height: 1;
 }
 .auth-card {
   width: min(100%, 380px);
@@ -277,14 +301,6 @@ hr {
   border-radius: 10px;
   background: var(--bg-soft);
   box-shadow: 0 12px 36px rgba(15, 23, 42, 0.12);
-}
-.auth-brand {
-  margin: 0 0 18px;
-  color: var(--accent);
-  font-size: 0.82rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 .auth-card h1 {
   margin: 0;
@@ -711,6 +727,10 @@ body.brand-constellation-active * {
 main.container {
   padding-top: 32px;
   padding-bottom: 64px;
+}
+main.container.auth-page-shell {
+  padding-top: 0;
+  padding-bottom: 0;
 }
 
 /* Post list */
