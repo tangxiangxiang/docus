@@ -226,7 +226,10 @@ export function verifyPassword(
   options?: PasswordKdfOptions | KdfGuard,
   signal?: AbortSignal,
 ): Promise<boolean> {
-  if (typeof password !== 'string' || typeof encodedHash !== 'string') {
+  // Keep the low-level verifier safe for callers outside AuthService too. The
+  // route/service boundary maps this false result to generic credentials, and
+  // no malformed-length input should ever schedule a memory-hard KDF.
+  if (!isValidPassword(password) || typeof encodedHash !== 'string') {
     return Promise.resolve(false)
   }
 

@@ -1,4 +1,5 @@
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie'
+import { bodyLimit } from 'hono/body-limit'
 import { Hono } from 'hono'
 import {
   LOCAL_SESSION_COOKIE_NAME,
@@ -36,6 +37,21 @@ function jsonError(
   }
   return c.json({ error, code }, status)
 }
+
+// Authentication payloads contain only short credentials. Keep this limit
+// local to setup/login so document mutation routes can continue to accept
+// larger Markdown bodies.
+export const AUTH_REQUEST_BODY_MAX_BYTES = 16 * 1024
+
+const authRequestBodyLimit = bodyLimit({
+  maxSize: AUTH_REQUEST_BODY_MAX_BYTES,
+  onError: (c) => jsonError(
+    c,
+    413,
+    'Authentication request is too large.',
+    'auth-request-too-large',
+  ),
+})
 
 function runtimeOrError(c: any) {
   const runtime = getAuthRuntime()
@@ -112,7 +128,7 @@ authRoutes.get('/status', (c) => {
   }
 })
 
-authRoutes.post('/setup', async (c) => {
+authRoutes.post('/setup', authRequestBodyLimit, async (c) => {
   const resolved = runtimeOrError(c)
   if (!resolved.runtime) return resolved.response!
   const runtime = resolved.runtime
@@ -152,7 +168,7 @@ authRoutes.post('/setup', async (c) => {
   }
 })
 
-authRoutes.post('/login', async (c) => {
+authRoutes.post('/login', authRequestBodyLimit, async (c) => {
   const resolved = runtimeOrError(c)
   if (!resolved.runtime) return resolved.response!
   const runtime = resolved.runtime

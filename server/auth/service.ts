@@ -8,6 +8,7 @@ import {
 } from './kdfGuard.js'
 import {
   hashPassword,
+  isValidPassword,
   normalizeUsername,
   validatePassword,
   verifyPassword,
@@ -126,6 +127,12 @@ function retryAfterError(retryAfterMs: number): AuthServiceError {
     'Too many authentication attempts. Please try again later.',
     retryAfterMs,
   )
+}
+
+function throwLoginFailure(limiter: AuthRateLimiter, normalized: string | null): never {
+  const failure = limiter.recordFailure(normalized ?? '<invalid-username>')
+  if (failure.retryAfterMs > 0) throw retryAfterError(failure.retryAfterMs)
+  throw new AuthServiceError('invalid-credentials', 401, 'Invalid username or password.')
 }
 
 export class AuthService {
@@ -310,6 +317,13 @@ export class AuthService {
       // same public credential response as an unknown owner.
     }
 
+    // Do not let malformed-length passwords reach verifyPassword/scrypt. Keep
+    // this response on the same generic failure path as a bad credential; a
+    // valid-length unknown user continues to receive dummy-hash equalization.
+    if (!isValidPassword(input.password)) {
+      throwLoginFailure(this.loginLimiter, normalized)
+    }
+
     const owner = ownerRow(this.db)
     const candidate = normalized && owner && owner.username_normalized === normalized ? owner : undefined
     let verified = false
@@ -322,10 +336,7 @@ export class AuthService {
     }
 
     if (!candidate || !verified || candidate.disabled === 1) {
-      const key = normalized ?? '<invalid-username>'
-      const failure = this.loginLimiter.recordFailure(key)
-      if (failure.retryAfterMs > 0) throw retryAfterError(failure.retryAfterMs)
-      throw new AuthServiceError('invalid-credentials', 401, 'Invalid username or password.')
+      throwLoginFailure(this.loginLimiter, normalized)
     }
 
     this.loginLimiter.reset(normalized!)

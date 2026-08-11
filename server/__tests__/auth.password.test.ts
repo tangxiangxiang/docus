@@ -13,6 +13,7 @@ import {
   validatePassword,
   verifyPassword,
 } from '../auth/password'
+import type { KdfGuard } from '../auth/kdfGuard'
 
 describe('authentication username and password primitives', () => {
   it('normalizes usernames by trimming and lowercasing the frozen ASCII contract', () => {
@@ -68,5 +69,19 @@ describe('authentication username and password primitives', () => {
     await expect(verifyPassword('any sufficiently long password', 'scrypt$v2$N=32768,r=8,p=1$AA$AA')).resolves.toBe(false)
     await expect(verifyPassword('any sufficiently long password', 'scrypt$v1$N=1048576,r=8,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')).resolves.toBe(false)
     expect(() => parsePasswordHash('scrypt$v1$N=32768,r=8,p=1$invalid$invalid')).toThrow()
+  })
+
+  it('does not schedule the KDF for an overlong verifier input', async () => {
+    const encoded = await hashPassword('a valid password for this test')
+    let calls = 0
+    const guard = {
+      run: (..._args: unknown[]) => {
+        calls += 1
+        return Promise.resolve(Buffer.alloc(32))
+      },
+    } as unknown as KdfGuard
+
+    await expect(verifyPassword('x'.repeat(PASSWORD_MAX_LENGTH + 1), encoded, { guard })).resolves.toBe(false)
+    expect(calls).toBe(0)
   })
 })
