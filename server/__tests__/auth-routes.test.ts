@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import app, { __setMetadataDbForTesting } from '../index.js'
-import { PASSWORD_MAX_LENGTH } from '../auth/password.js'
+import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '../auth/password.js'
 import { AUTH_REQUEST_BODY_MAX_BYTES } from '../auth/routes.js'
 import { createSession, findSessionByRawToken, revokeSession } from '../auth/session.js'
 import {
@@ -274,6 +274,75 @@ describe('Phase 2 auth routes', () => {
     })
     expect(kdfCalls).toBe(0)
     expect(countRows(context.db, 'auth_sessions')).toBe(beforeSessions)
+  })
+
+  it('maps an underlong login password to generic credentials without entering the KDF', async () => {
+    closeAuthTestContext(context)
+    let kdfCalls = 0
+    const instrumentedGuard = {
+      run: (..._args: unknown[]) => {
+        kdfCalls += 1
+        return Promise.resolve(Buffer.alloc(32))
+      },
+    } as unknown as KdfGuard
+    context = createAuthTestContext({ kdfGuard: instrumentedGuard })
+    await setupOwner()
+    kdfCalls = 0
+    const beforeSessions = countRows(context.db, 'auth_sessions')
+
+    const response = await app.fetch(jsonRequest('/api/auth/login', {
+      method: 'POST',
+      origin: context.runtime.config.publicOrigin,
+      body: { username: 'admin', password: 'x'.repeat(PASSWORD_MIN_LENGTH - 1) },
+    }))
+    expect(response.status).toBe(401)
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(await response.json()).toEqual({
+      error: 'Invalid username or password.',
+      code: 'invalid-credentials',
+    })
+    expect(kdfCalls).toBe(0)
+    expect(countRows(context.db, 'auth_sessions')).toBe(beforeSessions)
+  })
+
+  it('rejects an oversized login Content-Length before authentication work', async () => {
+    closeAuthTestContext(context)
+    let kdfCalls = 0
+    const instrumentedGuard = {
+      run: (..._args: unknown[]) => {
+        kdfCalls += 1
+        return Promise.resolve(Buffer.alloc(32))
+      },
+    } as unknown as KdfGuard
+    context = createAuthTestContext({ kdfGuard: instrumentedGuard })
+    await setupOwner()
+    kdfCalls = 0
+    const beforeSessions = countRows(context.db, 'auth_sessions')
+    const login = vi.spyOn(context.runtime.service, 'login')
+
+    try {
+      const request = new Request('http://localhost/api/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': String(AUTH_REQUEST_BODY_MAX_BYTES + 1),
+          Origin: context.runtime.config.publicOrigin,
+        },
+        body: JSON.stringify({ username: 'admin', password: 'correct horse battery staple' }),
+      })
+      const response = await app.fetch(request)
+      expect(response.status).toBe(413)
+      expect(response.headers.get('cache-control')).toBe('no-store')
+      expect(await response.json()).toEqual({
+        error: 'Authentication request is too large.',
+        code: 'auth-request-too-large',
+      })
+      expect(login).not.toHaveBeenCalled()
+      expect(kdfCalls).toBe(0)
+      expect(countRows(context.db, 'auth_sessions')).toBe(beforeSessions)
+    } finally {
+      login.mockRestore()
+    }
   })
 
   it('accepts a login password at PASSWORD_MAX_LENGTH', async () => {
