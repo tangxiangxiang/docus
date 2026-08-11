@@ -21,7 +21,7 @@
 
 import { ref, watchEffect, type Ref } from 'vue'
 import { parseDoc } from '../../lib/frontmatter'
-import { render, __setMdResolverForTesting } from '../../lib/markdown'
+import { render } from '../../lib/markdown'
 import type { Resolver as WikiResolver } from '../../lib/wikiLinks'
 
 export interface Heading {
@@ -100,10 +100,6 @@ export function useMarkdownRender(
 
   watchEffect(async (onCleanup) => {
     const raw = typeof source === 'function' ? source() : source.value
-    // Set the resolver BEFORE render() so the wiki-link plugin sees
-    // the latest closure. Passing `null` resets to the identity
-    // (as-written) resolver — useful for tests.
-    __setMdResolverForTesting(resolver ?? null)
     /* Cancel any in-flight render when source changes again. Without
        this, a slow render from the previous document can resolve
        AFTER the new one and clobber the html/headings, leaving the
@@ -117,7 +113,7 @@ export function useMarkdownRender(
       const body = !startsWithH1 && title
         ? `# ${title}\n\n${content.replace(/^\n+/, '')}`
         : content
-      const rendered = await render(body)
+      const rendered = await render(body, { resolver })
       if (cancelled) return
       html.value = rendered
       headings.value = extractHeadings(rendered)

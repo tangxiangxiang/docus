@@ -1551,12 +1551,10 @@ const selectedTag = ref<string | null>(null)
 // by useLinkIndexSubscription's onMounted.
 useLinkIndexSubscription(fileChanges)
 
-// Wiki-link resolver: reads the *current* link index from
-// this Vault instance's link index so updates flow through. The
-// activeResolver in markdown.ts is set to a closure over this
-// ref on every render). We pass the resolver through a getter
-// function so the panes always see the latest index without
-// having to re-mount.
+// Wiki-link resolver: reads the *current* link index from this Vault
+// instance. useMarkdownRender passes this closure through the
+// render-scoped markdown-it env, so panes always see the latest index
+// without sharing resolver state or having to re-mount.
 const linkIndex = getLinkIndex(fileChanges)
 const wikiResolver = (ref: string, _anchor?: string) => {
   const allPaths = Array.from(linkIndex.value.paths)

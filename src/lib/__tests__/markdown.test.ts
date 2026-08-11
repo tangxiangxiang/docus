@@ -8,6 +8,7 @@
 // the async hljs init).
 import { describe, it, expect } from 'vitest'
 import { render } from '../markdown'
+import type { Resolver as WikiResolver } from '../wikiLinks'
 
 describe('markdown render()', () => {
   it('emits a markmap-mount placeholder for ```markmap fences', async () => {
@@ -177,6 +178,42 @@ describe('markdown render()', () => {
     expect(html).toContain('</table></div>')
   })
 
+  it('keeps wiki-link resolvers isolated across concurrent renders', async () => {
+    const resolverA: WikiResolver = (ref) => ({ target: `vault-a/${ref}` })
+    const resolverB: WikiResolver = (ref) => ({ target: `vault-b/${ref}` })
+
+    const [htmlA, htmlB] = await Promise.all([
+      render('[[note]] and [Text](note.md)', { resolver: resolverA }),
+      render('[[note]] and [Text](note.md)', { resolver: resolverB }),
+    ])
+
+    expect(htmlA).toContain('href="/vault/vault-a/note"')
+    expect(htmlA).not.toContain('vault-b/note')
+    expect(htmlB).toContain('href="/vault/vault-b/note"')
+    expect(htmlB).not.toContain('vault-a/note')
+  })
+
+  it('preserves task-list labels and checkbox state after sanitization', async () => {
+    const html = await render('- [x] Done\n- [ ] Todo')
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const items = Array.from(doc.querySelectorAll('li.task-list-item'))
+    const inputs = Array.from(doc.querySelectorAll<HTMLInputElement>('input.task-list-item-checkbox'))
+    const labels = Array.from(doc.querySelectorAll('label'))
+
+    expect(doc.querySelector('ul.contains-task-list')).not.toBeNull()
+    expect(items).toHaveLength(2)
+    expect(inputs).toHaveLength(2)
+    expect(labels).toHaveLength(2)
+    expect(inputs[0].type).toBe('checkbox')
+    expect(inputs[0].checked).toBe(true)
+    expect(inputs[0].hasAttribute('checked')).toBe(true)
+    expect(inputs[1].checked).toBe(false)
+    expect(inputs[1].hasAttribute('checked')).toBe(false)
+    expect(inputs[0].closest('label')).toBe(labels[0])
+    expect(inputs[1].closest('label')).toBe(labels[1])
+    expect(items.every((item) => item.classList.contains('enabled'))).toBe(true)
+  })
+
   it('leaves [^id] literal when no matching definition exists', async () => {
     const html = await render('A reference with no body[^orphan].')
     /* The plugin refuses to emit a <sup> for an unresolved ref —
@@ -280,6 +317,7 @@ describe('markdown render()', () => {
   it('preserves safe HTML and sanitizes dangerous raw HTML', async () => {
     const html = await render([
       '<strong>safe HTML</strong><br><a href="https://example.com">safe link</a>',
+      '<label onclick="alert(1)">unsafe label</label>',
       '<script>alert(1)</script>',
       '<img src="https://example.com/image.png" onerror="alert(1)">',
       '<iframe src="https://evil.example"></iframe>',
@@ -288,6 +326,7 @@ describe('markdown render()', () => {
     expect(html).toContain('<strong>safe HTML</strong>')
     expect(html).toContain('<br>')
     expect(html).toContain('<a href="https://example.com">safe link</a>')
+    expect(html).toContain('<label>unsafe label</label>')
     expect(html).toContain('<img src="https://example.com/image.png">')
     expect(html).not.toMatch(/<script\b/i)
     expect(html).not.toMatch(/<iframe\b/i)

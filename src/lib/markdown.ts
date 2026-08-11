@@ -5,7 +5,7 @@ import anchor from 'markdown-it-anchor'
 import footnote from 'markdown-it-footnote'
 import deflist from 'markdown-it-deflist'
 import mark from 'markdown-it-mark'
-import { wikiLinkPlugin, type Resolver as WikiResolver } from './wikiLinks'
+import { wikiLinkPlugin, type Resolver as WikiResolver, type WikiLinkEnv } from './wikiLinks'
 
 function escapeHtml(s: string): string {
   return s
@@ -53,6 +53,7 @@ const MARKDOWN_SANITIZE_CONFIG = {
     'img',
     'input',
     'kbd',
+    'label',
     'li',
     'mark',
     'ol',
@@ -193,20 +194,6 @@ async function buildHighlight(): Promise<HighlightFn> {
 
 let mdPromise: Promise<MarkdownIt> | null = null
 
-// Per-call resolver for wiki links. The MarkdownIt instance is a
-// module-level singleton, but the resolver depends on the
-// currently-mounted link index (which changes as the user edits).
-// Reading the resolver through this mutable ref means the
-// wikiLinkPlugin always sees the latest one without rebuilding
-// the whole pipeline. `useMarkdownRender` (or its caller) sets this
-// before each `render()` call; the test seam
-// `__setMdResolverForTesting` does the same.
-let activeResolver: WikiResolver = (ref) => ({ target: ref })
-
-export function __setMdResolverForTesting(fn: WikiResolver | null): void {
-  activeResolver = fn ?? ((ref) => ({ target: ref }))
-}
-
 async function getMd(): Promise<MarkdownIt> {
   if (mdPromise) return mdPromise
   mdPromise = (async () => {
@@ -247,13 +234,9 @@ async function getMd(): Promise<MarkdownIt> {
       // 是因为它跟其它行内标记(粗体、代码、链接)需要在同一阶段
       // 解析,但顺序对结果无影响 —— 这里跟 deflist 排在一起读着顺。
       .use(mark)
-      // Wiki link + standard `.md` link classification. Plugin
-      // signature is `(md, opts) => void` — see wikiLinks.ts for why
-      // currying doesn't work with `md.use`. The resolver reads
-      // `activeResolver` on every call so updates flow through.
-      .use(wikiLinkPlugin, {
-        resolve: (ref: string, anchor?: string) => activeResolver(ref, anchor),
-      })
+      // Wiki link + standard `.md` link classification. The resolver is
+      // supplied through markdown-it's per-render env by render().
+      .use(wikiLinkPlugin)
     md.renderer.rules.table_open = () => '<div class="table-scroll"><table>\n'
     md.renderer.rules.table_close = () => '</table></div>\n'
     return md
@@ -261,7 +244,12 @@ async function getMd(): Promise<MarkdownIt> {
   return mdPromise
 }
 
-export async function render(markdown: string): Promise<string> {
+export interface MarkdownRenderOptions {
+  resolver?: WikiResolver
+}
+
+export async function render(markdown: string, options: MarkdownRenderOptions = {}): Promise<string> {
   const md = await getMd()
-  return sanitizeMarkdownHtml(md.render(markdown))
+  const env: WikiLinkEnv = options.resolver ? { wikiResolver: options.resolver } : {}
+  return sanitizeMarkdownHtml(md.render(markdown, env))
 }

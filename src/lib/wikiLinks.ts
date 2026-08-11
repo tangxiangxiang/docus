@@ -35,8 +35,26 @@ export interface WikiLinkOptions {
   /** Called for every `[[…]]` ref and every internal `[t](path.md)`
    *  link. Receives the ref as-written and the optional anchor.
    *  Returns the resolved target (or null for broken links) and an
-   *  optional display alias. */
-  resolve: Resolver
+   *  optional display alias.
+   *
+   *  This is a fallback for callers that use the plugin directly. The
+   *  application passes a render-scoped resolver through `env.wikiResolver`
+   *  instead, so separate renders never share resolver state. */
+  resolve?: Resolver
+}
+
+export interface WikiLinkEnv {
+  wikiResolver?: Resolver
+}
+
+const identityResolver: Resolver = (ref) => ({ target: ref })
+
+function resolverFromEnv(env: unknown, opts: WikiLinkOptions): Resolver {
+  if (typeof env === 'object' && env !== null) {
+    const candidate = (env as { wikiResolver?: unknown }).wikiResolver
+    if (typeof candidate === 'function') return candidate as Resolver
+  }
+  return opts.resolve ?? identityResolver
 }
 
 // Minimal structural types for the bits of markdown-it's state /
@@ -55,21 +73,20 @@ type MdToken = {
 type MdRenderer = { renderToken(tokens: MdToken[], idx: number, options: unknown): string }
 
 interface WikiLinkInlineState {
-  // The actual state is MarkdownIt's StateInline; we only need to
-  // attach our own opts to it for the rule to read. We use a
-  // structural type so callers can pass either the real StateInline
-  // or a previous WikiLinkInlineState carrying the same opts.
+  // The actual state is MarkdownIt's StateInline. We use a
+  // structural type so the rule can read the per-render env without
+  // coupling the plugin to markdown-it's full type namespace.
   pos: number
   posMax: number
   src: string
   push: (type: string, tag: string, nesting: number) => MdToken
   env: Record<string, unknown>
-  wikiLinkOpts: WikiLinkOptions
 }
 
 function wikiLinkRule(
   state: WikiLinkInlineState,
   silent: boolean,
+  opts: WikiLinkOptions,
 ): boolean {
   const start = state.pos
   const src = state.src
@@ -109,8 +126,7 @@ function wikiLinkRule(
 
   if (silent) return true  // validation only
 
-  const opts = state.wikiLinkOpts
-  const resolved = opts.resolve(ref, anchor)
+  const resolved = resolverFromEnv(state.env, opts)(ref, anchor)
   const display = alias ?? ref
   // data-target is the as-written ref for missing links; for
   // resolved links, it's the resolved path (so the click handler
@@ -152,7 +168,7 @@ const INTERNAL_HREF_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\/[a-z0-9](?:[a-z0-
 function classifyLinkOpenToken(
   tokens: MdToken[],
   idx: number,
-  opts: WikiLinkOptions,
+  resolve: Resolver,
 ): void {
   const t = tokens[idx]
   if (t.type !== 'link_open') return
@@ -166,7 +182,7 @@ function classifyLinkOpenToken(
   const hash = hashIdx === -1 ? '' : hrefAttr.slice(hashIdx + 1)
   const cleanPath = pathPart.replace(/\.md$/i, '')
   if (!cleanPath) return
-  const resolved = opts.resolve(cleanPath, hash || undefined)
+  const resolved = resolve(cleanPath, hash || undefined)
   const missing = resolved?.target ? 'false' : 'true'
   const target = resolved?.target ?? cleanPath
   const newHref = resolved?.target
@@ -187,11 +203,11 @@ function classifyLinkOpenToken(
  *  and never invoke the returned closure. */
 export function wikiLinkPlugin(
   md: MarkdownIt,
-  opts: WikiLinkOptions,
+  opts: WikiLinkOptions = {},
 ): void {
   md.inline.ruler.before('text', 'wiki_link', (state, silent) => {
-    ;(state as unknown as WikiLinkInlineState).wikiLinkOpts = opts
-    return wikiLinkRule(state as unknown as WikiLinkInlineState, silent)
+    const inlineState = state as unknown as WikiLinkInlineState
+    return wikiLinkRule(inlineState, silent, opts)
   })
   // Renderer rule for `link_open`: classifies standard `[t](path.md)`
   // links into wiki-links. Runs once per `link_open` token as the
@@ -200,10 +216,10 @@ export function wikiLinkPlugin(
     tokens: MdToken[],
     idx: number,
     options: unknown,
-    _env: unknown,
+    env: unknown,
     self: MdRenderer,
   ): string {
-    classifyLinkOpenToken(tokens, idx, opts)
+    classifyLinkOpenToken(tokens, idx, resolverFromEnv(env, opts))
     return self.renderToken(tokens, idx, options)
   }
 }
