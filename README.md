@@ -1,6 +1,6 @@
 # Docus
 
-[简体中文](README.zh-CN.md) · [Documentation](docs/README.md) · [Deployment](docs/deployment/overview.md)
+[简体中文](README.zh-CN.md) · [Documentation](docs/README.md) · [Getting Started](docs/getting-started/quick-start.md) · [Deployment](docs/deployment/overview.md)
 
 Docus is a self-hosted Markdown knowledge workspace for writing, organizing, versioning, linking, and optionally working with AI. Your notes remain ordinary files; Docus adds a Vue interface, safe server-side mutations, SQLite metadata, explicit Git versions, and browser draft recovery.
 
@@ -31,6 +31,14 @@ npm run dev
 Open the URL printed by Vite, normally `http://localhost:5173`.
 
 The source development path requires the three vault roots to exist. The production server creates missing initial roots automatically. See [Installation](docs/getting-started/installation.md) and [Quick Start](docs/getting-started/quick-start.md) for details.
+
+## Authentication
+
+Docus Authentication v1 protects a single-owner, single-vault instance with a server-side session. On first start, Docus sends the browser to `/setup`; the operator supplies `DOCUS_SETUP_TOKEN` (or the one-time fallback token printed by the private server log) and creates the owner username and password. After setup, the owner uses `/login` to enter the workspace and Logout to revoke the current server session.
+
+This is an instance access boundary, not a user-owned document model. Docus has no public registration, multi-user accounts, team or collaboration accounts, RBAC, roles, permissions, or workspace sharing. The existing Markdown vault, SQLite metadata, AI settings, History, and recovery state remain scoped to the single Docus instance.
+
+See [Quick Start](docs/getting-started/quick-start.md), [Runtime Configuration](docs/deployment/configuration.md), [Deployment Security](docs/deployment/security.md), and [Backup and Restore](docs/deployment/backup-and-restore.md).
 
 ## How It Fits Together
 
@@ -67,9 +75,9 @@ docker compose up -d --build
 curl --fail http://127.0.0.1:3000/api/health
 ```
 
-By default, Compose binds only to `127.0.0.1:3000`, mounts `./src/content` as the vault, and stores SQLite plus the managed AI master key in the `docus-data` volume.
+By default, Compose binds only to `127.0.0.1:3000`, mounts `./src/content` as the vault, and stores SQLite plus the managed AI master key in the `docus-data` volume. The first browser visit completes the token-protected owner setup; later visits require login.
 
-Docus does **not** provide authentication or TLS. Keep it on loopback or a private network, or put an authenticated TLS reverse proxy in front of it. Back up both the vault—including its hidden `.git`—and `data/`.
+Docus provides single-owner authentication but does not terminate TLS. Keep direct HTTP access on loopback, or put an HTTPS reverse proxy in front of Docus for remote access. Set the explicit browser-facing `DOCUS_PUBLIC_ORIGIN` for that proxy. Back up both the vault—including its hidden `.git`—and `data/`.
 
 - [Deployment overview](docs/deployment/overview.md)
 - [Docker guide](docs/deployment/docker.md)
@@ -86,12 +94,15 @@ Server settings include:
 | `VAULT_DIR` | `<cwd>/src/content` | Vault root |
 | `HOST` | `127.0.0.1` | Bare-metal listener address |
 | `PORT` | `3000` | Bare-metal listener port |
+| `DOCUS_PUBLIC_ORIGIN` | Derived for loopback production; explicit for remote/HTTPS | Browser-facing origin and authentication cookie/Origin policy |
+| `DOCUS_SETUP_TOKEN` | Generated once in memory when unset | Operator-held first-run setup secret; explicit values need at least 32 UTF-8 bytes |
+| `DOCUS_AUTH_REVOKE_SESSIONS_ON_START` | `0` | Set to `1` for explicit startup re-authentication |
 | `DOCUS_MASTER_KEY` | unset | Explicit 32-byte AI credential master key |
 | `DOCUS_MASTER_KEY_FILE` | unset | File containing the master key |
 
 AI provider, API key, model, and optional base URL are configured in application Settings, not through provider-specific environment variables. If no explicit master key is supplied, Docus creates `data/.docus-master-key` when an API key is first saved.
 
-See [Configuration](docs/getting-started/configuration.md) for the complete precedence and Docker-specific variables.
+Docker additionally uses `DOCUS_BIND_ADDRESS` and `DOCS_PORT` for host publication; those values are not the browser-facing authentication origin. See [Configuration](docs/getting-started/configuration.md) and [Runtime Configuration](docs/deployment/configuration.md) for the complete behavior.
 
 ## Documentation
 
@@ -121,6 +132,8 @@ Browser suites are available with:
 ```bash
 npm run test:e2e
 npm run test:e2e:draft-store
+npm run test:e2e:auth
+npm run test:deployment-auth
 ```
 
 CI verifies Node.js 22 on Ubuntu for production parity and Node.js 24 on Ubuntu, macOS, and Windows for forward compatibility, along with crash-recovery, browser E2E, visual, and Docker smoke tests.

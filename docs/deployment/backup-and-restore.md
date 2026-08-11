@@ -6,11 +6,31 @@ Docus server persistence spans the vault, the data directory, and any externally
 | --- | --- | --- |
 | Markdown notes | `src/content/**/*.md` | Required. |
 | Vault versions and identity | `src/content/.git/`, `src/content/.docus/`, vault dotfiles | Required if History must survive. |
-| SQLite metadata and AI data | `data/docus.db` plus active WAL/SHM files | Required for titles, summaries, tags, document IDs, migration records, AI settings, encrypted credentials, sessions, and messages. |
+| SQLite metadata, AI data, and Authentication v1 state | `data/docus.db` plus active WAL/SHM files | Required for titles, summaries, tags, document IDs, migration records, `users`, `auth_instance`, `auth_sessions`, AI settings, encrypted credentials, sessions, and messages. |
 | AI master key | `data/.docus-master-key` or an external environment/secret file | Required to decrypt stored AI credentials. |
 | Unsaved drafts | Browser IndexedDB `docus-draft-recovery` | Browser-local; not included in server or Docker backups. |
 
 A complete server backup includes the full vault, the full data directory, and the master key when it is managed outside `data/`.
+
+## Authentication State
+
+Authentication v1 state is part of the same SQLite database:
+
+- `users` stores the single owner's canonical username, password hash, disabled flag, and timestamps.
+- `auth_instance` stores the singleton owner relationship for this Docus instance.
+- `auth_sessions` stores session metadata and token hashes, never raw session tokens.
+
+A database backup therefore includes owner metadata and may include sessions
+that are still within their fixed 30-day lifetime. The setup token is not part
+of the database backup: an explicit `DOCUS_SETUP_TOKEN` belongs in the
+operator's secret management, while a generated fallback exists only in the
+process memory that created it and is not recoverable from SQLite.
+
+Treat a restore from an untrusted, shared, older, or incident-affected backup
+as an authentication event. Set `DOCUS_AUTH_REVOKE_SESSIONS_ON_START=1` for
+the first startup after the restore, then return it to `0` for normal restarts.
+This revokes restored sessions before requests are accepted; do not recommend
+editing `auth_sessions`, `users`, or `auth_instance` directly.
 
 In fallback mode, `data/docus.db` and `data/.docus-master-key` are a recovery
 pair and must be backed up and restored together. Restoring only SQLite leaves
@@ -58,8 +78,9 @@ Store the external master key separately if it is not under `data/`.
 3. Restore the complete `data/` directory or Docker volume contents, not only `docus.db`.
 4. Restore the same external master key configuration used when the AI credentials were encrypted.
 5. Ensure the runtime user can read and write the restored paths.
-6. Start Docus and inspect startup logs.
-7. Verify `/api/health`, open representative notes, check tags and properties, inspect History, and test AI settings without replacing the key.
+6. If the restore should force reauthentication, set `DOCUS_AUTH_REVOKE_SESSIONS_ON_START=1` before starting Docus.
+7. Start Docus and inspect startup logs; reset the flag to `0` after the one-shot invalidation has run.
+8. Verify `/api/health`, authenticate the owner, open representative notes, check tags and properties, inspect History, and test AI settings without replacing the key.
 
 For Docker, one restore method that preserves the existing named volume is:
 
@@ -81,3 +102,4 @@ The `--delete` flag makes the restored vault match the backup and removes newer 
 - If the original key cannot be recovered, Settings can explicitly forget one provider credential at a time. This destructive action removes only the selected encrypted row; it does not decrypt, rewrite, or remove the other provider's row or the master-key file. Once all unrecoverable rows are cleared, a new API key can be saved and a new fallback key will be created.
 - Vault files without `.git/` lose History even though current Markdown remains.
 - Clearing browser storage loses unsaved recovery drafts but does not delete server-saved notes.
+- Restoring only `data/docus.db` can restore owner/session metadata without the vault; restoring a backup without the matching database can lose authentication state. Restore the complete instance stores together.

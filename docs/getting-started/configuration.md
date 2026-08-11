@@ -2,7 +2,7 @@
 
 Docus has two configuration surfaces: runtime environment variables for the server and Settings in the application for AI and metadata operations.
 
-## Vault and Network
+## Vault, Listener, and Browser Origin
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
@@ -13,6 +13,56 @@ Docus has two configuration surfaces: runtime environment variables for the serv
 | `GIT_AUTHOR_EMAIL` | `docus@localhost` when the vault has no local identity | Author email for Docus-created versions. |
 
 The Docker Compose deployment has separate host-side variables: `DOCUS_BIND_ADDRESS` and `DOCS_PORT`. See [Runtime Configuration](../deployment/configuration.md).
+
+`DOCUS_PUBLIC_ORIGIN` is the origin that the browser actually opens. It is the
+security authority for cookie selection and Origin validation; it is not the
+Node listener address and it is not inferred from `HOST`, Docker's internal
+`0.0.0.0`, or forwarded proxy headers.
+
+Examples:
+
+```bash
+# Vite development, if an explicit value is needed
+DOCUS_PUBLIC_ORIGIN=http://localhost:5173
+
+# Docker published on a custom loopback port
+DOCS_PORT=8088
+DOCUS_PUBLIC_ORIGIN=http://127.0.0.1:8088
+
+# Browser-facing HTTPS reverse proxy
+DOCUS_PUBLIC_ORIGIN=https://docs.example.com
+```
+
+`http://0.0.0.0:3000` is a bind/listener address, not a valid browser-facing
+origin. Plain HTTP is accepted only for `localhost`, `127.0.0.1`, and `[::1]`;
+non-loopback browser access should use an HTTPS reverse proxy and an explicit
+`https://` origin. A bare-metal production process with a loopback `HOST` can
+derive `http://127.0.0.1:<PORT>` when the variable is omitted; a non-loopback
+`HOST` requires an explicit public origin.
+
+## Authentication Configuration
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `DOCUS_PUBLIC_ORIGIN` | Vite: `http://localhost:5173`; bare-metal loopback: `http://127.0.0.1:<PORT>`; Docker: `http://127.0.0.1:<DOCS_PORT>` | Browser-facing origin, cookie profile, and same-origin mutation policy. |
+| `DOCUS_SETUP_TOKEN` | A process-local random fallback when unset and setup is required | First-run owner bootstrap secret. Explicit values must contain at least 32 UTF-8 bytes. |
+| `DOCUS_AUTH_REVOKE_SESSIONS_ON_START` | `0` | Set to `1` to revoke all existing sessions before accepting requests. |
+
+Setup requires the token even on local HTTP. The fallback token is generated
+once per process, printed once to the private operator log, retained only in
+memory until owner creation, and never written to SQLite, `.env`, Git, or a
+normal response. Restarting before setup creates a new fallback token. Once the
+owner exists, setup is closed.
+
+Authentication v1 accepts one owner only. Username input is 3–32 ASCII
+characters, canonicalized to lowercase, from `[a-z0-9._-]` with alphanumeric
+boundaries; password input is 12–256 Unicode code points. Passwords are not
+trimmed or normalized.
+
+The startup revocation control is an explicit operator action for incidents,
+trusted restore, or forced global reauthentication. Leave it at `0` for normal
+restarts. It revokes existing sessions; the owner then signs in again. Do not
+edit `auth_sessions` directly.
 
 ## AI Provider Settings
 

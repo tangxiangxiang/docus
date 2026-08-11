@@ -23,6 +23,51 @@ Compose sets the container's `HOST=0.0.0.0` and `PORT=3000`. Do not use those co
 
 The supplied Compose file does not expose `VAULT_DIR` because it always mounts the vault at the default `/app/src/content`. Change the volume mapping, not the in-container path, unless you also update the service configuration coherently.
 
+## Browser-facing Authentication Origin
+
+`DOCUS_PUBLIC_ORIGIN` is the canonical origin that a browser uses to access
+Docus. It controls the session cookie profile and the Origin check for unsafe
+mutations. It is separate from both the bare-metal `HOST` listener and Docker's
+internal `HOST=0.0.0.0`.
+
+| Variable | Default / example | Notes |
+| --- | --- | --- |
+| `DOCUS_PUBLIC_ORIGIN` | Bare-metal loopback: `http://127.0.0.1:<PORT>`; Docker: `http://127.0.0.1:<DOCS_PORT>` | Must match the browser URL exactly, with no path, query, or fragment. |
+| `DOCUS_BIND_ADDRESS` | `127.0.0.1` | Host interface for Docker port publication only. It is not the public origin. |
+| `DOCS_PORT` | `3000` | Host port mapped to container port 3000; the default origin follows it. |
+
+For example, when Docker publishes `DOCS_PORT=8088`, open
+`http://127.0.0.1:8088` and use:
+
+```bash
+DOCS_PORT=8088
+DOCUS_PUBLIC_ORIGIN=http://127.0.0.1:8088
+```
+
+For an HTTPS reverse proxy, use the external URL instead:
+
+```bash
+DOCUS_PUBLIC_ORIGIN=https://docs.example.com
+```
+
+Do not use `http://0.0.0.0:3000` as a browser-facing origin. Plain HTTP is
+accepted only for `localhost`, `127.0.0.1`, and `[::1]`; a non-loopback HTTP
+origin fails validation. A non-loopback bare-metal `HOST` therefore requires
+an explicit HTTPS public origin. Docus does not trust `Host` or arbitrary
+`X-Forwarded-Proto`/`X-Forwarded-Host` values for this decision.
+
+## Owner Setup and Startup Session Revocation
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `DOCUS_SETUP_TOKEN` | Process-local random fallback when setup is required and the variable is unset | Explicit values need at least 32 UTF-8 bytes. The fallback is printed once to the private startup log, retained only in memory, and is not written to SQLite, `.env`, or Git. |
+| `DOCUS_AUTH_REVOKE_SESSIONS_ON_START` | `0` | Set to `1` for security incidents, trusted restore, or operator-forced global reauthentication. Existing sessions are revoked before requests are accepted. |
+
+The setup token is only for first-run owner bootstrap; it is not the owner
+password and does not become a long-term login credential. After the owner
+transaction commits, setup is permanently closed. Leave startup revocation at
+`0` for ordinary restarts; do not modify `auth_sessions` by hand.
+
 ## AI Master Key
 
 | Variable | Default | Notes |

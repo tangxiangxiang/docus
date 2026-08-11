@@ -1,6 +1,6 @@
 # Docus
 
-[English](README.md) · [文档中心](docs/README.md) · [部署指南](docs/deployment/overview.md)
+[English](README.md) · [文档中心](docs/README.md) · [快速开始](docs/getting-started/quick-start.md) · [部署指南](docs/deployment/overview.md)
 
 Docus 是一个可自托管的 Markdown 知识工作区，用于写作、整理、链接、版本管理，以及按需使用 AI。笔记始终是普通文件；Docus 在此基础上提供 Vue 界面、安全的服务端文件操作、SQLite 元数据、显式 Git 版本和浏览器草稿恢复。
 
@@ -31,6 +31,14 @@ npm run dev
 打开 Vite 输出的地址，通常为 `http://localhost:5173`。
 
 源码开发模式要求先创建三个笔记库根目录；生产服务会自动补齐缺失的初始根目录。详细说明见[安装](docs/getting-started/installation.md)和[快速开始](docs/getting-started/quick-start.md)。
+
+## 身份认证
+
+Docus Authentication v1 使用服务端 session 保护一个单 owner、单 Vault 实例。首次启动时，Docus 会将浏览器引导到 `/setup`；操作者需要提供 `DOCUS_SETUP_TOKEN`（或私有服务端日志中一次性输出的 fallback token），然后创建 owner 用户名和密码。完成 setup 后，通过 `/login` 进入工作区；Logout 会撤销当前服务端 session。
+
+这是一层实例访问边界，不是按用户划分文档的数据模型。Docus 没有公开注册、多用户账号、团队或协作账号、RBAC、角色、权限或工作区分享。现有 Markdown 笔记库、SQLite 元数据、AI 设置、History 和恢复状态仍然属于单个 Docus 实例。
+
+详见[快速开始](docs/getting-started/quick-start.md)、[运行时配置](docs/deployment/configuration.md)、[部署安全](docs/deployment/security.md)和[备份与恢复](docs/deployment/backup-and-restore.md)。
 
 ## 系统组成
 
@@ -67,9 +75,9 @@ docker compose up -d --build
 curl --fail http://127.0.0.1:3000/api/health
 ```
 
-Compose 默认只绑定 `127.0.0.1:3000`，将 `./src/content` 挂载为笔记库，并把 SQLite 与托管的 AI 主密钥保存在 `docus-data` 卷中。
+Compose 默认只绑定 `127.0.0.1:3000`，将 `./src/content` 挂载为笔记库，并把 SQLite 与托管的 AI 主密钥保存在 `docus-data` 卷中。首次打开浏览器时完成 token 保护的 owner setup；之后的访问需要登录。
 
-Docus **不提供**身份认证或 TLS。请保持回环地址或私有网络访问；如需远程访问，应在前方配置带认证的 TLS 反向代理。备份必须同时包含笔记库（包括隐藏的 `.git`）和 `data/`。
+Docus 提供单 owner 身份认证，但不负责 TLS 终止。直接 HTTP 访问应保持在回环地址；需要远程访问时，请在 Docus 前配置 HTTPS 反向代理，并设置明确的、面向浏览器的 `DOCUS_PUBLIC_ORIGIN`。备份必须同时包含笔记库（包括隐藏的 `.git`）和 `data/`。
 
 - [部署概览](docs/deployment/overview.md)
 - [Docker 指南](docs/deployment/docker.md)
@@ -86,12 +94,15 @@ Docus **不提供**身份认证或 TLS。请保持回环地址或私有网络访
 | `VAULT_DIR` | `<cwd>/src/content` | 笔记库根目录 |
 | `HOST` | `127.0.0.1` | 裸机监听地址 |
 | `PORT` | `3000` | 裸机监听端口 |
+| `DOCUS_PUBLIC_ORIGIN` | 回环生产模式下自动推导；远程/HTTPS 时显式设置 | 面向浏览器的 origin，以及认证 cookie/Origin 策略 |
+| `DOCUS_SETUP_TOKEN` | 未设置时在内存中生成一次 | 首次 setup 的操作者 secret；显式值至少需要 32 个 UTF-8 字节 |
+| `DOCUS_AUTH_REVOKE_SESSIONS_ON_START` | `0` | 设置为 `1`，在启动时强制重新登录 |
 | `DOCUS_MASTER_KEY` | 未设置 | 显式的 32 字节 AI 凭据主密钥 |
 | `DOCUS_MASTER_KEY_FILE` | 未设置 | 存放主密钥的文件 |
 
 AI provider、API key、模型和可选 base URL 在应用 Settings 中配置，而不是使用 provider 专用环境变量。未提供显式主密钥时，Docus 会在首次保存 API key 时创建 `data/.docus-master-key`。
 
-完整优先级和 Docker 专用变量见[配置说明](docs/getting-started/configuration.md)。
+Docker 另外使用 `DOCUS_BIND_ADDRESS` 和 `DOCS_PORT` 控制宿主机端口发布；它们不是面向浏览器的认证 origin。完整行为见[配置说明](docs/getting-started/configuration.md)和[运行时配置](docs/deployment/configuration.md)。
 
 ## 文档导航
 
@@ -121,6 +132,8 @@ npm run lint:icons
 ```bash
 npm run test:e2e
 npm run test:e2e:draft-store
+npm run test:e2e:auth
+npm run test:deployment-auth
 ```
 
 CI 使用 Node.js 22 在 Ubuntu 上验证生产版本兼容性，并使用 Node.js 24 在 Ubuntu、macOS 和 Windows 上进行跨平台验证，同时运行崩溃恢复、浏览器 E2E、视觉基线和 Docker smoke 测试。

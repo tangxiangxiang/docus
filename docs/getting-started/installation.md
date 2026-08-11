@@ -26,6 +26,12 @@ On Windows, create the same three directories in File Explorer or PowerShell bef
 
 Then follow the [Quick Start](quick-start.md).
 
+The first start is also the Authentication v1 bootstrap. Docus does not create
+a default account: after the server starts, the browser will use `/api/auth/status`
+to determine whether it should show `/setup` for the one owner or `/login` for
+an existing owner. Read [Configuration](configuration.md) before setup if you
+want to provide an explicit `DOCUS_SETUP_TOKEN`.
+
 ## Docker Alternative
 
 Docker packages the Vue build, Hono server, Git, and the native SQLite dependency into one image:

@@ -2,6 +2,28 @@
 
 All notable changes to Docus are documented in this file.
 
+## Authentication v1 — 2026-08-11
+
+### Product capability
+
+- Added single-owner Authentication v1 for the existing Docus instance.
+- Added first-run owner setup, login, logout, and protected application APIs.
+- Kept the existing vault, metadata, AI, History, Git, and recovery data instance-scoped; no public registration or multi-user model was introduced.
+
+### Security
+
+- Added opaque server-side sessions in `HttpOnly` cookies with fixed 30-day expiry, revocation, disabled-owner checks, and optional startup session invalidation.
+- Added versioned scrypt password hashing, bounded KDF concurrency/queue work, failure-based login throttling, generic credential failures, and malformed/abnormally sized password handling before expensive KDF work.
+- Added layered `SameSite`, Origin, Fetch Metadata, and JSON content-type protections for mutations.
+- Added a dedicated 16 KiB request-body limit for owner setup/login credential payloads without limiting Markdown document bodies.
+
+### Architecture and deployment
+
+- Made `GET /api/health` liveness-only and moved stable instance identity to protected `GET /api/vault/identity`.
+- Made authentication hydration and protected identity resolution precede Vault workspace, tab persistence, and Draft Store recovery initialization.
+- Integrated active logout and session-expiry handling with existing editor save barriers and browser Draft Store preservation.
+- Documented loopback/HTTPS cookie profiles, browser-facing `DOCUS_PUBLIC_ORIGIN`, Docker setup, backup/restore session implications, and the real authentication test lanes.
+
 ## AI Provider & Settings Hardening — 2026-08-09
 
 - Added separate Anthropic and OpenAI provider settings with encrypted saved credentials.
