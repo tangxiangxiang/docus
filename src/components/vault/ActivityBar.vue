@@ -15,12 +15,18 @@ import {
   ICON_FOLDER,
   ICON_TAG,
 } from './icons'
+import AccountMenu from './AccountMenu.vue'
 export type SidePanel = 'files' | 'tags' | 'history' | 'recovery'
 
-defineProps<{ activePanel: SidePanel | null }>()
+const props = defineProps<{
+  activePanel: SidePanel | null
+  username?: string | null
+  logoutBusy?: boolean
+}>()
 const emit = defineEmits<{
   'select-panel': [panel: SidePanel]
   'open-settings': []
+  logout: []
 }>()
 
 const h = useHistory()
@@ -65,6 +71,11 @@ const { t } = useI18n()
       >{{ h.dirtyCount.value }}</span>
     </button>
     <div class="ab-spacer" aria-hidden="true" />
+    <AccountMenu
+      :username="props.username"
+      :logout-busy="props.logoutBusy"
+      @logout="emit('logout')"
+    />
     <button
       class="ab-btn ab-btn-settings"
       :title="t('activity.settings')"

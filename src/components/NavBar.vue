@@ -12,7 +12,6 @@ import { useI18n } from '../composables/useI18n'
 const props = defineProps<{ isVault?: boolean; logoutBusy?: boolean }>()
 const emit = defineEmits<{
   'open-search': []
-  logout: []
 }>()
 
 const { theme, toggle } = useTheme()
@@ -208,19 +207,6 @@ const SCOPE_ICONS: Record<string, string> = {
           @click="toggleRightRail"
         >
           <span class="right-rail-toggle-icon" aria-hidden="true" v-html="ICON_PANEL_RIGHT_OPEN" />
-        </button>
-        <button
-          v-if="props.isVault"
-          class="nav-logout"
-          type="button"
-          :disabled="props.logoutBusy"
-          :aria-busy="props.logoutBusy || undefined"
-          :title="t('nav.logout')"
-          :aria-label="t('nav.logout')"
-          data-testid="logout-button"
-          @click="emit('logout')"
-        >
-          {{ props.logoutBusy ? t('auth.logging_out') : t('nav.logout') }}
         </button>
       </div>
     </div>

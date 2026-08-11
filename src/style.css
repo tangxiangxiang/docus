@@ -614,8 +614,7 @@ body.brand-constellation-active * {
   gap: 6px;            /* search and theme toggle sit close together as a unit */
 }
 .nav-search,
-.theme-toggle,
-.nav-logout {
+.theme-toggle {
   width: 28px;
   height: 28px;
   background: transparent;
@@ -630,22 +629,11 @@ body.brand-constellation-active * {
   transition: color 0.15s, border-color 0.15s, background 0.15s;
 }
 .nav-search:hover,
-.theme-toggle:hover,
-.nav-logout:hover:not(:disabled) {
+.theme-toggle:hover {
   color: var(--text-h);
   border-color: var(--border);
   background: var(--bg-soft);
 }
-.nav-logout {
-  width: auto;
-  min-width: 28px;
-  padding: 0 8px;
-  color: var(--text-muted);
-  font: inherit;
-  font-size: 0.72rem;
-  white-space: nowrap;
-}
-.nav-logout:disabled { cursor: wait; opacity: 0.6; }
 .nav-actions :where(.nav-search, .theme-toggle, .right-rail-toggle, .view-toggle) svg {
   display: block;
   width: 18px;
@@ -833,6 +821,91 @@ main.container {
 }
 .activity-bar .ab-spacer {
   flex: 1 1 auto;
+}
+
+.account-menu-root {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 36px;
+}
+.account-menu-root .ab-btn-account[aria-expanded='true'] {
+  color: var(--vs-text-1);
+  background: var(--vs-hover-bg);
+}
+.account-popover {
+  position: absolute;
+  left: calc(100% + 8px);
+  bottom: 8px;
+  width: 200px;
+  box-sizing: border-box;
+  padding: 6px;
+  color: var(--vs-text-1);
+  background: var(--vs-bg-1);
+  border: 1px solid var(--vs-border);
+  border-radius: 7px;
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--vs-text-1) 20%, transparent);
+  z-index: 1000;
+}
+.account-menu-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  padding: 5px 8px 7px;
+}
+.account-menu-summary-label {
+  color: var(--vs-text-2);
+  font-size: 0.68rem;
+  line-height: 1.25;
+}
+.account-menu-username {
+  overflow: hidden;
+  color: var(--vs-text-1);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.account-menu-divider {
+  height: 1px;
+  margin: 0 2px 4px;
+  background: var(--vs-border);
+}
+.account-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  padding: 0 8px;
+  color: var(--vs-text-1);
+  font: inherit;
+  font-size: 0.76rem;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.account-menu-item:hover:not(:disabled) {
+  color: var(--vs-danger, #d73a49);
+  background: color-mix(in srgb, var(--vs-danger, #d73a49) 10%, transparent);
+}
+.account-menu-item:disabled,
+.account-menu-root .ab-btn:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+.account-menu-item-icon {
+  display: inline-flex;
+  flex: 0 0 14px;
+  align-items: center;
+  justify-content: center;
+}
+.account-menu-item-icon svg {
+  display: block;
+  width: 14px;
+  height: 14px;
 }
 
 /* History is a commit-first timeline in the standard side-panel column. */
@@ -4334,6 +4407,7 @@ main.container {
   display: flex;
   flex-direction: column;
 }
+.vault > .activity-bar { overflow: visible; }
 
 .preview { max-width: 100%; }
 .render-error {

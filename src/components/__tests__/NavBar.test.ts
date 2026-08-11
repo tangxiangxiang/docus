@@ -46,25 +46,24 @@ describe('NavBar — view-toggle button', () => {
       ['theme-toggle'],
       ['view-toggle'],
       ['right-rail-toggle'],
-      ['nav-logout'],
     ])
   })
 
-  it('emits a logout intent without owning the auth request', async () => {
+  it('does not render a logout action in the top-right chrome', () => {
     const { wrapper } = mountNavBar()
-    await wrapper.find('[data-testid="logout-button"]').trigger('click')
-    expect(wrapper.emitted('logout')).toHaveLength(1)
+    expect(wrapper.find('[data-testid="logout-button"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toMatch(/log out/i)
   })
 
-  it('renders a disabled busy logout button during the transition', () => {
+  it('keeps the top chrome busy without rendering a logout button', () => {
     const api = makeViewModeApi()
     const wrapper = mount(NavBar, {
       props: { isVault: true, logoutBusy: true },
       global: { provide: { [VaultViewModeKey as symbol]: api } },
     })
-    const button = wrapper.find('[data-testid="logout-button"]')
-    expect((button.element as HTMLButtonElement).disabled).toBe(true)
-    expect(button.attributes('aria-busy')).toBe('true')
+    expect(wrapper.find('.navbar').attributes('inert')).toBeDefined()
+    expect(wrapper.find('.navbar').attributes('aria-busy')).toBe('true')
+    expect(wrapper.find('[data-testid="logout-button"]').exists()).toBe(false)
   })
 
   it('clicking the button calls viewModeApi.toggle()', async () => {

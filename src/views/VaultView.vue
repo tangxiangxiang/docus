@@ -106,6 +106,9 @@ const EditorPane = defineAsyncComponent(() => import('../components/vault/Editor
 const navSearch = inject<{ tick: ReturnType<typeof ref<number>>; trigger: () => void } | null>('openSearch', null)
 const settingsOpen = ref(false)
 const editorFocusWidth = useStorage('docus.editor.focus-width', true)
+const emit = defineEmits<{
+  logout: []
+}>()
 
 /* Platform-aware shortcut display for the empty-state hint chips.
    Computed once at module load (see useShortcutDisplay), so this
@@ -1596,8 +1599,11 @@ watch(isReadMode, async (reading) => {
   >
     <ActivityBar
       :active-panel="activePanel"
+      :username="auth.user.value?.username"
+      :logout-busy="auth.transitionKind.value === 'logout'"
       @select-panel="selectActivityPanel"
       @open-settings="settingsOpen = true"
+      @logout="emit('logout')"
     />
 
     <SettingsModal

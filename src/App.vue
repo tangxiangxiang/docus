@@ -125,7 +125,6 @@ provide(VaultViewModeKey, { mode: viewMode, set: setViewMode, toggle: toggleView
     :is-vault="isVault"
     :logout-busy="auth.transitionKind.value === 'logout'"
     @open-search="onOpenSearch"
-    @logout="onLogout"
   />
   <section
     v-if="!showRoutedContent"
@@ -161,7 +160,7 @@ provide(VaultViewModeKey, { mode: viewMode, set: setViewMode, toggle: toggleView
       :inert="auth.transitionKind.value !== null || undefined"
       :aria-busy="auth.transitionKind.value !== null || undefined"
     >
-      <component :is="Component" />
+      <component :is="Component" @logout="onLogout" />
     </main>
   </RouterView>
   <ToastHost />
