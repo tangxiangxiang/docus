@@ -42,6 +42,15 @@ title: Markdown Style Specimen
 
 > 同一份内容在 Preview 和 Reading 中应保持相同的视觉语义，只改变阅读密度和页面留白。
 
+> [!note]
+> A normal note callout.
+
+> [!warning] Custom warning
+> Be careful.
+
+> [!success]
+> Everything worked.
+
 #### Data table
 
 | Surface | Semantic style | Density |

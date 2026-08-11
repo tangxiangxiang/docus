@@ -6,6 +6,7 @@ import footnote from 'markdown-it-footnote'
 import deflist from 'markdown-it-deflist'
 import mark from 'markdown-it-mark'
 import { wikiLinkPlugin, type Resolver as WikiResolver, type WikiLinkEnv } from './wikiLinks'
+import { calloutPlugin } from './callouts'
 
 function escapeHtml(s: string): string {
   return s
@@ -237,6 +238,9 @@ async function getMd(): Promise<MarkdownIt> {
       // Wiki link + standard `.md` link classification. The resolver is
       // supplied through markdown-it's per-render env by render().
       .use(wikiLinkPlugin)
+      // Obsidian-style `> [!note]` callouts. The plugin transforms the
+      // parsed blockquote token and leaves ordinary blockquotes untouched.
+      .use(calloutPlugin)
     md.renderer.rules.table_open = () => '<div class="table-scroll"><table>\n'
     md.renderer.rules.table_close = () => '</table></div>\n'
     return md

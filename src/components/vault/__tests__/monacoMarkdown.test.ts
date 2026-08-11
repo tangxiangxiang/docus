@@ -35,7 +35,11 @@ describe('Monaco Markdown helpers', () => {
       'heading 1', 'heading 2', 'heading 3',
     ])
     expect(filterMarkdownSlashCommands('图表').map((item) => item.label)).toEqual(['mermaid'])
-    expect(filterMarkdownSlashCommands('')).toHaveLength(11)
+    expect(filterMarkdownSlashCommands('提示').map((item) => item.label)).toEqual(['callout'])
+    expect(filterMarkdownSlashCommands('callout')).toEqual([
+      { label: 'callout', detail: '提示块', insertText: '> [!note] ${1:Title}\n> ${2:Content}' },
+    ])
+    expect(filterMarkdownSlashCommands('')).toHaveLength(12)
   })
 
   it('extracts preview-compatible heading anchors and ignores fenced code', () => {

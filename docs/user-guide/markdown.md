@@ -12,7 +12,32 @@ Docus renders Markdown with `markdown-it` and supports the core syntax plus:
 - tables and syntax-highlighted code fences;
 - automatic links;
 - Wiki links;
+- Obsidian-style callouts;
 - Mermaid and Markmap fences.
+
+## Callouts
+
+Docus supports Obsidian-style callouts. A marker at the start of a blockquote
+turns that blockquote into a lightweight, typed note while the content inside
+continues to use normal Markdown.
+
+```md
+> [!note]
+> This is a note.
+```
+
+You can provide a title after the type:
+
+```md
+> [!warning] Important
+> Back up your data first.
+```
+
+The canonical types are `note`, `info`, `tip`, `success`, `question`,
+`warning`, `danger`, `bug`, `example`, and `quote`. Common Obsidian aliases
+such as `caution`, `done`, `hint`, and `error` are normalized to their
+canonical type. Unknown types use the `note` appearance. Foldable callouts
+(`+` / `-` markers) are not enabled.
 
 ## Links Between Notes
 
