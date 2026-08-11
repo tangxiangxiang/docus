@@ -82,7 +82,7 @@ onMounted(() => tokenInput.value?.focus())
     <div class="auth-page-brand" aria-label="Docus">
       <img
         class="auth-page-brand-logo"
-        src="/logo-48.png"
+        :src="'/logo-48.png'"
         alt=""
         aria-hidden="true"
         data-testid="auth-logo"
