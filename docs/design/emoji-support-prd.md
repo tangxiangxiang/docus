@@ -4,7 +4,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| Status | Proposed；仅完成调研与产品/架构定义 |
+| Status | Approved for Implementation；仅完成调研与产品/架构定义 |
 | Date | 2026-08-12 |
 | Owner | Docus Markdown / Editor platform（待项目分配具体负责人） |
 | Phase | Emoji MVP |
@@ -31,7 +31,7 @@ Docus 第一版 Emoji 支持采用 Markdown shortcode 作为持久化源码格�
 - 第一版关闭 `:)`、`:D`、`:-)` 等 emoticon shortcuts。
 - Markdown renderer 与 Monaco autocomplete 共用一份 Docus-local generated Emoji definitions。该数据由 upstream 数据源生成，不手工维护两份 allowlist。
 - 使用 `@mdit/plugin-emoji` 提供 MarkdownIt Emoji 解析/渲染规则；优先使用其 `bareEmoji` 能力注入 Docus 的 full definitions 和空 shortcuts 配置，以同时满足 full dataset 与“关闭 emoticon shortcuts”的产品决策。
-- 当前 Docus 实际锁定的 `markdown-it` 为 14.2.0，满足当前 upstream plugin 的 `markdown-it ^14.2.0` peer 范围。Emoji Phase 不升级 MarkdownIt major version。
+- Emoji MVP pin 已发布的 `@mdit/plugin-emoji@1.1.1`：该版本的 `markdown-it ^14.2.0` peer 与 Docus 当前实际锁定的 14.2.0 兼容。upstream `main` 是另一条迁移到 MarkdownIt 15 的开发线，不作为 MVP 依赖来源；Emoji Phase 不升级 MarkdownIt major version，也不跟随 upstream main / future latest。
 - Monaco 增加 `:` 触发，但必须先通过严格的 shortcode 上下文判断。`/emoji` 插入 `:` 并调用现有 `editor.action.triggerSuggest`，不直接插入 Unicode，也不创建第二套 popup 或 Wiki 搜索系统。
 - Emoji renderer 只输出 Unicode 文本，不输出 HTML、SVG、图片、CDN 资源或用户定义的可执行内容。因此主 DOMPurify policy 不需要也不得放宽。
 
@@ -66,7 +66,7 @@ Docus 是 Markdown-based personal knowledge base。现有 Markdown architecture 
   → math
   ```
 
-- MarkdownIt 开启 HTML、breaks、linkify 等当前能力；代码 span、fenced code、link destination 等由 MarkdownIt tokenization 处理。
+- MarkdownIt 开启 HTML、linkify、typographer 等当前能力；当前没有开启 `breaks: true`。代码 span、fenced code、link destination 等由 MarkdownIt tokenization 处理。
 - `render()` 在 MarkdownIt 输出完成后进入 `sanitizeMarkdownHtml()`，DOMPurify 是最终 Markdown HTML 的安全边界。
 
 ### 4.2 现有 sanitizer 边界
@@ -121,12 +121,18 @@ Slash Command completion 当前使用 `CompletionItemKind.Snippet`、`InsertAsSn
 
 ### 5.1 `@mdit/plugin-emoji` 当前结论
 
-截至本文日期，upstream package main branch / npm latest 为 `@mdit/plugin-emoji@1.1.1`。关键事实：
+截至本文日期，必须区分两个不同的 upstream 状态（npm `1.1.1` 的发布 manifest 与 GitHub `main` 的当前 manifest）：
+
+1. **已发布 npm `@mdit/plugin-emoji@1.1.1`**：这是 Emoji MVP 的依赖基线；其 manifest 的 peer dependency 为 `markdown-it ^14.2.0`。
+2. **upstream GitHub `main`**：这是 moving development branch。2026-08-11 的 `feat: migrate to markdown-it v15` 已将 main 上的 peer dependency 改为 `markdown-it ^15.0.0`；main 的 package version 字段仍可能显示 `1.1.1`，不能仅凭 version 字段判断兼容性。该 main 状态来自本次 review 对 upstream commit/manifest 的核对，不代表已发布 npm artifact。
+
+因此，Docus Emoji MVP 必须 pin 已发布的 npm `@mdit/plugin-emoji@1.1.1`，不读取 upstream main 的未发布 peer 状态，也不跟随 future latest。关键事实：
 
 | 项目 | 调研结论 |
 | --- | --- |
 | License | MIT |
-| peer dependency | `markdown-it: ^14.2.0`，peer metadata 标记为 optional |
+| peer dependency | npm `1.1.1`：`markdown-it: ^14.2.0`，peer metadata 标记为 optional |
+| upstream main peer | 当前 main：`markdown-it: ^15.0.0`；不属于 MVP 依赖基线 |
 | package exports | 公开主入口；提供 preset/plugin API，不将内部 `emojiData` 作为稳定 public data export |
 | `sideEffects` | `false` |
 | Node engine | `>=22`；未来实现必须与 Docus 支持的 Node floor 一起验证 |
@@ -134,7 +140,7 @@ Slash Command completion 当前使用 `CompletionItemKind.Snippet`、`InsertAsSn
 | 默认 renderer | 返回 Unicode 文本；不是 HTML、SVG 或图片 |
 | plugin behavior | 在 inline token 处理阶段识别已知 shortcode，并生成 Emoji token；未知 shortcode 保持文本 |
 
-Docus 的实际 `markdown-it@14.2.0` 满足该 peer range，因此当前没有 MarkdownIt 版本兼容阻塞，也没有为了 Emoji 升级到 15.x 的理由。`package.json` 的声明范围与 lockfile 实际解析版本略有差异，未来依赖 PR 需要遵循项目 lockfile policy，但不得把 MarkdownIt major upgrade 混入 Emoji Phase。
+Docus 的实际 `markdown-it@14.2.0` 满足 npm `@mdit/plugin-emoji@1.1.1` 的 peer range；因此 MVP 没有 MarkdownIt 版本兼容阻塞，也没有为了 Emoji 升级到 15.x 的理由。未来依赖 PR 需要遵循项目 lockfile policy，并明确 pin 到已发布的 1.1.1；不得把 upstream main 或 MarkdownIt major upgrade 混入 Emoji Phase。
 
 ### 5.2 Preset 语义
 
@@ -336,16 +342,16 @@ Renderer 侧以 MarkdownIt 的 code tokenization 为准；Emoji rule 不能重�
 
 ### 10.3 Link label、link destination 与 autolink
 
-推荐行为：
+采用 upstream Emoji rule 的自然 token 语义，不为“看起来像 URL 的 explicit link label”增加 Docus 特殊 parser：
 
 | 内容 | 行为 |
 | --- | --- |
-| `[:smile:](https://example.com)` | label 转换为 `😄`；destination 保持 URL |
-| `[https://example.com/:smile](https://example.com/:smile)` | URL label/destination 中的 shortcode 不转换 |
+| `[:smile:](https://example.com)` | explicit link label 转换为 `😄`；destination 保持 URL |
+| `[https://example.com/:smile](https://example.com/:smile)` | explicit link label 中的 `:smile:` 也转换为 `😄`；destination 保持 URL |
 | `<https://example.com/:smile>` | autolink URL 中不转换 |
 | 普通文本 `Text :rocket: text` | 转换 |
 
-Emoji 不得改变 link destination、autolink URL、href 或 sanitizer URI 判断。link label 仍是正常 inline Markdown 内容，可以按普通文本规则处理。
+Emoji 不得改变 link destination、autolink URL、href 或 sanitizer URI 判断。explicit Markdown link label 仍是正常 inline Markdown 内容，可以按普通文本规则处理；只有 upstream rule 明确识别的 autolink URL 区域不转换。不要为了识别 URL-looking label 增加第二套 URL parser。
 
 ### 10.4 与现有 Markdown extensions 的交互
 
@@ -648,7 +654,7 @@ Emoji definitions 是受版本控制的 trusted application data，不是 Markdo
 
 ### 17.1 MarkdownIt
 
-Emoji Phase 不升级 MarkdownIt major version。实现时选择 peer compatible 的 `@mdit/plugin-emoji` 版本；当前锁定的 14.2.0 已满足 1.1.1 的 `^14.2.0` peer requirement。
+Emoji Phase 不升级 MarkdownIt major version。实现时必须 pin 已发布的 `@mdit/plugin-emoji@1.1.1`；Docus 当前锁定的 14.2.0 满足该版本的 `^14.2.0` peer requirement。不要使用 upstream main 当前的 `^15.0.0` peer 状态，也不要跟随 future latest。
 
 如果 Docus 的受支持 Node runtime 低于 upstream package 的 `>=22` engine：
 
@@ -754,7 +760,7 @@ completion item 同时显示 glyph 和 shortcode，避免只显示不可搜索�
 7. 多个 Emoji 和中文混合文本；
 8. inline code 中的 `:smile:` 不转换；
 9. fenced code 中的 `:smile:` 不转换；
-10. link label 可转换、link destination 不转换；
+10. explicit link label 可转换（包括 URL-looking label）、link destination 不转换；
 11. autolink URL 不转换；
 12. `12:30`、`key:value`、`foo::bar` 等普通 colon 文本不被错误转换；
 13. `:)`、`:D`、`:-)` 在 shortcut disabled policy 下保持原文；
@@ -837,7 +843,7 @@ Unknown :not_an_emoji:
 - [ ] native Unicode Emoji 保持原样。
 - [ ] inline code 不转换。
 - [ ] fenced code 不转换。
-- [ ] 普通 link label 可以转换。
+- [ ] explicit link label 可以转换，包括 URL-looking label。
 - [ ] link destination 和 autolink URL 不转换。
 - [ ] 第一版不启用 `:)`、`:D`、`:-)` 等 emoticon shortcuts。
 - [ ] malformed shortcode 不抛异常、不吞掉相邻文本。
@@ -931,11 +937,11 @@ Unknown :not_an_emoji:
 
 ### ADR-5：不为了 Emoji 升级 MarkdownIt major version
 
-**Decision**：Emoji Phase 保持 MarkdownIt 14.x；当前 lockfile 的 14.2.0 已满足 upstream plugin peer range。
+**Decision**：Emoji Phase 保持 MarkdownIt 14.x，并 pin 已发布的 `@mdit/plugin-emoji@1.1.1`；当前 lockfile 的 14.2.0 满足该发布版本的 peer range。upstream main 的 MarkdownIt 15 迁移另立 RFC。
 
 **Reason**：这是局部 Markdown extension，不足以证明一次 parser major migration 的收益；major migration 应另立 RFC。
 
-**Trade-offs**：如果未来 plugin 只支持 MarkdownIt 15，需要选择兼容 release 或单独做 migration，不把两个风险叠加。
+**Trade-offs**：如果未来 plugin 只支持 MarkdownIt 15，需要选择仍兼容 14.x 的 release 或单独做 migration，不把两个风险叠加。
 
 ### ADR-6：`/emoji` 复用 Monaco completion
 
@@ -1074,7 +1080,8 @@ Unknown :not_an_emoji:
 ### Upstream sources
 
 - [Official `@mdit/plugin-emoji` documentation](https://mdit-plugins.github.io/emoji.html)
-- [Official package manifest](https://github.com/mdit-plugins/mdit-plugins/blob/main/packages/plugin-emoji/package.json)
+- [Published npm 1.1.1 package manifest](https://registry.npmjs.org/@mdit%2fplugin-emoji/1.1.1)
+- [Current upstream main package manifest](https://github.com/mdit-plugins/mdit-plugins/blob/main/packages/plugin-emoji/package.json)
 - [Preset implementation](https://github.com/mdit-plugins/mdit-plugins/blob/main/packages/plugin-emoji/src/full.ts)
 - [Emoji rule implementation](https://github.com/mdit-plugins/mdit-plugins/blob/main/packages/plugin-emoji/src/rule.ts)
 - [Renderer implementation](https://github.com/mdit-plugins/mdit-plugins/blob/main/packages/plugin-emoji/src/render.ts)
