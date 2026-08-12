@@ -43,6 +43,7 @@ export interface MarkdownSlashCommand {
   label: string
   detail: string
   insertText: string
+  command?: { id: string; title: string }
 }
 
 export const MARKDOWN_SLASH_COMMANDS: readonly MarkdownSlashCommand[] = [
@@ -60,6 +61,16 @@ export const MARKDOWN_SLASH_COMMANDS: readonly MarkdownSlashCommand[] = [
   { label: 'mermaid', detail: 'Mermaid 图表', insertText: '```mermaid\n${1:graph TD\n  A --> B}\n```' },
   { label: 'markmap', detail: 'Markmap 思维导图', insertText: '```markmap\n# ${1:Topic}\n- ${2:Branch}\n```' },
   { label: 'table', detail: 'Markdown 表格', insertText: '| ${1:Column} | ${2:Column} |\n| --- | --- |\n| ${3:Value} | ${4:Value} |' },
+  { label: 'footnote', detail: '脚注', insertText: '${1:Text}[^${2:1}]\n\n[^${2:1}]: ${3:Footnote content}' },
+  { label: 'highlight', detail: '高亮', insertText: '==${1:Highlighted text}==' },
+  { label: 'definition list', detail: '定义列表', insertText: '${1:Term}\n: ${2:Definition}' },
+  {
+    label: 'wiki link',
+    detail: 'Wiki 链接',
+    insertText: '[[',
+    // Monaco executes this after the snippet edit, reusing the existing Wiki provider.
+    command: { id: 'editor.action.triggerSuggest', title: 'Trigger Wiki Link completion' },
+  },
 ] as const
 
 export function filterMarkdownSlashCommands(query: string): readonly MarkdownSlashCommand[] {

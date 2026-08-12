@@ -163,6 +163,50 @@ describe('Monaco EditorPane', () => {
     wrapper.unmount()
   })
 
+  it('inserts the added Markdown slash commands through Monaco snippets', async () => {
+    const expected = [
+      ['footnote', '${1:Text}[^${2:1}]\n\n[^${2:1}]: ${3:Footnote content}'],
+      ['highlight', '==${1:Highlighted text}=='],
+      ['definition list', '${1:Term}\n: ${2:Definition}'],
+    ] as const
+
+    for (const [label, insertText] of expected) {
+      const query = label === 'definition list' ? 'definition' : label
+      const wrapper = mount(EditorPane, { props: { modelValue: `/${query}`, path: `inbox/${label}` } })
+      const provider = mocks.completionProviders.at(-1)
+      const result = await provider.provideCompletionItems(mocks.model, { lineNumber: 1, column: query.length + 2 })
+      expect(result.suggestions).toEqual(expect.arrayContaining([
+        expect.objectContaining({ label, insertText, insertTextRules: 4, kind: 3 }),
+      ]))
+      wrapper.unmount()
+    }
+  })
+
+  it('starts the existing Wiki Link completion after the wiki slash command', async () => {
+    const wrapper = mount(EditorPane, {
+      props: {
+        modelValue: '/wiki',
+        path: 'inbox/source',
+        linkTargets: [{ path: 'docs/guide', title: 'Guide' }],
+      },
+    })
+    const provider = mocks.completionProviders.at(-1)
+    const slashResult = await provider.provideCompletionItems(mocks.model, { lineNumber: 1, column: 6 })
+    const wikiCommand = slashResult.suggestions.find((item: any) => item.label === 'wiki link')
+    expect(wikiCommand).toMatchObject({
+      insertText: '[[',
+      insertTextRules: 4,
+      command: { id: 'editor.action.triggerSuggest' },
+    })
+
+    mocks.model.value = wikiCommand.insertText
+    const wikiResult = await provider.provideCompletionItems(mocks.model, { lineNumber: 1, column: 3 })
+    expect(wikiResult.suggestions).toContainEqual(expect.objectContaining({
+      label: 'Guide', insertText: 'docs/guide]]', range: expect.objectContaining({ startColumn: 3, endColumn: 3 }),
+    }))
+    wrapper.unmount()
+  })
+
   it('offers target headings after a Wiki Link hash', async () => {
     mocks.getPost.mockResolvedValue({ content: '# Intro\n\n## Setup Guide\n\n## 中文标题' })
     const wrapper = mount(EditorPane, {

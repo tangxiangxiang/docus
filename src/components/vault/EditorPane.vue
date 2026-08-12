@@ -229,6 +229,7 @@ const completionProvider: monaco.languages.CompletionItemProvider = {
           kind: monaco.languages.CompletionItemKind.Snippet,
           insertText: command.insertText,
           insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          command: command.command,
           range: {
             startLineNumber: position.lineNumber,
             startColumn: before.lastIndexOf('/') + 1,

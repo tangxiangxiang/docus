@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  filterMarkdownSlashCommands, indentMarkdownLine, MARKDOWN_WRAPS, markdownContinuation, markdownDecorationSpecs, markdownHeadingTargets, writingDiagnostics,
+  filterMarkdownSlashCommands, indentMarkdownLine, MARKDOWN_SLASH_COMMANDS, MARKDOWN_WRAPS, markdownContinuation, markdownDecorationSpecs, markdownHeadingTargets, writingDiagnostics,
   markdownLinkFromPaste, markdownWrapEdit, rankWikiTargets, toggleMarkdownWrap, wikiLinkAtColumn,
 } from '../monacoMarkdown'
 
@@ -44,7 +44,32 @@ describe('Monaco Markdown helpers', () => {
       { label: 'inline math', detail: '行内公式', insertText: '$${1:x + y}$' },
       { label: 'math block', detail: '块级公式', insertText: '$$\n${1:E = mc^2}\n$$' },
     ])
-    expect(filterMarkdownSlashCommands('')).toHaveLength(14)
+    expect(filterMarkdownSlashCommands('footnote').map((item) => item.label)).toEqual(['footnote'])
+    expect(filterMarkdownSlashCommands('highlight').map((item) => item.label)).toEqual(['highlight'])
+    expect(filterMarkdownSlashCommands('definition').map((item) => item.label)).toEqual(['definition list'])
+    expect(filterMarkdownSlashCommands('wiki').map((item) => item.label)).toEqual(['wiki link'])
+    expect(filterMarkdownSlashCommands('高亮').map((item) => item.label)).toEqual(['highlight'])
+    expect(filterMarkdownSlashCommands('')).toHaveLength(MARKDOWN_SLASH_COMMANDS.length)
+  })
+
+  it('provides renderer-supported snippets for the missing Markdown structures', () => {
+    expect(MARKDOWN_SLASH_COMMANDS.find((item) => item.label === 'footnote')).toEqual({
+      label: 'footnote',
+      detail: '脚注',
+      insertText: '${1:Text}[^${2:1}]\n\n[^${2:1}]: ${3:Footnote content}',
+    })
+    expect(MARKDOWN_SLASH_COMMANDS.find((item) => item.label === 'highlight')).toEqual({
+      label: 'highlight', detail: '高亮', insertText: '==${1:Highlighted text}==',
+    })
+    expect(MARKDOWN_SLASH_COMMANDS.find((item) => item.label === 'definition list')).toEqual({
+      label: 'definition list', detail: '定义列表', insertText: '${1:Term}\n: ${2:Definition}',
+    })
+    expect(MARKDOWN_SLASH_COMMANDS.find((item) => item.label === 'wiki link')).toEqual({
+      label: 'wiki link',
+      detail: 'Wiki 链接',
+      insertText: '[[',
+      command: { id: 'editor.action.triggerSuggest', title: 'Trigger Wiki Link completion' },
+    })
   })
 
   it('extracts preview-compatible heading anchors and ignores fenced code', () => {
