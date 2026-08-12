@@ -427,4 +427,97 @@ describe('markdown render()', () => {
     expect(html).not.toContain('<mark>')
     expect(html).toContain('==')
   })
+
+  it('renders full Emoji shortcodes as native Unicode text', async () => {
+    const html = await render('完成 :smile: :rocket: :+1: :thumbsup: 😀')
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+
+    expect(doc.body.textContent?.trim()).toBe('完成 😄 🚀 👍 👍 😀')
+    expect(html).not.toMatch(/<img|<svg|https?:\/\//)
+  })
+
+  it('keeps unknown, malformed, and emoticon forms literal', async () => {
+    const html = await render(':not_an_emoji: :smile: :) :D :-) :( foo::bar :')
+    expect(new DOMParser().parseFromString(html, 'text/html').body.textContent?.trim())
+      .toBe(':not_an_emoji: 😄 :) :D :-) :( foo::bar :')
+  })
+
+  it('does not rewrite inline or fenced code', async () => {
+    const html = await render([
+      'Inline `:smile:`.',
+      '',
+      '```text',
+      ':smile:',
+      '```',
+    ].join('\n'))
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    expect(doc.querySelector('code')?.textContent).toBe(':smile:')
+    expect(doc.querySelector('pre code')?.textContent).toBe(':smile:\n')
+    expect(doc.body.textContent).toContain('Inline :smile:.')
+    expect(doc.body.textContent).not.toContain('Inline 😄.')
+  })
+
+  it('converts explicit link labels without changing destinations or autolink URLs', async () => {
+    const html = await render([
+      '[:smile:](https://example.com)',
+      '[https://example.com/:smile:](https://example.com/:smile:)',
+      '<https://example.com/:smile>',
+    ].join('\n'))
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const links = Array.from(doc.querySelectorAll<HTMLAnchorElement>('a'))
+
+    expect(links[0]?.textContent).toBe('😄')
+    expect(links[0]?.getAttribute('href')).toBe('https://example.com')
+    expect(links[1]?.textContent).toBe('https://example.com/😄')
+    expect(links[1]?.getAttribute('href')).toBe('https://example.com/:smile:')
+    expect(links[2]?.textContent).toBe('https://example.com/:smile')
+    expect(links[2]?.getAttribute('href')).toBe('https://example.com/:smile')
+  })
+
+  it('keeps math and Wiki token semantics separate from Emoji', async () => {
+    const resolver: WikiResolver = (ref) => ({ target: `notes/${ref}` })
+    const html = await render([
+      '$:smile:$ and $x$ :rocket:',
+      '',
+      '[[Target|:smile:]]',
+    ].join('\n'), { resolver })
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+
+    expect(doc.querySelector('.math-inline')?.getAttribute('data-content')).toBe('%3Asmile%3A')
+    expect(doc.querySelector('.math-inline')?.textContent).toBe('')
+    expect(doc.body.textContent).toContain('🚀')
+    expect(doc.querySelector('a.wiki-link')?.textContent).toBe('😄')
+    expect(doc.querySelector('a.wiki-link')?.getAttribute('href')).toBe('/vault/notes/Target')
+  })
+
+  it('keeps Emoji working through task, callout, highlight, definition, and footnote output', async () => {
+    const html = await render([
+      '> [!note] Review',
+      '> Body :smile:',
+      '',
+      '- [ ] :rocket:',
+      '',
+      '==:heart:==',
+      '',
+      'Term',
+      ': :+1:',
+      '',
+      'Reference[^one]',
+      '',
+      '[^one]: :thumbsup:',
+    ].join('\n'))
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+
+    expect(doc.querySelector('.callout-note')?.textContent).toContain('😄')
+    expect(doc.querySelector('input.task-list-item-checkbox')?.closest('li')?.textContent).toContain('🚀')
+    expect(doc.querySelector('mark')?.textContent).toBe('❤️')
+    expect(doc.querySelector('dd')?.textContent).toBe('👍')
+    expect(doc.querySelector('section.footnotes')?.textContent).toContain('👍')
+  })
+
+  it('keeps raw HTML sanitizer behavior unchanged while rendering adjacent Emoji', async () => {
+    const html = await render('<span onclick="alert(1)">:smile:</span><script>alert(1)</script>')
+    expect(html).toContain('<span>😄</span>')
+    expect(html).not.toMatch(/<script|onclick=/i)
+  })
 })

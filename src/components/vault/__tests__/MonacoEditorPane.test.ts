@@ -113,6 +113,13 @@ describe('Monaco EditorPane', () => {
     mocks.scrollListeners.length = 0
     mocks.mouseDownListeners.length = 0
     vi.clearAllMocks()
+    mocks.model.getValueInRange.mockReset()
+    mocks.model.getValueInRange.mockImplementation(() => mocks.model.value)
+    mocks.model.getLineContent.mockReset()
+    mocks.model.getLineContent.mockImplementation(() => '')
+    mocks.model.getLineMaxColumn.mockReset()
+    mocks.model.getLineMaxColumn.mockImplementation(() => 1)
+    mocks.model.value = ''
     mocks.editor.getSelection.mockReturnValue(null)
     mocks.model.getLineContent.mockReturnValue('')
     document.documentElement.setAttribute('data-theme', 'light')
@@ -160,6 +167,143 @@ describe('Monaco EditorPane', () => {
     const result = await provider.provideCompletionItems(mocks.model, { lineNumber: 1, column: 5 })
     expect(result.suggestions).toHaveLength(1)
     expect(result.suggestions[0]).toMatchObject({ label: 'mermaid', insertTextRules: 4 })
+    wrapper.unmount()
+  })
+
+  it('offers ranked Emoji snippets from the existing Markdown provider', async () => {
+    const wrapper = mount(EditorPane, { props: { modelValue: ':smi', path: 'inbox/emoji' } })
+    const provider = mocks.completionProviders.at(-1)
+    const result = await provider.provideCompletionItems(
+      mocks.model,
+      { lineNumber: 1, column: 5 },
+      { triggerKind: 1, triggerCharacter: ':' },
+    )
+    expect(result.suggestions[0]).toMatchObject({
+      label: '😄 :smile:',
+      detail: 'Emoji',
+      insertText: 'smile:',
+      insertTextRules: 4,
+      kind: 3,
+      range: { startColumn: 2, endColumn: 5 },
+    })
+    expect(result.suggestions.length).toBeLessThanOrEqual(30)
+
+    const item = result.suggestions[0]
+    const start = item.range.startColumn - 1
+    const end = item.range.endColumn - 1
+    const sourceAfterEdit = mocks.model.value.slice(0, start) + item.insertText + mocks.model.value.slice(end)
+    expect(sourceAfterEdit).toBe(':smile:')
+    wrapper.unmount()
+  })
+
+  it('keeps ordinary empty colon quiet but lets /emoji explicitly invoke the same provider', async () => {
+    const ordinary = mount(EditorPane, { props: { modelValue: ':', path: 'inbox/ordinary-colon' } })
+    const ordinaryProvider = mocks.completionProviders.at(-1)
+    const ordinaryResult = await ordinaryProvider.provideCompletionItems(
+      mocks.model,
+      { lineNumber: 1, column: 2 },
+      { triggerKind: 1, triggerCharacter: ':' },
+    )
+    expect(ordinaryResult.suggestions).toEqual([])
+    ordinary.unmount()
+
+    const slash = mount(EditorPane, { props: { modelValue: '/emoji', path: 'inbox/emoji-slash' } })
+    const provider = mocks.completionProviders.at(-1)
+    const slashResult = await provider.provideCompletionItems(mocks.model, { lineNumber: 1, column: 6 })
+    const command = slashResult.suggestions.find((item: any) => item.label === 'emoji')
+    expect(command).toMatchObject({
+      insertText: ':', insertTextRules: 4, kind: 3,
+      command: { id: 'editor.action.triggerSuggest' },
+    })
+
+    mocks.model.value = ':'
+    const explicitResult = await provider.provideCompletionItems(
+      mocks.model,
+      { lineNumber: 1, column: 2 },
+      { triggerKind: 0 },
+    )
+    expect(explicitResult.suggestions.length).toBe(30)
+    expect(explicitResult.suggestions[0]).toMatchObject({ label: '👍 :+1:', insertText: '+1:' })
+    slash.unmount()
+  })
+
+  it('suppresses Emoji completion in inline/fenced code, URLs, and during IME composition', async () => {
+    const wrapper = mount(EditorPane, { props: { modelValue: '` :smi', path: 'inbox/emoji-guards' } })
+    const provider = mocks.completionProviders.at(-1)
+    const result = await provider.provideCompletionItems(
+      mocks.model,
+      { lineNumber: 1, column: 6 },
+      { triggerKind: 1, triggerCharacter: ':' },
+    )
+    expect(result.suggestions).toEqual([])
+
+    mocks.model.value = '```text\n:smi'
+    mocks.model.getValueInRange.mockReturnValue(':smi')
+    mocks.model.getLineContent.mockImplementation(((lineNumber: number) => lineNumber === 1 ? '```text' : ':smi') as any)
+    const fencedResult = await provider.provideCompletionItems(
+      mocks.model,
+      { lineNumber: 2, column: 5 },
+      { triggerKind: 1, triggerCharacter: ':' },
+    )
+    expect(fencedResult.suggestions).toEqual([])
+
+    mocks.model.value = 'https://example.com/:smi'
+    mocks.model.getValueInRange.mockReturnValue('https://example.com/:smi')
+    const urlResult = await provider.provideCompletionItems(
+      mocks.model,
+      { lineNumber: 1, column: 26 },
+      { triggerKind: 1, triggerCharacter: ':' },
+    )
+    expect(urlResult.suggestions).toEqual([])
+
+    mocks.compositionStartListeners.forEach((fn) => fn())
+    mocks.model.value = ':smi'
+    mocks.model.getValueInRange.mockReturnValue(':smi')
+    const composingResult = await provider.provideCompletionItems(
+      mocks.model,
+      { lineNumber: 1, column: 5 },
+      { triggerKind: 1, triggerCharacter: ':' },
+    )
+    expect(composingResult.suggestions).toEqual([])
+    mocks.compositionEndListeners.forEach((fn) => fn())
+    wrapper.unmount()
+  })
+
+  it('keeps completion contexts isolated by model URI', async () => {
+    const first = mount(EditorPane, { props: { modelValue: ':smi', path: 'inbox/first' } })
+    const firstProvider = mocks.completionProviders.at(-1)
+    const firstResult = await firstProvider.provideCompletionItems(
+      mocks.model,
+      { lineNumber: 1, column: 5 },
+      { triggerKind: 1, triggerCharacter: ':' },
+    )
+    expect(firstResult.suggestions[0]).toMatchObject({ label: '😄 :smile:' })
+    first.unmount()
+
+    const second = mount(EditorPane, { props: { modelValue: '[[gui', path: 'inbox/second', linkTargets: [{ path: 'docs/guide', title: 'Guide' }] } })
+    const secondProvider = mocks.completionProviders.at(-1)
+    const secondResult = await secondProvider.provideCompletionItems(
+      mocks.model,
+      { lineNumber: 1, column: 6 },
+      { triggerKind: 1, triggerCharacter: '[' },
+    )
+    expect(secondResult.suggestions[0]).toMatchObject({ label: 'Guide', insertText: 'docs/guide]]' })
+    second.unmount()
+  })
+
+  it('does not read the full value while completing in a large document', async () => {
+    const wrapper = mount(EditorPane, { props: { modelValue: 'x'.repeat(500_000) + '\n:smi', path: 'inbox/emoji-large' } })
+    const provider = mocks.completionProviders.at(-1)
+    mocks.model.getValue.mockClear()
+    mocks.model.getValueInRange.mockReturnValue(':smi')
+    mocks.model.getLineContent.mockReturnValue(':smi')
+    const result = await provider.provideCompletionItems(
+      mocks.model,
+      { lineNumber: 2, column: 5 },
+      { triggerKind: 1, triggerCharacter: ':' },
+    )
+    expect(result.suggestions[0]).toMatchObject({ label: '😄 :smile:' })
+    expect(mocks.model.getValue).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 

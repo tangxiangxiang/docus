@@ -10,6 +10,7 @@ import { getPost } from '../../lib/api'
 import { useEditorPreferences } from '../../composables/vault/useEditorPreferences'
 import {
   indentMarkdownLine,
+  getEmojiCompletionContext,
   filterMarkdownSlashCommands,
   MARKDOWN_CODE_LANGUAGES,
   MARKDOWN_WRAPS,
@@ -22,6 +23,7 @@ import {
   wikiLinkAtColumn,
   writingDiagnostics,
 } from './monacoMarkdown'
+import { MAX_EMOJI_SUGGESTIONS, rankEmojiSuggestions } from '../../lib/emoji'
 
 export interface EditorLinkTarget {
   path: string
@@ -210,9 +212,34 @@ function scheduleMarkdownDecorations() {
   decorationTimer = setTimeout(refreshMarkdownDecorations, 120)
 }
 
+const MAX_FENCE_CONTEXT_LINES = 200
+
+function isFenceMarker(line: string): { character: '`' | '~'; length: number } | null {
+  const match = /^\s{0,3}(`{3,}|~{3,})/.exec(line)
+  if (!match) return null
+  return { character: match[1][0] as '`' | '~', length: match[1].length }
+}
+
+function isInsideFencedCode(currentModel: monaco.editor.ITextModel, lineNumber: number): boolean {
+  const startLine = Math.max(1, lineNumber - MAX_FENCE_CONTEXT_LINES + 1)
+  let fence: { character: '`' | '~'; length: number } | null = null
+  for (let currentLine = startLine; currentLine <= lineNumber; currentLine += 1) {
+    const marker = isFenceMarker(currentModel.getLineContent(currentLine))
+    if (!marker) continue
+    if (!fence) fence = marker
+    else if (marker.character === fence.character && marker.length >= fence.length) fence = null
+    // A fence marker line itself is never a valid Emoji completion line.
+    if (currentLine === lineNumber) return true
+  }
+  // If the bounded window starts in the middle of a document, the first
+  // marker may be an opener or a closer from before the window. Suppress
+  // suggestions rather than risk popping inside a very long fenced block.
+  return fence !== null || startLine > 1
+}
+
 const completionProvider: monaco.languages.CompletionItemProvider = {
-  triggerCharacters: ['[', '`', '/'],
-  async provideCompletionItems(currentModel, position) {
+  triggerCharacters: ['[', '`', '/', ':'],
+  async provideCompletionItems(currentModel, position, context) {
     if (currentModel !== model) return { suggestions: [] }
     const before = currentModel.getValueInRange({
       startLineNumber: position.lineNumber,
@@ -253,6 +280,34 @@ const completionProvider: monaco.languages.CompletionItemProvider = {
             endColumn: position.column,
           },
         })),
+      }
+    }
+    if (!composing) {
+      const emojiContext = getEmojiCompletionContext(
+        before,
+        position.column,
+        {
+          explicitInvocation: context?.triggerKind === 0,
+          inFencedCode: isInsideFencedCode(currentModel, position.lineNumber),
+        },
+      )
+      if (emojiContext.valid) {
+        const suggestions = rankEmojiSuggestions(emojiContext.query, { allowEmpty: context?.triggerKind === 0 })
+        return {
+          suggestions: suggestions.slice(0, MAX_EMOJI_SUGGESTIONS).map((entry) => ({
+            label: `${entry.glyph} :${entry.name}:`,
+            detail: 'Emoji',
+            kind: monaco.languages.CompletionItemKind.Snippet,
+            insertText: `${entry.name}:`,
+            insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+            range: {
+              startLineNumber: position.lineNumber,
+              startColumn: emojiContext.startColumn,
+              endLineNumber: position.lineNumber,
+              endColumn: emojiContext.endColumn,
+            },
+          })),
+        }
       }
     }
     const match = /\[\[([^\]\n]*)$/.exec(before)

@@ -21,11 +21,13 @@
     "test:e2e:auth": "node node_modules/@playwright/test/cli.js test --config=playwright.auth.config.ts",
     "test:deployment-auth": "node scripts/docker-auth-smoke.mjs",
     "lint:icons": "tsx scripts/icon-lint.ts --allow-file=src/components/MarkMap.vue --allow-file=src/components/Mermaid.vue",
-    "lint:icons:strict": "tsx scripts/icon-lint.ts --strict --allow-file=src/components/MarkMap.vue --allow-file=src/components/Mermaid.vue"
+    "lint:icons:strict": "tsx scripts/icon-lint.ts --strict --allow-file=src/components/MarkMap.vue --allow-file=src/components/Mermaid.vue",
+    "generate:emoji": "node scripts/generate-emoji-data.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.102.0",
     "@hono/node-server": "^2.0.4",
+    "@mdit/plugin-emoji": "1.1.1",
     "@types/diff": "^7.0.2",
     "@vueuse/core": "^14.3.0",
     "better-sqlite3": "^11.7.0",

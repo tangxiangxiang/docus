@@ -30,6 +30,22 @@ title: Markdown Style Specimen
 
 这是一段用于视觉回归的中文正文，包含 ==高亮==、**粗体**、*强调*、\`inline code\` 与 [外部链接](https://example.com)。
 
+## Emoji
+
+Emoji: :smile: :rocket: :+1:
+
+完成 :rocket:
+
+Unknown :not_an_emoji:
+
+Inline code: \`:smile:\`
+
+\`\`\`text
+:smile:
+\`\`\`
+
+Explicit link: [:smile:](https://example.com)
+
 ## Content hierarchy
 
 ### Lists and tasks

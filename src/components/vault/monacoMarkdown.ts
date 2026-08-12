@@ -71,7 +71,103 @@ export const MARKDOWN_SLASH_COMMANDS: readonly MarkdownSlashCommand[] = [
     // Monaco executes this after the snippet edit, reusing the existing Wiki provider.
     command: { id: 'editor.action.triggerSuggest', title: 'Trigger Wiki Link completion' },
   },
+  {
+    label: 'emoji',
+    detail: '表情',
+    insertText: ':',
+    // The inserted colon is handled by the same Markdown completion provider.
+    command: { id: 'editor.action.triggerSuggest', title: 'Trigger Emoji completion' },
+  },
 ] as const
+
+export interface EmojiCompletionContext {
+  query: string
+  startColumn: number
+  endColumn: number
+  valid: boolean
+  inInlineCode: boolean
+  inFencedCode: boolean
+  reason?: 'missing-colon' | 'empty-query' | 'boundary' | 'url' | 'inline-code' | 'fenced-code'
+}
+
+interface EmojiCompletionContextOptions {
+  explicitInvocation?: boolean
+  inFencedCode?: boolean
+}
+
+function isEscapedAt(value: string, index: number): boolean {
+  let slashes = 0
+  for (let cursor = index - 1; cursor >= 0 && value[cursor] === '\\'; cursor -= 1) slashes += 1
+  return slashes % 2 === 1
+}
+
+export function isInsideMarkdownInlineCode(lineBeforeCursor: string): boolean {
+  let delimiterLength = 0
+  for (let index = 0; index < lineBeforeCursor.length;) {
+    if (lineBeforeCursor[index] !== '`' || isEscapedAt(lineBeforeCursor, index)) {
+      index += 1
+      continue
+    }
+    let end = index + 1
+    while (lineBeforeCursor[end] === '`') end += 1
+    const length = end - index
+    if (delimiterLength === 0) delimiterLength = length
+    else if (delimiterLength === length) delimiterLength = 0
+    index = end
+  }
+  return delimiterLength > 0
+}
+
+function tokenBeforeColon(value: string, colonIndex: number): string {
+  let start = colonIndex
+  while (start > 0 && !/\s/.test(value[start - 1])) start -= 1
+  return value.slice(start, colonIndex)
+}
+
+export function getEmojiCompletionContext(
+  lineBeforeCursor: string,
+  cursorColumn = lineBeforeCursor.length + 1,
+  options: EmojiCompletionContextOptions = {},
+): EmojiCompletionContext {
+  const before = lineBeforeCursor.slice(0, Math.max(0, cursorColumn - 1))
+  const match = /:([A-Za-z0-9_+\-]*)$/.exec(before)
+  const inInlineCode = isInsideMarkdownInlineCode(before)
+  const inFencedCode = options.inFencedCode ?? false
+  if (!match || match.index === undefined) {
+    return {
+      query: '',
+      startColumn: cursorColumn,
+      endColumn: cursorColumn,
+      valid: false,
+      inInlineCode,
+      inFencedCode,
+      reason: 'missing-colon',
+    }
+  }
+
+  const colonIndex = match.index
+  const query = match[1]
+  const previous = before[colonIndex - 1] ?? ''
+  const token = tokenBeforeColon(before, colonIndex).replace(/^[\[<]/, '')
+  const url = /^(?:https?|ftp):\/\//i.test(token) || /:\/\/$/.test(before.slice(0, colonIndex + 1))
+  const boundary = previous !== '' && /[A-Za-z0-9_+\-:]/.test(previous)
+  let reason: EmojiCompletionContext['reason']
+  if (inInlineCode) reason = 'inline-code'
+  else if (inFencedCode) reason = 'fenced-code'
+  else if (url) reason = 'url'
+  else if (boundary) reason = 'boundary'
+  else if (!query && !options.explicitInvocation) reason = 'empty-query'
+
+  return {
+    query,
+    startColumn: colonIndex + 2,
+    endColumn: cursorColumn,
+    valid: reason === undefined,
+    inInlineCode,
+    inFencedCode,
+    reason,
+  }
+}
 
 export function filterMarkdownSlashCommands(query: string): readonly MarkdownSlashCommand[] {
   const needle = query.trim().toLocaleLowerCase()

@@ -5,9 +5,11 @@ import anchor from 'markdown-it-anchor'
 import footnote from 'markdown-it-footnote'
 import deflist from 'markdown-it-deflist'
 import mark from 'markdown-it-mark'
+import { bareEmoji } from '@mdit/plugin-emoji'
 import { wikiLinkPlugin, type Resolver as WikiResolver, type WikiLinkEnv } from './wikiLinks'
 import { calloutPlugin } from './callouts'
 import { mathPlugin } from './math'
+import { emojiDefinitions } from './emoji'
 
 function escapeHtml(s: string): string {
   return s
@@ -251,6 +253,9 @@ async function getMd(): Promise<MarkdownIt> {
       // Math placeholders are emitted before sanitization and upgraded by
       // useMathMount after v-html has inserted the safe HTML.
       .use(mathPlugin)
+      // Shortcodes are rendered as native Unicode text. An explicit empty
+      // shortcuts map keeps emoticon forms such as `:)` literal.
+      .use(bareEmoji, { definitions: emojiDefinitions, shortcuts: {} })
     md.renderer.rules.table_open = () => '<div class="table-scroll"><table>\n'
     md.renderer.rules.table_close = () => '</table></div>\n'
     return md

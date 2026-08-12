@@ -13,7 +13,7 @@ export function ensureMarkdownProvidersRegistered(): void {
   if (registered) return
   registered = true
   monaco.languages.registerCompletionItemProvider('markdown', {
-    triggerCharacters: ['[', '`', '/'],
+    triggerCharacters: ['[', '`', '/', ':'],
     provideCompletionItems(model, position, context, token) {
       return contexts.get(key(model))?.completion.provideCompletionItems(model, position, context, token) ?? { suggestions: [] }
     },

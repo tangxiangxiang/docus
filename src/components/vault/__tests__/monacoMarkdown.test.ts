@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   filterMarkdownSlashCommands, indentMarkdownLine, MARKDOWN_SLASH_COMMANDS, MARKDOWN_WRAPS, markdownContinuation, markdownDecorationSpecs, markdownHeadingTargets, writingDiagnostics,
-  markdownLinkFromPaste, markdownWrapEdit, rankWikiTargets, toggleMarkdownWrap, wikiLinkAtColumn,
+  getEmojiCompletionContext, isInsideMarkdownInlineCode, markdownLinkFromPaste, markdownWrapEdit, rankWikiTargets, toggleMarkdownWrap, wikiLinkAtColumn,
 } from '../monacoMarkdown'
 
 describe('Monaco Markdown helpers', () => {
@@ -50,6 +50,44 @@ describe('Monaco Markdown helpers', () => {
     expect(filterMarkdownSlashCommands('wiki').map((item) => item.label)).toEqual(['wiki link'])
     expect(filterMarkdownSlashCommands('高亮').map((item) => item.label)).toEqual(['highlight'])
     expect(filterMarkdownSlashCommands('')).toHaveLength(MARKDOWN_SLASH_COMMANDS.length)
+    expect(filterMarkdownSlashCommands('emoji')).toEqual([{
+      label: 'emoji', detail: '表情', insertText: ':',
+      command: { id: 'editor.action.triggerSuggest', title: 'Trigger Emoji completion' },
+    }])
+  })
+
+  it('extracts safe Emoji completion context and suppresses colon noise', () => {
+    expect(getEmojiCompletionContext(':smi', 5)).toMatchObject({
+      query: 'smi', startColumn: 2, endColumn: 5, valid: true,
+    })
+    expect(getEmojiCompletionContext('今天 :rocket', 11)).toMatchObject({ query: 'rocket', valid: true })
+    expect(getEmojiCompletionContext(':+1', 4)).toMatchObject({ query: '+1', valid: true })
+    expect(getEmojiCompletionContext(':', 2)).toMatchObject({ valid: false, reason: 'empty-query' })
+    expect(getEmojiCompletionContext(':', 2, { explicitInvocation: true })).toMatchObject({ valid: true, query: '' })
+
+    for (const value of [
+      'https://example.com/:rocket',
+      '[https://example.com/:rocket',
+      '<https://example.com/:rocket',
+      '12:30',
+      '2026-08-12T14:30',
+      'key:value',
+      'key: value',
+      'foo::bar',
+      '::1',
+      'C:\\Users',
+      'color: red',
+    ]) {
+      expect(getEmojiCompletionContext(value, value.length + 1).valid, value).toBe(false)
+    }
+  })
+
+  it('guards inline code and bounded fenced-code contexts', () => {
+    expect(isInsideMarkdownInlineCode('`foo :smi')).toBe(true)
+    expect(isInsideMarkdownInlineCode('``foo :smi')).toBe(true)
+    expect(isInsideMarkdownInlineCode('`foo` :smi')).toBe(false)
+    expect(getEmojiCompletionContext('`foo :smi', 10)).toMatchObject({ valid: false, reason: 'inline-code' })
+    expect(getEmojiCompletionContext(':smi', 5, { inFencedCode: true })).toMatchObject({ valid: false, reason: 'fenced-code' })
   })
 
   it('provides renderer-supported snippets for the missing Markdown structures', () => {
