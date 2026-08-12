@@ -4,9 +4,9 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 文档状态 | Implementation Plan — Approved for implementation planning |
+| 文档状态 | Ready for Implementation |
 | 产品 PRD | [`docs/design/emoji-support-prd.md`](./emoji-support-prd.md) |
-| 代码基线 | `f485cadb5025f747eb04951598e986a498dcf2a5` |
+| Implementation Plan baseline | `85b97a80176138d6a11b1f7a3095e242344395f2` |
 | 计划日期 | 2026-08-12 |
 | 本任务范围 | 只产出实施计划，不执行 Emoji implementation |
 | 目标 | 将已批准 PRD 拆成可执行、可测试、可 review 的 E1–E4 工作包 |
@@ -111,9 +111,12 @@ EditorPane.vue
 - 当前 slash provider 已有 `/wiki` 的最小链路：插入 `[[`，再执行 `editor.action.triggerSuggest`，由现有 Wiki provider 继续处理。
 - `monacoMarkdownProviders.ts` 为 model context 做 URI 隔离，并注册全局 Markdown completion provider；目前 trigger characters 包括 `[`, backtick 和 `/`。
 - `EditorPane.vue` 的 provider 读取当前行局部内容；completion 不应改成全量 `model.getValue()` 扫描。
-- 已有 `composing` 状态及 composition start/end 处理；Emoji provider 应在 composition 期间抑制建议，但不能重写 IME architecture。
+- 已有 `composing` 状态及 composition start/end 处理；当前它主要用于阻止 composition 中间态直接 emit 为正式 modelValue，现有 completion provider 尚不会仅因 `composing === true` 自动返回空 suggestions。
+- E2 应复用这个已有 state，并新增 Emoji completion-level composing guard；不要创建 Emoji-specific IME state，也不要把“现有 completion 已处理 IME”写成当前能力。
 - `isLargeDocument` 对 500k+ 文档关闭部分 decoration/folding 行为；Emoji completion 只能使用当前行和必要的受限上下文，不能因为加入 `:` trigger 而扫描整篇文档。
-- 当前 provider 已有 fenced code language / inline code 相关判断能力或对应分支；Emoji 必须复用/扩展最小的 editor context 判定，不创建第二套 Markdown parser。
+- 当前 Monaco 已有 Markdown completion provider、Wiki/slash completion、opening-fence language completion、line-local input、`composing` state、composition start/end listeners、model URI isolation 和 500k+ large-document threshold。
+- 当前 opening-fence language completion 只处理正在输入 fenced-code opening line、并为语言标识提供建议的分支；它不是通用的 `isCursorInsideFencedCode()` 能力。
+- 当前不存在可复用的 inline-code completion guard、fenced-code cursor-context detector、generic Markdown code-context helper、Emoji completion-level `composing` guard 或 Emoji context parser。Emoji E2 必须实现这些最小能力，但不得创建第二套 Markdown parser。
 
 ### 3.5 当前测试和浏览器验证
 
@@ -196,11 +199,14 @@ committed Docus generated definitions
 要求：
 
 - generated definitions 是唯一运行时 Emoji mapping source。
+- runtime shared entry 的最小语义是 `{ name: string, glyph: string }`；source 中的每个 alias 展开为独立 entry，renderer 视图可由同一份数据投影为 `Record<shortcode, glyph>`。
 - 不让 renderer 从 `@mdit/plugin-emoji` 私有 dist 导出读取一份数据，同时让 Monaco 手工复制另一份。
 - aliases 保留，例如 `:+1:` 和 `:thumbsup:` 都有效，即使 glyph 相同。
 - 不按 glyph 去重 shortcode。
 - generator 输出必须稳定排序、可重复生成、无运行时网络请求。
-- generated header 记录 source、revision/version、生成日期、generator 版本和 license/attribution 信息。
+- generated artifact header 只记录可复现的 provenance：source、pinned source revision、由该 revision metadata 派生的 source revision date、generator version、license 和 attribution reference；不记录 generator 执行时的 wall-clock 时间。
+- header 的固定字段为 `Generated file — do not edit manually`、`Source`、`Source revision`、`Source revision date`、`Generator version`、`License`；如果未来已有 `SOURCE_DATE_EPOCH` policy，可以复用，但 Emoji MVP 不建立这套 infrastructure。
+- wall-clock regeneration time is review metadata only；它可以写入 PR description、commit message 或 release notes，但不能进入 generated artifact。
 - source、license 和 attribution 必须在实现 PR 中随 generated data 一并可追溯；不能只在 commit message 中口头说明。
 - 如果 generator 需要新的 dev-only data package，必须单独说明其 license、lockfile 影响和维护方式；不得把数据包作为运行时依赖无理由打入 bundle。
 
@@ -343,18 +349,21 @@ shared completion items
 
 推荐实现顺序：
 
-1. 确定 pinned `gemoji-json`/upstream source revision。
+1. 确定 pinned `gemoji-json`/upstream source revision 及其 revision date metadata。
 2. generator 只读取 pinned source，生成 Docus-local definitions。
-3. 输出 canonical name 和 aliases 到同一个 generated module。
-4. 按稳定 key 顺序写出，避免每次更新产生无意义 diff。
-5. 在生成结果中保留 provenance header；将 license/attribution 交给仓库认可的 notice 机制。
-6. generator 对缺失 glyph、非法 shortcode、重复 key、非稳定排序和 source schema 变化失败退出。
+3. 对 source entry 的每个 alias 生成一个平等的 `{ name, glyph }` entry，并把它们展开为同一 generated module 中的 `Record<shortcode, glyph>`；不建立首选 shortcode 层级。
+4. 按稳定 shortcode key 顺序写出，避免每次更新产生无意义 diff。
+5. 写入 deterministic provenance header：`Source`、`Source revision`、`Source revision date`、`Generator version`、`License`；不写 `Generated at`、`Date.now()` 或任何 wall-clock timestamp。
+6. generator 对缺失 glyph、非法/空 shortcode、重复 shortcode key（无论 glyph 是否相同）、source schema 变化失败退出；相同 glyph 对应多个不同 shortcode 是合法的。
 7. runtime 不访问网络、不动态拉取 Emoji 数据。
 
 generator 的验证要求：
 
-- 同一 source revision 连续运行两次，输出字节一致。
-- alias 不因为 glyph 相同而被去重。
+- 同一 source revision、generator version 和 inputs 连续运行两次，输出 byte-for-byte identical。
+- source revision date 来自 pinned revision metadata，重复运行不会变化。
+- alias 不因为 glyph 相同而被去重；每个有效 alias 都是独立 shortcode entry。
+- shortcode key 重复出现时 generation fail（即使 glyph 相同也不覆盖）；不同 shortcode 共享 glyph 是合法的。
+- 生成结果不得依赖 current date/time、timezone、locale、randomness 或未锁定的 network latest state。
 - unknown shortcode 不在 definitions 中时由 renderer 原文保留。
 - 生成文件不含可执行 HTML、URL、script 或用户输入。
 
@@ -422,7 +431,9 @@ generator 的验证要求：
 ### E1 Exit Criteria
 
 - npm artifact 与 MarkdownIt 14.2.0 peer 核验通过。
-- shared definitions 生成可重复且有 provenance。
+- shared definitions 生成可重复且有 deterministic provenance；artifact 不含 wall-clock timestamp。
+- 同一 pinned source revision、generator version 和 inputs 连续生成两次必须 byte-for-byte identical。
+- 每个有效 source alias 都是独立 shortcode entry；相同 glyph 可重复，重复 shortcode key 必须让 generator fail。
 - renderer 使用 shared definitions 和空 shortcuts。
 - known/unknown/alias/code/fence/link/math/Wiki regression tests 通过。
 - DOMPurify policy diff 为零。
@@ -496,7 +507,7 @@ renderer 侧必须可靠保护 inline/fenced code。editor 侧应尽量不在 co
 
 每个 item：
 
-- label：`😄 :smile:` 形式，显示 glyph 和 canonical/alias shortcode。
+- label：`😄 :smile:` 形式，显示 glyph 和对应 shortcode name；每个 alias 都可独立显示，不因 glyph 相同而去重。
 - detail：`Emoji` 或现有 UI locale 约定的等价短 detail。
 - insertText：输入 `:smi` 时插入完整的 `smile:`，replacement range 只覆盖已有的 `smi`；前导 `:` 保留，最终 source 必须是 `:smile:`。
 - insertTextRules：继续使用 `CompletionItemInsertTextRule.InsertAsSnippet`，即使文本没有 placeholder，也必须走现有 insertion mechanism。
@@ -558,6 +569,7 @@ renderer 侧必须可靠保护 inline/fenced code。editor 侧应尽量不在 co
 - shared generated data 是唯一 suggestion source。
 - CompletionItem 真正使用 InsertAsSnippet。
 - context/range/ranking/limit/IME/large-document tests 通过。
+- E2 新增并通过 completion-level `composing` guard、inline-code guard 和 fenced-code cursor-context guard；这些是 E2 实现责任，不得在 review 中声称它们原本已是 reusable helper。
 - Wiki completion 和现有 provider 分支无回归。
 
 ---
@@ -674,7 +686,7 @@ E4 必须复跑或确认现有 regression：
 | --- | --- | --- |
 | shared data | `src/lib/__tests__/emoji.test.ts` | definitions、alias、ranking、上限、稳定排序 |
 | real renderer | `src/lib/__tests__/markdown.test.ts` | shortcode → Unicode、unknown、native、code/fence、links、math/Wiki interaction |
-| generator | generator-specific test 或 deterministic check | 同源重复生成字节一致、非法 source 失败、provenance 存在 |
+| generator | generator-specific test 或 deterministic check | 同一 pinned revision/version/inputs 重复生成 byte-identical；无 wall-clock timestamp；revision date deterministic；任何 duplicate shortcode key（含同 glyph）失败；duplicate glyph aliases 保留；不依赖 time/locale/randomness/network latest state |
 | sanitizer regression | 现有 Markdown tests | policy unchanged；Emoji 不产 HTML |
 
 ### 11.2 Monaco
@@ -940,6 +952,9 @@ CI 需要覆盖现有 matrix：
 | no Twemoji/remote assets | renderer/data design | dependency and output audit |
 | no MarkdownIt major upgrade | dependency/lock | package/lock diff |
 | browser preview visible | E4 fixture | Playwright functional assertion |
+| no wall-clock timestamp in generated artifact | generator | deterministic generation check |
+| source revision metadata deterministic | generator provenance | pinned revision metadata check |
+| aliases remain independent entries; duplicate keys fail | generator/shared data | duplicate-glyph and duplicate-key tests |
 
 ---
 
@@ -967,14 +982,13 @@ CI 需要覆盖现有 matrix：
 
 ## 20. Implementation Blockers 和 Open Questions
 
-### 20.1 Blockers
+### 20.1 Implementation Blockers
 
-当前代码审计没有发现阻止开始 E1 的硬 blocker：
+None。当前三个 review issue 均已在本计划中修正为文档约束，不构成产品或实现 blocker。
 
-- MarkdownIt 14.2.0 满足已发布 plugin `1.1.1` 的 peer range。
-- Node 22/24 满足该 package 的 declared engine。
-- 现有 renderer 和 Monaco provider 都有可复用的接入点。
-- 当前任务不需要先改 Markmap、Mermaid、KaTeX 或 sanitizer。
+Supporting audit facts：
+
+- 审计依据：MarkdownIt 14.2.0 满足已发布 plugin `1.1.1` 的 peer range；Node 22/24 满足该 package 的 declared engine；现有 renderer 和 Monaco provider 有明确的 planned integration points；当前任务不需要先修改 Markmap、Mermaid、KaTeX 或 sanitizer。
 
 ### 20.2 Open Implementation Questions
 
@@ -995,7 +1009,9 @@ Emoji implementation PR 只有在以下全部完成后才能从 implementation r
 
 - [ ] 使用已发布 `@mdit/plugin-emoji@1.1.1`，没有依赖 upstream main。
 - [ ] MarkdownIt 仍为 14.x，lock 中仍为当前受支持版本。
-- [ ] generated full definitions 有 source pin、license、attribution 和 deterministic generator。
+- [ ] generated full definitions 有 source pin、source revision date、license、attribution 和 deterministic generator。
+- [ ] generated artifact 不含 wall-clock timestamp；同一 pinned source revision、generator version 和 inputs 产生 byte-identical output。
+- [ ] 每个有效 source alias 都是独立 shortcode entry；相同 glyph 可有多个名称，重复 shortcode key 会让 generation fail。
 - [ ] renderer 与 Monaco 共用同一个 definitions source。
 - [ ] `bareEmoji` 明确关闭 emoticon shortcuts。
 - [ ] `:smile:`、`:rocket:`、`:+1:`、aliases、unknown、native Unicode 正确。
@@ -1006,6 +1022,7 @@ Emoji implementation PR 只有在以下全部完成后才能从 implementation r
 - [ ] label 显示 glyph + shortcode，source 最终保存 shortcode。
 - [ ] ranking deterministic，suggestion 上限不超过 30。
 - [ ] URL/time/key:value/path/code/IME false positives 有测试。
+- [ ] E2 复用已有 `composing` state，并实现 completion-level IME guard；inline-code/fenced-code cursor-context guards 被作为 E2 新增责任验证，而不是声称为现有 helper。
 - [ ] large document completion 不扫描全文。
 - [ ] `/emoji` 存在，插入 `:`，复用 `triggerSuggest`，空 query 显式触发可用。
 - [ ] 既有 slash、Wiki、Markdown、math、Markmap、Mermaid 行为回归通过。
@@ -1022,15 +1039,20 @@ Emoji implementation PR 只有在以下全部完成后才能从 implementation r
 
 ### Preflight
 
-- [ ] Checkout `f485cadb5025f747eb04951598e986a498dcf2a5` 或明确的后续 review baseline。
+- [ ] Checkout `85b97a80176138d6a11b1f7a3095e242344395f2` 或明确的后续 review baseline。
 - [ ] 核验 npm `@mdit/plugin-emoji@1.1.1` artifact。
 - [ ] 核验 Node、MarkdownIt、npm CI 和 lockfile policy。
-- [ ] 确认 data source、license 和 attribution 机制。
+- [ ] 确认 pinned data source revision、source revision date、license 和 attribution 机制。
+- [ ] 确认 generated artifact 不包含 wall-clock timestamp。
 
 ### E1
 
 - [ ] Add exact dependency and approved lockfile updates。
 - [ ] Add deterministic generator and generated full definitions。
+- [ ] Generate twice with the same pinned revision/version/inputs and compare byte-identical output。
+- [ ] Verify source revision date is deterministic and duplicate-glyph aliases survive。
+- [ ] Verify duplicate shortcode names fail generation, including same-glyph duplicates。
+- [ ] Verify generation is independent of current time, timezone, locale, randomness and unpinned network state。
 - [ ] Add shared adapter/index/ranking primitives。
 - [ ] Integrate `bareEmoji` with empty shortcuts。
 - [ ] Add real renderer/data tests。
