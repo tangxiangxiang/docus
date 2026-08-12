@@ -17,7 +17,7 @@
 
 import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useTheme } from '../composables/useTheme'
-import { createMarkdownSanitizer, type MarkdownSanitizer } from '../lib/markdown'
+import { docusMarkmapSecurityPlugin } from '../lib/markmapSecurity'
 
 const props = defineProps<{
   /** Source markdown the Transformer should parse. */
@@ -187,7 +187,7 @@ async function mountMarkmap() {
        link strokes (markmap caches the resolved color per node). */
     teardownInstance()
     try {
-      const [{ Transformer }, { Markmap, loadCSS, loadJS, deriveOptions }] =
+      const [{ Transformer, builtInPlugins }, { Markmap, loadCSS, loadJS, deriveOptions }] =
         await Promise.all([import('markmap-lib'), import('markmap-view')])
       /* If the article was re-rendered while we were awaiting
          imports (e.g. the user switched documents in the vault),
@@ -206,15 +206,12 @@ async function mountMarkmap() {
          will get its own mountMarkmap call from its own onMounted;
          this one is finished. */
       if (disposed || !svg.isConnected) return
-      const transformer = new Transformer()
+      const transformer = new Transformer([...builtInPlugins, docusMarkmapSecurityPlugin])
       const { root, features } = transformer.transform(props.content)
-      // Markmap renders each node's HTML with innerHTML inside an SVG
-      // foreignObject. The main Markdown DOMPurify pass cannot see that
-      // decoded fence content, so sanitize the transformed tree before it
-      // reaches the post-mount renderer. Reuse the exact Markdown policy;
-      // this keeps raw HTML useful while preserving the app's script/style/
-      // event-handler/URL boundary.
-      sanitizeMarkmapTree(root, createMarkdownSanitizer())
+      /* Security is installed at MarkdownIt's raw HTML token boundary.
+         Do not sanitize root.content here: after Transformer it mixes
+         author HTML with trusted KaTeX/highlight/plugin output, and a
+         blanket sanitizer would remove KaTeX's layout styles. */
       const { styles, scripts } = transformer.getUsedAssets(features)
       if (styles) loadCSS(styles)
       if (scripts) loadJS(scripts, { getMarkmap: () => ({ Markmap, deriveOptions }) })
@@ -238,16 +235,6 @@ async function mountMarkmap() {
       void mountMarkmap()
     }
   }
-}
-
-interface MarkmapNode {
-  content: string
-  children: MarkmapNode[]
-}
-
-function sanitizeMarkmapTree(node: MarkmapNode, sanitize: MarkdownSanitizer): void {
-  node.content = sanitize(node.content)
-  for (const child of node.children) sanitizeMarkmapTree(child, sanitize)
 }
 
 onMounted(() => {
