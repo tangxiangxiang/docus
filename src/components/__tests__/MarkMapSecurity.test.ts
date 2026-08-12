@@ -30,12 +30,16 @@ interface Captures {
 const captures: Captures = { roots: [], styles: [], scripts: [] }
 
 vi.mock('markmap-view', () => ({
+  refreshHook: { call() { /* no-op for the test */ } },
   Markmap: {
-    create(_svg: SVGSVGElement, _options: Record<string, unknown>, root: unknown) {
-      captures.roots.push(root)
+    create(_svg: SVGSVGElement, _options: Record<string, unknown>) {
       return {
         destroy() { /* no-op */ },
         fit() { /* no-op */ },
+        setData(root: unknown) {
+          captures.roots.push(root)
+          return Promise.resolve()
+        },
         setOptions() { /* no-op */ },
       }
     },

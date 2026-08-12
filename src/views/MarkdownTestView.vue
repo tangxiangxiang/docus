@@ -88,7 +88,8 @@ flowchart LR
 
 \`\`\`markmap
 # Knowledge
-## Preview
+## Mathematics $E = mc^2$
+## Fraction $\\frac{a}{b}$
 ## Reading
 \`\`\`
 

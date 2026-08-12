@@ -59,16 +59,53 @@ interface MarkmapTestCounters {
   createRoots: unknown[]
   destroyCalls: number[]
   setOptionsCalls: Array<Record<string, unknown>>
+  setDataCalls: unknown[]
+  fitCalls: number
+  transformCalls: number
+  retransformCallbacks: Array<() => void>
+  triggerRetransformDuringFirstTransform: boolean
+  rejectSetData: boolean
 }
 const g = globalThis as typeof globalThis & { __markmapTest?: MarkmapTestCounters }
-g.__markmapTest = { createCalls: [], createOptions: [], createRoots: [], destroyCalls: [], setOptionsCalls: [] }
+g.__markmapTest = {
+  createCalls: [],
+  createOptions: [],
+  createRoots: [],
+  destroyCalls: [],
+  setOptionsCalls: [],
+  setDataCalls: [],
+  fitCalls: 0,
+  transformCalls: 0,
+  retransformCallbacks: [],
+  triggerRetransformDuringFirstTransform: false,
+  rejectSetData: false,
+}
 
 vi.mock('markmap-lib', () => ({
   builtInPlugins: [],
   Transformer: class {
+    hooks = {
+      retransform: {
+        tap: (fn: () => void) => {
+          const t = (globalThis as typeof globalThis & { __markmapTest?: MarkmapTestCounters }).__markmapTest
+          t?.retransformCallbacks.push(fn)
+          /* Keep the callback in the test registry even after revoke().
+             This simulates an already queued upstream Promise callback,
+             which is the race the component's generation guard protects. */
+          return () => { /* no-op test revoke */ }
+        },
+      },
+    }
     transform() {
+      const t = (globalThis as typeof globalThis & { __markmapTest?: MarkmapTestCounters }).__markmapTest
+      if (t) {
+        t.transformCalls += 1
+        if (t.triggerRetransformDuringFirstTransform && t.transformCalls === 1) {
+          t.retransformCallbacks.at(-1)?.()
+        }
+      }
       return {
-        root: { content: 'root', children: [] },
+        root: { content: `root-${t?.transformCalls ?? 0}`, children: [] },
         features: {},
       }
     }
@@ -77,6 +114,7 @@ vi.mock('markmap-lib', () => ({
 }))
 
 vi.mock('markmap-view', () => ({
+  refreshHook: { call() { /* no-op for the test */ } },
   Markmap: {
     create(svg: SVGSVGElement, opts?: Record<string, unknown>, root?: unknown) {
       const t = (globalThis as typeof globalThis & { __markmapTest?: MarkmapTestCounters }).__markmapTest
@@ -90,7 +128,16 @@ vi.mock('markmap-view', () => ({
           const t2 = (globalThis as typeof globalThis & { __markmapTest?: MarkmapTestCounters }).__markmapTest
           if (t2) t2.destroyCalls.push(t2.createCalls.length)
         },
-        fit() { /* no-op for the test */ },
+        fit() {
+          const t2 = (globalThis as typeof globalThis & { __markmapTest?: MarkmapTestCounters }).__markmapTest
+          if (t2) t2.fitCalls += 1
+        },
+        setData(root: unknown) {
+          const t2 = (globalThis as typeof globalThis & { __markmapTest?: MarkmapTestCounters }).__markmapTest
+          if (t2) t2.setDataCalls.push(root)
+          if (t2?.rejectSetData) return Promise.reject(new Error('setData failed'))
+          return Promise.resolve()
+        },
         setOptions(opts: Record<string, unknown>) {
           const t2 = (globalThis as typeof globalThis & { __markmapTest?: MarkmapTestCounters }).__markmapTest
           if (t2) t2.setOptionsCalls.push({ ...opts })
@@ -183,6 +230,12 @@ beforeEach(() => {
     t.createRoots.length = 0
     t.destroyCalls.length = 0
     t.setOptionsCalls.length = 0
+    t.setDataCalls.length = 0
+    t.fitCalls = 0
+    t.transformCalls = 0
+    t.retransformCallbacks.length = 0
+    t.triggerRetransformDuringFirstTransform = false
+    t.rejectSetData = false
   }
 })
 
@@ -322,6 +375,118 @@ describe('MarkMap theme switch', () => {
     unmount()
   })
 })
+describe('MarkMap KaTeX retransform lifecycle', () => {
+  it('updates the existing instance after retransform without recreating it', async () => {
+    const { unmount } = mountStandalone()
+    await settle()
+    expect(g.__markmapTest!.createCalls).toHaveLength(1)
+    expect(g.__markmapTest!.retransformCallbacks).toHaveLength(1)
+
+    g.__markmapTest!.retransformCallbacks[0]()
+    await settle()
+
+    expect(g.__markmapTest!.transformCalls).toBe(2)
+    expect(g.__markmapTest!.createCalls).toHaveLength(1)
+    expect(g.__markmapTest!.setDataCalls).toHaveLength(2)
+    expect((g.__markmapTest!.setDataCalls.at(-1) as { content?: string }).content).toBe('root-2')
+    expect(g.__markmapTest!.fitCalls).toBe(2)
+
+    unmount()
+  })
+
+  it('does not lose a retransform that arrives before Markmap.create', async () => {
+    g.__markmapTest!.triggerRetransformDuringFirstTransform = true
+    const { unmount } = mountStandalone()
+    await settle()
+
+    expect(g.__markmapTest!.transformCalls).toBe(2)
+    expect(g.__markmapTest!.createCalls).toHaveLength(1)
+    expect(g.__markmapTest!.setDataCalls).toHaveLength(2)
+    expect((g.__markmapTest!.setDataCalls.at(-1) as { content?: string }).content).toBe('root-2')
+
+    unmount()
+  })
+
+  it('settles multiple queued callbacks without a retransform loop', async () => {
+    const { unmount } = mountStandalone()
+    await settle()
+    const callback = g.__markmapTest!.retransformCallbacks[0]
+
+    callback()
+    callback()
+    await settle()
+
+    /* Both notifications are consumed, but the second transform sees the
+       already-loaded mock runtime and cannot schedule another callback. */
+    expect(g.__markmapTest!.transformCalls).toBe(3)
+    expect(g.__markmapTest!.setDataCalls).toHaveLength(3)
+    expect(g.__markmapTest!.createCalls).toHaveLength(1)
+
+    unmount()
+  })
+
+  it('ignores a stale Transformer callback after a theme remount', async () => {
+    const { unmount } = mountStandalone()
+    await settle()
+    const callbackA = g.__markmapTest!.retransformCallbacks[0]
+
+    const { set } = useTheme()
+    set(useTheme().theme.value === 'dark' ? 'light' : 'dark')
+    await settle()
+    expect(g.__markmapTest!.createCalls).toHaveLength(2)
+    expect(g.__markmapTest!.retransformCallbacks).toHaveLength(2)
+
+    callbackA()
+    await settle()
+
+    expect(g.__markmapTest!.createCalls).toHaveLength(2)
+    expect(g.__markmapTest!.setDataCalls).toHaveLength(2)
+
+    set('light')
+    unmount()
+  })
+
+  it('makes a queued callback a no-op after unmount', async () => {
+    const { unmount } = mountStandalone()
+    await settle()
+    const callback = g.__markmapTest!.retransformCallbacks[0]
+    unmount()
+
+    expect(() => callback()).not.toThrow()
+    await settle()
+    expect(g.__markmapTest!.setDataCalls).toHaveLength(1)
+    expect(g.__markmapTest!.fitCalls).toBe(1)
+  })
+
+  it('ignores a retransform callback when the svg is detached', async () => {
+    const { host, unmount } = mountStandalone()
+    await settle()
+    const callback = g.__markmapTest!.retransformCallbacks[0]
+    const widget = host.querySelector<HTMLElement>('.markmap-widget')!
+    widget.remove()
+
+    expect(() => callback()).not.toThrow()
+    await settle()
+    expect(g.__markmapTest!.setDataCalls).toHaveLength(1)
+    expect(g.__markmapTest!.fitCalls).toBe(1)
+
+    unmount()
+  })
+
+  it('localizes a setData failure without an unhandled rejection', async () => {
+    const { host, unmount } = mountStandalone()
+    await settle()
+    g.__markmapTest!.rejectSetData = true
+    g.__markmapTest!.retransformCallbacks[0]()
+    await settle()
+
+    expect(g.__markmapTest!.setDataCalls).toHaveLength(2)
+    expect(host.querySelector('.markmap-error')?.textContent).toContain('setData failed')
+
+    unmount()
+  })
+})
+
 describe('MarkMap lock toggle', () => {
   it('mounts locked by default and unlocks via setOptions on click', async () => {
     const { unmount, host } = mountStandalone()

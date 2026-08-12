@@ -16,6 +16,12 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(article.locator('.math-block .katex-display')).toBeVisible()
     await expect(article.locator('.mermaid-svg > svg')).toBeVisible()
     await expect(article.locator('svg.markmap-svg')).toBeVisible()
+    const markmap = article.locator('.markmap-widget-host')
+    await expect(markmap).toBeVisible()
+    /* The page also contains ordinary Markdown math. Scope this assertion
+       to the Markmap host so it proves browser KaTeX autoload → retransform
+       → setData, rather than accidentally matching the article's math. */
+    await expect(markmap.locator('.katex').first()).toBeVisible()
     await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
     await expect(page).toHaveScreenshot(`markdown-${mode}-${theme}.png`, {
       fullPage: true,

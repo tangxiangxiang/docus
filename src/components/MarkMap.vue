@@ -18,6 +18,8 @@
 import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useTheme } from '../composables/useTheme'
 import { docusMarkmapSecurityPlugin } from '../lib/markmapSecurity'
+import type { IMarkmapOptions } from 'markmap-view'
+import type { Transformer as MarkmapTransformer } from 'markmap-lib'
 
 const props = defineProps<{
   /** Source markdown the Transformer should parse. */
@@ -68,7 +70,14 @@ function hashStr(s: string): number {
   return h
 }
 
-interface MmInstance { destroy?: () => void; fit?: () => void }
+type MmData = ReturnType<MarkmapTransformer['transform']>['root']
+
+interface MmInstance {
+  destroy?: () => void
+  fit?: (maxScale?: number) => Promise<void> | void
+  setData?: (data?: MmData | null, opts?: Partial<IMarkmapOptions>) => Promise<void>
+  setOptions?: (opts: Record<string, unknown>) => void
+}
 let mm: MmInstance | null = null
 
 /* `mountMarkmap` is idempotent: it tears down any previous instance
@@ -79,6 +88,8 @@ let mm: MmInstance | null = null
 let mountPromise: Promise<void> | null = null
 let pendingRemount = false
 let disposed = false
+let generation = 0
+let revokeRetransform: (() => void) | null = null
 
 /* Two layout gates on top of the isConnected check (see inside
    mountMarkmap). The d3 force layout that markmap kicks off reads
@@ -148,6 +159,12 @@ function scheduleMount() {
    the in-flight fit() transition to stop so it can't write a
    `translate(NaN,NaN)` transform to a 0×0 svg). */
 function teardownInstance() {
+  /* Invalidate the Transformer closure before destroying the view. A
+     retransform can already be queued by KaTeX's async autoloader; the
+     callback must never be allowed to update a later mount. */
+  generation += 1
+  revokeRetransform?.()
+  revokeRetransform = null
   mm?.destroy?.()
   mm = null
   const svg = svgRef.value
@@ -186,8 +203,10 @@ async function mountMarkmap() {
        just calling mm.fit() with new opts wouldn't re-tint existing
        link strokes (markmap caches the resolved color per node). */
     teardownInstance()
+    const mountGeneration = generation
+    const source = props.content
     try {
-      const [{ Transformer, builtInPlugins }, { Markmap, loadCSS, loadJS, deriveOptions }] =
+      const [{ Transformer, builtInPlugins }, { Markmap, loadCSS, loadJS, deriveOptions, refreshHook }] =
         await Promise.all([import('markmap-lib'), import('markmap-view')])
       /* If the article was re-rendered while we were awaiting
          imports (e.g. the user switched documents in the vault),
@@ -205,25 +224,124 @@ async function mountMarkmap() {
          has been detached. The new widget for the next document
          will get its own mountMarkmap call from its own onMounted;
          this one is finished. */
-      if (disposed || !svg.isConnected) return
+      if (disposed || mountGeneration !== generation || !svg.isConnected) return
       const transformer = new Transformer([...builtInPlugins, docusMarkmapSecurityPlugin])
-      const { root, features } = transformer.transform(props.content)
+      let instance: MmInstance | null = null
+      let retransformPending = false
+      let initialDataPending = true
+      let refreshPromise: Promise<void> | null = null
+      let refreshRequested = false
+
+      const isCurrentMount = () =>
+        !disposed && mountGeneration === generation && svg.isConnected
+
+      const isCurrentInstance = () =>
+        isCurrentMount() && instance !== null && mm === instance
+
+      async function refreshFromTransformer() {
+        if (!isCurrentInstance() || !instance) return
+        try {
+          /* Always use the source captured by this mount. In particular,
+             an old Transformer must not transform a newer document's
+             props after a fast document switch. */
+          const { root } = transformer.transform(source)
+          if (!isCurrentInstance()) return
+          if (!instance.setData) return
+          await instance.setData(root)
+          if (!isCurrentInstance()) return
+          await instance.fit?.()
+          if (isCurrentInstance()) mountError.value = null
+        } catch (error) {
+          /* A late retransform failure must not destroy a working
+             Markmap instance or become an unhandled Promise rejection. */
+          if (isCurrentInstance()) {
+            mountError.value = (error as Error).message
+          }
+        }
+      }
+
+      function requestRetransform() {
+        if (!isCurrentMount()) return
+        if (!instance || mm !== instance || initialDataPending) {
+          /* KaTeX can finish before Markmap.create if the asset is cached.
+             Preserve that one-shot notification and consume it after the
+             initial instance data has been committed. */
+          retransformPending = true
+          return
+        }
+        refreshRequested = true
+        if (refreshPromise) return
+        const run = (async () => {
+          while (refreshRequested && isCurrentInstance()) {
+            refreshRequested = false
+            await refreshFromTransformer()
+          }
+        })()
+        refreshPromise = run
+        void run.then(
+          () => {
+            if (refreshPromise === run) refreshPromise = null
+          },
+          () => {
+            if (refreshPromise === run) refreshPromise = null
+          },
+        )
+      }
+
+      /* markmap-lib's browser KaTeX/highlight plugins use this hook after
+         their first asynchronous asset load. Keep the hook attached to
+         this exact Transformer and consume it with setData on the same
+         Markmap instance; do not recreate the D3 widget. */
+      const revoke = transformer.hooks.retransform.tap(() => {
+        if (!isCurrentMount()) return
+        requestRetransform()
+      })
+      revokeRetransform = revoke
+      if (!isCurrentMount()) {
+        revoke()
+        if (revokeRetransform === revoke) revokeRetransform = null
+        return
+      }
+
+      const { root, features } = transformer.transform(source)
       /* Security is installed at MarkdownIt's raw HTML token boundary.
          Do not sanitize root.content here: after Transformer it mixes
          author HTML with trusted KaTeX/highlight/plugin output, and a
          blanket sanitizer would remove KaTeX's layout styles. */
       const { styles, scripts } = transformer.getUsedAssets(features)
       if (styles) loadCSS(styles)
-      if (scripts) loadJS(scripts, { getMarkmap: () => ({ Markmap, deriveOptions }) })
-      if (disposed || !svg.isConnected) return
-      mm = Markmap.create(svg, {
+      if (scripts) loadJS(scripts, { getMarkmap: () => ({ Markmap, deriveOptions, refreshHook }) })
+      if (!isCurrentMount()) return
+      const created = Markmap.create(svg, {
         autoFit: true,
         color: colorForNode,
         pan: !isLocked.value,
         zoom: !isLocked.value,
-      }, root) as unknown as MmInstance
+      }) as unknown as MmInstance
+      if (!isCurrentMount()) {
+        created.destroy?.()
+        return
+      }
+      instance = created
+      mm = instance
+      /* Markmap.create(data) starts an internal, unawaitable setData(). A
+         retransform can race that hidden Promise and leave the old raw-TeX
+         render on top of the KaTeX render. Create the view empty, then own
+         the initial setData Promise so every later retransform is serialized
+         after it. */
+      if (!instance.setData) throw new Error('Markmap instance does not support setData')
+      await instance.setData(root)
+      if (!isCurrentInstance()) return
+      await instance.fit?.()
+      initialDataPending = false
+      if (retransformPending) {
+        retransformPending = false
+        requestRetransform()
+      }
     } catch (e) {
-      mountError.value = (e as Error).message
+      if (!disposed && mountGeneration === generation) {
+        mountError.value = (e as Error).message
+      }
     }
   })()
   try {
@@ -299,13 +417,22 @@ watch(theme, () => {
   scheduleMount()
 })
 
+/* MarkMap is normally recreated by useMarkmapMount when a Markdown
+   placeholder is replaced. Keep the component correct if a caller updates
+   its content prop in place as well: invalidate the old Transformer and
+   remount with a source captured by the new generation. */
+watch(() => props.content, () => {
+  teardownInstance()
+  scheduleMount()
+})
+
 /* Lock toggle → flip pan/zoom in place. setOptions() updates markmap's
    internal option map and the next pointer event consults the new
    flags, so the user feels the change immediately. Falling back to
    a full rebuild is fine if a future markmap drops setOptions —
    the rebuild path is the one we already exercise on theme change. */
 watch(isLocked, (locked) => {
-  const inst = mm as (MmInstance & { setOptions?: (o: Record<string, unknown>) => void }) | null
+  const inst = mm
   if (inst?.setOptions) {
     inst.setOptions({ pan: !locked, zoom: !locked })
   } else {
@@ -323,8 +450,7 @@ onBeforeUnmount(() => {
   resizeObserver?.disconnect()
   resizeObserver = null
   document.removeEventListener('fullscreenchange', onFullscreenChange)
-  mm?.destroy?.()
-  mm = null
+  teardownInstance()
   /* Always exit fullscreen if WE are the fullscreen element, otherwise
      the browser keeps the body locked and the next mount looks broken. */
   if (document.fullscreenElement === wrapperRef.value) {
