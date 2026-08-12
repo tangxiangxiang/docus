@@ -90,6 +90,94 @@ export interface EmojiCompletionContext {
   reason?: 'missing-colon' | 'empty-query' | 'boundary' | 'url' | 'inline-code' | 'fenced-code'
 }
 
+export interface MarkdownFenceState {
+  character: '`' | '~'
+  length: number
+}
+
+export interface MarkdownFenceMarker extends MarkdownFenceState {
+  trailing: string
+}
+
+/**
+ * Parses the small subset of CommonMark fence syntax needed by completion.
+ * The returned trailing text is used to distinguish openers from closers.
+ */
+export function markdownFenceMarker(line: string): MarkdownFenceMarker | null {
+  const match = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line)
+  if (!match) return null
+  const trailing = match[2]
+  // CommonMark does not allow backticks in a backtick fence's info string.
+  if (match[1][0] === '`' && trailing.includes('`')) return null
+  return {
+    character: match[1][0] as '`' | '~',
+    length: match[1].length,
+    trailing,
+  }
+}
+
+export function advanceMarkdownFenceState(
+  line: string,
+  state: MarkdownFenceState | null,
+): MarkdownFenceState | null {
+  const marker = markdownFenceMarker(line)
+  if (!marker) return state
+  if (!state) return { character: marker.character, length: marker.length }
+  if (
+    marker.character === state.character
+    && marker.length >= state.length
+    && marker.trailing.trim() === ''
+  ) {
+    return null
+  }
+  return state
+}
+
+export function isMarkdownFenceMarkerLine(line: string): boolean {
+  return markdownFenceMarker(line) !== null
+}
+
+export class MarkdownFenceStateCache {
+  private readonly statesAfterLine: Array<MarkdownFenceState | null | undefined> = []
+  private computedThrough = 0
+
+  reset(): void {
+    this.statesAfterLine.length = 0
+    this.computedThrough = 0
+  }
+
+  invalidateFrom(lineNumber: number): void {
+    const firstInvalidLine = Math.max(1, Math.floor(lineNumber))
+    if (firstInvalidLine > this.computedThrough) return
+    this.computedThrough = firstInvalidLine - 1
+    this.statesAfterLine.length = this.computedThrough + 1
+  }
+
+  stateBeforeLine(lineNumber: number, getLineContent: (line: number) => string): MarkdownFenceState | null {
+    const targetLine = Math.max(1, Math.floor(lineNumber))
+    const targetStateLine = targetLine - 1
+    if (targetStateLine <= this.computedThrough) {
+      return targetStateLine > 0 ? (this.statesAfterLine[targetStateLine] ?? null) : null
+    }
+
+    let state = this.computedThrough > 0
+      ? (this.statesAfterLine[this.computedThrough] ?? null)
+      : null
+
+    for (let currentLine = this.computedThrough + 1; currentLine <= targetStateLine; currentLine += 1) {
+      state = advanceMarkdownFenceState(getLineContent(currentLine), state)
+      this.statesAfterLine[currentLine] = state
+    }
+    if (targetStateLine > this.computedThrough) this.computedThrough = targetStateLine
+    return state
+  }
+
+  isInsideOrOnFenceLine(lineNumber: number, getLineContent: (line: number) => string): boolean {
+    const stateBefore = this.stateBeforeLine(lineNumber, getLineContent)
+    return stateBefore !== null || isMarkdownFenceMarkerLine(getLineContent(lineNumber))
+  }
+}
+
 interface EmojiCompletionContextOptions {
   explicitInvocation?: boolean
   inFencedCode?: boolean

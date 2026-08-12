@@ -19,6 +19,7 @@ import {
   markdownLinkFromPaste,
   markdownHeadingTargets,
   markdownWrapEdit,
+  MarkdownFenceStateCache,
   rankWikiTargets,
   wikiLinkAtColumn,
   writingDiagnostics,
@@ -61,6 +62,7 @@ let linkPaths: string[] = []
 let targetsByPath = new Map<string, EditorLinkTarget>()
 const resolvedLinkCache = new Map<string, string | null>()
 const headingCache = new Map<string, Promise<ReturnType<typeof markdownHeadingTargets>>>()
+const fenceStateCache = new MarkdownFenceStateCache()
 
 function recentLinks(): string[] {
   try {
@@ -212,29 +214,8 @@ function scheduleMarkdownDecorations() {
   decorationTimer = setTimeout(refreshMarkdownDecorations, 120)
 }
 
-const MAX_FENCE_CONTEXT_LINES = 200
-
-function isFenceMarker(line: string): { character: '`' | '~'; length: number } | null {
-  const match = /^\s{0,3}(`{3,}|~{3,})/.exec(line)
-  if (!match) return null
-  return { character: match[1][0] as '`' | '~', length: match[1].length }
-}
-
 function isInsideFencedCode(currentModel: monaco.editor.ITextModel, lineNumber: number): boolean {
-  const startLine = Math.max(1, lineNumber - MAX_FENCE_CONTEXT_LINES + 1)
-  let fence: { character: '`' | '~'; length: number } | null = null
-  for (let currentLine = startLine; currentLine <= lineNumber; currentLine += 1) {
-    const marker = isFenceMarker(currentModel.getLineContent(currentLine))
-    if (!marker) continue
-    if (!fence) fence = marker
-    else if (marker.character === fence.character && marker.length >= fence.length) fence = null
-    // A fence marker line itself is never a valid Emoji completion line.
-    if (currentLine === lineNumber) return true
-  }
-  // If the bounded window starts in the middle of a document, the first
-  // marker may be an opener or a closer from before the window. Suppress
-  // suggestions rather than risk popping inside a very long fenced block.
-  return fence !== null || startLine > 1
+  return fenceStateCache.isInsideOrOnFenceLine(lineNumber, (line) => currentModel.getLineContent(line))
 }
 
 const completionProvider: monaco.languages.CompletionItemProvider = {
@@ -372,6 +353,7 @@ const hoverProvider: monaco.languages.HoverProvider = {
 onMounted(() => {
   if (!host.value) return
   model = acquireMarkdownModel(props.path, props.modelValue)
+  fenceStateCache.reset()
   bindMarkdownProviderContext(model, { completion: completionProvider, hover: hoverProvider })
   editor = monaco.editor.create(host.value, {
     model,
@@ -426,7 +408,12 @@ onMounted(() => {
   const saved = readViewState()
   if (saved) editor.restoreViewState(saved)
   refreshMarkdownDecorations()
-  editor.onDidChangeModelContent(() => {
+  editor.onDidChangeModelContent((event) => {
+    const firstAffectedLine = event?.changes.reduce(
+      (line, change) => Math.min(line, change.range.startLineNumber),
+      Number.POSITIVE_INFINITY,
+    )
+    fenceStateCache.invalidateFrom(Number.isFinite(firstAffectedLine) ? firstAffectedLine : 1)
     scheduleMarkdownDecorations()
     if (suppressChange || composing || !model) return
     emit('update:modelValue', model.getValue())
@@ -581,6 +568,7 @@ watch(() => props.path, (nextPath, previousPath) => {
   saveViewState(previousPath)
   if (model) unbindMarkdownProviderContext(model)
   model = acquireMarkdownModel(nextPath, props.modelValue)
+  fenceStateCache.reset()
   bindMarkdownProviderContext(model, { completion: completionProvider, hover: hoverProvider })
   editor.setModel(model)
   const state = readViewState(nextPath)

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 
 const mocks = vi.hoisted(() => {
-  const changeListeners: Array<() => void> = []
+  const changeListeners: Array<(event?: { changes: Array<{ range: { startLineNumber: number } }> }) => void> = []
   const blurListeners: Array<() => void> = []
   const compositionStartListeners: Array<() => void> = []
   const compositionEndListeners: Array<() => void> = []
@@ -28,7 +28,7 @@ const mocks = vi.hoisted(() => {
     saveViewState: vi.fn(() => ({ cursorState: [], viewState: {} })),
     restoreViewState: vi.fn(),
     deltaDecorations: vi.fn(() => []),
-    onDidChangeModelContent: vi.fn((fn: () => void) => { changeListeners.push(fn) }),
+    onDidChangeModelContent: vi.fn((fn: (event?: { changes: Array<{ range: { startLineNumber: number } }> }) => void) => { changeListeners.push(fn) }),
     onDidBlurEditorWidget: vi.fn((fn: () => void) => { blurListeners.push(fn) }),
     onDidCompositionStart: vi.fn((fn: () => void) => { compositionStartListeners.push(fn) }),
     onDidCompositionEnd: vi.fn((fn: () => void) => { compositionEndListeners.push(fn) }),
@@ -103,6 +103,26 @@ import EditorPane from '../EditorPane.vue'
 import { resetMarkdownModelsForTesting } from '../monacoModels'
 
 describe('Monaco EditorPane', () => {
+  function setDocumentLines(lines: string[]) {
+    mocks.model.value = lines.join('\n')
+    mocks.model.getLineContent.mockImplementation((lineNumber?: number) => lines[(lineNumber ?? 1) - 1] ?? '')
+    mocks.model.getLineCount.mockImplementation(() => lines.length)
+    mocks.model.getValueInRange.mockImplementation((range?: { startLineNumber: number; endLineNumber: number; endColumn: number }) => {
+      if (!range) return ''
+      if (range.startLineNumber !== range.endLineNumber) return ''
+      return (lines[range.startLineNumber - 1] ?? '').slice(0, Math.max(0, range.endColumn - 1))
+    })
+  }
+
+  async function completeEmojiAt(provider: any, lines: string[], lineNumber: number) {
+    setDocumentLines(lines)
+    return provider.provideCompletionItems(
+      mocks.model,
+      { lineNumber, column: 5 },
+      { triggerKind: 1, triggerCharacter: ':' },
+    )
+  }
+
   beforeEach(() => {
     resetMarkdownModelsForTesting()
     localStorage.clear()
@@ -266,6 +286,112 @@ describe('Monaco EditorPane', () => {
     )
     expect(composingResult.suggestions).toEqual([])
     mocks.compositionEndListeners.forEach((fn) => fn())
+    wrapper.unmount()
+  })
+
+  it('keeps Emoji completion available in ordinary documents after line 200', async () => {
+    const wrapper = mount(EditorPane, { props: { modelValue: ':smi', path: 'inbox/emoji-line-251' } })
+    const provider = mocks.completionProviders.at(-1)
+    const lines = [...Array.from({ length: 250 }, (_, index) => `normal ${index + 1}`), ':smi']
+    const result = await completeEmojiAt(provider, lines, 251)
+    expect(result.suggestions[0]).toMatchObject({ label: '😄 :smile:' })
+    wrapper.unmount()
+  })
+
+  it('keeps Emoji completion available at line 1001 without a full-value read', async () => {
+    const wrapper = mount(EditorPane, { props: { modelValue: ':smi', path: 'inbox/emoji-line-1001' } })
+    const provider = mocks.completionProviders.at(-1)
+    const lines = [...Array.from({ length: 1000 }, (_, index) => `normal ${index + 1}`), ':smi']
+    mocks.model.getValue.mockClear()
+    const result = await completeEmojiAt(provider, lines, 1001)
+    expect(result.suggestions[0]).toMatchObject({ label: '😄 :smile:' })
+    expect(mocks.model.getValue).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('reuses cached fence state when typing repeatedly on a distant line', async () => {
+    const wrapper = mount(EditorPane, { props: { modelValue: ':smi', path: 'inbox/emoji-cache' } })
+    const provider = mocks.completionProviders.at(-1)
+    const lines = [...Array.from({ length: 1000 }, (_, index) => `normal ${index + 1}`), ':smi']
+    await completeEmojiAt(provider, lines, 1001)
+    const readsAfterFirstCompletion = mocks.model.getLineContent.mock.calls.length
+    lines[1000] = ':smil'
+    setDocumentLines(lines)
+    const result = await provider.provideCompletionItems(
+      mocks.model,
+      { lineNumber: 1001, column: 6 },
+      { triggerKind: 1, triggerCharacter: ':' },
+    )
+    expect(result.suggestions[0]).toMatchObject({ label: '😄 :smile:' })
+    expect(mocks.model.getLineContent.mock.calls.length - readsAfterFirstCompletion).toBe(1)
+    wrapper.unmount()
+  })
+
+  it('suppresses Emoji inside a long open fence but resumes after a later close', async () => {
+    const openWrapper = mount(EditorPane, { props: { modelValue: ':smi', path: 'inbox/emoji-long-open' } })
+    const openProvider = mocks.completionProviders.at(-1)
+    const openLines = Array.from({ length: 251 }, (_, index) => {
+      if (index === 0) return '```text'
+      if (index === 250) return ':smi'
+      return `code ${index + 1}`
+    })
+    const openResult = await completeEmojiAt(openProvider, openLines, 251)
+    expect(openResult.suggestions).toEqual([])
+    openWrapper.unmount()
+
+    const closedWrapper = mount(EditorPane, { props: { modelValue: ':smi', path: 'inbox/emoji-long-closed' } })
+    const closedProvider = mocks.completionProviders.at(-1)
+    const closedLines = Array.from({ length: 251 }, (_, index) => {
+      if (index === 0) return '```text'
+      if (index === 219) return '```'
+      if (index === 250) return ':smi'
+      return `code ${index + 1}`
+    })
+    const closedResult = await completeEmojiAt(closedProvider, closedLines, 251)
+    expect(closedResult.suggestions[0]).toMatchObject({ label: '😄 :smile:' })
+    closedWrapper.unmount()
+  })
+
+  it('suppresses Emoji inside nearby, tilde, and longer-fence code blocks', async () => {
+    const nearbyWrapper = mount(EditorPane, { props: { modelValue: ':smi', path: 'inbox/emoji-nearby-fence' } })
+    const nearbyProvider = mocks.completionProviders.at(-1)
+    const nearbyLines = Array.from({ length: 230 }, (_, index) => {
+      if (index === 224) return '```text'
+      if (index === 229) return ':smi'
+      return `normal ${index + 1}`
+    })
+    expect((await completeEmojiAt(nearbyProvider, nearbyLines, 230)).suggestions).toEqual([])
+    nearbyWrapper.unmount()
+
+    const tildeWrapper = mount(EditorPane, { props: { modelValue: ':smi', path: 'inbox/emoji-tilde-fence' } })
+    const tildeProvider = mocks.completionProviders.at(-1)
+    const tildeLines = ['~~~text', ':smi', '~~~', ':smi']
+    expect((await completeEmojiAt(tildeProvider, tildeLines, 2)).suggestions).toEqual([])
+    const tildeResult = await completeEmojiAt(tildeProvider, tildeLines, 4)
+    expect(tildeResult.suggestions[0]).toMatchObject({ label: '😄 :smile:' })
+    tildeWrapper.unmount()
+
+    const lengthWrapper = mount(EditorPane, { props: { modelValue: ':smi', path: 'inbox/emoji-longer-fence' } })
+    const lengthProvider = mocks.completionProviders.at(-1)
+    const lengthLines = [' ````text', 'code', '```', ':smi', '````', ':smi']
+    expect((await completeEmojiAt(lengthProvider, lengthLines, 4)).suggestions).toEqual([])
+    const lengthResult = await completeEmojiAt(lengthProvider, lengthLines, 6)
+    expect(lengthResult.suggestions[0]).toMatchObject({ label: '😄 :smile:' })
+    lengthWrapper.unmount()
+  })
+
+  it('does not close a fence on trailing non-whitespace text and invalidates changed lines', async () => {
+    const wrapper = mount(EditorPane, { props: { modelValue: ':smi', path: 'inbox/emoji-fence-edit' } })
+    const provider = mocks.completionProviders.at(-1)
+    const lines = ['```text', '```not-close', ':smi']
+    expect((await completeEmojiAt(provider, lines, 3)).suggestions).toEqual([])
+
+    lines[0] = 'normal'
+    lines[1] = 'code'
+    setDocumentLines(lines)
+    mocks.changeListeners.forEach((listener) => listener({ changes: [{ range: { startLineNumber: 1 } }] }))
+    const result = await completeEmojiAt(provider, lines, 3)
+    expect(result.suggestions[0]).toMatchObject({ label: '😄 :smile:' })
     wrapper.unmount()
   })
 

@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   filterMarkdownSlashCommands, indentMarkdownLine, MARKDOWN_SLASH_COMMANDS, MARKDOWN_WRAPS, markdownContinuation, markdownDecorationSpecs, markdownHeadingTargets, writingDiagnostics,
-  getEmojiCompletionContext, isInsideMarkdownInlineCode, markdownLinkFromPaste, markdownWrapEdit, rankWikiTargets, toggleMarkdownWrap, wikiLinkAtColumn,
+  advanceMarkdownFenceState, getEmojiCompletionContext, isInsideMarkdownInlineCode, isMarkdownFenceMarkerLine, markdownLinkFromPaste, MarkdownFenceStateCache, markdownWrapEdit, rankWikiTargets, toggleMarkdownWrap, wikiLinkAtColumn,
 } from '../monacoMarkdown'
 
 describe('Monaco Markdown helpers', () => {
@@ -88,6 +88,38 @@ describe('Monaco Markdown helpers', () => {
     expect(isInsideMarkdownInlineCode('`foo` :smi')).toBe(false)
     expect(getEmojiCompletionContext('`foo :smi', 10)).toMatchObject({ valid: false, reason: 'inline-code' })
     expect(getEmojiCompletionContext(':smi', 5, { inFencedCode: true })).toMatchObject({ valid: false, reason: 'fenced-code' })
+  })
+
+  it('tracks Markdown fence state with CommonMark-compatible marker rules', () => {
+    expect(advanceMarkdownFenceState('```js', null)).toEqual({ character: '`', length: 3 })
+    expect(advanceMarkdownFenceState('~~~js', null)).toEqual({ character: '~', length: 3 })
+    expect(advanceMarkdownFenceState('``', { character: '`', length: 3 })).toEqual({ character: '`', length: 3 })
+    expect(advanceMarkdownFenceState('~~~', { character: '`', length: 3 })).toEqual({ character: '`', length: 3 })
+    expect(advanceMarkdownFenceState('```not-close', { character: '`', length: 3 })).toEqual({ character: '`', length: 3 })
+    expect(advanceMarkdownFenceState('````', { character: '`', length: 3 })).toBeNull()
+    expect(advanceMarkdownFenceState('```  ', { character: '`', length: 3 })).toBeNull()
+    expect(advanceMarkdownFenceState('~~~', { character: '~', length: 3 })).toBeNull()
+    expect(isMarkdownFenceMarkerLine('```js')).toBe(true)
+    expect(isMarkdownFenceMarkerLine('  ~~~')).toBe(true)
+    expect(isMarkdownFenceMarkerLine('    ```js')).toBe(false)
+  })
+
+  it('caches fence state by line and invalidates only from the changed line', () => {
+    const lines = ['```text', 'code', '```', ':smi']
+    const cache = new MarkdownFenceStateCache()
+    const getLineContent = vi.fn((lineNumber: number) => lines[lineNumber - 1] ?? '')
+
+    expect(cache.isInsideOrOnFenceLine(2, getLineContent)).toBe(true)
+    expect(cache.isInsideOrOnFenceLine(4, getLineContent)).toBe(false)
+    const readsAfterFirstScan = getLineContent.mock.calls.length
+    expect(cache.isInsideOrOnFenceLine(4, getLineContent)).toBe(false)
+    expect(getLineContent).toHaveBeenCalledTimes(readsAfterFirstScan + 1)
+
+    lines[2] = 'code'
+    cache.invalidateFrom(3)
+    expect(cache.isInsideOrOnFenceLine(4, getLineContent)).toBe(true)
+    expect(cache.isInsideOrOnFenceLine(4, getLineContent)).toBe(true)
+    expect(getLineContent.mock.calls.at(-1)?.[0]).toBe(3)
   })
 
   it('provides renderer-supported snippets for the missing Markdown structures', () => {
