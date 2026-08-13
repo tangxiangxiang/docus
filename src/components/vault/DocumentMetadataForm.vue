@@ -13,6 +13,10 @@ import { useI18n } from '../../composables/useI18n'
 import { ICON_AI } from './icons'
 import type { MetadataBase, MetadataContext, MetadataDraft, MetadataDraftKey } from './metadataDraftStore'
 import {
+  normalizeTagDisplay,
+  normalizeTagIdentity,
+} from '../../../shared/tagNormalization'
+import {
   getMetadataDraft,
   metadataDraftKey,
   metadataDrafts,
@@ -68,6 +72,11 @@ let applyingFields = false
 type ActiveMetadataSave = {
   revision: number
   payload: UpdateDocumentMetadata
+  intended: {
+    title: string
+    summary: string
+    tags: string[]
+  }
   base: MetadataBase
 }
 const activeSaveByKey = new Map<MetadataDraftKey, ActiveMetadataSave>()
@@ -103,9 +112,9 @@ function join(values: string[]): string { return values.join(', ') }
 
 function split(value: string): string[] {
   const seen = new Set<string>()
-  return value.split(/[,\n]/).map((item) => item.trim()).filter((item) => {
-    const key = item.toLocaleLowerCase()
-    if (!item || seen.has(key)) return false
+  return value.split(/[,\n]/).map((item) => normalizeTagDisplay(item)).filter((item) => {
+    const key = normalizeTagIdentity(item)
+    if (!item || !key || seen.has(key)) return false
     seen.add(key)
     return true
   })
@@ -270,13 +279,13 @@ function snapshotVisibleFieldsWithRevision(): MetadataFieldSnapshot {
 }
 
 function fieldsFromSavePayload(
-  payload: UpdateDocumentMetadata,
+  intended: ActiveMetadataSave['intended'],
   revision: number,
 ): MetadataFieldSnapshot {
   return {
-    title: payload.title,
-    summary: payload.summary,
-    tagsText: join(payload.tags),
+    title: intended.title,
+    summary: intended.summary,
+    tagsText: join(intended.tags),
     revision,
   }
 }
@@ -291,9 +300,9 @@ function metadataMatchesPayload(
   metadata: DocumentMetadata,
   payload: UpdateDocumentMetadata,
 ): boolean {
-  return normalizeTitle(metadata.title) === payload.title
-    && normalizeSummary(metadata.summary) === payload.summary
-    && JSON.stringify(split(join(metadata.tags))) === JSON.stringify(payload.tags)
+  return (payload.title === undefined || normalizeTitle(metadata.title) === payload.title)
+    && (payload.summary === undefined || normalizeSummary(metadata.summary) === payload.summary)
+    && (payload.tags === undefined || JSON.stringify(split(join(metadata.tags))) === JSON.stringify(split(join(payload.tags))))
 }
 
 type SaveContext = {
@@ -338,13 +347,13 @@ function reconcileMetadataAgainstBase(
   const candidate = newerDraft ?? (
     context.outcome === 'confirmed-saved'
       ? null
-      : fieldsFromSavePayload(context.activeSave.payload, context.activeSave.revision)
+      : fieldsFromSavePayload(context.activeSave.intended, context.activeSave.revision)
   )
   const hasNewerFields = candidate !== null && candidate.revision > context.activeSave.revision
   const provisionalBase: MetadataBase = {
-    title: context.activeSave.payload.title,
-    summary: context.activeSave.payload.summary,
-    tags: [...context.activeSave.payload.tags],
+    title: context.activeSave.intended.title,
+    summary: context.activeSave.intended.summary,
+    tags: [...context.activeSave.intended.tags],
     updatedAt: context.activeSave.base.updatedAt,
   }
   const reconciliationBase = context.outcome === 'unknown' && hasNewerFields
@@ -439,10 +448,18 @@ async function save(): Promise<void> {
   const savingDocumentId = identity.documentId
   const savingKey = metadataDraftKey(identity)
   const savingRevision = draftRevision.value
-  const payload = snapshotCurrentFields()
+  const intended = snapshotCurrentFields()
   const savingBase = loadedBase.value
   if (!savingBase) return
-  const saveSnapshot: ActiveMetadataSave = { revision: savingRevision, payload, base: savingBase }
+  const payload: UpdateDocumentMetadata = {}
+  if (intended.title !== savingBase.title) payload.title = intended.title
+  if (intended.summary !== savingBase.summary) payload.summary = intended.summary
+  if (JSON.stringify(intended.tags) !== JSON.stringify(savingBase.tags)) {
+    payload.tags = intended.tags
+    payload.expectedUpdatedAt = savingBase.updatedAt
+  }
+  if (Object.keys(payload).length === 0) return
+  const saveSnapshot: ActiveMetadataSave = { revision: savingRevision, payload, intended, base: savingBase }
   activeSaveByKey.set(savingKey, saveSnapshot)
   saving.value = true
   try {

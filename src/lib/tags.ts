@@ -52,6 +52,15 @@
 //     "caller has no info" and returns the original index
 //     untouched, never zeroing anything.
 
+import {
+  normalizeTagDisplay as normalizeSharedTagDisplay,
+  normalizeTagIdentity as normalizeSharedTagIdentity,
+} from '../../shared/tagNormalization'
+
+/** Phase 1 compatibility exports backed by the shared identity contract. */
+export const normalizeTag = normalizeSharedTagIdentity
+export const normalizeTagDisplay = normalizeSharedTagDisplay
+
 /**
  * Canonical tag identity. Two tag strings that normalize to the same
  * value are the same tag for matching purposes. The index records the
@@ -138,35 +147,6 @@ export interface DocumentTagsDelta {
  * We do NOT do NFKC normalization here — that would rewrite `ﬁ` →
  * `fi` etc. and silently change user-authored tag names.
  */
-export function normalizeTag(raw: string | undefined | null): string {
-  if (raw == null) return ''
-  const trimmed = raw.trim()
-  if (!trimmed) return ''
-  // Strip at most one leading `#`. Multiple `##java` is preserved
-  // verbatim so a user who actually names a tag `##java` doesn't
-  // have it silently turned into `java`. The trim after the strip
-  // handles the `# java` → `' java'` → ` java` case (without the
-  // re-trim the function would return a leading-space string that
-  // looks normalized but never matches anything in the index).
-  const stripped = trimmed.startsWith('#') ? trimmed.slice(1) : trimmed
-  const out = stripped.trim().toLowerCase()
-  return out
-}
-
-/**
- * Display form for the UI: trim and strip one leading `#`, preserve
- * original casing. Used by `buildTagIndex` so a metadata field that
- * contains the literal `#java` shows up in the tag list as `#java`
- * rather than `##java`.
- */
-export function normalizeTagDisplay(raw: string | undefined | null): string {
-  if (raw == null) return ''
-  const trimmed = raw.trim()
-  if (!trimmed) return ''
-  const stripped = trimmed.startsWith('#') ? trimmed.slice(1) : trimmed
-  return stripped.trim()
-}
-
 /**
  * Parse a free-text query into a structured `TagQuery`. Whitespace
  * separates tokens. Recognized token shapes:

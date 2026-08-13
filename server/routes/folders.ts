@@ -65,7 +65,8 @@ import { captureDurableDirectoryIdentity } from '../durableDirectoryIdentity.js'
 import { CONTENT_DIR, filePathFor, folderPathFor, isValidPathSyntax } from '../paths.js'
 import { rewriteDocumentReferences } from '../renameReferences.js'
 import { listSubtreePaths } from '../tree.js'
-import { bad, ensureMetadata, exists, metadataDb } from './shared.js'
+import { bad, ensureMetadata, exists, metadataDb, recordCommittedMetadata } from './shared.js'
+import { nextMetadataBatchUpdatedAt } from '../metadataVersion.js'
 
 const folderRoutes = new Hono()
 
@@ -437,6 +438,9 @@ folderRoutes.patch('/api/folders/*', async (c) => {
       ],
     )
     journalUuid = randomUUID()
+    const journalDocumentVersions = (preparedMetadataSnapshot.documents as Array<{ updated_at: unknown }>)
+      .map((row) => Number(row.updated_at))
+    const transactionTimestamp = nextMetadataBatchUpdatedAt(journalDocumentVersions, Date.now())
     folderMoveJournal = {
       version: FOLDER_MOVE_JOURNAL_VERSION,
       op: 'folder-rename',
@@ -454,7 +458,7 @@ folderRoutes.patch('/api/folders/*', async (c) => {
       directoryGenerations: physical.directoryGenerations,
       metadataDisposition: {
         kind: 'prefix-move',
-        transactionTimestamp: Date.now(),
+        transactionTimestamp,
         preparedSnapshot: serializeMetadataSnapshot(preparedMetadataSnapshot),
       },
     }
@@ -570,7 +574,7 @@ folderRoutes.patch('/api/folders/*', async (c) => {
       written.push(snapshot)
       const stat = await fs.stat(target)
       snapshot.mtime = stat.mtimeMs
-      ensureMetadata(snapshot.writePath, snapshot.updated, stat.mtimeMs, Date.now())
+      recordCommittedMetadata(snapshot.writePath, snapshot.updated, stat.mtimeMs, Date.now())
     }
     await __folderRaceHooks?.afterReferenceWrites?.()
     await referenceJournal?.cleanup()

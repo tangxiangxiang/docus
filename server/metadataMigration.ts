@@ -6,7 +6,6 @@ import { withDocumentWriteLock } from './documentWriteLock.js'
 import {
   ensureDocumentMetadata,
   getDocumentMetadata,
-  saveDocumentMetadata,
 } from './documentMetadata.js'
 
 export type MetadataMigrationStatus = 'legacy' | 'imported' | 'verified' | 'cleaned' | 'failed' | 'orphaned'
@@ -222,10 +221,7 @@ export async function migrateVaultMetadata(
       saveRecord(db, file.path, 'legacy', sourceHash, '', frontmatterBackup)
       const existing = getDocumentMetadata(db, file.path)
       const imported = existing
-        ? saveDocumentMetadata(db, {
-            ...existing,
-            updatedAt: Math.max(existing.updatedAt, stat.mtimeMs),
-          })
+        ? existing
         : ensureDocumentMetadata(db, file.path, raw, stat.mtimeMs)
       saveRecord(db, file.path, 'imported', sourceHash, '', frontmatterBackup)
       verifyStoredMetadata(db, file.path, imported)

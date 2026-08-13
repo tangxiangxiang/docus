@@ -39,8 +39,11 @@ beforeEach(() => {
   toastSuccesses.mockReset()
   getPost.mockReset().mockImplementation((path: string) => Promise.resolve(post(path, `id-${path}`, path)))
   updateDocumentMetadata.mockReset().mockImplementation(async (path: string, input: any) => ({
-    ...post(path, `id-${path}`, input.title).metadata,
+    ...post(path, `id-${path}`, path).metadata,
     ...input,
+    title: input.title ?? path,
+    summary: input.summary ?? `${path} summary`,
+    tags: input.tags ?? ['Rag'],
     updatedAt: 99,
   }))
   suggestSummary.mockReset().mockResolvedValue({ summary: 'AI summary' })
@@ -112,6 +115,26 @@ describe('DocumentMetadataForm', () => {
     await flushPromises()
     expect(updateDocumentMetadata).toHaveBeenCalledWith('a', expect.objectContaining({ title: 'Saved' }))
     expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('sends only the changed metadata field and never replays tags for a title edit', async () => {
+    const wrapper = mount(DocumentMetadataForm, { props: { path: 'a' } })
+    await flushPromises()
+    await wrapper.get('input').setValue('Saved')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(updateDocumentMetadata).toHaveBeenCalledWith('a', { title: 'Saved' })
+  })
+
+  it('sends the tag version token only with an explicit tag edit', async () => {
+    const wrapper = mount(DocumentMetadataForm, { props: { path: 'a' } })
+    await flushPromises()
+    await wrapper.findAll('input')[1].setValue('Fresh')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(updateDocumentMetadata).toHaveBeenCalledWith('a', {
+      tags: ['Fresh'], expectedUpdatedAt: 2,
+    })
   })
 
   it('does not let a save response for A overwrite the newly loaded B form', async () => {

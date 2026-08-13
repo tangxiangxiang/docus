@@ -10,6 +10,7 @@ import { getDb } from './db.ts'
 import { loadAuthConfig } from './auth/config.ts'
 import { initializeAuthRuntime } from './auth/runtime.ts'
 import { migrateVaultMetadata } from './metadataMigration.ts'
+import { initializeTagIdentityAndHealth } from './tagIdentityMigration.ts'
 import { recoverInterruptedOperations } from './crashRecovery.ts'
 import {
   acquireVaultWriterOwnership,
@@ -39,6 +40,8 @@ export function serverPlugin(): Plugin {
         }
         const report = await migrateVaultMetadata(getDb(), CONTENT_DIR)
         console.log(`[docus] metadata migration: ${JSON.stringify(report)}`)
+        const tagIdentityHealth = await initializeTagIdentityAndHealth(getDb(), CONTENT_DIR, report)
+        console.log(`[docus] tag identity health: ${JSON.stringify(tagIdentityHealth)}`)
         server.middlewares.use(async (req, res, next) => {
           if (!req.url?.startsWith('/api/')) return next()
           const url = `http://localhost${req.url}`

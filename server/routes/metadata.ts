@@ -1,6 +1,11 @@
 import { promises as fs } from 'node:fs'
 import { Hono } from 'hono'
-import { getDocumentMetadataById, saveDocumentMetadata } from '../documentMetadata.js'
+import {
+  DocumentMetadataError,
+  getDocumentMetadataById,
+  patchDocumentMetadata,
+  type DocumentMetadataChange,
+} from '../documentMetadata.js'
 import { withDocumentWriteLock } from '../documentWriteLock.js'
 import {
   cleanDocumentFrontmatter,
@@ -14,6 +19,7 @@ import {
   listMetadataMigrationRecords,
   migrateVaultMetadata,
 } from '../metadataMigration.js'
+import { initializeTagIdentityAndHealth } from '../tagIdentityMigration.js'
 import { CONTENT_DIR, filePathFor } from '../paths.js'
 import { bad, ensureMetadata, exists, metadataDb } from './shared.js'
 
@@ -40,7 +46,8 @@ metadataRoutes.get('/api/metadata/migration', (c) => {
 
 metadataRoutes.post('/api/metadata/migrate', async (c) => {
   const report = await runMetadataMigration()
-  return c.json({ report, summary: getMetadataMigrationSummary(metadataDb()) })
+  const health = await initializeTagIdentityAndHealth(metadataDb(), CONTENT_DIR, report)
+  return c.json({ report, summary: getMetadataMigrationSummary(metadataDb()), tagIdentityHealth: health })
 })
 
 metadataRoutes.get('/api/metadata/cleanup/preview', async (c) => {
@@ -81,14 +88,6 @@ metadataRoutes.post('/api/metadata/restore', async (c) => {
   return c.json(await restoreDocumentFrontmatter(metadataDb(), paths, mode))
 })
 
-function stringList(value: unknown, field: string): string[] {
-  if (!Array.isArray(value) || value.length > 50) throw new Error(`${field} must be an array of at most 50 strings`)
-  if (value.some((item) => typeof item !== 'string' || item.length > 100)) {
-    throw new Error(`${field} items must be strings of at most 100 characters`)
-  }
-  return value as string[]
-}
-
 // Current metadata by STABLE document id (single-segment UUID) —
 // method-disambiguated from the path-splat PATCH below. Draft
 // recovery's path resolver queries this: after an emptied-family
@@ -110,33 +109,48 @@ metadataRoutes.patch('/api/metadata/documents/*', async (c) => {
   if (!body || Array.isArray(body)) return bad(c, 'body required')
 
   const [raw, stat] = await Promise.all([fs.readFile(abs, 'utf8'), fs.stat(abs)])
-  const current = ensureMetadata(documentPath, raw, stat.mtimeMs)
-  const title = body.title === undefined ? current.title : body.title
-  const summary = body.summary === undefined ? current.summary : body.summary
-  if (typeof title !== 'string' || !title.trim() || title.length > 200) {
-    return bad(c, 'title must be a non-empty string of at most 200 characters')
+  ensureMetadata(documentPath, raw, stat.mtimeMs)
+  const changes: DocumentMetadataChange[] = []
+  if (Object.hasOwn(body, 'title')) {
+    if (typeof body.title !== 'string' || !body.title.trim() || body.title.length > 200) {
+      return bad(c, 'title must be a non-empty string of at most 200 characters')
+    }
+    changes.push({ field: 'title', value: body.title })
   }
-  if (typeof summary !== 'string' || summary.length > 2000) {
-    return bad(c, 'summary must be a string of at most 2000 characters')
+  if (Object.hasOwn(body, 'summary')) {
+    if (typeof body.summary !== 'string' || body.summary.length > 2000) {
+      return bad(c, 'summary must be a string of at most 2000 characters')
+    }
+    changes.push({ field: 'summary', value: body.summary })
   }
+  if (Object.hasOwn(body, 'tags')) {
+    if (!Array.isArray(body.tags)) return bad(c, 'tags must be an array of at most 50 strings')
+    changes.push({ field: 'tags', values: body.tags as string[] })
+  }
+  if (changes.length === 0) return bad(c, 'at least one metadata field is required')
 
-  let tags = current.tags
+  let saved: ReturnType<typeof patchDocumentMetadata>
   try {
-    if (body.tags !== undefined) tags = stringList(body.tags, 'tags')
+    saved = patchDocumentMetadata(metadataDb(), {
+      path: documentPath,
+      changes,
+      ...(Object.hasOwn(body, 'tags') ? { expectedUpdatedAt: body.expectedUpdatedAt as number } : {}),
+    })
   } catch (error) {
-    return bad(c, (error as Error).message)
+    if (error instanceof DocumentMetadataError) {
+      const status = error.code === 'METADATA_VERSION_CONFLICT' ? 409
+        : error.code === 'METADATA_NOT_FOUND' ? 404
+          : 400
+      return c.json({ error: error.message, code: error.code }, status)
+    }
+    throw error
   }
-  const saved = saveDocumentMetadata(metadataDb(), {
-    ...current,
-    title,
-    summary,
-    tags,
-    updatedAt: Date.now(),
-  })
-  try {
-    const idx = await getLinkIndex()
-    idx.setTitle(documentPath, saved.title)
-  } catch { /* next rebuild repairs a stale display title */ }
+  if (Object.hasOwn(body, 'title')) {
+    try {
+      const idx = await getLinkIndex()
+      idx.setTitle(documentPath, saved.title)
+    } catch { /* next rebuild repairs a stale display title */ }
+  }
   return c.json(saved)
   })
 })

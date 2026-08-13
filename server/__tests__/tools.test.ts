@@ -660,6 +660,45 @@ describe('TOOL_DEFINITIONS', () => {
   })
 })
 
+describe('T2-0 update_metadata writer safety', () => {
+  it('keeps tags untouched for a summary-only call', async () => {
+    saveDocumentMetadata(db, { path: 'ai/note', title: 'Note', tags: ['Java'], updatedAt: 100 })
+    const result = await executeToolCall('update_metadata', {
+      path: 'ai/note', summary: 'Summary only',
+    }, ctx)
+    expect(result.isError).toBe(false)
+    expect(getDocumentMetadata(db, 'ai/note')).toMatchObject({ summary: 'Summary only', tags: ['Java'] })
+  })
+
+  it('requires the read version for an explicit tag call', async () => {
+    saveDocumentMetadata(db, { path: 'ai/note', title: 'Note', tags: ['Java'], updatedAt: 100 })
+    const before = getDocumentMetadata(db, 'ai/note')
+    const result = await executeToolCall('update_metadata', {
+      path: 'ai/note', tags: ['TypeScript'],
+    }, ctx)
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain('expected_updated_at')
+    expect(getDocumentMetadata(db, 'ai/note')).toEqual(before)
+  })
+
+  it('rejects stale mixed metadata without applying the title', async () => {
+    saveDocumentMetadata(db, { path: 'ai/note', title: 'Original', tags: ['Java'], updatedAt: 100 })
+    const staleToken = getDocumentMetadata(db, 'ai/note')!.updatedAt
+    const first = await executeToolCall('update_metadata', {
+      path: 'ai/note', tags: ['Live'], expected_updated_at: staleToken,
+    }, ctx)
+    expect(first.isError).toBe(false)
+    const beforeRejected = getDocumentMetadata(db, 'ai/note')
+
+    const stale = await executeToolCall('update_metadata', {
+      path: 'ai/note', title: 'Must not land', tags: ['Stale'], expected_updated_at: staleToken,
+    }, ctx)
+    expect(stale.isError).toBe(true)
+    expect(stale.content).toContain('METADATA_VERSION_CONFLICT')
+    expect(getDocumentMetadata(db, 'ai/note')).toEqual(beforeRejected)
+  })
+})
+
 // --- Edit-10.4 tool safety --------------------------------------------------
 // Integration layer: real temp vault + real DB + real executeToolCall with a
 // ToolSafetyPolicy in the tool context. Pure decision logic (policy

@@ -15,6 +15,7 @@ import { CONTENT_DIR } from './paths.ts'
 import { ensureInitialFolders } from './seed.ts'
 import { getDb } from './db.ts'
 import { migrateVaultMetadata } from './metadataMigration.ts'
+import { initializeTagIdentityAndHealth } from './tagIdentityMigration.ts'
 import { recoverInterruptedOperations } from './crashRecovery.ts'
 import {
   acquireVaultWriterOwnership,
@@ -87,6 +88,8 @@ try {
   // as an orphan during this very startup.
   const metadataReport = await migrateVaultMetadata(getDb(), CONTENT_DIR)
   console.log(`[docus] metadata migration: ${JSON.stringify(metadataReport)}`)
+  const tagIdentityHealth = await initializeTagIdentityAndHealth(getDb(), CONTENT_DIR, metadataReport)
+  console.log(`[docus] tag identity health: ${JSON.stringify(tagIdentityHealth)}`)
 
   const server = serve({ fetch: app.fetch, port: PORT, hostname: HOST }, (info) => {
     console.log(`[docus] listening on http://${info.address}:${info.port}`)

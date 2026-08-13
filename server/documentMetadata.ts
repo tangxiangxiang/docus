@@ -1,6 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import type { Database as DatabaseT } from 'better-sqlite3'
 import matter from 'gray-matter'
+import {
+  normalizeAndDedupeTags,
+  TagNormalizationError,
+  type NormalizedTag,
+} from '../shared/tagNormalization.js'
+import { MetadataVersionError, nextMetadataBatchUpdatedAt, nextMetadataUpdatedAt } from './metadataVersion.js'
 
 export interface DocumentMetadata {
   id: string
@@ -20,6 +26,36 @@ export interface SaveDocumentMetadata {
   tags?: string[]
   createdAt?: number
   updatedAt?: number
+}
+
+export type DocumentMetadataChange =
+  | { field: 'title'; value: string }
+  | { field: 'summary'; value: string }
+  | { field: 'tags'; values: string[] }
+
+export interface PatchDocumentMetadata {
+  path: string
+  changes: readonly DocumentMetadataChange[]
+  expectedUpdatedAt?: number
+}
+
+export type DocumentMetadataErrorCode =
+  | 'METADATA_NOT_FOUND'
+  | 'METADATA_ALREADY_EXISTS'
+  | 'METADATA_VERSION_CONFLICT'
+  | 'INVALID_METADATA_CHANGE'
+  | 'INVALID_TAG'
+  | 'TAG_LIMIT_EXCEEDED'
+  | 'METADATA_VERSION_OVERFLOW'
+
+export class DocumentMetadataError extends Error {
+  readonly code: DocumentMetadataErrorCode
+
+  constructor(code: DocumentMetadataErrorCode, message: string) {
+    super(message)
+    this.name = 'DocumentMetadataError'
+    this.code = code
+  }
 }
 
 /**
@@ -604,17 +640,67 @@ type DocumentRow = {
   updated_at: number
 }
 
-function cleanValues(values: string[] = []): string[] {
-  const seen = new Set<string>()
-  const result: string[] = []
-  for (const value of values) {
-    const trimmed = value.trim()
-    const normalized = trimmed.toLocaleLowerCase()
-    if (!trimmed || seen.has(normalized)) continue
-    seen.add(normalized)
-    result.push(trimmed)
+function normalizeTags(values: readonly unknown[]): NormalizedTag[] {
+  try {
+    return normalizeAndDedupeTags(values)
+  } catch (error) {
+    if (error instanceof TagNormalizationError) {
+      const code: DocumentMetadataErrorCode = error.code === 'TAG_LIMIT_EXCEEDED'
+        ? 'TAG_LIMIT_EXCEEDED'
+        : 'INVALID_TAG'
+      throw new DocumentMetadataError(code, error.message)
+    }
+    throw error
   }
-  return result
+}
+
+function assertMetadataPathTitle(path: string, title: string): void {
+  if (!path) throw new DocumentMetadataError('INVALID_METADATA_CHANGE', 'metadata path is required')
+  if (!title) throw new DocumentMetadataError('INVALID_METADATA_CHANGE', 'metadata title is required')
+}
+
+function safeTimestamp(value: number, label: string): number {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new DocumentMetadataError('INVALID_METADATA_CHANGE', `${label} must be a non-negative safe integer`)
+  }
+  return value
+}
+
+function insertOrGetTags(db: DatabaseT, tags: readonly NormalizedTag[]): void {
+  const insert = db.prepare(`
+    INSERT INTO tags (name, normalized_name) VALUES (?, ?)
+    ON CONFLICT(normalized_name) DO NOTHING
+  `)
+  const select = db.prepare('SELECT id FROM tags WHERE normalized_name = ?')
+  for (const tag of tags) {
+    insert.run(tag.displayName, tag.normalizedName)
+    if (!select.get(tag.normalizedName)) {
+      throw new DocumentMetadataError('INVALID_TAG', 'tag identity row was not created')
+    }
+  }
+}
+
+function replaceDocumentTags(db: DatabaseT, documentId: string, tags: readonly NormalizedTag[]): void {
+  db.prepare('DELETE FROM document_tags WHERE document_id = ?').run(documentId)
+  const insertAssociation = db.prepare(`
+    INSERT INTO document_tags (document_id, tag_id)
+    SELECT ?, id FROM tags WHERE normalized_name = ?
+  `)
+  for (const tag of tags) insertAssociation.run(documentId, tag.normalizedName)
+}
+
+function currentTagIdentities(db: DatabaseT, documentId: string): string[] {
+  return (db.prepare(`
+    SELECT t.normalized_name AS normalizedName
+    FROM tags t JOIN document_tags dt ON dt.tag_id = t.id
+    WHERE dt.document_id = ? ORDER BY t.normalized_name
+  `).all(documentId) as Array<{ normalizedName: string }>).map((row) => row.normalizedName)
+}
+
+function sameIdentitySet(left: readonly string[], right: readonly string[]): boolean {
+  const a = [...new Set(left)].sort()
+  const b = [...new Set(right)].sort()
+  return a.length === b.length && a.every((value, index) => value === b[index])
 }
 
 function hydrate(db: DatabaseT, row: DocumentRow): DocumentMetadata {
@@ -663,21 +749,48 @@ export function listDocumentMetadata(db: DatabaseT): DocumentMetadata[] {
   return rows.map((row) => hydrate(db, row))
 }
 
+/** Create/import a metadata row. Existing-row ordinary updates use patchDocumentMetadata. */
+export function createDocumentMetadata(db: DatabaseT, input: SaveDocumentMetadata): DocumentMetadata {
+  const path = input.path.trim()
+  const title = input.title.trim()
+  assertMetadataPathTitle(path, title)
+
+  const tx = db.transaction(() => {
+    if (db.prepare('SELECT 1 FROM documents WHERE path = ?').get(path)) {
+      throw new DocumentMetadataError('METADATA_ALREADY_EXISTS', `metadata already exists: ${path}`)
+    }
+    const now = Date.now()
+    const id = input.id ?? randomUUID()
+    const createdAt = safeTimestamp(Math.trunc(input.createdAt ?? now), 'metadata createdAt')
+    const updatedAt = safeTimestamp(Math.trunc(input.updatedAt ?? now), 'metadata updatedAt')
+    const tags = normalizeTags(input.tags ?? [])
+    db.prepare(`
+      INSERT INTO documents (id, path, title, summary, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(id, path, title, input.summary?.trim() ?? '', createdAt, updatedAt)
+    insertOrGetTags(db, tags)
+    replaceDocumentTags(db, id, tags)
+
+    return getDocumentMetadata(db, path)!
+  })
+  return tx.immediate()
+}
+
+/**
+ * Compatibility full writer for recovery/fixtures. Ordinary production
+ * callers must use createDocumentMetadata or patchDocumentMetadata.
+ */
 export function saveDocumentMetadata(db: DatabaseT, input: SaveDocumentMetadata): DocumentMetadata {
   const path = input.path.trim()
   const title = input.title.trim()
-  if (!path) throw new Error('metadata path is required')
-  if (!title) throw new Error('metadata title is required')
-
-  return db.transaction(() => {
+  assertMetadataPathTitle(path, title)
+  const tx = db.transaction(() => {
     const existing = getDocumentMetadata(db, path)
     const now = Date.now()
     const id = existing?.id ?? input.id ?? randomUUID()
-    const createdAt = Math.trunc(input.createdAt ?? existing?.createdAt ?? now)
-    const updatedAt = Math.trunc(input.updatedAt ?? now)
-    if (!Number.isSafeInteger(createdAt) || !Number.isSafeInteger(updatedAt)) {
-      throw new Error('metadata timestamps must be safe integers')
-    }
+    const createdAt = safeTimestamp(Math.trunc(input.createdAt ?? existing?.createdAt ?? now), 'metadata createdAt')
+    const updatedAt = safeTimestamp(Math.trunc(input.updatedAt ?? now), 'metadata updatedAt')
+    const tags = normalizeTags(input.tags ?? existing?.tags ?? [])
     db.prepare(`
       INSERT INTO documents (id, path, title, summary, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?)
@@ -686,20 +799,161 @@ export function saveDocumentMetadata(db: DatabaseT, input: SaveDocumentMetadata)
         summary = excluded.summary,
         updated_at = excluded.updated_at
     `).run(id, path, title, input.summary?.trim() ?? existing?.summary ?? '', createdAt, updatedAt)
-
-    db.prepare('DELETE FROM document_tags WHERE document_id = ?').run(id)
-    for (const tag of cleanValues(input.tags ?? existing?.tags)) {
-      const normalized = tag.toLocaleLowerCase()
-      db.prepare(`
-        INSERT INTO tags (name, normalized_name) VALUES (?, ?)
-        ON CONFLICT(normalized_name) DO NOTHING
-      `).run(tag, normalized)
-      const tagRow = db.prepare('SELECT id FROM tags WHERE normalized_name = ?').get(normalized) as { id: number }
-      db.prepare('INSERT INTO document_tags (document_id, tag_id) VALUES (?, ?)').run(id, tagRow.id)
-    }
-
+    insertOrGetTags(db, tags)
+    replaceDocumentTags(db, id, tags)
     return getDocumentMetadata(db, path)!
-  })()
+  })
+  return tx.immediate()
+}
+
+function assertPatchChanges(changes: readonly DocumentMetadataChange[]): void {
+  if (!Array.isArray(changes) || changes.length === 0) {
+    throw new DocumentMetadataError('INVALID_METADATA_CHANGE', 'at least one metadata field change is required')
+  }
+  const seen = new Set<string>()
+  for (const change of changes) {
+    if (!change || typeof change !== 'object' || !('field' in change)) {
+      throw new DocumentMetadataError('INVALID_METADATA_CHANGE', 'invalid metadata field change')
+    }
+    if (change.field !== 'title' && change.field !== 'summary' && change.field !== 'tags') {
+      throw new DocumentMetadataError('INVALID_METADATA_CHANGE', 'unknown metadata field')
+    }
+    if (seen.has(change.field)) {
+      throw new DocumentMetadataError('INVALID_METADATA_CHANGE', `duplicate metadata field: ${change.field}`)
+    }
+    seen.add(change.field)
+  }
+}
+
+export function patchDocumentMetadataWithinTransaction(
+  db: DatabaseT,
+  input: PatchDocumentMetadata,
+  now = Date.now(),
+): DocumentMetadata {
+  const path = input.path.trim()
+  if (!path) throw new DocumentMetadataError('INVALID_METADATA_CHANGE', 'metadata path is required')
+  assertPatchChanges(input.changes)
+  const tagChange = input.changes.find((change): change is Extract<DocumentMetadataChange, { field: 'tags' }> => change.field === 'tags')
+  let normalizedTags: NormalizedTag[] | null = null
+  if (tagChange) normalizedTags = normalizeTags(tagChange.values)
+  if (tagChange && (!Number.isSafeInteger(input.expectedUpdatedAt) || input.expectedUpdatedAt! < 0)) {
+    throw new DocumentMetadataError('INVALID_METADATA_CHANGE', 'expectedUpdatedAt is required for explicit tag changes')
+  }
+
+  const current = getDocumentMetadata(db, path)
+  if (!current) throw new DocumentMetadataError('METADATA_NOT_FOUND', `metadata does not exist: ${path}`)
+  if (tagChange && input.expectedUpdatedAt !== current.updatedAt) {
+    throw new DocumentMetadataError('METADATA_VERSION_CONFLICT', 'metadata version is stale')
+  }
+
+  let nextTitle = current.title
+  let nextSummary = current.summary
+  for (const change of input.changes) {
+    if (change.field === 'title') {
+      if (typeof change.value !== 'string' || !change.value.trim() || change.value.length > 200) {
+        throw new DocumentMetadataError('INVALID_METADATA_CHANGE', 'title must be a non-empty string of at most 200 characters')
+      }
+      nextTitle = change.value.trim()
+    } else if (change.field === 'summary') {
+      if (typeof change.value !== 'string' || change.value.length > 2000) {
+        throw new DocumentMetadataError('INVALID_METADATA_CHANGE', 'summary must be a string of at most 2000 characters')
+      }
+      nextSummary = change.value.trim()
+    } else {
+      // The normalized tag set is kept separately so an explicit request
+      // can be compared by identity before associations are rewritten.
+    }
+  }
+
+  const titleChanged = nextTitle !== current.title
+  const summaryChanged = nextSummary !== current.summary
+  const tagsChanged = normalizedTags !== null
+    && !sameIdentitySet(currentTagIdentities(db, current.id), normalizedTags.map((tag) => tag.normalizedName))
+  if (!titleChanged && !summaryChanged && !tagsChanged) return current
+
+  let updatedAt: number
+  try {
+    updatedAt = nextMetadataUpdatedAt(current.updatedAt, now)
+  } catch (error) {
+    if (error instanceof MetadataVersionError) {
+      throw new DocumentMetadataError('METADATA_VERSION_OVERFLOW', error.message)
+    }
+    throw error
+  }
+  db.prepare(`
+    UPDATE documents SET title = ?, summary = ?, updated_at = ? WHERE id = ?
+  `).run(nextTitle, nextSummary, updatedAt, current.id)
+  if (tagsChanged && normalizedTags) {
+    insertOrGetTags(db, normalizedTags)
+    replaceDocumentTags(db, current.id, normalizedTags)
+  }
+  return getDocumentMetadata(db, path)!
+}
+
+export function patchDocumentMetadata(db: DatabaseT, input: PatchDocumentMetadata): DocumentMetadata {
+  const tx = db.transaction(() => patchDocumentMetadataWithinTransaction(db, input))
+  return tx.immediate()
+}
+
+/** Read/import an absent row without rebuilding an existing row's associations. */
+export function observeDocumentMetadata(
+  db: DatabaseT,
+  path: string,
+  raw: string,
+  mtimeMs: number,
+): DocumentMetadata {
+  const existing = getDocumentMetadata(db, path)
+  if (existing) return existing
+  const parsed = matter(raw)
+  const fallbackTitle = path.split('/').pop()!
+  const heading = /^#\s+(.+)$/m.exec(parsed.content)?.[1]?.trim()
+  const title = typeof parsed.data.title === 'string' && parsed.data.title.trim()
+    ? parsed.data.title.trim()
+    : heading || fallbackTitle
+  const tags = Array.isArray(parsed.data.tags) ? parsed.data.tags : []
+  const legacyUpdatedAt = dateMs(parsed.data.updated, mtimeMs)
+  return createDocumentMetadata(db, {
+    path,
+    title,
+    summary: typeof parsed.data.summary === 'string' ? parsed.data.summary : '',
+    tags: tags as string[],
+    createdAt: dateMs(parsed.data.created ?? parsed.data.date, mtimeMs),
+    updatedAt: Math.max(legacyUpdatedAt, mtimeMs),
+  })
+}
+
+/** Advance the version for a known committed body/path/lifecycle mutation. */
+export function touchDocumentMetadata(db: DatabaseT, path: string, now = Date.now()): DocumentMetadata {
+  const tx = db.transaction(() => {
+    const current = getDocumentMetadata(db, path)
+    if (!current) throw new DocumentMetadataError('METADATA_NOT_FOUND', `metadata does not exist: ${path}`)
+    let updatedAt: number
+    try { updatedAt = nextMetadataUpdatedAt(current.updatedAt, now) }
+    catch (error) {
+      if (error instanceof MetadataVersionError) throw new DocumentMetadataError('METADATA_VERSION_OVERFLOW', error.message)
+      throw error
+    }
+    db.prepare('UPDATE documents SET updated_at = ? WHERE id = ?').run(updatedAt, current.id)
+    return getDocumentMetadata(db, path)!
+  })
+  return tx.immediate()
+}
+
+/**
+ * Record a mutation that has already committed in the file/lifecycle layer.
+ * Existing database-owned metadata is only versioned here; it is never
+ * reconstructed from the file's stale Frontmatter tags.
+ */
+export function recordCommittedDocumentMutation(
+  db: DatabaseT,
+  path: string,
+  raw: string,
+  mtimeMs: number,
+  now = Date.now(),
+): DocumentMetadata {
+  return getDocumentMetadata(db, path)
+    ? touchDocumentMetadata(db, path, now)
+    : observeDocumentMetadata(db, path, raw, mtimeMs)
 }
 
 /** Import legacy Frontmatter once, then keep database-owned fields unchanged on body writes. */
@@ -710,54 +964,25 @@ export function ensureDocumentMetadata(
   mtimeMs: number,
   updatedAt = mtimeMs,
 ): DocumentMetadata {
-  const existing = getDocumentMetadata(db, path)
-  if (existing) {
-    // Don't let mtime or a stale `updatedAt` argument push the stored
-    // updatedAt backwards. External editors (vim, Obsidian) can advance
-    // the frontmatter `updated:` without touching mtime — git checkout in
-    // particular preserves mtime — and the database row's updatedAt is
-    // supposed to be the user's most recent claim, not the file's clock.
-    // Mirror the Math.max guard migrateVaultMetadata uses on re-import.
-    return saveDocumentMetadata(db, {
-      ...existing,
-      updatedAt: Math.max(existing.updatedAt, updatedAt, mtimeMs),
-    })
-  }
-
-  const parsed = matter(raw)
-  const fallbackTitle = path.split('/').pop()!
-  const heading = /^#\s+(.+)$/m.exec(parsed.content)?.[1]?.trim()
-  const title = typeof parsed.data.title === 'string' && parsed.data.title.trim()
-    ? parsed.data.title.trim()
-    : heading || fallbackTitle
-  const tags = Array.isArray(parsed.data.tags)
-    ? parsed.data.tags.filter((tag: unknown): tag is string => typeof tag === 'string')
-    : []
-  // First-time import: trust the file's frontmatter `updated:` when it
-  // parses to a later date than mtime (e.g. user edited in vim then
-  // git-checked-out without restoring mtime).
-  const legacyUpdatedAt = dateMs(parsed.data.updated, mtimeMs)
-  return saveDocumentMetadata(db, {
-    path,
-    title,
-    summary: typeof parsed.data.summary === 'string' ? parsed.data.summary : '',
-    tags,
-    createdAt: dateMs(parsed.data.created ?? parsed.data.date, mtimeMs),
-    updatedAt: Math.max(legacyUpdatedAt, mtimeMs),
-  })
+  // `updatedAt` remains accepted for compatibility with existing callers,
+  // but observing an existing row never treats a file timestamp as a
+  // committed metadata mutation.
+  void updatedAt
+  return observeDocumentMetadata(db, path, raw, mtimeMs)
 }
 
 export function moveDocumentMetadata(db: DatabaseT, fromPath: string, toPath: string): boolean {
   return db.transaction(() => {
-    const source = db.prepare('SELECT id FROM documents WHERE path = ?').get(fromPath) as { id: string } | undefined
+    const source = db.prepare('SELECT id, updated_at FROM documents WHERE path = ?').get(fromPath) as { id: string; updated_at: number } | undefined
     if (!source) return false
+    const timestamp = nextMetadataUpdatedAt(source.updated_at, Date.now())
     const result = db.prepare(
       'UPDATE documents SET path = ?, updated_at = ? WHERE path = ?',
-    ).run(toPath, Date.now(), fromPath)
+    ).run(toPath, timestamp, fromPath)
     db.prepare(`
       UPDATE metadata_migrations SET path = ?, document_id = ?, updated_at = ?
       WHERE document_id = ? OR (document_id IS NULL AND path = ?)
-    `).run(toPath, source.id, Date.now(), source.id, fromPath)
+    `).run(toPath, source.id, timestamp, source.id, fromPath)
     return result.changes > 0
   })()
 }
@@ -786,14 +1011,15 @@ export function moveDocumentMetadataReplacingDestination(
   toPath: string,
 ): boolean {
   return db.transaction(() => {
-    const source = db.prepare('SELECT id FROM documents WHERE path = ?').get(fromPath) as { id: string } | undefined
+    const source = db.prepare('SELECT id, updated_at FROM documents WHERE path = ?').get(fromPath) as { id: string; updated_at: number } | undefined
     if (!source) return false
     const destination = db.prepare('SELECT id FROM documents WHERE path = ?').get(toPath) as { id: string } | undefined
     quarantineMigrationAtPath(db, toPath, destination?.id)
     if (destination) db.prepare('DELETE FROM documents WHERE id = ?').run(destination.id)
-    db.prepare('UPDATE documents SET path = ?, updated_at = ? WHERE id = ?').run(toPath, Date.now(), source.id)
+    const timestamp = nextMetadataUpdatedAt(source.updated_at, Date.now())
+    db.prepare('UPDATE documents SET path = ?, updated_at = ? WHERE id = ?').run(toPath, timestamp, source.id)
     db.prepare('UPDATE metadata_migrations SET path = ?, updated_at = ? WHERE document_id = ?')
-      .run(toPath, Date.now(), source.id)
+      .run(toPath, timestamp, source.id)
     return true
   })()
 }
@@ -859,12 +1085,12 @@ export function moveDocumentMetadataPrefix(
   db: DatabaseT,
   fromPrefix: string,
   toPrefix: string,
-  transactionTimestamp = Date.now(),
+  transactionTimestamp?: number,
 ): number {
   return db.transaction(() => {
     const rows = db.prepare(
-      'SELECT id, path FROM documents WHERE path = ? OR path LIKE ? ORDER BY length(path)',
-    ).all(fromPrefix, `${fromPrefix}/%`) as Array<{ id: string; path: string }>
+      'SELECT id, path, updated_at FROM documents WHERE path = ? OR path LIKE ? ORDER BY length(path)',
+    ).all(fromPrefix, `${fromPrefix}/%`) as Array<{ id: string; path: string; updated_at: number }>
     const planned = rows.map((row) => ({
       id: row.id,
       fromPath: row.path,
@@ -932,9 +1158,18 @@ export function moveDocumentMetadataPrefix(
       }
     }
 
+    const batchTimestamp = transactionTimestamp ?? nextMetadataBatchUpdatedAt(
+      rows.map((row) => Number(row.updated_at)),
+      Date.now(),
+    )
     const update = db.prepare('UPDATE documents SET path = ?, updated_at = ? WHERE id = ?')
-    const now = transactionTimestamp
+    const now = batchTimestamp
     for (const { id, nextPath } of planned) {
+      const current = rows.find((row) => row.id === id)
+      if (!current) throw new Error(`metadata row disappeared during prefix move: ${id}`)
+      // New journals mint `now` strictly above every current row. Legacy
+      // journals replay their persisted timestamp verbatim so recovery stays
+      // deterministic and matches the durable committed snapshot.
       update.run(nextPath, now, id)
     }
 

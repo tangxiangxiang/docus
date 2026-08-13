@@ -6,6 +6,7 @@ import {
   getDocumentMetadata,
   restoreDocumentMetadataMutation,
   snapshotDocumentMetadataMutation,
+  touchDocumentMetadata,
   type DocumentMetadata,
 } from './documentMetadata.js'
 import { withDocumentWriteLock } from './documentWriteLock.js'
@@ -184,6 +185,7 @@ export async function cleanDocumentFrontmatter(
           WHERE path = ? AND document_id = ? AND status = 'verified' AND source_hash = ?
         `).run(cleanedHash, Date.now(), path, metadata.id, record.sourceHash)
         if (updated.changes !== 1) throw new Error('migration state changed during cleanup')
+        touchDocumentMetadata(db, path, Date.now())
       })
       result.changed.push({ path, newRaw: cleaned, newMtime })
       })
@@ -226,6 +228,7 @@ export async function restoreDocumentFrontmatter(
           WHERE path = ? AND document_id = ? AND status = 'cleaned' AND cleaned_hash = ?
         `).run(restoredHash, Date.now(), path, metadata.id, record.cleanedHash)
         if (updated.changes !== 1) throw new Error('migration state changed during restore')
+        touchDocumentMetadata(db, path, Date.now())
       })
       result.changed.push({ path, newRaw: restored, newMtime })
       })

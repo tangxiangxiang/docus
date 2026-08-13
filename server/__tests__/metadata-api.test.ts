@@ -31,7 +31,7 @@ afterAll(() => {
 })
 
 beforeEach(async () => {
-  db.exec('DELETE FROM documents; DELETE FROM tags;')
+  db.exec('DELETE FROM metadata_migrations; DELETE FROM documents; DELETE FROM tags;')
   root = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-metadata-api-'))
   await fs.mkdir(path.join(root, 'inbox'), { recursive: true })
 })
@@ -58,8 +58,11 @@ describe('PATCH /api/metadata/documents/*', () => {
   it('imports legacy metadata, updates SQLite, and leaves Markdown unchanged', async () => {
     const raw = '---\ntitle: Legacy\ntags: [old]\n---\n\n# Body\n'
     await fs.writeFile(path.join(root, 'inbox', 'note.md'), raw, 'utf8')
+    await migrateVaultMetadata(db, root)
+    const current = getDocumentMetadata(db, 'inbox/note')!
     const response = await patch('inbox/note', {
       title: 'Database title', summary: 'For retrieval', tags: ['rag', 'RAG'],
+      expectedUpdatedAt: current.updatedAt,
     })
     expect(response.status).toBe(200)
     expect(await response.json()).toMatchObject({
@@ -74,6 +77,61 @@ describe('PATCH /api/metadata/documents/*', () => {
     expect((await patch('inbox/note', { title: '' })).status).toBe(400)
     expect((await patch('inbox/note', { summary: 'x'.repeat(2001) })).status).toBe(400)
     expect((await patch('inbox/note', { tags: Array.from({ length: 51 }, (_, i) => `t${i}`) })).status).toBe(400)
+  })
+
+  it('preserves intervening tags for title/summary-only requests and rejects stale mixed tag replay', async () => {
+    await fs.writeFile(path.join(root, 'inbox', 'note.md'), '# Note\n', 'utf8')
+    await migrateVaultMetadata(db, root)
+    const initial = getDocumentMetadata(db, 'inbox/note')!
+
+    const liveTags = await patch('inbox/note', {
+      tags: ['live'], expectedUpdatedAt: initial.updatedAt,
+    })
+    expect(liveTags.status).toBe(200)
+    const afterTags = getDocumentMetadata(db, 'inbox/note')!
+
+    const titleOnly = await patch('inbox/note', { title: 'New title' })
+    expect(titleOnly.status).toBe(200)
+    expect((await titleOnly.json()).tags).toEqual(['live'])
+    const summaryOnly = await patch('inbox/note', { summary: 'New summary' })
+    expect(summaryOnly.status).toBe(200)
+    expect((await summaryOnly.json()).tags).toEqual(['live'])
+
+    const stale = await patch('inbox/note', {
+      title: 'Must not land', tags: ['stale'], expectedUpdatedAt: initial.updatedAt,
+    })
+    expect(stale.status).toBe(409)
+    expect(await stale.json()).toMatchObject({ code: 'METADATA_VERSION_CONFLICT' })
+    expect(getDocumentMetadata(db, 'inbox/note')).toMatchObject({
+      title: 'New title', summary: 'New summary', tags: ['live'],
+    })
+    expect(getDocumentMetadata(db, 'inbox/note')!.updatedAt).toBeGreaterThan(afterTags.updatedAt)
+  })
+
+  it('requires an explicit version token for tags and does not mutate on rejection', async () => {
+    await fs.writeFile(path.join(root, 'inbox', 'note.md'), '# Note\n', 'utf8')
+    await migrateVaultMetadata(db, root)
+    const before = getDocumentMetadata(db, 'inbox/note')!
+    const response = await patch('inbox/note', { tags: ['new'] })
+    expect(response.status).toBe(400)
+    expect(await response.json()).toMatchObject({ code: 'INVALID_METADATA_CHANGE' })
+    expect(getDocumentMetadata(db, 'inbox/note')).toEqual(before)
+  })
+
+  it('updates the title index only for an explicit title change', async () => {
+    await fs.writeFile(path.join(root, 'inbox', 'note.md'), '# Note\n', 'utf8')
+    await migrateVaultMetadata(db, root)
+    const { getIndex } = await import('../linkIndex')
+    const index = await getIndex()
+    const setTitle = vi.spyOn(index, 'setTitle')
+    try {
+      expect((await patch('inbox/note', { summary: 'Summary' })).status).toBe(200)
+      expect(setTitle).not.toHaveBeenCalled()
+      expect((await patch('inbox/note', { title: 'Title' })).status).toBe(200)
+      expect(setTitle).toHaveBeenCalledWith('inbox/note', 'Title')
+    } finally {
+      setTitle.mockRestore()
+    }
   })
 
   it('returns 404 when the document does not exist', async () => {

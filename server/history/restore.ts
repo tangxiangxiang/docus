@@ -15,6 +15,7 @@ import {
 } from '../atomicTextWrite.js'
 import {
   ensureDocumentMetadata,
+  recordCommittedDocumentMutation,
   restoreDocumentMetadataMutation,
   snapshotDocumentMetadataMutation,
 } from '../documentMetadata.js'
@@ -252,13 +253,9 @@ export async function restoreHistoricalDocument(input: {
             'HISTORY_CONTENT_CHANGED',
           )
         }
-        ensureDocumentMetadata(
-          input.db,
-          logicalPath,
-          observed.raw,
-          observed.stat.mtimeMs,
-          committed ? Date.now() : observed.stat.mtimeMs,
-        )
+        committed
+          ? recordCommittedDocumentMutation(input.db, logicalPath, observed.raw, observed.stat.mtimeMs, Date.now())
+          : ensureDocumentMetadata(input.db, logicalPath, observed.raw, observed.stat.mtimeMs)
         return {
           path: input.path,
           ref: input.ref,

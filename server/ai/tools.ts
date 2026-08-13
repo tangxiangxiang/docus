@@ -38,8 +38,10 @@ import {
   ensureDocumentMetadata,
   getDocumentMetadata,
   moveDocumentMetadataReplacingDestination,
+  patchDocumentMetadata,
+  DocumentMetadataError,
+  recordCommittedDocumentMutation,
   restoreDocumentMetadataMutation,
-  saveDocumentMetadata,
   snapshotDocumentMetadataMutation,
 } from '../documentMetadata.js'
 import { trackCleanedDocumentWrite } from '../metadataMigration.js'
@@ -169,6 +171,10 @@ export const TOOL_DEFINITIONS: NormalizedTool[] = [
         title: { type: 'string', description: 'Non-empty display title (max 200 characters).' },
         summary: { type: 'string', description: 'Search summary (max 2000 characters).' },
         tags: { type: 'array', items: { type: 'string' }, description: 'Searchable tags.' },
+        expected_updated_at: {
+          type: 'integer',
+          description: 'Required when tags is supplied. Use the updatedAt token from read_file metadata.',
+        },
       },
       required: ['path'],
     },
@@ -298,7 +304,13 @@ function executeReadFile(input: { path?: string }, db: DatabaseT): ToolResult {
   return ok(JSON.stringify(payload, null, 2))
 }
 
-function executeUpdateMetadata(input: { path?: string; title?: unknown; summary?: unknown; tags?: unknown }, db: DatabaseT): ToolResult {
+function executeUpdateMetadata(input: {
+  path?: string
+  title?: unknown
+  summary?: unknown
+  tags?: unknown
+  expected_updated_at?: unknown
+}, db: DatabaseT): ToolResult {
   if (typeof input.path !== 'string' || !input.path) return err('update_metadata: `path` is required')
   const current = getDocumentMetadata(db, input.path)
   if (!current) return err(`update_metadata: document does not exist: ${input.path}`)
@@ -311,14 +323,24 @@ function executeUpdateMetadata(input: { path?: string; title?: unknown; summary?
   if (input.tags !== undefined && (!Array.isArray(input.tags) || input.tags.some((item) => typeof item !== 'string'))) {
     return err('update_metadata: `tags` must be an array of strings')
   }
+  if (input.tags !== undefined && (!Number.isSafeInteger(input.expected_updated_at) || (input.expected_updated_at as number) < 0)) {
+    return err('update_metadata: `expected_updated_at` is required for explicit tag changes')
+  }
+  const changes: import('../documentMetadata.js').DocumentMetadataChange[] = []
+  if (input.title !== undefined) changes.push({ field: 'title', value: input.title as string })
+  if (input.summary !== undefined) changes.push({ field: 'summary', value: input.summary as string })
+  if (input.tags !== undefined) changes.push({ field: 'tags', values: input.tags as string[] })
+  if (changes.length === 0) return err('update_metadata: at least one field is required')
   try {
-    return ok(JSON.stringify(saveDocumentMetadata(db, {
-      ...current,
-      title: typeof input.title === 'string' ? input.title.trim() : current.title,
-      summary: typeof input.summary === 'string' ? input.summary.trim() : current.summary,
-      tags: (input.tags as string[] | undefined) ?? current.tags,
+    return ok(JSON.stringify(patchDocumentMetadata(db, {
+      path: input.path,
+      changes,
+      ...(input.tags !== undefined ? { expectedUpdatedAt: input.expected_updated_at as number } : {}),
     }), null, 2))
   } catch (e) {
+    if (e instanceof DocumentMetadataError) {
+      return err(`update_metadata [${e.code}]: ${e.message}`)
+    }
     return err(`update_metadata: ${(e as Error).message}`)
   }
 }
@@ -408,7 +430,7 @@ async function commitDocumentBody(
     }
     committed = true
     const stat = fs.statSync(abs)
-    ensureDocumentMetadata(db, documentPath, raw, stat.mtimeMs, Date.now())
+    recordCommittedDocumentMutation(db, documentPath, raw, stat.mtimeMs, Date.now())
     trackCleanedDocumentWrite(db, documentPath, raw)
     return stat
   } catch (error) {
@@ -802,7 +824,7 @@ async function executeRenameFile(input: { path?: string; new_path?: string; upda
         await atomicReplaceTextIfUnchanged(reference.abs, reference.raw, reference.updated)
         written.push(reference)
         const stat = fs.statSync(reference.abs)
-        ensureDocumentMetadata(db, reference.path, reference.updated, stat.mtimeMs, Date.now())
+        recordCommittedDocumentMutation(db, reference.path, reference.updated, stat.mtimeMs, Date.now())
       }
       await referenceJournal?.cleanup()
       referenceJournal = null
@@ -1246,7 +1268,7 @@ async function dispatchToolCall(
     case 'list_files':
       return executeListFiles(input as { scope?: string })
     case 'update_metadata':
-      return executeUpdateMetadata(input as { path?: string; title?: unknown; summary?: unknown; tags?: unknown }, db)
+      return executeUpdateMetadata(input as { path?: string; title?: unknown; summary?: unknown; tags?: unknown; expected_updated_at?: unknown }, db)
     case 'create_file':
       return executeCreateFile(input as { path?: string; content?: string }, db)
     case 'write_file':

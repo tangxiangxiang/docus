@@ -98,12 +98,15 @@ describe('Frontmatter archive and cleanup preview', () => {
     const raw = '---\n# comment\ntitle: Note\ncustom: yes\n---\n\n# Body\n'
     await write('note.md', raw)
     await migrateVaultMetadata(db, root)
+    const beforeCleanup = getDocumentMetadata(db, 'note')!
 
     const cleaned = await cleanDocumentFrontmatter(db, ['note'])
     expect(cleaned.failed).toEqual([])
     expect(cleaned.changed[0].newRaw).toBe('# Body\n')
     expect(await fs.readFile(path.join(root, 'note.md'), 'utf8')).toBe('# Body\n')
     expect(getMetadataMigrationRecord(db, 'note')?.status).toBe('cleaned')
+    const afterCleanup = getDocumentMetadata(db, 'note')!
+    expect(afterCleanup.updatedAt).toBeGreaterThan(beforeCleanup.updatedAt)
 
     const startupPass = await migrateVaultMetadata(db, root)
     expect(startupPass.skipped).toBe(1)
@@ -113,6 +116,7 @@ describe('Frontmatter archive and cleanup preview', () => {
     expect(restored.failed).toEqual([])
     expect(await fs.readFile(path.join(root, 'note.md'), 'utf8')).toBe(raw)
     expect(getMetadataMigrationRecord(db, 'note')?.status).toBe('verified')
+    expect(getDocumentMetadata(db, 'note')!.updatedAt).toBeGreaterThan(afterCleanup.updatedAt)
   })
 
   it('refuses restore when the cleaned body changed outside the tracked write flow', async () => {

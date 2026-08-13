@@ -7,9 +7,9 @@ import { isInArchive } from '../../shared/archiveProtocol.js'
 import type { PostDetail, PostSummary, SavePostResult } from '../../src/lib/api.js'
 import {
   deleteDocumentMetadata,
+  createDocumentMetadata,
   getDocumentMetadata,
   moveDocumentMetadataReplacingDestination,
-  saveDocumentMetadata,
   restoreDocumentMetadataMutation,
   snapshotDocumentMetadataMutation,
 } from '../documentMetadata.js'
@@ -42,7 +42,7 @@ import { CONTENT_DIR, filePathFor, isValidPathSyntax, isValidSegment } from '../
 import { rewriteDocumentReferences } from '../renameReferences.js'
 import { validateDocumentMutation } from '../documentMutationPolicy.js'
 import { listPostsFlat, readFrontmatter } from '../tree.js'
-import { bad, ensureMetadata, exists, metadataDb } from './shared.js'
+import { bad, ensureMetadata, exists, metadataDb, recordCommittedMetadata } from './shared.js'
 
 const postRoutes = new Hono()
 
@@ -147,7 +147,7 @@ postRoutes.post('/api/posts', async (c) => {
     deleteDocumentMetadata(metadataDb(), documentPath)
     await prepared.commit()
     committed = true
-    saveDocumentMetadata(metadataDb(), { path: documentPath, title, createdAt: now, updatedAt: now })
+    createDocumentMetadata(metadataDb(), { path: documentPath, title, createdAt: now, updatedAt: now })
   } catch (error) {
     const failures: unknown[] = [error]
     try {
@@ -290,7 +290,7 @@ postRoutes.put('/api/posts/*', async (c) => {
     let metadata: ReturnType<typeof ensureMetadata>
     try {
       stat = await fs.stat(abs)
-      metadata = ensureMetadata(splat, requestedRaw, stat.mtimeMs, Date.now())
+      metadata = recordCommittedMetadata(splat, requestedRaw, stat.mtimeMs, Date.now())
       trackCleanedDocumentWrite(metadataDb(), splat, requestedRaw)
     } catch (error) {
       const failures: unknown[] = [error]
@@ -342,9 +342,8 @@ postRoutes.put('/api/recover/*', async (c) => {
       committed = true
       stat = await fs.stat(abs)
       metadata = previousMetadata
-        ? { ...previousMetadata, updatedAt: Date.now() }
+        ? recordCommittedMetadata(documentPath, requestedRaw, stat.mtimeMs, Date.now())
         : ensureMetadata(documentPath, requestedRaw, stat.mtimeMs, Date.now())
-      if (previousMetadata) saveDocumentMetadata(metadataDb(), metadata)
       trackCleanedDocumentWrite(metadataDb(), documentPath, requestedRaw)
     } catch (error) {
       const failures: unknown[] = [error]
@@ -560,7 +559,7 @@ postRoutes.patch('/api/posts/*', async (c) => {
       written.push(snapshot)
       const stat = await fs.stat(snapshot.abs)
       snapshot.mtime = stat.mtimeMs
-      ensureMetadata(snapshot.writePath, snapshot.updated, stat.mtimeMs, Date.now())
+      recordCommittedMetadata(snapshot.writePath, snapshot.updated, stat.mtimeMs, Date.now())
     }
     await referenceJournal?.cleanup()
     referenceJournal = null

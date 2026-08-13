@@ -385,12 +385,12 @@ describe('PUT /api/posts/* (Task 7 smoke)', () => {
     db.exec(`
       CREATE TABLE put_metadata_update_count (count INTEGER NOT NULL);
       INSERT INTO put_metadata_update_count VALUES (0);
-      CREATE TRIGGER fail_second_put_metadata_update
+      CREATE TRIGGER fail_put_metadata_update
       BEFORE UPDATE ON documents
       BEGIN
         UPDATE put_metadata_update_count SET count = count + 1;
         SELECT CASE
-          WHEN (SELECT count FROM put_metadata_update_count) >= 2
+          WHEN (SELECT count FROM put_metadata_update_count) >= 1
           THEN RAISE(ABORT, 'forced metadata failure')
         END;
       END;
@@ -406,7 +406,7 @@ describe('PUT /api/posts/* (Task 7 smoke)', () => {
       expect((await fs.readdir(CONTENT_DIR)).some((name) => name.startsWith('.put-metadata-rollback.md.docus-save-'))).toBe(false)
     } finally {
       db.exec(`
-        DROP TRIGGER IF EXISTS fail_second_put_metadata_update;
+        DROP TRIGGER IF EXISTS fail_put_metadata_update;
         DROP TABLE IF EXISTS put_metadata_update_count;
       `)
       await fs.rm(abs, { force: true })
@@ -433,16 +433,16 @@ describe('PUT /api/posts/* (Task 7 smoke)', () => {
     db.exec(`
       CREATE TABLE put_external_update_count (count INTEGER NOT NULL);
       INSERT INTO put_external_update_count VALUES (0);
-      CREATE TRIGGER fail_second_put_external_update
+      CREATE TRIGGER fail_put_external_update
       BEFORE UPDATE ON documents
       BEGIN
         SELECT CASE
-          WHEN (SELECT count FROM put_external_update_count) >= 1
+          WHEN (SELECT count FROM put_external_update_count) >= 0
           THEN write_external_body_for_put_test()
         END;
         UPDATE put_external_update_count SET count = count + 1;
         SELECT CASE
-          WHEN (SELECT count FROM put_external_update_count) >= 2
+          WHEN (SELECT count FROM put_external_update_count) >= 1
           THEN RAISE(ABORT, 'forced metadata failure after external write')
         END;
       END;
@@ -458,7 +458,7 @@ describe('PUT /api/posts/* (Task 7 smoke)', () => {
       expect((await fs.readdir(CONTENT_DIR)).some((name) => name.startsWith('.put-metadata-external.md.docus-save-'))).toBe(false)
     } finally {
       db.exec(`
-        DROP TRIGGER IF EXISTS fail_second_put_external_update;
+        DROP TRIGGER IF EXISTS fail_put_external_update;
         DROP TABLE IF EXISTS put_external_update_count;
       `)
       await fs.rm(abs, { force: true })

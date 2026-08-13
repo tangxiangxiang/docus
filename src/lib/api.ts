@@ -73,7 +73,12 @@ export interface DocumentMetadata {
   updatedAt: number
 }
 
-export type UpdateDocumentMetadata = Pick<DocumentMetadata, 'title' | 'summary' | 'tags'>
+export type UpdateDocumentMetadata = {
+  title?: string
+  summary?: string
+  tags?: string[]
+  expectedUpdatedAt?: number
+}
 
 export interface MetadataMigrationSummary {
   total: number

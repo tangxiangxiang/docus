@@ -9,6 +9,8 @@ import {
   moveDocumentMetadata,
   moveDocumentMetadataPrefix,
   deleteDocumentMetadataPrefix,
+  patchDocumentMetadata,
+  patchDocumentMetadataWithinTransaction,
   saveDocumentMetadata,
   restoreDocumentMetadataMutation,
   snapshotDocumentMetadataMutation,
@@ -202,5 +204,115 @@ describe('document metadata repository', () => {
     ].join('\n')
     const result = ensureDocumentMetadata(db, 'inbox/note', raw, oldMtimeMs, oldMtimeMs)
     expect(result.updatedAt).toBe(futureMs)
+  })
+
+  it('observes an existing row without replaying stale Frontmatter fields', () => {
+    const saved = saveDocumentMetadata(db, {
+      path: 'inbox/note', title: 'Database title', summary: 'Database summary',
+      tags: ['live'], updatedAt: 100,
+    })
+    const observed = ensureDocumentMetadata(
+      db,
+      'inbox/note',
+      '---\ntitle: Old title\nsummary: Old summary\ntags: [old]\n---\n\nbody',
+      1,
+      1,
+    )
+    expect(observed).toEqual(saved)
+    expect(getDocumentMetadata(db, 'inbox/note')).toEqual(saved)
+  })
+
+  it('patches title and summary independently while preserving live tags', () => {
+    saveDocumentMetadata(db, {
+      path: 'inbox/note', title: 'A', summary: 'S', tags: ['live'], updatedAt: 100,
+    })
+    const titled = patchDocumentMetadata(db, {
+      path: 'inbox/note', changes: [{ field: 'title', value: 'B' }],
+    })
+    expect(titled.title).toBe('B')
+    expect(titled.tags).toEqual(['live'])
+    const summarized = patchDocumentMetadata(db, {
+      path: 'inbox/note', changes: [{ field: 'summary', value: 'T' }],
+    })
+    expect(summarized.summary).toBe('T')
+    expect(summarized.tags).toEqual(['live'])
+    expect(summarized.updatedAt).toBeGreaterThan(titled.updatedAt)
+  })
+
+  it('rejects a stale explicit tag patch atomically, including mixed title changes', () => {
+    saveDocumentMetadata(db, {
+      path: 'inbox/note', title: 'Original', tags: ['old'], updatedAt: 100,
+    })
+    const staleToken = getDocumentMetadata(db, 'inbox/note')!.updatedAt
+    const first = patchDocumentMetadata(db, {
+      path: 'inbox/note',
+      changes: [{ field: 'tags', values: ['live'] }],
+      expectedUpdatedAt: staleToken,
+    })
+    expect(first.tags).toEqual(['live'])
+    const beforeRejected = getDocumentMetadata(db, 'inbox/note')!
+
+    expect(() => patchDocumentMetadata(db, {
+      path: 'inbox/note',
+      changes: [
+        { field: 'title', value: 'Must not land' },
+        { field: 'tags', values: ['stale'] },
+      ],
+      expectedUpdatedAt: staleToken,
+    })).toThrowError(expect.objectContaining({
+      code: 'METADATA_VERSION_CONFLICT',
+    }))
+    expect(getDocumentMetadata(db, 'inbox/note')).toEqual(beforeRejected)
+  })
+
+  it('requires a tag token, advances strictly within one millisecond, and treats equal tags as a no-op', () => {
+    saveDocumentMetadata(db, { path: 'inbox/note', title: 'A', tags: ['old'], updatedAt: 1000 })
+    expect(() => patchDocumentMetadata(db, {
+      path: 'inbox/note', changes: [{ field: 'tags', values: ['new'] }],
+    })).toThrowError(expect.objectContaining({ code: 'INVALID_METADATA_CHANGE' }))
+
+    const first = patchDocumentMetadataWithinTransaction(db, {
+      path: 'inbox/note', changes: [{ field: 'title', value: 'B' }],
+    }, 1000)
+    expect(first.updatedAt).toBe(1001)
+    const second = patchDocumentMetadataWithinTransaction(db, {
+      path: 'inbox/note', changes: [{ field: 'summary', value: 'S' }],
+    }, 1000)
+    expect(second.updatedAt).toBe(1002)
+    const changed = patchDocumentMetadataWithinTransaction(db, {
+      path: 'inbox/note',
+      changes: [{ field: 'tags', values: ['#new'] }],
+      expectedUpdatedAt: second.updatedAt,
+    }, 1000)
+    expect(changed.updatedAt).toBe(1003)
+    const noOp = patchDocumentMetadataWithinTransaction(db, {
+      path: 'inbox/note',
+      changes: [{ field: 'tags', values: ['new'] }],
+      expectedUpdatedAt: changed.updatedAt,
+    }, 1000)
+    expect(noOp.updatedAt).toBe(changed.updatedAt)
+    expect(noOp.tags).toEqual(['new'])
+  })
+
+  it('rejects a negative explicit tag version before any mutation', () => {
+    saveDocumentMetadata(db, { path: 'inbox/note', title: 'A', tags: ['old'], updatedAt: 1000 })
+    const before = getDocumentMetadata(db, 'inbox/note')
+    expect(() => patchDocumentMetadata(db, {
+      path: 'inbox/note', changes: [{ field: 'tags', values: ['new'] }], expectedUpdatedAt: -1,
+    })).toThrowError(expect.objectContaining({ code: 'INVALID_METADATA_CHANGE' }))
+    expect(getDocumentMetadata(db, 'inbox/note')).toEqual(before)
+  })
+
+  it('fails closed on metadata version overflow without changing the row', () => {
+    saveDocumentMetadata(db, {
+      path: 'inbox/note', title: 'A', tags: ['old'], updatedAt: Number.MAX_SAFE_INTEGER,
+    })
+    const before = getDocumentMetadata(db, 'inbox/note')
+    expect(() => patchDocumentMetadata(db, {
+      path: 'inbox/note', changes: [{ field: 'title', value: 'B' }],
+    })).toThrowError(expect.objectContaining({
+      code: 'METADATA_VERSION_OVERFLOW',
+    }))
+    expect(getDocumentMetadata(db, 'inbox/note')).toEqual(before)
   })
 })
