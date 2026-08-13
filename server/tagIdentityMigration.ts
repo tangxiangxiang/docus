@@ -11,6 +11,9 @@ import type { MetadataMigrationReport } from './metadataMigration.js'
 
 export const TAG_IDENTITY_MIGRATION_KEY = 'internal.tags.identity.tag-identity-v1'
 const MAX_MARKER_BYTES = 4096
+const MAX_ERROR_REASON_LENGTH = 256
+const UNSAFE_ERROR_REASON_CHARACTERS = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/u
+const UNSAFE_ERROR_REASON_CHARACTERS_GLOBAL = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/gu
 
 export type TagIdentityHealthState = 'checking' | 'healthy' | 'unavailable'
 
@@ -53,6 +56,7 @@ type Marker = {
   completedAt?: number
   report: TagIdentityMigrationReport
   errorCode?: string
+  errorReason?: string
 }
 
 const EMPTY_REPORT: TagIdentityMigrationReport = {
@@ -68,6 +72,43 @@ const EMPTY_REPORT: TagIdentityMigrationReport = {
   documentsVersioned: 0,
 }
 
+function copyReport(report: TagIdentityMigrationReport): TagIdentityMigrationReport {
+  return { ...report }
+}
+
+function sanitizeMigrationFailureReason(reason: unknown): string {
+  const raw = reason instanceof Error
+    ? reason.message
+    : typeof reason === 'string'
+      ? reason
+      : 'tag identity migration failed'
+  const normalized = raw
+    .replace(UNSAFE_ERROR_REASON_CHARACTERS_GLOBAL, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim()
+  return (normalized || 'tag identity migration failed').slice(0, MAX_ERROR_REASON_LENGTH)
+}
+
+class TagIdentityMigrationError extends Error {
+  readonly code: string
+  readonly report?: TagIdentityMigrationReport
+
+  constructor(code: string, message: string, report?: TagIdentityMigrationReport) {
+    super(message)
+    this.name = 'TagIdentityMigrationError'
+    this.code = code
+    this.report = report ? copyReport(report) : undefined
+  }
+}
+
+function migrationFailure(
+  code: string,
+  reason: string,
+  report?: TagIdentityMigrationReport,
+): TagIdentityMigrationError {
+  return new TagIdentityMigrationError(code, sanitizeMigrationFailureReason(reason), report)
+}
+
 const healthByDb = new WeakMap<object, TagIdentityHealth>()
 type MigrationFailureStage =
   | 'after-staging'
@@ -78,7 +119,12 @@ type MigrationFailureStage =
   | 'after-document-version-update'
   | 'before-complete-marker'
 
-let failureInjection: MigrationFailureStage | null = null
+type MigrationFailureInjection = {
+  stage: MigrationFailureStage
+  reason?: string
+}
+
+let failureInjection: MigrationFailureStage | MigrationFailureInjection | null = null
 
 function now(): number {
   return Date.now()
@@ -108,7 +154,12 @@ function readMarker(db: DatabaseT): Marker | null | 'invalid' {
       || (parsed.status === 'complete' && (!Number.isSafeInteger(parsed.completedAt) || parsed.completedAt! < 0))
       || !report || typeof report !== 'object'
       || reportFields.some((field) => !Number.isSafeInteger(report[field]) || (report[field] as number) < 0)
-      || (parsed.errorCode !== undefined && (typeof parsed.errorCode !== 'string' || parsed.errorCode.length > 128))) {
+      || (parsed.errorCode !== undefined && (typeof parsed.errorCode !== 'string' || parsed.errorCode.length > 128))
+      || (parsed.errorReason !== undefined && (
+        typeof parsed.errorReason !== 'string'
+        || parsed.errorReason.length > MAX_ERROR_REASON_LENGTH
+        || UNSAFE_ERROR_REASON_CHARACTERS.test(parsed.errorReason)
+      ))) {
       return 'invalid'
     }
     return parsed as Marker
@@ -120,7 +171,7 @@ function readMarker(db: DatabaseT): Marker | null | 'invalid' {
 function writeMarker(db: DatabaseT, marker: Marker): void {
   const value = JSON.stringify(marker)
   if (Buffer.byteLength(value, 'utf8') > MAX_MARKER_BYTES) {
-    throw new TagIdentityMigrationError('TAG_IDENTITY_MIGRATION_FAILED', 'tag identity marker is too large')
+    throw migrationFailure('TAG_IDENTITY_MIGRATION_FAILED', 'tag identity marker is too large')
   }
   db.prepare(`
     INSERT INTO settings (key, value) VALUES (?, ?)
@@ -128,9 +179,16 @@ function writeMarker(db: DatabaseT, marker: Marker): void {
   `).run(TAG_IDENTITY_MIGRATION_KEY, value)
 }
 
-function injectFailureIfRequested(stage: MigrationFailureStage): void {
-  if (failureInjection !== stage) return
-  throw new TagIdentityMigrationError('TAG_IDENTITY_MIGRATION_FAILED', `injected migration failure at ${stage}`)
+function injectFailureIfRequested(stage: MigrationFailureStage, report: TagIdentityMigrationReport): void {
+  const injection = typeof failureInjection === 'string'
+    ? { stage: failureInjection }
+    : failureInjection
+  if (!injection || injection.stage !== stage) return
+  throw migrationFailure(
+    'TAG_IDENTITY_MIGRATION_FAILED',
+    injection.reason ?? `injected migration failure at ${stage}`,
+    report,
+  )
 }
 
 function readTagRows(db: DatabaseT): TagRow[] {
@@ -139,18 +197,8 @@ function readTagRows(db: DatabaseT): TagRow[] {
 
 function canonicalTag(row: TagRow): { displayName: string; normalizedName: string } {
   const validation = validatePersistentTag(row.name)
-  if (!validation.ok) throw new TagIdentityMigrationError('TAG_IDENTITY_INVALID', validation.message)
+  if (!validation.ok) throw migrationFailure('TAG_IDENTITY_INVALID', validation.message)
   return { displayName: validation.displayName, normalizedName: validation.normalizedName }
-}
-
-class TagIdentityMigrationError extends Error {
-  readonly code: string
-
-  constructor(code: string, message: string) {
-    super(message)
-    this.name = 'TagIdentityMigrationError'
-    this.code = code
-  }
 }
 
 function logicalMemberships(db: DatabaseT, tags = readTagRows(db)): Set<string> {
@@ -161,15 +209,15 @@ function logicalMemberships(db: DatabaseT, tags = readTagRows(db)): Set<string> 
     .all() as Array<{ document_id: string; tag_id: number }>
   for (const row of rows) {
     const identity = byId.get(row.tag_id)
-    if (identity === undefined) throw new TagIdentityMigrationError('TAG_IDENTITY_ASSOCIATION_INVALID', 'association references an unknown tag')
+    if (identity === undefined) throw migrationFailure('TAG_IDENTITY_ASSOCIATION_INVALID', 'association references an unknown tag')
     memberships.add(`${row.document_id}\u0000${identity}`)
   }
   return memberships
 }
 
 function verifySetsEqual(before: Set<string>, after: Set<string>): void {
-  if (before.size !== after.size) throw new TagIdentityMigrationError('TAG_IDENTITY_MEMBERSHIP_LOSS', 'logical tag membership changed during migration')
-  for (const value of before) if (!after.has(value)) throw new TagIdentityMigrationError('TAG_IDENTITY_MEMBERSHIP_LOSS', 'logical tag membership changed during migration')
+  if (before.size !== after.size) throw migrationFailure('TAG_IDENTITY_MEMBERSHIP_LOSS', 'logical tag membership changed during migration')
+  for (const value of before) if (!after.has(value)) throw migrationFailure('TAG_IDENTITY_MEMBERSHIP_LOSS', 'logical tag membership changed during migration')
 }
 
 function verifyCanonicalState(db: DatabaseT): void {
@@ -178,10 +226,10 @@ function verifyCanonicalState(db: DatabaseT): void {
   for (const row of rows) {
     const canonical = canonicalTag(row)
     if (row.normalized_name !== canonical.normalizedName) {
-      throw new TagIdentityMigrationError('TAG_IDENTITY_UNHEALTHY', 'stored tag identity is not canonical')
+      throw migrationFailure('TAG_IDENTITY_UNHEALTHY', 'stored tag identity is not canonical')
     }
     if (identities.has(canonical.normalizedName)) {
-      throw new TagIdentityMigrationError('TAG_IDENTITY_CONFLICT', 'duplicate canonical tag identity remains')
+      throw migrationFailure('TAG_IDENTITY_CONFLICT', 'duplicate canonical tag identity remains')
     }
     identities.add(canonical.normalizedName)
   }
@@ -189,9 +237,9 @@ function verifyCanonicalState(db: DatabaseT): void {
     SELECT document_id, tag_id, COUNT(*) AS count
     FROM document_tags GROUP BY document_id, tag_id HAVING count > 1 LIMIT 1
   `).get()
-  if (duplicateAssociation) throw new TagIdentityMigrationError('TAG_IDENTITY_UNHEALTHY', 'duplicate document-tag association remains')
+  if (duplicateAssociation) throw migrationFailure('TAG_IDENTITY_UNHEALTHY', 'duplicate document-tag association remains')
   const foreignKeyFailure = db.prepare('PRAGMA foreign_key_check').get()
-  if (foreignKeyFailure) throw new TagIdentityMigrationError('TAG_IDENTITY_UNHEALTHY', 'foreign key check failed')
+  if (foreignKeyFailure) throw migrationFailure('TAG_IDENTITY_UNHEALTHY', 'foreign key check failed')
 }
 
 function stageNamespace(db: DatabaseT, group: TagGroup): string {
@@ -199,7 +247,7 @@ function stageNamespace(db: DatabaseT, group: TagGroup): string {
   for (const row of group.rows) {
     const staged = `${namespace}${row.id}`
     if (db.prepare('SELECT 1 FROM tags WHERE normalized_name = ?').get(staged)) {
-      throw new TagIdentityMigrationError('TAG_IDENTITY_MIGRATION_FAILED', 'temporary identity namespace collided')
+      throw migrationFailure('TAG_IDENTITY_MIGRATION_FAILED', 'temporary identity namespace collided')
     }
     db.prepare('UPDATE tags SET normalized_name = ? WHERE id = ?').run(staged, row.id)
   }
@@ -208,121 +256,135 @@ function stageNamespace(db: DatabaseT, group: TagGroup): string {
 
 function writeMigration(db: DatabaseT, attemptedAt: number): TagIdentityMigrationReport {
   const tags = readTagRows(db)
-  const beforeMembership = logicalMemberships(db, tags)
-  const groupsByIdentity = new Map<string, TagRow[]>()
-  for (const row of tags) {
-    const canonical = canonicalTag(row)
-    const group = groupsByIdentity.get(canonical.normalizedName) ?? []
-    group.push(row)
-    groupsByIdentity.set(canonical.normalizedName, group)
-  }
-  const groups: TagGroup[] = [...groupsByIdentity.entries()]
-    .map(([identity, rows]) => ({ identity, rows: rows.sort((a, b) => a.id - b.id) }))
-    .sort((a, b) => a.rows[0].id - b.rows[0].id)
   const report: TagIdentityMigrationReport = {
     ...EMPTY_REPORT,
     rowsScanned: tags.length,
-    logicalGroups: groups.length,
-    collisionGroups: groups.filter((group) => group.rows.length > 1).length,
-    survivors: groups.length,
   }
-  const affectedDocuments = new Set<string>()
-  const associationCount = db.prepare('SELECT document_id, tag_id FROM document_tags')
-    .all() as Array<{ document_id: string; tag_id: number }>
-  const docsByTag = new Map<number, string[]>()
-  for (const association of associationCount) {
-    const docs = docsByTag.get(association.tag_id) ?? []
-    docs.push(association.document_id)
-    docsByTag.set(association.tag_id, docs)
-  }
-
-  // A document is versioned only when its physical membership changes or its
-  // hydrated display changes. Staging is an internal implementation detail;
-  // it must not make survivor-only documents look affected.
-  for (const group of groups) {
-    const survivor = group.rows[0]
-    const survivorCanonical = canonicalTag(survivor)
-    const displayChanges = survivor.name !== survivorCanonical.displayName
-    const affectedRows = displayChanges ? group.rows : group.rows.slice(1)
-    for (const row of affectedRows) {
-      for (const documentId of docsByTag.get(row.id) ?? []) affectedDocuments.add(documentId)
-    }
-  }
-
-  const stageGroups = groups.filter((group) => group.rows.length > 1
-    || group.rows.some((row) => {
+  try {
+    const beforeMembership = logicalMemberships(db, tags)
+    const groupsByIdentity = new Map<string, TagRow[]>()
+    for (const row of tags) {
       const canonical = canonicalTag(row)
-      return canonical.normalizedName !== row.normalized_name || canonical.displayName !== row.name
-    }))
-  for (const group of stageGroups) {
-    stageNamespace(db, group)
-    injectFailureIfRequested('after-staging')
-  }
+      const group = groupsByIdentity.get(canonical.normalizedName) ?? []
+      group.push(row)
+      groupsByIdentity.set(canonical.normalizedName, group)
+    }
+    const groups: TagGroup[] = [...groupsByIdentity.entries()]
+      .map(([identity, rows]) => ({ identity, rows: rows.sort((a, b) => a.id - b.id) }))
+      .sort((a, b) => a.rows[0].id - b.rows[0].id)
+    report.logicalGroups = groups.length
+    report.collisionGroups = groups.filter((group) => group.rows.length > 1).length
+    report.survivors = groups.length
 
-  const deleteAssociations = db.prepare('DELETE FROM document_tags WHERE tag_id = ?')
-  const deleteTag = db.prepare('DELETE FROM tags WHERE id = ?')
-  const updateSurvivor = db.prepare('UPDATE tags SET name = ?, normalized_name = ? WHERE id = ?')
-  for (const group of groups) {
-    const survivor = group.rows[0]
-    const canonical = canonicalTag(survivor)
-    if (group.rows.length > 1) {
-      const losingIds = group.rows.slice(1).map((row) => row.id)
-      const beforeAssociations = db.prepare(`SELECT COUNT(*) AS count FROM document_tags WHERE tag_id IN (${losingIds.map(() => '?').join(', ')})`).get(...losingIds) as { count: number }
-      const repoint = db.prepare(`
-        INSERT OR IGNORE INTO document_tags (document_id, tag_id)
-        SELECT document_id, ? FROM document_tags
-        WHERE tag_id IN (${group.rows.map(() => '?').join(', ')})
-      `).run(survivor.id, ...group.rows.map((row) => row.id))
-      injectFailureIfRequested('after-association-repoint')
-      deleteAssociations.run(losingIds[0])
-      for (const losingId of losingIds.slice(1)) deleteAssociations.run(losingId)
-      injectFailureIfRequested('after-association-collapse')
-      for (const losingId of losingIds) deleteTag.run(losingId)
-      injectFailureIfRequested('after-tag-deletion')
-      report.associationsMoved += Number(repoint.changes)
-      report.associationsCollapsed += Number(beforeAssociations.count) - Number(repoint.changes)
-      report.tagRowsDeleted += losingIds.length
+    const affectedDocuments = new Set<string>()
+    const associationCount = db.prepare('SELECT document_id, tag_id FROM document_tags')
+      .all() as Array<{ document_id: string; tag_id: number }>
+    const docsByTag = new Map<number, string[]>()
+    for (const association of associationCount) {
+      const docs = docsByTag.get(association.tag_id) ?? []
+      docs.push(association.document_id)
+      docsByTag.set(association.tag_id, docs)
     }
-    if (survivor.name !== canonical.displayName) report.displayRowsChanged++
-    if (survivor.normalized_name !== canonical.normalizedName) report.identityRowsChanged++
-    if (group.rows.length > 1 || survivor.name !== canonical.displayName || survivor.normalized_name !== canonical.normalizedName) {
-      updateSurvivor.run(canonical.displayName, canonical.normalizedName, survivor.id)
-      injectFailureIfRequested('after-tag-update')
-    }
-  }
 
-  const candidateNow = now()
-  let versionRows: Array<{ id: string; updated_at: number }> = []
-  if (affectedDocuments.size > 0) {
-    versionRows = db.prepare(
-      `SELECT id, updated_at FROM documents WHERE id IN (${[...affectedDocuments].map(() => '?').join(', ')}) ORDER BY id`,
-    ).all(...affectedDocuments) as Array<{ id: string; updated_at: number }>
-  }
-  const updateVersion = db.prepare('UPDATE documents SET updated_at = ? WHERE id = ?')
-  for (const row of versionRows) {
-    let next: number
-    try { next = nextMetadataUpdatedAt(row.updated_at, candidateNow) }
-    catch (error) {
-      if (error instanceof MetadataVersionError) throw new TagIdentityMigrationError('METADATA_VERSION_OVERFLOW', error.message)
-      throw error
+    // A document is versioned only when its physical membership changes or its
+    // hydrated display changes. Staging is an internal implementation detail;
+    // it must not make survivor-only documents look affected.
+    for (const group of groups) {
+      const survivor = group.rows[0]
+      const survivorCanonical = canonicalTag(survivor)
+      const displayChanges = survivor.name !== survivorCanonical.displayName
+      const affectedRows = displayChanges ? group.rows : group.rows.slice(1)
+      for (const row of affectedRows) {
+        for (const documentId of docsByTag.get(row.id) ?? []) affectedDocuments.add(documentId)
+      }
     }
-    updateVersion.run(next, row.id)
-    injectFailureIfRequested('after-document-version-update')
+
+    const stageGroups = groups.filter((group) => group.rows.length > 1
+      || group.rows.some((row) => {
+        const canonical = canonicalTag(row)
+        return canonical.normalizedName !== row.normalized_name || canonical.displayName !== row.name
+      }))
+    for (const group of stageGroups) {
+      stageNamespace(db, group)
+      injectFailureIfRequested('after-staging', report)
+    }
+
+    const deleteAssociations = db.prepare('DELETE FROM document_tags WHERE tag_id = ?')
+    const deleteTag = db.prepare('DELETE FROM tags WHERE id = ?')
+    const updateSurvivor = db.prepare('UPDATE tags SET name = ?, normalized_name = ? WHERE id = ?')
+    for (const group of groups) {
+      const survivor = group.rows[0]
+      const canonical = canonicalTag(survivor)
+      const displayChanges = survivor.name !== canonical.displayName
+      const identityChanges = survivor.normalized_name !== canonical.normalizedName
+      if (group.rows.length > 1) {
+        const losingIds = group.rows.slice(1).map((row) => row.id)
+        const beforeAssociations = db.prepare(`SELECT COUNT(*) AS count FROM document_tags WHERE tag_id IN (${losingIds.map(() => '?').join(', ')})`).get(...losingIds) as { count: number }
+        const repoint = db.prepare(`
+          INSERT OR IGNORE INTO document_tags (document_id, tag_id)
+          SELECT document_id, ? FROM document_tags
+          WHERE tag_id IN (${group.rows.map(() => '?').join(', ')})
+        `).run(survivor.id, ...group.rows.map((row) => row.id))
+        report.associationsMoved += Number(repoint.changes)
+        injectFailureIfRequested('after-association-repoint', report)
+        deleteAssociations.run(losingIds[0])
+        for (const losingId of losingIds.slice(1)) deleteAssociations.run(losingId)
+        report.associationsCollapsed += Number(beforeAssociations.count) - Number(repoint.changes)
+        injectFailureIfRequested('after-association-collapse', report)
+        for (const losingId of losingIds) deleteTag.run(losingId)
+        report.tagRowsDeleted += losingIds.length
+        injectFailureIfRequested('after-tag-deletion', report)
+      }
+      if (group.rows.length > 1 || displayChanges || identityChanges) {
+        updateSurvivor.run(canonical.displayName, canonical.normalizedName, survivor.id)
+        if (displayChanges) report.displayRowsChanged++
+        if (identityChanges) report.identityRowsChanged++
+        injectFailureIfRequested('after-tag-update', report)
+      }
+    }
+
+    const candidateNow = now()
+    let versionRows: Array<{ id: string; updated_at: number }> = []
+    if (affectedDocuments.size > 0) {
+      versionRows = db.prepare(
+        `SELECT id, updated_at FROM documents WHERE id IN (${[...affectedDocuments].map(() => '?').join(', ')}) ORDER BY id`,
+      ).all(...affectedDocuments) as Array<{ id: string; updated_at: number }>
+    }
+    const updateVersion = db.prepare('UPDATE documents SET updated_at = ? WHERE id = ?')
+    for (const row of versionRows) {
+      let next: number
+      try { next = nextMetadataUpdatedAt(row.updated_at, candidateNow) }
+      catch (error) {
+        if (error instanceof MetadataVersionError) throw migrationFailure('METADATA_VERSION_OVERFLOW', error.message)
+        throw error
+      }
+      updateVersion.run(next, row.id)
+      report.documentsVersioned++
+      injectFailureIfRequested('after-document-version-update', report)
+    }
+    verifyCanonicalState(db)
+    verifySetsEqual(beforeMembership, logicalMemberships(db))
+    injectFailureIfRequested('before-complete-marker', report)
+    const marker: Marker = {
+      contractVersion: TAG_IDENTITY_CONTRACT_VERSION,
+      status: 'complete',
+      attemptedAt,
+      completedAt: now(),
+      report,
+    }
+    // Marker-last: no write follows this settings update before COMMIT.
+    writeMarker(db, marker)
+    return report
+  } catch (error) {
+    if (error instanceof TagIdentityMigrationError) {
+      // Failed-marker reports describe attempt progress before rollback, not
+      // mutations that were durably committed.
+      throw migrationFailure(error.code, error.message, report)
+    }
+    // Unexpected SQLite/runtime failures still get the safely available
+    // attempt snapshot, but never expose raw driver text in the marker.
+    throw migrationFailure('TAG_IDENTITY_MIGRATION_FAILED', 'tag identity migration failed', report)
   }
-  report.documentsVersioned = versionRows.length
-  verifyCanonicalState(db)
-  verifySetsEqual(beforeMembership, logicalMemberships(db))
-  injectFailureIfRequested('before-complete-marker')
-  const marker: Marker = {
-    contractVersion: TAG_IDENTITY_CONTRACT_VERSION,
-    status: 'complete',
-    attemptedAt,
-    completedAt: now(),
-    report,
-  }
-  // Marker-last: no write follows this settings update before COMMIT.
-  writeMarker(db, marker)
-  return report
 }
 
 function failedReport(): TagIdentityMigrationReport {
@@ -350,24 +412,29 @@ function runTagIdentityMigrationAtStartup(db: DatabaseT): { report: TagIdentityM
     const tx = db.transaction(() => writeMigration(db, attemptedAt))
     return { report: tx.immediate(), complete: true }
   } catch (error) {
-    const code = error instanceof TagIdentityMigrationError
-      ? error.code
+    const migrationError = error instanceof TagIdentityMigrationError ? error : undefined
+    const code = migrationError
+      ? migrationError.code
       : error instanceof Error && error.name === 'SqliteError'
         ? 'TAG_IDENTITY_MIGRATION_FAILED'
         : 'TAG_IDENTITY_MIGRATION_FAILED'
+    const report = migrationError?.report ?? failedReport()
     try {
       writeMarker(db, {
         contractVersion: TAG_IDENTITY_CONTRACT_VERSION,
         status: 'failed',
         attemptedAt,
-        report: failedReport(),
+        // This is diagnostic attempt progress; the surrounding transaction
+        // has already rolled back and none of these mutations were committed.
+        report,
         errorCode: code,
+        errorReason: sanitizeMigrationFailureReason(migrationError?.message ?? 'tag identity migration failed'),
       })
     } catch {
       // The process health cache below remains unavailable and the missing
       // marker makes a future startup retry the migration.
     }
-    return { report: failedReport(), complete: false, code }
+    return { report, complete: false, code }
   }
 }
 
@@ -503,7 +570,7 @@ export function resetTagIdentityHealthForTesting(db?: DatabaseT): void {
 }
 
 export function __setTagIdentityMigrationFailureForTesting(
-  failure: MigrationFailureStage | null,
+  failure: MigrationFailureStage | MigrationFailureInjection | null,
 ): void {
   failureInjection = failure
 }

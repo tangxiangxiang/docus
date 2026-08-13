@@ -289,7 +289,145 @@ describe('T2-0 tag identity migration', () => {
     expect(result.complete).toBe(false)
     expect(result.code).toBe('TAG_IDENTITY_INVALID')
     expect(snapshot()).toEqual(before)
-    expect(marker()).toMatchObject({ status: 'failed', errorCode: 'TAG_IDENTITY_INVALID' })
+    expect(marker()).toMatchObject({
+      status: 'failed',
+      errorCode: 'TAG_IDENTITY_INVALID',
+      errorReason: expect.any(String),
+      report: { rowsScanned: 1, logicalGroups: 0, collisionGroups: 0, survivors: 0 },
+    })
+    expect((marker() as { errorReason: string }).errorReason).not.toMatch(/[\u0000-\u001F\u007F-\u009F\u2028\u2029]/u)
+  })
+
+  it('preserves report diagnostics when staging fails, without committing them', () => {
+    seedCollision()
+    const before = snapshot()
+    __setTagIdentityMigrationFailureForTesting('after-staging')
+
+    const result = runTagIdentityMigrationForTesting(db)
+    const failed = marker() as { report: Record<string, number>; errorReason: string }
+
+    expect(result.complete).toBe(false)
+    expect(result.report).toMatchObject({ rowsScanned: 3, logicalGroups: 1, collisionGroups: 1, survivors: 1 })
+    expect(failed).toMatchObject({
+      report: { rowsScanned: 3, logicalGroups: 1, collisionGroups: 1, survivors: 1 },
+      errorReason: 'injected migration failure at after-staging',
+    })
+    expect(snapshot()).toEqual(before)
+  })
+
+  it('preserves post-deletion diagnostics after transaction rollback', () => {
+    seedCollision()
+    const before = snapshot()
+    __setTagIdentityMigrationFailureForTesting('after-tag-deletion')
+
+    runTagIdentityMigrationForTesting(db)
+    const failed = marker() as { report: Record<string, number> }
+
+    expect(failed.report).toMatchObject({
+      rowsScanned: 3,
+      logicalGroups: 1,
+      collisionGroups: 1,
+      survivors: 1,
+      associationsMoved: 1,
+      associationsCollapsed: 2,
+      tagRowsDeleted: 2,
+      displayRowsChanged: 0,
+      identityRowsChanged: 0,
+      documentsVersioned: 0,
+    })
+    expect(snapshot()).toEqual(before)
+  })
+
+  it('preserves the executed document-version count after rollback', () => {
+    seedCollision()
+    const before = snapshot()
+    __setTagIdentityMigrationFailureForTesting('after-document-version-update')
+
+    runTagIdentityMigrationForTesting(db)
+    const failed = marker() as { report: Record<string, number> }
+
+    expect(failed.report).toMatchObject({
+      associationsMoved: 1,
+      associationsCollapsed: 2,
+      tagRowsDeleted: 2,
+      identityRowsChanged: 1,
+      documentsVersioned: 1,
+    })
+    expect(snapshot()).toEqual(before)
+  })
+
+  it('preserves the full attempt report before the complete marker failure', () => {
+    seedCollision()
+    const before = snapshot()
+    __setTagIdentityMigrationFailureForTesting('before-complete-marker')
+
+    runTagIdentityMigrationForTesting(db)
+    const failed = marker() as { status: string; report: Record<string, number> }
+
+    expect(failed.status).toBe('failed')
+    expect(failed.report).toEqual({
+      rowsScanned: 3,
+      logicalGroups: 1,
+      collisionGroups: 1,
+      survivors: 1,
+      associationsMoved: 1,
+      associationsCollapsed: 2,
+      tagRowsDeleted: 2,
+      displayRowsChanged: 0,
+      identityRowsChanged: 1,
+      documentsVersioned: 2,
+    })
+    expect(snapshot()).toEqual(before)
+    expect(db.prepare("SELECT normalized_name FROM tags WHERE normalized_name LIKE '__docus_t20_stage_%'").all()).toEqual([])
+  })
+
+  it('sanitizes and bounds an injected failure reason', () => {
+    seedCollision()
+    __setTagIdentityMigrationFailureForTesting({
+      stage: 'after-staging',
+      reason: `first line\nsecond\u0001line ${'x'.repeat(600)}`,
+    })
+
+    runTagIdentityMigrationForTesting(db)
+    const reason = (marker() as { errorReason: string }).errorReason
+
+    expect(reason.length).toBeLessThanOrEqual(256)
+    expect(reason).not.toMatch(/[\u0000-\u001F\u007F-\u009F\u2028\u2029]/u)
+    expect(reason).toContain('first line second line')
+  })
+
+  it.each([
+    ['non-string', 42],
+    ['oversized', 'x'.repeat(257)],
+    ['control character', 'safe\u0001reason'],
+  ] as const)('fails closed for invalid failed-marker errorReason: %s', (_label, errorReason) => {
+    db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run(TAG_IDENTITY_MIGRATION_KEY, JSON.stringify({
+      contractVersion: 'tag-identity-v1',
+      status: 'failed',
+      attemptedAt: 1,
+      report: {
+        rowsScanned: 0,
+        logicalGroups: 0,
+        collisionGroups: 0,
+        survivors: 0,
+        associationsMoved: 0,
+        associationsCollapsed: 0,
+        tagRowsDeleted: 0,
+        displayRowsChanged: 0,
+        identityRowsChanged: 0,
+        documentsVersioned: 0,
+      },
+      errorCode: 'TAG_IDENTITY_MIGRATION_FAILED',
+      errorReason,
+    }))
+    seedCollision()
+
+    const result = runTagIdentityMigrationForTesting(db)
+
+    expect(result.complete).toBe(false)
+    expect(result.code).toBe('TAG_IDENTITY_CONFLICT')
+    expect(marker()).toMatchObject({ status: 'failed', errorReason })
+    expect(db.prepare('SELECT COUNT(*) AS count FROM tags').get()).toEqual({ count: 3 })
   })
 
   it('is idempotent after a completed marker and performs no additional mutation', () => {
