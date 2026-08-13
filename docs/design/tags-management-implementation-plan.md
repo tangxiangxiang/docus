@@ -8,7 +8,7 @@
 
 **Plan review/repair baseline:** `fc73bbe1428fb4734eada68b0a1529ffb85c8730`
 
-**Current document revision baseline:** `9797f75bf2a0d5c7d7c66dec79f4be01da8f4c87`
+**Plan repair input baseline:** `9797f75bf2a0d5c7d7c66dec79f4be01da8f4c87`
 
 **Approved PRD commit:** `f9a79c9be2723f2b163486b743e91792e1471393`
 
@@ -80,12 +80,12 @@ verified diff from `f9a79c9` to this commit contains only
 `docs/design/tags-management-implementation-plan.md`; no production
 architecture changed between those commits.
 
-### 3.3 Current document revision
+### 3.3 Plan repair input baseline
 
-Current repository HEAD is
-`9797f75bf2a0d5c7d7c66dec79f4be01da8f4c87`. The verified diff from
-`fc73bbe1` to this revision is also documentation-only and contains only this
-Implementation Plan. This revision records plan review fixes; it is not the
+`9797f75bf2a0d5c7d7c66dec79f4be01da8f4c87` was the repository HEAD at the
+start of the baseline-provenance repair pass. The verified diff from
+`fc73bbe1` to that input baseline is also documentation-only and contains only
+this Implementation Plan. It records plan review fixes; it is not the
 production implementation baseline and does not supersede the
 `f9a79c9` architecture evidence baseline.
 
