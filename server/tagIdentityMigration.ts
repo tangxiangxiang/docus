@@ -462,9 +462,11 @@ async function liveMarkdownPaths(rootDir: string): Promise<string[]> {
 async function verifyLiveMetadata(
   db: DatabaseT,
   contentDir: string,
-  metadataReport: MetadataMigrationReport,
+  metadataReport?: MetadataMigrationReport,
 ): Promise<{ code?: string; reason?: string }> {
-  if (metadataReport.failed > 0) return { code: 'METADATA_MIGRATION_INCOMPLETE', reason: 'live metadata migration has failed documents' }
+  if (metadataReport?.failed && metadataReport.failed > 0) {
+    return { code: 'METADATA_MIGRATION_INCOMPLETE', reason: 'live metadata migration has failed documents' }
+  }
   let paths: string[]
   try { paths = await liveMarkdownPaths(contentDir) }
   catch { return { code: 'METADATA_INVENTORY_UNAVAILABLE', reason: 'live Markdown inventory could not be read' } }
@@ -476,6 +478,52 @@ async function verifyLiveMetadata(
     if (failedRows.has(documentPath)) return { code: 'METADATA_MIGRATION_INCOMPLETE', reason: 'a live Markdown path has a failed metadata migration' }
   }
   return {}
+}
+
+/**
+ * Re-run the management safety checks without retrying identity migration.
+ *
+ * Management requests must not rely on the startup cache: a Markdown file can
+ * be added after startup and would otherwise be invisible to a global tag
+ * operation. This function is deliberately read-only and is also the only
+ * health seam used by the management routes.
+ */
+export async function preflightTagIdentityHealth(
+  db: DatabaseT,
+  contentDir: string,
+): Promise<TagIdentityHealth> {
+  const marker = readMarker(db)
+  if (marker === 'invalid') {
+    return unavailable('TAG_IDENTITY_CONFLICT', 'tag identity marker is malformed or has an unknown version')
+  }
+  if (!marker) {
+    return unavailable('TAG_IDENTITY_MIGRATION_REQUIRED', 'tag identity migration has not completed')
+  }
+  if (marker.status === 'failed') {
+    return unavailable(marker.errorCode ?? 'TAG_IDENTITY_MIGRATION_FAILED', 'tag identity migration failed during startup')
+  }
+
+  try {
+    verifyCanonicalState(db)
+  } catch (error) {
+    return unavailable(
+      error instanceof TagIdentityMigrationError ? error.code : 'TAG_IDENTITY_UNHEALTHY',
+      'tag identity invariant verification failed',
+      true,
+    )
+  }
+  const invalidTagId = (db.prepare('SELECT id FROM tags').all() as Array<{ id: number }>)
+    .some((row) => !Number.isSafeInteger(row.id) || row.id <= 0)
+  if (invalidTagId) {
+    return unavailable('TAG_IDENTITY_UNHEALTHY', 'tag identity stable IDs are unavailable', true)
+  }
+
+  const live = await verifyLiveMetadata(db, contentDir)
+  if (live.code) {
+    return unavailable(live.code, live.reason ?? 'metadata health is unavailable', true)
+  }
+
+  return { state: 'healthy', migrationComplete: true, checkedAt: now() }
 }
 
 export async function initializeTagIdentityAndHealth(

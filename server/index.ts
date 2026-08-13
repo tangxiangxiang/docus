@@ -8,6 +8,7 @@ import healthRoutes from './routes/health.js'
 import linkRoutes from './routes/links.js'
 import metadataRoutes from './routes/metadata.js'
 import postRoutes from './routes/posts.js'
+import tagRoutes from './routes/tags.js'
 import vaultIdentityRoutes from './routes/vaultIdentity.js'
 import { __setMetadataDbForTesting } from './routes/shared.js'
 import vaultRoutes from './routes/vault.js'
@@ -27,6 +28,7 @@ app.route('/', vaultIdentityRoutes)
 app.route('/', metadataRoutes)
 app.route('/', folderRoutes)
 app.route('/', postRoutes)
+app.route('/', tagRoutes)
 app.route('/', vaultRoutes)
 app.route('/', linkRoutes)
 app.route('/api/ai', aiRoutes)
