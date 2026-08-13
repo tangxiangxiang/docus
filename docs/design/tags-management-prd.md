@@ -1,10 +1,10 @@
 # Docus Tags Management Phase 2 PRD
 
-**Status:** Draft for Review  
+**Status:** Approved for Implementation
 **Date:** 2026-08-13  
 **Research baseline:** 89cd538dbf1f35d21fdb656324ee2815768d7a3d  
-**Scope:** Product and architecture contract only; no implementation authorization  
-**Owner:** Docus product owner (review required before implementation)
+**Scope:** Approved product and architecture contract; implementation requires a separately approved plan
+**Owner:** Docus product owner (Owner / Architecture Review complete)
 
 > This document defines what Tags Phase 2 must mean and why it is safe. It is
 > not an Implementation Plan. It intentionally does not prescribe source-file
@@ -15,9 +15,11 @@
 
 ### 1.1 Decision status
 
-This is the first active PRD for Tags Phase 2. It is **Draft for Review**. It
-is not Approved and is not Ready for Implementation. Owner review must happen
-before a Phase 2 implementation plan is created.
+This PRD has completed Owner / Architecture Review and is **Approved for
+Implementation**. Its product and safety contracts are the source of truth for
+the Tags Phase 2 Implementation Plan. Implementation must not silently change
+these contracts; any material product or architecture deviation requires a PRD
+amendment and review before implementation continues.
 
 ### 1.2 Baseline and research scope
 
@@ -40,11 +42,23 @@ read from their current archive locations:
 The earlier Vault Tag Filter interaction is historical. It is superseded by
 the shipped Phase 1 behavior and is not a Phase 2 product contract.
 
-### 1.3 What this PRD authorizes
+### 1.3 What approval authorizes
 
-This PRD authorizes only product and architecture review. It does not authorize
-changes to src, server, shared, e2e, tests, package files, database schema,
-migrations, TagPanel, FileTree, VaultView, AI tools, or Git History.
+Approval authorizes creation of a Tags Phase 2 Implementation Plan.
+Implementation work is authorized only after that plan is separately reviewed
+and approved. Approval does not mean implementation is complete, permit an
+immediate migration or production rollout, bring Undo into Phase 2 MVP, or
+rewrite the historical freeze record.
+
+**Product source of truth:** `docs/design/tags-management-prd.md`. If an
+Implementation Plan conflicts with this PRD, the PRD wins.
+
+The required sequence is:
+
+~~~text
+Approved PRD -> Implementation Plan -> Plan Review -> T2-0 through T2-7
+Implementation -> Closure
+~~~
 
 ## 2. Executive Summary
 
@@ -1623,9 +1637,10 @@ without requiring a Phase 1 state-architecture rewrite.
 ## 33. Open Product Questions
 
 None are required to define the Phase 2 MVP contract. The decisions above are
-the recommended defaults for Owner review. A future question about separating
-content and metadata timestamps or adding durable operation history belongs in
-a separately approved PRD/ADR, not in implementation by assumption.
+the approved source of truth for implementation planning. A future question
+about separating content and metadata timestamps or adding durable operation
+history belongs in a separately approved PRD/ADR, not in implementation by
+assumption.
 
 ## 34. Acceptance Criteria
 
@@ -1717,4 +1732,4 @@ This PRD is complete when:
 - no production code, schema, migration, dependency, or test file has been
   changed.
 
-**Document status remains Draft for Review until Owner approval.**
+**PRD review is complete and document status is Approved for Implementation.**
