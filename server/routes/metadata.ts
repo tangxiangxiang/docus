@@ -19,7 +19,7 @@ import {
   listMetadataMigrationRecords,
   migrateVaultMetadata,
 } from '../metadataMigration.js'
-import { initializeTagIdentityAndHealth } from '../tagIdentityMigration.js'
+import { refreshTagIdentityHealth } from '../tagIdentityMigration.js'
 import { CONTENT_DIR, filePathFor } from '../paths.js'
 import { bad, ensureMetadata, exists, metadataDb } from './shared.js'
 
@@ -46,7 +46,7 @@ metadataRoutes.get('/api/metadata/migration', (c) => {
 
 metadataRoutes.post('/api/metadata/migrate', async (c) => {
   const report = await runMetadataMigration()
-  const health = await initializeTagIdentityAndHealth(metadataDb(), CONTENT_DIR, report)
+  const health = await refreshTagIdentityHealth(metadataDb(), CONTENT_DIR, report)
   return c.json({ report, summary: getMetadataMigrationSummary(metadataDb()), tagIdentityHealth: health })
 })
 

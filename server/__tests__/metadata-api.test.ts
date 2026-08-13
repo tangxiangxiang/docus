@@ -7,8 +7,13 @@ import app, { __setMetadataDbForTesting } from '../index'
 import { applyMigrations } from '../db'
 import { getDocumentMetadata, moveDocumentMetadata, saveDocumentMetadata } from '../documentMetadata'
 import { migrateVaultMetadata } from '../metadataMigration'
+import {
+  TAG_IDENTITY_CONTRACT_VERSION,
+} from '../../shared/tagNormalization'
+import { TAG_IDENTITY_MIGRATION_KEY } from '../tagIdentityMigration'
 import { closeAuthTestContext, createAuthenticatedTestContext, type AuthenticatedTestContext } from './helpers/auth'
 
+const mockPathState = vi.hoisted(() => ({ root: '' }))
 let root: string
 const db = new Database(':memory:')
 db.pragma('foreign_keys = ON')
@@ -17,7 +22,11 @@ let auth: AuthenticatedTestContext
 
 vi.mock('../paths.js', async (importOriginal) => {
   const original = await importOriginal<typeof import('../paths.js')>()
-  return { ...original, filePathFor: (documentPath: string) => path.join(root, `${documentPath}.md`) }
+  return {
+    ...original,
+    get CONTENT_DIR() { return mockPathState.root || original.CONTENT_DIR },
+    filePathFor: (documentPath: string) => path.join(mockPathState.root, `${documentPath}.md`),
+  }
 })
 
 beforeAll(() => {
@@ -32,7 +41,9 @@ afterAll(() => {
 
 beforeEach(async () => {
   db.exec('DELETE FROM metadata_migrations; DELETE FROM documents; DELETE FROM tags;')
+  db.prepare('DELETE FROM settings WHERE key = ?').run(TAG_IDENTITY_MIGRATION_KEY)
   root = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-metadata-api-'))
+  mockPathState.root = root
   await fs.mkdir(path.join(root, 'inbox'), { recursive: true })
 })
 
@@ -190,5 +201,70 @@ describe('GET /api/metadata/documents/:id', () => {
 
   it('returns 404 for an unknown id', async () => {
     expect((await getById('no-such-id')).status).toBe(404)
+  })
+})
+
+describe('POST /api/metadata/migrate', () => {
+  function seedIdentityCollision() {
+    db.exec(`
+      INSERT INTO tags (id, name, normalized_name) VALUES (3, 'Java', 'java'), (8, '#java', '#java');
+    `)
+  }
+
+  function failedIdentityMarker() {
+    return JSON.stringify({
+      contractVersion: TAG_IDENTITY_CONTRACT_VERSION,
+      status: 'failed',
+      attemptedAt: 1,
+      report: {
+        rowsScanned: 0,
+        logicalGroups: 0,
+        collisionGroups: 0,
+        survivors: 0,
+        associationsMoved: 0,
+        associationsCollapsed: 0,
+        tagRowsDeleted: 0,
+        displayRowsChanged: 0,
+        identityRowsChanged: 0,
+        documentsVersioned: 0,
+      },
+      errorCode: 'TAG_IDENTITY_MIGRATION_FAILED',
+    })
+  }
+
+  it('runs metadata migration, then only refreshes an absent identity marker', async () => {
+    await fs.writeFile(path.join(root, 'inbox', 'note.md'), '# Note\n', 'utf8')
+    seedIdentityCollision()
+
+    const response = await post('/api/metadata/migrate', {})
+    const body = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(body.report).toMatchObject({ scanned: 1, imported: 1, failed: 0 })
+    expect(body.tagIdentityHealth).toMatchObject({
+      state: 'unavailable',
+      code: 'TAG_IDENTITY_MIGRATION_REQUIRED',
+    })
+    expect(db.prepare('SELECT id FROM tags ORDER BY id').all()).toEqual([{ id: 3 }, { id: 8 }])
+    expect(db.prepare('SELECT value FROM settings WHERE key = ?').get(TAG_IDENTITY_MIGRATION_KEY)).toBeUndefined()
+  })
+
+  it('does not retry identity migration through the route when the durable marker is failed', async () => {
+    await fs.writeFile(path.join(root, 'inbox', 'note.md'), '# Note\n', 'utf8')
+    seedIdentityCollision()
+    db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run(TAG_IDENTITY_MIGRATION_KEY, failedIdentityMarker())
+
+    const response = await post('/api/metadata/migrate', {})
+    const body = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(body.report).toMatchObject({ scanned: 1, imported: 1, failed: 0 })
+    expect(body.tagIdentityHealth).toMatchObject({
+      state: 'unavailable',
+      code: 'TAG_IDENTITY_MIGRATION_FAILED',
+    })
+    expect(db.prepare('SELECT id FROM tags ORDER BY id').all()).toEqual([{ id: 3 }, { id: 8 }])
+    expect(JSON.parse((db.prepare('SELECT value FROM settings WHERE key = ?').get(TAG_IDENTITY_MIGRATION_KEY) as { value: string }).value))
+      .toMatchObject({ status: 'failed', errorCode: 'TAG_IDENTITY_MIGRATION_FAILED' })
   })
 })

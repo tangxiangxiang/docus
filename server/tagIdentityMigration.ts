@@ -69,7 +69,16 @@ const EMPTY_REPORT: TagIdentityMigrationReport = {
 }
 
 const healthByDb = new WeakMap<object, TagIdentityHealth>()
-let failureInjection: 'after-association-repoint' | null = null
+type MigrationFailureStage =
+  | 'after-staging'
+  | 'after-association-repoint'
+  | 'after-association-collapse'
+  | 'after-tag-deletion'
+  | 'after-tag-update'
+  | 'after-document-version-update'
+  | 'before-complete-marker'
+
+let failureInjection: MigrationFailureStage | null = null
 
 function now(): number {
   return Date.now()
@@ -117,6 +126,11 @@ function writeMarker(db: DatabaseT, marker: Marker): void {
     INSERT INTO settings (key, value) VALUES (?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
   `).run(TAG_IDENTITY_MIGRATION_KEY, value)
+}
+
+function injectFailureIfRequested(stage: MigrationFailureStage): void {
+  if (failureInjection !== stage) return
+  throw new TagIdentityMigrationError('TAG_IDENTITY_MIGRATION_FAILED', `injected migration failure at ${stage}`)
 }
 
 function readTagRows(db: DatabaseT): TagRow[] {
@@ -222,14 +236,27 @@ function writeMigration(db: DatabaseT, attemptedAt: number): TagIdentityMigratio
     docsByTag.set(association.tag_id, docs)
   }
 
+  // A document is versioned only when its physical membership changes or its
+  // hydrated display changes. Staging is an internal implementation detail;
+  // it must not make survivor-only documents look affected.
+  for (const group of groups) {
+    const survivor = group.rows[0]
+    const survivorCanonical = canonicalTag(survivor)
+    const displayChanges = survivor.name !== survivorCanonical.displayName
+    const affectedRows = displayChanges ? group.rows : group.rows.slice(1)
+    for (const row of affectedRows) {
+      for (const documentId of docsByTag.get(row.id) ?? []) affectedDocuments.add(documentId)
+    }
+  }
+
   const stageGroups = groups.filter((group) => group.rows.length > 1
     || group.rows.some((row) => {
       const canonical = canonicalTag(row)
       return canonical.normalizedName !== row.normalized_name || canonical.displayName !== row.name
     }))
   for (const group of stageGroups) {
-    for (const row of group.rows) for (const documentId of docsByTag.get(row.id) ?? []) affectedDocuments.add(documentId)
     stageNamespace(db, group)
+    injectFailureIfRequested('after-staging')
   }
 
   const deleteAssociations = db.prepare('DELETE FROM document_tags WHERE tag_id = ?')
@@ -246,12 +273,12 @@ function writeMigration(db: DatabaseT, attemptedAt: number): TagIdentityMigratio
         SELECT document_id, ? FROM document_tags
         WHERE tag_id IN (${group.rows.map(() => '?').join(', ')})
       `).run(survivor.id, ...group.rows.map((row) => row.id))
-      if (failureInjection === 'after-association-repoint') {
-        throw new TagIdentityMigrationError('TAG_IDENTITY_MIGRATION_FAILED', 'injected migration failure')
-      }
+      injectFailureIfRequested('after-association-repoint')
       deleteAssociations.run(losingIds[0])
       for (const losingId of losingIds.slice(1)) deleteAssociations.run(losingId)
+      injectFailureIfRequested('after-association-collapse')
       for (const losingId of losingIds) deleteTag.run(losingId)
+      injectFailureIfRequested('after-tag-deletion')
       report.associationsMoved += Number(repoint.changes)
       report.associationsCollapsed += Number(beforeAssociations.count) - Number(repoint.changes)
       report.tagRowsDeleted += losingIds.length
@@ -260,6 +287,7 @@ function writeMigration(db: DatabaseT, attemptedAt: number): TagIdentityMigratio
     if (survivor.normalized_name !== canonical.normalizedName) report.identityRowsChanged++
     if (group.rows.length > 1 || survivor.name !== canonical.displayName || survivor.normalized_name !== canonical.normalizedName) {
       updateSurvivor.run(canonical.displayName, canonical.normalizedName, survivor.id)
+      injectFailureIfRequested('after-tag-update')
     }
   }
 
@@ -279,10 +307,12 @@ function writeMigration(db: DatabaseT, attemptedAt: number): TagIdentityMigratio
       throw error
     }
     updateVersion.run(next, row.id)
+    injectFailureIfRequested('after-document-version-update')
   }
   report.documentsVersioned = versionRows.length
   verifyCanonicalState(db)
   verifySetsEqual(beforeMembership, logicalMemberships(db))
+  injectFailureIfRequested('before-complete-marker')
   const marker: Marker = {
     contractVersion: TAG_IDENTITY_CONTRACT_VERSION,
     status: 'complete',
@@ -299,7 +329,7 @@ function failedReport(): TagIdentityMigrationReport {
   return { ...EMPTY_REPORT }
 }
 
-export function runTagIdentityMigrationForTesting(db: DatabaseT): { report: TagIdentityMigrationReport; complete: boolean; code?: string } {
+function runTagIdentityMigrationAtStartup(db: DatabaseT): { report: TagIdentityMigrationReport; complete: boolean; code?: string } {
   const marker = readMarker(db)
   if (marker === 'invalid') return { report: failedReport(), complete: false, code: 'TAG_IDENTITY_CONFLICT' }
   if (marker?.status === 'complete') {
@@ -339,6 +369,11 @@ export function runTagIdentityMigrationForTesting(db: DatabaseT): { report: TagI
     }
     return { report: failedReport(), complete: false, code }
   }
+}
+
+/** Test seam for the startup-only destructive identity migration. */
+export function runTagIdentityMigrationForTesting(db: DatabaseT): { report: TagIdentityMigrationReport; complete: boolean; code?: string } {
+  return runTagIdentityMigrationAtStartup(db)
 }
 
 async function liveMarkdownPaths(rootDir: string): Promise<string[]> {
@@ -383,12 +418,59 @@ export async function initializeTagIdentityAndHealth(
 ): Promise<TagIdentityHealth> {
   const checking: TagIdentityHealth = { state: 'checking', migrationComplete: false, checkedAt: now() }
   healthByDb.set(db, checking)
-  const migration = runTagIdentityMigrationForTesting(db)
+  const migration = runTagIdentityMigrationAtStartup(db)
   if (!migration.complete) {
     const result = unavailable(migration.code ?? 'TAG_IDENTITY_UNHEALTHY', 'tag identity migration or verification failed')
     healthByDb.set(db, result)
     return result
   }
+  const live = await verifyLiveMetadata(db, contentDir, metadataReport)
+  if (live.code) {
+    const result = unavailable(live.code, live.reason ?? 'metadata health is unavailable', true)
+    healthByDb.set(db, result)
+    return result
+  }
+  try { verifyCanonicalState(db) }
+  catch (error) {
+    const result = unavailable(error instanceof TagIdentityMigrationError ? error.code : 'TAG_IDENTITY_UNHEALTHY', 'tag identity invariant verification failed', true)
+    healthByDb.set(db, result)
+    return result
+  }
+  const result: TagIdentityHealth = { state: 'healthy', migrationComplete: true, checkedAt: now() }
+  healthByDb.set(db, result)
+  return result
+}
+
+/**
+ * Refresh the process-local management health after a runtime metadata
+ * migration. This path is deliberately read-only for Tag identity: only the
+ * startup initializer may retry an absent or failed identity migration.
+ */
+export async function refreshTagIdentityHealth(
+  db: DatabaseT,
+  contentDir: string,
+  metadataReport: MetadataMigrationReport,
+): Promise<TagIdentityHealth> {
+  const checking: TagIdentityHealth = { state: 'checking', migrationComplete: false, checkedAt: now() }
+  healthByDb.set(db, checking)
+
+  const marker = readMarker(db)
+  if (marker === 'invalid') {
+    const result = unavailable('TAG_IDENTITY_CONFLICT', 'tag identity marker is malformed or has an unknown version')
+    healthByDb.set(db, result)
+    return result
+  }
+  if (!marker) {
+    const result = unavailable('TAG_IDENTITY_MIGRATION_REQUIRED', 'tag identity migration has not completed')
+    healthByDb.set(db, result)
+    return result
+  }
+  if (marker.status === 'failed') {
+    const result = unavailable('TAG_IDENTITY_MIGRATION_FAILED', 'tag identity migration failed during startup')
+    healthByDb.set(db, result)
+    return result
+  }
+
   const live = await verifyLiveMetadata(db, contentDir, metadataReport)
   if (live.code) {
     const result = unavailable(live.code, live.reason ?? 'metadata health is unavailable', true)
@@ -421,7 +503,7 @@ export function resetTagIdentityHealthForTesting(db?: DatabaseT): void {
 }
 
 export function __setTagIdentityMigrationFailureForTesting(
-  failure: 'after-association-repoint' | null,
+  failure: MigrationFailureStage | null,
 ): void {
   failureInjection = failure
 }
