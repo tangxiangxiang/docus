@@ -4,7 +4,7 @@
 
 **Date:** 2026-08-13
 
-**Planning baseline:** `f9a79c9be2723f2b163486b743e91792e1471393`
+**Planning baseline:** `fc73bbe1428fb4734eada68b0a1529ffb85c8730`
 
 **Approved PRD commit:** `f9a79c9be2723f2b163486b743e91792e1471393`
 
@@ -1036,35 +1036,53 @@ picker excludes the source and searches the authoritative list. The default
 sample is 20, and “show more” requests fingerprint-bound pages without making
 the rendered list the mutation scope.
 
-`TagPanel.vue` only adds a keyboard-reachable “Manage tags” button in its header
-and emits `manage` with no operation payload. It does not receive stable IDs,
+`TagPanel.vue` eventually adds a keyboard-reachable “Manage tags” button in its
+header and emits `manage` with no operation payload. It does not receive stable IDs,
 change its tag list rows, selection behavior, count/name ordering, filter, grid,
 or results region. `VaultView.vue` owns dialog open/close, the post-commit sync
 callback, and selection reconciliation. The dialog may preselect the currently
 selected tag after resolving it against its own authoritative list, but the
 trigger never guesses an ID from the Phase 1 index.
 
-The button stays absent until T2-3. Once shipped, it remains visible so a failed
-health state is discoverable and repairable; opening it loads `GET /api/tags`,
-and a 503 renders a read-only unavailable/diagnostic state with retry while all
-mutation controls remain hidden/disabled. This is a local availability gate,
-not a feature-flag framework.
+The production trigger stays absent through T2-4. T2-3 and T2-4 may mount the
+dialog/internal components directly for tests, but production users cannot see
+Manage Tags yet. T2-5 wires/shows the trigger only after the cumulative
+Rename/Display Rename/Merge/Remove exposure gate passes. A failed health state
+then remains discoverable and repairable through the existing unavailable/
+diagnostic state. No generic feature-flag framework is introduced.
 
 ## 26. `selectedTag` Reconciliation
 
 Do not rewrite Phase 1's `selectedTag: string | null`. When opening the manager,
 resolve the current string through shared normalization against the
 authoritative managed-tag list and capture its stable ID, if any. When Apply
-starts, capture that selected ID again together with the operation IDs.
+starts, capture a selection snapshot before operation work, including the raw
+selected value, its resolved stable ID when available, operation source and
+destination IDs, and a local selection revision/epoch/generation.
 
-The modal backdrop and focus trap prevent interaction with the underlying
-TagPanel during Apply. As a defensive guard, reconciliation proceeds only if
-the current selected string still resolves to the captured ID after refresh;
-if it represents a different user selection, preserve it.
+`VaultView` maintains a small local monotonic selection epoch. It increments
+only when the user actually changes the selected tag. Apply captures the epoch
+at start; completion compares the current epoch with that captured value. The
+epoch is the race detector, not a global store, router state, or state-machine
+library. The modal backdrop and focus trap may prevent interaction during Apply,
+but the defensive epoch check remains required.
 
-If the selected string did not resolve when Apply started, treat selection as
-unrelated and do not attach it to the operation merely because a refreshed tag
-later has the same display spelling.
+After Apply commits, clear operation Preview state, perform the authoritative
+posts/tree refresh and fresh managed-tag-list refresh, then detect whether the
+selection epoch changed while Apply was in flight. If it changed, preserve the
+current user selection and do not let operation reconciliation overwrite it.
+Otherwise reconcile from the captured stable ID, operation result stable IDs,
+and fresh authoritative managed-tag list. Never optimistically set `selectedTag`
+before the authoritative refresh.
+
+The operation result supplies stable identity fields such as `sourceTagId`,
+`destinationTagId`, `survivorTagId`, final names, and `sourceDeleted`.
+Post-refresh reconciliation must not require the old display string to resolve:
+Rename may change its display, Merge may delete the source, and Remove deletes
+the source row. Display strings are UI values only. If the selected string did
+not resolve when Apply started, treat selection as unrelated/unknown and never
+attach it to source, destination, or survivor because a refreshed row happens to
+share its display string.
 
 After a committed Apply and successful refresh, resolve final display names
 from the fresh management list and apply this stable-ID matrix:
@@ -1075,11 +1093,18 @@ from the fresh management list and apply this stable-ID matrix:
 | source | Merge | destination's fresh display |
 | destination | Merge | destination's fresh display |
 | source | Remove | `null` |
-| unrelated | any | preserve current selection, canonicalizing its display only if the same ID is found |
+| unrelated | any | preserve the selected stable ID, canonicalizing its display from the fresh list if it still exists |
 
-If the selected tag no longer resolves for an unrelated reason, clear it rather
-than retain a label with no server row. Never use `selectedTag === oldDisplay`
-as identity proof and never change selection before commit.
+If the user changed selection during Apply, preserve the current selection even
+if operation IDs suggest another result. If an unchanged unrelated stable ID no
+longer exists in the fresh authoritative list, clear it rather than retain a
+label with no server row. Never use old-display survival as identity proof.
+
+The required reconciliation order is: commit; receive result IDs; clear
+Preview state; refresh posts/tree; refresh the authoritative managed-tag list;
+compare the selection epoch; preserve the current selection if it changed;
+otherwise reconcile by stable ID and operation result; render final TagPanel
+state.
 
 ## 27. Refresh / Failure Model
 
@@ -1266,11 +1291,23 @@ interleave.
   list IDs, all three flows, display rename, Preview invalidation, stale,
   pagination, destructive confirm, keyboard/focus/live announcements, committed
   refresh failure, and sync-only retry.
-- Extend `TagPanel.test.ts` only for the minimal management trigger and unchanged
-  Phase 1 list/filter/selection contract.
+- Extend `TagPanel.test.ts` for the unchanged Phase 1 list/filter/selection
+  contract and the T2-5 production trigger exposure gate.
 - Add `src/lib/__tests__/tag-selection-reconciliation.test.ts` for the complete
-  stable-ID matrix and selection-race guard; keep the logic pure and imported by
-  VaultView.
+  stable-ID matrix and selection epoch guard; keep the logic pure and imported
+  by VaultView. The plan must cover: (A) Rename Java(id=7) -> Backend selects
+  Backend(id=7) although Java is absent; (B) Display Rename Java -> JAVA keeps
+  id 7 and selects JAVA; (C) selected source 7 follows Merge destination 9
+  after source deletion; (D) selected destination 9 remains selected after
+  Merge 7 -> 9; (E) Remove selected source 7 clears to null after deletion;
+  (F) unrelated Python(id=20) survives Java -> Backend; (G) epoch 12 at Apply
+  start, user selects Python at epoch 13, and Python wins; (H) an unresolved
+  pre-Apply string is not attached to source/destination by display coincidence.
+- At T2-3, verify Rename works when the dialog is mounted internally while the
+  production TagPanel Manage Tags entry is absent. At T2-4, verify Merge works
+  internally while that entry remains absent. At T2-5, verify Rename, Display
+  Rename, Merge, and Remove are all available and the production entry becomes
+  visible only after the cumulative gate.
 - Add `e2e/tag-management.spec.ts`: create/import notes, capture Markdown bytes
   and vault Git status/HEAD, Preview+Rename, verify TagPanel and metadata,
   Merge with overlap dedupe, Remove, verify selection behavior, then prove
@@ -1299,8 +1336,10 @@ so no CI workflow change is planned.
 
 T2-0 ships before any management control and must be independently reviewable.
 T2-1 may ship read-only list/Preview endpoints. T2-2 may ship Apply endpoints
-with no client entry. T2-3 exposes the management shell and Rename only after
-T2-0–T2-2 gates pass; Merge and Remove are exposed in their later phases.
+with no client entry. T2-3 builds the management shell and Rename internally,
+and T2-4 adds Merge internally; both keep the production Manage Tags entry
+hidden/unmounted. T2-5 adds Remove, runs the cumulative Rename/Display
+Rename/Merge/Remove gates, and only then wires the production entry.
 
 The production Docker image contains SPA and server from one build, so the
 normal deployment unit is atomic. During development or a stale-browser
@@ -1396,7 +1435,7 @@ deferral.
 | `server/index.ts` | Mount Tag routes |
 | `src/lib/api.ts` | Partial metadata PATCH type and reusable JSON error helper |
 | `src/components/vault/DocumentMetadataForm.vue` | Derive partial changes and supply tag version |
-| `src/components/vault/TagPanel.vue` | Minimal Manage Tags trigger only |
+| `src/components/vault/TagPanel.vue` | Wire/show the Manage Tags production trigger only in T2-5; preserve Phase 1 behavior |
 | `src/views/VaultView.vue` | Own dialog, one sync cycle, selection reconciliation |
 | `src/composables/useI18n.ts` | Chinese/English manager strings |
 | `server/__tests__/documentMetadata.test.ts`, `metadata-api.test.ts`, `tools.test.ts`, `metadataMigration.test.ts` | Writer/import regression matrix |
@@ -1549,11 +1588,12 @@ No new dependency is required.
 
 1. Add typed client API, manager shell, health/list loading, state machine,
    Preview rendering, pagination, Apply, and post-commit sync callback.
-2. Add the minimal TagPanel management trigger and VaultView ownership.
+2. Add the dialog/VaultView ownership seam; keep the production TagPanel
+   management trigger hidden until T2-5.
 3. Implement normal Rename and Display Rename UX, destination conflict guidance,
    stable-ID selection reconciliation, accessibility, and bilingual copy.
-4. Expose the trigger only after T2-0–T2-2 code gates pass; runtime health still
-   gates every management read/mutation and renders diagnostics on failure.
+4. Keep the production trigger unmounted; runtime health still gates every
+   management read/mutation and renders diagnostics on failure.
 
 ### Acceptance gate before T2-4
 
@@ -1563,8 +1603,13 @@ No new dependency is required.
       discards the fingerprint.
 - [ ] Existing destination explicitly guides to Merge and cannot auto-merge.
 - [ ] Display Rename is labeled and shows zero association delta.
-- [ ] Selected source follows the fresh survivor display by stable ID;
-      unrelated or newly changed user selection is not overwritten.
+- [ ] Rename follows the fresh survivor display by stable ID even when the old
+      source display no longer exists after refresh.
+- [ ] Display Rename resolves the same stable ID to its fresh display.
+- [ ] Actual user selection changes during Apply are preserved; old-display
+      survival is not used as the race detector.
+- [ ] Production TagPanel Manage Tags remains hidden/unmounted; tests mount the
+      dialog/internal components directly.
 - [ ] Success performs one posts/tree refresh and one management-list read in a
       single sync cycle, with no optimistic post/TagIndex patch.
 - [ ] Committed + refresh failure enters sync-pending and retries sync only.
@@ -1579,15 +1624,17 @@ No new dependency is required.
 Extend the reviewed manager shell with existing-tag destination search, source
 exclusion, overlap/dedupe Preview, destination-display ownership explanation,
 source-deletion warning, and source/destination selected-tag reconciliation.
-Do not rewrite the shell or TagPanel.
+Do not rewrite the shell or TagPanel. Keep the production Manage Tags trigger
+hidden/unmounted; Merge tests may mount the dialog/internal components directly.
 
 ### Acceptance gate before T2-5
 
 - [ ] Only an existing distinct destination stable ID can be selected.
 - [ ] Preview shows complete affected count, added/removed/collapsed counts,
       destination display winner, and source deletion.
-- [ ] Selected source follows the fresh destination; selected destination stays;
-      unrelated selection remains.
+- [ ] Selected source follows the fresh destination even though the source row
+      is deleted; selected destination stays; unrelated selection remains.
+- [ ] A user-changed unrelated selection is not overwritten by reconciliation.
 - [ ] Stale/deleted destination clears Preview and requires a new one.
 - [ ] Source-only, overlap, destination-only exclusion, selection, refresh
       failure, keyboard, and real browser Merge cases pass.
@@ -1599,8 +1646,10 @@ Do not rewrite the shell or TagPanel.
 
 Add the destructive Remove flow to the existing manager: exact source label,
 affected count/sample, explicit documents/Markdown-preserved explanation,
-destructive confirmation, and selected-source clearing. Do not redesign the
-manager.
+destructive confirmation, and selected-source clearing. Add the cumulative
+Rename/Display Rename/Merge/Remove regression gates, then wire/show the
+production TagPanel Manage Tags entry only after every exposure gate passes. Do
+not redesign the manager.
 
 ### Acceptance gate before T2-6
 
@@ -1610,9 +1659,16 @@ manager.
 - [ ] UI states that documents and Markdown remain while associations/global
       tag are removed.
 - [ ] Selected source clears after fresh sync; unrelated selection remains.
+- [ ] Selected removed source clears even though its source row no longer exists
+      after refresh; a user-changed selection is preserved.
 - [ ] Cancel/confirm, stale, sync-pending, keyboard/live-region, zero/many, and
       real browser Remove cases pass.
 - [ ] Rename and Merge regressions remain green.
+- [ ] Rename, Display Rename, Merge, and Remove production flows are complete;
+      Preview/Apply, stale handling, sync-pending, selectedTag, accessibility,
+      and i18n gates are green.
+- [ ] No partial management controls are exposed; only now is the production
+      Manage Tags entry enabled.
 
 ## 41. T2-6 — Hardening
 
@@ -1700,7 +1756,8 @@ belong in these commits.
 | Rename destination appears after Preview | Fingerprint includes resolved absence; locked recomputation returns stale before UNIQUE SQL |
 | Large Preview consumes memory or holds transactions | Set-based fixed query count, bounded wire sample, measured 10k/50k fixture; no invented SLA/cache |
 | Apply commit succeeds but client looks stale | Separate committed-refreshing/sync-pending state; retry sync only; no optimistic projection |
-| String-based Phase 1 selection targets wrong row | Resolve/capture stable ID from authoritative list and recheck selection after refresh |
+| Post-Apply reconciliation mistakes old display survival for a selection race | Capture stable ID plus local selection epoch at Apply start; detect actual user selection mutation; reconcile with operation-result IDs and the fresh authoritative list |
+| Manage Tags production entry appears before the Phase 2 MVP is complete | Keep production trigger hidden through T2-4 and wire it only after the cumulative T2-5 Rename/Display Rename/Merge/Remove gate |
 | New client and old server, or stale old client | Management unavailable safely; old explicit full-tag PATCH fails closed; atomic image + refresh note |
 | Downgrade after identity consolidation | Pre-upgrade SQLite backup; no false reverse-migration promise; restore matching image/database together |
 | Scope expands into renderer/history/recovery rewrite | Protected file map and per-phase review gate; stop on newly discovered architecture conflict |
@@ -1787,3 +1844,14 @@ Tags Management Phase 2 is done only when:
    was smuggled into the MVP.
 10. The separate T2-7 closure is approved. This Draft for Review plan alone does
     not satisfy implementation Definition of Done and does not authorize T2-0.
+
+Plan-level reconciliation and exposure checks:
+
+- [ ] Selection race detection is based on actual selection-state change, not
+      old-display survival.
+- [ ] Rename reconciliation works when the old display disappears.
+- [ ] Merge reconciliation works when the source ID disappears.
+- [ ] Remove reconciliation works when the source ID disappears.
+- [ ] A user-selected unrelated tag during Apply is preserved.
+- [ ] Production Manage Tags is not exposed before Rename, Merge, and Remove
+      are all available.
