@@ -4,7 +4,11 @@
 
 **Date:** 2026-08-13
 
-**Planning baseline:** `fc73bbe1428fb4734eada68b0a1529ffb85c8730`
+**Implementation/code planning baseline:** `f9a79c9be2723f2b163486b743e91792e1471393`
+
+**Plan review/repair baseline:** `fc73bbe1428fb4734eada68b0a1529ffb85c8730`
+
+**Current document revision baseline:** `9797f75bf2a0d5c7d7c66dec79f4be01da8f4c87`
 
 **Approved PRD commit:** `f9a79c9be2723f2b163486b743e91792e1471393`
 
@@ -18,9 +22,12 @@ boundaries, migration execution, API shapes, UI ownership, test locations, and
 phase gates. It does not change the product contract and does not itself approve
 implementation.
 
-The repository was inspected at the planning baseline above. `HEAD`,
-`origin/main`, and the Approved PRD commit were identical, and the tracked
-working tree was clean before this planning file was created.
+The production architecture and code findings in this plan were inspected
+against the implementation/code planning baseline
+`f9a79c9be2723f2b163486b743e91792e1471393`. The subsequent plan review/repair
+commits through `fc73bbe1428fb4734eada68b0a1529ffb85c8730` and the current
+document revision were documentation-only and did not alter those production
+architecture facts.
 
 ## 2. Source of Truth
 
@@ -37,7 +44,16 @@ implementation must not reinterpret the contract in code; a documented PRD
 amendment and review is required first. No Architecture / PRD Conflict was
 found during this planning pass.
 
-## 3. Planning Baseline
+## 3. Planning and Review Baselines
+
+### 3.1 Implementation/code planning baseline
+
+`f9a79c9be2723f2b163486b743e91792e1471393`
+
+Production architecture and code inspection occurred at this baseline. The
+verified migration, shared-module, package/CI, and current-domain facts below,
+as well as the Current Architecture Verification section, belong to this code
+baseline:
 
 The following facts were re-verified from the current repository rather than
 copied from the PRD research snapshot:
@@ -54,6 +70,24 @@ copied from the PRD research snapshot:
   Docker build/smoke, and macOS visual checks.
 - No Tag Management domain, stable-ID management endpoint, Preview/Apply API,
   or global management UI exists at this baseline.
+
+### 3.2 Plan review/repair baseline
+
+`fc73bbe1428fb4734eada68b0a1529ffb85c8730`
+
+This commit introduced the initial Implementation Plan document only. The
+verified diff from `f9a79c9` to this commit contains only
+`docs/design/tags-management-implementation-plan.md`; no production
+architecture changed between those commits.
+
+### 3.3 Current document revision
+
+Current repository HEAD is
+`9797f75bf2a0d5c7d7c66dec79f4be01da8f4c87`. The verified diff from
+`fc73bbe1` to this revision is also documentation-only and contains only this
+Implementation Plan. This revision records plan review fixes; it is not the
+production implementation baseline and does not supersede the
+`f9a79c9` architecture evidence baseline.
 
 ## 4. Current Architecture Verification
 
@@ -1467,6 +1501,13 @@ No new dependency is required.
 ## 35. T2-0 — Identity and Writer Safety Foundation
 
 ### Scope
+
+Before starting T2-0, record the actual implementation HEAD and compare
+production-code changes since the approved implementation/code planning
+baseline `f9a79c9be2723f2b163486b743e91792e1471393`. Revalidate any changed
+files that affect this plan. If the architecture has materially changed, stop
+and update/re-review the plan; otherwise continue using this plan without
+rewriting its historical baselines.
 
 1. Add the shared identity/display/validation contract and delegate the Phase 1
    client exports to it.
