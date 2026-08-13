@@ -163,6 +163,14 @@ tag identity. The research found four product risks:
    schema has no separate metadata version, global tag revision, or persistent
    operation log.
 
+The current `saveDocumentMetadata` semantics are not field-scoped: the save
+path persists the document row, deletes the document's existing `document_tags`
+rows, and reinserts associations from the input tag array. Therefore a caller
+whose user intent is only a title or summary change is still a tag-association
+writer if it carries a stale `current.tags` snapshot. This creates a real
+read-before-Tag-Apply/write-after-Tag-Apply race that cannot be solved by
+serializing Tag Management Apply alone.
+
 These risks are solvable with the existing SQLite model and transaction
 infrastructure, but they must be addressed before exposing controls.
 
@@ -521,6 +529,16 @@ Preview and Apply must use the same planner semantics. Preview is a read-only
 execution. Apply recomputes the plan after taking the SQLite immediate write
 lock and then validates that it still matches the user’s Preview.
 
+Every Preview plan must be built from one internally consistent logical SQLite
+snapshot. The source tag, destination state, association state, complete
+affected-document set, document versions, counts, warnings, sample, and
+fingerprint must all describe the same snapshot. The planner must not read the
+source from one state, associations from a later state, versions from another
+state, and return a mixed plan that never existed in SQLite. Preview is
+read-only and must not take `BEGIN IMMEDIATE` merely to obtain consistency or
+hold a long write lock; a read transaction, SQLite snapshot transaction, or
+equivalent approach is implementation-owned.
+
 The implementation may choose names later; the product contract is the shared
 semantics:
 
@@ -560,8 +578,22 @@ client may mutate its own copy of the affected set.
 
 For 1,000 or 10,000 affected documents, the UI shows the count plus a bounded
 sample and an explicit expandable/paginated view. It does not render the full
-set in one dialog. Pagination is presentation-only; the Apply plan always
-covers the complete set selected by the server planner.
+set in one dialog. Pagination is presentation-only for mutation scope, but a
+page still belongs to the Preview the user is reviewing. Any expansion or
+pagination request must carry the originating `planFingerprint` or an
+equivalent immutable Preview identity. The server may return the next page
+only when the relevant plan still matches that identity; otherwise it returns
+`PREVIEW_STALE` and the client must regenerate the Preview. It must not
+silently read the latest database state for a later page and present Page 1
+from one state with Page 2 from another.
+
+The implementation may use stateless recomputation plus fingerprint
+validation, a short-lived server-side Preview snapshot/cache, or another
+deterministic fingerprint-bound continuation strategy. The product contract is
+that all Preview pages belong to the same logical Preview snapshot. Relevant
+state changes make old page expansion stale. An unrelated change outside the
+plan's relevant graph need not invalidate the Preview; this is not a global
+database-revision requirement.
 
 ## 16. Apply Contract
 
@@ -661,12 +693,82 @@ Examples:
 - Two Apply requests from the same Preview serialize; the first valid one
   commits, the second fails stale after recomputation.
 
-### 17.4 AI and other writers
+### 17.4 Existing metadata writer coordination
 
-AI update_metadata and the ordinary metadata API are in the concurrency
-surface. Persistent tag changes from those paths must use the same server
-normalization and version invariants as Tag Management. AI must not receive a
-raw SQL path or a bypass to the management domain.
+All persistent writers capable of rewriting `document_tags` are part of the
+Tags Phase 2 concurrency surface. This includes, but is not limited to:
+
+- ordinary metadata PATCH;
+- AI `update_metadata`;
+- legacy or internal metadata saves; and
+- future code paths that can replace a document's tag association set.
+
+User intent alone does not determine whether a request is a tag writer. Under
+the current whole-tag-replacement behavior, a title-only or summary-only
+request that carries `current.tags` can still delete and reinsert the tag
+associations, so it must be coordinated as a tag-association writer until the
+write contract is made field-scoped.
+
+The required race contract is:
+
+~~~text
+Request A reads V1: tags = [Java]
+Tag Management Apply: Java -> Backend
+Apply commits V2: Backend is authoritative in SQLite
+Request A later saves stale metadata with tags = [Java]
+~~~
+
+The final stale replay must not resurrect Java, remove a newly applied Backend
+association, undo a Merge, or reverse a Remove. After a successful Tag
+Management Apply commits, no request that read metadata before that commit may
+replay an older tag-association snapshot and overwrite or resurrect the
+committed result. This invariant applies to Rename, Display Rename, Merge, and
+Remove.
+
+The future field-scoped write contract is explicit:
+
+- omitted metadata fields must not be rewritten as side effects;
+- a title-only mutation updates title and its version, but does not rewrite
+  `document_tags`;
+- a summary-only mutation updates summary and its version, but does not rewrite
+  `document_tags`; and
+- only an explicitly supplied `tags` field is a tag-association mutation.
+
+An explicit tag write must read the current state/version, prepare the change,
+validate the state again at the mutation boundary, and reject a stale write
+fail-closed. The exact implementation primitive (version CAS, transactional
+re-read, field-level compare, or a shared metadata mutation primitive) is
+implementation-owned; silent last-writer-wins replay is not an accepted
+product outcome.
+
+`BEGIN IMMEDIATE` protects the internal serialization of Tag Management Apply,
+but it does not by itself solve a request that reads before Apply and writes
+after Apply. Apply transaction serialization and existing-writer stale/field
+coordination are two separate layers of the concurrency model.
+
+The required ordering is therefore:
+
+~~~text
+Existing metadata request reads V1
+        |
+Tag Apply: BEGIN IMMEDIATE -> mutation -> version V2 -> COMMIT
+        |
+Old request attempts commit
+        |
+Field-scoped or version validation
+        |
+Old tags must not replay
+~~~
+
+### 17.5 AI and other writers
+
+AI `update_metadata` and the ordinary metadata API use the same contract. AI
+must not receive a raw `saveDocumentMetadata` bypass or a second tag mutation
+semantic. An AI operation that changes only summary must not replay stale tags;
+an AI operation that explicitly changes tags must use the same normalization,
+version, server-authority, and stale-write rejection rules as an ordinary
+metadata write. Legacy/internal writers and future writers are subject to the
+same invariant.
 
 ## 18. Metadata Versioning
 
@@ -716,12 +818,36 @@ product must not pretend that a tag operation is a content edit in Git History.
 
 After a successful Apply, the client:
 
-1. clears the operation dialog and Preview result;
-2. accepts the server result for status/toast/audit display;
+1. accepts the server result for status/toast/audit display;
+2. closes or clears the management dialog and Preview state;
 3. performs one authoritative refresh of the canonical document/tag data;
 4. rebuilds the client TagIndex from the refreshed posts;
-5. lets FileTree, TagPanel, selected-tag results, and other projections update
-   from that one refreshed state.
+5. resolves the surviving or newly renamed tag from the refreshed server state;
+6. reconciles `selectedTag` using the stable operation identity/result mapping;
+7. renders the refreshed TagPanel and selected-tag results.
+
+The result must provide enough identity information for reconciliation,
+including the operation, source tag ID, destination tag ID when applicable,
+surviving tag ID, resulting display/normalized name, and whether the source was
+deleted (exact field names are implementation-owned). The client must not
+guess from stale display strings.
+
+Selection reconciliation is part of the product contract:
+
+| Operation and current selection | Result after refresh |
+|---|---|
+| Selected source + Rename | Follow the renamed tag; selected label is the new display name |
+| Selected source + Display Rename | Remain on the same stable tag ID; update the visible label |
+| Selected source + Merge | Select the destination stable tag ID/display |
+| Selected destination + Merge | Keep the destination selection |
+| Selected source + Remove | Clear `selectedTag` and close the selected-results region |
+| Unrelated Rename, Merge, or Remove | Preserve the current selection |
+
+No selected tag is changed optimistically before the server commit. If Apply
+commits but the authoritative refresh fails, the UI reports synchronization
+pending and may retain the current UI state only as pending state; it must not
+fabricate a final selected label from stale posts. Final reconciliation uses a
+successful authoritative refresh.
 
 The client does not optimistically patch every affected document. It does not
 emit metadata fileChanges or a Git History mutation for a SQLite-only tag
@@ -785,6 +911,23 @@ the product flow is not.
 - On success, clear the operation state before the single refresh.
 - On failure, preserve enough input to allow correction without pretending that
   a mutation partially succeeded.
+
+### 20.6 Post-Apply selectedTag reconciliation
+
+Management operations use stable tag IDs. The current Phase 1 `selectedTag`
+representation need not be rewritten in this PRD, but a successful management
+result must give the client an explicit source/destination/survivor mapping so
+that selection follows identity rather than comparing old display strings.
+After the one authoritative refresh, a selected source follows Rename and
+Display Rename, a selected source follows Merge to the destination, a selected
+source is cleared after Remove, and a selection unrelated to the operation is
+preserved. The destination remains selected when it was already selected for a
+Merge. The TagPanel results remain visible for a renamed or merged selection
+and close when the selected tag was removed.
+
+This contract does not reconnect TagPanel to FileTree, add multi-select, build
+a global tag store, rewrite Phase 1 TagIndex/query behavior, or introduce
+optimistic mutation. It only defines the post-Apply state reconciliation.
 
 ## 21. Historical Data Migration
 
@@ -1146,12 +1289,50 @@ at least the following coverage.
   rejection;
 - rollback leaves every row and version unchanged.
 
-### 29.7 Integration and UI matrix
+### 29.7 Existing metadata writer regression matrix
+
+- title-only REST PATCH reads tags=[Java] -> Rename Java to Backend commits ->
+  PATCH commits title -> title changes and Backend remains authoritative;
+- summary-only AI `update_metadata` reads tags=[javascript] -> Merge
+  javascript to js commits -> AI update commits summary -> js remains
+  authoritative;
+- explicit REST tag mutation based on stale version -> Tag Apply commits ->
+  stale mutation is rejected fail-closed;
+- explicit AI tag mutation based on stale version -> Tag Apply commits ->
+  stale mutation is rejected fail-closed;
+- Remove commits -> stale title-only request completes -> removed source
+  association is not recreated;
+- stale whole-tag replacement cannot resurrect a renamed/removed source,
+  remove a newly applied destination, or undo a Merge.
+
+### 29.8 Preview consistency matrix
+
+- a writer changes an association while Preview planning is in progress ->
+  Preview never returns a mixed pre/post snapshot;
+- Preview count, sample, affected set, document versions, and fingerprint are
+  all derived from one logical SQLite snapshot;
+- Preview page 1 generated -> relevant association changes -> page 2 requested
+  with the old fingerprint -> `PREVIEW_STALE`;
+- Preview page 1 generated -> unrelated document changes -> page 2 may remain
+  valid when the relevant graph is unchanged.
+
+### 29.9 Integration and UI matrix
 
 - API auth boundary;
 - Preview response shape and bounded sample;
 - Apply result and one-refresh behavior;
+- Apply result carries stable source/destination/survivor identity needed for
+  reconciliation;
 - TagPanel action state;
+- selected source Rename -> renamed tag remains selected and results remain;
+- selected source Display Rename -> same stable tag remains selected with the
+  updated display label;
+- selected source Merge -> destination becomes selected;
+- selected destination Merge -> destination selection remains;
+- selected source Remove -> `selectedTag` clears and results close;
+- unrelated operation -> current selection is preserved;
+- reconciliation uses stable operation identity/result, not display-string
+  guessing;
 - stale/error/loading accessibility announcements;
 - keyboard and focus behavior;
 - large impact rendering;
@@ -1212,10 +1393,13 @@ Before production migration, operators should:
 | updated_at is both content and metadata timestamp | Tag-only changes may change displayed update date | Reuse the field deliberately, version affected docs once, document the impact |
 | Large SQLite transaction holds a write lock | Other metadata writers wait | Set-based planner/apply, bounded UI sample, measure baseline |
 | Timestamp-only staleness is weak at same-millisecond writes | Missed conflict | Fingerprint full relevant metadata/association state, not timestamp alone |
+| Stale whole-metadata writer replays an old tag set after Tag Management commits | Renamed/removed source tag is resurrected, Merge membership is undone, or the authoritative destination is overwritten | Field-scoped metadata writes, explicit tag-write stale validation, shared normalization/version invariants, and REST/AI regression coverage |
+| Preview combines rows from different SQLite states | Counts, samples, versions, or fingerprints describe a state that never existed | Build every Preview input from one consistent read snapshot; bind expansion to the originating fingerprint |
 | AI or legacy API bypasses the domain | Preview may become stale unexpectedly or normalization may diverge | Route all persistent tag writes through shared server contract |
 | Frontmatter fallback remains during migration | Two apparent sources of tags | Fail closed for management until live DB ownership is healthy |
 | No durable operation log | Limited post-hoc Undo/audit | Return audit-friendly result and application logs; defer Undo explicitly |
 | Client cache refresh runs twice or optimistically | Stale or flickering UI | One authoritative refresh and no cross-document optimistic patch |
+| Successful management leaves TagPanel selected on a deleted or renamed label | Stale results, an empty source selection, or misleading UI after commit | Return stable operation identity/result mappings and reconcile selection after the authoritative refresh |
 | Historical collision migration deletes an association | Data loss | Survivor mapping, dedupe checks, counts, rollback, idempotence tests |
 | User interprets Rename as Merge | Unexpected global reassignment | Destination-exists conflict and explicit “Use Merge instead” guidance |
 
@@ -1379,6 +1563,63 @@ authoritative store.
 Markdown/Git history remain unchanged and Frontmatter write-back is out of
 scope.
 
+### ADR-13: Existing metadata writer coordination
+
+**Context:** The existing metadata save path can replace `document_tags` even
+when the user intends only a title or summary change. A request can therefore
+read tags before Tag Management Apply and replay them after Apply commits.
+
+**Options:** Allow last-writer-wins; serialize every metadata request globally;
+use field-scoped writes with stale validation for explicit tag writes.
+
+**Decision:** Omitted metadata fields must not be rewritten as side effects.
+Title-only and summary-only writes must preserve the authoritative
+`document_tags` state. An explicitly supplied tag set participates in current
+version/state validation and stale writes fail closed. REST metadata PATCH,
+AI `update_metadata`, legacy/internal saves, and future writers follow the same
+contract.
+
+**Consequences:** Tag Management Apply cannot be undone by a stale metadata or
+AI writer; the exact CAS/re-read/shared-primitive implementation remains for a
+later Implementation Plan.
+
+### ADR-14: Preview snapshot consistency
+
+**Context:** A Preview assembled from separate reads can combine source state,
+associations, document versions, counts, samples, and fingerprints from
+different SQLite states, even if Apply later rejects a stale fingerprint.
+
+**Options:** Permit mixed reads; hold a long write lock; build the complete
+Preview from one consistent read snapshot and bind continuation to its
+fingerprint.
+
+**Decision:** Every Preview and every expanded/paginated page describes the
+same logical relevant SQLite snapshot. Preview remains read-only and does not
+require `BEGIN IMMEDIATE`; relevant changes make the originating fingerprint
+stale, while unrelated changes need not invalidate it.
+
+**Consequences:** Preview cannot describe a state that never existed, and a
+later page cannot silently switch to a newer relevant database state. The
+snapshot/cache mechanism is implementation-owned.
+
+### ADR-15: Post-Apply selected-tag reconciliation
+
+**Context:** A single authoritative refresh does not automatically repair the
+current string-based TagPanel selection after Rename, Display Rename, Merge, or
+Remove.
+
+**Options:** Leave the old display string selected; infer from refreshed labels;
+return stable operation identity/result mappings and reconcile after refresh.
+
+**Decision:** Reconcile using stable tag IDs and the committed operation result:
+Rename follows the renamed row, Display Rename keeps the same row and updates
+its label, Merge follows the destination, Remove clears the selection, and an
+unrelated operation preserves it. No optimistic pre-commit selection change
+is allowed.
+
+**Consequences:** TagPanel results remain truthful after a committed operation
+without requiring a Phase 1 state-architecture rewrite.
+
 ## 33. Open Product Questions
 
 None are required to define the Phase 2 MVP contract. The decisions above are
@@ -1397,6 +1638,12 @@ a separately approved PRD/ADR, not in implementation by assumption.
 - [ ] Preview is mandatory.
 - [ ] Preview is server-authoritative.
 - [ ] Preview and Apply use the same planner semantics.
+- [ ] Every Preview is internally consistent and its counts, sample, affected
+      set, versions, warnings, and fingerprint come from one logical SQLite
+      snapshot.
+- [ ] Expanded or paginated Preview results are bound to the originating
+      Preview fingerprint; relevant changes return PREVIEW_STALE, while
+      unrelated changes need not invalidate the plan.
 - [ ] Apply uses one BEGIN IMMEDIATE transaction.
 - [ ] Apply has no partial-success outcome.
 - [ ] Stale Preview is rejected fail-closed.
@@ -1405,6 +1652,15 @@ a separately approved PRD/ADR, not in implementation by assumption.
 - [ ] Duplicate associations are deduplicated.
 - [ ] Display-name rules are deterministic.
 - [ ] The client performs one authoritative refresh after success.
+- [ ] Title-only and summary-only metadata writes do not rewrite
+      `document_tags` as side effects.
+- [ ] A stale metadata writer cannot replay pre-Apply tags after Rename,
+      Merge, or Remove.
+- [ ] Explicit stale tag mutations are rejected fail-closed.
+- [ ] REST metadata PATCH and AI `update_metadata` obey the same field/version
+      and tag invariants.
+- [ ] Rename, Display Rename, Merge, Remove, and unrelated operations have
+      defined stable-ID selectedTag reconciliation.
 - [ ] No Markdown changes occur for tag-only operations.
 - [ ] No fake fileChanges are emitted.
 - [ ] No Git mutation occurs for tag-only operations.
@@ -1446,6 +1702,10 @@ This PRD is complete when:
 - atomicity and stale-preview behavior are defined;
 - normalization and historical migration are defined;
 - metadata version semantics and refresh behavior are defined;
+- existing metadata/AI writer coordination and stale-write behavior are
+  defined;
+- Preview snapshot and continuation consistency are defined;
+- post-Apply selected-tag reconciliation is defined;
 - UI, accessibility, API shape, security, and authorization boundaries are
   defined;
 - error taxonomy, performance expectations, risks, and rollout are documented;
@@ -1458,4 +1718,3 @@ This PRD is complete when:
   changed.
 
 **Document status remains Draft for Review until Owner approval.**
-
