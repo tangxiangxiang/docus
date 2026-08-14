@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import { randomUUID } from 'node:crypto'
 import { CONTENT_DIR } from '../paths.js'
 import { preflightTagIdentityHealth } from '../tagIdentityMigration.js'
 import {
@@ -53,10 +54,14 @@ function domainError(c: any, error: TagManagementError): Response {
 }
 
 function unexpectedError(c: any): Response {
+  const correlationId = randomUUID()
+  const method = typeof c.req.method === 'string' ? c.req.method.slice(0, 16) : 'UNKNOWN'
+  const route = typeof c.req.path === 'string' ? c.req.path.slice(0, 128) : '/api/tags'
+  console.error(`[tag-management] ${correlationId} ${method} ${route} TRANSACTION_FAILED`)
   return c.json({
     error: 'Tag management operation failed.',
     code: 'TRANSACTION_FAILED',
-    details: {},
+    details: { correlationId },
   }, 500)
 }
 

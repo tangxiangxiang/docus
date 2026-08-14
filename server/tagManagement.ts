@@ -149,6 +149,21 @@ export type ResolvedTagOperation = {
   requestedDestination: { displayName: string; normalizedName: string } | null
 }
 
+/**
+ * Resolution is deliberately explicit so initial Preview and continuation
+ * recomputation share the same lookup semantics. A null row is a real,
+ * fingerprintable missing-row state, not an exception-only control path.
+ */
+export type TagResolutionState = {
+  source: TagRowView | null
+  destination: TagRowView | null
+}
+
+export type TagOperationPlanState = Omit<TagOperationPlan, 'sourceTag'> & {
+  sourceTag: TagRowView | null
+  resolution: TagResolutionState
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -170,6 +185,25 @@ function requireExactKeys(
 
 export function isPositiveSafeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+}
+
+function assertSafeIntegerInvariant(value: unknown, field: string): asserts value is number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value)) {
+    throw new TagManagementError('TAG_IDENTITY_CONFLICT', `${field} is outside the safe integer invariant`)
+  }
+}
+
+function safeFingerprintInteger(value: unknown, field: string): number {
+  assertSafeIntegerInvariant(value, field)
+  return value
+}
+
+function safeNonNegativeFingerprintInteger(value: unknown, field: string): number {
+  const integer = safeFingerprintInteger(value, field)
+  if (integer < 0) {
+    throw new TagManagementError('TAG_IDENTITY_CONFLICT', `${field} is outside the non-negative integer invariant`)
+  }
+  return integer
 }
 
 function parseTagId(value: unknown, field: string): number {
@@ -246,19 +280,32 @@ function assertCanonicalTagRow(row: DatabaseTagRow): void {
 }
 
 function tagTuple(row: TagRowView): [number, string, string] {
-  return [row.id, row.displayName, row.normalizedName]
+  const id = safeFingerprintInteger(row.id, 'tag.id')
+  if (id <= 0) {
+    throw new TagManagementError('TAG_IDENTITY_CONFLICT', 'tag.id is outside the positive integer invariant')
+  }
+  return [id, row.displayName, row.normalizedName]
 }
 
 function compareDocumentIds(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0
 }
 
-function fingerprintInput(plan: Omit<TagOperationPlan, 'planFingerprint'>): unknown[] {
+function fingerprintInput(plan: Omit<TagOperationPlanState, 'planFingerprint'>): unknown[] {
   const operationTuple = plan.operation.kind === 'rename'
-    ? ['rename', plan.operation.sourceTagId, plan.operation.destinationName, plan.requestedDestination!.normalizedName]
+    ? [
+        'rename',
+        safeFingerprintInteger(plan.operation.sourceTagId, 'operation.sourceTagId'),
+        plan.operation.destinationName,
+        plan.requestedDestination!.normalizedName,
+      ]
     : plan.operation.kind === 'merge'
-      ? ['merge', plan.operation.sourceTagId, plan.operation.destinationTagId]
-      : ['remove', plan.operation.sourceTagId]
+      ? [
+          'merge',
+          safeFingerprintInteger(plan.operation.sourceTagId, 'operation.sourceTagId'),
+          safeFingerprintInteger(plan.operation.destinationTagId, 'operation.destinationTagId'),
+        ]
+      : ['remove', safeFingerprintInteger(plan.operation.sourceTagId, 'operation.sourceTagId')]
 
   const destinationResolutionTuple = plan.operation.kind === 'rename'
     ? [plan.requestedDestination!.normalizedName, plan.destinationTag ? tagTuple(plan.destinationTag) : null]
@@ -273,10 +320,10 @@ function fingerprintInput(plan: Omit<TagOperationPlan, 'planFingerprint'>): unkn
       document.path,
       document.title,
       document.summary,
-      document.createdAt,
-      document.updatedAt,
+      safeFingerprintInteger(document.createdAt, 'document.createdAt'),
+      safeFingerprintInteger(document.updatedAt, 'document.updatedAt'),
       [...document.completeTagRows]
-        .sort((left, right) => left.id - right.id)
+        .sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0)
         .map(tagTuple),
     ])
 
@@ -284,12 +331,12 @@ function fingerprintInput(plan: Omit<TagOperationPlan, 'planFingerprint'>): unkn
     plan.displayOnly,
     plan.allowedToApply,
     plan.conflictCode ?? null,
-    plan.affectedCount,
-    plan.associationAdds,
-    plan.associationRemoves,
-    plan.duplicateCollapses,
-    plan.tagCreates,
-    plan.tagDeletes,
+    safeNonNegativeFingerprintInteger(plan.affectedCount, 'plan.affectedCount'),
+    safeNonNegativeFingerprintInteger(plan.associationAdds, 'plan.associationAdds'),
+    safeNonNegativeFingerprintInteger(plan.associationRemoves, 'plan.associationRemoves'),
+    safeNonNegativeFingerprintInteger(plan.duplicateCollapses, 'plan.duplicateCollapses'),
+    safeNonNegativeFingerprintInteger(plan.tagCreates, 'plan.tagCreates'),
+    safeNonNegativeFingerprintInteger(plan.tagDeletes, 'plan.tagDeletes'),
     [...plan.warnings],
   ]
 
@@ -298,14 +345,14 @@ function fingerprintInput(plan: Omit<TagOperationPlan, 'planFingerprint'>): unkn
     1,
     TAG_IDENTITY_CONTRACT_VERSION,
     operationTuple,
-    tagTuple(plan.sourceTag),
+    plan.sourceTag ? tagTuple(plan.sourceTag) : null,
     destinationResolutionTuple,
     affectedDocumentTuples,
     derivedPlanTuple,
   ]
 }
 
-function fingerprintForPlan(plan: Omit<TagOperationPlan, 'planFingerprint'>): string {
+function fingerprintForPlan(plan: Omit<TagOperationPlanState, 'planFingerprint'>): string {
   return createHash('sha256')
     .update(JSON.stringify(fingerprintInput(plan)), 'utf8')
     .digest('hex')
@@ -318,10 +365,11 @@ function warningCodes(operation: TagOperationRequest, affectedCount: number): Ta
   return warnings
 }
 
-function readResolvedTags(db: DatabaseT, operation: TagOperationRequest, requestedDestination: ResolvedTagOperation['requestedDestination']): {
-  source: TagRowView | null
-  destination: TagRowView | null
-} {
+function readResolvedTags(
+  db: DatabaseT,
+  operation: TagOperationRequest,
+  requestedDestination: ResolvedTagOperation['requestedDestination'],
+): TagResolutionState {
   let rows: DatabaseTagRow[]
   if (operation.kind === 'rename') {
     rows = db.prepare(`
@@ -395,38 +443,57 @@ function readAffectedDocuments(db: DatabaseT, sourceTagId: number): FingerprintD
     path: row.path,
     title: row.title,
     summary: row.summary,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    createdAt: safeFingerprintInteger(row.created_at, 'document.created_at'),
+    updatedAt: safeFingerprintInteger(row.updated_at, 'document.updated_at'),
     completeTagRows: tagsByDocument.get(row.id) ?? [],
   }))
 }
 
+function hasRequiredResolution(
+  operation: TagOperationRequest,
+  resolution: TagResolutionState,
+): boolean {
+  return resolution.source !== null
+    && (operation.kind !== 'merge' || resolution.destination !== null)
+}
+
+function materializeResolvedPlan(state: TagOperationPlanState): TagOperationPlan {
+  if (!state.sourceTag || !hasRequiredResolution(state.operation, state.resolution)) {
+    throw new TagManagementError('TAG_NOT_FOUND', state.operation.kind === 'merge' && !state.resolution.destination
+      ? 'destination tag was not found'
+      : 'source tag was not found')
+  }
+  return state as TagOperationPlan
+}
+
 /**
- * Build a complete operation plan from the caller's current SQLite snapshot.
- * This function is synchronous and read-only. It does not open a transaction,
- * read the filesystem, create temporary tables, or mutate any row.
+ * Build the shared read-only planning state from the caller's current SQLite
+ * snapshot. Missing source/destination rows remain explicit null states so
+ * continuation can classify their disappearance as stale without re-running
+ * a strict planner and translating its exception.
  */
-export function buildTagOperationPlan(
+export function buildTagOperationPlanState(
   db: DatabaseT,
   operationInput: TagOperationRequest,
-): TagOperationPlan {
+): TagOperationPlanState {
   const resolved = parseTagOperation(operationInput)
   const { operation, requestedDestination } = resolved
-  const { source, destination } = readResolvedTags(db, operation, requestedDestination)
-  if (!source) throw new TagManagementError('TAG_NOT_FOUND', 'source tag was not found')
+  const resolution = readResolvedTags(db, operation, requestedDestination)
+  const { source, destination } = resolution
+  const requiredResolution = hasRequiredResolution(operation, resolution)
 
-  const affectedDocuments = readAffectedDocuments(db, source.id)
+  const affectedDocuments = requiredResolution ? readAffectedDocuments(db, source!.id) : []
   let displayOnly = false
   let conflictCode: TagPlanConflictCode | undefined
   let conflictMessage: string | undefined
-  let allowedToApply = true
+  let allowedToApply = requiredResolution
   let survivorTag: TagRowView | null = source
   let associationAdds = 0
   let associationRemoves = 0
   let duplicateCollapses = 0
   let tagDeletes = 0
 
-  if (operation.kind === 'rename') {
+  if (operation.kind === 'rename' && source) {
     if (destination && destination.id !== source.id) {
       allowedToApply = false
       conflictCode = 'DESTINATION_EXISTS'
@@ -439,15 +506,14 @@ export function buildTagOperationPlan(
         conflictMessage = 'rename destination is the same as the current tag'
       }
     }
-  } else if (operation.kind === 'merge') {
+  } else if (operation.kind === 'merge' && requiredResolution) {
     survivorTag = destination
-    if (!destination) throw new TagManagementError('TAG_NOT_FOUND', 'destination tag was not found')
-    if (source.id === destination.id) {
+    if (source!.id === destination!.id) {
       allowedToApply = false
       conflictCode = 'SOURCE_DESTINATION_SAME'
       conflictMessage = 'merge source and destination must be different tags'
     } else {
-      const destinationId = destination.id
+      const destinationId = destination!.id
       for (const document of affectedDocuments) {
         if (document.completeTagRows.some((tag) => tag.id === destinationId)) duplicateCollapses++
         else associationAdds++
@@ -455,14 +521,14 @@ export function buildTagOperationPlan(
       associationRemoves = affectedDocuments.length
       tagDeletes = 1
     }
-  } else {
+  } else if (operation.kind === 'remove' && source) {
     survivorTag = null
     associationRemoves = affectedDocuments.length
     tagDeletes = 1
   }
 
   const warnings = warningCodes(operation, affectedDocuments.length)
-  const planWithoutFingerprint = {
+  const planWithoutFingerprint: Omit<TagOperationPlanState, 'planFingerprint'> = {
     operation,
     sourceTag: source,
     destinationTag: destination,
@@ -481,12 +547,21 @@ export function buildTagOperationPlan(
     allowedToApply,
     ...(conflictCode ? { conflictCode } : {}),
     ...(conflictMessage ? { conflictMessage } : {}),
+    resolution,
     healthContractVersion: TAG_IDENTITY_CONTRACT_VERSION as typeof TAG_IDENTITY_CONTRACT_VERSION,
   }
   return {
     ...planWithoutFingerprint,
     planFingerprint: fingerprintForPlan(planWithoutFingerprint),
   }
+}
+
+/** Build a strict initial-Preview plan from the shared resolution state. */
+export function buildTagOperationPlan(
+  db: DatabaseT,
+  operationInput: TagOperationRequest,
+): TagOperationPlan {
+  return materializeResolvedPlan(buildTagOperationPlanState(db, operationInput))
 }
 
 export function previewFromPlan(
@@ -541,18 +616,13 @@ export function previewTagOperationPage(
     throw new TagManagementError('INVALID_OPERATION', `limit must be an integer from 1 to ${MANAGEMENT_PREVIEW_PAGE_MAX_LIMIT}`)
   }
   const transaction = db.transaction(() => {
-    let plan: TagOperationPlan
-    try {
-      plan = buildTagOperationPlan(db, operation)
-    } catch (error) {
-      // A previously valid source/destination can disappear between Preview
-      // and a page request. The original fingerprint is the authority for
-      // continuation, so a now-missing row is stale rather than a new 404.
-      if (error instanceof TagManagementError && error.code === 'TAG_NOT_FOUND') {
-        throw new TagManagementError('PREVIEW_STALE', 'preview is stale')
-      }
-      throw error
+    const state = buildTagOperationPlanState(db, operation)
+    if (!hasRequiredResolution(operation, state.resolution)) {
+      // Continuation uses the shared explicit resolution state. A previously
+      // reviewed identity that disappeared is stale, not a new 404.
+      throw new TagManagementError('PREVIEW_STALE', 'preview is stale')
     }
+    const plan = materializeResolvedPlan(state)
     if (plan.planFingerprint !== planFingerprint) {
       throw new TagManagementError('PREVIEW_STALE', 'preview is stale')
     }

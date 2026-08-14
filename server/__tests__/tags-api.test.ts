@@ -3,9 +3,11 @@ import Database from 'better-sqlite3'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { performance } from 'node:perf_hooks'
 import app from '../index'
 import { applyMigrations } from '../db'
 import {
+  preflightTagIdentityHealth,
   resetTagIdentityHealthForTesting,
   runTagIdentityMigrationForTesting,
 } from '../tagIdentityMigration'
@@ -122,6 +124,45 @@ describe('Tag Management API auth and health gate', () => {
     const repaired = await authenticated('/api/tags')
     expect(repaired.status).toBe(200)
   })
+
+  it('records live-path health preflight cost at the 10k-entry scale', async () => {
+    db.prepare('INSERT INTO tags (id, name, normalized_name) VALUES (?, ?, ?)').run(7, 'Java', 'java')
+    const insertDocument = db.prepare(`
+      INSERT INTO documents (id, path, title, summary, created_at, updated_at)
+      VALUES (?, ?, ?, '', 1, 1)
+    `)
+    const entryCount = 10000
+    db.transaction(() => {
+      for (let i = 0; i < entryCount; i++) {
+        const id = `scale-${String(i).padStart(5, '0')}`
+        insertDocument.run(id, id, id)
+      }
+    })()
+    await Promise.all(Array.from({ length: entryCount }, (_, i) => {
+      const id = `scale-${String(i).padStart(5, '0')}`
+      return fs.writeFile(path.join(root, `${id}.md`), '', 'utf8')
+    }))
+    expect(runTagIdentityMigrationForTesting(db).complete).toBe(true)
+
+    const metadataOwnershipCount = (db.prepare('SELECT COUNT(*) AS count FROM documents').get() as { count: number }).count
+    const heapBefore = process.memoryUsage().heapUsed
+    const startedAt = performance.now()
+    const health = await preflightTagIdentityHealth(db, root)
+    const elapsedMs = Number((performance.now() - startedAt).toFixed(2))
+    const heapDeltaBytes = process.memoryUsage().heapUsed - heapBefore
+    const evidence = {
+      markdownEntries: entryCount,
+      metadataOwnershipCount,
+      elapsedMs,
+      heapDeltaBytes,
+    }
+    console.info('[tag-management-health-perf]', JSON.stringify(evidence))
+
+    expect(health.state).toBe('healthy')
+    expect(metadataOwnershipCount).toBe(entryCount)
+    expect(Number.isFinite(evidence.elapsedMs)).toBe(true)
+    expect(Number.isFinite(evidence.heapDeltaBytes)).toBe(true)
+  })
 })
 
 describe('Tag Management API read model and Preview', () => {
@@ -190,6 +231,40 @@ describe('Tag Management API read model and Preview', () => {
     expect(unsafeName.status).toBe(200)
     expect(await unsafeName.json()).toMatchObject({ allowedToApply: true })
     expect(db.prepare("SELECT name FROM tags WHERE id = 7").get()).toEqual({ name: 'Java' })
+  })
+
+  it('correlates unexpected server failures without exposing internal error text', async () => {
+    const throwingDb = new Proxy(db, {
+      get(target, property, receiver) {
+        if (property !== 'prepare') return Reflect.get(target, property, receiver)
+        return (sql: string) => {
+          if (sql.includes('COUNT(DISTINCT dt.document_id)')) {
+            throw new Error('SELECT secret_sql; stack=should-not-reach-client')
+          }
+          return target.prepare(sql)
+        }
+      },
+    }) as Database.Database
+    __setMetadataDbForTesting(throwingDb)
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const response = await authenticated('/api/tags')
+      expect(response.status).toBe(500)
+      const body = await response.json() as {
+        code: string
+        details?: { correlationId?: string }
+      }
+      expect(body.code).toBe('TRANSACTION_FAILED')
+      expect(body.details?.correlationId).toMatch(/^[0-9a-f-]{36}$/)
+      const correlationId = body.details!.correlationId!
+      expect(errorSpy.mock.calls.flat().join(' ')).toContain(correlationId)
+      const serialized = JSON.stringify(body)
+      expect(serialized).not.toContain('secret_sql')
+      expect(serialized).not.toContain('stack=')
+    } finally {
+      errorSpy.mockRestore()
+      __setMetadataDbForTesting(db)
+    }
   })
 
   it('enforces JSON content type and same-origin CSRF on Preview', async () => {

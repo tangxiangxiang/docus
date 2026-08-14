@@ -3,10 +3,12 @@ import Database from 'better-sqlite3'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { performance } from 'node:perf_hooks'
 import { applyMigrations } from '../db'
 import {
   __setTagManagementPlannerHookForTesting,
   buildTagOperationPlan,
+  buildTagOperationPlanState,
   isPlanFingerprint,
   listManagedTags,
   parsePreviewPageRequest,
@@ -182,6 +184,39 @@ describe('tag management planner', () => {
     })
   })
 
+  it('keeps missing source and destination as explicit shared resolution states', () => {
+    seedTag(7, 'Java', 'java')
+
+    const missingSource = buildTagOperationPlanState(db, { kind: 'remove', sourceTagId: 9 })
+    expect(missingSource.resolution).toEqual({ source: null, destination: null })
+
+    const missingDestination = buildTagOperationPlanState(db, { kind: 'merge', sourceTagId: 7, destinationTagId: 9 })
+    expect(missingDestination.resolution.source).toMatchObject({ id: 7, normalizedName: 'java' })
+    expect(missingDestination.resolution.destination).toBeNull()
+  })
+
+  it.each(['created_at', 'updated_at'] as const)('fails closed for an unsafe persisted %s fingerprint value', (field) => {
+    seedTag(7, 'Java', 'java')
+    seedDocument('doc', [7])
+    db.exec(`UPDATE documents SET ${field} = 9223372036854775807 WHERE id = 'doc'`)
+
+    expectDomainCode(
+      () => buildTagOperationPlan(db, { kind: 'rename', sourceTagId: 7, destinationName: 'Backend' }),
+      'TAG_IDENTITY_CONFLICT',
+    )
+  })
+
+  it('accepts the exact JavaScript safe-integer timestamp boundary', () => {
+    seedTag(7, 'Java', 'java')
+    seedDocument('doc', [7], {
+      createdAt: Number.MAX_SAFE_INTEGER,
+      updatedAt: Number.MAX_SAFE_INTEGER,
+    })
+
+    expect(buildTagOperationPlan(db, { kind: 'rename', sourceTagId: 7, destinationName: 'Backend' }).planFingerprint)
+      .toMatch(/^[0-9a-f]{64}$/)
+  })
+
   it('adds HIGH_IMPACT only at the stable 1000-document threshold', () => {
     seedTag(7, 'Java', 'java')
     const insertDocument = db.prepare(`
@@ -301,6 +336,47 @@ describe('tag management fingerprints and pagination', () => {
     )
   })
 
+  it('classifies shared resolution changes as stale for Merge and Rename continuation', () => {
+    seedTag(7, 'Java', 'java')
+    seedTag(9, 'Backend', 'backend')
+    seedDocument('source', [7])
+
+    const mergeOperation: TagOperationRequest = { kind: 'merge', sourceTagId: 7, destinationTagId: 9 }
+    const mergePreview = previewTagOperation(db, mergeOperation)
+    db.prepare('DELETE FROM tags WHERE id = ?').run(9)
+    expectDomainCode(
+      () => previewTagOperationPage(db, mergeOperation, mergePreview.planFingerprint, undefined, 1),
+      'PREVIEW_STALE',
+    )
+
+    const renamePreview = previewTagOperation(db, { kind: 'rename', sourceTagId: 7, destinationName: 'Backend' })
+    seedTag(11, 'Backend', 'backend')
+    expectDomainCode(
+      () => previewTagOperationPage(
+        db,
+        { kind: 'rename', sourceTagId: 7, destinationName: 'Backend' },
+        renamePreview.planFingerprint,
+        undefined,
+        1,
+      ),
+      'PREVIEW_STALE',
+    )
+  })
+
+  it('keeps a Preview valid when an unrelated orphan tag disappears', () => {
+    seedTag(7, 'Java', 'java')
+    seedTag(20, 'Unrelated', 'unrelated')
+    seedDocument('source', [7])
+    const operation: TagOperationRequest = { kind: 'remove', sourceTagId: 7 }
+    const preview = previewTagOperation(db, operation)
+
+    db.prepare('DELETE FROM tags WHERE id = ?').run(20)
+    expect(previewTagOperationPage(db, operation, preview.planFingerprint, undefined, 1)).toMatchObject({
+      planFingerprint: preview.planFingerprint,
+      affectedCount: 1,
+    })
+  })
+
   it('uses a deferred read transaction snapshot while another WAL connection commits', async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-tag-preview-wal-'))
     const databasePath = path.join(directory, 'preview.db')
@@ -313,16 +389,48 @@ describe('tag management fingerprints and pagination', () => {
       second.pragma('journal_mode = WAL')
       second.pragma('foreign_keys = ON')
       seedTagOn(first, 7, 'Java', 'java')
+      seedTagOn(first, 9, 'Backend', 'backend')
       seedDocumentOn(first, 'doc', [7], { title: 'Before' })
-      const operation: TagOperationRequest = { kind: 'rename', sourceTagId: 7, destinationName: 'Backend' }
+      const operation: TagOperationRequest = { kind: 'merge', sourceTagId: 7, destinationTagId: 9 }
+      const beforePlan = buildTagOperationPlan(first, operation)
+      expect(beforePlan.affectedDocuments[0]?.completeTagRows.map((tag) => tag.id)).toEqual([7])
       __setTagManagementPlannerHookForTesting((stage) => {
         if (stage !== 'after-affected-document-read') return
         second.prepare('UPDATE documents SET title = ? WHERE id = ?').run('After', 'doc')
+        second.prepare('INSERT INTO document_tags (document_id, tag_id) VALUES (?, ?)').run('doc', 9)
       })
 
       const preview = previewTagOperation(first, operation)
+      expect(preview).toMatchObject({
+        affectedCount: beforePlan.affectedCount,
+        associationAdds: beforePlan.associationAdds,
+        associationRemoves: beforePlan.associationRemoves,
+        duplicateCollapses: beforePlan.duplicateCollapses,
+        sample: beforePlan.sample,
+        planFingerprint: beforePlan.planFingerprint,
+      })
       expect(preview.sample[0]).toMatchObject({ id: 'doc', title: 'Before' })
-      expect(previewTagOperation(first, operation).sample[0]).toMatchObject({ id: 'doc', title: 'After' })
+
+      __setTagManagementPlannerHookForTesting(null)
+      const afterPlan = buildTagOperationPlan(first, operation)
+      const afterPreview = previewTagOperation(first, operation)
+      expect(afterPlan.affectedDocuments[0]).toMatchObject({ id: 'doc', title: 'After' })
+      expect(afterPlan.affectedDocuments[0]?.completeTagRows.map((tag) => tag.id)).toEqual([7, 9])
+      expect(afterPlan).toMatchObject({
+        affectedCount: 1,
+        associationAdds: 0,
+        associationRemoves: 1,
+        duplicateCollapses: 1,
+      })
+      expect(afterPlan.planFingerprint).not.toBe(beforePlan.planFingerprint)
+      expect(afterPreview).toMatchObject({
+        sample: [{ id: 'doc', title: 'After' }],
+        affectedCount: afterPlan.affectedCount,
+        associationAdds: afterPlan.associationAdds,
+        associationRemoves: afterPlan.associationRemoves,
+        duplicateCollapses: afterPlan.duplicateCollapses,
+        planFingerprint: afterPlan.planFingerprint,
+      })
     } finally {
       __setTagManagementPlannerHookForTesting(null)
       if (second.open) second.close()
@@ -366,7 +474,7 @@ describe('tag management input safety and set-based scale', () => {
     expect(preparedStatements.some((sql) => sql.includes('IN (?, ?,'))).toBe(false)
   })
 
-  it('handles the deterministic 10k-document / 50k-association fixture structurally', () => {
+  it('records constant-query planning evidence for the deterministic 10k/50k fixture', () => {
     for (let tagId = 1; tagId <= 5; tagId++) seedTag(tagId, `Tag-${tagId}`, `tag-${tagId}`)
     const insertDocument = db.prepare(`
       INSERT INTO documents (id, path, title, summary, created_at, updated_at)
@@ -381,13 +489,39 @@ describe('tag management input safety and set-based scale', () => {
       }
     })()
 
-    const plan = buildTagOperationPlan(db, { kind: 'merge', sourceTagId: 1, destinationTagId: 2 })
+    const preparedStatements: string[] = []
+    const countedDb = new Proxy(db, {
+      get(target, property, receiver) {
+        if (property !== 'prepare') return Reflect.get(target, property, receiver)
+        return (sql: string) => {
+          preparedStatements.push(sql)
+          return target.prepare(sql)
+        }
+      },
+    }) as Database.Database
+    const heapBefore = process.memoryUsage().heapUsed
+    const startedAt = performance.now()
+    const plan = buildTagOperationPlan(countedDb, { kind: 'merge', sourceTagId: 1, destinationTagId: 2 })
+    const elapsedMs = Number((performance.now() - startedAt).toFixed(2))
+    const heapDeltaBytes = process.memoryUsage().heapUsed - heapBefore
+    const evidence = {
+      documents: 10000,
+      associations: 50000,
+      plannerQueries: preparedStatements.length,
+      elapsedMs,
+      heapDeltaBytes,
+    }
+    console.info('[tag-management-perf]', JSON.stringify(evidence))
+
     expect(plan.affectedCount).toBe(10000)
     expect(plan.associationAdds).toBe(0)
     expect(plan.associationRemoves).toBe(10000)
     expect(plan.duplicateCollapses).toBe(10000)
     expect(plan.sample).toHaveLength(20)
     expect(isPlanFingerprint(plan.planFingerprint)).toBe(true)
+    expect(evidence.plannerQueries).toBe(3)
+    expect(Number.isFinite(evidence.elapsedMs)).toBe(true)
+    expect(Number.isFinite(evidence.heapDeltaBytes)).toBe(true)
   })
 })
 
