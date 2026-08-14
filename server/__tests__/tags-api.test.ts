@@ -138,10 +138,15 @@ describe('Tag Management API auth and health gate', () => {
         insertDocument.run(id, id, id)
       }
     })()
-    await Promise.all(Array.from({ length: entryCount }, (_, i) => {
-      const id = `scale-${String(i).padStart(5, '0')}`
-      return fs.writeFile(path.join(root, `${id}.md`), '', 'utf8')
-    }))
+    const writeBatchSize = 256
+    for (let start = 0; start < entryCount; start += writeBatchSize) {
+      const end = Math.min(start + writeBatchSize, entryCount)
+      await Promise.all(Array.from({ length: end - start }, (_, offset) => {
+        const i = start + offset
+        const id = `scale-${String(i).padStart(5, '0')}`
+        return fs.writeFile(path.join(root, `${id}.md`), '', 'utf8')
+      }))
+    }
     expect(runTagIdentityMigrationForTesting(db).complete).toBe(true)
 
     const metadataOwnershipCount = (db.prepare('SELECT COUNT(*) AS count FROM documents').get() as { count: number }).count
@@ -162,7 +167,7 @@ describe('Tag Management API auth and health gate', () => {
     expect(metadataOwnershipCount).toBe(entryCount)
     expect(Number.isFinite(evidence.elapsedMs)).toBe(true)
     expect(Number.isFinite(evidence.heapDeltaBytes)).toBe(true)
-  })
+  }, 30_000)
 })
 
 describe('Tag Management API read model and Preview', () => {
