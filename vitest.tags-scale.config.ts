@@ -5,9 +5,7 @@ export default defineConfig({
     include: ['server/__tests__/**/*.scale.test.ts'],
     exclude: ['e2e/**', 'node_modules/**', 'dist/**'],
     environment: 'node',
-    pool: 'forks',
     fileParallelism: false,
     maxWorkers: 1,
-    isolate: false,
   },
 })
