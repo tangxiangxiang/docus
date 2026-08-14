@@ -1,5 +1,7 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import type { Database as DatabaseT } from 'better-sqlite3'
+import { withDocumentWriteLocks } from './documentWriteLock.js'
+import { MetadataVersionError, nextMetadataUpdatedAt } from './metadataVersion.js'
 import {
   TAG_IDENTITY_CONTRACT_VERSION,
   validatePersistentTag,
@@ -67,6 +69,7 @@ export type TagManagementErrorCode =
   | 'DESTINATION_EXISTS'
   | 'TAG_IDENTITY_CONFLICT'
   | 'TAG_MANAGEMENT_UNAVAILABLE'
+  | 'PREVIEW_REQUIRED'
   | 'PREVIEW_STALE'
   | 'TRANSACTION_FAILED'
 
@@ -86,6 +89,60 @@ export class TagManagementError extends Error {
     this.code = code
     this.details = details
   }
+}
+
+export type TagOperationApplyResult = {
+  operationId: string
+  resultId: string
+  kind: TagOperationRequest['kind']
+  operation: TagOperationRequest
+  sourceTagId: number
+  destinationTagId: number | null
+  survivorTagId: number | null
+  sourceTag: TagRowView | null
+  destinationTag: TagRowView | null
+  survivorTag: TagRowView | null
+  sourceDisplayName: string | null
+  sourceNormalizedName: string | null
+  destinationDisplayName: string | null
+  destinationNormalizedName: string | null
+  survivorDisplayName: string | null
+  survivorNormalizedName: string | null
+  sourceDeleted: boolean
+  affectedCount: number
+  associationAdds: number
+  associationRemoves: number
+  duplicateCollapses: number
+  tagCreates: number
+  tagDeletes: number
+  displayOnly: boolean
+  versionUpdateCount: number
+  commitTimestamp: number
+  appliedFingerprint: string
+}
+
+export type TagManagementApplyFailureStage =
+  | 'after-version-update'
+  | 'after-association-mutation'
+  | 'after-tag-row-mutation'
+  | 'before-postcondition'
+  | 'before-commit'
+
+export type TagManagementApplyTestHooks = {
+  afterDiscovery?: (state: TagOperationPlanState) => void
+  afterLocks?: (paths: readonly string[]) => void
+  failureStage?: TagManagementApplyFailureStage | null
+  beforePostcondition?: (db: DatabaseT, plan: TagOperationPlan) => void
+  afterCommit?: (result: TagOperationApplyResult) => void
+}
+
+let applyTestHooks: TagManagementApplyTestHooks | null = null
+
+/** Test-only seams for atomicity and lock-ordering tests; never used by HTTP. */
+export function __setTagManagementApplyHooksForTesting(
+  hooks: TagManagementApplyTestHooks | null,
+): void {
+  applyTestHooks = hooks
 }
 
 type DatabaseTagRow = {
@@ -700,5 +757,512 @@ export function parsePreviewPageRequest(value: unknown): {
     planFingerprint: value.planFingerprint,
     ...(afterDocumentId === undefined ? {} : { afterDocumentId }),
     limit,
+  }
+}
+
+export function parseTagApplyRequest(value: unknown): {
+  operation: TagOperationRequest
+  planFingerprint: string
+} {
+  if (!isPlainObject(value)) throw new TagManagementError('INVALID_OPERATION', 'apply body is required')
+  const keys = Object.keys(value)
+  if (keys.some((key) => key !== 'operation' && key !== 'planFingerprint')) {
+    throw new TagManagementError('INVALID_OPERATION', 'apply body must contain only operation and planFingerprint')
+  }
+  if (!Object.hasOwn(value, 'planFingerprint') || !isPlanFingerprint(value.planFingerprint)) {
+    throw new TagManagementError('PREVIEW_REQUIRED', 'a current Preview fingerprint is required')
+  }
+  if (!Object.hasOwn(value, 'operation')) {
+    throw new TagManagementError('INVALID_OPERATION', 'operation is required')
+  }
+  return {
+    operation: parseTagOperation(value.operation).operation,
+    planFingerprint: value.planFingerprint,
+  }
+}
+
+type ApplyDocumentVersionRow = {
+  id: string
+  updated_at: unknown
+}
+
+type ApplyAssociationRow = {
+  document_id: string
+  tag_id: number
+}
+
+function readApplyDocumentVersions(db: DatabaseT): Map<string, unknown> {
+  const rows = db.prepare(`
+    SELECT id, updated_at
+    FROM documents
+    ORDER BY id COLLATE BINARY
+  `).all() as ApplyDocumentVersionRow[]
+  const versions = new Map<string, unknown>()
+  for (const row of rows) {
+    if (typeof row.id !== 'string') {
+      throw new TagManagementError('TRANSACTION_FAILED', 'document metadata version is invalid')
+    }
+    versions.set(row.id, row.updated_at)
+  }
+  return versions
+}
+
+function readApplyAssociations(db: DatabaseT): ApplyAssociationRow[] {
+  return db.prepare(`
+    SELECT document_id, tag_id
+    FROM document_tags
+    ORDER BY document_id COLLATE BINARY, tag_id
+  `).all() as ApplyAssociationRow[]
+}
+
+function readApplyTags(db: DatabaseT): DatabaseTagRow[] {
+  return db.prepare(`
+    SELECT id, name, normalized_name
+    FROM tags
+    ORDER BY id
+  `).all() as DatabaseTagRow[]
+}
+
+function sameApplyRows(
+  actual: readonly ApplyAssociationRow[],
+  expected: readonly ApplyAssociationRow[],
+): boolean {
+  if (actual.length !== expected.length) return false
+  for (let index = 0; index < actual.length; index++) {
+    const left = actual[index]!
+    const right = expected[index]!
+    if (left.document_id !== right.document_id || left.tag_id !== right.tag_id) return false
+  }
+  return true
+}
+
+function sameApplyTagRows(
+  actual: readonly DatabaseTagRow[],
+  expected: readonly DatabaseTagRow[],
+): boolean {
+  if (actual.length !== expected.length) return false
+  for (let index = 0; index < actual.length; index++) {
+    const left = actual[index]!
+    const right = expected[index]!
+    if (left.id !== right.id || left.name !== right.name || left.normalized_name !== right.normalized_name) return false
+  }
+  return true
+}
+
+function sortApplyAssociations(rows: ApplyAssociationRow[]): ApplyAssociationRow[] {
+  return rows.sort((left, right) => {
+    const documentOrder = compareDocumentIds(left.document_id, right.document_id)
+    return documentOrder !== 0 ? documentOrder : left.tag_id - right.tag_id
+  })
+}
+
+function assertApplyPostcondition(condition: unknown, message: string): asserts condition {
+  if (!condition) throw new TagManagementError('TRANSACTION_FAILED', message)
+}
+
+function throwInjectedApplyFailure(stage: TagManagementApplyFailureStage): void {
+  if (applyTestHooks?.failureStage === stage) {
+    throw new Error(`injected tag management failure at ${stage}`)
+  }
+}
+
+function buildExpectedApplyAssociations(
+  before: readonly ApplyAssociationRow[],
+  plan: TagOperationPlan,
+): ApplyAssociationRow[] {
+  if (plan.operation.kind === 'rename') return before.map((row) => ({ ...row }))
+  const sourceTagId = plan.operation.sourceTagId
+  if (plan.operation.kind === 'remove') {
+    return sortApplyAssociations(before.filter((row) => row.tag_id !== sourceTagId).map((row) => ({ ...row })))
+  }
+  const destinationTagId = plan.operation.destinationTagId
+  const destinationByDocument = new Set(
+    before.filter((row) => row.tag_id === destinationTagId).map((row) => row.document_id),
+  )
+  const expected = before
+    .filter((row) => row.tag_id !== sourceTagId)
+    .map((row) => ({ ...row }))
+  for (const row of before) {
+    if (row.tag_id === sourceTagId && !destinationByDocument.has(row.document_id)) {
+      expected.push({ document_id: row.document_id, tag_id: destinationTagId })
+    }
+  }
+  return sortApplyAssociations(expected)
+}
+
+function buildExpectedApplyTags(
+  before: readonly DatabaseTagRow[],
+  plan: TagOperationPlan,
+): DatabaseTagRow[] {
+  if (plan.operation.kind === 'rename') {
+    return before.map((row) => row.id === plan.sourceTag.id
+      ? {
+          ...row,
+          name: plan.requestedDestination!.displayName,
+          normalized_name: plan.requestedDestination!.normalizedName,
+        }
+      : { ...row })
+  }
+  return before.filter((row) => row.id !== plan.operation.sourceTagId).map((row) => ({ ...row }))
+}
+
+function assertApplyVersions(
+  before: ReadonlyMap<string, unknown>,
+  after: ReadonlyMap<string, unknown>,
+  plan: TagOperationPlan,
+  expectedAffectedVersions: ReadonlyMap<string, number>,
+): void {
+  assertApplyPostcondition(after.size === before.size, 'document set changed during tag operation')
+  for (const [id, beforeVersion] of before) {
+    const actual = after.get(id)
+    assertApplyPostcondition(actual !== undefined, 'document disappeared during tag operation')
+    const expected = expectedAffectedVersions.get(id)
+    assertApplyPostcondition(actual === (expected ?? beforeVersion), 'document version postcondition failed')
+  }
+  assertApplyPostcondition(expectedAffectedVersions.size === plan.affectedCount, 'affected document version count mismatched')
+}
+
+function readApplyTag(db: DatabaseT, id: number): TagRowView | null {
+  const row = db.prepare(`
+    SELECT id, name, normalized_name
+    FROM tags
+    WHERE id = ?
+  `).get(id) as DatabaseTagRow | undefined
+  if (!row) return null
+  assertCanonicalTagRow(row)
+  return databaseTagToView(row)
+}
+
+function assertApplyPostconditions(
+  db: DatabaseT,
+  plan: TagOperationPlan,
+  beforeVersions: ReadonlyMap<string, unknown>,
+  expectedAffectedVersions: ReadonlyMap<string, number>,
+  beforeAssociations: readonly ApplyAssociationRow[],
+  beforeTags: readonly DatabaseTagRow[],
+): void {
+  const afterVersions = readApplyDocumentVersions(db)
+  assertApplyVersions(beforeVersions, afterVersions, plan, expectedAffectedVersions)
+
+  const afterAssociations = readApplyAssociations(db)
+  const expectedAssociations = buildExpectedApplyAssociations(beforeAssociations, plan)
+  assertApplyPostcondition(
+    sameApplyRows(afterAssociations, expectedAssociations),
+    'tag association postcondition failed',
+  )
+
+  const afterTags = readApplyTags(db)
+  const expectedTags = buildExpectedApplyTags(beforeTags, plan)
+  assertApplyPostcondition(sameApplyTagRows(afterTags, expectedTags), 'tag row postcondition failed')
+
+  if (plan.operation.kind === 'rename') {
+    const source = readApplyTag(db, plan.sourceTag.id)
+    assertApplyPostcondition(source !== null, 'rename source tag disappeared')
+    assertApplyPostcondition(source.displayName === plan.requestedDestination!.displayName, 'rename display postcondition failed')
+    assertApplyPostcondition(source.normalizedName === plan.requestedDestination!.normalizedName, 'rename identity postcondition failed')
+    const ownerCount = (db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM tags
+      WHERE normalized_name = ? COLLATE BINARY
+    `).get(plan.requestedDestination!.normalizedName) as { count: number }).count
+    assertApplyPostcondition(ownerCount === 1, 'rename destination identity is not unique')
+    const sourceDocuments = (db.prepare(`
+      SELECT document_id
+      FROM document_tags
+      WHERE tag_id = ?
+      ORDER BY document_id COLLATE BINARY
+    `).all(plan.sourceTag.id) as Array<{ document_id: string }>).map((row) => row.document_id)
+    const expectedDocuments = plan.affectedDocuments.map((document) => document.id)
+    assertApplyPostcondition(
+      sourceDocuments.length === expectedDocuments.length
+        && sourceDocuments.every((id, index) => id === expectedDocuments[index]),
+      'rename source associations changed',
+    )
+  } else if (plan.operation.kind === 'merge') {
+    const destination = readApplyTag(db, plan.operation.destinationTagId)
+    assertApplyPostcondition(destination !== null, 'merge destination tag disappeared')
+    assertApplyPostcondition(destination.displayName === plan.destinationTag!.displayName, 'merge destination display changed')
+    assertApplyPostcondition(destination.normalizedName === plan.destinationTag!.normalizedName, 'merge destination identity changed')
+    assertApplyPostcondition(readApplyTag(db, plan.operation.sourceTagId) === null, 'merge source tag remains')
+    const sourceAssociations = (db.prepare('SELECT COUNT(*) AS count FROM document_tags WHERE tag_id = ?')
+      .get(plan.operation.sourceTagId) as { count: number }).count
+    assertApplyPostcondition(sourceAssociations === 0, 'merge source associations remain')
+    const destinationDocuments = new Set(
+      (db.prepare(`
+        SELECT document_id
+        FROM document_tags
+        WHERE tag_id = ?
+      `).all(plan.operation.destinationTagId) as Array<{ document_id: string }>).map((row) => row.document_id),
+    )
+    for (const document of plan.affectedDocuments) {
+      assertApplyPostcondition(destinationDocuments.has(document.id), 'merge survivor association is missing')
+    }
+  } else {
+    assertApplyPostcondition(readApplyTag(db, plan.operation.sourceTagId) === null, 'remove source tag remains')
+    const sourceAssociations = (db.prepare('SELECT COUNT(*) AS count FROM document_tags WHERE tag_id = ?')
+      .get(plan.operation.sourceTagId) as { count: number }).count
+    assertApplyPostcondition(sourceAssociations === 0, 'remove source associations remain')
+  }
+}
+
+function conflictFromApplyPlan(plan: TagOperationPlan): never {
+  const code = plan.conflictCode ?? 'INVALID_OPERATION'
+  throw new TagManagementError(
+    code,
+    plan.conflictMessage ?? 'tag operation is not allowed by the reviewed Preview',
+    code === 'DESTINATION_EXISTS' && plan.destinationTag
+      ? {
+          destinationTagId: plan.destinationTag.id,
+          destinationDisplayName: plan.destinationTag.displayName,
+        }
+      : {},
+  )
+}
+
+function buildApplyResult(
+  operationId: string,
+  plan: TagOperationPlan,
+  commitTimestamp: number,
+  versionUpdateCount: number,
+  appliedFingerprint: string,
+  finalSourceTag: TagRowView | null,
+  finalDestinationTag: TagRowView | null,
+): TagOperationApplyResult {
+  const sourceDeleted = plan.operation.kind !== 'rename'
+  const survivorTag = plan.operation.kind === 'merge'
+    ? finalDestinationTag
+    : plan.operation.kind === 'remove' ? null : finalSourceTag
+  return {
+    operationId,
+    resultId: operationId,
+    kind: plan.operation.kind,
+    operation: plan.operation,
+    sourceTagId: plan.operation.sourceTagId,
+    destinationTagId: plan.operation.kind === 'merge' ? plan.operation.destinationTagId : null,
+    survivorTagId: survivorTag?.id ?? null,
+    sourceTag: finalSourceTag,
+    destinationTag: finalDestinationTag,
+    survivorTag,
+    sourceDisplayName: finalSourceTag?.displayName ?? null,
+    sourceNormalizedName: finalSourceTag?.normalizedName ?? null,
+    destinationDisplayName: finalDestinationTag?.displayName ?? null,
+    destinationNormalizedName: finalDestinationTag?.normalizedName ?? null,
+    survivorDisplayName: survivorTag?.displayName ?? null,
+    survivorNormalizedName: survivorTag?.normalizedName ?? null,
+    sourceDeleted,
+    affectedCount: plan.affectedCount,
+    associationAdds: plan.associationAdds,
+    associationRemoves: plan.associationRemoves,
+    duplicateCollapses: plan.duplicateCollapses,
+    tagCreates: plan.tagCreates,
+    tagDeletes: plan.tagDeletes,
+    displayOnly: plan.displayOnly,
+    versionUpdateCount,
+    commitTimestamp,
+    appliedFingerprint,
+  }
+}
+
+function logAppliedTagOperation(result: TagOperationApplyResult): void {
+  const logResult = {
+    operationId: result.operationId,
+    resultId: result.resultId,
+    kind: result.kind,
+    sourceTagId: result.sourceTagId,
+    destinationTagId: result.destinationTagId,
+    survivorTagId: result.survivorTagId,
+    affectedCount: result.affectedCount,
+    associationAdds: result.associationAdds,
+    associationRemoves: result.associationRemoves,
+    duplicateCollapses: result.duplicateCollapses,
+    tagCreates: result.tagCreates,
+    tagDeletes: result.tagDeletes,
+    displayOnly: result.displayOnly,
+    versionUpdateCount: result.versionUpdateCount,
+    commitTimestamp: result.commitTimestamp,
+    appliedFingerprint: result.appliedFingerprint,
+  }
+  try {
+    console.info('[tag-management-apply]', JSON.stringify(logResult))
+  } catch {
+    // The SQLite commit is authoritative. Logging failure must not turn a
+    // committed operation into a reported rollback.
+  }
+}
+
+function transactionFailed(): TagManagementError {
+  return new TagManagementError('TRANSACTION_FAILED', 'tag management operation failed')
+}
+
+/**
+ * Apply one reviewed operation. Discovery is a short deferred read; the
+ * mutation authority is the one synchronous IMMEDIATE transaction executed
+ * while every currently affected document path lock is held.
+ */
+export async function applyTagOperation(
+  db: DatabaseT,
+  operationInput: TagOperationRequest,
+  planFingerprint: string,
+): Promise<TagOperationApplyResult> {
+  if (!isPlanFingerprint(planFingerprint)) {
+    throw new TagManagementError('PREVIEW_REQUIRED', 'a current Preview fingerprint is required')
+  }
+  let operation: TagOperationRequest
+  try {
+    operation = parseTagOperation(operationInput).operation
+  } catch (error) {
+    if (error instanceof TagManagementError) throw error
+    throw transactionFailed()
+  }
+
+  let discovery: TagOperationPlanState
+  try {
+    const discoveryTransaction = db.transaction(() => buildTagOperationPlanState(db, operation))
+    discovery = discoveryTransaction()
+    applyTestHooks?.afterDiscovery?.(discovery)
+  } catch (error) {
+    if (error instanceof TagManagementError) throw error
+    throw transactionFailed()
+  }
+  if (!hasRequiredResolution(operation, discovery.resolution)
+    || discovery.planFingerprint !== planFingerprint) {
+    throw new TagManagementError('PREVIEW_STALE', 'preview is stale')
+  }
+
+  const operationId = randomUUID()
+  const paths = discovery.affectedDocuments.map((document) => document.path)
+  try {
+    const result = await withDocumentWriteLocks(paths, async () => {
+      applyTestHooks?.afterLocks?.(paths)
+      const mutation = db.transaction(() => {
+        const lockedState = buildTagOperationPlanState(db, operation)
+        if (!hasRequiredResolution(operation, lockedState.resolution)
+          || lockedState.planFingerprint !== planFingerprint) {
+          throw new TagManagementError('PREVIEW_STALE', 'preview is stale')
+        }
+        const plan = lockedState as TagOperationPlan
+        if (!plan.allowedToApply) conflictFromApplyPlan(plan)
+
+        const commitTimestamp = Date.now()
+        const beforeVersions = readApplyDocumentVersions(db)
+        const expectedAffectedVersions = new Map<string, number>()
+        for (const document of plan.affectedDocuments) {
+          const current = beforeVersions.get(document.id)
+          if (current === undefined
+            || typeof current !== 'number'
+            || !Number.isSafeInteger(current)
+            || current < 0
+            || current !== document.updatedAt) {
+            throw new TagManagementError('PREVIEW_STALE', 'preview is stale')
+          }
+          try {
+            expectedAffectedVersions.set(document.id, nextMetadataUpdatedAt(current, commitTimestamp))
+          } catch (error) {
+            if (error instanceof MetadataVersionError) throw transactionFailed()
+            throw error
+          }
+        }
+        const beforeAssociations = readApplyAssociations(db)
+        const beforeTags = readApplyTags(db)
+
+        const versionUpdate = db.prepare(`
+          UPDATE documents
+          SET updated_at = CASE
+            WHEN updated_at + 1 > ? THEN updated_at + 1
+            ELSE ?
+          END
+          WHERE id IN (
+            SELECT document_id
+            FROM document_tags
+            WHERE tag_id = ?
+          )
+        `).run(commitTimestamp, commitTimestamp, plan.operation.sourceTagId)
+        if (versionUpdate.changes !== plan.affectedCount) {
+          throw transactionFailed()
+        }
+        throwInjectedApplyFailure('after-version-update')
+
+        if (plan.operation.kind === 'rename') {
+          const tagUpdate = plan.displayOnly
+            ? db.prepare(`
+                UPDATE tags
+                SET name = ?
+                WHERE id = ?
+              `).run(plan.requestedDestination!.displayName, plan.sourceTag.id)
+            : db.prepare(`
+                UPDATE tags
+                SET name = ?, normalized_name = ?
+                WHERE id = ?
+              `).run(
+                plan.requestedDestination!.displayName,
+                plan.requestedDestination!.normalizedName,
+                plan.sourceTag.id,
+              )
+          if (tagUpdate.changes !== 1) throw transactionFailed()
+        } else if (plan.operation.kind === 'merge') {
+          const insertAssociations = db.prepare(`
+            INSERT INTO document_tags (document_id, tag_id)
+            SELECT document_id, ?
+            FROM document_tags
+            WHERE tag_id = ?
+            ON CONFLICT(document_id, tag_id) DO NOTHING
+          `).run(plan.operation.destinationTagId, plan.operation.sourceTagId)
+          if (insertAssociations.changes !== plan.associationAdds) throw transactionFailed()
+          const deleteAssociations = db.prepare('DELETE FROM document_tags WHERE tag_id = ?')
+            .run(plan.operation.sourceTagId)
+          if (deleteAssociations.changes !== plan.associationRemoves) throw transactionFailed()
+          throwInjectedApplyFailure('after-association-mutation')
+          const deleteSource = db.prepare('DELETE FROM tags WHERE id = ?').run(plan.operation.sourceTagId)
+          if (deleteSource.changes !== 1) throw transactionFailed()
+        } else {
+          const deleteAssociations = db.prepare('DELETE FROM document_tags WHERE tag_id = ?')
+            .run(plan.operation.sourceTagId)
+          if (deleteAssociations.changes !== plan.associationRemoves) throw transactionFailed()
+          throwInjectedApplyFailure('after-association-mutation')
+          const deleteSource = db.prepare('DELETE FROM tags WHERE id = ?').run(plan.operation.sourceTagId)
+          if (deleteSource.changes !== 1) throw transactionFailed()
+        }
+        throwInjectedApplyFailure('after-tag-row-mutation')
+        applyTestHooks?.beforePostcondition?.(db, plan)
+        throwInjectedApplyFailure('before-postcondition')
+        assertApplyPostconditions(
+          db,
+          plan,
+          beforeVersions,
+          expectedAffectedVersions,
+          beforeAssociations,
+          beforeTags,
+        )
+        const finalSourceTag = plan.operation.kind === 'merge' || plan.operation.kind === 'remove'
+          ? null
+          : readApplyTag(db, plan.sourceTag.id)
+        const finalDestinationTag = plan.operation.kind === 'merge'
+          ? readApplyTag(db, plan.operation.destinationTagId)
+          : null
+        const result = buildApplyResult(
+          operationId,
+          plan,
+          commitTimestamp,
+          versionUpdate.changes,
+          planFingerprint,
+          finalSourceTag,
+          finalDestinationTag,
+        )
+        throwInjectedApplyFailure('before-commit')
+        return result
+      })
+      return mutation.immediate()
+    })
+    logAppliedTagOperation(result)
+    try {
+      applyTestHooks?.afterCommit?.(result)
+    } catch {
+      // A test observer is not transaction authority; the commit already
+      // succeeded and the response must not claim that it was rolled back.
+    }
+    return result
+  } catch (error) {
+    if (error instanceof TagManagementError) throw error
+    throw transactionFailed()
   }
 }

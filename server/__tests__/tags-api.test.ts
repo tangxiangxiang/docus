@@ -87,7 +87,7 @@ async function authenticated(
 }
 
 describe('Tag Management API auth and health gate', () => {
-  it('rejects unauthenticated list and Preview requests before domain work', async () => {
+  it('rejects unauthenticated list, Preview, and Apply requests before domain work', async () => {
     const list = await request('/api/tags')
     expect(list.status).toBe(401)
     expect(list.headers.get('cache-control')).toBe('no-store')
@@ -96,6 +96,14 @@ describe('Tag Management API auth and health gate', () => {
       method: 'POST', body: { kind: 'remove', sourceTagId: 7 },
     })
     expect(preview.status).toBe(401)
+
+    const apply = await request('/api/tags/operations/apply', {
+      method: 'POST', body: {
+        operation: { kind: 'remove', sourceTagId: 7 },
+        planFingerprint: 'a'.repeat(64),
+      },
+    })
+    expect(apply.status).toBe(401)
   })
 
   it('returns 503 while identity migration health is unavailable', async () => {
@@ -205,11 +213,21 @@ describe('Tag Management API read model and Preview', () => {
       method: 'POST', body: { kind: 'rename', sourceTagId: 7, destinationName: 'backend' },
     })
     expect(response.status).toBe(200)
-    expect(await response.json()).toMatchObject({
+    const preview = await response.json()
+    expect(preview).toMatchObject({
       allowedToApply: false,
       conflictCode: 'DESTINATION_EXISTS',
       destinationTag: { id: 9, displayName: 'Backend' },
     })
+
+    const apply = await authenticated('/api/tags/operations/apply', {
+      method: 'POST', body: {
+        operation: { kind: 'rename', sourceTagId: 7, destinationName: 'backend' },
+        planFingerprint: preview.planFingerprint,
+      },
+    })
+    expect(apply.status).toBe(409)
+    expect(await apply.json()).toMatchObject({ code: 'DESTINATION_EXISTS', details: { destinationTagId: 9 } })
   })
 
   it('maps malformed, missing, and security-sensitive requests without SQL leakage', async () => {
@@ -356,10 +374,54 @@ describe('Tag Management API pagination', () => {
     expect(await stale.json()).toMatchObject({ code: 'PREVIEW_STALE' })
   })
 
-  it('does not expose an Apply endpoint in T2-1', async () => {
-    const response = await authenticated('/api/tags/operations/apply', {
-      method: 'POST', body: { operation: { kind: 'remove', sourceTagId: 7 }, planFingerprint: 'a'.repeat(64) },
+  it('applies a current Preview through the authenticated Apply endpoint', async () => {
+    const previewResponse = await authenticated('/api/tags/operations/preview', {
+      method: 'POST', body: { kind: 'remove', sourceTagId: 7 },
     })
-    expect(response.status).toBe(404)
+    expect(previewResponse.status).toBe(200)
+    const preview = await previewResponse.json()
+    const response = await authenticated('/api/tags/operations/apply', {
+      method: 'POST', body: {
+        operation: { kind: 'remove', sourceTagId: 7 },
+        planFingerprint: preview.planFingerprint,
+      },
+    })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      kind: 'remove',
+      sourceTagId: 7,
+      sourceDeleted: true,
+      affectedCount: 22,
+      versionUpdateCount: 22,
+      appliedFingerprint: preview.planFingerprint,
+    })
+  })
+
+  it('requires a current Preview and preserves Apply auth/CSRF/content boundaries', async () => {
+    const missing = await authenticated('/api/tags/operations/apply', {
+      method: 'POST', body: { operation: { kind: 'remove', sourceTagId: 7 } },
+    })
+    expect(missing.status).toBe(409)
+    expect(await missing.json()).toMatchObject({ code: 'PREVIEW_REQUIRED' })
+
+    const extra = await authenticated('/api/tags/operations/apply', {
+      method: 'POST', body: {
+        operation: { kind: 'remove', sourceTagId: 7 },
+        planFingerprint: 'a'.repeat(64),
+        affectedDocuments: [],
+      },
+    })
+    expect(extra.status).toBe(400)
+    expect(await extra.json()).toMatchObject({ code: 'INVALID_OPERATION' })
+
+    const missingType = await authenticated('/api/tags/operations/apply', {
+      method: 'POST', body: { operation: { kind: 'remove', sourceTagId: 7 }, planFingerprint: 'a'.repeat(64) }, contentType: '',
+    })
+    expect(missingType.status).toBe(415)
+
+    const crossOrigin = await authenticated('/api/tags/operations/apply', {
+      method: 'POST', body: { operation: { kind: 'remove', sourceTagId: 7 }, planFingerprint: 'a'.repeat(64) }, origin: 'https://evil.example',
+    })
+    expect(crossOrigin.status).toBe(403)
   })
 })

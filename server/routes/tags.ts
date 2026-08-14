@@ -3,9 +3,11 @@ import { randomUUID } from 'node:crypto'
 import { CONTENT_DIR } from '../paths.js'
 import { preflightTagIdentityHealth } from '../tagIdentityMigration.js'
 import {
+  applyTagOperation,
   TagManagementError,
   isPlanFingerprint,
   listManagedTags,
+  parseTagApplyRequest,
   parsePreviewPageRequest,
   parseTagOperation,
   previewTagOperation,
@@ -33,12 +35,15 @@ async function requireManagementHealth(c: any): Promise<Response | null> {
   }
 }
 
-function domainError(c: any, error: TagManagementError): Response {
+function domainError(c: any, error: TagManagementError, apply = false): Response {
+  if (error.code === 'TRANSACTION_FAILED') return unexpectedError(c)
   const status = error.code === 'TAG_NOT_FOUND' ? 404
     : error.code === 'TAG_MANAGEMENT_UNAVAILABLE' || error.code === 'TAG_IDENTITY_CONFLICT' ? 503
       : error.code === 'PREVIEW_STALE'
+        || error.code === 'PREVIEW_REQUIRED'
         || error.code === 'DESTINATION_EXISTS'
-        || error.code === 'SOURCE_DESTINATION_SAME' ? 409
+        || error.code === 'SOURCE_DESTINATION_SAME'
+        || (apply && error.code === 'INVALID_OPERATION') ? 409
           : 400
   return c.json({
     error: error.message,
@@ -107,6 +112,25 @@ tagRoutes.post('/api/tags/operations/preview/page', async (c) => {
     ))
   } catch (error) {
     if (error instanceof TagManagementError) return domainError(c, error)
+    return unexpectedError(c)
+  }
+})
+
+tagRoutes.post('/api/tags/operations/apply', async (c) => {
+  const unavailable = await requireManagementHealth(c)
+  if (unavailable) return unavailable
+  const body = await c.req.json().catch(() => null)
+  let parsed: ReturnType<typeof parseTagApplyRequest>
+  try {
+    parsed = parseTagApplyRequest(body)
+  } catch (error) {
+    if (error instanceof TagManagementError) return domainError(c, error)
+    return unexpectedError(c)
+  }
+  try {
+    return c.json(await applyTagOperation(metadataDb(), parsed.operation, parsed.planFingerprint))
+  } catch (error) {
+    if (error instanceof TagManagementError) return domainError(c, error, true)
     return unexpectedError(c)
   }
 })

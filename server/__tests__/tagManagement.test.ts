@@ -6,11 +6,14 @@ import path from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { applyMigrations } from '../db'
 import {
+  __setTagManagementApplyHooksForTesting,
   __setTagManagementPlannerHookForTesting,
+  applyTagOperation,
   buildTagOperationPlan,
   buildTagOperationPlanState,
   isPlanFingerprint,
   listManagedTags,
+  parseTagApplyRequest,
   parsePreviewPageRequest,
   parseTagOperation,
   previewTagOperation,
@@ -28,6 +31,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  __setTagManagementApplyHooksForTesting(null)
   __setTagManagementPlannerHookForTesting(null)
   if (db.open) db.close()
 })
@@ -60,6 +64,16 @@ function seedBasicGraph(): void {
 function expectDomainCode(callback: () => unknown, code: string): void {
   try {
     callback()
+    throw new Error(`expected ${code}`)
+  } catch (error) {
+    expect(error).toBeInstanceOf(TagManagementError)
+    expect((error as TagManagementError).code).toBe(code)
+  }
+}
+
+async function expectAsyncDomainCode(callback: () => Promise<unknown>, code: string): Promise<void> {
+  try {
+    await callback()
     throw new Error(`expected ${code}`)
   } catch (error) {
     expect(error).toBeInstanceOf(TagManagementError)
@@ -522,6 +536,330 @@ describe('tag management input safety and set-based scale', () => {
     expect(evidence.plannerQueries).toBe(3)
     expect(Number.isFinite(evidence.elapsedMs)).toBe(true)
     expect(Number.isFinite(evidence.heapDeltaBytes)).toBe(true)
+  })
+})
+
+describe('tag management atomic Apply', () => {
+  function databaseSnapshot(): unknown {
+    return {
+      documents: db.prepare('SELECT * FROM documents ORDER BY id').all(),
+      tags: db.prepare('SELECT * FROM tags ORDER BY id').all(),
+      associations: db.prepare('SELECT * FROM document_tags ORDER BY document_id, tag_id').all(),
+    }
+  }
+
+  it('applies normal Rename in place, versions each source document once, and rejects duplicate Apply', async () => {
+    seedTag(7, 'Java', 'java')
+    seedDocument('b', [7], { updatedAt: 10 })
+    seedDocument('a', [7], { updatedAt: 20 })
+    const operation: TagOperationRequest = { kind: 'rename', sourceTagId: 7, destinationName: 'Backend' }
+    const preview = previewTagOperation(db, operation)
+    const beforeIds = db.prepare('SELECT document_id, tag_id FROM document_tags WHERE tag_id = 7 ORDER BY document_id').all()
+
+    const result = await applyTagOperation(db, operation, preview.planFingerprint)
+    expect(result).toMatchObject({
+      kind: 'rename',
+      operationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      resultId: expect.any(String),
+      sourceTagId: 7,
+      destinationTagId: null,
+      survivorTagId: 7,
+      sourceDeleted: false,
+      affectedCount: 2,
+      associationAdds: 0,
+      associationRemoves: 0,
+      duplicateCollapses: 0,
+      tagCreates: 0,
+      tagDeletes: 0,
+      displayOnly: false,
+      versionUpdateCount: 2,
+      appliedFingerprint: preview.planFingerprint,
+    })
+    expect(result.operationId).toBe(result.resultId)
+    expect(db.prepare('SELECT id, name, normalized_name FROM tags').all()).toEqual([
+      { id: 7, name: 'Backend', normalized_name: 'backend' },
+    ])
+    expect(db.prepare('SELECT document_id, tag_id FROM document_tags WHERE tag_id = 7 ORDER BY document_id').all()).toEqual(beforeIds)
+    expect(db.prepare('SELECT id, updated_at FROM documents ORDER BY id').all()).toEqual([
+      expect.objectContaining({ id: 'a' }),
+      expect.objectContaining({ id: 'b' }),
+    ])
+    expect((db.prepare('SELECT updated_at FROM documents WHERE id = ?').get('a') as { updated_at: number }).updated_at).toBeGreaterThan(20)
+    expect((db.prepare('SELECT updated_at FROM documents WHERE id = ?').get('b') as { updated_at: number }).updated_at).toBeGreaterThan(10)
+
+    await expectAsyncDomainCode(
+      () => applyTagOperation(db, operation, preview.planFingerprint),
+      'PREVIEW_STALE',
+    )
+  })
+
+  it('applies Display Rename without changing identity or associations', async () => {
+    seedTag(7, 'Java', 'java')
+    seedDocument('doc', [7], { updatedAt: 100 })
+    const operation: TagOperationRequest = { kind: 'rename', sourceTagId: 7, destinationName: 'JAVA' }
+    const preview = previewTagOperation(db, operation)
+    const result = await applyTagOperation(db, operation, preview.planFingerprint)
+
+    expect(result).toMatchObject({ displayOnly: true, sourceTagId: 7, survivorTagId: 7, versionUpdateCount: 1 })
+    expect(db.prepare('SELECT id, name, normalized_name FROM tags').all()).toEqual([
+      { id: 7, name: 'JAVA', normalized_name: 'java' },
+    ])
+    expect(db.prepare('SELECT document_id, tag_id FROM document_tags').all()).toEqual([{ document_id: 'doc', tag_id: 7 }])
+  })
+
+  it('applies Merge with overlap accounting and leaves destination-only versions unchanged', async () => {
+    seedTag(7, 'Java', 'java')
+    seedTag(9, 'Backend', 'backend')
+    seedTag(20, 'Python', 'python')
+    seedDocument('source-only', [7], { updatedAt: 10 })
+    seedDocument('overlap', [7, 9], { updatedAt: 20 })
+    seedDocument('destination-only', [9, 20], { updatedAt: 30 })
+    const operation: TagOperationRequest = { kind: 'merge', sourceTagId: 7, destinationTagId: 9 }
+    const preview = previewTagOperation(db, operation)
+    const result = await applyTagOperation(db, operation, preview.planFingerprint)
+
+    expect(result).toMatchObject({
+      kind: 'merge',
+      sourceTagId: 7,
+      destinationTagId: 9,
+      survivorTagId: 9,
+      sourceDeleted: true,
+      affectedCount: 2,
+      associationAdds: 1,
+      associationRemoves: 2,
+      duplicateCollapses: 1,
+      tagDeletes: 1,
+      versionUpdateCount: 2,
+    })
+    expect(db.prepare('SELECT id, name, normalized_name FROM tags ORDER BY id').all()).toEqual([
+      { id: 9, name: 'Backend', normalized_name: 'backend' },
+      { id: 20, name: 'Python', normalized_name: 'python' },
+    ])
+    expect(db.prepare('SELECT document_id, tag_id FROM document_tags ORDER BY document_id, tag_id').all()).toEqual([
+      { document_id: 'destination-only', tag_id: 9 },
+      { document_id: 'destination-only', tag_id: 20 },
+      { document_id: 'overlap', tag_id: 9 },
+      { document_id: 'source-only', tag_id: 9 },
+    ])
+    expect((db.prepare('SELECT updated_at FROM documents WHERE id = ?').get('destination-only') as { updated_at: number }).updated_at).toBe(30)
+  })
+
+  it('keeps Apply mutation queries set-based at the 10k-document/50k-association scale', async () => {
+    for (let tagId = 1; tagId <= 5; tagId++) seedTag(tagId, `Tag-${tagId}`, `tag-${tagId}`)
+    const insertDocument = db.prepare(`
+      INSERT INTO documents (id, path, title, summary, created_at, updated_at)
+      VALUES (?, ?, ?, '', 1, 1)
+    `)
+    const insertAssociation = db.prepare('INSERT INTO document_tags (document_id, tag_id) VALUES (?, ?)')
+    db.transaction(() => {
+      for (let i = 0; i < 10000; i++) {
+        const id = `doc-${String(i).padStart(5, '0')}`
+        insertDocument.run(id, id, id)
+        for (let tagId = 1; tagId <= 5; tagId++) insertAssociation.run(id, tagId)
+      }
+    })()
+
+    const operation: TagOperationRequest = { kind: 'remove', sourceTagId: 1 }
+    const preview = previewTagOperation(db, operation)
+    const result = await applyTagOperation(db, operation, preview.planFingerprint)
+
+    expect(result).toMatchObject({
+      affectedCount: 10000,
+      associationAdds: 0,
+      associationRemoves: 10000,
+      duplicateCollapses: 0,
+      tagDeletes: 1,
+      versionUpdateCount: 10000,
+    })
+    expect(db.prepare('SELECT COUNT(*) AS count FROM document_tags WHERE tag_id = 1').get()).toEqual({ count: 0 })
+    expect(db.prepare('SELECT COUNT(*) AS count FROM document_tags').get()).toEqual({ count: 40000 })
+    expect(db.prepare('SELECT COUNT(*) AS count FROM documents WHERE updated_at = 1').get()).toEqual({ count: 0 })
+  }, 30_000)
+
+  it('applies orphan Remove without versioning any document', async () => {
+    seedTag(7, 'Orphan', 'orphan')
+    const operation: TagOperationRequest = { kind: 'remove', sourceTagId: 7 }
+    const preview = previewTagOperation(db, operation)
+    const before = databaseSnapshot()
+    const result = await applyTagOperation(db, operation, preview.planFingerprint)
+
+    expect(result).toMatchObject({
+      kind: 'remove',
+      sourceTagId: 7,
+      survivorTagId: null,
+      sourceDeleted: true,
+      affectedCount: 0,
+      associationAdds: 0,
+      associationRemoves: 0,
+      tagDeletes: 1,
+      versionUpdateCount: 0,
+    })
+    expect(db.prepare('SELECT * FROM tags').all()).toEqual([])
+    expect(db.prepare('SELECT * FROM documents').all()).toEqual((before as { documents: unknown[] }).documents)
+  })
+
+  it.each([
+    ['after-version-update', { kind: 'rename', sourceTagId: 7, destinationName: 'Backend' }],
+    ['after-tag-row-mutation', { kind: 'remove', sourceTagId: 7 }],
+    ['before-postcondition', { kind: 'rename', sourceTagId: 7, destinationName: 'Backend' }],
+    ['before-commit', { kind: 'rename', sourceTagId: 7, destinationName: 'Backend' }],
+  ] as const)('rolls back every row and version after injected %s failure', async (stage, operation) => {
+    seedTag(7, 'Java', 'java')
+    seedDocument('doc', [7], { updatedAt: 100 })
+    const preview = previewTagOperation(db, operation)
+    const before = databaseSnapshot()
+    __setTagManagementApplyHooksForTesting({ failureStage: stage })
+
+    await expectAsyncDomainCode(
+      () => applyTagOperation(db, operation, preview.planFingerprint),
+      'TRANSACTION_FAILED',
+    )
+    expect(databaseSnapshot()).toEqual(before)
+  })
+
+  it('rolls back Merge after association mutation', async () => {
+    seedTag(7, 'Java', 'java')
+    seedTag(9, 'Backend', 'backend')
+    seedDocument('source', [7], { updatedAt: 100 })
+    seedDocument('overlap', [7, 9], { updatedAt: 200 })
+    const operation: TagOperationRequest = { kind: 'merge', sourceTagId: 7, destinationTagId: 9 }
+    const preview = previewTagOperation(db, operation)
+    const before = databaseSnapshot()
+    __setTagManagementApplyHooksForTesting({ failureStage: 'after-association-mutation' })
+
+    await expectAsyncDomainCode(
+      () => applyTagOperation(db, operation, preview.planFingerprint),
+      'TRANSACTION_FAILED',
+    )
+    expect(databaseSnapshot()).toEqual(before)
+  })
+
+  it('rolls back when a controlled postcondition mismatch is introduced', async () => {
+    seedTag(7, 'Java', 'java')
+    seedDocument('doc', [7], { updatedAt: 100 })
+    const operation: TagOperationRequest = { kind: 'rename', sourceTagId: 7, destinationName: 'Backend' }
+    const preview = previewTagOperation(db, operation)
+    const before = databaseSnapshot()
+    __setTagManagementApplyHooksForTesting({
+      beforePostcondition: (database) => {
+        database.prepare('UPDATE tags SET name = ? WHERE id = ?').run('corrupted', 7)
+      },
+    })
+
+    await expectAsyncDomainCode(
+      () => applyTagOperation(db, operation, preview.planFingerprint),
+      'TRANSACTION_FAILED',
+    )
+    expect(databaseSnapshot()).toEqual(before)
+  })
+
+  it('returns PREVIEW_STALE before mutation when discovery changes a destination conflict', async () => {
+    seedTag(7, 'Java', 'java')
+    seedDocument('doc', [7])
+    const operation: TagOperationRequest = { kind: 'rename', sourceTagId: 7, destinationName: 'Backend' }
+    const preview = previewTagOperation(db, operation)
+    __setTagManagementApplyHooksForTesting({
+      afterDiscovery: () => seedTag(9, 'Backend', 'backend'),
+    })
+
+    await expectAsyncDomainCode(
+      () => applyTagOperation(db, operation, preview.planFingerprint),
+      'PREVIEW_STALE',
+    )
+    expect(db.prepare('SELECT name, normalized_name FROM tags WHERE id = 7').get()).toEqual({ name: 'Java', normalized_name: 'java' })
+  })
+
+  it('rejects a relevant two-connection change after path discovery before the IMMEDIATE transaction', async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-tag-apply-wal-'))
+    const databasePath = path.join(directory, 'apply.db')
+    const first = new Database(databasePath)
+    const second = new Database(databasePath)
+    try {
+      first.pragma('journal_mode = WAL')
+      first.pragma('foreign_keys = ON')
+      applyMigrations(first)
+      second.pragma('journal_mode = WAL')
+      second.pragma('foreign_keys = ON')
+      seedTagOn(first, 7, 'Java', 'java')
+      seedDocumentOn(first, 'doc', [7], { title: 'Before', updatedAt: 10 })
+      const operation: TagOperationRequest = { kind: 'rename', sourceTagId: 7, destinationName: 'Backend' }
+      const preview = previewTagOperation(first, operation)
+      __setTagManagementApplyHooksForTesting({
+        afterLocks: () => second.prepare('UPDATE documents SET title = ? WHERE id = ?').run('After', 'doc'),
+      })
+
+      await expectAsyncDomainCode(
+        () => applyTagOperation(first, operation, preview.planFingerprint),
+        'PREVIEW_STALE',
+      )
+      expect(first.prepare('SELECT name, normalized_name FROM tags WHERE id = 7').get()).toEqual({ name: 'Java', normalized_name: 'java' })
+      expect(first.prepare('SELECT title FROM documents WHERE id = ?').get('doc')).toEqual({ title: 'After' })
+    } finally {
+      __setTagManagementApplyHooksForTesting(null)
+      if (second.open) second.close()
+      if (first.open) first.close()
+      await fs.rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('rechecks the fingerprint after locks and before any mutation SQL', async () => {
+    seedTag(7, 'Java', 'java')
+    seedDocument('doc', [7])
+    const operation: TagOperationRequest = { kind: 'rename', sourceTagId: 7, destinationName: 'Backend' }
+    const preview = previewTagOperation(db, operation)
+    __setTagManagementApplyHooksForTesting({
+      afterLocks: () => db.prepare('UPDATE documents SET title = ? WHERE id = ?').run('changed', 'doc'),
+    })
+
+    await expectAsyncDomainCode(
+      () => applyTagOperation(db, operation, preview.planFingerprint),
+      'PREVIEW_STALE',
+    )
+    expect(db.prepare('SELECT name, normalized_name FROM tags WHERE id = 7').get()).toEqual({ name: 'Java', normalized_name: 'java' })
+  })
+
+  it('fails before mutation when an affected document cannot advance its version', async () => {
+    seedTag(7, 'Java', 'java')
+    seedDocument('doc', [7], { updatedAt: Number.MAX_SAFE_INTEGER })
+    const operation: TagOperationRequest = { kind: 'remove', sourceTagId: 7 }
+    const preview = previewTagOperation(db, operation)
+    const before = databaseSnapshot()
+
+    await expectAsyncDomainCode(
+      () => applyTagOperation(db, operation, preview.planFingerprint),
+      'TRANSACTION_FAILED',
+    )
+    expect(databaseSnapshot()).toEqual(before)
+  })
+
+  it('returns the current reviewed conflict without reaching mutation SQL', async () => {
+    seedTag(7, 'Java', 'java')
+    seedTag(9, 'Backend', 'backend')
+    seedDocument('doc', [7])
+    const operation: TagOperationRequest = { kind: 'rename', sourceTagId: 7, destinationName: 'Backend' }
+    const preview = previewTagOperation(db, operation)
+    expect(preview.allowedToApply).toBe(false)
+
+    await expectAsyncDomainCode(
+      () => applyTagOperation(db, operation, preview.planFingerprint),
+      'DESTINATION_EXISTS',
+    )
+    expect(db.prepare('SELECT name, normalized_name FROM tags WHERE id = 7').get()).toEqual({ name: 'Java', normalized_name: 'java' })
+  })
+
+  it('requires a current fingerprint and accepts only the exact Apply body', () => {
+    expectDomainCode(
+      () => parseTagApplyRequest({ operation: { kind: 'remove', sourceTagId: 7 } }),
+      'PREVIEW_REQUIRED',
+    )
+    expectDomainCode(
+      () => parseTagApplyRequest({ operation: { kind: 'remove', sourceTagId: 7 }, planFingerprint: 'A'.repeat(64) }),
+      'PREVIEW_REQUIRED',
+    )
+    expectDomainCode(
+      () => parseTagApplyRequest({ operation: { kind: 'remove', sourceTagId: 7 }, planFingerprint: 'a'.repeat(64), sample: [] }),
+      'INVALID_OPERATION',
+    )
   })
 })
 
