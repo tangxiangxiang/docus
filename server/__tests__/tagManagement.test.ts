@@ -1,10 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Database from 'better-sqlite3'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { applyMigrations } from '../db'
+import { DocumentMetadataError, patchDocumentMetadata } from '../documentMetadata'
+import { documentWriteLockWaitersForTesting, withDocumentWriteLock } from '../documentWriteLock'
 import {
   __setTagManagementApplyHooksForTesting,
   __setTagManagementPlannerHookForTesting,
@@ -816,6 +818,137 @@ describe('tag management atomic Apply', () => {
       'PREVIEW_STALE',
     )
     expect(db.prepare('SELECT name, normalized_name FROM tags WHERE id = 7').get()).toEqual({ name: 'Java', normalized_name: 'java' })
+  })
+
+  it('serializes two Apply calls from one Preview into one commit and one stale rejection', async () => {
+    seedTag(7, 'Java', 'java')
+    seedDocument('a', [7])
+    seedDocument('b', [7])
+    const operation: TagOperationRequest = { kind: 'rename', sourceTagId: 7, destinationName: 'Backend' }
+    const preview = previewTagOperation(db, operation)
+    const outcomes = await Promise.allSettled([
+      applyTagOperation(db, operation, preview.planFingerprint),
+      applyTagOperation(db, operation, preview.planFingerprint),
+    ])
+
+    expect(outcomes.filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1)
+    const rejected = outcomes.find((outcome) => outcome.status === 'rejected')
+    expect(rejected?.status).toBe('rejected')
+    expect((rejected as PromiseRejectedResult).reason).toMatchObject({ code: 'PREVIEW_STALE' })
+    expect(db.prepare('SELECT name, normalized_name FROM tags WHERE id = 7').get()).toEqual({ name: 'Backend', normalized_name: 'backend' })
+    expect((db.prepare('SELECT updated_at FROM documents WHERE id = ?').get('a') as { updated_at: number }).updated_at).toBeGreaterThan(100)
+    expect((db.prepare('SELECT updated_at FROM documents WHERE id = ?').get('b') as { updated_at: number }).updated_at).toBeGreaterThan(100)
+  })
+
+  it('waits for an existing document writer lock before locked fingerprint recomputation', async () => {
+    seedTag(7, 'Java', 'java')
+    seedDocument('doc', [7])
+    const operation: TagOperationRequest = { kind: 'rename', sourceTagId: 7, destinationName: 'Backend' }
+    const preview = previewTagOperation(db, operation)
+    let releaseWriter!: () => void
+    let markWriterStarted!: () => void
+    const writerStarted = new Promise<void>((resolve) => { markWriterStarted = resolve })
+    const writerGate = new Promise<void>((resolve) => { releaseWriter = resolve })
+    const writer = withDocumentWriteLock('doc/note', async () => {
+      markWriterStarted()
+      await writerGate
+    })
+    await writerStarted
+
+    const applyPromise = applyTagOperation(db, operation, preview.planFingerprint)
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    expect(documentWriteLockWaitersForTesting('doc/note')).toBeGreaterThan(0)
+    db.prepare('UPDATE documents SET title = ? WHERE id = ?').run('writer changed', 'doc')
+    releaseWriter()
+    await writer
+    await expectAsyncDomainCode(() => applyPromise, 'PREVIEW_STALE')
+  })
+
+  it('rejects a stale explicit tag writer after Apply while title and summary writes preserve the new association', async () => {
+    seedTag(7, 'Java', 'java')
+    seedDocument('doc', [7], { updatedAt: 100 })
+    const operation: TagOperationRequest = { kind: 'rename', sourceTagId: 7, destinationName: 'Backend' }
+    const fullPlan = buildTagOperationPlan(db, operation)
+    const preview = previewTagOperation(db, operation)
+    const staleVersion = fullPlan.affectedDocuments[0]?.updatedAt
+    expect(staleVersion).toBe(100)
+    const result = await applyTagOperation(db, operation, preview.planFingerprint)
+
+    try {
+      patchDocumentMetadata(db, {
+        path: 'doc/note',
+        changes: [{ field: 'tags', values: ['Java'] }],
+        expectedUpdatedAt: staleVersion,
+      })
+      throw new Error('expected stale metadata version')
+    } catch (error) {
+      expect(error).toBeInstanceOf(DocumentMetadataError)
+      expect((error as DocumentMetadataError).code).toBe('METADATA_VERSION_CONFLICT')
+    }
+
+    patchDocumentMetadata(db, { path: 'doc/note', changes: [{ field: 'title', value: 'New title' }] })
+    patchDocumentMetadata(db, { path: 'doc/note', changes: [{ field: 'summary', value: 'New summary' }] })
+    expect(db.prepare(`
+      SELECT t.name
+      FROM document_tags dt
+      JOIN tags t ON t.id = dt.tag_id
+      WHERE dt.document_id = ?
+    `).get('doc')).toEqual({ name: 'Backend' })
+    expect((db.prepare('SELECT updated_at FROM documents WHERE id = ?').get('doc') as { updated_at: number }).updated_at)
+      .toBeGreaterThan(result.commitTimestamp)
+  })
+
+  it('uses one commit candidate with strict monotonic increments for equal and future versions', async () => {
+    seedTag(7, 'Java', 'java')
+    seedDocument('below', [7], { updatedAt: 999 })
+    seedDocument('equal', [7], { updatedAt: 1000 })
+    seedDocument('future', [7], { updatedAt: 1001 })
+    const operation: TagOperationRequest = { kind: 'remove', sourceTagId: 7 }
+    const preview = previewTagOperation(db, operation)
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1000)
+    try {
+      const result = await applyTagOperation(db, operation, preview.planFingerprint)
+      expect(result.commitTimestamp).toBe(1000)
+    } finally {
+      clock.mockRestore()
+    }
+    expect(db.prepare('SELECT id, updated_at FROM documents ORDER BY id').all()).toEqual([
+      { id: 'below', updated_at: 1000 },
+      { id: 'equal', updated_at: 1001 },
+      { id: 'future', updated_at: 1002 },
+    ])
+  })
+
+  it('keeps Markdown bytes, mtime, settings, and the success log outside Apply mutation scope', async () => {
+    seedTag(7, 'Java', 'java')
+    seedDocument('doc', [7])
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-tag-apply-boundary-'))
+    const file = path.join(directory, 'doc', 'note.md')
+    await fs.mkdir(path.dirname(file), { recursive: true })
+    await fs.writeFile(file, '# unchanged\n', 'utf8')
+    const beforeBytes = await fs.readFile(file)
+    const beforeMtime = (await fs.stat(file)).mtimeMs
+    const beforeSettings = db.prepare('SELECT * FROM settings ORDER BY key').all()
+    const operation: TagOperationRequest = { kind: 'rename', sourceTagId: 7, destinationName: 'Backend' }
+    const preview = previewTagOperation(db, operation)
+    const logSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
+    try {
+      const result = await applyTagOperation(db, operation, preview.planFingerprint)
+      const logCall = logSpy.mock.calls.find((call) => call[0] === '[tag-management-apply]')
+      expect(logCall?.[1]).toBeTypeOf('string')
+      expect(JSON.parse(String(logCall?.[1]))).toMatchObject({
+        operationId: result.operationId,
+        kind: result.kind,
+        affectedCount: result.affectedCount,
+        appliedFingerprint: result.appliedFingerprint,
+      })
+    } finally {
+      logSpy.mockRestore()
+    }
+    expect(await fs.readFile(file)).toEqual(beforeBytes)
+    expect((await fs.stat(file)).mtimeMs).toBe(beforeMtime)
+    expect(db.prepare('SELECT * FROM settings ORDER BY key').all()).toEqual(beforeSettings)
+    await fs.rm(directory, { recursive: true, force: true })
   })
 
   it('fails before mutation when an affected document cannot advance its version', async () => {
