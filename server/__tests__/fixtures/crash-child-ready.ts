@@ -1,7 +1,7 @@
 // Shared crash-child handshake. A crash fixture calls readyAndWait at
 // its exact protocol seam: it prints READY:<point> on stdout and then
-// HANGS until the parent force-kills it. The parent (crashRecovery.
-// test.ts) kills only AFTER receiving the READY line, so READY receipt
+// HANGS until the parent force-kills it. The parent test kills only AFTER
+// receiving the READY line, so READY receipt
 // is the proof the hook was reached and the disk holds exactly that
 // point's state. A child that dies on its own — hook never fired,
 // missing env, a bug in the fixture — never prints READY, and the
