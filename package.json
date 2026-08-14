@@ -13,6 +13,7 @@
     "preview": "vite preview",
     "test": "npm run test:unit && npm run test:history-integration && npm run test:recovery-integration",
     "test:unit": "vitest run --exclude server/__tests__/history-git.test.ts --exclude server/__tests__/history-routes.test.ts --exclude server/__tests__/history-folder-coordination.test.ts --exclude server/__tests__/ai-history-commit-message.test.ts --exclude server/__tests__/edit-program-closure.test.ts --exclude server/__tests__/crashRecovery.test.ts --exclude server/__tests__/crashRecovery.state-machine.test.ts --exclude server/__tests__/atomicTextWrite.test.ts --exclude server/__tests__/documentFileLifecycle.test.ts --exclude server/__tests__/createOnlyMove.test.ts",
+    "test:tags-scale": "vitest run --config vitest.tags-scale.config.ts",
     "test:history-integration": "vitest run --config vitest.history.config.ts",
     "test:recovery-integration": "vitest run --config vitest.recovery.config.ts",
     "test:watch": "vitest",

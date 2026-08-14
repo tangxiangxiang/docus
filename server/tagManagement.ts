@@ -781,80 +781,13 @@ export function parseTagApplyRequest(value: unknown): {
   }
 }
 
-type ApplyDocumentVersionRow = {
-  id: string
-  updated_at: unknown
-}
-
-type ApplyAssociationRow = {
+type ApplyAffectedDocumentRow = {
   document_id: string
-  tag_id: number
+  before_updated_at: unknown
+  expected_updated_at: unknown
 }
 
-function readApplyDocumentVersions(db: DatabaseT): Map<string, unknown> {
-  const rows = db.prepare(`
-    SELECT id, updated_at
-    FROM documents
-    ORDER BY id COLLATE BINARY
-  `).all() as ApplyDocumentVersionRow[]
-  const versions = new Map<string, unknown>()
-  for (const row of rows) {
-    if (typeof row.id !== 'string') {
-      throw new TagManagementError('TRANSACTION_FAILED', 'document metadata version is invalid')
-    }
-    versions.set(row.id, row.updated_at)
-  }
-  return versions
-}
-
-function readApplyAssociations(db: DatabaseT): ApplyAssociationRow[] {
-  return db.prepare(`
-    SELECT document_id, tag_id
-    FROM document_tags
-    ORDER BY document_id COLLATE BINARY, tag_id
-  `).all() as ApplyAssociationRow[]
-}
-
-function readApplyTags(db: DatabaseT): DatabaseTagRow[] {
-  return db.prepare(`
-    SELECT id, name, normalized_name
-    FROM tags
-    ORDER BY id
-  `).all() as DatabaseTagRow[]
-}
-
-function sameApplyRows(
-  actual: readonly ApplyAssociationRow[],
-  expected: readonly ApplyAssociationRow[],
-): boolean {
-  if (actual.length !== expected.length) return false
-  for (let index = 0; index < actual.length; index++) {
-    const left = actual[index]!
-    const right = expected[index]!
-    if (left.document_id !== right.document_id || left.tag_id !== right.tag_id) return false
-  }
-  return true
-}
-
-function sameApplyTagRows(
-  actual: readonly DatabaseTagRow[],
-  expected: readonly DatabaseTagRow[],
-): boolean {
-  if (actual.length !== expected.length) return false
-  for (let index = 0; index < actual.length; index++) {
-    const left = actual[index]!
-    const right = expected[index]!
-    if (left.id !== right.id || left.name !== right.name || left.normalized_name !== right.normalized_name) return false
-  }
-  return true
-}
-
-function sortApplyAssociations(rows: ApplyAssociationRow[]): ApplyAssociationRow[] {
-  return rows.sort((left, right) => {
-    const documentOrder = compareDocumentIds(left.document_id, right.document_id)
-    return documentOrder !== 0 ? documentOrder : left.tag_id - right.tag_id
-  })
-}
+const APPLY_AFFECTED_DOCUMENTS_TEMP_TABLE = 'tag_apply_affected_documents'
 
 function assertApplyPostcondition(condition: unknown, message: string): asserts condition {
   if (!condition) throw new TagManagementError('TRANSACTION_FAILED', message)
@@ -866,60 +799,88 @@ function throwInjectedApplyFailure(stage: TagManagementApplyFailureStage): void 
   }
 }
 
-function buildExpectedApplyAssociations(
-  before: readonly ApplyAssociationRow[],
+function captureApplyAffectedDocuments(
+  db: DatabaseT,
   plan: TagOperationPlan,
-): ApplyAssociationRow[] {
-  if (plan.operation.kind === 'rename') return before.map((row) => ({ ...row }))
-  const sourceTagId = plan.operation.sourceTagId
-  if (plan.operation.kind === 'remove') {
-    return sortApplyAssociations(before.filter((row) => row.tag_id !== sourceTagId).map((row) => ({ ...row })))
-  }
-  const destinationTagId = plan.operation.destinationTagId
-  const destinationByDocument = new Set(
-    before.filter((row) => row.tag_id === destinationTagId).map((row) => row.document_id),
-  )
-  const expected = before
-    .filter((row) => row.tag_id !== sourceTagId)
-    .map((row) => ({ ...row }))
-  for (const row of before) {
-    if (row.tag_id === sourceTagId && !destinationByDocument.has(row.document_id)) {
-      expected.push({ document_id: row.document_id, tag_id: destinationTagId })
+  commitTimestamp: number,
+): ApplyAffectedDocumentRow[] {
+  db.exec(`
+    DROP TABLE IF EXISTS temp.${APPLY_AFFECTED_DOCUMENTS_TEMP_TABLE};
+    CREATE TEMP TABLE ${APPLY_AFFECTED_DOCUMENTS_TEMP_TABLE} (
+      document_id TEXT PRIMARY KEY,
+      before_updated_at INTEGER NOT NULL,
+      expected_updated_at INTEGER NOT NULL
+    ) WITHOUT ROWID;
+  `)
+  const inserted = db.prepare(`
+    INSERT INTO temp.${APPLY_AFFECTED_DOCUMENTS_TEMP_TABLE} (
+      document_id,
+      before_updated_at,
+      expected_updated_at
+    )
+    SELECT
+      d.id,
+      d.updated_at,
+      CASE
+        WHEN d.updated_at + 1 > ? THEN d.updated_at + 1
+        ELSE ?
+      END
+    FROM documents d
+    JOIN document_tags dt ON dt.document_id = d.id
+    WHERE dt.tag_id = ?
+    ORDER BY d.id COLLATE BINARY
+  `).run(commitTimestamp, commitTimestamp, plan.operation.sourceTagId)
+  assertApplyPostcondition(inserted.changes === plan.affectedCount, 'affected document set changed during tag operation')
+
+  const rows = db.prepare(`
+    SELECT document_id, before_updated_at, expected_updated_at
+    FROM temp.${APPLY_AFFECTED_DOCUMENTS_TEMP_TABLE}
+    ORDER BY document_id COLLATE BINARY
+  `).all() as ApplyAffectedDocumentRow[]
+  const expectedDocuments = [...plan.affectedDocuments].sort((left, right) => compareDocumentIds(left.id, right.id))
+  assertApplyPostcondition(rows.length === expectedDocuments.length, 'affected document count mismatched')
+  for (let index = 0; index < rows.length; index++) {
+    const row = rows[index]!
+    const expected = expectedDocuments[index]!
+    assertApplyPostcondition(row.document_id === expected.id, 'affected document identity changed during tag operation')
+    if (typeof row.before_updated_at !== 'number'
+      || !Number.isSafeInteger(row.before_updated_at)
+      || row.before_updated_at < 0) {
+      throw transactionFailed()
+    }
+    if (row.before_updated_at !== expected.updatedAt) {
+      throw new TagManagementError('PREVIEW_STALE', 'preview is stale')
+    }
+    try {
+      assertApplyPostcondition(
+        row.expected_updated_at === nextMetadataUpdatedAt(expected.updatedAt, commitTimestamp),
+        'document version candidate changed during tag operation',
+      )
+    } catch (error) {
+      if (error instanceof MetadataVersionError) throw transactionFailed()
+      throw error
     }
   }
-  return sortApplyAssociations(expected)
+  return rows
 }
 
-function buildExpectedApplyTags(
-  before: readonly DatabaseTagRow[],
-  plan: TagOperationPlan,
-): DatabaseTagRow[] {
-  if (plan.operation.kind === 'rename') {
-    return before.map((row) => row.id === plan.sourceTag.id
-      ? {
-          ...row,
-          name: plan.requestedDestination!.displayName,
-          normalized_name: plan.requestedDestination!.normalizedName,
-        }
-      : { ...row })
-  }
-  return before.filter((row) => row.id !== plan.operation.sourceTagId).map((row) => ({ ...row }))
-}
-
-function assertApplyVersions(
-  before: ReadonlyMap<string, unknown>,
-  after: ReadonlyMap<string, unknown>,
-  plan: TagOperationPlan,
-  expectedAffectedVersions: ReadonlyMap<string, number>,
-): void {
-  assertApplyPostcondition(after.size === before.size, 'document set changed during tag operation')
-  for (const [id, beforeVersion] of before) {
-    const actual = after.get(id)
-    assertApplyPostcondition(actual !== undefined, 'document disappeared during tag operation')
-    const expected = expectedAffectedVersions.get(id)
-    assertApplyPostcondition(actual === (expected ?? beforeVersion), 'document version postcondition failed')
-  }
-  assertApplyPostcondition(expectedAffectedVersions.size === plan.affectedCount, 'affected document version count mismatched')
+function assertApplyVersionPostcondition(db: DatabaseT, plan: TagOperationPlan): void {
+  const row = db.prepare(`
+    SELECT
+      COUNT(*) AS expected_count,
+      COUNT(d.id) AS present_count,
+      COALESCE(SUM(
+        CASE
+          WHEN d.id IS NULL OR d.updated_at <> affected.expected_updated_at THEN 1
+          ELSE 0
+        END
+      ), 0) AS mismatched_count
+    FROM temp.${APPLY_AFFECTED_DOCUMENTS_TEMP_TABLE} affected
+    LEFT JOIN documents d ON d.id = affected.document_id
+  `).get() as { expected_count: number; present_count: number; mismatched_count: number }
+  assertApplyPostcondition(row.expected_count === plan.affectedCount, 'affected document version count mismatched')
+  assertApplyPostcondition(row.present_count === plan.affectedCount, 'affected document disappeared during tag operation')
+  assertApplyPostcondition(row.mismatched_count === 0, 'document version postcondition failed')
 }
 
 function readApplyTag(db: DatabaseT, id: number): TagRowView | null {
@@ -929,31 +890,67 @@ function readApplyTag(db: DatabaseT, id: number): TagRowView | null {
     WHERE id = ?
   `).get(id) as DatabaseTagRow | undefined
   if (!row) return null
-  assertCanonicalTagRow(row)
+  try {
+    assertCanonicalTagRow(row)
+  } catch (error) {
+    if (error instanceof TagManagementError) throw transactionFailed()
+    throw error
+  }
   return databaseTagToView(row)
+}
+
+function readApplyAssociationCounts(
+  db: DatabaseT,
+  sourceTagId: number,
+  destinationTagId: number | null,
+): {
+  sourceCount: number
+  affectedSourceCount: number
+  destinationCount: number | null
+  affectedDestinationCount: number | null
+} {
+  const row = db.prepare(`
+    SELECT
+      (SELECT COUNT(*) FROM document_tags WHERE tag_id = ?) AS source_count,
+      (
+        SELECT COUNT(*)
+        FROM temp.${APPLY_AFFECTED_DOCUMENTS_TEMP_TABLE} affected
+        JOIN document_tags dt ON dt.document_id = affected.document_id
+        WHERE dt.tag_id = ?
+      ) AS affected_source_count,
+      ${destinationTagId === null ? 'NULL' : '(SELECT COUNT(*) FROM document_tags WHERE tag_id = ?)'} AS destination_count,
+      ${destinationTagId === null
+        ? 'NULL'
+        : `(
+            SELECT COUNT(*)
+            FROM temp.${APPLY_AFFECTED_DOCUMENTS_TEMP_TABLE} affected
+            JOIN document_tags dt ON dt.document_id = affected.document_id
+            WHERE dt.tag_id = ?
+          )`} AS affected_destination_count
+  `).get(
+    destinationTagId === null
+      ? [sourceTagId, sourceTagId]
+      : [sourceTagId, sourceTagId, destinationTagId, destinationTagId],
+  ) as {
+    source_count: number
+    affected_source_count: number
+    destination_count: number | null
+    affected_destination_count: number | null
+  }
+  return {
+    sourceCount: row.source_count,
+    affectedSourceCount: row.affected_source_count,
+    destinationCount: row.destination_count,
+    affectedDestinationCount: row.affected_destination_count,
+  }
 }
 
 function assertApplyPostconditions(
   db: DatabaseT,
   plan: TagOperationPlan,
-  beforeVersions: ReadonlyMap<string, unknown>,
-  expectedAffectedVersions: ReadonlyMap<string, number>,
-  beforeAssociations: readonly ApplyAssociationRow[],
-  beforeTags: readonly DatabaseTagRow[],
+  beforeDestinationAssociationCount: number | null,
 ): void {
-  const afterVersions = readApplyDocumentVersions(db)
-  assertApplyVersions(beforeVersions, afterVersions, plan, expectedAffectedVersions)
-
-  const afterAssociations = readApplyAssociations(db)
-  const expectedAssociations = buildExpectedApplyAssociations(beforeAssociations, plan)
-  assertApplyPostcondition(
-    sameApplyRows(afterAssociations, expectedAssociations),
-    'tag association postcondition failed',
-  )
-
-  const afterTags = readApplyTags(db)
-  const expectedTags = buildExpectedApplyTags(beforeTags, plan)
-  assertApplyPostcondition(sameApplyTagRows(afterTags, expectedTags), 'tag row postcondition failed')
+  assertApplyVersionPostcondition(db, plan)
 
   if (plan.operation.kind === 'rename') {
     const source = readApplyTag(db, plan.sourceTag.id)
@@ -966,16 +963,10 @@ function assertApplyPostconditions(
       WHERE normalized_name = ? COLLATE BINARY
     `).get(plan.requestedDestination!.normalizedName) as { count: number }).count
     assertApplyPostcondition(ownerCount === 1, 'rename destination identity is not unique')
-    const sourceDocuments = (db.prepare(`
-      SELECT document_id
-      FROM document_tags
-      WHERE tag_id = ?
-      ORDER BY document_id COLLATE BINARY
-    `).all(plan.sourceTag.id) as Array<{ document_id: string }>).map((row) => row.document_id)
-    const expectedDocuments = plan.affectedDocuments.map((document) => document.id)
+    const associations = readApplyAssociationCounts(db, plan.sourceTag.id, null)
+    assertApplyPostcondition(associations.sourceCount === plan.affectedCount, 'rename source association count changed')
     assertApplyPostcondition(
-      sourceDocuments.length === expectedDocuments.length
-        && sourceDocuments.every((id, index) => id === expectedDocuments[index]),
+      associations.affectedSourceCount === plan.affectedCount,
       'rename source associations changed',
     )
   } else if (plan.operation.kind === 'merge') {
@@ -984,24 +975,21 @@ function assertApplyPostconditions(
     assertApplyPostcondition(destination.displayName === plan.destinationTag!.displayName, 'merge destination display changed')
     assertApplyPostcondition(destination.normalizedName === plan.destinationTag!.normalizedName, 'merge destination identity changed')
     assertApplyPostcondition(readApplyTag(db, plan.operation.sourceTagId) === null, 'merge source tag remains')
-    const sourceAssociations = (db.prepare('SELECT COUNT(*) AS count FROM document_tags WHERE tag_id = ?')
-      .get(plan.operation.sourceTagId) as { count: number }).count
-    assertApplyPostcondition(sourceAssociations === 0, 'merge source associations remain')
-    const destinationDocuments = new Set(
-      (db.prepare(`
-        SELECT document_id
-        FROM document_tags
-        WHERE tag_id = ?
-      `).all(plan.operation.destinationTagId) as Array<{ document_id: string }>).map((row) => row.document_id),
+    const associations = readApplyAssociationCounts(db, plan.operation.sourceTagId, plan.operation.destinationTagId)
+    assertApplyPostcondition(associations.sourceCount === 0, 'merge source associations remain')
+    assertApplyPostcondition(
+      associations.affectedDestinationCount === plan.affectedCount,
+      'merge survivor association is missing',
     )
-    for (const document of plan.affectedDocuments) {
-      assertApplyPostcondition(destinationDocuments.has(document.id), 'merge survivor association is missing')
-    }
+    assertApplyPostcondition(
+      beforeDestinationAssociationCount !== null
+        && associations.destinationCount === beforeDestinationAssociationCount + plan.associationAdds,
+      'merge destination association count changed',
+    )
   } else {
     assertApplyPostcondition(readApplyTag(db, plan.operation.sourceTagId) === null, 'remove source tag remains')
-    const sourceAssociations = (db.prepare('SELECT COUNT(*) AS count FROM document_tags WHERE tag_id = ?')
-      .get(plan.operation.sourceTagId) as { count: number }).count
-    assertApplyPostcondition(sourceAssociations === 0, 'remove source associations remain')
+    const associations = readApplyAssociationCounts(db, plan.operation.sourceTagId, null)
+    assertApplyPostcondition(associations.sourceCount === 0, 'remove source associations remain')
   }
 }
 
@@ -1063,14 +1051,60 @@ function buildApplyResult(
   }
 }
 
-function logAppliedTagOperation(result: TagOperationApplyResult): void {
-  const logResult = {
+const MAX_TAG_APPLY_AUDIT_STRING_LENGTH = 256
+
+function boundedAuditString(value: string | null): string | null {
+  if (value === null) return null
+  return value
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .slice(0, MAX_TAG_APPLY_AUDIT_STRING_LENGTH)
+}
+
+function auditTagView(tag: TagRowView | null): { id: number; displayName: string; normalizedName: string } | null {
+  if (!tag) return null
+  return {
+    id: tag.id,
+    displayName: boundedAuditString(tag.displayName)!,
+    normalizedName: boundedAuditString(tag.normalizedName)!,
+  }
+}
+
+function buildTagManagementApplyAuditEvent(result: TagOperationApplyResult): Record<string, unknown> {
+  const operation = result.operation.kind === 'rename'
+    ? {
+        kind: 'rename' as const,
+        sourceTagId: result.operation.sourceTagId,
+        destinationName: boundedAuditString(result.operation.destinationName)!,
+      }
+    : result.operation.kind === 'merge'
+      ? {
+          kind: 'merge' as const,
+          sourceTagId: result.operation.sourceTagId,
+          destinationTagId: result.operation.destinationTagId,
+        }
+      : {
+          kind: 'remove' as const,
+          sourceTagId: result.operation.sourceTagId,
+        }
+
+  return {
     operationId: result.operationId,
     resultId: result.resultId,
     kind: result.kind,
+    operation,
     sourceTagId: result.sourceTagId,
     destinationTagId: result.destinationTagId,
     survivorTagId: result.survivorTagId,
+    sourceTag: auditTagView(result.sourceTag),
+    destinationTag: auditTagView(result.destinationTag),
+    survivorTag: auditTagView(result.survivorTag),
+    sourceDisplayName: boundedAuditString(result.sourceDisplayName),
+    sourceNormalizedName: boundedAuditString(result.sourceNormalizedName),
+    destinationDisplayName: boundedAuditString(result.destinationDisplayName),
+    destinationNormalizedName: boundedAuditString(result.destinationNormalizedName),
+    survivorDisplayName: boundedAuditString(result.survivorDisplayName),
+    survivorNormalizedName: boundedAuditString(result.survivorNormalizedName),
+    sourceDeleted: result.sourceDeleted,
     affectedCount: result.affectedCount,
     associationAdds: result.associationAdds,
     associationRemoves: result.associationRemoves,
@@ -1082,6 +1116,10 @@ function logAppliedTagOperation(result: TagOperationApplyResult): void {
     commitTimestamp: result.commitTimestamp,
     appliedFingerprint: result.appliedFingerprint,
   }
+}
+
+function logAppliedTagOperation(result: TagOperationApplyResult): void {
+  const logResult = buildTagManagementApplyAuditEvent(result)
   try {
     console.info('[tag-management-apply]', JSON.stringify(logResult))
   } catch {
@@ -1144,26 +1182,15 @@ export async function applyTagOperation(
         if (!plan.allowedToApply) conflictFromApplyPlan(plan)
 
         const commitTimestamp = Date.now()
-        const beforeVersions = readApplyDocumentVersions(db)
-        const expectedAffectedVersions = new Map<string, number>()
-        for (const document of plan.affectedDocuments) {
-          const current = beforeVersions.get(document.id)
-          if (current === undefined
-            || typeof current !== 'number'
-            || !Number.isSafeInteger(current)
-            || current < 0
-            || current !== document.updatedAt) {
-            throw new TagManagementError('PREVIEW_STALE', 'preview is stale')
-          }
-          try {
-            expectedAffectedVersions.set(document.id, nextMetadataUpdatedAt(current, commitTimestamp))
-          } catch (error) {
-            if (error instanceof MetadataVersionError) throw transactionFailed()
-            throw error
-          }
+        captureApplyAffectedDocuments(db, plan, commitTimestamp)
+        let beforeDestinationAssociationCount: number | null = null
+        if (plan.operation.kind === 'merge') {
+          beforeDestinationAssociationCount = (db.prepare(`
+            SELECT COUNT(*) AS count
+            FROM document_tags
+            WHERE tag_id = ?
+          `).get(plan.operation.destinationTagId) as { count: number }).count
         }
-        const beforeAssociations = readApplyAssociations(db)
-        const beforeTags = readApplyTags(db)
 
         const versionUpdate = db.prepare(`
           UPDATE documents
@@ -1228,10 +1255,7 @@ export async function applyTagOperation(
         assertApplyPostconditions(
           db,
           plan,
-          beforeVersions,
-          expectedAffectedVersions,
-          beforeAssociations,
-          beforeTags,
+          beforeDestinationAssociationCount,
         )
         const finalSourceTag = plan.operation.kind === 'merge' || plan.operation.kind === 'remove'
           ? null
@@ -1248,6 +1272,7 @@ export async function applyTagOperation(
           finalSourceTag,
           finalDestinationTag,
         )
+        db.exec(`DROP TABLE IF EXISTS temp.${APPLY_AFFECTED_DOCUMENTS_TEMP_TABLE}`)
         throwInjectedApplyFailure('before-commit')
         return result
       })

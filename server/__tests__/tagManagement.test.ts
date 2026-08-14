@@ -3,10 +3,14 @@ import Database from 'better-sqlite3'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { performance } from 'node:perf_hooks'
 import { applyMigrations } from '../db'
 import { DocumentMetadataError, patchDocumentMetadata } from '../documentMetadata'
 import { documentWriteLockWaitersForTesting, withDocumentWriteLock } from '../documentWriteLock'
+import { CONTENT_DIR, setContentDir } from '../paths'
+import { __resetLinkIndexForTesting, getIndex as getLinkIndex } from '../linkIndex'
+import * as git from '../history/git'
+import { ensureRepo } from '../history/repo'
+import { createVaultFileChanges } from '../../src/composables/vault/context/fileChanges'
 import {
   __setTagManagementApplyHooksForTesting,
   __setTagManagementPlannerHookForTesting,
@@ -456,7 +460,7 @@ describe('tag management fingerprints and pagination', () => {
   })
 })
 
-describe('tag management input safety and set-based scale', () => {
+describe('tag management input safety and query complexity', () => {
   it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1, '7', null])(
     'rejects unsafe source ID %p',
     (sourceTagId) => {
@@ -490,55 +494,6 @@ describe('tag management input safety and set-based scale', () => {
     expect(preparedStatements.some((sql) => sql.includes('IN (?, ?,'))).toBe(false)
   })
 
-  it('records constant-query planning evidence for the deterministic 10k/50k fixture', () => {
-    for (let tagId = 1; tagId <= 5; tagId++) seedTag(tagId, `Tag-${tagId}`, `tag-${tagId}`)
-    const insertDocument = db.prepare(`
-      INSERT INTO documents (id, path, title, summary, created_at, updated_at)
-      VALUES (?, ?, ?, '', 1, 1)
-    `)
-    const insertAssociation = db.prepare('INSERT INTO document_tags (document_id, tag_id) VALUES (?, ?)')
-    db.transaction(() => {
-      for (let i = 0; i < 10000; i++) {
-        const id = `doc-${String(i).padStart(5, '0')}`
-        insertDocument.run(id, id, id)
-        for (let tagId = 1; tagId <= 5; tagId++) insertAssociation.run(id, tagId)
-      }
-    })()
-
-    const preparedStatements: string[] = []
-    const countedDb = new Proxy(db, {
-      get(target, property, receiver) {
-        if (property !== 'prepare') return Reflect.get(target, property, receiver)
-        return (sql: string) => {
-          preparedStatements.push(sql)
-          return target.prepare(sql)
-        }
-      },
-    }) as Database.Database
-    const heapBefore = process.memoryUsage().heapUsed
-    const startedAt = performance.now()
-    const plan = buildTagOperationPlan(countedDb, { kind: 'merge', sourceTagId: 1, destinationTagId: 2 })
-    const elapsedMs = Number((performance.now() - startedAt).toFixed(2))
-    const heapDeltaBytes = process.memoryUsage().heapUsed - heapBefore
-    const evidence = {
-      documents: 10000,
-      associations: 50000,
-      plannerQueries: preparedStatements.length,
-      elapsedMs,
-      heapDeltaBytes,
-    }
-    console.info('[tag-management-perf]', JSON.stringify(evidence))
-
-    expect(plan.affectedCount).toBe(10000)
-    expect(plan.associationAdds).toBe(0)
-    expect(plan.associationRemoves).toBe(10000)
-    expect(plan.duplicateCollapses).toBe(10000)
-    expect(plan.sample).toHaveLength(20)
-    expect(isPlanFingerprint(plan.planFingerprint)).toBe(true)
-    expect(evidence.plannerQueries).toBe(3)
-    expect(Number.isFinite(evidence.elapsedMs)).toBe(true)
-    expect(Number.isFinite(evidence.heapDeltaBytes)).toBe(true)
-  })
 })
 
 describe('tag management atomic Apply', () => {
@@ -618,7 +573,33 @@ describe('tag management atomic Apply', () => {
     seedDocument('destination-only', [9, 20], { updatedAt: 30 })
     const operation: TagOperationRequest = { kind: 'merge', sourceTagId: 7, destinationTagId: 9 }
     const preview = previewTagOperation(db, operation)
-    const result = await applyTagOperation(db, operation, preview.planFingerprint)
+    const logSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
+    let result: Awaited<ReturnType<typeof applyTagOperation>>
+    try {
+      result = await applyTagOperation(db, operation, preview.planFingerprint)
+      const events = logSpy.mock.calls.filter((call) => call[0] === '[tag-management-apply]')
+      expect(events).toHaveLength(1)
+      expect(JSON.parse(String(events[0]?.[1]))).toMatchObject({
+        operationId: result.operationId,
+        resultId: result.resultId,
+        kind: 'merge',
+        operation: result.operation,
+        sourceTagId: 7,
+        destinationTagId: 9,
+        survivorTagId: 9,
+        sourceDeleted: true,
+        affectedCount: 2,
+        associationAdds: 1,
+        associationRemoves: 2,
+        duplicateCollapses: 1,
+        tagDeletes: 1,
+        displayOnly: false,
+        versionUpdateCount: 2,
+        appliedFingerprint: preview.planFingerprint,
+      })
+    } finally {
+      logSpy.mockRestore()
+    }
 
     expect(result).toMatchObject({
       kind: 'merge',
@@ -645,38 +626,6 @@ describe('tag management atomic Apply', () => {
     ])
     expect((db.prepare('SELECT updated_at FROM documents WHERE id = ?').get('destination-only') as { updated_at: number }).updated_at).toBe(30)
   })
-
-  it('keeps Apply mutation queries set-based at the 10k-document/50k-association scale', async () => {
-    for (let tagId = 1; tagId <= 5; tagId++) seedTag(tagId, `Tag-${tagId}`, `tag-${tagId}`)
-    const insertDocument = db.prepare(`
-      INSERT INTO documents (id, path, title, summary, created_at, updated_at)
-      VALUES (?, ?, ?, '', 1, 1)
-    `)
-    const insertAssociation = db.prepare('INSERT INTO document_tags (document_id, tag_id) VALUES (?, ?)')
-    db.transaction(() => {
-      for (let i = 0; i < 10000; i++) {
-        const id = `doc-${String(i).padStart(5, '0')}`
-        insertDocument.run(id, id, id)
-        for (let tagId = 1; tagId <= 5; tagId++) insertAssociation.run(id, tagId)
-      }
-    })()
-
-    const operation: TagOperationRequest = { kind: 'remove', sourceTagId: 1 }
-    const preview = previewTagOperation(db, operation)
-    const result = await applyTagOperation(db, operation, preview.planFingerprint)
-
-    expect(result).toMatchObject({
-      affectedCount: 10000,
-      associationAdds: 0,
-      associationRemoves: 10000,
-      duplicateCollapses: 0,
-      tagDeletes: 1,
-      versionUpdateCount: 10000,
-    })
-    expect(db.prepare('SELECT COUNT(*) AS count FROM document_tags WHERE tag_id = 1').get()).toEqual({ count: 0 })
-    expect(db.prepare('SELECT COUNT(*) AS count FROM document_tags').get()).toEqual({ count: 40000 })
-    expect(db.prepare('SELECT COUNT(*) AS count FROM documents WHERE updated_at = 1').get()).toEqual({ count: 0 })
-  }, 30_000)
 
   it('applies orphan Remove without versioning any document', async () => {
     seedTag(7, 'Orphan', 'orphan')
@@ -747,12 +696,18 @@ describe('tag management atomic Apply', () => {
         database.prepare('UPDATE tags SET name = ? WHERE id = ?').run('corrupted', 7)
       },
     })
+    const logSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
 
-    await expectAsyncDomainCode(
-      () => applyTagOperation(db, operation, preview.planFingerprint),
-      'TRANSACTION_FAILED',
-    )
-    expect(databaseSnapshot()).toEqual(before)
+    try {
+      await expectAsyncDomainCode(
+        () => applyTagOperation(db, operation, preview.planFingerprint),
+        'TRANSACTION_FAILED',
+      )
+      expect(databaseSnapshot()).toEqual(before)
+      expect(logSpy.mock.calls.filter((call) => call[0] === '[tag-management-apply]')).toHaveLength(0)
+    } finally {
+      logSpy.mockRestore()
+    }
   })
 
   it('returns PREVIEW_STALE before mutation when discovery changes a destination conflict', async () => {
@@ -812,12 +767,18 @@ describe('tag management atomic Apply', () => {
     __setTagManagementApplyHooksForTesting({
       afterLocks: () => db.prepare('UPDATE documents SET title = ? WHERE id = ?').run('changed', 'doc'),
     })
+    const logSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
 
-    await expectAsyncDomainCode(
-      () => applyTagOperation(db, operation, preview.planFingerprint),
-      'PREVIEW_STALE',
-    )
-    expect(db.prepare('SELECT name, normalized_name FROM tags WHERE id = 7').get()).toEqual({ name: 'Java', normalized_name: 'java' })
+    try {
+      await expectAsyncDomainCode(
+        () => applyTagOperation(db, operation, preview.planFingerprint),
+        'PREVIEW_STALE',
+      )
+      expect(db.prepare('SELECT name, normalized_name FROM tags WHERE id = 7').get()).toEqual({ name: 'Java', normalized_name: 'java' })
+      expect(logSpy.mock.calls.filter((call) => call[0] === '[tag-management-apply]')).toHaveLength(0)
+    } finally {
+      logSpy.mockRestore()
+    }
   })
 
   it('serializes two Apply calls from one Preview into one commit and one stale rejection', async () => {
@@ -919,16 +880,33 @@ describe('tag management atomic Apply', () => {
     ])
   })
 
-  it('keeps Markdown bytes, mtime, settings, and the success log outside Apply mutation scope', async () => {
+  it('keeps Markdown bytes, mtime, fileChanges, link index, Git, settings, and the success log outside Apply mutation scope', async () => {
     seedTag(7, 'Java', 'java')
     seedDocument('doc', [7])
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-tag-apply-boundary-'))
     const file = path.join(directory, 'doc', 'note.md')
+    const otherFile = path.join(directory, 'other.md')
+    const originalContentDir = CONTENT_DIR
     await fs.mkdir(path.dirname(file), { recursive: true })
-    await fs.writeFile(file, '# unchanged\n', 'utf8')
+    await fs.writeFile(file, '# unchanged\nsee [[other]]\n', 'utf8')
+    await fs.writeFile(otherFile, '# other\n', 'utf8')
     const beforeBytes = await fs.readFile(file)
     const beforeMtime = (await fs.stat(file)).mtimeMs
     const beforeSettings = db.prepare('SELECT * FROM settings ORDER BY key').all()
+    const fileChanges = createVaultFileChanges()
+    fileChanges.publish({ path: 'doc/note', kind: 'write', newMtime: beforeMtime, newRaw: '# unchanged\nsee [[other]]\n' })
+    const beforeFileChanges = fileChanges.events.value.map((event) => ({ ...event }))
+    setContentDir(directory)
+    __resetLinkIndexForTesting()
+    const beforeLinkIndex = (await getLinkIndex()).snapshot()
+    await ensureRepo(directory)
+    await git.run(directory, ['config', 'user.name', 'Tags Apply Test'])
+    await git.run(directory, ['config', 'user.email', 'tags-apply@example.test'])
+    await git.run(directory, ['add', '--', 'doc/note.md', 'other.md'])
+    const committed = await git.run(directory, ['commit', '-m', 'boundary seed'])
+    expect(committed.status).toBe(0)
+    const beforeGitHead = (await git.run(directory, ['rev-parse', 'HEAD'])).stdout.trim()
+    const beforeGitStatus = await git.status(directory)
     const operation: TagOperationRequest = { kind: 'rename', sourceTagId: 7, destinationName: 'Backend' }
     const preview = previewTagOperation(db, operation)
     const logSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
@@ -936,19 +914,49 @@ describe('tag management atomic Apply', () => {
       const result = await applyTagOperation(db, operation, preview.planFingerprint)
       const logCall = logSpy.mock.calls.find((call) => call[0] === '[tag-management-apply]')
       expect(logCall?.[1]).toBeTypeOf('string')
-      expect(JSON.parse(String(logCall?.[1]))).toMatchObject({
+      expect(logSpy.mock.calls.filter((call) => call[0] === '[tag-management-apply]')).toHaveLength(1)
+      expect(JSON.parse(String(logCall?.[1]))).toEqual({
         operationId: result.operationId,
+        resultId: result.resultId,
         kind: result.kind,
+        operation: result.operation,
+        sourceTagId: result.sourceTagId,
+        destinationTagId: result.destinationTagId,
+        survivorTagId: result.survivorTagId,
+        sourceTag: result.sourceTag,
+        destinationTag: result.destinationTag,
+        survivorTag: result.survivorTag,
+        sourceDisplayName: result.sourceDisplayName,
+        sourceNormalizedName: result.sourceNormalizedName,
+        destinationDisplayName: result.destinationDisplayName,
+        destinationNormalizedName: result.destinationNormalizedName,
+        survivorDisplayName: result.survivorDisplayName,
+        survivorNormalizedName: result.survivorNormalizedName,
+        sourceDeleted: result.sourceDeleted,
         affectedCount: result.affectedCount,
+        associationAdds: result.associationAdds,
+        associationRemoves: result.associationRemoves,
+        duplicateCollapses: result.duplicateCollapses,
+        tagCreates: result.tagCreates,
+        tagDeletes: result.tagDeletes,
+        displayOnly: result.displayOnly,
+        versionUpdateCount: result.versionUpdateCount,
+        commitTimestamp: result.commitTimestamp,
         appliedFingerprint: result.appliedFingerprint,
       })
+      expect(fileChanges.events.value).toEqual(beforeFileChanges)
+      expect((await getLinkIndex()).snapshot()).toEqual(beforeLinkIndex)
+      expect((await git.run(directory, ['rev-parse', 'HEAD'])).stdout.trim()).toBe(beforeGitHead)
+      expect(await git.status(directory)).toEqual(beforeGitStatus)
+      expect(await fs.readFile(file)).toEqual(beforeBytes)
+      expect((await fs.stat(file)).mtimeMs).toBe(beforeMtime)
+      expect(db.prepare('SELECT * FROM settings ORDER BY key').all()).toEqual(beforeSettings)
     } finally {
       logSpy.mockRestore()
+      setContentDir(originalContentDir)
+      __resetLinkIndexForTesting()
+      await fs.rm(directory, { recursive: true, force: true })
     }
-    expect(await fs.readFile(file)).toEqual(beforeBytes)
-    expect((await fs.stat(file)).mtimeMs).toBe(beforeMtime)
-    expect(db.prepare('SELECT * FROM settings ORDER BY key').all()).toEqual(beforeSettings)
-    await fs.rm(directory, { recursive: true, force: true })
   })
 
   it('fails before mutation when an affected document cannot advance its version', async () => {
