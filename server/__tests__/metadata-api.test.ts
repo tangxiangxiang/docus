@@ -11,6 +11,11 @@ import {
   TAG_IDENTITY_CONTRACT_VERSION,
 } from '../../shared/tagNormalization'
 import { TAG_IDENTITY_MIGRATION_KEY } from '../tagIdentityMigration'
+import {
+  applyTagOperation,
+  previewTagOperation,
+  type TagOperationRequest,
+} from '../tagManagement'
 import { closeAuthTestContext, createAuthenticatedTestContext, type AuthenticatedTestContext } from './helpers/auth'
 
 const mockPathState = vi.hoisted(() => ({ root: '' }))
@@ -118,6 +123,61 @@ describe('PATCH /api/metadata/documents/*', () => {
     })
     expect(getDocumentMetadata(db, 'inbox/note')!.updatedAt).toBeGreaterThan(afterTags.updatedAt)
   })
+
+  it.each(['rename', 'display-rename', 'merge', 'remove'] as const)(
+    'keeps committed %s tag state authoritative for REST stale writers',
+    async (kind) => {
+      const initialTags = kind === 'merge' ? ['Java', 'Backend'] : ['Java']
+      const expectedTags = kind === 'rename' ? ['Backend']
+        : kind === 'display-rename' ? ['JAVA']
+          : kind === 'merge' ? ['Backend']
+            : []
+      const staleTags = initialTags
+      await fs.writeFile(path.join(root, 'inbox', 'note.md'), '# Note\n', 'utf8')
+      const initial = saveDocumentMetadata(db, {
+        id: 'writer-matrix-rest',
+        path: 'inbox/note',
+        title: 'Original',
+        tags: initialTags,
+        updatedAt: 100,
+      })
+      const sourceTagId = (db.prepare(
+        'SELECT id FROM tags WHERE normalized_name = ?',
+      ).get('java') as { id: number }).id
+      const destinationTagId = kind === 'merge'
+        ? (db.prepare('SELECT id FROM tags WHERE normalized_name = ?').get('backend') as { id: number }).id
+        : null
+      const operation: TagOperationRequest = kind === 'rename'
+        ? { kind: 'rename', sourceTagId, destinationName: 'Backend' }
+        : kind === 'display-rename'
+          ? { kind: 'rename', sourceTagId, destinationName: 'JAVA' }
+          : kind === 'merge'
+            ? { kind: 'merge', sourceTagId, destinationTagId: destinationTagId! }
+            : { kind: 'remove', sourceTagId }
+      const preview = previewTagOperation(db, operation)
+      await applyTagOperation(db, operation, preview.planFingerprint)
+
+      const titleOnly = await patch('inbox/note', { title: 'Title written after Tag Apply' })
+      expect(titleOnly.status).toBe(200)
+      expect((await titleOnly.json()).tags).toEqual(expectedTags)
+
+      const staleExplicit = await patch('inbox/note', {
+        tags: staleTags,
+        expectedUpdatedAt: initial.updatedAt,
+      })
+      expect(staleExplicit.status).toBe(409)
+      expect(await staleExplicit.json()).toMatchObject({ code: 'METADATA_VERSION_CONFLICT' })
+      expect(getDocumentMetadata(db, 'inbox/note')?.tags).toEqual(expectedTags)
+
+      const current = getDocumentMetadata(db, 'inbox/note')!
+      const currentExplicit = await patch('inbox/note', {
+        tags: [...current.tags, 'Current'],
+        expectedUpdatedAt: current.updatedAt,
+      })
+      expect(currentExplicit.status).toBe(200)
+      expect(new Set((await currentExplicit.json()).tags)).toEqual(new Set([...expectedTags, 'Current']))
+    },
+  )
 
   it('requires an explicit version token for tags and does not mutate on rejection', async () => {
     await fs.writeFile(path.join(root, 'inbox', 'note.md'), '# Note\n', 'utf8')

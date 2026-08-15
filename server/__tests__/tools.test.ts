@@ -21,6 +21,7 @@ import {
 } from '../ai/tools'
 import { applyMigrations } from '../db'
 import { getDocumentMetadata, saveDocumentMetadata, snapshotDocumentMetadataDatabase } from '../documentMetadata'
+import { applyTagOperation, previewTagOperation, type TagOperationRequest } from '../tagManagement'
 import { __resetLinkIndexForTesting, getIndex as getLinkIndex } from '../linkIndex'
 import {
   documentWriteLockWaitersForTesting,
@@ -697,6 +698,63 @@ describe('T2-0 update_metadata writer safety', () => {
     expect(stale.content).toContain('METADATA_VERSION_CONFLICT')
     expect(getDocumentMetadata(db, 'ai/note')).toEqual(beforeRejected)
   })
+
+  it.each(['rename', 'display-rename', 'merge', 'remove'] as const)(
+    'keeps committed %s tag state authoritative for AI stale writers',
+    async (kind) => {
+      const initialTags = kind === 'merge' ? ['Java', 'Backend'] : ['Java']
+      const expectedTags = kind === 'rename' ? ['Backend']
+        : kind === 'display-rename' ? ['JAVA']
+          : kind === 'merge' ? ['Backend']
+            : []
+      const saved = saveDocumentMetadata(db, {
+        path: 'ai/writer-matrix',
+        title: 'Original',
+        tags: initialTags,
+        updatedAt: 100,
+      })
+      const sourceTagId = (db.prepare(
+        'SELECT id FROM tags WHERE normalized_name = ?',
+      ).get('java') as { id: number }).id
+      const destinationTagId = kind === 'merge'
+        ? (db.prepare('SELECT id FROM tags WHERE normalized_name = ?').get('backend') as { id: number }).id
+        : null
+      const operation: TagOperationRequest = kind === 'rename'
+        ? { kind: 'rename', sourceTagId, destinationName: 'Backend' }
+        : kind === 'display-rename'
+          ? { kind: 'rename', sourceTagId, destinationName: 'JAVA' }
+          : kind === 'merge'
+            ? { kind: 'merge', sourceTagId, destinationTagId: destinationTagId! }
+            : { kind: 'remove', sourceTagId }
+      const preview = previewTagOperation(db, operation)
+      await applyTagOperation(db, operation, preview.planFingerprint)
+
+      const summaryOnly = await executeToolCall('update_metadata', {
+        path: saved.path,
+        summary: 'Summary written after Tag Apply',
+      }, ctx)
+      expect(summaryOnly.isError).toBe(false)
+      expect(getDocumentMetadata(db, saved.path)?.tags).toEqual(expectedTags)
+
+      const staleExplicit = await executeToolCall('update_metadata', {
+        path: saved.path,
+        tags: initialTags,
+        expected_updated_at: saved.updatedAt,
+      }, ctx)
+      expect(staleExplicit.isError).toBe(true)
+      expect(staleExplicit.content).toContain('METADATA_VERSION_CONFLICT')
+      expect(getDocumentMetadata(db, saved.path)?.tags).toEqual(expectedTags)
+
+      const current = getDocumentMetadata(db, saved.path)!
+      const currentExplicit = await executeToolCall('update_metadata', {
+        path: saved.path,
+        tags: [...current.tags, 'Current'],
+        expected_updated_at: current.updatedAt,
+      }, ctx)
+      expect(currentExplicit.isError).toBe(false)
+      expect(new Set(getDocumentMetadata(db, saved.path)?.tags)).toEqual(new Set([...expectedTags, 'Current']))
+    },
+  )
 })
 
 // --- Edit-10.4 tool safety --------------------------------------------------

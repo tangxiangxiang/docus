@@ -92,6 +92,7 @@ test('authenticated Rename transport preserves Markdown and Git boundaries', asy
     // and selection assertions remain independent from the production entry.
     await page.goto('/vault')
     await waitForVaultReady(page)
+
     await mountTagManagementHarness(page)
     const dialog = page.getByRole('dialog')
     await expect(dialog).toHaveAttribute('data-state', 'ready')
@@ -163,8 +164,83 @@ test('authenticated Rename transport preserves Markdown and Git boundaries', asy
     await manageTags.click()
     const productionDialog = page.getByRole('dialog')
     await expect(productionDialog).toHaveAttribute('data-state', 'ready')
-    await expect(productionDialog.locator('[data-operation="remove"]')).toHaveCount(1)
+
+    // T2-6 production-entry hardening: exercise a real Rename, then a
+    // Display Rename through the dialog owned by VaultView. The earlier
+    // harness flow remains independent transport coverage.
+    const productionRename = `production-backend-${Date.now()}`
+    const managedForProduction = await (await request.get('/api/tags')).json() as Array<{
+      id: number
+      displayName: string
+    }>
+    const backendTag = managedForProduction.find((tag) => tag.displayName === 'Backend')
+    expect(backendTag?.id).toBeGreaterThan(0)
+    await productionDialog.locator('[data-operation="rename"]').click()
+    await productionDialog.locator('#tag-management-source').selectOption(String(backendTag!.id))
+    await productionDialog.locator('#tag-management-destination').fill(productionRename)
+    const productionRenamePreview = page.waitForResponse((response) => (
+      response.request().method() === 'POST'
+      && new URL(response.url()).pathname === '/api/tags/operations/preview'
+    ))
+    await productionDialog.locator('form button[type="submit"]').click()
+    expect((await productionRenamePreview).status()).toBe(200)
+    const productionRenameApply = page.waitForResponse((response) => (
+      response.request().method() === 'POST'
+      && new URL(response.url()).pathname === '/api/tags/operations/apply'
+    ))
+    await productionDialog.locator('.tag-management-preview .primary').click()
+    const productionRenameResult = await productionRenameApply
+    expect(productionRenameResult.status()).toBe(200)
+    await expect(productionDialog).toHaveAttribute('data-state', 'success')
+
     await productionDialog.locator('[data-action="close"]').click()
+    await expect(productionDialog).toHaveCount(0)
+    await manageTags.click()
+    const displayRenameDialog = page.getByRole('dialog')
+    await expect(displayRenameDialog).toHaveAttribute('data-state', 'ready')
+    const managedAfterProductionRename = await (await request.get('/api/tags')).json() as Array<{
+      id: number
+      displayName: string
+    }>
+    const productionSource = managedAfterProductionRename.find((tag) => tag.displayName === productionRename)
+    expect(productionSource).toMatchObject({ id: backendTag!.id, displayName: productionRename })
+    const productionDisplayName = productionRename.toUpperCase()
+    await displayRenameDialog.locator('#tag-management-source').selectOption(String(productionSource!.id))
+    await displayRenameDialog.locator('#tag-management-destination').fill(productionDisplayName)
+    const displayRenamePreview = page.waitForResponse((response) => (
+      response.request().method() === 'POST'
+      && new URL(response.url()).pathname === '/api/tags/operations/preview'
+    ))
+    await displayRenameDialog.locator('form button[type="submit"]').click()
+    expect((await displayRenamePreview).status()).toBe(200)
+    const displayRenameApply = page.waitForResponse((response) => (
+      response.request().method() === 'POST'
+      && new URL(response.url()).pathname === '/api/tags/operations/apply'
+    ))
+    await displayRenameDialog.locator('.tag-management-preview .primary').click()
+    const displayRenameResult = await displayRenameApply
+    expect(displayRenameResult.status()).toBe(200)
+    await expect(displayRenameDialog).toHaveAttribute('data-state', 'success')
+    const displayApplied = await displayRenameResult.json() as {
+      sourceTagId: number
+      survivorTagId: number
+      displayOnly: boolean
+      sourceDeleted: boolean
+    }
+    expect(displayApplied).toMatchObject({
+      sourceTagId: backendTag!.id,
+      survivorTagId: backendTag!.id,
+      displayOnly: true,
+      sourceDeleted: false,
+    })
+
+    await displayRenameDialog.locator('[data-action="close"]').click()
+    await expect(displayRenameDialog).toHaveCount(0)
+    await manageTags.click()
+    const finalProductionDialog = page.getByRole('dialog')
+    await expect(finalProductionDialog).toHaveAttribute('data-state', 'ready')
+    await expect(finalProductionDialog.locator('[data-operation="remove"]')).toHaveCount(1)
+    await finalProductionDialog.locator('[data-action="close"]').click()
   } finally {
     await cleanupCreatedPaths(request, createdPaths)
   }
@@ -174,6 +250,8 @@ test('authenticated Merge preserves the destination identity, deduplicates overl
   const stamp = Date.now()
   const sourceName = `rabbit-${stamp}`
   const destinationName = `pets-${stamp}`
+  const productionSourceName = `rabbit-production-${stamp}`
+  const productionDestinationName = `pets-production-${stamp}`
   const raceSourceName = `rabbit-race-${stamp}`
   const raceDestinationName = `pets-race-${stamp}`
   const otherName = `work-${stamp}`
@@ -181,6 +259,8 @@ test('authenticated Merge preserves the destination identity, deduplicates overl
     { slug: `inbox/t2-4-merge-source-${stamp}`, tags: [sourceName], body: 'Document A: source only.\n' },
     { slug: `inbox/t2-4-merge-destination-${stamp}`, tags: [destinationName], body: 'Document B: destination only.\n' },
     { slug: `inbox/t2-4-merge-overlap-${stamp}`, tags: [sourceName, destinationName], body: 'Document C: source and destination overlap.\n' },
+    { slug: `inbox/t2-6-production-merge-source-${stamp}`, tags: [productionSourceName], body: 'Production source.\n' },
+    { slug: `inbox/t2-6-production-merge-destination-${stamp}`, tags: [productionDestinationName], body: 'Production destination.\n' },
     { slug: `inbox/t2-4-merge-race-source-${stamp}`, tags: [raceSourceName], body: 'Race source.\n' },
     { slug: `inbox/t2-4-merge-race-destination-${stamp}`, tags: [raceDestinationName], body: 'Race destination.\n' },
     { slug: `inbox/t2-4-merge-other-${stamp}`, tags: [otherName], body: 'User selection target.\n' },
@@ -211,15 +291,93 @@ test('authenticated Merge preserves the destination identity, deduplicates overl
     }>
     const source = managedBefore.find((tag) => tag.displayName === sourceName)
     const destination = managedBefore.find((tag) => tag.displayName === destinationName)
+    const productionSource = managedBefore.find((tag) => tag.displayName === productionSourceName)
+    const productionDestination = managedBefore.find((tag) => tag.displayName === productionDestinationName)
     const raceSource = managedBefore.find((tag) => tag.displayName === raceSourceName)
     const raceDestination = managedBefore.find((tag) => tag.displayName === raceDestinationName)
     expect(source?.id).toBeGreaterThan(0)
     expect(destination?.id).toBeGreaterThan(0)
+    expect(productionSource?.id).toBeGreaterThan(0)
+    expect(productionDestination?.id).toBeGreaterThan(0)
     expect(raceSource?.id).toBeGreaterThan(0)
     expect(raceDestination?.id).toBeGreaterThan(0)
 
     await page.goto('/vault')
     await waitForVaultReady(page)
+
+    // T2-6 production-entry hardening: the Merge flow must work through the
+    // real TagPanel -> VaultView -> TagManagementDialog path as well as the
+    // focused harness below.
+    await page.locator('.activity-bar .ab-btn').nth(1).click()
+    const productionManageTags = page.getByRole('button', { name: /manage tags/i })
+    await expect(productionManageTags).toHaveCount(1)
+    await productionManageTags.click()
+    const productionDialog = page.getByRole('dialog')
+    await expect(productionDialog).toHaveAttribute('data-state', 'ready')
+    await productionDialog.locator('[data-operation="merge"]').click()
+    await productionDialog.locator('#tag-management-source').selectOption(String(productionSource!.id))
+    await productionDialog.locator('#tag-management-destination-search').fill(productionDestinationName)
+    await productionDialog.locator('#tag-management-destination').selectOption(String(productionDestination!.id))
+    const productionPreviewResponse = page.waitForResponse((response) => (
+      response.request().method() === 'POST'
+      && new URL(response.url()).pathname === '/api/tags/operations/preview'
+    ))
+    await productionDialog.locator('form button[type="submit"]').click()
+    const productionPreview = await productionPreviewResponse
+    expect(productionPreview.status()).toBe(200)
+    expect(await productionPreview.json()).toMatchObject({
+      operation: {
+        kind: 'merge',
+        sourceTagId: productionSource!.id,
+        destinationTagId: productionDestination!.id,
+      },
+      affectedCount: 1,
+      associationAdds: 1,
+      associationRemoves: 1,
+      tagDeletes: 1,
+    })
+    const productionApplyResponse = page.waitForResponse((response) => (
+      response.request().method() === 'POST'
+      && new URL(response.url()).pathname === '/api/tags/operations/apply'
+    ))
+    await productionDialog.locator('.tag-management-preview .primary').click()
+    const productionApply = await productionApplyResponse
+    expect(productionApply.status()).toBe(200)
+    expect(await productionApply.json()).toMatchObject({
+      kind: 'merge',
+      sourceTagId: productionSource!.id,
+      destinationTagId: productionDestination!.id,
+      survivorTagId: productionDestination!.id,
+      sourceDeleted: true,
+    })
+    await expect(productionDialog).toHaveAttribute('data-state', 'success')
+    await productionDialog.locator('[data-action="close"]').click()
+    await expect(productionDialog).toHaveCount(0)
+
+    const productionManagedAfter = await (await request.get('/api/tags')).json() as Array<{
+      id: number
+      displayName: string
+    }>
+    expect(productionManagedAfter.find((tag) => tag.id === productionSource!.id)).toBeUndefined()
+    expect(productionManagedAfter.find((tag) => tag.id === productionDestination!.id)).toMatchObject({
+      id: productionDestination!.id,
+      displayName: productionDestinationName,
+    })
+    const productionSourceSlug = `inbox/t2-6-production-merge-source-${stamp}`
+    const productionDestinationSlug = `inbox/t2-6-production-merge-destination-${stamp}`
+    const productionSourceDetail = await readPostDetail(request, productionSourceSlug)
+    const productionDestinationDetail = await readPostDetail(request, productionDestinationSlug)
+    expect(productionSourceDetail.metadata.tags).toEqual([productionDestinationName])
+    expect(productionDestinationDetail.metadata.tags).toEqual([productionDestinationName])
+    expect(productionSourceDetail.metadata.updatedAt).toBeGreaterThan(versionBefore.get(productionSourceSlug)!)
+    expect(productionDestinationDetail.metadata.updatedAt).toBe(versionBefore.get(productionDestinationSlug))
+    for (const slug of [productionSourceSlug, productionDestinationSlug]) {
+      const snapshot = fileSnapshots.get(slug)!
+      expect(await fs.readFile(path.join(E2E_VAULT, `${slug}.md`))).toEqual(snapshot.bytes)
+      expect((await fs.stat(path.join(E2E_VAULT, `${slug}.md`))).mtimeMs).toBe(snapshot.mtimeMs)
+    }
+    expect(gitSnapshot()).toEqual(originalGit)
+
     await mountTagManagementHarness(page)
     const dialog = page.getByRole('dialog')
     await expect(dialog).toHaveAttribute('data-state', 'ready')

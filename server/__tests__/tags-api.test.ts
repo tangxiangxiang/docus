@@ -211,6 +211,50 @@ describe('Tag Management API read model and Preview', () => {
     expect(db.prepare("SELECT name FROM tags WHERE id = 7").get()).toEqual({ name: 'Java' })
   })
 
+  it('fails closed for unsafe IDs, fingerprints, and persistent tag names', async () => {
+    for (const sourceTagId of [0, -1, 1.5, null, '7', Number.MAX_SAFE_INTEGER + 1]) {
+      const response = await authenticated('/api/tags/operations/preview', {
+        method: 'POST', body: { kind: 'remove', sourceTagId },
+      })
+      expect(response.status).toBe(400)
+      expect(await response.json()).toMatchObject({ code: 'INVALID_OPERATION' })
+    }
+
+    const invalidFingerprints: unknown[] = [
+      undefined,
+      null,
+      42,
+      '',
+      'a'.repeat(63),
+      'a'.repeat(65),
+      'A'.repeat(64),
+      'g'.repeat(64),
+      ` ${'a'.repeat(64)} `,
+    ]
+    for (const planFingerprint of invalidFingerprints) {
+      const body = planFingerprint === undefined
+        ? { operation: { kind: 'remove', sourceTagId: 7 } }
+        : { operation: { kind: 'remove', sourceTagId: 7 }, planFingerprint }
+      const response = await authenticated('/api/tags/operations/apply', { method: 'POST', body })
+      expect(response.status).toBe(409)
+      expect(await response.json()).toMatchObject({ code: 'PREVIEW_REQUIRED' })
+    }
+
+    for (const destinationName of ['', 'bad\u0000name', 'bad\u0001name', 'x'.repeat(101)]) {
+      const response = await authenticated('/api/tags/operations/preview', {
+        method: 'POST', body: { kind: 'rename', sourceTagId: 7, destinationName },
+      })
+      expect(response.status).toBe(400)
+      expect(await response.json()).toMatchObject({ code: 'INVALID_TAG_NAME' })
+    }
+
+    const unicode = await authenticated('/api/tags/operations/preview', {
+      method: 'POST', body: { kind: 'rename', sourceTagId: 7, destinationName: '数据/后端' },
+    })
+    expect(unicode.status).toBe(200)
+    expect(await unicode.json()).toMatchObject({ allowedToApply: true })
+  })
+
   it('correlates unexpected server failures without exposing internal error text', async () => {
     const throwingDb = new Proxy(db, {
       get(target, property, receiver) {

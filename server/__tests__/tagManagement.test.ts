@@ -417,11 +417,13 @@ describe('tag management fingerprints and pagination', () => {
       __setTagManagementPlannerHookForTesting((stage) => {
         if (stage !== 'after-affected-document-read') return
         second.prepare('UPDATE documents SET title = ? WHERE id = ?').run('After', 'doc')
+        second.prepare('UPDATE tags SET name = ? WHERE id = ?').run('JAVA', 7)
         second.prepare('INSERT INTO document_tags (document_id, tag_id) VALUES (?, ?)').run('doc', 9)
       })
 
       const preview = previewTagOperation(first, operation)
       expect(preview).toMatchObject({
+        sourceTag: { id: 7, displayName: 'Java', normalizedName: 'java' },
         affectedCount: beforePlan.affectedCount,
         associationAdds: beforePlan.associationAdds,
         associationRemoves: beforePlan.associationRemoves,
@@ -434,6 +436,7 @@ describe('tag management fingerprints and pagination', () => {
       __setTagManagementPlannerHookForTesting(null)
       const afterPlan = buildTagOperationPlan(first, operation)
       const afterPreview = previewTagOperation(first, operation)
+      expect(afterPlan.sourceTag).toMatchObject({ id: 7, displayName: 'JAVA', normalizedName: 'java' })
       expect(afterPlan.affectedDocuments[0]).toMatchObject({ id: 'doc', title: 'After' })
       expect(afterPlan.affectedDocuments[0]?.completeTagRows.map((tag) => tag.id)).toEqual([7, 9])
       expect(afterPlan).toMatchObject({
@@ -453,6 +456,80 @@ describe('tag management fingerprints and pagination', () => {
       })
     } finally {
       __setTagManagementPlannerHookForTesting(null)
+      if (second.open) second.close()
+      if (first.open) first.close()
+      await fs.rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a relevant two-connection association change after Preview without partial mutation', async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-tag-apply-association-wal-'))
+    const databasePath = path.join(directory, 'apply.db')
+    const first = new Database(databasePath)
+    const second = new Database(databasePath)
+    try {
+      first.pragma('journal_mode = WAL')
+      first.pragma('foreign_keys = ON')
+      applyMigrations(first)
+      second.pragma('journal_mode = WAL')
+      second.pragma('foreign_keys = ON')
+      seedTagOn(first, 7, 'Java', 'java')
+      seedDocumentOn(first, 'doc', [7], { updatedAt: 10 })
+      const operation: TagOperationRequest = { kind: 'remove', sourceTagId: 7 }
+      const preview = previewTagOperation(first, operation)
+      __setTagManagementApplyHooksForTesting({
+        afterDiscovery: () => {
+          second.prepare('DELETE FROM document_tags WHERE document_id = ? AND tag_id = ?').run('doc', 7)
+        },
+      })
+
+      await expectAsyncDomainCode(
+        () => applyTagOperation(first, operation, preview.planFingerprint),
+        'PREVIEW_STALE',
+      )
+      expect(first.prepare('SELECT id, name, normalized_name FROM tags').all()).toEqual([
+        { id: 7, name: 'Java', normalized_name: 'java' },
+      ])
+      expect(first.prepare('SELECT document_id, tag_id FROM document_tags').all()).toEqual([])
+      expect(first.prepare('SELECT updated_at FROM documents WHERE id = ?').get('doc')).toEqual({ updated_at: 10 })
+    } finally {
+      __setTagManagementApplyHooksForTesting(null)
+      if (second.open) second.close()
+      if (first.open) first.close()
+      await fs.rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('serializes two Apply calls from one Preview across two WAL connections', async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-tag-apply-two-connections-'))
+    const databasePath = path.join(directory, 'apply.db')
+    const first = new Database(databasePath)
+    const second = new Database(databasePath)
+    try {
+      first.pragma('journal_mode = WAL')
+      first.pragma('foreign_keys = ON')
+      applyMigrations(first)
+      second.pragma('journal_mode = WAL')
+      second.pragma('foreign_keys = ON')
+      seedTagOn(first, 7, 'Java', 'java')
+      seedDocumentOn(first, 'doc-a', [7])
+      seedDocumentOn(first, 'doc-b', [7])
+      const operation: TagOperationRequest = { kind: 'rename', sourceTagId: 7, destinationName: 'Backend' }
+      const preview = previewTagOperation(first, operation)
+
+      const outcomes = await Promise.allSettled([
+        applyTagOperation(first, operation, preview.planFingerprint),
+        applyTagOperation(second, operation, preview.planFingerprint),
+      ])
+      expect(outcomes.filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1)
+      const rejected = outcomes.find((outcome) => outcome.status === 'rejected')
+      expect(rejected?.status).toBe('rejected')
+      expect((rejected as PromiseRejectedResult).reason).toMatchObject({ code: 'PREVIEW_STALE' })
+      expect(first.prepare('SELECT id, name, normalized_name FROM tags').all()).toEqual([
+        { id: 7, name: 'Backend', normalized_name: 'backend' },
+      ])
+      expect(first.prepare('SELECT COUNT(*) AS count FROM document_tags WHERE tag_id = ?').get(7)).toEqual({ count: 2 })
+    } finally {
       if (second.open) second.close()
       if (first.open) first.close()
       await fs.rm(directory, { recursive: true, force: true })
