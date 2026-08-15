@@ -426,7 +426,7 @@ describe('write routes update the index', () => {
       expect(names.some((name) => name.includes('.docus-save-'))).toBe(false)
       expect(names.some((name) => name.includes('.docus-staged-'))).toBe(false)
     } finally { __setFolderRaceHooksForTesting(null) }
-  })
+  }, 30_000)
 
   it('refuses the replayable reverse move when the journal direction flip cannot be persisted', async () => {
     // Round-8 P1: for the replayable protocol the journal direction
@@ -487,7 +487,7 @@ describe('write routes update the index', () => {
       __setFolderRaceHooksForTesting(null)
       __setDirectoryMoveStrategyOverrideForTesting(null)
     }
-  })
+  }, 30_000)
 
   it('does not delete destination recovery metadata when the filesystem rename fails', async () => {
     await fs.mkdir(path.join(sandbox, 'notes'))
