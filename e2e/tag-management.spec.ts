@@ -485,6 +485,7 @@ test('production Remove previews, confirms once, clears selection, and preserves
     const confirmationAgain = page.getByRole('alertdialog')
     await confirmationAgain.getByRole('button', { name: `Remove #${sourceName}` }).click()
     const applyResponse = await applyResponsePromise
+    expect(applyRequests).toBe(1)
     page.off('request', onRequest)
     expect(applyResponse.status(), await applyResponse.text()).toBe(200)
     const applied = await applyResponse.json() as {
