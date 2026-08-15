@@ -106,14 +106,23 @@ export interface FrontmatterMutationResult {
   failed: Array<{ path: string; reason: string }>
 }
 
-async function jsonOrThrow<T>(r: Response): Promise<T> {
+export async function jsonOrThrow<T>(r: Response): Promise<T> {
   if (!r.ok) {
-    // See ai-api.ts: no error-body schema, cast to the shape we read.
-    const body = (await r.json().catch(() => ({ error: r.statusText }))) as { error?: string; code?: string }
-    throw Object.assign(new Error(body.error || r.statusText || `HTTP ${r.status}`), {
+    // Feature-specific wrappers may validate a richer error envelope after
+    // this shared parser has preserved it. Keep the common helper free of
+    // domain assumptions while retaining structured details.
+    const body = (await r.json().catch(() => ({ error: r.statusText }))) as {
+      error?: unknown
+      code?: unknown
+      details?: unknown
+    }
+    const message = typeof body.error === 'string' && body.error.trim()
+      ? body.error
+      : r.statusText || `HTTP ${r.status}`
+    throw Object.assign(new Error(message), {
       status: r.status,
       body,
-      code: body.code,
+      code: typeof body.code === 'string' ? body.code : undefined,
     })
   }
   return r.json() as Promise<T>

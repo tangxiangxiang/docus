@@ -1544,6 +1544,15 @@ const { activeScope } = useScopeFilter()
 
 /* ---------- Tag filter ---------- */
 const selectedTag = ref<string | null>(null)
+// Phase 2 management dialogs use this local monotonic epoch to distinguish
+// an actual user selection change from an asynchronous Apply completion. The
+// manager remains unmounted in T2-3, but the Phase 1 callback is already the
+// real selection boundary it will consume when production exposure is wired.
+const tagSelectionEpoch = ref(0)
+function selectTag(tag: string): void {
+  selectedTag.value = selectedTag.value === tag ? null : tag
+  tagSelectionEpoch.value += 1
+}
 
 /* ---------- Bi-directional links ---------- */
 // Mount the file-change-bus subscription so the link index stays
@@ -1639,7 +1648,7 @@ watch(isReadMode, async (reading) => {
       :posts="posts"
       :selected-tag="selectedTag"
       :path="activePath"
-      @select="selectedTag = selectedTag === $event ? null : $event"
+      @select="selectTag"
       @open="openPost"
     />
     <HistoryPanel
