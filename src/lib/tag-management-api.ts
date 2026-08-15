@@ -352,6 +352,105 @@ function parseNullableBoundedString(value: unknown, field: string): string | nul
   return value
 }
 
+function assertRowFieldContract(
+  row: TagRowView | null,
+  id: number | null,
+  displayName: string | null,
+  normalizedName: string | null,
+  field: string,
+): void {
+  if (id === null) {
+    assert(row === null, `${field} must be null when its identity is null`)
+    assert(displayName === null, `${field} display name must be null without a row`)
+    assert(normalizedName === null, `${field} normalized name must be null without a row`)
+    return
+  }
+  assert(row !== null, `${field} is required for its identity`)
+  assert(row.id === id, `${field}.id does not match its identity`)
+  assert(displayName === row.displayName, `${field} display name does not match its row`)
+  assert(normalizedName === row.normalizedName, `${field} normalized name does not match its row`)
+}
+
+function assertSameTagRow(left: TagRowView | null, right: TagRowView | null, field: string): void {
+  assert(left !== null && right !== null, `${field} rows are required`)
+  assert(left.id === right.id, `${field} IDs do not agree`)
+  assert(left.displayName === right.displayName, `${field} display names do not agree`)
+  assert(left.normalizedName === right.normalizedName, `${field} normalized names do not agree`)
+}
+
+/**
+ * The server result is consumed by stable-ID reconciliation. Shape checks are
+ * not enough here: a response can be structurally valid while pointing the
+ * selection at a different row. Keep these checks aligned with
+ * server/tagManagement.ts's buildApplyResult contract.
+ */
+function assertApplyResultSemantics(result: TagOperationApplyResult): void {
+  assert(result.sourceTagId === result.operation.sourceTagId, 'sourceTagId does not match operation')
+  if (result.sourceTag !== null) {
+    assert(result.sourceTag.id === result.sourceTagId, 'sourceTag.id does not match sourceTagId')
+  }
+  assertRowFieldContract(
+    result.sourceTag,
+    result.sourceTag?.id ?? null,
+    result.sourceDisplayName,
+    result.sourceNormalizedName,
+    'sourceTag',
+  )
+  assertRowFieldContract(
+    result.destinationTag,
+    result.destinationTagId,
+    result.destinationDisplayName,
+    result.destinationNormalizedName,
+    'destinationTag',
+  )
+  assertRowFieldContract(
+    result.survivorTag,
+    result.survivorTagId,
+    result.survivorDisplayName,
+    result.survivorNormalizedName,
+    'survivorTag',
+  )
+
+  assert(result.tagCreates === 0, 'tagCreates must be zero for MVP operations')
+
+  if (result.operation.kind === 'rename') {
+    assert(result.destinationTagId === null, 'rename destinationTagId must be null')
+    assert(result.destinationTag === null, 'rename destinationTag must be null')
+    assert(result.survivorTagId === result.sourceTagId, 'rename survivorTagId must preserve source identity')
+    assert(result.sourceTag !== null, 'rename sourceTag is required')
+    assert(result.survivorTag !== null, 'rename survivorTag is required')
+    assertSameTagRow(result.sourceTag, result.survivorTag, 'rename source/survivor')
+    assert(result.sourceDeleted === false, 'rename sourceDeleted must be false')
+    assert(result.tagDeletes === 0, 'rename tagDeletes must be zero')
+    assert(result.associationAdds === 0, 'rename associationAdds must be zero')
+    assert(result.associationRemoves === 0, 'rename associationRemoves must be zero')
+    assert(result.duplicateCollapses === 0, 'rename duplicateCollapses must be zero')
+    return
+  }
+
+  if (result.operation.kind === 'merge') {
+    assert(result.destinationTagId === result.operation.destinationTagId, 'merge destinationTagId does not match operation')
+    assert(result.destinationTag !== null, 'merge destinationTag is required')
+    assert(result.survivorTagId === result.operation.destinationTagId, 'merge survivorTagId must preserve destination identity')
+    assert(result.survivorTag !== null, 'merge survivorTag is required')
+    assertSameTagRow(result.destinationTag, result.survivorTag, 'merge destination/survivor')
+    assert(result.sourceTag === null, 'merge sourceTag must be null after deletion')
+    assert(result.sourceDeleted === true, 'merge sourceDeleted must be true')
+    assert(result.displayOnly === false, 'merge displayOnly must be false')
+    assert(result.tagDeletes === 1, 'merge must delete exactly one tag row')
+    return
+  }
+
+  assert(result.destinationTagId === null, 'remove destinationTagId must be null')
+  assert(result.destinationTag === null, 'remove destinationTag must be null')
+  assert(result.survivorTagId === null, 'remove survivorTagId must be null')
+  assert(result.survivorTag === null, 'remove survivorTag must be null')
+  assert(result.sourceTag === null, 'remove sourceTag must be null after deletion')
+  assert(result.sourceDeleted === true, 'remove sourceDeleted must be true')
+  assert(result.displayOnly === false, 'remove displayOnly must be false')
+  assert(result.tagDeletes === 1, 'remove must delete exactly one tag row')
+}
+
 function operationsEqual(left: TagOperationRequest, right: TagOperationRequest): boolean {
   if (left.kind !== right.kind || left.sourceTagId !== right.sourceTagId) return false
   if (left.kind === 'rename' && right.kind === 'rename') return left.destinationName === right.destinationName
@@ -399,7 +498,7 @@ function parseApplyResult(value: unknown): TagOperationApplyResult {
   const commitTimestamp = requiredNonNegativeInteger(value.commitTimestamp, 'commitTimestamp')
   assert(typeof value.displayOnly === 'boolean', 'displayOnly is invalid')
   assert(typeof value.appliedFingerprint === 'string' && PLAN_FINGERPRINT.test(value.appliedFingerprint), 'appliedFingerprint is invalid')
-  return {
+  const result: TagOperationApplyResult = {
     operationId: value.operationId,
     resultId: value.resultId,
     kind,
@@ -428,6 +527,8 @@ function parseApplyResult(value: unknown): TagOperationApplyResult {
     commitTimestamp,
     appliedFingerprint: value.appliedFingerprint,
   }
+  assertApplyResultSemantics(result)
+  return result
 }
 
 const ERROR_CODES = new Set<TagManagementErrorCode>([

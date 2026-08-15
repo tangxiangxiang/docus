@@ -59,6 +59,7 @@ import type { DocumentLifecycle } from '../composables/vault/useDocumentLifecycl
 import { applyMetadataToPostSummary } from './metadataPostSummary'
 import FileTree from '../components/vault/FileTree.vue'
 import TagPanel from '../components/vault/TagPanel.vue'
+import TagManagementDialog from '../components/vault/TagManagementDialog.vue'
 import ReadingPane from '../components/vault/ReadingPane.vue'
 import RightRail from '../components/vault/RightRail.vue'
 import EmptyState from '../components/vault/EmptyState.vue'
@@ -95,6 +96,15 @@ import {
 import StatusBar from '../components/vault/StatusBar.vue'
 import CommandPalette from '../components/vault/CommandPalette.vue'
 import { requireVaultId } from '../lib/vault-identity'
+import {
+  listManagedTags,
+  type ManagedTag,
+  type TagOperationApplyResult,
+} from '../lib/tag-management-api'
+import {
+  reconcileTagSelection,
+  type TagSelectionSnapshot,
+} from '../lib/tag-selection-reconciliation'
 
 // Monaco is the heaviest client dependency. Load it only when edit mode
 // actually mounts an editor, keeping navigation/read-only startup lean.
@@ -1544,6 +1554,7 @@ const { activeScope } = useScopeFilter()
 
 /* ---------- Tag filter ---------- */
 const selectedTag = ref<string | null>(null)
+const tagManagementOpen = ref(false)
 // Phase 2 management dialogs use this local monotonic epoch to distinguish
 // an actual user selection change from an asynchronous Apply completion. The
 // manager remains unmounted in T2-3, but the Phase 1 callback is already the
@@ -1552,6 +1563,32 @@ const tagSelectionEpoch = ref(0)
 function selectTag(tag: string): void {
   selectedTag.value = selectedTag.value === tag ? null : tag
   tagSelectionEpoch.value += 1
+}
+
+/**
+ * VaultView owns the one post-commit synchronization cycle. The dialog only
+ * captures the Apply-start snapshot and hands the committed result here; the
+ * shell refreshes both authoritative projections together, then performs the
+ * stable-ID selection reconciliation against the fresh management list.
+ */
+async function synchronizeCommittedTagOperation(
+  result: TagOperationApplyResult,
+  snapshot: TagSelectionSnapshot,
+): Promise<{ managedTags: ManagedTag[]; selectedTag: string | null }> {
+  const [, freshTags] = await Promise.all([
+    refresh(),
+    listManagedTags(),
+  ])
+  const reconciled = reconcileTagSelection({
+    snapshot,
+    currentSelectedTag: selectedTag.value,
+    currentSelectionEpoch: tagSelectionEpoch.value,
+    operation: result.operation,
+    result,
+    managedTags: freshTags,
+  })
+  selectedTag.value = reconciled
+  return { managedTags: freshTags, selectedTag: reconciled }
 }
 
 /* ---------- Bi-directional links ---------- */
@@ -1616,6 +1653,18 @@ watch(isReadMode, async (reading) => {
     <SettingsModal
       :open="settingsOpen"
       @close="settingsOpen = false"
+    />
+
+    <!-- T2-3 mounts the management shell only through this Vault-owned seam.
+         No production action sets tagManagementOpen until the T2-5 exposure
+         gate, so TagPanel remains unchanged and has no Manage Tags trigger. -->
+    <TagManagementDialog
+      v-if="tagManagementOpen"
+      :open="tagManagementOpen"
+      :selected-tag="selectedTag"
+      :selection-epoch="tagSelectionEpoch"
+      :sync-after-commit="synchronizeCommittedTagOperation"
+      @close="tagManagementOpen = false"
     />
 
     <DraftRecoveryPrompt

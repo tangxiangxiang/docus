@@ -4,6 +4,27 @@ import { describe, expect, it } from 'vitest'
 import { applyMetadataToPostSummary } from '../metadataPostSummary'
 
 describe('VaultView editor tab wiring', () => {
+  it('owns the hidden T2-3 dialog seam and one canonical post-commit sync cycle', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+    const sync = source.match(/async function synchronizeCommittedTagOperation[\s\S]*?\n}/)?.[0]
+
+    expect(source).toContain("import TagManagementDialog from '../components/vault/TagManagementDialog.vue'")
+    expect(source).toContain('const tagManagementOpen = ref(false)')
+    expect(source).toContain('const tagSelectionEpoch = ref(0)')
+    expect(source).toContain('<TagManagementDialog')
+    expect(source).toContain('v-if="tagManagementOpen"')
+    expect(source).toContain(':sync-after-commit="synchronizeCommittedTagOperation"')
+    expect(source).not.toContain('tagManagementOpen = true')
+    expect(sync).toBeDefined()
+    expect(sync).toContain('const [, freshTags] = await Promise.all([')
+    expect(sync).toContain('refresh(),')
+    expect(sync).toContain('listManagedTags(),')
+    expect(sync).toContain('reconcileTagSelection({')
+    expect(sync).toContain('selectedTag.value = reconciled')
+    expect(sync).not.toContain('refreshLinkIndex')
+    expect(sync).not.toContain('applyPostSummary')
+  })
+
   it('derives one save presentation per document and shares the active result with StatusBar', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
 

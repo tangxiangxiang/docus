@@ -70,6 +70,73 @@ function applyResult() {
   }
 }
 
+const mergeOperation = { kind: 'merge' as const, sourceTagId: 7, destinationTagId: 20 }
+const destinationTag = { id: 20, normalizedName: 'backend', displayName: 'Backend' }
+
+function mergeApplyResult() {
+  return {
+    operationId: 'operation-merge',
+    resultId: 'operation-merge',
+    kind: 'merge' as const,
+    operation: mergeOperation,
+    sourceTagId: 7,
+    destinationTagId: 20,
+    survivorTagId: 20,
+    sourceTag: null,
+    destinationTag,
+    survivorTag: destinationTag,
+    sourceDisplayName: null,
+    sourceNormalizedName: null,
+    destinationDisplayName: 'Backend',
+    destinationNormalizedName: 'backend',
+    survivorDisplayName: 'Backend',
+    survivorNormalizedName: 'backend',
+    sourceDeleted: true,
+    affectedCount: 1,
+    associationAdds: 1,
+    associationRemoves: 1,
+    duplicateCollapses: 0,
+    tagCreates: 0,
+    tagDeletes: 1,
+    displayOnly: false,
+    versionUpdateCount: 1,
+    commitTimestamp: 1_700_000_000_000,
+    appliedFingerprint: fingerprint,
+  }
+}
+
+function removeApplyResult() {
+  return {
+    operationId: 'operation-remove',
+    resultId: 'operation-remove',
+    kind: 'remove' as const,
+    operation: { kind: 'remove' as const, sourceTagId: 7 },
+    sourceTagId: 7,
+    destinationTagId: null,
+    survivorTagId: null,
+    sourceTag: null,
+    destinationTag: null,
+    survivorTag: null,
+    sourceDisplayName: null,
+    sourceNormalizedName: null,
+    destinationDisplayName: null,
+    destinationNormalizedName: null,
+    survivorDisplayName: null,
+    survivorNormalizedName: null,
+    sourceDeleted: true,
+    affectedCount: 1,
+    associationAdds: 0,
+    associationRemoves: 1,
+    duplicateCollapses: 0,
+    tagCreates: 0,
+    tagDeletes: 1,
+    displayOnly: false,
+    versionUpdateCount: 1,
+    commitTimestamp: 1_700_000_000_000,
+    appliedFingerprint: fingerprint,
+  }
+}
+
 let calls: Array<{ url: string; init: RequestInit }> = []
 let responses: Array<{ status: number; body: unknown }> = []
 
@@ -135,6 +202,68 @@ describe('tag management API runtime guards', () => {
 
     responses.push({ status: 500, body: { error: 'internal', code: 'NOT_A_DOMAIN_CODE', details: {} } })
     await expect(applyTagOperation(operation, fingerprint)).rejects.toMatchObject({ code: 'CLIENT_PROTOCOL_ERROR' })
+  })
+
+  it('rejects Apply results with malformed stable-ID relationships', async () => {
+    responses.push({ status: 200, body: { ...applyResult(), sourceTagId: 20 } })
+    await expect(applyTagOperation(operation, fingerprint)).rejects.toMatchObject({ code: 'CLIENT_PROTOCOL_ERROR' })
+
+    responses.push({ status: 200, body: { ...applyResult(), survivorTagId: 20 } })
+    await expect(applyTagOperation(operation, fingerprint)).rejects.toMatchObject({ code: 'CLIENT_PROTOCOL_ERROR' })
+
+    responses.push({
+      status: 200,
+      body: {
+        ...applyResult(),
+        survivorTag: { id: 20, normalizedName: 'backend', displayName: 'Backend' },
+      },
+    })
+    await expect(applyTagOperation(operation, fingerprint)).rejects.toMatchObject({ code: 'CLIENT_PROTOCOL_ERROR' })
+  })
+
+  it('keeps Merge and Remove result identities fail-closed', async () => {
+    responses.push({
+      status: 200,
+      body: {
+        ...mergeApplyResult(),
+        destinationTag: { id: 7, normalizedName: 'java', displayName: 'Java' },
+        destinationDisplayName: 'Java',
+        destinationNormalizedName: 'java',
+        survivorTag: { id: 7, normalizedName: 'java', displayName: 'Java' },
+        survivorTagId: 7,
+        survivorDisplayName: 'Java',
+        survivorNormalizedName: 'java',
+      },
+    })
+    await expect(applyTagOperation(mergeOperation, fingerprint)).rejects.toMatchObject({ code: 'CLIENT_PROTOCOL_ERROR' })
+
+    responses.push({
+      status: 200,
+      body: { ...mergeApplyResult(), survivorTagId: 7 },
+    })
+    await expect(applyTagOperation(mergeOperation, fingerprint)).rejects.toMatchObject({ code: 'CLIENT_PROTOCOL_ERROR' })
+
+    responses.push({
+      status: 200,
+      body: { ...removeApplyResult(), survivorTag: destinationTag, survivorTagId: 20 },
+    })
+    await expect(applyTagOperation(removeApplyResult().operation, fingerprint)).rejects.toMatchObject({ code: 'CLIENT_PROTOCOL_ERROR' })
+  })
+
+  it('accepts the frozen server identity shapes for Merge and Remove', async () => {
+    responses.push({ status: 200, body: mergeApplyResult() })
+    await expect(applyTagOperation(mergeOperation, fingerprint)).resolves.toMatchObject({
+      survivorTagId: 20,
+      destinationTagId: 20,
+      sourceDeleted: true,
+    })
+
+    const removeOperation = removeApplyResult().operation
+    responses.push({ status: 200, body: removeApplyResult() })
+    await expect(applyTagOperation(removeOperation, fingerprint)).resolves.toMatchObject({
+      survivorTagId: null,
+      sourceDeleted: true,
+    })
   })
 })
 

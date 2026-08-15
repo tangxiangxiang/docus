@@ -17,7 +17,6 @@ import {
 } from '../../lib/tag-management-api'
 import {
   captureTagSelection,
-  reconcileTagSelection,
   resolveManagedTagId,
   type TagSelectionSnapshot,
 } from '../../lib/tag-selection-reconciliation'
@@ -39,10 +38,14 @@ interface TagManagementDialogProps {
   open: boolean
   selectedTag?: string | null
   selectionEpoch?: number
-  /** The one canonical posts/tree refresh owned by the vault shell. */
-  refreshPosts?: () => void | Promise<void>
-  /** Alias kept for small internal/test harnesses that call the callback `refresh`. */
-  refresh?: () => void | Promise<void>
+  /** The VaultView-owned canonical refresh and stable-ID reconciliation seam. */
+  syncAfterCommit: (
+    result: TagOperationApplyResult,
+    snapshot: TagSelectionSnapshot,
+  ) => Promise<{
+    managedTags: ManagedTag[]
+    selectedTag: string | null
+  }>
 }
 
 const props = withDefaults(defineProps<TagManagementDialogProps>(), {
@@ -52,7 +55,6 @@ const props = withDefaults(defineProps<TagManagementDialogProps>(), {
 
 const emit = defineEmits<{
   close: []
-  'selection-reconciled': [selectedTag: string | null]
   success: [result: TagOperationApplyResult]
 }>()
 
@@ -82,13 +84,13 @@ const staleMessage = ref('')
 const liveMessage = ref('')
 const diagnosticStage = ref('loading')
 const diagnosticCode = ref<TagManagementClientErrorCode | null>(null)
-const syncRefreshDone = ref(false)
-const syncTagsDone = ref(false)
 const selectionSnapshot = ref<TagSelectionSnapshot | null>(null)
+const reconciledSelectedTag = ref<string | null>(null)
 
 let loadRun = 0
 let previewRun = 0
 let syncRun = 0
+let pageRun = 0
 let operationRevision = 0
 
 const filteredManagedTags = computed(() => {
@@ -180,6 +182,11 @@ function announce(message: string): void {
 }
 
 function clearPreview(): void {
+  // A new Preview, an input edit, a reset, and close all invalidate every
+  // outstanding continuation request. The page generation is independent of
+  // the normal Preview run so an old page's finally block cannot touch a
+  // newer page's loading state.
+  pageRun += 1
   preview.value = null
   reviewedOperation.value = null
   continuationPages.value = []
@@ -231,10 +238,15 @@ function operationFromForm(): TagOperationRequest | null {
   }
 }
 
+function isHealthBlocked(code: TagManagementClientErrorCode): boolean {
+  return code === 'TAG_MANAGEMENT_UNAVAILABLE' || code === 'TAG_IDENTITY_CONFLICT'
+}
+
 function mapError(error: unknown, stage: 'preview' | 'apply' | 'load'): string {
   const code = error instanceof TagManagementApiError ? error.code : 'CLIENT_PROTOCOL_ERROR'
   diagnosticCode.value = code
   if (code === 'TAG_MANAGEMENT_UNAVAILABLE') return t('tags.manage.error_unavailable')
+  if (code === 'TAG_IDENTITY_CONFLICT') return t('tags.manage.error_identity_conflict')
   if (code === 'TAG_NOT_FOUND') return t('tags.manage.error_not_found')
   if (code === 'DESTINATION_EXISTS') return t('tags.manage.conflict_destination_exists')
   if (code === 'INVALID_OPERATION' || code === 'SOURCE_DESTINATION_SAME') {
@@ -278,8 +290,45 @@ async function fetchManagedTagsForOpening(): Promise<void> {
   } catch (error) {
     if (run !== loadRun || !props.open) return
     const code = error instanceof TagManagementApiError ? error.code : 'CLIENT_PROTOCOL_ERROR'
-    state.value = code === 'TAG_MANAGEMENT_UNAVAILABLE' ? 'unavailable' : 'error'
-    setDiagnostic(code === 'TAG_MANAGEMENT_UNAVAILABLE' ? 'unavailable' : 'load-failure', code)
+    state.value = isHealthBlocked(code) ? 'unavailable' : 'error'
+    setDiagnostic(isHealthBlocked(code) ? 'unavailable' : 'load-failure', code)
+    errorMessage.value = mapError(error, 'load')
+    announce(errorMessage.value)
+    await nextTick()
+    modalRef.value?.querySelector<HTMLButtonElement>('[data-action="reload"]')?.focus()
+  }
+}
+
+/** Recover a missing stable source without reusing a stale Preview. */
+async function refreshManagedTagsAfterTagNotFound(): Promise<void> {
+  const run = ++loadRun
+  ++previewRun
+  clearPreview()
+  state.value = 'loading'
+  setDiagnostic('loading', 'TAG_NOT_FOUND')
+  staleMessage.value = ''
+  errorMessage.value = t('tags.manage.error_not_found')
+  announce(errorMessage.value)
+  try {
+    const tags = await listManagedTags()
+    if (run !== loadRun || !props.open) return
+    managedTags.value = tags
+    finalTags.value = tags
+    if (sourceTagId.value !== null && !tags.some((tag) => tag.id === sourceTagId.value)) {
+      sourceTagId.value = null
+      sourceError.value = ''
+    }
+    state.value = 'editing'
+    setDiagnostic('ready', 'TAG_NOT_FOUND')
+    errorMessage.value = t('tags.manage.error_not_found')
+    announce(errorMessage.value)
+    await nextTick()
+    if (sourceTagId.value === null) sourceSelectRef.value?.focus()
+  } catch (error) {
+    if (run !== loadRun || !props.open) return
+    const code = error instanceof TagManagementApiError ? error.code : 'CLIENT_PROTOCOL_ERROR'
+    state.value = isHealthBlocked(code) ? 'unavailable' : 'error'
+    setDiagnostic(isHealthBlocked(code) ? 'unavailable' : 'load-failure', code)
     errorMessage.value = mapError(error, 'load')
     announce(errorMessage.value)
     await nextTick()
@@ -303,8 +352,7 @@ function resetForOpen(): void {
   destinationError.value = ''
   errorMessage.value = ''
   staleMessage.value = ''
-  syncRefreshDone.value = false
-  syncTagsDone.value = false
+  reconciledSelectedTag.value = null
 }
 
 async function onPreview(): Promise<void> {
@@ -335,11 +383,19 @@ async function onPreview(): Promise<void> {
   } catch (error) {
     if (run !== previewRun || revision !== operationRevision || !props.open) return
     const code = error instanceof TagManagementApiError ? error.code : 'CLIENT_PROTOCOL_ERROR'
+    if (code === 'TAG_NOT_FOUND') {
+      await refreshManagedTagsAfterTagNotFound()
+      return
+    }
     errorMessage.value = mapError(error, 'preview')
     setDiagnostic(code === 'PREVIEW_STALE' ? 'preview-stale' : 'preview-failure', code)
     if (code === 'PREVIEW_STALE') {
       staleMessage.value = t('tags.manage.preview_stale')
       invalidatePreview('editing')
+    } else if (isHealthBlocked(code)) {
+      clearPreview()
+      state.value = 'unavailable'
+      setDiagnostic('unavailable', code)
     } else {
       state.value = 'error'
     }
@@ -352,11 +408,27 @@ async function loadMore(): Promise<void> {
   if (!preview.value || !reviewedOperation.value || !nextAfterDocumentId.value || pageLoading.value) return
   const fingerprint = preview.value.planFingerprint
   const cursor = nextAfterDocumentId.value
+  const operation = reviewedOperation.value
+  const previewGeneration = previewRun
+  const run = ++pageRun
   pageLoading.value = true
   setDiagnostic('preview-page-loading')
   try {
-    const page = await getTagOperationPreviewPage(reviewedOperation.value, fingerprint, cursor, 100)
-    if (!preview.value || page.planFingerprint !== preview.value.planFingerprint) {
+    const page = await getTagOperationPreviewPage(operation, fingerprint, cursor, 100)
+    if (
+      run !== pageRun
+      || previewGeneration !== previewRun
+      || !props.open
+      || !preview.value
+      || preview.value.planFingerprint !== fingerprint
+      || reviewedOperation.value !== operation
+      || nextAfterDocumentId.value !== cursor
+    ) {
+      // A page belonging to an obsolete Preview is intentionally ignored.
+      // In particular, it must not turn a newer Preview into PREVIEW_STALE.
+      return
+    }
+    if (page.planFingerprint !== fingerprint) {
       throw new TagManagementApiError(
         t('tags.manage.preview_stale'),
         409,
@@ -367,12 +439,21 @@ async function loadMore(): Promise<void> {
     nextAfterDocumentId.value = page.nextAfterDocumentId
     setDiagnostic('preview-ready')
   } catch (error) {
+    if (run !== pageRun || previewGeneration !== previewRun || !props.open) return
     const code = error instanceof TagManagementApiError ? error.code : 'CLIENT_PROTOCOL_ERROR'
     if (code === 'PREVIEW_STALE') {
       staleMessage.value = t('tags.manage.preview_stale')
       errorMessage.value = staleMessage.value
       invalidatePreview('editing')
       setDiagnostic('preview-stale', code)
+    } else if (code === 'TAG_NOT_FOUND') {
+      await refreshManagedTagsAfterTagNotFound()
+      return
+    } else if (isHealthBlocked(code)) {
+      clearPreview()
+      state.value = 'unavailable'
+      errorMessage.value = mapError(error, 'preview')
+      setDiagnostic('unavailable', code)
     } else {
       errorMessage.value = mapError(error, 'preview')
       state.value = 'error'
@@ -380,7 +461,7 @@ async function loadMore(): Promise<void> {
     }
     announce(errorMessage.value)
   } finally {
-    pageLoading.value = false
+    if (run === pageRun) pageLoading.value = false
   }
 }
 
@@ -390,31 +471,22 @@ async function runSynchronization(result: TagOperationApplyResult): Promise<void
   setDiagnostic('syncing')
   announce(t('tags.manage.syncing'))
   try {
-    if (!syncRefreshDone.value) {
-      const refresh = props.refreshPosts ?? props.refresh
-      if (refresh) await refresh()
-      syncRefreshDone.value = true
-    }
-    if (!syncTagsDone.value) {
-      const tags = await listManagedTags()
-      if (run !== syncRun || !props.open) return
-      finalTags.value = tags
-      managedTags.value = tags
-      syncTagsDone.value = true
-    }
-    if (run !== syncRun || !props.open) return
     const snapshot = selectionSnapshot.value
-    if (snapshot) {
-      const reconciled = reconcileTagSelection({
-        snapshot,
-        currentSelectedTag: props.selectedTag,
-        currentSelectionEpoch: props.selectionEpoch,
-        operation: result.operation,
-        result,
-        managedTags: finalTags.value,
-      })
-      emit('selection-reconciled', reconciled)
+    if (!snapshot || typeof props.syncAfterCommit !== 'function') {
+      // A missing ownership seam is a synchronization failure, never a
+      // successful Apply. The committed result remains available for a
+      // retry, but Apply is not repeated.
+      state.value = 'sync-pending'
+      setDiagnostic('sync-pending', 'CLIENT_PROTOCOL_ERROR')
+      errorMessage.value = t('tags.manage.sync_pending')
+      announce(errorMessage.value)
+      return
     }
+    const synchronized = await props.syncAfterCommit(result, snapshot)
+    if (run !== syncRun || !props.open) return
+    finalTags.value = synchronized.managedTags
+    managedTags.value = synchronized.managedTags
+    reconciledSelectedTag.value = synchronized.selectedTag
     state.value = 'success'
     setDiagnostic('success')
     announce(finalDisplayName.value
@@ -441,8 +513,6 @@ async function onApply(): Promise<void> {
     props.selectionEpoch,
   )
   const run = ++syncRun
-  syncRefreshDone.value = false
-  syncTagsDone.value = false
   errorMessage.value = ''
   staleMessage.value = ''
   state.value = 'applying'
@@ -465,10 +535,14 @@ async function onApply(): Promise<void> {
       announce(errorMessage.value)
       return
     }
+    if (code === 'TAG_NOT_FOUND') {
+      await refreshManagedTagsAfterTagNotFound()
+      return
+    }
     clearPreview()
-    state.value = code === 'TAG_MANAGEMENT_UNAVAILABLE' ? 'unavailable' : 'error'
+    state.value = isHealthBlocked(code) ? 'unavailable' : 'error'
     errorMessage.value = mapError(error, 'apply')
-    setDiagnostic('apply-failure', code)
+    setDiagnostic(isHealthBlocked(code) ? 'unavailable' : 'apply-failure', code)
     if (code === 'INVALID_TAG_NAME') focusDestination()
     announce(errorMessage.value)
   }
@@ -534,6 +608,7 @@ watch(() => props.open, (open) => {
     ++loadRun
     ++previewRun
     ++syncRun
+    clearPreview()
     void trap.deactivate()
   }
 }, { immediate: true })
@@ -542,6 +617,7 @@ onBeforeUnmount(() => {
   ++loadRun
   ++previewRun
   ++syncRun
+  ++pageRun
   void trap.deactivate()
 })
 </script>
@@ -732,7 +808,12 @@ onBeforeUnmount(() => {
               </button>
             </section>
 
-            <section v-if="state === 'success'" class="tag-management-state tag-management-state-success" role="status">
+            <section
+              v-if="state === 'success'"
+              class="tag-management-state tag-management-state-success"
+              role="status"
+              :data-selected-tag="reconciledSelectedTag ?? undefined"
+            >
               <p>{{ t('tags.manage.committed') }}</p>
               <p>{{ finalDisplayName ? t('tags.manage.success', { name: finalDisplayName }) : t('tags.manage.success_generic') }}</p>
             </section>
