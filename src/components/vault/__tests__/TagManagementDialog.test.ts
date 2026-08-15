@@ -1267,4 +1267,69 @@ describe('TagManagementDialog', () => {
     expect(wrapper.text()).toContain('Rename')
     expect(useI18n().t('tags.manage.conflict_destination_exists')).toContain('Use Merge instead')
   })
+
+  it('covers Remove-specific preview, warning, confirmation, and success copy in both locales', async () => {
+    mocks.previewTagOperation.mockResolvedValueOnce(makeRemovePreview())
+    mocks.applyTagOperation.mockResolvedValueOnce(makeRemoveResult())
+    const wrapper = mountTracked()
+
+    useI18n().setLocale('zh')
+    await settle()
+    await wrapper.get('[data-operation="remove"]').trigger('click')
+    await wrapper.get('#tag-management-source').setValue('7')
+    await wrapper.get('form').trigger('submit')
+    await settle()
+
+    expect(wrapper.get('[data-operation="remove"]').text()).toContain('删除')
+    expect(wrapper.findAll('.tag-management-summary dd')[1]?.text()).toBe('#Java')
+    const chineseExplanation = wrapper.get('#tag-management-remove-explanation').text()
+    expect(chineseExplanation).toContain('文档本身不会被删除')
+    expect(chineseExplanation).toContain('Markdown/frontmatter')
+    expect(chineseExplanation).toContain('不会被修改')
+    expect(chineseExplanation).toContain('全局标签记录将被删除')
+    expect(wrapper.get('.tag-management-warnings').text()).toContain('此操作具有破坏性')
+    expect(wrapper.get('[data-action="remove-apply"]').text()).toBe('删除 #Java')
+
+    const chineseConfirmation = pendingRemovalConfirmation()
+    await wrapper.get('[data-action="remove-apply"]').trigger('click')
+    await settle()
+    expect(mocks.confirmCancellable).toHaveBeenLastCalledWith(
+      '确认删除标签 #Java？',
+      expect.stringContaining('文档和 Markdown 文件会保留'),
+      expect.objectContaining({
+        cancelLabel: '取消',
+        confirmLabel: '删除 #Java',
+        destructive: true,
+      }),
+    )
+    chineseConfirmation.resolve(false)
+    await settle()
+
+    useI18n().setLocale('en')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.get('[data-operation="remove"]').text()).toContain('Remove')
+    expect(wrapper.findAll('.tag-management-summary dd')[1]?.text()).toBe('#Java')
+    const englishExplanation = wrapper.get('#tag-management-remove-explanation').text()
+    expect(englishExplanation).toContain('The documents themselves will not be deleted')
+    expect(englishExplanation).toContain('Markdown/frontmatter files')
+    expect(englishExplanation).toContain('global tag record will be deleted')
+    expect(wrapper.get('.tag-management-warnings').text()).toContain('This operation is destructive')
+    expect(wrapper.get('[data-action="remove-apply"]').text()).toBe('Remove #Java')
+
+    const englishConfirmation = pendingRemovalConfirmation()
+    await wrapper.get('[data-action="remove-apply"]').trigger('click')
+    await settle()
+    expect(mocks.confirmCancellable).toHaveBeenLastCalledWith(
+      'Remove tag #Java?',
+      expect.stringContaining('Documents and Markdown files remain'),
+      expect.objectContaining({
+        cancelLabel: 'Cancel',
+        confirmLabel: 'Remove #Java',
+        destructive: true,
+      }),
+    )
+    englishConfirmation.resolve(true)
+    await settle()
+    expect(wrapper.text()).toContain('#Java was removed')
+  })
 })

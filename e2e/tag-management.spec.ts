@@ -467,9 +467,15 @@ test('production Remove previews, confirms once, clears selection, and preserves
     await dialog.locator('[data-action="remove-apply"]').click()
     const confirmation = page.getByRole('alertdialog')
     await expect(confirmation).toContainText(`Remove tag #${sourceName}?`)
-    await confirmation.getByRole('button', { name: 'Cancel' }).click()
+    const cancelButton = confirmation.getByRole('button', { name: 'Cancel' })
+    await expect(cancelButton).toBeFocused()
+    await page.keyboard.press('Escape')
     await expect(confirmation).toHaveCount(0)
     expect(applyRequests).toBe(0)
+    await expect(dialog).toHaveAttribute('data-state', 'preview-ready')
+    await expect(dialog.locator('#tag-management-source')).toHaveValue(String(source!.id))
+    await expect(dialog).toContainText(`#${sourceName}`)
+    await expect(dialog.locator('[data-action="remove-apply"]')).toBeFocused()
 
     const applyResponsePromise = page.waitForResponse((response) => (
       response.request().method() === 'POST'
