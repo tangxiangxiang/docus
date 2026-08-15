@@ -94,6 +94,11 @@ const diagnosticStage = ref('loading')
 const diagnosticCode = ref<TagManagementClientErrorCode | null>(null)
 const selectionSnapshot = ref<TagSelectionSnapshot | null>(null)
 const reconciledSelectedTag = ref<string | null>(null)
+// A successful Apply whose response fails the reviewed-Preview contract is
+// committed, but its contradictory identity fields are unsafe for the normal
+// VaultView reconciliation seam. Retry must therefore use an authoritative
+// managed-tag reload and never pass this result to syncAfterCommit.
+const authoritativeRecoveryPending = ref(false)
 
 let loadRun = 0
 let previewRun = 0
@@ -446,6 +451,7 @@ function resetForOpen(): void {
   destinationSearch.value = ''
   destinationTagId.value = null
   applyResult.value = null
+  authoritativeRecoveryPending.value = false
   selectionSnapshot.value = null
   sourceError.value = ''
   destinationError.value = ''
@@ -462,6 +468,7 @@ async function onPreview(): Promise<void> {
   const revision = operationRevision
   clearPreview()
   applyResult.value = null
+  authoritativeRecoveryPending.value = false
   errorMessage.value = ''
   staleMessage.value = ''
   state.value = 'previewing'
@@ -602,6 +609,35 @@ async function runSynchronization(result: TagOperationApplyResult): Promise<void
   }
 }
 
+async function reloadAuthoritativeTagsAfterCommittedProtocolMismatch(): Promise<void> {
+  const run = ++loadRun
+  const syncGeneration = syncRun
+  state.value = 'syncing'
+  setDiagnostic('syncing', 'CLIENT_PROTOCOL_ERROR')
+  announce(t('tags.manage.syncing'))
+  try {
+    const tags = await listManagedTags()
+    if (run !== loadRun || syncGeneration !== syncRun || !props.open) return
+    managedTags.value = tags
+    finalTags.value = tags
+    selectInitialSource(tags)
+    reconcileDestinationWithTags(tags)
+    applyResult.value = null
+    selectionSnapshot.value = null
+    authoritativeRecoveryPending.value = false
+    state.value = 'editing'
+    setDiagnostic('ready', 'CLIENT_PROTOCOL_ERROR')
+    errorMessage.value = t('tags.manage.committed_protocol_mismatch')
+    announce(errorMessage.value)
+  } catch {
+    if (run !== loadRun || syncGeneration !== syncRun || !props.open) return
+    state.value = 'sync-pending'
+    setDiagnostic('sync-pending', 'CLIENT_PROTOCOL_ERROR')
+    errorMessage.value = t('tags.manage.committed_protocol_mismatch')
+    announce(errorMessage.value)
+  }
+}
+
 async function onApply(): Promise<void> {
   if (!canApply.value || !preview.value || !reviewedOperation.value) return
   const currentPreview = preview.value
@@ -617,13 +653,9 @@ async function onApply(): Promise<void> {
   state.value = 'applying'
   setDiagnostic('applying')
   announce(t('tags.manage.applying'))
+  let result: TagOperationApplyResult
   try {
-    const result = await applyTagOperation(operation, currentPreview.planFingerprint)
-    if (run !== syncRun || !props.open) return
-    assertApplyResultMatchesReviewedPreview(result, currentPreview)
-    applyResult.value = result
-    clearPreview()
-    await runSynchronization(result)
+    result = await applyTagOperation(operation, currentPreview.planFingerprint)
   } catch (error) {
     if (run !== syncRun || !props.open) return
     const code = error instanceof TagManagementApiError ? error.code : 'CLIENT_PROTOCOL_ERROR'
@@ -645,12 +677,39 @@ async function onApply(): Promise<void> {
     setDiagnostic(isHealthBlocked(code) ? 'unavailable' : 'apply-failure', code)
     if (code === 'INVALID_TAG_NAME') focusDestination()
     announce(errorMessage.value)
+    return
   }
+
+  if (run !== syncRun || !props.open) return
+  applyResult.value = result
+
+  try {
+    assertApplyResultMatchesReviewedPreview(result, currentPreview)
+  } catch {
+    // The successful response proves that the mutation committed. Its
+    // contradictory fields cannot be used for reconciliation, so retain
+    // only enough committed context for a safe authoritative reload.
+    authoritativeRecoveryPending.value = true
+    clearPreview()
+    state.value = 'sync-pending'
+    setDiagnostic('sync-pending', 'CLIENT_PROTOCOL_ERROR')
+    errorMessage.value = t('tags.manage.committed_protocol_mismatch')
+    announce(errorMessage.value)
+    return
+  }
+
+  authoritativeRecoveryPending.value = false
+  clearPreview()
+  await runSynchronization(result)
 }
 
 async function retrySynchronization(): Promise<void> {
   if (!applyResult.value || state.value !== 'sync-pending') return
   ++syncRun
+  if (authoritativeRecoveryPending.value) {
+    await reloadAuthoritativeTagsAfterCommittedProtocolMismatch()
+    return
+  }
   await runSynchronization(applyResult.value)
 }
 
@@ -658,6 +717,7 @@ async function reloadManagedTags(): Promise<void> {
   ++previewRun
   clearPreview()
   applyResult.value = null
+  authoritativeRecoveryPending.value = false
   destinationTagId.value = null
   destinationError.value = ''
   await fetchManagedTagsForOpening()

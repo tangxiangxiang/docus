@@ -267,7 +267,7 @@ describe('TagManagementDialog', () => {
     expect(wrapper.find('.tag-management-preview').exists()).toBe(false)
     expect((wrapper.get('#tag-management-destination').element as HTMLInputElement).value).toBe('Backend')
     expect((wrapper.get('#tag-management-source').element as HTMLSelectElement).value).toBe('')
-    expect(wrapper.text()).toContain('source tag no longer exists')
+    expect(wrapper.text()).toContain('source or destination tag no longer exists')
   })
 
   it('refreshes the authoritative list on Apply TAG_NOT_FOUND without re-Applying', async () => {
@@ -290,7 +290,7 @@ describe('TagManagementDialog', () => {
     expect(wrapper.find('.tag-management-preview').exists()).toBe(false)
     expect((wrapper.get('#tag-management-destination').element as HTMLInputElement).value).toBe('Backend')
     expect((wrapper.get('#tag-management-source').element as HTMLSelectElement).value).toBe('')
-    expect(wrapper.text()).toContain('source tag no longer exists')
+    expect(wrapper.text()).toContain('source or destination tag no longer exists')
   })
 
   it('clears a deleted Merge destination after Apply TAG_NOT_FOUND and requires a new Preview', async () => {
@@ -319,7 +319,7 @@ describe('TagManagementDialog', () => {
     expect((wrapper.get('#tag-management-source').element as HTMLSelectElement).value).toBe('7')
     expect((wrapper.get('#tag-management-destination').element as HTMLSelectElement).value).toBe('')
     expect(wrapper.get('#tag-management-destination').findAll('option').map((option) => option.attributes('value'))).toEqual([''])
-    expect(wrapper.text()).toContain('source tag no longer exists')
+    expect(wrapper.text()).toContain('source or destination tag no longer exists')
 
     await wrapper.get('form').trigger('submit')
     await settle()
@@ -395,7 +395,7 @@ describe('TagManagementDialog', () => {
     expect(wrapper.text()).toContain('Surviving destination tag: Python')
   })
 
-  it('fails closed before synchronization when Merge Apply changes the reviewed destination display identity', async () => {
+  it('preserves committed state and reloads authoritative tags when Merge Apply changes the reviewed destination display identity', async () => {
     const reviewedPreview = makeMergePreview()
     const changedResult = makeMergeResult({
       destinationTag: { id: 20, normalizedName: 'python', displayName: 'Changed' },
@@ -424,10 +424,24 @@ describe('TagManagementDialog', () => {
     expect(mocks.assertApplyResultMatchesReviewedPreview).toHaveBeenCalledTimes(1)
     expect(syncAfterCommit).not.toHaveBeenCalled()
     expect(mocks.applyTagOperation).toHaveBeenCalledTimes(1)
-    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('error')
+    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('sync-pending')
     expect(wrapper.get('[role="dialog"]').attributes('data-diagnostic-code')).toBe('CLIENT_PROTOCOL_ERROR')
     expect(wrapper.find('.tag-management-state-success').exists()).toBe(false)
-    expect(wrapper.text()).toContain('Preview again before retrying')
+    expect(wrapper.text()).toContain('was committed')
+    expect(wrapper.text()).toContain('did not match the reviewed Preview')
+    expect(wrapper.text()).not.toContain('The tag operation failed')
+    expect(wrapper.text()).not.toContain('Preview again before retrying')
+    expect(wrapper.find('.tag-management-preview').exists()).toBe(false)
+    expect(wrapper.get('.tag-management-state-error .primary').text()).toBe('Retry synchronization')
+
+    await wrapper.get('.tag-management-state-error .primary').trigger('click')
+    await settle()
+    expect(mocks.listManagedTags).toHaveBeenCalledTimes(2)
+    expect(syncAfterCommit).not.toHaveBeenCalled()
+    expect(mocks.applyTagOperation).toHaveBeenCalledTimes(1)
+    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('editing')
+    expect(wrapper.find('.tag-management-preview').exists()).toBe(false)
+    expect(wrapper.text()).toContain('Do not apply the operation again')
   })
 
   it('clears a destination when the source changes to that stable ID and invalidates Preview', async () => {
