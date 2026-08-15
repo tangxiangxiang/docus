@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   previewTagOperation: vi.fn(),
   getTagOperationPreviewPage: vi.fn(),
   applyTagOperation: vi.fn(),
+  assertApplyResultMatchesReviewedPreview: vi.fn(),
   TagManagementApiError: class extends Error {
     readonly status: number
     readonly code: string
@@ -210,6 +211,7 @@ describe('TagManagementDialog', () => {
       nextAfterDocumentId: 'doc-2',
     }))
     mocks.applyTagOperation.mockReset().mockResolvedValue(makeResult())
+    mocks.assertApplyResultMatchesReviewedPreview.mockReset()
   })
 
   afterEach(() => {
@@ -291,6 +293,40 @@ describe('TagManagementDialog', () => {
     expect(wrapper.text()).toContain('source tag no longer exists')
   })
 
+  it('clears a deleted Merge destination after Apply TAG_NOT_FOUND and requires a new Preview', async () => {
+    mocks.previewTagOperation.mockResolvedValueOnce(makeMergePreview())
+    mocks.applyTagOperation.mockRejectedValueOnce(new mocks.TagManagementApiError('missing', 404, 'TAG_NOT_FOUND'))
+    mocks.listManagedTags
+      .mockReset()
+      .mockResolvedValueOnce(TAGS)
+      .mockResolvedValueOnce([TAGS[0]!])
+    const wrapper = mountTracked({ selectedTag: 'Java' })
+    await settle()
+    await wrapper.get('[data-operation="merge"]').trigger('click')
+    await wrapper.get('#tag-management-source').setValue('7')
+    await wrapper.get('#tag-management-destination').setValue('20')
+    await wrapper.get('form').trigger('submit')
+    await settle()
+    expect(wrapper.find('.tag-management-preview').exists()).toBe(true)
+
+    await wrapper.get('.tag-management-preview .primary').trigger('click')
+    await settle()
+    expect(mocks.applyTagOperation).toHaveBeenCalledTimes(1)
+    expect(mocks.listManagedTags).toHaveBeenCalledTimes(2)
+    expect(mocks.previewTagOperation).toHaveBeenCalledTimes(1)
+    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('editing')
+    expect(wrapper.find('.tag-management-preview').exists()).toBe(false)
+    expect((wrapper.get('#tag-management-source').element as HTMLSelectElement).value).toBe('7')
+    expect((wrapper.get('#tag-management-destination').element as HTMLSelectElement).value).toBe('')
+    expect(wrapper.get('#tag-management-destination').findAll('option').map((option) => option.attributes('value'))).toEqual([''])
+    expect(wrapper.text()).toContain('source tag no longer exists')
+
+    await wrapper.get('form').trigger('submit')
+    await settle()
+    expect(mocks.previewTagOperation).toHaveBeenCalledTimes(1)
+    expect(mocks.applyTagOperation).toHaveBeenCalledTimes(1)
+  })
+
   it('health-blocks management on TAG_IDENTITY_CONFLICT', async () => {
     mocks.previewTagOperation.mockRejectedValueOnce(new mocks.TagManagementApiError('identity conflict', 409, 'TAG_IDENTITY_CONFLICT'))
     const wrapper = mountTracked()
@@ -357,6 +393,41 @@ describe('TagManagementDialog', () => {
     expect(mocks.applyTagOperation).toHaveBeenCalledWith(mergeOperation, 'a'.repeat(64))
     expect(wrapper.get('.tag-management-state-success').attributes('data-selected-tag')).toBe('Python')
     expect(wrapper.text()).toContain('Surviving destination tag: Python')
+  })
+
+  it('fails closed before synchronization when Merge Apply changes the reviewed destination display identity', async () => {
+    const reviewedPreview = makeMergePreview()
+    const changedResult = makeMergeResult({
+      destinationTag: { id: 20, normalizedName: 'python', displayName: 'Changed' },
+      survivorTag: { id: 20, normalizedName: 'python', displayName: 'Changed' },
+      destinationDisplayName: 'Changed',
+      survivorDisplayName: 'Changed',
+    })
+    mocks.previewTagOperation.mockResolvedValueOnce(reviewedPreview)
+    mocks.applyTagOperation.mockResolvedValueOnce(changedResult)
+    mocks.assertApplyResultMatchesReviewedPreview.mockImplementationOnce((result: TagOperationApplyResult, preview: TagOperationPreview) => {
+      expect(result).toBe(changedResult)
+      expect(preview).toBe(reviewedPreview)
+      throw new mocks.TagManagementApiError('invalid response', 200, 'CLIENT_PROTOCOL_ERROR')
+    })
+    const syncAfterCommit = vi.fn(async () => ({ managedTags: TAGS, selectedTag: 'Python' }))
+    const wrapper = mountTracked({ syncAfterCommit })
+    await settle()
+    await wrapper.get('[data-operation="merge"]').trigger('click')
+    await wrapper.get('#tag-management-source').setValue('7')
+    await wrapper.get('#tag-management-destination').setValue('20')
+    await wrapper.get('form').trigger('submit')
+    await settle()
+    await wrapper.get('.tag-management-preview .primary').trigger('click')
+    await settle()
+
+    expect(mocks.assertApplyResultMatchesReviewedPreview).toHaveBeenCalledTimes(1)
+    expect(syncAfterCommit).not.toHaveBeenCalled()
+    expect(mocks.applyTagOperation).toHaveBeenCalledTimes(1)
+    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('error')
+    expect(wrapper.get('[role="dialog"]').attributes('data-diagnostic-code')).toBe('CLIENT_PROTOCOL_ERROR')
+    expect(wrapper.find('.tag-management-state-success').exists()).toBe(false)
+    expect(wrapper.text()).toContain('Preview again before retrying')
   })
 
   it('clears a destination when the source changes to that stable ID and invalidates Preview', async () => {

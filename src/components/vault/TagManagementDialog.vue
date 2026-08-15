@@ -4,6 +4,7 @@ import { useFocusTrap } from '../../composables/useFocusTrap'
 import { useI18n } from '../../composables/useI18n'
 import {
   applyTagOperation,
+  assertApplyResultMatchesReviewedPreview,
   getTagOperationPreviewPage,
   listManagedTags,
   previewTagOperation,
@@ -619,6 +620,7 @@ async function onApply(): Promise<void> {
   try {
     const result = await applyTagOperation(operation, currentPreview.planFingerprint)
     if (run !== syncRun || !props.open) return
+    assertApplyResultMatchesReviewedPreview(result, currentPreview)
     applyResult.value = result
     clearPreview()
     await runSynchronization(result)

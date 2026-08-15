@@ -484,6 +484,35 @@ function operationsEqual(left: TagOperationRequest, right: TagOperationRequest):
   return left.kind === 'remove' && right.kind === 'remove'
 }
 
+/**
+ * Bind a successful Apply response to the exact Preview the user reviewed.
+ * This is intentionally a client-only protocol check: the Preview is never
+ * sent back to the server and no mutable Apply fields are compared here.
+ */
+export function assertApplyResultMatchesReviewedPreview(
+  result: TagOperationApplyResult,
+  preview: TagOperationPreview,
+): void {
+  assert(operationsEqual(result.operation, preview.operation), 'apply operation does not match reviewed Preview')
+  assert(result.appliedFingerprint === preview.planFingerprint, 'apply fingerprint does not match reviewed Preview')
+
+  if (preview.operation.kind !== 'merge') return
+
+  assert(preview.destinationTag !== null, 'reviewed merge destination is required')
+  assert(preview.survivorTag !== null, 'reviewed merge survivor is required')
+  assert(preview.destinationTag.id === preview.operation.destinationTagId, 'reviewed merge destination identity does not match operation')
+  assert(preview.survivorTag.id === preview.operation.destinationTagId, 'reviewed merge survivor identity does not match operation')
+
+  assert(result.kind === 'merge', 'merge apply result kind is invalid')
+  assert(result.destinationTagId === preview.destinationTag.id, 'merge apply destination identity changed from reviewed Preview')
+  assert(result.survivorTagId === preview.destinationTag.id, 'merge apply survivor identity changed from reviewed Preview')
+  assert(result.destinationTag !== null, 'merge apply destination is required')
+  assert(result.survivorTag !== null, 'merge apply survivor is required')
+  assertSameTagRow(result.destinationTag, preview.destinationTag, 'merge apply/reviewed destination')
+  assertSameTagRow(result.survivorTag, preview.destinationTag, 'merge apply survivor/reviewed destination')
+  assertSameTagRow(result.survivorTag, preview.survivorTag, 'merge apply/reviewed survivor')
+}
+
 function parseApplyResult(value: unknown): TagOperationApplyResult {
   assert(isPlainObject(value), 'apply result must be an object')
   assert(hasExactKeys(value, [

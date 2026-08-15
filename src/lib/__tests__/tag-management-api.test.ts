@@ -3,9 +3,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   applyTagOperation,
+  assertApplyResultMatchesReviewedPreview,
   getTagOperationPreviewPage,
   listManagedTags,
   previewTagOperation,
+  type TagOperationApplyResult,
   type TagOperationPreview,
 } from '../tag-management-api'
 
@@ -90,7 +92,17 @@ function applyResult() {
 const mergeOperation = { kind: 'merge' as const, sourceTagId: 7, destinationTagId: 20 }
 const destinationTag = { id: 20, normalizedName: 'backend', displayName: 'Backend' }
 
-function mergeApplyResult() {
+function expectClientProtocolError(action: () => void): void {
+  try {
+    action()
+  } catch (error) {
+    expect(error).toMatchObject({ code: 'CLIENT_PROTOCOL_ERROR' })
+    return
+  }
+  throw new Error('Expected a CLIENT_PROTOCOL_ERROR')
+}
+
+function mergeApplyResult(overrides: Partial<TagOperationApplyResult> = {}): TagOperationApplyResult {
   return {
     operationId: 'operation-merge',
     resultId: 'operation-merge',
@@ -119,6 +131,7 @@ function mergeApplyResult() {
     versionUpdateCount: 1,
     commitTimestamp: 1_700_000_000_000,
     appliedFingerprint: fingerprint,
+    ...overrides,
   }
 }
 
@@ -309,6 +322,52 @@ describe('tag management API runtime guards', () => {
       survivorTagId: null,
       sourceDeleted: true,
     })
+  })
+
+  it('binds Merge Apply identity and display ownership to the reviewed Preview', () => {
+    const reviewedPreview = mergePreview()
+    const validResult = mergeApplyResult()
+    expect(() => assertApplyResultMatchesReviewedPreview(validResult, reviewedPreview)).not.toThrow()
+
+    expectClientProtocolError(() => assertApplyResultMatchesReviewedPreview(
+      mergeApplyResult({
+        destinationTag: { ...destinationTag, displayName: 'BACKEND CHANGED' },
+        survivorTag: { ...destinationTag, displayName: 'BACKEND CHANGED' },
+        destinationDisplayName: 'BACKEND CHANGED',
+        survivorDisplayName: 'BACKEND CHANGED',
+      }),
+      reviewedPreview,
+    ))
+
+    expectClientProtocolError(() => assertApplyResultMatchesReviewedPreview(
+      mergeApplyResult({
+        destinationTag: { ...destinationTag, normalizedName: 'different' },
+        survivorTag: { ...destinationTag, normalizedName: 'different' },
+        destinationNormalizedName: 'different',
+        survivorNormalizedName: 'different',
+      }),
+      reviewedPreview,
+    ))
+
+    expectClientProtocolError(() => assertApplyResultMatchesReviewedPreview(
+      mergeApplyResult({
+        survivorTag: { ...destinationTag, displayName: 'Different survivor' },
+        survivorDisplayName: 'Different survivor',
+      }),
+      reviewedPreview,
+    ))
+
+    expectClientProtocolError(() => assertApplyResultMatchesReviewedPreview(
+      mergeApplyResult({ appliedFingerprint: 'b'.repeat(64) }),
+      reviewedPreview,
+    ))
+
+    expectClientProtocolError(() => assertApplyResultMatchesReviewedPreview(
+      mergeApplyResult({
+        operation: { kind: 'merge', sourceTagId: 7, destinationTagId: 21 },
+      }),
+      reviewedPreview,
+    ))
   })
 })
 
