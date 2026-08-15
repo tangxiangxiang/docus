@@ -38,6 +38,23 @@ function preview(overrides: Partial<TagOperationPreview> = {}): TagOperationPrev
   }
 }
 
+function mergePreview(overrides: Partial<TagOperationPreview> = {}): TagOperationPreview {
+  return preview({
+    operation: mergeOperation,
+    sourceTag: { id: 7, normalizedName: 'java', displayName: 'Java' },
+    destinationTag,
+    requestedDestination: null,
+    survivorTag: destinationTag,
+    displayOnly: false,
+    affectedCount: 2,
+    associationAdds: 1,
+    associationRemoves: 2,
+    duplicateCollapses: 1,
+    tagDeletes: 1,
+    ...overrides,
+  })
+}
+
 function applyResult() {
   return {
     operationId: 'operation-1',
@@ -196,6 +213,24 @@ describe('tag management API runtime guards', () => {
     await expect(previewTagOperation(operation)).rejects.toMatchObject({ code: 'CLIENT_PROTOCOL_ERROR' })
   })
 
+  it('binds Merge Preview to the submitted stable source and destination IDs', async () => {
+    responses.push({ status: 200, body: mergePreview() })
+    await expect(previewTagOperation(mergeOperation)).resolves.toMatchObject({
+      operation: mergeOperation,
+      destinationTag: { id: 20 },
+      survivorTag: { id: 20 },
+    })
+
+    responses.push({
+      status: 200,
+      body: mergePreview({
+        destinationTag: { id: 7, normalizedName: 'java', displayName: 'Java' },
+        survivorTag: { id: 7, normalizedName: 'java', displayName: 'Java' },
+      }),
+    })
+    await expect(previewTagOperation(mergeOperation)).rejects.toMatchObject({ code: 'CLIENT_PROTOCOL_ERROR' })
+  })
+
   it('rejects malformed Apply results and malformed error envelopes safely', async () => {
     responses.push({ status: 200, body: { ...applyResult(), affectedCount: -1 } })
     await expect(applyTagOperation(operation, fingerprint)).rejects.toMatchObject({ code: 'CLIENT_PROTOCOL_ERROR' })
@@ -248,6 +283,16 @@ describe('tag management API runtime guards', () => {
       body: { ...removeApplyResult(), survivorTag: destinationTag, survivorTagId: 20 },
     })
     await expect(applyTagOperation(removeApplyResult().operation, fingerprint)).rejects.toMatchObject({ code: 'CLIENT_PROTOCOL_ERROR' })
+
+    for (const overrides of [
+      { sourceDeleted: false },
+      { tagCreates: 1 },
+      { tagDeletes: 0 },
+      { displayOnly: true },
+    ]) {
+      responses.push({ status: 200, body: { ...mergeApplyResult(), ...overrides } })
+      await expect(applyTagOperation(mergeOperation, fingerprint)).rejects.toMatchObject({ code: 'CLIENT_PROTOCOL_ERROR' })
+    }
   })
 
   it('accepts the frozen server identity shapes for Merge and Remove', async () => {

@@ -12,6 +12,7 @@ import {
   type PreviewDocument,
   type TagManagementClientErrorCode,
   type TagOperationApplyResult,
+  type TagOperationKind,
   type TagOperationPreview,
   type TagOperationRequest,
 } from '../../lib/tag-management-api'
@@ -33,6 +34,8 @@ type ManagerState =
   | 'sync-pending'
   | 'unavailable'
   | 'error'
+
+type VisibleOperationKind = Exclude<TagOperationKind, 'remove'>
 
 interface TagManagementDialogProps {
   open: boolean
@@ -63,13 +66,17 @@ const trap = useFocusTrap()
 const modalRef = ref<HTMLElement | null>(null)
 const sourceSelectRef = ref<HTMLSelectElement | null>(null)
 const destinationInputRef = ref<HTMLInputElement | null>(null)
+const destinationSelectRef = ref<HTMLSelectElement | null>(null)
 const previewHeadingRef = ref<HTMLElement | null>(null)
 
 const state = ref<ManagerState>('loading')
 const managedTags = ref<ManagedTag[]>([])
+const operationKind = ref<VisibleOperationKind>('rename')
 const sourceTagId = ref<number | null>(null)
 const destinationName = ref('')
 const tagSearch = ref('')
+const destinationSearch = ref('')
+const destinationTagId = ref<number | null>(null)
 const preview = ref<TagOperationPreview | null>(null)
 const reviewedOperation = ref<TagOperationRequest | null>(null)
 const continuationPages = ref<PreviewDocument[][]>([])
@@ -107,6 +114,35 @@ const filteredManagedTags = computed(() => {
   }
   return filtered
 })
+
+const filteredDestinationTags = computed(() => {
+  const needle = destinationSearch.value.trim().toLocaleLowerCase()
+  const filtered = managedTags.value.filter((tag) => (
+    tag.id !== sourceTagId.value
+    && (!needle
+      || tag.displayName.toLocaleLowerCase().includes(needle)
+      || tag.normalizedName.includes(needle))
+  ))
+  if (destinationTagId.value !== null && !filtered.some((tag) => tag.id === destinationTagId.value)) {
+    const selected = managedTags.value.find((tag) => (
+      tag.id === destinationTagId.value && tag.id !== sourceTagId.value
+    ))
+    return selected ? [selected, ...filtered] : filtered
+  }
+  return filtered
+})
+
+const selectedDestinationTag = computed(() => (
+  destinationTagId.value === null
+    ? null
+    : managedTags.value.find((tag) => tag.id === destinationTagId.value) ?? null
+))
+
+const selectedSourceTag = computed(() => (
+  sourceTagId.value === null
+    ? null
+    : managedTags.value.find((tag) => tag.id === sourceTagId.value) ?? null
+))
 
 const renderedSample = computed(() => {
   const seen = new Set<string>()
@@ -153,16 +189,31 @@ const canEdit = computed(() => ![
   'loading', 'previewing', 'applying', 'syncing', 'sync-pending', 'unavailable',
 ].includes(state.value))
 
+const hasValidMergeDestination = computed(() => (
+  operationKind.value === 'merge'
+  && selectedSourceTag.value !== null
+  && destinationTagId.value !== null
+  && sourceTagId.value !== destinationTagId.value
+  && managedTags.value.some((tag) => tag.id === destinationTagId.value)
+))
+
 const canPreview = computed(() => (
   canEdit.value
-  && sourceTagId.value !== null
-  && destinationName.value.trim().length > 0
+  && selectedSourceTag.value !== null
+  && (operationKind.value === 'merge'
+    ? hasValidMergeDestination.value
+    : destinationName.value.trim().length > 0)
 ))
 
 const canApply = computed(() => (
   state.value === 'preview-ready'
   && preview.value !== null
   && reviewedOperation.value !== null
+  && operationsEqual(preview.value.operation, reviewedOperation.value)
+  && (() => {
+    const current = operationFromForm()
+    return current !== null && operationsEqual(current, reviewedOperation.value)
+  })()
   && preview.value.allowedToApply
   && preview.value.planFingerprint.length === 64
   && !pageLoading.value
@@ -194,6 +245,13 @@ function clearPreview(): void {
   pageLoading.value = false
 }
 
+function operationsEqual(left: TagOperationRequest, right: TagOperationRequest): boolean {
+  if (left.kind !== right.kind || left.sourceTagId !== right.sourceTagId) return false
+  if (left.kind === 'rename' && right.kind === 'rename') return left.destinationName === right.destinationName
+  if (left.kind === 'merge' && right.kind === 'merge') return left.destinationTagId === right.destinationTagId
+  return false
+}
+
 function invalidatePreview(nextState: ManagerState = 'editing'): void {
   previewRun += 1
   clearPreview()
@@ -203,17 +261,30 @@ function invalidatePreview(nextState: ManagerState = 'editing'): void {
 }
 
 function focusDestination(): void {
-  void nextTick(() => destinationInputRef.value?.focus())
+  void nextTick(() => {
+    if (operationKind.value === 'merge') destinationSelectRef.value?.focus()
+    else destinationInputRef.value?.focus()
+  })
 }
 
 function validateForm(): boolean {
   sourceError.value = ''
   destinationError.value = ''
   errorMessage.value = ''
-  if (sourceTagId.value === null) {
+  if (selectedSourceTag.value === null) {
     sourceError.value = t('tags.manage.source_required')
     void nextTick(() => sourceSelectRef.value?.focus())
     return false
+  }
+  if (operationKind.value === 'merge') {
+    if (!hasValidMergeDestination.value) {
+      destinationError.value = sourceTagId.value === destinationTagId.value
+        ? t('tags.manage.merge_same_tag')
+        : t('tags.manage.destination_required_merge')
+      focusDestination()
+      return false
+    }
+    return true
   }
   const value = destinationName.value
   if (!value.trim()) {
@@ -230,10 +301,20 @@ function validateForm(): boolean {
 }
 
 function operationFromForm(): TagOperationRequest | null {
-  if (sourceTagId.value === null) return null
+  const source = sourceTagId.value
+  if (source === null || selectedSourceTag.value === null) return null
+  if (operationKind.value === 'merge') {
+    const destination = destinationTagId.value
+    if (!hasValidMergeDestination.value || destination === null) return null
+    return {
+      kind: 'merge',
+      sourceTagId: source,
+      destinationTagId: destination,
+    }
+  }
   return {
     kind: 'rename',
-    sourceTagId: sourceTagId.value,
+    sourceTagId: source,
     destinationName: destinationName.value,
   }
 }
@@ -248,7 +329,11 @@ function mapError(error: unknown, stage: 'preview' | 'apply' | 'load'): string {
   if (code === 'TAG_MANAGEMENT_UNAVAILABLE') return t('tags.manage.error_unavailable')
   if (code === 'TAG_IDENTITY_CONFLICT') return t('tags.manage.error_identity_conflict')
   if (code === 'TAG_NOT_FOUND') return t('tags.manage.error_not_found')
-  if (code === 'DESTINATION_EXISTS') return t('tags.manage.conflict_destination_exists')
+  if (code === 'DESTINATION_EXISTS') {
+    return operationKind.value === 'merge'
+      ? t('tags.manage.conflict_generic')
+      : t('tags.manage.conflict_destination_exists')
+  }
   if (code === 'INVALID_OPERATION' || code === 'SOURCE_DESTINATION_SAME') {
     return stage === 'preview' ? t('tags.manage.conflict_generic') : t('tags.manage.error_generic')
   }
@@ -269,6 +354,14 @@ function selectInitialSource(tags: ManagedTag[]): void {
   sourceTagId.value = null
 }
 
+function reconcileDestinationWithTags(tags: ManagedTag[]): void {
+  if (destinationTagId.value === null) return
+  if (!tags.some((tag) => tag.id === destinationTagId.value && tag.id !== sourceTagId.value)) {
+    destinationTagId.value = null
+    destinationError.value = ''
+  }
+}
+
 async function fetchManagedTagsForOpening(): Promise<void> {
   const run = ++loadRun
   state.value = 'loading'
@@ -282,6 +375,7 @@ async function fetchManagedTagsForOpening(): Promise<void> {
     managedTags.value = tags
     finalTags.value = tags
     selectInitialSource(tags)
+    reconcileDestinationWithTags(tags)
     state.value = 'ready'
     setDiagnostic('ready')
     announce(t('tags.manage.preview_required'))
@@ -318,6 +412,7 @@ async function refreshManagedTagsAfterTagNotFound(): Promise<void> {
       sourceTagId.value = null
       sourceError.value = ''
     }
+    reconcileDestinationWithTags(tags)
     state.value = 'editing'
     setDiagnostic('ready', 'TAG_NOT_FOUND')
     errorMessage.value = t('tags.manage.error_not_found')
@@ -343,9 +438,12 @@ function resetForOpen(): void {
   clearPreview()
   managedTags.value = []
   finalTags.value = []
+  operationKind.value = 'rename'
   sourceTagId.value = null
   destinationName.value = ''
   tagSearch.value = ''
+  destinationSearch.value = ''
+  destinationTagId.value = null
   applyResult.value = null
   selectionSnapshot.value = null
   sourceError.value = ''
@@ -558,6 +656,8 @@ async function reloadManagedTags(): Promise<void> {
   ++previewRun
   clearPreview()
   applyResult.value = null
+  destinationTagId.value = null
+  destinationError.value = ''
   await fetchManagedTagsForOpening()
 }
 
@@ -582,10 +682,30 @@ function onBackdropClick(): void {
 function onSourceChange(event: Event): void {
   const value = (event.target as HTMLSelectElement).value
   sourceTagId.value = value ? Number(value) : null
+  if (sourceTagId.value !== null && sourceTagId.value === destinationTagId.value) {
+    destinationTagId.value = null
+  }
 }
 
-watch([sourceTagId, destinationName], ([nextSource, nextDestination], [previousSource, previousDestination]) => {
-  if (nextSource === previousSource && nextDestination === previousDestination) return
+function onDestinationChange(event: Event): void {
+  const value = (event.target as HTMLSelectElement).value
+  destinationTagId.value = value ? Number(value) : null
+}
+
+function setOperationKind(kind: VisibleOperationKind): void {
+  if (operationKind.value === kind) return
+  operationKind.value = kind
+  destinationTagId.value = null
+  destinationSearch.value = ''
+  operationRevision += 1
+  invalidatePreview('editing')
+  sourceError.value = ''
+  destinationError.value = ''
+  announce(kind === 'merge' ? t('tags.manage.merge_selected') : t('tags.manage.rename_selected'))
+}
+
+watch([operationKind, sourceTagId, destinationTagId, destinationName], (next, previous) => {
+  if (next.every((value, index) => value === previous[index])) return
   operationRevision += 1
   sourceError.value = ''
   destinationError.value = ''
@@ -676,6 +796,26 @@ onBeforeUnmount(() => {
 
           <template v-else>
             <form class="tag-management-form" @submit.prevent="onPreview">
+              <fieldset class="tag-management-mode" :disabled="!canEdit">
+                <legend>{{ t('tags.manage.operation') }}</legend>
+                <div class="tag-management-mode-buttons" role="group" :aria-label="t('tags.manage.operation')">
+                  <button
+                    type="button"
+                    class="tag-management-mode-button"
+                    data-operation="rename"
+                    :aria-pressed="operationKind === 'rename'"
+                    @click="setOperationKind('rename')"
+                  >{{ t('tags.manage.rename') }}</button>
+                  <button
+                    type="button"
+                    class="tag-management-mode-button"
+                    data-operation="merge"
+                    :aria-pressed="operationKind === 'merge'"
+                    @click="setOperationKind('merge')"
+                  >{{ t('tags.manage.merge') }}</button>
+                </div>
+              </fieldset>
+
               <div class="tag-management-field">
                 <label for="tag-management-search">{{ t('tags.manage.search') }}</label>
                 <input
@@ -708,7 +848,49 @@ onBeforeUnmount(() => {
                 <p v-if="sourceError" id="tag-management-source-error" class="tag-management-error" role="alert">{{ sourceError }}</p>
               </div>
 
-              <div class="tag-management-field">
+              <template v-if="operationKind === 'merge'">
+                <div class="tag-management-field">
+                  <label for="tag-management-destination-search">{{ t('tags.manage.destination_search') }}</label>
+                  <input
+                    id="tag-management-destination-search"
+                    v-model="destinationSearch"
+                    type="search"
+                    class="tag-management-input"
+                    :placeholder="t('tags.manage.destination_search_placeholder')"
+                    :disabled="!canEdit"
+                    @input="destinationError = ''"
+                  />
+                </div>
+
+                <div class="tag-management-field">
+                  <label for="tag-management-destination">{{ t('tags.manage.destination_tag') }}</label>
+                  <select
+                    id="tag-management-destination"
+                    ref="destinationSelectRef"
+                    class="tag-management-input"
+                    :value="destinationTagId ?? ''"
+                    :disabled="!canEdit || managedTags.length === 0"
+                    :aria-invalid="destinationError ? 'true' : undefined"
+                    :aria-describedby="destinationError ? 'tag-management-destination-error tag-management-destination-help' : 'tag-management-destination-help'"
+                    @change="onDestinationChange"
+                  >
+                    <option value="">{{ t('tags.manage.destination_placeholder') }}</option>
+                    <option v-for="tag in filteredDestinationTags" :key="tag.id" :value="tag.id">
+                      #{{ tag.displayName }} · {{ tag.documentCount }}
+                    </option>
+                  </select>
+                  <p id="tag-management-destination-help" class="tag-management-help">{{ t('tags.manage.destination_help_merge') }}</p>
+                  <p v-if="selectedDestinationTag" class="tag-management-selected" data-selected-destination>
+                    {{ t('tags.manage.destination_selected', { name: selectedDestinationTag.displayName }) }}
+                  </p>
+                  <p v-if="destinationSearch.trim() && filteredDestinationTags.length === 0" class="tag-management-help">
+                    {{ t('tags.manage.destination_no_matches') }}
+                  </p>
+                  <p v-if="destinationError" id="tag-management-destination-error" class="tag-management-error" role="alert">{{ destinationError }}</p>
+                </div>
+              </template>
+
+              <div v-else class="tag-management-field">
                 <label for="tag-management-destination">{{ t('tags.manage.destination') }}</label>
                 <input
                   id="tag-management-destination"
@@ -737,9 +919,9 @@ onBeforeUnmount(() => {
             <section v-if="preview" class="tag-management-preview" aria-live="polite" :aria-busy="state === 'previewing'">
               <h3 ref="previewHeadingRef" tabindex="-1">{{ t('tags.manage.preview_ready', { count: preview.affectedCount }) }}</h3>
               <dl class="tag-management-summary">
-                <div><dt>{{ t('tags.manage.preview_operation') }}</dt><dd>{{ t('tags.manage.rename') }}</dd></div>
+                <div><dt>{{ t('tags.manage.preview_operation') }}</dt><dd>{{ preview.operation.kind === 'merge' ? t('tags.manage.merge') : t('tags.manage.rename') }}</dd></div>
                 <div><dt>{{ t('tags.manage.source') }}</dt><dd>#{{ preview.sourceTag.displayName }}</dd></div>
-                <div><dt>{{ t('tags.manage.requested_destination') }}</dt><dd>#{{ preview.requestedDestination?.displayName ?? destinationName }}</dd></div>
+                <div><dt>{{ preview.operation.kind === 'merge' ? t('tags.manage.destination_tag') : t('tags.manage.requested_destination') }}</dt><dd>#{{ preview.operation.kind === 'merge' ? preview.destinationTag?.displayName : (preview.requestedDestination?.displayName ?? destinationName) }}</dd></div>
                 <div><dt>{{ t('tags.manage.affected_documents') }}</dt><dd>{{ preview.affectedCount }}</dd></div>
                 <div><dt>{{ t('tags.manage.association_adds') }}</dt><dd>{{ preview.associationAdds }}</dd></div>
                 <div><dt>{{ t('tags.manage.association_removes') }}</dt><dd>{{ preview.associationRemoves }}</dd></div>
@@ -753,8 +935,19 @@ onBeforeUnmount(() => {
                 <span>{{ t('tags.manage.display_rename_detail') }}</span>
               </div>
 
+              <div v-if="preview.operation.kind === 'merge'" class="tag-management-merge-guidance">
+                <strong>{{ t('tags.manage.merge_destination_survives') }}</strong>
+                <span>{{ t('tags.manage.merge_destination_survives_detail', { destination: preview.destinationTag?.displayName ?? '', source: preview.sourceTag.displayName }) }}</span>
+                <span>{{ t('tags.manage.merge_source_deletion', { source: preview.sourceTag.displayName, destination: preview.destinationTag?.displayName ?? '' }) }}</span>
+                <span>{{ t('tags.manage.merge_overlap_detail') }}</span>
+              </div>
+
               <div v-if="preview.conflictCode" class="tag-management-conflict" role="alert">
-                {{ preview.conflictCode === 'DESTINATION_EXISTS'
+                {{ preview.operation.kind === 'merge'
+                  ? preview.conflictCode === 'SOURCE_DESTINATION_SAME'
+                    ? t('tags.manage.merge_same_tag')
+                    : t('tags.manage.conflict_generic')
+                  : preview.conflictCode === 'DESTINATION_EXISTS'
                   ? t('tags.manage.conflict_destination_exists')
                   : preview.conflictCode === 'INVALID_OPERATION'
                     ? t('tags.manage.conflict_noop')
@@ -792,7 +985,7 @@ onBeforeUnmount(() => {
 
               <div class="tag-management-actions">
                 <button type="button" class="tag-management-button primary" :disabled="!canApply" @click="onApply">
-                  {{ state === 'applying' ? t('tags.manage.applying') : t('tags.manage.apply') }}
+                  {{ state === 'applying' ? t('tags.manage.applying') : (operationKind === 'merge' ? t('tags.manage.apply_merge') : t('tags.manage.apply')) }}
                 </button>
               </div>
             </section>
@@ -815,7 +1008,11 @@ onBeforeUnmount(() => {
               :data-selected-tag="reconciledSelectedTag ?? undefined"
             >
               <p>{{ t('tags.manage.committed') }}</p>
-              <p>{{ finalDisplayName ? t('tags.manage.success', { name: finalDisplayName }) : t('tags.manage.success_generic') }}</p>
+              <p>{{ finalDisplayName
+                ? (applyResult?.operation.kind === 'merge'
+                  ? t('tags.manage.merge_success', { name: finalDisplayName })
+                  : t('tags.manage.success', { name: finalDisplayName }))
+                : t('tags.manage.success_generic') }}</p>
             </section>
 
             <p v-if="managedTags.length === 0 && state !== 'sync-pending' && state !== 'success'" class="tag-management-empty">
@@ -878,6 +1075,13 @@ onBeforeUnmount(() => {
 .tag-management-body { max-height: calc(100vh - 140px); overflow-y: auto; padding: 18px 20px 20px; }
 .tag-management-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .tag-management-form { display: grid; gap: 14px; }
+.tag-management-mode { display: grid; gap: 7px; margin: 0; padding: 0; border: 0; }
+.tag-management-mode legend { padding: 0; color: var(--text-h); font-size: 0.78rem; font-weight: 600; }
+.tag-management-mode-buttons { display: flex; flex-wrap: wrap; gap: 7px; }
+.tag-management-mode-button { min-height: 32px; padding: 5px 12px; border: 1px solid var(--border); border-radius: 5px; background: transparent; color: var(--text); font: inherit; font-size: 0.78rem; cursor: pointer; }
+.tag-management-mode-button[aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--text-h); }
+.tag-management-mode-button:hover:not(:disabled) { background: var(--bg-soft); }
+.tag-management-mode:disabled .tag-management-mode-button { cursor: not-allowed; opacity: 0.55; }
 .tag-management-field { display: grid; gap: 5px; }
 .tag-management-field label { color: var(--text-h); font-size: 0.78rem; font-weight: 600; }
 .tag-management-input {
@@ -894,6 +1098,7 @@ onBeforeUnmount(() => {
 .tag-management-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .tag-management-input:disabled { cursor: not-allowed; opacity: 0.55; }
 .tag-management-help { margin: 0; color: var(--text-muted); font-size: 0.72rem; line-height: 1.4; }
+.tag-management-selected { margin: 0; color: var(--text); font-size: 0.76rem; font-weight: 600; }
 .tag-management-error { margin: 0; color: var(--danger, #c94f4f); font-size: 0.76rem; line-height: 1.45; }
 .tag-management-banner { margin-top: 14px; padding: 9px 10px; border: 1px solid color-mix(in srgb, var(--danger, #c94f4f) 35%, var(--border)); border-radius: 5px; background: color-mix(in srgb, var(--danger, #c94f4f) 8%, transparent); }
 .tag-management-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
@@ -916,6 +1121,8 @@ onBeforeUnmount(() => {
 .tag-management-summary dd { margin: 0; color: var(--text); font-variant-numeric: tabular-nums; text-align: right; }
 .tag-management-display-only { display: grid; gap: 4px; margin-top: 14px; padding: 10px 12px; border-left: 3px solid var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); font-size: 0.78rem; line-height: 1.45; }
 .tag-management-display-only span { color: var(--text-muted); }
+.tag-management-merge-guidance { display: grid; gap: 5px; margin-top: 14px; padding: 10px 12px; border-left: 3px solid var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); font-size: 0.78rem; line-height: 1.45; }
+.tag-management-merge-guidance span { color: var(--text-muted); }
 .tag-management-conflict { margin-top: 14px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--danger, #c94f4f) 35%, var(--border)); border-radius: 5px; color: var(--danger, #c94f4f); font-size: 0.78rem; line-height: 1.45; }
 .tag-management-warnings { margin-top: 14px; padding: 10px 12px; border-left: 3px solid var(--warning, #d97706); background: color-mix(in srgb, var(--warning, #d97706) 8%, transparent); font-size: 0.76rem; }
 .tag-management-warnings h4, .tag-management-sample h4 { margin: 0 0 7px; font-size: 0.78rem; }

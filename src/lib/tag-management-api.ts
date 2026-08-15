@@ -236,6 +236,7 @@ function parseOperation(value: unknown, field = 'operation'): TagOperationReques
     assert(hasExactKeys(value, ['kind', 'sourceTagId', 'destinationTagId']), `${field} shape is invalid`)
     assert(isPositiveSafeInteger(value.sourceTagId), `${field}.sourceTagId is invalid`)
     assert(isPositiveSafeInteger(value.destinationTagId), `${field}.destinationTagId is invalid`)
+    assert(value.sourceTagId !== value.destinationTagId, `${field} source and destination must differ`)
     return {
       kind: 'merge',
       sourceTagId: value.sourceTagId,
@@ -343,6 +344,30 @@ function parsePreview(value: unknown, maxSample: number): TagOperationPreview {
   }
 }
 
+function assertPreviewSemantics(preview: TagOperationPreview, operation: TagOperationRequest): void {
+  assert(operationsEqual(preview.operation, operation), 'preview operation does not match request')
+  assert(preview.sourceTag.id === operation.sourceTagId, 'preview source identity does not match request')
+
+  if (operation.kind === 'merge') {
+    assert(preview.destinationTag !== null, 'merge preview destination is required')
+    assert(preview.destinationTag.id === operation.destinationTagId, 'merge preview destination identity does not match request')
+    assert(preview.survivorTag !== null, 'merge preview survivor is required')
+    assert(preview.survivorTag.id === operation.destinationTagId, 'merge preview survivor identity does not match request')
+    assert(preview.displayOnly === false, 'merge preview cannot be display-only')
+    assert(preview.requestedDestination === null, 'merge preview cannot have a requested display name')
+    if (preview.allowedToApply) {
+      assert(preview.tagCreates === 0, 'merge preview tagCreates must be zero')
+      assert(preview.tagDeletes === 1, 'merge preview must delete one tag')
+    }
+    return
+  }
+
+  if (operation.kind === 'rename') {
+    assert(preview.survivorTag !== null, 'rename preview survivor is required')
+    assert(preview.survivorTag.id === operation.sourceTagId, 'rename preview survivor identity does not match request')
+  }
+}
+
 function parseNullableTag(value: unknown, field: string): TagRowView | null {
   return value === null ? null : parseTagRow(value, field)
 }
@@ -429,6 +454,7 @@ function assertApplyResultSemantics(result: TagOperationApplyResult): void {
   }
 
   if (result.operation.kind === 'merge') {
+    assert(result.operation.sourceTagId !== result.operation.destinationTagId, 'merge source and destination must differ')
     assert(result.destinationTagId === result.operation.destinationTagId, 'merge destinationTagId does not match operation')
     assert(result.destinationTag !== null, 'merge destinationTag is required')
     assert(result.survivorTagId === result.operation.destinationTagId, 'merge survivorTagId must preserve destination identity')
@@ -608,11 +634,13 @@ export async function listManagedTags(): Promise<ManagedTag[]> {
 
 export async function previewTagOperation(operation: TagOperationRequest): Promise<TagOperationPreview> {
   parseOperation(operation)
-  return request('/api/tags/operations/preview', {
+  const preview = await request('/api/tags/operations/preview', {
     method: 'POST',
     headers: requestHeaders(),
     body: operationBody(operation),
   }, (value) => parsePreview(value, INITIAL_SAMPLE_LIMIT))
+  assertPreviewSemantics(preview, operation)
+  return preview
 }
 
 export async function getTagOperationPreviewPage(
@@ -637,7 +665,7 @@ export async function getTagOperationPreviewPage(
     body: JSON.stringify(body),
   }, (value) => parsePreview(value, PAGE_SAMPLE_LIMIT))
   if (page.planFingerprint !== planFingerprint) throw protocolError('page fingerprint changed')
-  if (!operationsEqual(page.operation, operation)) throw protocolError('page operation changed')
+  assertPreviewSemantics(page, operation)
   return page
 }
 

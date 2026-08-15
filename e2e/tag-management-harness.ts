@@ -12,6 +12,9 @@ import {
 type TagManagementHarness = {
   app: ReturnType<typeof createApp>
   host: HTMLElement
+  setSelectedTag: (tag: string | null) => void
+  holdSync: () => void
+  releaseSync: () => void
 }
 
 declare global {
@@ -20,11 +23,13 @@ declare global {
   }
 }
 
-/** Test-only mount for the still-hidden T2-3 dialog. */
+/** Test-only mount for the still-hidden T2-4 dialog. */
 export function mountTagManagementHarness(): void {
-  const selectedTag = ref('Java')
+  const selectedTag = ref<string | null>('Java')
   const selectionEpoch = ref(0)
   const open = ref(true)
+  let syncHeld = false
+  let releaseHeldSync: (() => void) | null = null
   const syncAfterCommit = async (
     result: TagOperationApplyResult,
     snapshot: TagSelectionSnapshot,
@@ -33,6 +38,9 @@ export function mountTagManagementHarness(): void {
       fetch('/api/posts'),
       listManagedTags(),
     ])
+    if (syncHeld) {
+      await new Promise<void>((resolve) => { releaseHeldSync = resolve })
+    }
     const finalSelectedTag = reconcileTagSelection({
       snapshot,
       currentSelectedTag: selectedTag.value,
@@ -45,7 +53,7 @@ export function mountTagManagementHarness(): void {
     return { managedTags, selectedTag: finalSelectedTag }
   }
   const host = document.createElement('div')
-  host.id = 't2-3-tag-management-harness'
+  host.id = 't2-4-tag-management-harness'
   document.body.append(host)
   const app = createApp({
     setup() {
@@ -62,7 +70,22 @@ export function mountTagManagementHarness(): void {
     },
   })
   app.mount(host)
-  window.__t2TagManagementHarness = { app, host }
+  window.__t2TagManagementHarness = {
+    app,
+    host,
+    setSelectedTag(tag) {
+      selectedTag.value = tag
+      selectionEpoch.value += 1
+    },
+    holdSync() {
+      syncHeld = true
+    },
+    releaseSync() {
+      syncHeld = false
+      releaseHeldSync?.()
+      releaseHeldSync = null
+    },
+  }
 }
 
 export function unmountTagManagementHarness(): void {

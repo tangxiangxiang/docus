@@ -39,6 +39,8 @@ const RENAMED_TAGS: ManagedTag[] = [
   TAGS[1]!,
 ]
 const operation = { kind: 'rename' as const, sourceTagId: 7, destinationName: 'Backend' }
+const mergeOperation = { kind: 'merge' as const, sourceTagId: 7, destinationTagId: 20 }
+const mergeDestination = { id: 20, normalizedName: 'python', displayName: 'Python' }
 
 function makePreview(overrides: Partial<TagOperationPreview> = {}): TagOperationPreview {
   return {
@@ -89,6 +91,58 @@ function makeResult(overrides: Partial<TagOperationApplyResult> = {}): TagOperat
     duplicateCollapses: 0,
     tagCreates: 0,
     tagDeletes: 0,
+    displayOnly: false,
+    versionUpdateCount: 3,
+    commitTimestamp: 1_700_000_000_000,
+    appliedFingerprint: 'a'.repeat(64),
+    ...overrides,
+  }
+}
+
+function makeMergePreview(overrides: Partial<TagOperationPreview> = {}): TagOperationPreview {
+  return makePreview({
+    operation: mergeOperation,
+    sourceTag: { id: 7, normalizedName: 'java', displayName: 'Java' },
+    destinationTag: mergeDestination,
+    requestedDestination: null,
+    survivorTag: mergeDestination,
+    displayOnly: false,
+    affectedCount: 3,
+    associationAdds: 2,
+    associationRemoves: 3,
+    duplicateCollapses: 1,
+    tagCreates: 0,
+    tagDeletes: 1,
+    warnings: ['DESTRUCTIVE'],
+    ...overrides,
+  })
+}
+
+function makeMergeResult(overrides: Partial<TagOperationApplyResult> = {}): TagOperationApplyResult {
+  return {
+    operationId: 'merge-operation-1',
+    resultId: 'merge-operation-1',
+    kind: 'merge',
+    operation: mergeOperation,
+    sourceTagId: 7,
+    destinationTagId: 20,
+    survivorTagId: 20,
+    sourceTag: null,
+    destinationTag: mergeDestination,
+    survivorTag: mergeDestination,
+    sourceDisplayName: null,
+    sourceNormalizedName: null,
+    destinationDisplayName: 'Python',
+    destinationNormalizedName: 'python',
+    survivorDisplayName: 'Python',
+    survivorNormalizedName: 'python',
+    sourceDeleted: true,
+    affectedCount: 3,
+    associationAdds: 2,
+    associationRemoves: 3,
+    duplicateCollapses: 1,
+    tagCreates: 0,
+    tagDeletes: 1,
     displayOnly: false,
     versionUpdateCount: 3,
     commitTimestamp: 1_700_000_000_000,
@@ -178,8 +232,8 @@ describe('TagManagementDialog', () => {
     expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('ready')
     expect(wrapper.get('#tag-management-source').findAll('option')).toHaveLength(3)
     expect(wrapper.text()).toContain('Manage tags')
-    expect(wrapper.text()).not.toContain('Merge')
     expect(wrapper.text()).not.toContain('Remove')
+    expect(wrapper.find('[data-operation="merge"]').exists()).toBe(true)
   })
 
   it('renders a safe unavailable state and makes Preview/Apply impossible', async () => {
@@ -249,6 +303,136 @@ describe('TagManagementDialog', () => {
     expect(wrapper.text()).toContain('Tag identity health failed')
     expect(wrapper.find('.tag-management-preview').exists()).toBe(false)
     expect(mocks.applyTagOperation).not.toHaveBeenCalled()
+  })
+
+  it('offers Merge without Remove and binds an existing destination by stable ID', async () => {
+    const wrapper = mountTracked()
+    await settle()
+    await wrapper.get('[data-operation="merge"]').trigger('click')
+    await wrapper.get('#tag-management-source').setValue('7')
+
+    const destination = wrapper.get('#tag-management-destination')
+    expect(destination.findAll('option').map((option) => option.attributes('value'))).toEqual(['', '20'])
+    expect(wrapper.text()).not.toContain('Remove')
+
+    await wrapper.get('#tag-management-destination-search').setValue('python')
+    expect(destination.findAll('option').map((option) => option.attributes('value'))).toEqual(['', '20'])
+    await destination.setValue('20')
+    expect((destination.element as HTMLSelectElement).value).toBe('20')
+    expect(wrapper.find('[data-selected-destination]').text()).toContain('Python')
+
+    await wrapper.get('#tag-management-destination-search').setValue('java')
+    expect((destination.element as HTMLSelectElement).value).toBe('20')
+    expect(wrapper.find('[data-selected-destination]').text()).toContain('Python')
+    expect(destination.findAll('option').map((option) => option.attributes('value'))).toEqual(['', '20'])
+  })
+
+  it('requires a current Merge Preview and renders overlap, survivor, and deletion evidence', async () => {
+    mocks.previewTagOperation.mockResolvedValueOnce(makeMergePreview())
+    mocks.applyTagOperation.mockResolvedValueOnce(makeMergeResult())
+    mocks.listManagedTags
+      .mockReset()
+      .mockResolvedValueOnce(TAGS)
+      .mockResolvedValueOnce([TAGS[1]!])
+    const wrapper = mountTracked({ selectedTag: 'Java', selectionEpoch: 12 })
+    await settle()
+    await wrapper.get('[data-operation="merge"]').trigger('click')
+    await wrapper.get('#tag-management-source').setValue('7')
+    await wrapper.get('#tag-management-destination').setValue('20')
+    expect(wrapper.find('.tag-management-preview').exists()).toBe(false)
+
+    await wrapper.get('form').trigger('submit')
+    await settle()
+    expect(mocks.previewTagOperation).toHaveBeenCalledWith(mergeOperation)
+    expect(wrapper.findAll('.tag-management-summary dd')[0]?.text()).toBe('Merge')
+    expect(wrapper.text()).toContain('Duplicate associations collapsed')
+    expect(wrapper.text()).toContain('Source-only documents receive the destination tag')
+    expect(wrapper.text()).toContain('The destination tag will survive')
+    expect(wrapper.text()).toContain('will be deleted')
+    expect(wrapper.text()).toContain('1')
+    expect(wrapper.get('.tag-management-preview .primary').text()).toContain('Apply Merge')
+
+    await wrapper.get('.tag-management-preview .primary').trigger('click')
+    await settle()
+    expect(mocks.applyTagOperation).toHaveBeenCalledWith(mergeOperation, 'a'.repeat(64))
+    expect(wrapper.get('.tag-management-state-success').attributes('data-selected-tag')).toBe('Python')
+    expect(wrapper.text()).toContain('Surviving destination tag: Python')
+  })
+
+  it('clears a destination when the source changes to that stable ID and invalidates Preview', async () => {
+    mocks.previewTagOperation.mockResolvedValueOnce(makeMergePreview())
+    const wrapper = mountTracked()
+    await settle()
+    await wrapper.get('[data-operation="merge"]').trigger('click')
+    await wrapper.get('#tag-management-source').setValue('7')
+    await wrapper.get('#tag-management-destination').setValue('20')
+    await wrapper.get('form').trigger('submit')
+    await settle()
+    expect(wrapper.find('.tag-management-preview').exists()).toBe(true)
+
+    await wrapper.get('#tag-management-source').setValue('20')
+    await settle()
+    expect((wrapper.get('#tag-management-destination').element as HTMLSelectElement).value).toBe('')
+    expect(wrapper.find('.tag-management-preview').exists()).toBe(false)
+    expect(mocks.applyTagOperation).not.toHaveBeenCalled()
+  })
+
+  it('invalidates a Merge Preview when switching back to Rename', async () => {
+    mocks.previewTagOperation.mockResolvedValueOnce(makeMergePreview())
+    const wrapper = mountTracked()
+    await settle()
+    await wrapper.get('[data-operation="merge"]').trigger('click')
+    await wrapper.get('#tag-management-source').setValue('7')
+    await wrapper.get('#tag-management-destination').setValue('20')
+    await wrapper.get('form').trigger('submit')
+    await settle()
+    expect(wrapper.find('.tag-management-preview').exists()).toBe(true)
+
+    await wrapper.get('[data-operation="rename"]').trigger('click')
+    await settle()
+    expect(wrapper.find('.tag-management-preview').exists()).toBe(false)
+    expect(wrapper.find('#tag-management-destination-search').exists()).toBe(false)
+    expect(wrapper.find('#tag-management-destination').element.tagName).toBe('INPUT')
+  })
+
+  it('does not route an impossible Merge DESTINATION_EXISTS error into Rename guidance', async () => {
+    mocks.previewTagOperation.mockRejectedValueOnce(new mocks.TagManagementApiError('collision', 409, 'DESTINATION_EXISTS'))
+    const wrapper = mountTracked()
+    await settle()
+    await wrapper.get('[data-operation="merge"]').trigger('click')
+    await wrapper.get('#tag-management-source').setValue('7')
+    await wrapper.get('#tag-management-destination').setValue('20')
+    await wrapper.get('form').trigger('submit')
+    await settle()
+    expect(wrapper.text()).not.toContain('Use Merge instead')
+    expect(wrapper.text()).toContain('This Preview cannot be applied')
+  })
+
+  it('keeps a committed Merge in sync-pending and retries sync without applying again', async () => {
+    mocks.previewTagOperation.mockResolvedValueOnce(makeMergePreview())
+    mocks.applyTagOperation.mockResolvedValueOnce(makeMergeResult())
+    let syncAttempts = 0
+    const syncAfterCommit = vi.fn(async () => {
+      syncAttempts += 1
+      if (syncAttempts === 1) throw new Error('sync unavailable')
+      return { managedTags: [TAGS[1]!], selectedTag: 'Python' }
+    })
+    const wrapper = mountTracked({ syncAfterCommit })
+    await settle()
+    await wrapper.get('[data-operation="merge"]').trigger('click')
+    await wrapper.get('#tag-management-source').setValue('7')
+    await wrapper.get('#tag-management-destination').setValue('20')
+    await wrapper.get('form').trigger('submit')
+    await settle()
+    await wrapper.get('.tag-management-preview .primary').trigger('click')
+    await settle()
+    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('sync-pending')
+    expect(mocks.applyTagOperation).toHaveBeenCalledTimes(1)
+    await wrapper.get('.tag-management-state-error .primary').trigger('click')
+    await settle()
+    expect(syncAfterCommit).toHaveBeenCalledTimes(2)
+    expect(mocks.applyTagOperation).toHaveBeenCalledTimes(1)
+    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('success')
   })
 
   it('previews and applies a normal Rename with exact server counts and one sync cycle', async () => {
@@ -325,8 +509,8 @@ describe('TagManagementDialog', () => {
     await settle()
     expect(wrapper.text()).toContain('already belongs to another tag')
     expect(wrapper.text()).toContain('Use Merge instead')
-    expect(wrapper.find('[data-operation="merge"]').exists()).toBe(false)
-    expect(wrapper.findAll('button').some((button) => /merge/i.test(button.text()))).toBe(false)
+    expect(wrapper.find('[data-operation="merge"]').exists()).toBe(true)
+    expect(wrapper.findAll('button').some((button) => /merge/i.test(button.text()))).toBe(true)
     expect(wrapper.find('.tag-management-preview .primary').attributes('disabled')).toBeDefined()
     expect(mocks.applyTagOperation).not.toHaveBeenCalled()
   })
