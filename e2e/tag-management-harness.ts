@@ -25,7 +25,7 @@ declare global {
   }
 }
 
-/** Test-only mount for the still-hidden T2-4 dialog. */
+/** Test-only mount for focused management-flow coverage. */
 export function mountTagManagementHarness(): void {
   const selectedTag = ref<string | null>('Java')
   const selectionEpoch = ref(0)

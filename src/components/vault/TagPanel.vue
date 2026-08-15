@@ -13,7 +13,7 @@ import DocumentHoverCard from './DocumentHoverCard.vue'
 import { ICON_FILE_MD, ICON_SEARCH } from './icons'
 
 const props = defineProps<{ posts: PostSummary[]; selectedTag: string | null; path: string | null }>()
-const emit = defineEmits<{ select: [tag: string]; open: [path: string] }>()
+const emit = defineEmits<{ select: [tag: string]; open: [path: string]; manage: [] }>()
 
 /* The panel contains:
    1. A filterable single-select tag list.
@@ -115,6 +115,14 @@ function onFilterKeydown(event: KeyboardEvent) {
         <span class="tag-filter-icon" v-html="ICON_SEARCH" aria-hidden="true" />
         <input v-model="filter" class="tag-filter-input" type="text" :placeholder="t('tags.filter')" :aria-label="t('tags.filter')" @keydown="onFilterKeydown" />
         <button v-if="filter" class="tag-filter-clear-x" :title="t('tags.clear_filter')" :aria-label="t('tags.clear_filter')" @click="filter = ''">×</button>
+        <button
+          type="button"
+          class="tag-management-trigger"
+          data-action="manage-tags"
+          :title="t('tags.manage.title')"
+          :aria-label="t('tags.manage.title')"
+          @click="emit('manage')"
+        >{{ t('tags.manage.title') }}</button>
       </div>
     </header>
 
@@ -160,3 +168,28 @@ function onFilterKeydown(event: KeyboardEvent) {
     </div>
   </aside>
 </template>
+
+<style scoped>
+.tag-management-trigger {
+  flex: 0 0 auto;
+  min-height: 24px;
+  padding: 2px 7px;
+  border: 1px solid var(--vs-border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--vs-text-2);
+  font: inherit;
+  font-size: 0.68rem;
+  line-height: 1.2;
+  cursor: pointer;
+}
+.tag-management-trigger:hover {
+  border-color: var(--vs-accent);
+  color: var(--vs-text-1);
+  background: var(--vs-hover-bg);
+}
+.tag-management-trigger:focus-visible {
+  outline: 2px solid var(--vs-accent);
+  outline-offset: 2px;
+}
+</style>

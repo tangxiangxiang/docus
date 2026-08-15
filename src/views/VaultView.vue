@@ -1558,9 +1558,9 @@ const { activeScope } = useScopeFilter()
 const selectedTag = ref<string | null>(null)
 const tagManagementOpen = ref(false)
 // Phase 2 management dialogs use this local monotonic epoch to distinguish
-// an actual user selection change from an asynchronous Apply completion. The
-// manager remains unmounted in T2-3, but the Phase 1 callback is already the
-// real selection boundary it will consume when production exposure is wired.
+// an actual user selection change from an asynchronous Apply completion.
+// The manager remains owned by VaultView while TagPanel only emits its entry
+// action.
 const tagSelectionEpoch = ref(0)
 function selectTag(tag: string): void {
   selectedTag.value = selectedTag.value === tag ? null : tag
@@ -1681,9 +1681,8 @@ watch(isReadMode, async (reading) => {
       @close="settingsOpen = false"
     />
 
-    <!-- T2-3 mounts the management shell only through this Vault-owned seam.
-         No production action sets tagManagementOpen until the T2-5 exposure
-         gate, so TagPanel remains unchanged and has no Manage Tags trigger. -->
+    <!-- VaultView owns dialog lifetime and both post-commit synchronization
+         seams; TagPanel only emits the production entry action. -->
     <TagManagementDialog
       v-if="tagManagementOpen"
       :open="tagManagementOpen"
@@ -1726,6 +1725,7 @@ watch(isReadMode, async (reading) => {
       :path="activePath"
       @select="selectTag"
       @open="openPost"
+      @manage="tagManagementOpen = true"
     />
     <HistoryPanel
       v-else-if="activePanel === 'history'"

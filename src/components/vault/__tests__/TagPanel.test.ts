@@ -70,6 +70,17 @@ describe('Tags filter', () => {
     expect(wrapper.emitted('open')?.[0]).toEqual([POSTS[0].path])
   })
 
+  it('exposes Manage Tags without changing the Phase 1 filter or selection state', async () => {
+    const wrapper = mountPanel({ selectedTag: 'reference' })
+    await wrapper.get('.tag-filter-input').setValue('ref')
+    const before = wrapper.findAll('.tag-entry').map((entry) => entry.text())
+    await wrapper.get('[data-action="manage-tags"]').trigger('click')
+    expect(wrapper.emitted('manage')).toEqual([[]])
+    expect((wrapper.get('.tag-filter-input').element as HTMLInputElement).value).toBe('ref')
+    expect(wrapper.findAll('.tag-entry').map((entry) => entry.text())).toEqual(before)
+    expect(wrapper.find('.results').exists()).toBe(true)
+  })
+
   it('uses the shared document hover card for tag results', async () => {
     const wrapper = mountPanel({ selectedTag: 'reference' })
     await wrapper.get('.result-entry').trigger('mouseenter')

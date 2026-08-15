@@ -19,7 +19,7 @@ function gitSnapshot(): { head: string; status: string } {
   }
 }
 
-/** Mount the hidden dialog from a test-only Vite module using the app runtime. */
+/** Mount the dialog from a test-only Vite module for focused flow tests. */
 async function mountTagManagementHarness(page: Page): Promise<void> {
   await page.evaluate(async () => {
     const harness = await import('/e2e/tag-management-harness.ts')
@@ -88,9 +88,8 @@ test('authenticated Rename transport preserves Markdown and Git boundaries', asy
     const java = (await managedBefore.json() as Array<{ id: number; displayName: string }>).find((tag) => tag.displayName === 'Java')
     expect(java?.id).toBeGreaterThan(0)
 
-    // The production Manage Tags trigger is intentionally absent through
-    // T2-3. Mount the existing dialog directly in this test-scoped harness;
-    // no production entry or feature flag is shipped.
+    // The focused Rename flow still uses the dialog harness so its transport
+    // and selection assertions remain independent from the production entry.
     await page.goto('/vault')
     await waitForVaultReady(page)
     await mountTagManagementHarness(page)
@@ -159,7 +158,13 @@ test('authenticated Rename transport preserves Markdown and Git boundaries', asy
     await page.locator('.activity-bar .ab-btn').nth(1).click()
     await expect(page.locator('.tag-entry')).toContainText('Backend')
     await expect(page.locator('.tag-entry')).not.toContainText('Java')
-    await expect(page.getByRole('button', { name: /manage tags/i })).toHaveCount(0)
+    const manageTags = page.getByRole('button', { name: /manage tags/i })
+    await expect(manageTags).toHaveCount(1)
+    await manageTags.click()
+    const productionDialog = page.getByRole('dialog')
+    await expect(productionDialog).toHaveAttribute('data-state', 'ready')
+    await expect(productionDialog.locator('[data-operation="remove"]')).toHaveCount(1)
+    await productionDialog.locator('[data-action="close"]').click()
   } finally {
     await cleanupCreatedPaths(request, createdPaths)
   }
@@ -358,6 +363,174 @@ test('authenticated Merge preserves the destination identity, deduplicates overl
     await page.evaluate(() => window.__t2TagManagementHarness?.releaseSync())
     await expect(raceDialog).toHaveAttribute('data-state', 'success')
     await expect(raceDialog.locator('.tag-management-state-success')).toHaveAttribute('data-selected-tag', otherName)
+  } finally {
+    await cleanupCreatedPaths(request, createdPaths)
+  }
+})
+
+test('production Remove previews, confirms once, clears selection, and preserves files', async ({ page, request }) => {
+  const stamp = Date.now()
+  const sourceName = `remove-source-${stamp}`
+  const unrelatedName = `remove-unrelated-${stamp}`
+  const fixtures = [
+    { slug: `inbox/t2-5-remove-one-${stamp}`, tags: [sourceName], body: 'Remove fixture one.\n' },
+    { slug: `inbox/t2-5-remove-two-${stamp}`, tags: [sourceName], body: 'Remove fixture two.\n' },
+    { slug: `inbox/t2-5-remove-three-${stamp}`, tags: [sourceName], body: 'Remove fixture three.\n' },
+    { slug: `inbox/t2-5-remove-unrelated-${stamp}`, tags: [unrelatedName], body: 'Unrelated fixture.\n' },
+  ]
+  const createdPaths: string[] = []
+  const originalGit = gitSnapshot()
+  const fileSnapshots = new Map<string, { bytes: Buffer; mtimeMs: number }>()
+  const versionBefore = new Map<string, number>()
+
+  try {
+    for (const fixture of fixtures) {
+      await createDoc(request, fixture.slug, `# ${fixture.slug}\n\n${fixture.body}`, createdPaths)
+      const saved = await setDocumentTags(request, fixture.slug, fixture.tags)
+      versionBefore.set(fixture.slug, saved.metadata.updatedAt)
+      const filePath = path.join(E2E_VAULT, `${fixture.slug}.md`)
+      fileSnapshots.set(fixture.slug, {
+        bytes: await fs.readFile(filePath),
+        mtimeMs: (await fs.stat(filePath)).mtimeMs,
+      })
+    }
+
+    const managedBeforeResponse = await request.get('/api/tags')
+    expect(managedBeforeResponse.status(), await managedBeforeResponse.text()).toBe(200)
+    const managedBefore = await managedBeforeResponse.json() as Array<{
+      id: number
+      normalizedName: string
+      displayName: string
+    }>
+    const source = managedBefore.find((tag) => tag.displayName === sourceName)
+    const unrelated = managedBefore.find((tag) => tag.displayName === unrelatedName)
+    expect(source?.id).toBeGreaterThan(0)
+    expect(unrelated?.id).toBeGreaterThan(0)
+
+    await page.goto('/vault')
+    await waitForVaultReady(page)
+    await page.locator('.activity-bar .ab-btn').nth(1).click()
+    const sourceRow = page.locator('.tag-entry').filter({ hasText: `#${sourceName}` })
+    await expect(sourceRow).toHaveCount(1)
+    await sourceRow.click()
+    await expect(page.locator('.results')).toContainText('3')
+
+    const manageTags = page.getByRole('button', { name: /manage tags/i })
+    await expect(manageTags).toHaveCount(1)
+    await manageTags.click()
+    const dialog = page.getByRole('dialog')
+    await expect(dialog).toHaveAttribute('data-state', 'ready')
+    await dialog.locator('[data-operation="remove"]').click()
+    await dialog.locator('#tag-management-source').selectOption(String(source!.id))
+    await expect(dialog.locator('#tag-management-destination')).toHaveCount(0)
+    await expect(dialog.locator('#tag-management-destination-search')).toHaveCount(0)
+
+    const previewResponsePromise = page.waitForResponse((response) => (
+      response.request().method() === 'POST'
+      && new URL(response.url()).pathname === '/api/tags/operations/preview'
+    ))
+    await dialog.locator('form button[type="submit"]').click()
+    const previewResponse = await previewResponsePromise
+    expect(previewResponse.status(), await previewResponse.text()).toBe(200)
+    const preview = await previewResponse.json() as {
+      operation: { kind: string; sourceTagId: number }
+      sourceTag: { id: number; displayName: string }
+      affectedCount: number
+      associationRemoves: number
+      tagDeletes: number
+      sample: Array<unknown>
+      planFingerprint: string
+    }
+    expect(preview).toMatchObject({
+      operation: { kind: 'remove', sourceTagId: source!.id },
+      sourceTag: { id: source!.id, displayName: sourceName },
+      affectedCount: 3,
+      associationRemoves: 3,
+      tagDeletes: 1,
+    })
+    expect(preview.sample).toHaveLength(3)
+    expect(preview.planFingerprint).toMatch(/^[0-9a-f]{64}$/)
+    await expect(dialog).toHaveAttribute('data-state', 'preview-ready')
+    await expect(dialog).toContainText(`#${sourceName}`)
+    await expect(dialog).toContainText('The documents themselves will not be deleted')
+    await expect(dialog).toContainText('Markdown/frontmatter files')
+    await expect(dialog).toContainText('global tag record will be deleted')
+    await expect(dialog.locator('.tag-management-sample')).toContainText('t2-5-remove-one')
+
+    let applyRequests = 0
+    const onRequest = (requestEvent: import('@playwright/test').Request) => {
+      if (requestEvent.method() === 'POST' && new URL(requestEvent.url()).pathname === '/api/tags/operations/apply') {
+        applyRequests += 1
+      }
+    }
+    page.on('request', onRequest)
+    await dialog.locator('[data-action="remove-apply"]').click()
+    const confirmation = page.getByRole('alertdialog')
+    await expect(confirmation).toContainText(`Remove tag #${sourceName}?`)
+    await confirmation.getByRole('button', { name: 'Cancel' }).click()
+    await expect(confirmation).toHaveCount(0)
+    expect(applyRequests).toBe(0)
+
+    const applyResponsePromise = page.waitForResponse((response) => (
+      response.request().method() === 'POST'
+      && new URL(response.url()).pathname === '/api/tags/operations/apply'
+    ))
+    await dialog.locator('[data-action="remove-apply"]').click()
+    const confirmationAgain = page.getByRole('alertdialog')
+    await confirmationAgain.getByRole('button', { name: `Remove #${sourceName}` }).click()
+    const applyResponse = await applyResponsePromise
+    page.off('request', onRequest)
+    expect(applyResponse.status(), await applyResponse.text()).toBe(200)
+    const applied = await applyResponse.json() as {
+      kind: string
+      sourceTagId: number
+      survivorTagId: number | null
+      sourceDeleted: boolean
+      affectedCount: number
+      associationRemoves: number
+      tagDeletes: number
+      appliedFingerprint: string
+    }
+    expect(applied).toMatchObject({
+      kind: 'remove',
+      sourceTagId: source!.id,
+      survivorTagId: null,
+      sourceDeleted: true,
+      affectedCount: 3,
+      associationRemoves: 3,
+      tagDeletes: 1,
+      appliedFingerprint: preview.planFingerprint,
+    })
+    await expect(dialog).toHaveAttribute('data-state', 'success')
+    await expect(dialog).toContainText(`#${sourceName} was removed`)
+    await expect(dialog.locator('.tag-management-state-success')).not.toHaveAttribute('data-selected-tag')
+
+    const managedAfterResponse = await request.get('/api/tags')
+    expect(managedAfterResponse.status()).toBe(200)
+    const managedAfter = await managedAfterResponse.json() as Array<{ id: number; displayName: string }>
+    expect(managedAfter.find((tag) => tag.id === source!.id)).toBeUndefined()
+    expect(managedAfter.find((tag) => tag.id === unrelated!.id)).toMatchObject({ id: unrelated!.id, displayName: unrelatedName })
+
+    for (const fixture of fixtures) {
+      const after = await readPostDetail(request, fixture.slug)
+      expect(after.raw).toBeDefined()
+      if (fixture.tags.includes(sourceName)) {
+        expect(after.metadata.updatedAt).toBeGreaterThan(versionBefore.get(fixture.slug)!)
+        expect(after.metadata.tags).not.toContain(sourceName)
+      } else {
+        expect(after.metadata.updatedAt).toBe(versionBefore.get(fixture.slug))
+        expect(after.metadata.tags).toEqual([unrelatedName])
+      }
+      const snapshot = fileSnapshots.get(fixture.slug)!
+      const filePath = path.join(E2E_VAULT, `${fixture.slug}.md`)
+      expect(await fs.readFile(filePath)).toEqual(snapshot.bytes)
+      expect((await fs.stat(filePath)).mtimeMs).toBe(snapshot.mtimeMs)
+    }
+    expect(gitSnapshot()).toEqual(originalGit)
+
+    await dialog.locator('[data-action="close"]').click()
+    await expect(page.locator('.results')).toHaveCount(0)
+    await expect(page.locator('.tag-entry').filter({ hasText: `#${sourceName}` })).toHaveCount(0)
   } finally {
     await cleanupCreatedPaths(request, createdPaths)
   }

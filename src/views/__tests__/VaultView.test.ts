@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { applyMetadataToPostSummary } from '../metadataPostSummary'
 
 describe('VaultView editor tab wiring', () => {
-  it('owns the hidden T2-3 dialog seam and one canonical post-commit sync cycle', () => {
+  it('owns the production dialog seam and one canonical post-commit sync cycle', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
     const sync = source.match(/async function synchronizeCommittedTagOperation[\s\S]*?\n}/)?.[0]
     const recovery = source.match(/async function recoverCommittedTagOperation[\s\S]*?\n}/)?.[0]
@@ -16,7 +16,7 @@ describe('VaultView editor tab wiring', () => {
     expect(source).toContain('v-if="tagManagementOpen"')
     expect(source).toContain(':sync-after-commit="synchronizeCommittedTagOperation"')
     expect(source).toContain(':recover-committed-operation="recoverCommittedTagOperation"')
-    expect(source).not.toContain('tagManagementOpen = true')
+    expect(source).toContain('@manage="tagManagementOpen = true"')
     expect(sync).toBeDefined()
     expect(sync).toContain('const [, freshTags] = await Promise.all([')
     expect(sync).toContain('refresh(),')

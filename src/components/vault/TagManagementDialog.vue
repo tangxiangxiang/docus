@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { useConfirm } from '../../composables/useConfirm'
 import { useFocusTrap } from '../../composables/useFocusTrap'
 import { useI18n } from '../../composables/useI18n'
 import {
@@ -36,7 +37,13 @@ type ManagerState =
   | 'unavailable'
   | 'error'
 
-type VisibleOperationKind = Exclude<TagOperationKind, 'remove'>
+type VisibleOperationKind = TagOperationKind
+
+interface RemovalConfirmationContext {
+  operation: TagOperationRequest
+  planFingerprint: string
+  sourceDisplayName: string
+}
 
 interface TagManagementDialogProps {
   open: boolean
@@ -71,6 +78,7 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const { confirmCancellable } = useConfirm()
 const trap = useFocusTrap()
 const modalRef = ref<HTMLElement | null>(null)
 const sourceSelectRef = ref<HTMLSelectElement | null>(null)
@@ -102,12 +110,15 @@ const diagnosticStage = ref('loading')
 const diagnosticCode = ref<TagManagementClientErrorCode | null>(null)
 const selectionSnapshot = ref<TagSelectionSnapshot | null>(null)
 const reconciledSelectedTag = ref<string | null>(null)
+const committedSourceDisplayName = ref<string | null>(null)
 const committedRecoveryOperation = ref<TagOperationRequest | null>(null)
 // A successful Apply whose response fails the reviewed-Preview contract is
 // committed, but its contradictory identity fields are unsafe for the normal
 // VaultView reconciliation seam. Retry therefore uses the dedicated
 // VaultView-owned recovery seam and never passes this result for reconciliation.
 const authoritativeRecoveryPending = ref(false)
+const removalConfirmation = ref<RemovalConfirmationContext | null>(null)
+let cancelRemovalConfirmation: (() => void) | null = null
 
 let loadRun = 0
 let previewRun = 0
@@ -173,6 +184,7 @@ const renderedSample = computed(() => {
 const finalDisplayName = computed(() => {
   const result = applyResult.value
   if (!result) return null
+  if (result.operation.kind === 'remove') return committedSourceDisplayName.value
   if (result.survivorTagId !== null) {
     const fresh = finalTags.value.find((tag) => tag.id === result.survivorTagId)
     if (fresh) return fresh.displayName
@@ -217,7 +229,7 @@ const canPreview = computed(() => (
   && selectedSourceTag.value !== null
   && (operationKind.value === 'merge'
     ? hasValidMergeDestination.value
-    : destinationName.value.trim().length > 0)
+    : operationKind.value === 'remove' || destinationName.value.trim().length > 0)
 ))
 
 const canApply = computed(() => (
@@ -247,12 +259,20 @@ function announce(message: string): void {
   liveMessage.value = message
 }
 
+function cancelPendingRemovalConfirmation(): void {
+  removalConfirmation.value = null
+  const cancel = cancelRemovalConfirmation
+  cancelRemovalConfirmation = null
+  cancel?.()
+}
+
 function clearPreview(): void {
   // A new Preview, an input edit, a reset, and close all invalidate every
   // outstanding continuation request. The page generation is independent of
   // the normal Preview run so an old page's finally block cannot touch a
   // newer page's loading state.
   pageRun += 1
+  cancelPendingRemovalConfirmation()
   preview.value = null
   reviewedOperation.value = null
   continuationPages.value = []
@@ -264,7 +284,7 @@ function operationsEqual(left: TagOperationRequest, right: TagOperationRequest):
   if (left.kind !== right.kind || left.sourceTagId !== right.sourceTagId) return false
   if (left.kind === 'rename' && right.kind === 'rename') return left.destinationName === right.destinationName
   if (left.kind === 'merge' && right.kind === 'merge') return left.destinationTagId === right.destinationTagId
-  return false
+  return left.kind === 'remove' && right.kind === 'remove'
 }
 
 function invalidatePreview(nextState: ManagerState = 'editing'): void {
@@ -301,6 +321,7 @@ function validateForm(): boolean {
     }
     return true
   }
+  if (operationKind.value === 'remove') return true
   const value = destinationName.value
   if (!value.trim()) {
     destinationError.value = t('tags.manage.destination_required')
@@ -325,6 +346,12 @@ function operationFromForm(): TagOperationRequest | null {
       kind: 'merge',
       sourceTagId: source,
       destinationTagId: destination,
+    }
+  }
+  if (operationKind.value === 'remove') {
+    return {
+      kind: 'remove',
+      sourceTagId: source,
     }
   }
   return {
@@ -460,6 +487,7 @@ function resetForOpen(): void {
   destinationSearch.value = ''
   destinationTagId.value = null
   applyResult.value = null
+  committedSourceDisplayName.value = null
   authoritativeRecoveryPending.value = false
   committedRecoveryOperation.value = null
   selectionSnapshot.value = null
@@ -478,6 +506,7 @@ async function onPreview(): Promise<void> {
   const revision = operationRevision
   clearPreview()
   applyResult.value = null
+  committedSourceDisplayName.value = null
   authoritativeRecoveryPending.value = false
   committedRecoveryOperation.value = null
   errorMessage.value = ''
@@ -607,7 +636,9 @@ async function runSynchronization(result: TagOperationApplyResult): Promise<void
     state.value = 'success'
     setDiagnostic('success')
     announce(finalDisplayName.value
-      ? t('tags.manage.success', { name: finalDisplayName.value })
+      ? result.operation.kind === 'remove'
+        ? t('tags.manage.remove_success', { name: finalDisplayName.value })
+        : t('tags.manage.success', { name: finalDisplayName.value })
       : t('tags.manage.success_generic'))
     emit('success', result)
   } catch (error) {
@@ -618,6 +649,52 @@ async function runSynchronization(result: TagOperationApplyResult): Promise<void
     errorMessage.value = t('tags.manage.sync_pending')
     announce(errorMessage.value)
   }
+}
+
+function isCurrentRemovalConfirmation(context: RemovalConfirmationContext): boolean {
+  const currentOperation = operationFromForm()
+  return canApply.value
+    && preview.value?.planFingerprint === context.planFingerprint
+    && reviewedOperation.value !== null
+    && operationsEqual(reviewedOperation.value, context.operation)
+    && currentOperation !== null
+    && operationsEqual(currentOperation, context.operation)
+}
+
+async function requestRemovalConfirmation(
+  currentPreview: TagOperationPreview,
+  operation: TagOperationRequest,
+): Promise<void> {
+  const context: RemovalConfirmationContext = {
+    operation,
+    planFingerprint: currentPreview.planFingerprint,
+    sourceDisplayName: currentPreview.sourceTag.displayName,
+  }
+  removalConfirmation.value = context
+  const pending = confirmCancellable(
+    t('tags.manage.remove_confirm_title', { name: context.sourceDisplayName }),
+    t('tags.manage.remove_confirm_detail', { name: context.sourceDisplayName }),
+    {
+      cancelLabel: t('common.cancel'),
+      confirmLabel: t('tags.manage.confirm_remove', { name: context.sourceDisplayName }),
+      destructive: true,
+    },
+  )
+  cancelRemovalConfirmation = pending.cancel
+  const confirmed = await pending.promise
+  if (cancelRemovalConfirmation === pending.cancel) cancelRemovalConfirmation = null
+  if (removalConfirmation.value?.planFingerprint === context.planFingerprint) {
+    removalConfirmation.value = null
+  }
+  if (!confirmed) {
+    announce(t('tags.manage.remove_cancelled'))
+    return
+  }
+  if (!isCurrentRemovalConfirmation(context)) {
+    announce(t('tags.manage.preview_required'))
+    return
+  }
+  await applyReviewedPreview(currentPreview, operation)
 }
 
 async function recoverCommittedProtocolMismatch(): Promise<void> {
@@ -659,11 +736,24 @@ async function onApply(): Promise<void> {
   if (!canApply.value || !preview.value || !reviewedOperation.value) return
   const currentPreview = preview.value
   const operation = reviewedOperation.value
+  if (operation.kind === 'remove') {
+    if (removalConfirmation.value) return
+    await requestRemovalConfirmation(currentPreview, operation)
+    return
+  }
+  await applyReviewedPreview(currentPreview, operation)
+}
+
+async function applyReviewedPreview(
+  currentPreview: TagOperationPreview,
+  operation: TagOperationRequest,
+): Promise<void> {
   selectionSnapshot.value = captureTagSelection(
     props.selectedTag,
     managedTags.value,
     props.selectionEpoch,
   )
+  committedSourceDisplayName.value = currentPreview.sourceTag.displayName
   const run = ++syncRun
   errorMessage.value = ''
   staleMessage.value = ''
@@ -736,6 +826,7 @@ async function reloadManagedTags(): Promise<void> {
   ++previewRun
   clearPreview()
   applyResult.value = null
+  committedSourceDisplayName.value = null
   authoritativeRecoveryPending.value = false
   committedRecoveryOperation.value = null
   destinationTagId.value = null
@@ -745,6 +836,7 @@ async function reloadManagedTags(): Promise<void> {
 
 function close(): void {
   if (!canDismiss.value) return
+  cancelPendingRemovalConfirmation()
   emit('close')
 }
 
@@ -783,7 +875,13 @@ function setOperationKind(kind: VisibleOperationKind): void {
   invalidatePreview('editing')
   sourceError.value = ''
   destinationError.value = ''
-  announce(kind === 'merge' ? t('tags.manage.merge_selected') : t('tags.manage.rename_selected'))
+  announce(
+    kind === 'merge'
+      ? t('tags.manage.merge_selected')
+      : kind === 'remove'
+        ? t('tags.manage.remove_selected')
+        : t('tags.manage.rename_selected'),
+  )
 }
 
 watch([operationKind, sourceTagId, destinationTagId, destinationName], (next, previous) => {
@@ -895,6 +993,13 @@ onBeforeUnmount(() => {
                     :aria-pressed="operationKind === 'merge'"
                     @click="setOperationKind('merge')"
                   >{{ t('tags.manage.merge') }}</button>
+                  <button
+                    type="button"
+                    class="tag-management-mode-button"
+                    data-operation="remove"
+                    :aria-pressed="operationKind === 'remove'"
+                    @click="setOperationKind('remove')"
+                  >{{ t('tags.manage.remove') }}</button>
                 </div>
               </fieldset>
 
@@ -972,7 +1077,7 @@ onBeforeUnmount(() => {
                 </div>
               </template>
 
-              <div v-else class="tag-management-field">
+              <div v-else-if="operationKind === 'rename'" class="tag-management-field">
                 <label for="tag-management-destination">{{ t('tags.manage.destination') }}</label>
                 <input
                   id="tag-management-destination"
@@ -1001,9 +1106,14 @@ onBeforeUnmount(() => {
             <section v-if="preview" class="tag-management-preview" aria-live="polite" :aria-busy="state === 'previewing'">
               <h3 ref="previewHeadingRef" tabindex="-1">{{ t('tags.manage.preview_ready', { count: preview.affectedCount }) }}</h3>
               <dl class="tag-management-summary">
-                <div><dt>{{ t('tags.manage.preview_operation') }}</dt><dd>{{ preview.operation.kind === 'merge' ? t('tags.manage.merge') : t('tags.manage.rename') }}</dd></div>
+                <div><dt>{{ t('tags.manage.preview_operation') }}</dt><dd>{{ preview.operation.kind === 'merge' ? t('tags.manage.merge') : preview.operation.kind === 'remove' ? t('tags.manage.remove') : t('tags.manage.rename') }}</dd></div>
                 <div><dt>{{ t('tags.manage.source') }}</dt><dd>#{{ preview.sourceTag.displayName }}</dd></div>
-                <div><dt>{{ preview.operation.kind === 'merge' ? t('tags.manage.destination_tag') : t('tags.manage.requested_destination') }}</dt><dd>#{{ preview.operation.kind === 'merge' ? preview.destinationTag?.displayName : (preview.requestedDestination?.displayName ?? destinationName) }}</dd></div>
+                <template v-if="preview.operation.kind === 'merge'">
+                  <div><dt>{{ t('tags.manage.destination_tag') }}</dt><dd>#{{ preview.destinationTag?.displayName }}</dd></div>
+                </template>
+                <template v-else-if="preview.operation.kind === 'rename'">
+                  <div><dt>{{ t('tags.manage.requested_destination') }}</dt><dd>#{{ preview.requestedDestination?.displayName ?? destinationName }}</dd></div>
+                </template>
                 <div><dt>{{ t('tags.manage.affected_documents') }}</dt><dd>{{ preview.affectedCount }}</dd></div>
                 <div><dt>{{ t('tags.manage.association_adds') }}</dt><dd>{{ preview.associationAdds }}</dd></div>
                 <div><dt>{{ t('tags.manage.association_removes') }}</dt><dd>{{ preview.associationRemoves }}</dd></div>
@@ -1022,6 +1132,19 @@ onBeforeUnmount(() => {
                 <span>{{ t('tags.manage.merge_destination_survives_detail', { destination: preview.destinationTag?.displayName ?? '', source: preview.sourceTag.displayName }) }}</span>
                 <span>{{ t('tags.manage.merge_source_deletion', { source: preview.sourceTag.displayName, destination: preview.destinationTag?.displayName ?? '' }) }}</span>
                 <span>{{ t('tags.manage.merge_overlap_detail') }}</span>
+              </div>
+
+              <div
+                v-if="preview.operation.kind === 'remove'"
+                id="tag-management-remove-explanation"
+                class="tag-management-remove-guidance"
+                role="alert"
+              >
+                <strong>{{ t('tags.manage.remove_explanation_title', { name: preview.sourceTag.displayName }) }}</strong>
+                <span>{{ t('tags.manage.remove_explanation_documents') }}</span>
+                <span>{{ t('tags.manage.remove_explanation_markdown') }}</span>
+                <span>{{ t('tags.manage.remove_explanation_tag') }}</span>
+                <span v-if="preview.affectedCount === 0">{{ t('tags.manage.remove_explanation_orphan') }}</span>
               </div>
 
               <div v-if="preview.conflictCode" class="tag-management-conflict" role="alert">
@@ -1066,8 +1189,22 @@ onBeforeUnmount(() => {
               </div>
 
               <div class="tag-management-actions">
-                <button type="button" class="tag-management-button primary" :disabled="!canApply" @click="onApply">
-                  {{ state === 'applying' ? t('tags.manage.applying') : (operationKind === 'merge' ? t('tags.manage.apply_merge') : t('tags.manage.apply')) }}
+                <button
+                  type="button"
+                  class="tag-management-button primary"
+                  :class="{ destructive: operationKind === 'remove' }"
+                  :data-action="operationKind === 'remove' ? 'remove-apply' : 'apply'"
+                  :aria-describedby="operationKind === 'remove' ? 'tag-management-remove-explanation' : undefined"
+                  :disabled="!canApply"
+                  @click="onApply"
+                >
+                  {{ state === 'applying'
+                    ? t('tags.manage.applying')
+                    : operationKind === 'remove'
+                      ? t('tags.manage.apply_remove', { name: preview.sourceTag.displayName })
+                      : operationKind === 'merge'
+                        ? t('tags.manage.apply_merge')
+                        : t('tags.manage.apply') }}
                 </button>
               </div>
             </section>
@@ -1093,7 +1230,9 @@ onBeforeUnmount(() => {
               <p>{{ finalDisplayName
                 ? (applyResult?.operation.kind === 'merge'
                   ? t('tags.manage.merge_success', { name: finalDisplayName })
-                  : t('tags.manage.success', { name: finalDisplayName }))
+                  : applyResult?.operation.kind === 'remove'
+                    ? t('tags.manage.remove_success', { name: finalDisplayName })
+                    : t('tags.manage.success', { name: finalDisplayName }))
                 : t('tags.manage.success_generic') }}</p>
             </section>
 
@@ -1188,6 +1327,8 @@ onBeforeUnmount(() => {
 .tag-management-button:hover:not(:disabled) { background: var(--bg-soft); }
 .tag-management-button.primary { border-color: var(--accent); background: var(--accent); color: var(--bg); }
 .tag-management-button.primary:hover:not(:disabled) { background: var(--accent-hover, var(--accent)); }
+.tag-management-button.destructive { border-color: var(--danger, #b42318); background: var(--danger, #b42318); color: #fff; }
+.tag-management-button.destructive:hover:not(:disabled) { background: color-mix(in srgb, var(--danger, #b42318) 84%, #000); }
 .tag-management-button.secondary { margin-top: 8px; }
 .tag-management-button:disabled { cursor: not-allowed; opacity: 0.48; }
 .tag-management-state { display: grid; justify-items: center; gap: 12px; min-height: 150px; padding: 36px 12px; color: var(--text-muted); text-align: center; }
@@ -1205,6 +1346,8 @@ onBeforeUnmount(() => {
 .tag-management-display-only span { color: var(--text-muted); }
 .tag-management-merge-guidance { display: grid; gap: 5px; margin-top: 14px; padding: 10px 12px; border-left: 3px solid var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); font-size: 0.78rem; line-height: 1.45; }
 .tag-management-merge-guidance span { color: var(--text-muted); }
+.tag-management-remove-guidance { display: grid; gap: 5px; margin-top: 14px; padding: 10px 12px; border-left: 3px solid var(--danger, #b42318); background: color-mix(in srgb, var(--danger, #b42318) 8%, transparent); font-size: 0.78rem; line-height: 1.45; }
+.tag-management-remove-guidance span { color: var(--text-muted); }
 .tag-management-conflict { margin-top: 14px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--danger, #c94f4f) 35%, var(--border)); border-radius: 5px; color: var(--danger, #c94f4f); font-size: 0.78rem; line-height: 1.45; }
 .tag-management-warnings { margin-top: 14px; padding: 10px 12px; border-left: 3px solid var(--warning, #d97706); background: color-mix(in srgb, var(--warning, #d97706) 8%, transparent); font-size: 0.76rem; }
 .tag-management-warnings h4, .tag-management-sample h4 { margin: 0 0 7px; font-size: 0.78rem; }

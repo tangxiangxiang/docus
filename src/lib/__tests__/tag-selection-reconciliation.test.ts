@@ -219,4 +219,23 @@ describe('tag selection reconciliation', () => {
       managedTags: [{ ...tags[0]!, displayName: 'Backend' }, tags[1]!, tags[2]!],
     })).toBe('Work')
   })
+
+  it('reconciles committed Remove from the trusted source ID without an Apply result', () => {
+    const operation = { kind: 'remove' as const, sourceTagId: 7 }
+    const freshTags = tags.filter((tag) => tag.id !== 7)
+    expect(reconcileCommittedTagSelectionFromOperation({
+      snapshot: captureTagSelection('Java', tags, 8),
+      currentSelectedTag: 'Java',
+      currentSelectionEpoch: 8,
+      operation,
+      managedTags: freshTags,
+    })).toBeNull()
+    expect(reconcileCommittedTagSelectionFromOperation({
+      snapshot: captureTagSelection('Python', tags, 8),
+      currentSelectedTag: 'Python',
+      currentSelectionEpoch: 8,
+      operation,
+      managedTags: freshTags,
+    })).toBe('Python')
+  })
 })

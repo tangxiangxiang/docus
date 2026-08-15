@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   getTagOperationPreviewPage: vi.fn(),
   applyTagOperation: vi.fn(),
   assertApplyResultMatchesReviewedPreview: vi.fn(),
+  confirmCancellable: vi.fn(),
   TagManagementApiError: class extends Error {
     readonly status: number
     readonly code: string
@@ -35,6 +36,9 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('../../../lib/tag-management-api', () => mocks)
+vi.mock('../../../composables/useConfirm', () => ({
+  useConfirm: () => ({ confirmCancellable: mocks.confirmCancellable }),
+}))
 
 const TAGS: ManagedTag[] = [
   { id: 7, normalizedName: 'java', displayName: 'Java', documentCount: 3 },
@@ -47,6 +51,7 @@ const RENAMED_TAGS: ManagedTag[] = [
 const operation = { kind: 'rename' as const, sourceTagId: 7, destinationName: 'Backend' }
 const mergeOperation = { kind: 'merge' as const, sourceTagId: 7, destinationTagId: 20 }
 const mergeDestination = { id: 20, normalizedName: 'python', displayName: 'Python' }
+const removeOperation = { kind: 'remove' as const, sourceTagId: 7 }
 
 function makePreview(overrides: Partial<TagOperationPreview> = {}): TagOperationPreview {
   return {
@@ -157,6 +162,58 @@ function makeMergeResult(overrides: Partial<TagOperationApplyResult> = {}): TagO
   }
 }
 
+function makeRemovePreview(overrides: Partial<TagOperationPreview> = {}): TagOperationPreview {
+  return makePreview({
+    operation: removeOperation,
+    sourceTag: { id: 7, normalizedName: 'java', displayName: 'Java' },
+    destinationTag: null,
+    requestedDestination: null,
+    survivorTag: null,
+    displayOnly: false,
+    affectedCount: 3,
+    associationAdds: 0,
+    associationRemoves: 3,
+    duplicateCollapses: 0,
+    tagCreates: 0,
+    tagDeletes: 1,
+    warnings: ['DESTRUCTIVE'],
+    ...overrides,
+  })
+}
+
+function makeRemoveResult(overrides: Partial<TagOperationApplyResult> = {}): TagOperationApplyResult {
+  return {
+    operationId: 'remove-operation-1',
+    resultId: 'remove-operation-1',
+    kind: 'remove',
+    operation: removeOperation,
+    sourceTagId: 7,
+    destinationTagId: null,
+    survivorTagId: null,
+    sourceTag: null,
+    destinationTag: null,
+    survivorTag: null,
+    sourceDisplayName: null,
+    sourceNormalizedName: null,
+    destinationDisplayName: null,
+    destinationNormalizedName: null,
+    survivorDisplayName: null,
+    survivorNormalizedName: null,
+    sourceDeleted: true,
+    affectedCount: 3,
+    associationAdds: 0,
+    associationRemoves: 3,
+    duplicateCollapses: 0,
+    tagCreates: 0,
+    tagDeletes: 1,
+    displayOnly: false,
+    versionUpdateCount: 3,
+    commitTimestamp: 1_700_000_000_000,
+    appliedFingerprint: 'a'.repeat(64),
+    ...overrides,
+  }
+}
+
 function mountDialog(options: {
   selectedTag?: string | null
   selectionEpoch?: number
@@ -225,6 +282,21 @@ async function settle(): Promise<void> {
   await flushPromises()
 }
 
+function resolveRemovalConfirmation(value: boolean): void {
+  mocks.confirmCancellable.mockReturnValueOnce({
+    promise: Promise.resolve(value),
+    cancel: vi.fn(),
+  })
+}
+
+function pendingRemovalConfirmation(): { resolve: (value: boolean) => void; cancel: ReturnType<typeof vi.fn> } {
+  let resolve!: (value: boolean) => void
+  const promise = new Promise<boolean>((next) => { resolve = next })
+  const cancel = vi.fn(() => resolve(false))
+  mocks.confirmCancellable.mockReturnValueOnce({ promise, cancel })
+  return { resolve, cancel }
+}
+
 describe('TagManagementDialog', () => {
   let wrappers: VueWrapper[] = []
 
@@ -238,6 +310,7 @@ describe('TagManagementDialog', () => {
     }))
     mocks.applyTagOperation.mockReset().mockResolvedValue(makeResult())
     mocks.assertApplyResultMatchesReviewedPreview.mockReset()
+    mocks.confirmCancellable.mockReset()
   })
 
   afterEach(() => {
@@ -253,14 +326,14 @@ describe('TagManagementDialog', () => {
     return wrapper
   }
 
-  it('loads the authoritative stable-ID list and keeps the production trigger absent', async () => {
+  it('loads the authoritative stable-ID list and exposes all three operations', async () => {
     const wrapper = mountTracked()
     await settle()
     expect(mocks.listManagedTags).toHaveBeenCalledTimes(1)
     expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('ready')
     expect(wrapper.get('#tag-management-source').findAll('option')).toHaveLength(3)
     expect(wrapper.text()).toContain('Manage tags')
-    expect(wrapper.text()).not.toContain('Remove')
+    expect(wrapper.find('[data-operation="remove"]').exists()).toBe(true)
     expect(wrapper.find('[data-operation="merge"]').exists()).toBe(true)
   })
 
@@ -367,7 +440,7 @@ describe('TagManagementDialog', () => {
     expect(mocks.applyTagOperation).not.toHaveBeenCalled()
   })
 
-  it('offers Merge without Remove and binds an existing destination by stable ID', async () => {
+  it('offers Merge and binds an existing destination by stable ID', async () => {
     const wrapper = mountTracked()
     await settle()
     await wrapper.get('[data-operation="merge"]').trigger('click')
@@ -375,7 +448,7 @@ describe('TagManagementDialog', () => {
 
     const destination = wrapper.get('#tag-management-destination')
     expect(destination.findAll('option').map((option) => option.attributes('value'))).toEqual(['', '20'])
-    expect(wrapper.text()).not.toContain('Remove')
+    expect(wrapper.find('[data-operation="remove"]').exists()).toBe(true)
 
     await wrapper.get('#tag-management-destination-search').setValue('python')
     expect(destination.findAll('option').map((option) => option.attributes('value'))).toEqual(['', '20'])
@@ -419,6 +492,223 @@ describe('TagManagementDialog', () => {
     expect(mocks.applyTagOperation).toHaveBeenCalledWith(mergeOperation, 'a'.repeat(64))
     expect(wrapper.get('.tag-management-state-success').attributes('data-selected-tag')).toBe('Python')
     expect(wrapper.text()).toContain('Surviving destination tag: Python')
+  })
+
+  it('shows Remove without destination controls and previews the exact destructive impact', async () => {
+    mocks.previewTagOperation.mockResolvedValueOnce(makeRemovePreview())
+    const wrapper = mountTracked()
+    await settle()
+    await wrapper.get('[data-operation="remove"]').trigger('click')
+    await wrapper.get('#tag-management-source').setValue('7')
+
+    expect(wrapper.find('#tag-management-destination').exists()).toBe(false)
+    expect(wrapper.find('#tag-management-destination-search').exists()).toBe(false)
+    await wrapper.get('form').trigger('submit')
+    await settle()
+
+    expect(mocks.previewTagOperation).toHaveBeenCalledWith(removeOperation)
+    expect(wrapper.findAll('.tag-management-summary dd')[0]?.text()).toBe('Remove')
+    expect(wrapper.findAll('.tag-management-summary dd')[1]?.text()).toBe('#Java')
+    expect(wrapper.text()).toContain('The tag will be removed from all affected documents')
+    expect(wrapper.text()).toContain('The documents themselves will not be deleted')
+    expect(wrapper.text()).toContain('Markdown/frontmatter files')
+    expect(wrapper.text()).toContain('global tag record will be deleted')
+    expect(wrapper.text()).toContain('Affected document sample')
+    expect(wrapper.text()).toContain('Associations removed')
+    expect(wrapper.text()).toContain('Tags deleted')
+    expect(wrapper.get('[data-action="remove-apply"]').text()).toBe('Remove #Java')
+
+    const confirmation = pendingRemovalConfirmation()
+    await wrapper.get('[data-action="remove-apply"]').trigger('click')
+    await settle()
+    expect(mocks.confirmCancellable).toHaveBeenCalledWith(
+      'Remove tag #Java?',
+      expect.stringContaining('Documents and Markdown files remain'),
+      expect.objectContaining({
+        cancelLabel: 'Cancel',
+        confirmLabel: 'Remove #Java',
+        destructive: true,
+      }),
+    )
+    expect(mocks.applyTagOperation).not.toHaveBeenCalled()
+
+    confirmation.resolve(false)
+    await settle()
+    expect(mocks.applyTagOperation).not.toHaveBeenCalled()
+    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('preview-ready')
+    expect(wrapper.get('.tag-management-live').text()).toContain('Removal cancelled')
+  })
+
+  it('requires confirmation before one Remove Apply and reports the removed source', async () => {
+    mocks.previewTagOperation.mockResolvedValueOnce(makeRemovePreview())
+    mocks.applyTagOperation.mockResolvedValueOnce(makeRemoveResult())
+    mocks.listManagedTags
+      .mockReset()
+      .mockResolvedValueOnce(TAGS)
+      .mockResolvedValueOnce([TAGS[1]!])
+    const wrapper = mountTracked({ selectedTag: 'Java', selectionEpoch: 12 })
+    await settle()
+    await wrapper.get('[data-operation="remove"]').trigger('click')
+    await wrapper.get('#tag-management-source').setValue('7')
+    await wrapper.get('form').trigger('submit')
+    await settle()
+    resolveRemovalConfirmation(true)
+    await wrapper.get('[data-action="remove-apply"]').trigger('click')
+    await settle()
+
+    expect(mocks.applyTagOperation).toHaveBeenCalledTimes(1)
+    expect(mocks.applyTagOperation).toHaveBeenCalledWith(removeOperation, 'a'.repeat(64))
+    expect(wrapper.get('.tag-management-state-success').attributes('data-selected-tag')).toBeUndefined()
+    expect(wrapper.text()).toContain('#Java was removed')
+    expect(wrapper.text()).not.toContain('Final display name')
+  })
+
+  it('allows an orphan Remove with zero affected documents', async () => {
+    const orphan = { id: 30, normalizedName: 'orphan', displayName: 'Orphan', documentCount: 0 }
+    mocks.listManagedTags.mockReset().mockResolvedValueOnce([...TAGS, orphan]).mockResolvedValueOnce([TAGS[1]!])
+    mocks.previewTagOperation.mockResolvedValueOnce(makeRemovePreview({
+      sourceTag: { id: 30, normalizedName: 'orphan', displayName: 'Orphan' },
+      operation: { kind: 'remove', sourceTagId: 30 },
+      affectedCount: 0,
+      associationRemoves: 0,
+      sample: [],
+    }))
+    mocks.applyTagOperation.mockResolvedValueOnce(makeRemoveResult({
+      operation: { kind: 'remove', sourceTagId: 30 },
+      sourceTagId: 30,
+      affectedCount: 0,
+      associationRemoves: 0,
+      versionUpdateCount: 0,
+    }))
+    const wrapper = mountTracked()
+    await settle()
+    await wrapper.get('[data-operation="remove"]').trigger('click')
+    await wrapper.get('#tag-management-source').setValue('30')
+    await wrapper.get('form').trigger('submit')
+    await settle()
+    expect(wrapper.text()).toContain('not currently assigned to any documents')
+    expect(wrapper.text()).toContain('delete only the global tag record')
+    expect(wrapper.text()).toContain('Affected documents')
+    expect(wrapper.findAll('.tag-management-summary dd')[2]?.text()).toBe('0')
+    resolveRemovalConfirmation(true)
+    await wrapper.get('[data-action="remove-apply"]').trigger('click')
+    await settle()
+    expect(mocks.applyTagOperation).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).toContain('#Orphan was removed')
+  })
+
+  it('invalidates a pending destructive confirmation when the source changes', async () => {
+    mocks.previewTagOperation.mockResolvedValueOnce(makeRemovePreview())
+    const wrapper = mountTracked()
+    await settle()
+    await wrapper.get('[data-operation="remove"]').trigger('click')
+    await wrapper.get('#tag-management-source').setValue('7')
+    await wrapper.get('form').trigger('submit')
+    await settle()
+    const confirmation = pendingRemovalConfirmation()
+    await wrapper.get('[data-action="remove-apply"]').trigger('click')
+    await settle()
+    await wrapper.get('#tag-management-source').setValue('')
+    await settle()
+    expect(confirmation.cancel).toHaveBeenCalledTimes(1)
+    expect(mocks.applyTagOperation).not.toHaveBeenCalled()
+    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('editing')
+  })
+
+  it('handles Remove stale Apply without retrying automatically', async () => {
+    mocks.previewTagOperation.mockResolvedValueOnce(makeRemovePreview())
+    mocks.applyTagOperation.mockRejectedValueOnce(new mocks.TagManagementApiError('stale', 409, 'PREVIEW_STALE'))
+    const wrapper = mountTracked()
+    await settle()
+    await wrapper.get('[data-operation="remove"]').trigger('click')
+    await wrapper.get('#tag-management-source').setValue('7')
+    await wrapper.get('form').trigger('submit')
+    await settle()
+    resolveRemovalConfirmation(true)
+    await wrapper.get('[data-action="remove-apply"]').trigger('click')
+    await settle()
+    expect(mocks.applyTagOperation).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('.tag-management-preview').exists()).toBe(false)
+    expect(wrapper.get('.tag-management-live').text()).toContain('Tags changed after this Preview')
+  })
+
+  it('refreshes a missing Remove source after Apply TAG_NOT_FOUND without re-Applying', async () => {
+    mocks.previewTagOperation.mockResolvedValueOnce(makeRemovePreview())
+    mocks.applyTagOperation.mockRejectedValueOnce(new mocks.TagManagementApiError('missing', 404, 'TAG_NOT_FOUND'))
+    mocks.listManagedTags
+      .mockReset()
+      .mockResolvedValueOnce(TAGS)
+      .mockResolvedValueOnce([TAGS[1]!])
+    const wrapper = mountTracked({ selectedTag: 'Java' })
+    await settle()
+    await wrapper.get('[data-operation="remove"]').trigger('click')
+    await wrapper.get('#tag-management-source').setValue('7')
+    await wrapper.get('form').trigger('submit')
+    await settle()
+    resolveRemovalConfirmation(true)
+    await wrapper.get('[data-action="remove-apply"]').trigger('click')
+    await settle()
+    expect(mocks.applyTagOperation).toHaveBeenCalledTimes(1)
+    expect(mocks.listManagedTags).toHaveBeenCalledTimes(2)
+    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('editing')
+    expect(wrapper.find('.tag-management-preview').exists()).toBe(false)
+    expect((wrapper.get('#tag-management-source').element as HTMLSelectElement).value).toBe('')
+    expect(wrapper.text()).toContain('source or destination tag no longer exists')
+  })
+
+  it('keeps committed Remove sync-pending and retries synchronization only', async () => {
+    mocks.previewTagOperation.mockResolvedValueOnce(makeRemovePreview())
+    mocks.applyTagOperation.mockResolvedValueOnce(makeRemoveResult())
+    let syncAttempts = 0
+    const syncAfterCommit = vi.fn(async () => {
+      syncAttempts += 1
+      if (syncAttempts === 1) throw new Error('sync unavailable')
+      return { managedTags: [TAGS[1]!], selectedTag: null }
+    })
+    const wrapper = mountTracked({ syncAfterCommit })
+    await settle()
+    await wrapper.get('[data-operation="remove"]').trigger('click')
+    await wrapper.get('#tag-management-source').setValue('7')
+    await wrapper.get('form').trigger('submit')
+    await settle()
+    resolveRemovalConfirmation(true)
+    await wrapper.get('[data-action="remove-apply"]').trigger('click')
+    await settle()
+    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('sync-pending')
+    expect(mocks.applyTagOperation).toHaveBeenCalledTimes(1)
+    await wrapper.get('.tag-management-state-error .primary').trigger('click')
+    await settle()
+    expect(syncAfterCommit).toHaveBeenCalledTimes(2)
+    expect(mocks.applyTagOperation).toHaveBeenCalledTimes(1)
+    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('success')
+  })
+
+  it('preserves a newer user selection when Remove synchronization resolves', async () => {
+    mocks.previewTagOperation.mockResolvedValueOnce(makeRemovePreview())
+    mocks.applyTagOperation.mockResolvedValueOnce(makeRemoveResult())
+    let resolveSync: ((value: { managedTags: ManagedTag[]; selectedTag: string | null }) => void) | undefined
+    const syncAfterCommit = vi.fn(() => new Promise<{ managedTags: ManagedTag[]; selectedTag: string | null }>((resolve) => {
+      resolveSync = resolve
+    }))
+    const wrapper = mountTracked({ selectedTag: 'Java', selectionEpoch: 12, syncAfterCommit })
+    await settle()
+    await wrapper.get('[data-operation="remove"]').trigger('click')
+    await wrapper.get('#tag-management-source').setValue('7')
+    await wrapper.get('form').trigger('submit')
+    await settle()
+    resolveRemovalConfirmation(true)
+    await wrapper.get('[data-action="remove-apply"]').trigger('click')
+    await settle()
+    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('syncing')
+    await wrapper.setProps({ selectedTag: 'Python', selectionEpoch: 13 })
+    resolveSync?.({ managedTags: [TAGS[1]!], selectedTag: 'Python' })
+    await settle()
+    expect(syncAfterCommit).toHaveBeenCalledWith(
+      makeRemoveResult(),
+      expect.objectContaining({ selectedTag: 'Java', selectedTagId: 7, selectionEpoch: 12 }),
+    )
+    expect(mocks.applyTagOperation).toHaveBeenCalledTimes(1)
+    expect(wrapper.get('.tag-management-state-success').attributes('data-selected-tag')).toBe('Python')
   })
 
   it('preserves committed state and delegates protocol-mismatch recovery to VaultView', async () => {
@@ -474,6 +764,39 @@ describe('TagManagementDialog', () => {
     expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('editing')
     expect(wrapper.find('.tag-management-preview').exists()).toBe(false)
     expect(wrapper.text()).toContain('Do not apply the operation again')
+  })
+
+  it('recovers a committed Remove from the trusted submitted operation', async () => {
+    mocks.previewTagOperation.mockResolvedValueOnce(makeRemovePreview())
+    mocks.applyTagOperation.mockResolvedValueOnce(makeRemoveResult())
+    mocks.assertApplyResultMatchesReviewedPreview.mockImplementationOnce(() => {
+      throw new mocks.TagManagementApiError('invalid response', 200, 'CLIENT_PROTOCOL_ERROR')
+    })
+    const syncAfterCommit = vi.fn(async () => ({ managedTags: TAGS, selectedTag: 'Java' }))
+    const recoverCommittedOperation = vi.fn(async (submittedOperation: TagOperationRequest, snapshot: TagSelectionSnapshot) => {
+      expect(submittedOperation).toEqual(removeOperation)
+      expect(snapshot).toMatchObject({ selectedTag: 'Java', selectedTagId: 7, selectionEpoch: 12 })
+      return { managedTags: [TAGS[1]!], selectedTag: null }
+    })
+    const wrapper = mountTracked({ selectedTag: 'Java', selectionEpoch: 12, syncAfterCommit, recoverCommittedOperation })
+    await settle()
+    await wrapper.get('[data-operation="remove"]').trigger('click')
+    await wrapper.get('#tag-management-source').setValue('7')
+    await wrapper.get('form').trigger('submit')
+    await settle()
+    resolveRemovalConfirmation(true)
+    await wrapper.get('[data-action="remove-apply"]').trigger('click')
+    await settle()
+
+    expect(mocks.applyTagOperation).toHaveBeenCalledTimes(1)
+    expect(syncAfterCommit).not.toHaveBeenCalled()
+    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('sync-pending')
+    await wrapper.get('.tag-management-state-error .primary').trigger('click')
+    await settle()
+    expect(recoverCommittedOperation).toHaveBeenCalledTimes(1)
+    expect(mocks.applyTagOperation).toHaveBeenCalledTimes(1)
+    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('editing')
+    expect(wrapper.find('.tag-management-preview').exists()).toBe(false)
   })
 
   it('keeps committed protocol mismatch recovery pending and retries the VaultView seam without re-applying', async () => {
