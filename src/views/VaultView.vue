@@ -100,8 +100,10 @@ import {
   listManagedTags,
   type ManagedTag,
   type TagOperationApplyResult,
+  type TagOperationRequest,
 } from '../lib/tag-management-api'
 import {
+  reconcileCommittedTagSelectionFromOperation,
   reconcileTagSelection,
   type TagSelectionSnapshot,
 } from '../lib/tag-selection-reconciliation'
@@ -1591,6 +1593,30 @@ async function synchronizeCommittedTagOperation(
   return { managedTags: freshTags, selectedTag: reconciled }
 }
 
+/**
+ * VaultView owns the exceptional recovery cycle after a committed Apply
+ * response fails the reviewed-Preview contract. The submitted operation and
+ * selection snapshot are trusted; the contradictory Apply result is not.
+ */
+async function recoverCommittedTagOperation(
+  operation: TagOperationRequest,
+  snapshot: TagSelectionSnapshot,
+): Promise<{ managedTags: ManagedTag[]; selectedTag: string | null }> {
+  const [, freshTags] = await Promise.all([
+    refresh(),
+    listManagedTags(),
+  ])
+  const reconciled = reconcileCommittedTagSelectionFromOperation({
+    snapshot,
+    currentSelectedTag: selectedTag.value,
+    currentSelectionEpoch: tagSelectionEpoch.value,
+    operation,
+    managedTags: freshTags,
+  })
+  selectedTag.value = reconciled
+  return { managedTags: freshTags, selectedTag: reconciled }
+}
+
 /* ---------- Bi-directional links ---------- */
 // Mount the file-change-bus subscription so the link index stays
 // fresh as the user (or AI) edits. The initial fetch is triggered
@@ -1664,6 +1690,7 @@ watch(isReadMode, async (reading) => {
       :selected-tag="selectedTag"
       :selection-epoch="tagSelectionEpoch"
       :sync-after-commit="synchronizeCommittedTagOperation"
+      :recover-committed-operation="recoverCommittedTagOperation"
       @close="tagManagementOpen = false"
     />
 

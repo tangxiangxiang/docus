@@ -7,6 +7,7 @@ describe('VaultView editor tab wiring', () => {
   it('owns the hidden T2-3 dialog seam and one canonical post-commit sync cycle', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
     const sync = source.match(/async function synchronizeCommittedTagOperation[\s\S]*?\n}/)?.[0]
+    const recovery = source.match(/async function recoverCommittedTagOperation[\s\S]*?\n}/)?.[0]
 
     expect(source).toContain("import TagManagementDialog from '../components/vault/TagManagementDialog.vue'")
     expect(source).toContain('const tagManagementOpen = ref(false)')
@@ -14,6 +15,7 @@ describe('VaultView editor tab wiring', () => {
     expect(source).toContain('<TagManagementDialog')
     expect(source).toContain('v-if="tagManagementOpen"')
     expect(source).toContain(':sync-after-commit="synchronizeCommittedTagOperation"')
+    expect(source).toContain(':recover-committed-operation="recoverCommittedTagOperation"')
     expect(source).not.toContain('tagManagementOpen = true')
     expect(sync).toBeDefined()
     expect(sync).toContain('const [, freshTags] = await Promise.all([')
@@ -23,6 +25,18 @@ describe('VaultView editor tab wiring', () => {
     expect(sync).toContain('selectedTag.value = reconciled')
     expect(sync).not.toContain('refreshLinkIndex')
     expect(sync).not.toContain('applyPostSummary')
+    expect(recovery).toBeDefined()
+    if (!recovery) throw new Error('VaultView committed recovery seam is missing')
+    expect(recovery).toContain('const [, freshTags] = await Promise.all([')
+    expect(recovery).toContain('refresh(),')
+    expect(recovery).toContain('listManagedTags(),')
+    expect(recovery.match(/\brefresh\(\)/g)).toHaveLength(1)
+    expect(recovery.match(/\blistManagedTags\(\)/g)).toHaveLength(1)
+    expect(recovery).toContain('reconcileCommittedTagSelectionFromOperation({')
+    expect(recovery).toContain('selectedTag.value = reconciled')
+    expect(recovery.indexOf('listManagedTags()')).toBeLessThan(recovery.indexOf('reconcileCommittedTagSelectionFromOperation({'))
+    expect(recovery).not.toContain('tagSelectionEpoch.value += 1')
+    expect(recovery).not.toContain('result.')
   })
 
   it('derives one save presentation per document and shares the active result with StatusBar', () => {

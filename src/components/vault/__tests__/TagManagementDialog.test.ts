@@ -8,8 +8,13 @@ import type {
   ManagedTag,
   TagOperationApplyResult,
   TagOperationPreview,
+  TagOperationRequest,
 } from '../../../lib/tag-management-api'
-import { reconcileTagSelection, type TagSelectionSnapshot } from '../../../lib/tag-selection-reconciliation'
+import {
+  reconcileCommittedTagSelectionFromOperation,
+  reconcileTagSelection,
+  type TagSelectionSnapshot,
+} from '../../../lib/tag-selection-reconciliation'
 
 const mocks = vi.hoisted(() => ({
   listManagedTags: vi.fn(),
@@ -160,6 +165,10 @@ function mountDialog(options: {
     result: TagOperationApplyResult,
     snapshot: TagSelectionSnapshot,
   ) => Promise<{ managedTags: ManagedTag[]; selectedTag: string | null }>
+  recoverCommittedOperation?: (
+    operation: TagOperationRequest,
+    snapshot: TagSelectionSnapshot,
+  ) => Promise<{ managedTags: ManagedTag[]; selectedTag: string | null }>
 } = {}): VueWrapper {
   const syncAfterCommit = options.syncAfterCommit ?? (async (
     result: TagOperationApplyResult,
@@ -182,6 +191,22 @@ function mountDialog(options: {
       }),
     }
   })
+  const recoverCommittedOperation = options.recoverCommittedOperation ?? (async (
+    submittedOperation: TagOperationRequest,
+    snapshot: TagSelectionSnapshot,
+  ) => {
+    const managedTags = await mocks.listManagedTags() as ManagedTag[]
+    return {
+      managedTags,
+      selectedTag: reconcileCommittedTagSelectionFromOperation({
+        snapshot,
+        currentSelectedTag: options.selectedTag ?? null,
+        currentSelectionEpoch: options.selectionEpoch ?? 0,
+        operation: submittedOperation,
+        managedTags,
+      }),
+    }
+  })
   return mount(TagManagementDialog, {
     attachTo: document.body,
     global: { stubs: { Teleport: true } },
@@ -190,6 +215,7 @@ function mountDialog(options: {
       selectedTag: options.selectedTag ?? null,
       selectionEpoch: options.selectionEpoch ?? 0,
       syncAfterCommit,
+      recoverCommittedOperation,
     },
   })
 }
@@ -395,7 +421,7 @@ describe('TagManagementDialog', () => {
     expect(wrapper.text()).toContain('Surviving destination tag: Python')
   })
 
-  it('preserves committed state and reloads authoritative tags when Merge Apply changes the reviewed destination display identity', async () => {
+  it('preserves committed state and delegates protocol-mismatch recovery to VaultView', async () => {
     const reviewedPreview = makeMergePreview()
     const changedResult = makeMergeResult({
       destinationTag: { id: 20, normalizedName: 'python', displayName: 'Changed' },
@@ -411,7 +437,8 @@ describe('TagManagementDialog', () => {
       throw new mocks.TagManagementApiError('invalid response', 200, 'CLIENT_PROTOCOL_ERROR')
     })
     const syncAfterCommit = vi.fn(async () => ({ managedTags: TAGS, selectedTag: 'Python' }))
-    const wrapper = mountTracked({ syncAfterCommit })
+    const recoverCommittedOperation = vi.fn(async () => ({ managedTags: [TAGS[1]!], selectedTag: 'Python' }))
+    const wrapper = mountTracked({ selectedTag: 'Java', selectionEpoch: 12, syncAfterCommit, recoverCommittedOperation })
     await settle()
     await wrapper.get('[data-operation="merge"]').trigger('click')
     await wrapper.get('#tag-management-source').setValue('7')
@@ -423,6 +450,7 @@ describe('TagManagementDialog', () => {
 
     expect(mocks.assertApplyResultMatchesReviewedPreview).toHaveBeenCalledTimes(1)
     expect(syncAfterCommit).not.toHaveBeenCalled()
+    expect(recoverCommittedOperation).not.toHaveBeenCalled()
     expect(mocks.applyTagOperation).toHaveBeenCalledTimes(1)
     expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('sync-pending')
     expect(wrapper.get('[role="dialog"]').attributes('data-diagnostic-code')).toBe('CLIENT_PROTOCOL_ERROR')
@@ -436,12 +464,52 @@ describe('TagManagementDialog', () => {
 
     await wrapper.get('.tag-management-state-error .primary').trigger('click')
     await settle()
-    expect(mocks.listManagedTags).toHaveBeenCalledTimes(2)
+    expect(recoverCommittedOperation).toHaveBeenCalledTimes(1)
+    expect(recoverCommittedOperation).toHaveBeenCalledWith(
+      mergeOperation,
+      expect.objectContaining({ selectedTag: 'Java', selectedTagId: 7, selectionEpoch: 12 }),
+    )
     expect(syncAfterCommit).not.toHaveBeenCalled()
     expect(mocks.applyTagOperation).toHaveBeenCalledTimes(1)
     expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('editing')
     expect(wrapper.find('.tag-management-preview').exists()).toBe(false)
     expect(wrapper.text()).toContain('Do not apply the operation again')
+  })
+
+  it('keeps committed protocol mismatch recovery pending and retries the VaultView seam without re-applying', async () => {
+    mocks.previewTagOperation.mockResolvedValueOnce(makeMergePreview())
+    mocks.applyTagOperation.mockResolvedValueOnce(makeMergeResult())
+    mocks.assertApplyResultMatchesReviewedPreview.mockImplementationOnce(() => {
+      throw new mocks.TagManagementApiError('invalid response', 200, 'CLIENT_PROTOCOL_ERROR')
+    })
+    const recoverCommittedOperation = vi.fn(async () => {
+      throw new Error('VaultView refresh unavailable')
+    })
+    const wrapper = mountTracked({ recoverCommittedOperation })
+    await settle()
+    await wrapper.get('[data-operation="merge"]').trigger('click')
+    await wrapper.get('#tag-management-source').setValue('7')
+    await wrapper.get('#tag-management-destination').setValue('20')
+    await wrapper.get('form').trigger('submit')
+    await settle()
+    await wrapper.get('.tag-management-preview .primary').trigger('click')
+    await settle()
+
+    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('sync-pending')
+    expect(mocks.applyTagOperation).toHaveBeenCalledTimes(1)
+
+    await wrapper.get('.tag-management-state-error .primary').trigger('click')
+    await settle()
+    expect(recoverCommittedOperation).toHaveBeenCalledTimes(1)
+    expect(mocks.applyTagOperation).toHaveBeenCalledTimes(1)
+    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('sync-pending')
+    expect(wrapper.get('.tag-management-state-error .primary').text()).toBe('Retry synchronization')
+
+    await wrapper.get('.tag-management-state-error .primary').trigger('click')
+    await settle()
+    expect(recoverCommittedOperation).toHaveBeenCalledTimes(2)
+    expect(mocks.applyTagOperation).toHaveBeenCalledTimes(1)
+    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('sync-pending')
   })
 
   it('clears a destination when the source changes to that stable ID and invalidates Preview', async () => {

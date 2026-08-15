@@ -3,8 +3,10 @@ import TagManagementDialog from '../src/components/vault/TagManagementDialog.vue
 import {
   listManagedTags,
   type TagOperationApplyResult,
+  type TagOperationRequest,
 } from '../src/lib/tag-management-api'
 import {
+  reconcileCommittedTagSelectionFromOperation,
   reconcileTagSelection,
   type TagSelectionSnapshot,
 } from '../src/lib/tag-selection-reconciliation'
@@ -52,12 +54,30 @@ export function mountTagManagementHarness(): void {
     selectedTag.value = finalSelectedTag
     return { managedTags, selectedTag: finalSelectedTag }
   }
+  const recoverCommittedOperation = async (
+    operation: TagOperationRequest,
+    snapshot: TagSelectionSnapshot,
+  ) => {
+    const [, managedTags] = await Promise.all([
+      fetch('/api/posts'),
+      listManagedTags(),
+    ])
+    const finalSelectedTag = reconcileCommittedTagSelectionFromOperation({
+      snapshot,
+      currentSelectedTag: selectedTag.value,
+      currentSelectionEpoch: selectionEpoch.value,
+      operation,
+      managedTags,
+    })
+    selectedTag.value = finalSelectedTag
+    return { managedTags, selectedTag: finalSelectedTag }
+  }
   const host = document.createElement('div')
   host.id = 't2-4-tag-management-harness'
   document.body.append(host)
   const app = createApp({
     setup() {
-      return { open, selectedTag, selectionEpoch, syncAfterCommit }
+      return { open, selectedTag, selectionEpoch, syncAfterCommit, recoverCommittedOperation }
     },
     render() {
       return h(TagManagementDialog, {
@@ -65,6 +85,7 @@ export function mountTagManagementHarness(): void {
         selectedTag: this.selectedTag,
         selectionEpoch: this.selectionEpoch,
         syncAfterCommit: this.syncAfterCommit,
+        recoverCommittedOperation: this.recoverCommittedOperation,
         onClose: () => { open.value = false },
       })
     },

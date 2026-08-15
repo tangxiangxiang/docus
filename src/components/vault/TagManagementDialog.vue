@@ -50,6 +50,14 @@ interface TagManagementDialogProps {
     managedTags: ManagedTag[]
     selectedTag: string | null
   }>
+  /** The VaultView-owned recovery seam for a committed, untrusted Apply response. */
+  recoverCommittedOperation: (
+    operation: TagOperationRequest,
+    snapshot: TagSelectionSnapshot,
+  ) => Promise<{
+    managedTags: ManagedTag[]
+    selectedTag: string | null
+  }>
 }
 
 const props = withDefaults(defineProps<TagManagementDialogProps>(), {
@@ -94,10 +102,11 @@ const diagnosticStage = ref('loading')
 const diagnosticCode = ref<TagManagementClientErrorCode | null>(null)
 const selectionSnapshot = ref<TagSelectionSnapshot | null>(null)
 const reconciledSelectedTag = ref<string | null>(null)
+const committedRecoveryOperation = ref<TagOperationRequest | null>(null)
 // A successful Apply whose response fails the reviewed-Preview contract is
 // committed, but its contradictory identity fields are unsafe for the normal
-// VaultView reconciliation seam. Retry must therefore use an authoritative
-// managed-tag reload and never pass this result to syncAfterCommit.
+// VaultView reconciliation seam. Retry therefore uses the dedicated
+// VaultView-owned recovery seam and never passes this result for reconciliation.
 const authoritativeRecoveryPending = ref(false)
 
 let loadRun = 0
@@ -350,8 +359,8 @@ function mapError(error: unknown, stage: 'preview' | 'apply' | 'load'): string {
   return stage === 'preview' ? t('tags.manage.preview_failed') : t('tags.manage.error_generic')
 }
 
-function selectInitialSource(tags: ManagedTag[]): void {
-  const fromSelected = resolveManagedTagId(props.selectedTag, tags)
+function selectInitialSource(tags: ManagedTag[], selectedTag = props.selectedTag): void {
+  const fromSelected = resolveManagedTagId(selectedTag, tags)
   if (fromSelected !== null) {
     sourceTagId.value = fromSelected
     return
@@ -452,6 +461,7 @@ function resetForOpen(): void {
   destinationTagId.value = null
   applyResult.value = null
   authoritativeRecoveryPending.value = false
+  committedRecoveryOperation.value = null
   selectionSnapshot.value = null
   sourceError.value = ''
   destinationError.value = ''
@@ -469,6 +479,7 @@ async function onPreview(): Promise<void> {
   clearPreview()
   applyResult.value = null
   authoritativeRecoveryPending.value = false
+  committedRecoveryOperation.value = null
   errorMessage.value = ''
   staleMessage.value = ''
   state.value = 'previewing'
@@ -609,28 +620,34 @@ async function runSynchronization(result: TagOperationApplyResult): Promise<void
   }
 }
 
-async function reloadAuthoritativeTagsAfterCommittedProtocolMismatch(): Promise<void> {
-  const run = ++loadRun
-  const syncGeneration = syncRun
+async function recoverCommittedProtocolMismatch(): Promise<void> {
+  const run = syncRun
   state.value = 'syncing'
   setDiagnostic('syncing', 'CLIENT_PROTOCOL_ERROR')
   announce(t('tags.manage.syncing'))
   try {
-    const tags = await listManagedTags()
-    if (run !== loadRun || syncGeneration !== syncRun || !props.open) return
-    managedTags.value = tags
-    finalTags.value = tags
-    selectInitialSource(tags)
-    reconcileDestinationWithTags(tags)
+    const operation = committedRecoveryOperation.value
+    const snapshot = selectionSnapshot.value
+    if (!operation || !snapshot || typeof props.recoverCommittedOperation !== 'function') {
+      throw new Error('committed tag recovery seam is unavailable')
+    }
+    const synchronized = await props.recoverCommittedOperation(operation, snapshot)
+    if (run !== syncRun || !props.open) return
+    managedTags.value = synchronized.managedTags
+    finalTags.value = synchronized.managedTags
+    reconciledSelectedTag.value = synchronized.selectedTag
+    selectInitialSource(synchronized.managedTags, synchronized.selectedTag)
+    reconcileDestinationWithTags(synchronized.managedTags)
     applyResult.value = null
     selectionSnapshot.value = null
+    committedRecoveryOperation.value = null
     authoritativeRecoveryPending.value = false
     state.value = 'editing'
     setDiagnostic('ready', 'CLIENT_PROTOCOL_ERROR')
     errorMessage.value = t('tags.manage.committed_protocol_mismatch')
     announce(errorMessage.value)
   } catch {
-    if (run !== loadRun || syncGeneration !== syncRun || !props.open) return
+    if (run !== syncRun || !props.open) return
     state.value = 'sync-pending'
     setDiagnostic('sync-pending', 'CLIENT_PROTOCOL_ERROR')
     errorMessage.value = t('tags.manage.committed_protocol_mismatch')
@@ -688,8 +705,9 @@ async function onApply(): Promise<void> {
   } catch {
     // The successful response proves that the mutation committed. Its
     // contradictory fields cannot be used for reconciliation, so retain
-    // only enough committed context for a safe authoritative reload.
+    // only enough committed context for safe VaultView-owned recovery.
     authoritativeRecoveryPending.value = true
+    committedRecoveryOperation.value = operation
     clearPreview()
     state.value = 'sync-pending'
     setDiagnostic('sync-pending', 'CLIENT_PROTOCOL_ERROR')
@@ -704,12 +722,13 @@ async function onApply(): Promise<void> {
 }
 
 async function retrySynchronization(): Promise<void> {
-  if (!applyResult.value || state.value !== 'sync-pending') return
+  if (state.value !== 'sync-pending') return
   ++syncRun
   if (authoritativeRecoveryPending.value) {
-    await reloadAuthoritativeTagsAfterCommittedProtocolMismatch()
+    await recoverCommittedProtocolMismatch()
     return
   }
+  if (!applyResult.value) return
   await runSynchronization(applyResult.value)
 }
 
@@ -718,6 +737,7 @@ async function reloadManagedTags(): Promise<void> {
   clearPreview()
   applyResult.value = null
   authoritativeRecoveryPending.value = false
+  committedRecoveryOperation.value = null
   destinationTagId.value = null
   destinationError.value = ''
   await fetchManagedTagsForOpening()

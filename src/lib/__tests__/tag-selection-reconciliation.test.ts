@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   captureTagSelection,
+  reconcileCommittedTagSelectionFromOperation,
   reconcileTagSelection,
   resolveManagedTagId,
 } from '../tag-selection-reconciliation'
@@ -13,6 +14,7 @@ const tags: ManagedTag[] = [
   { id: 9, normalizedName: 'backend', displayName: 'Backend', documentCount: 4 },
   { id: 20, normalizedName: 'python', displayName: 'Python', documentCount: 2 },
 ]
+const workTag: ManagedTag = { id: 30, normalizedName: 'work', displayName: 'Work', documentCount: 1 }
 
 function result(operation: TagOperationRequest, overrides: Partial<TagOperationApplyResult> = {}): TagOperationApplyResult {
   return {
@@ -140,5 +142,81 @@ describe('tag selection reconciliation', () => {
       result: result(operation),
       managedTags: [{ ...tags[0]!, displayName: 'Backend' }],
     })).toBeNull()
+  })
+
+  it('reconciles committed Merge source selection from the trusted destination ID', () => {
+    const operation = { kind: 'merge' as const, sourceTagId: 7, destinationTagId: 20 }
+    expect(reconcileCommittedTagSelectionFromOperation({
+      snapshot: captureTagSelection('Java', tags, 4),
+      currentSelectedTag: 'Java',
+      currentSelectionEpoch: 4,
+      operation,
+      managedTags: tags,
+    })).toBe('Python')
+  })
+
+  it('preserves a newer selection during committed recovery', () => {
+    const operation = { kind: 'merge' as const, sourceTagId: 7, destinationTagId: 20 }
+    expect(reconcileCommittedTagSelectionFromOperation({
+      snapshot: captureTagSelection('Java', tags, 4),
+      currentSelectedTag: 'Work',
+      currentSelectionEpoch: 5,
+      operation,
+      managedTags: tags,
+    })).toBe('Work')
+  })
+
+  it('reconciles committed Merge destination and unrelated selections by stable ID', () => {
+    const operation = { kind: 'merge' as const, sourceTagId: 7, destinationTagId: 20 }
+    expect(reconcileCommittedTagSelectionFromOperation({
+      snapshot: captureTagSelection('Python', tags, 4),
+      currentSelectedTag: 'Python',
+      currentSelectionEpoch: 4,
+      operation,
+      managedTags: tags,
+    })).toBe('Python')
+    expect(reconcileCommittedTagSelectionFromOperation({
+      snapshot: captureTagSelection('Work', [...tags, workTag], 4),
+      currentSelectedTag: 'Work',
+      currentSelectionEpoch: 4,
+      operation,
+      managedTags: [...tags, workTag],
+    })).toBe('Work')
+  })
+
+  it('fails closed when committed Merge destination or unrelated stable ID is missing', () => {
+    const operation = { kind: 'merge' as const, sourceTagId: 7, destinationTagId: 20 }
+    expect(reconcileCommittedTagSelectionFromOperation({
+      snapshot: captureTagSelection('Java', tags, 4),
+      currentSelectedTag: 'Java',
+      currentSelectionEpoch: 4,
+      operation,
+      managedTags: tags.filter((tag) => tag.id !== 20),
+    })).toBeNull()
+    expect(reconcileCommittedTagSelectionFromOperation({
+      snapshot: captureTagSelection('Work', [workTag], 4),
+      currentSelectedTag: 'Work',
+      currentSelectionEpoch: 4,
+      operation,
+      managedTags: tags,
+    })).toBeNull()
+  })
+
+  it('reconciles committed Rename from the fresh source display and ignores the requested name', () => {
+    const operation = { kind: 'rename' as const, sourceTagId: 7, destinationName: 'Renamed' }
+    expect(reconcileCommittedTagSelectionFromOperation({
+      snapshot: captureTagSelection('Java', tags, 4),
+      currentSelectedTag: 'Java',
+      currentSelectionEpoch: 4,
+      operation,
+      managedTags: [{ ...tags[0]!, displayName: 'Backend' }, tags[1]!, tags[2]!],
+    })).toBe('Backend')
+    expect(reconcileCommittedTagSelectionFromOperation({
+      snapshot: captureTagSelection('Java', tags, 4),
+      currentSelectedTag: 'Work',
+      currentSelectionEpoch: 5,
+      operation,
+      managedTags: [{ ...tags[0]!, displayName: 'Backend' }, tags[1]!, tags[2]!],
+    })).toBe('Work')
   })
 })

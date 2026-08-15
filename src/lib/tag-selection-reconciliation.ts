@@ -20,6 +20,14 @@ export interface ReconcileTagSelectionInput {
   managedTags: readonly ManagedTag[]
 }
 
+export interface ReconcileCommittedTagSelectionInput {
+  snapshot: TagSelectionSnapshot
+  currentSelectedTag: string | null
+  currentSelectionEpoch: number
+  operation: TagOperationRequest
+  managedTags: readonly ManagedTag[]
+}
+
 /** Resolve a Phase 1 display value to management identity once, at the
  * authoritative list boundary. A display string is never used as a
  * post-Apply identity fallback. */
@@ -47,6 +55,27 @@ export function captureTagSelection(
 function displayForId(id: number | null, managedTags: readonly ManagedTag[]): string | null {
   if (id === null) return null
   return managedTags.find((tag) => tag.id === id)?.displayName ?? null
+}
+
+function committedReconciledId(
+  snapshot: TagSelectionSnapshot,
+  operation: TagOperationRequest,
+): number | null {
+  const selectedId = snapshot.selectedTagId
+  if (selectedId === null) return null
+
+  if (operation.kind === 'rename' && selectedId === operation.sourceTagId) {
+    return operation.sourceTagId
+  }
+  if (operation.kind === 'merge') {
+    if (selectedId === operation.sourceTagId || selectedId === operation.destinationTagId) {
+      return operation.destinationTagId
+    }
+  }
+  if (operation.kind === 'remove' && selectedId === operation.sourceTagId) {
+    return null
+  }
+  return selectedId
 }
 
 function reconciledId(
@@ -85,4 +114,23 @@ export function reconcileTagSelection(input: ReconcileTagSelectionInput): string
   // An unresolved pre-Apply string must not become attached to a refreshed
   // row merely because that row now has the same display value.
   return displayForId(id, input.managedTags)
+}
+
+/**
+ * Reconcile a committed operation using only the trusted submitted operation
+ * and fresh authoritative tags. This path is deliberately separate from the
+ * normal Apply-result reconciliation because a successful response may have
+ * failed the reviewed-Preview contract and must not provide identity data.
+ */
+export function reconcileCommittedTagSelectionFromOperation(
+  input: ReconcileCommittedTagSelectionInput,
+): string | null {
+  if (input.currentSelectionEpoch !== input.snapshot.selectionEpoch) {
+    return input.currentSelectedTag
+  }
+
+  return displayForId(
+    committedReconciledId(input.snapshot, input.operation),
+    input.managedTags,
+  )
 }
