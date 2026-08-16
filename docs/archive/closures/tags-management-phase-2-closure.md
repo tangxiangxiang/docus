@@ -89,10 +89,10 @@ to the repository history.
 | T2-5 | [`99fb454`](https://github.com/tangxiangxiang/docus/commit/99fb4546ddc2e53a85632a9bfebb977b4f3e0058) | `feat(tags): add remove management UI` | Added destructive Remove Preview, confirmation, synchronization, selection clearing, production entry, i18n, and browser flow. |
 | T2-5 | [`af45beb`](https://github.com/tangxiangxiang/docus/commit/af45beb8594bc78def03e9997908417d398d8ef7) | `test(tags): close phase 2 remove UI gate` | Added Remove-specific zh/en copy and production confirmation keyboard coverage. |
 | T2-5 | [`0042be5`](https://github.com/tangxiangxiang/docus/commit/0042be55dd446053a3bc5b91bf213109e208448d) | `test(tags): assert remove apply exactly once` | Proved the production Remove flow sends exactly one Apply after Escape cancellation. |
-| T2-6 | [`b3ec972`](https://github.com/tangxiangxiang/docus/commit/b3ec972de084650556d3f028899b41c0bf58abf8) | `test(tags): stabilize 10k health preflight evidence on Windows` | Stabilized the large-vault health-preflight evidence in the cross-platform lane. |
-| T2-6 | [`38e641a`](https://github.com/tangxiangxiang/docus/commit/38e641a49948494a3171cac90ec9736719ed6cac) | `test(tags): stabilize scale worker lifecycle` | Temporary tags-scale worker-lifecycle adjustment used during hardening. |
-| T2-6 | [`90955cf`](https://github.com/tangxiangxiang/docus/commit/90955cf6a7f2000337af80e36224278eb12cabd0) | `Revert "test(tags): stabilize scale worker lifecycle"` | Reverted the temporary scale configuration; the final release candidate contains the original configuration. |
-| T2-6 | [`05338c0`](https://github.com/tangxiangxiang/docus/commit/05338c0e23ea9b7004c291b1169d9fcfa4c22687) | `fix(deps): update better-sqlite3 to version 12.11.1 and increase timeout for write route tests` | Removed the Node 24 native teardown compatibility risk in the supported dependency and stabilized unrelated long write-route tests. |
+| T2-1 | [`b3ec972`](https://github.com/tangxiangxiang/docus/commit/b3ec972de084650556d3f028899b41c0bf58abf8) | `test(tags): stabilize 10k health preflight evidence on Windows` | T2-1 planner/Preview gate-support for the large-vault health preflight; this predates T2-2. |
+| T2-2 | [`38e641a`](https://github.com/tangxiangxiang/docus/commit/38e641a49948494a3171cac90ec9736719ed6cac) | `test(tags): stabilize scale worker lifecycle` | Temporary tags-scale worker-lifecycle adjustment during the T2-2 scale/CI evidence period. |
+| T2-2 | [`90955cf`](https://github.com/tangxiangxiang/docus/commit/90955cf6a7f2000337af80e36224278eb12cabd0) | `Revert "test(tags): stabilize scale worker lifecycle"` | T2-2 scale/CI support; explicitly reverted the temporary worker-lifecycle experiment. |
+| T2-2 | [`05338c0`](https://github.com/tangxiangxiang/docus/commit/05338c0e23ea9b7004c291b1169d9fcfa4c22687) | `fix(deps): update better-sqlite3 to version 12.11.1 and increase timeout for write route tests` | T2-2/cross-platform CI compatibility support before T2-3; removed the Node 24 native teardown risk and stabilized long write-route tests. |
 | T2-6 | [`99f4d73`](https://github.com/tangxiangxiang/docus/commit/99f4d73154349f8ebc99cb609f1a88b07937fb26) | `test(tags): harden phase 2 tag management` | Added the final hardening matrices for stale writers, health, security, browser boundaries, recovery, and cross-phase regression. |
 
 The plan-only commits before `e107fc0` are authority history, not Phase 2
@@ -176,15 +176,16 @@ The actual rehearsal used these pre-upgrade rows:
 id 1  Java    (legacy identity)
 id 2  #java   (legacy identity)
 id 3  JAVA    (legacy identity)
-id 10 Python
-id 11 Orphan
+id 4  Python
+id 5  Orphan
 ```
 
 After startup migration, IDs 2 and 3 were consolidated into the lowest-ID
-survivor ID 1 (`Java` / `java`), Python remained ID 10, and the orphan remained
-ID 11. Six physical associations became five after duplicate collapse; the
-logical membership set was unchanged. The completion marker was written only
-after verification and the resulting management health was `healthy`.
+survivor ID 1 (`Java` / `java`), Python remained ID 4, and the orphan remained
+ID 5. Six physical associations became four after one association move and two
+duplicate collapses; the logical membership set was unchanged. The completion
+marker was written only after verification and the resulting management health
+was `healthy`.
 
 The rehearsal also exercised a controlled failure after association repointing.
 The transaction rolled back the graph and versions, left a non-complete
@@ -207,17 +208,33 @@ Docker volume, or Git working data was used.
 Environment:
 
 ```text
-OS: Darwin arm64
+OS: Darwin 25.5.0 arm64
 Node: v24.15.0
+Docker: 29.4.2 client/server
 Isolation: OS temporary root; temporary data/vault/backup/failure/restore copies
+Release-candidate implementation: 99f4d73154349f8ebc99cb609f1a88b07937fb26
+Matching old production baseline: 20a4462d556e19ad0bbcec9709d1f579231a49d0
 ```
+
+The old baseline was independently verified as the direct parent of the first
+Phase 2 production commit:
+
+```text
+git rev-parse e107fc0f4226c3e69ba7e18759c5e2261fb03343^
+→ 20a4462d556e19ad0bbcec9709d1f579231a49d0
+```
+
+The main working tree stayed on the release-candidate closure branch. A
+separate disposable checkout was used for the old image because the runner's
+`.git/worktrees` directory was not writable; this kept the old runtime and its
+build context separate without checking the main tree backwards.
 
 ### Consistent backup
 
-The pre-upgrade backup used the better-sqlite3 SQLite backup API with writers
-stopped, while the source database was in WAL mode. The matching vault tree was
-copied as a backup set with file modification times preserved. This was not a
-live main-file-only copy.
+The pre-upgrade backup used the better-sqlite3 `Database.backup()` SQLite
+backup API with writers stopped, while the source database was in WAL mode. The
+matching vault tree was copied as a backup set with file modification times
+preserved. This was not a live main-file-only copy.
 
 Both the source and the backup returned:
 
@@ -232,7 +249,15 @@ Markdown mtimes, file paths, and file count.
 
 ### Upgrade and healthy verification
 
-The isolated driver exercised the same startup sequence used by production:
+The current release-candidate image was built from the production tree with:
+
+```text
+docker build --tag docus:t2-release-99f4d73 --file Dockerfile .
+image ID: sha256:46f1aa3b3eeaaf32b9456184f06de939b3fa69f6eda5d7b6b3ff7a1f6dbfdcd2
+```
+
+The isolated driver then exercised the same startup sequence used by
+production:
 
 ```text
 migrateVaultMetadata()
@@ -240,8 +265,9 @@ migrateVaultMetadata()
 ```
 
 It did not simulate migration by manually editing tables. The migration report
-scanned and verified five live documents, found no failed imports, and completed
-identity consolidation. The post-upgrade state had:
+scanned four live Markdown documents with no failed imports; the identity
+migration scanned five tag rows and completed consolidation. The post-upgrade
+state had:
 
 - one Java survivor at the lowest stable ID;
 - duplicate physical memberships collapsed;
@@ -254,6 +280,11 @@ identity consolidation. The post-upgrade state had:
 All fixture Markdown bytes and mtimes were unchanged. The expected affected
 document metadata versions advanced only for documents whose tag associations
 were consolidated; the files themselves were not rewritten.
+
+The current image's `/api/health`, managed-tag list, posts, representative
+metadata, and History reads all succeeded before the rollback step. Its
+identity graph was Java ID 1, Python ID 4, and Orphan ID 5; the three legacy
+Java spellings had one logical membership per affected document.
 
 ### Health failure and fail-closed behavior
 
@@ -281,10 +312,11 @@ clean. Removing the injection and rerunning startup succeeded, produced a
 ### Restore
 
 After the successful-upgrade and failure/retry checks, the isolated upgraded
-database was closed and replaced with the matching pre-upgrade SQLite backup.
+database was stopped and replaced with the matching pre-upgrade SQLite backup.
 The matching pre-upgrade vault backup was restored with paths, bytes, and mtimes
-preserved. The restored database was reopened under compatible old-runtime
-assumptions without running a reverse identity transformation.
+preserved. Before starting any application, the restored database matched the
+pre-upgrade snapshot exactly and returned `integrity_check = ok` with an empty
+foreign-key check.
 
 The restored state matched the pre-upgrade snapshot for:
 
@@ -298,9 +330,42 @@ The restored state matched the pre-upgrade snapshot for:
 The restored database again returned `PRAGMA integrity_check = ok` and an empty
 `PRAGMA foreign_key_check` result.
 
+### Matching old-image rollback execution
+
+This rollback was executed, not inferred from reopening the files. The old
+production image was built from `20a4462d556e19ad0bbcec9709d1f579231a49d0` with
+the repository Docker production path:
+
+```text
+docker build --tag docus:t2-prephase2-20a4462 --file Dockerfile .
+image ID: sha256:322b948a5bc3467d7cb645f242289f730abe370a9e9ae3abaafa8ea073fb4081
+```
+
+The matching pre-Phase-2 image was then started in an isolated container with
+the restored data and vault mounts, `npm run start`, and an isolated host port.
+The container reached Docker `healthy` and `/api/health` returned HTTP 200 with
+`{"ok":true}`. The old image used Node 22.23.2 inside the image. No Phase 2
+Manage Tags endpoint was expected or required in this old image.
+
+Through the actually running old image, the rehearsal successfully verified:
+
+- authenticated `/api/auth/status` for the fixture owner;
+- `/api/posts`, including historical `Java`, `#java`, and `JAVA` memberships;
+- `/api/posts/inbox/java` and `/api/metadata/documents/doc-java` reads;
+- `/api/history/status` and the baseline History log;
+- restored tag IDs 1 through 5 and their pre-upgrade associations;
+- database `PRAGMA integrity_check = ok` and empty `PRAGMA foreign_key_check`.
+
+After old-image startup, the restored database still compared exactly with the
+pre-upgrade snapshot: tags, IDs, `document_tags`, documents and `updated_at`,
+logical memberships, migration-marker state, Markdown paths/bytes/mtimes, and
+file count all matched. Git HEAD remained the fixture baseline commit and
+tracked Git status remained clean. The matching old image therefore actually
+served the restored pre-upgrade state successfully.
+
 There is no reverse identity migration after successful consolidation. Rollback
-requires the matching pre-upgrade backup plus the matching old/compatible
-application image/runtime. Losing tag IDs are not reconstructed.
+after successful consolidation requires the matching pre-upgrade backup plus the
+matching old application image/runtime. Losing tag IDs are not reconstructed.
 
 ## 8. Concurrency / Atomicity Evidence
 
@@ -489,7 +554,7 @@ The deterministic scale fixture contains:
 50,000 document-tag associations
 ```
 
-The recorded observations are:
+Structural acceptance evidence is:
 
 - exact large Remove scope: 10,000 affected documents, 10,000 association
   removals, and 10,000 document version updates;
@@ -498,16 +563,50 @@ The recorded observations are:
 - initial response sample is bounded to 20;
 - continuation page size is bounded to 100;
 - Apply scope is the complete affected set and is not bounded by the sample/page
-  wire response;
-- the health-preflight observation was approximately 43.5 ms;
-- the planner observation was approximately 78 ms;
-- recorded heap deltas were approximately 45.9 MB for planner evidence and
-  approximately 2.1 MB for health-preflight evidence.
+  wire response; Apply recomputes the complete mutation scope.
 
-These are observations from the deterministic local/CI scale evidence, not a
-fixed CI performance SLA. The scale tests are
+The release-candidate CI evidence is [CI #336 / run
+`31886374022`](https://github.com/tangxiangxiang/docus/actions/runs/31886374022),
+`tags-scale` job `95016156244`, which completed successfully and ran the two
+scale test files. The job conclusion is the CI gate evidence; the exact console
+timing and heap payload is not attributed to CI here because the job log is
+access-controlled in this environment.
+
+For precise provenance of the observational numbers, the same release-candidate
+test files were run locally on 2026-08-16 at closure HEAD `a8a0d7d` (the
+production tree is unchanged from `99f4d73`) with:
+
+```text
+OS: Darwin 25.5.0 arm64
+Node: v24.15.0
+Command: npm run test:tags-scale -- --disableConsoleIntercept --reporter=verbose
+Result: 2 files, 3 tests passed
+```
+
+The exact local observations printed by the tests were:
+
+```json
+{
+  "planner": {
+    "documents": 10000,
+    "associations": 50000,
+    "plannerQueries": 3,
+    "elapsedMs": 71.77,
+    "heapDeltaBytes": 45971552
+  },
+  "health": {
+    "markdownEntries": 10000,
+    "metadataOwnershipCount": 10000,
+    "elapsedMs": 40.17,
+    "heapDeltaBytes": 2001032
+  }
+}
+```
+
+Elapsed time and heap delta are observational only and vary by runner. No
+fixed wall-clock or heap SLA is introduced. The scale tests are
 `server/__tests__/tagManagement.scale.test.ts` and
-`server/__tests__/tags-api.scale.test.ts`, run by the `tags-scale` CI job.
+`server/__tests__/tags-api.scale.test.ts`.
 
 ## 15. Protected-Area Regression Audit
 
@@ -550,10 +649,13 @@ overall conclusion `success`.
 | `visual` | `95016156209` | success | macOS `e2e/markdown-visual.spec.ts` visual baseline success |
 
 The failure-evidence upload steps were skipped because the corresponding jobs
-did not fail; they are not failed jobs. No newer CI run is claimed here: this
-closure record is documentation-only and is prepared after the verified
-implementation run. The CI evidence therefore intentionally binds to the
-unchanged implementation HEAD, not to the later local closure-document commit.
+did not fail; they are not failed jobs. CI #336 is the authoritative production
+implementation run for `99f4d73`. The initial documentation-only closure
+commit was independently validated by [CI #337 / run
+`31926530191`](https://github.com/tangxiangxiang/docus/actions/runs/31926530191),
+which ran on `a8a0d7decf43a7743d19fa9cac7c612f9e0e13db` and completed
+successfully; its eight jobs also concluded successfully. The repair commit
+will trigger its own CI run, and no future result is claimed here.
 
 ## 17. Atomic Deployment / Compatibility
 
