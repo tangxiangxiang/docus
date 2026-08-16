@@ -45,11 +45,47 @@ describe('authentication migration', () => {
       INSERT INTO schema_version (version) VALUES (5);
       CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       INSERT INTO settings (key, value) VALUES ('theme', 'dark');
+      CREATE TABLE documents (
+        id TEXT PRIMARY KEY,
+        path TEXT NOT NULL UNIQUE,
+        title TEXT NOT NULL,
+        summary TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE tags (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        normalized_name TEXT NOT NULL UNIQUE
+      );
+      CREATE TABLE document_tags (
+        document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+        tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+        PRIMARY KEY (document_id, tag_id)
+      );
+      CREATE TABLE document_embeddings (
+        document_id TEXT PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,
+        content_hash TEXT NOT NULL,
+        model TEXT NOT NULL,
+        embedding BLOB NOT NULL,
+        indexed_at INTEGER NOT NULL
+      );
+      CREATE TABLE metadata_migrations (
+        path TEXT PRIMARY KEY,
+        document_id TEXT REFERENCES documents(id) ON DELETE SET NULL,
+        original_path TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL,
+        source_hash TEXT NOT NULL DEFAULT '',
+        error TEXT NOT NULL DEFAULT '',
+        updated_at INTEGER NOT NULL,
+        frontmatter_backup TEXT NOT NULL DEFAULT '',
+        cleaned_hash TEXT NOT NULL DEFAULT ''
+      );
     `)
 
     applyMigrations(db)
 
-    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(6)
+    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(7)
     expect(db.prepare("SELECT value FROM settings WHERE key = 'theme'").get()).toEqual({ value: 'dark' })
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'users'").get()).toEqual({ name: 'users' })
   })
@@ -61,7 +97,7 @@ describe('authentication migration', () => {
     applyMigrations(db)
     const after = db.prepare('SELECT COUNT(*) AS count FROM sqlite_master WHERE type = \'table\'').get() as { count: number }
     expect(after.count).toBe(before.count)
-    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(6)
+    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(7)
   })
 
   it('enforces singleton, uniqueness, value, and foreign-key constraints', () => {

@@ -124,6 +124,46 @@ describe('PATCH /api/metadata/documents/*', () => {
     expect(getDocumentMetadata(db, 'inbox/note')!.updatedAt).toBeGreaterThan(afterTags.updatedAt)
   })
 
+  it('uses set-diff provenance for REST tag additions and removals', async () => {
+    await fs.writeFile(path.join(root, 'inbox', 'note.md'), '# Note\n', 'utf8')
+    const initial = saveDocumentMetadata(db, {
+      id: 'rest-set-diff', path: 'inbox/note', title: 'Note', tags: ['Backend'], updatedAt: 100,
+    })
+    const backendBefore = db.prepare(`
+      SELECT dt.association_id
+      FROM document_tags dt JOIN tags t ON t.id = dt.tag_id
+      WHERE dt.document_id = ? AND t.normalized_name = 'backend'
+    `).get(initial.id) as { association_id: number }
+
+    const added = await patch('inbox/note', {
+      tags: ['Backend', 'Python'], expectedUpdatedAt: initial.updatedAt,
+    })
+    expect(added.status).toBe(200)
+    const backendAfterAdd = db.prepare(`
+      SELECT dt.association_id
+      FROM document_tags dt JOIN tags t ON t.id = dt.tag_id
+      WHERE dt.document_id = ? AND t.normalized_name = 'backend'
+    `).get(initial.id) as { association_id: number }
+    expect(backendAfterAdd).toEqual(backendBefore)
+
+    const afterAdd = getDocumentMetadata(db, 'inbox/note')!
+    const pythonBeforeRemove = db.prepare(`
+      SELECT dt.association_id
+      FROM document_tags dt JOIN tags t ON t.id = dt.tag_id
+      WHERE dt.document_id = ? AND t.normalized_name = 'python'
+    `).get(initial.id) as { association_id: number }
+    const removed = await patch('inbox/note', {
+      tags: ['Backend', 'Vue'], expectedUpdatedAt: afterAdd.updatedAt,
+    })
+    expect(removed.status).toBe(200)
+    expect(db.prepare(`
+      SELECT dt.association_id
+      FROM document_tags dt JOIN tags t ON t.id = dt.tag_id
+      WHERE dt.document_id = ? AND t.normalized_name = 'backend'
+    `).get(initial.id)).toEqual(backendBefore)
+    expect(db.prepare('SELECT 1 FROM document_tags WHERE association_id = ?').get(pythonBeforeRemove.association_id)).toBeUndefined()
+  })
+
   it.each(['rename', 'display-rename', 'merge', 'remove'] as const)(
     'keeps committed %s tag state authoritative for REST stale writers',
     async (kind) => {

@@ -671,6 +671,41 @@ describe('T2-0 update_metadata writer safety', () => {
     expect(getDocumentMetadata(db, 'ai/note')).toMatchObject({ summary: 'Summary only', tags: ['Java'] })
   })
 
+  it('uses the same set-diff provenance contract for AI tag updates', async () => {
+    const saved = saveDocumentMetadata(db, { path: 'ai/note', title: 'Note', tags: ['Backend'], updatedAt: 100 })
+    const backendBefore = db.prepare(`
+      SELECT dt.association_id
+      FROM document_tags dt JOIN tags t ON t.id = dt.tag_id
+      WHERE dt.document_id = ? AND t.normalized_name = 'backend'
+    `).get(saved.id) as { association_id: number }
+    const added = await executeToolCall('update_metadata', {
+      path: 'ai/note', tags: ['Backend', 'Python'], expected_updated_at: saved.updatedAt,
+    }, ctx)
+    expect(added.isError).toBe(false)
+    expect(db.prepare(`
+      SELECT dt.association_id
+      FROM document_tags dt JOIN tags t ON t.id = dt.tag_id
+      WHERE dt.document_id = ? AND t.normalized_name = 'backend'
+    `).get(saved.id)).toEqual(backendBefore)
+
+    const current = getDocumentMetadata(db, 'ai/note')!
+    const pythonBefore = db.prepare(`
+      SELECT dt.association_id
+      FROM document_tags dt JOIN tags t ON t.id = dt.tag_id
+      WHERE dt.document_id = ? AND t.normalized_name = 'python'
+    `).get(saved.id) as { association_id: number }
+    const removed = await executeToolCall('update_metadata', {
+      path: 'ai/note', tags: ['Backend', 'Vue'], expected_updated_at: current.updatedAt,
+    }, ctx)
+    expect(removed.isError).toBe(false)
+    expect(db.prepare('SELECT 1 FROM document_tags WHERE association_id = ?').get(pythonBefore.association_id)).toBeUndefined()
+    expect(db.prepare(`
+      SELECT dt.association_id
+      FROM document_tags dt JOIN tags t ON t.id = dt.tag_id
+      WHERE dt.document_id = ? AND t.normalized_name = 'backend'
+    `).get(saved.id)).toEqual(backendBefore)
+  })
+
   it('requires the read version for an explicit tag call', async () => {
     saveDocumentMetadata(db, { path: 'ai/note', title: 'Note', tags: ['Java'], updatedAt: 100 })
     const before = getDocumentMetadata(db, 'ai/note')

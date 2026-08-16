@@ -16,6 +16,7 @@ import { ensureInitialFolders } from './seed.ts'
 import { getDb } from './db.ts'
 import { migrateVaultMetadata } from './metadataMigration.ts'
 import { initializeTagIdentityAndHealth } from './tagIdentityMigration.ts'
+import { initializeTagUndoFoundationHealth } from './tagUndoHealth.ts'
 import { recoverInterruptedOperations } from './crashRecovery.ts'
 import {
   acquireVaultWriterOwnership,
@@ -90,6 +91,8 @@ try {
   console.log(`[docus] metadata migration: ${JSON.stringify(metadataReport)}`)
   const tagIdentityHealth = await initializeTagIdentityAndHealth(getDb(), CONTENT_DIR, metadataReport)
   console.log(`[docus] tag identity health: ${JSON.stringify(tagIdentityHealth)}`)
+  const tagUndoFoundationHealth = initializeTagUndoFoundationHealth(getDb())
+  console.log(`[docus] tag Undo foundation health: ${JSON.stringify(tagUndoFoundationHealth)}`)
 
   const server = serve({ fetch: app.fetch, port: PORT, hostname: HOST }, (info) => {
     console.log(`[docus] listening on http://${info.address}:${info.port}`)

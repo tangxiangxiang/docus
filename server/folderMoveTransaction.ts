@@ -178,9 +178,14 @@ export type SerializedMetadataSnapshot = {
   documents: Record<string, unknown>[]
   tags: Record<string, unknown>[]
   documentTags: Record<string, unknown>[]
+  /** New journals mark the physical row generation explicitly. Legacy v6
+   * journals omit this field and are classified from their exact row shape. */
+  documentTagsVersion?: 6 | 7
   embeddings: Record<string, unknown>[]
   migrations: Record<string, unknown>[]
 }
+
+export type DocumentTagsSnapshotGeneration = 'v6' | 'v7'
 
 /** Generate an unpredictable gate-token secret (32 random bytes → 64
  * hex chars). The journal persists it so recovery can verify the exact
@@ -224,6 +229,7 @@ export function serializeMetadataSnapshot(snapshot: DocumentMetadataMutationSnap
     documents: snapshot.documents.map((row) => mapRow(row, encodeBufferValue)),
     tags: snapshot.tags.map((row) => mapRow(row, encodeBufferValue)),
     documentTags: snapshot.documentTags.map((row) => mapRow(row, encodeBufferValue)),
+    documentTagsVersion: 7,
     embeddings: snapshot.embeddings.map((row) => mapRow(row, encodeBufferValue)),
     migrations: snapshot.migrations.map((row) => mapRow(row, encodeBufferValue)),
   }
@@ -336,9 +342,11 @@ const SNAPSHOT_COLUMNS = new Set([
   'paths', 'documentIds', 'tagIds', 'preexistingTagIds', 'documents',
   'tags', 'documentTags', 'embeddings', 'migrations',
 ])
+const SNAPSHOT_VERSIONED_COLUMNS = new Set([...SNAPSHOT_COLUMNS, 'documentTagsVersion'])
 const DOCUMENT_COLUMNS = ['id', 'path', 'title', 'summary', 'created_at', 'updated_at'] as const
 const TAG_COLUMNS = ['id', 'name', 'normalized_name'] as const
-const DOCUMENT_TAG_COLUMNS = ['document_id', 'tag_id'] as const
+const LEGACY_DOCUMENT_TAG_COLUMNS = ['document_id', 'tag_id'] as const
+const V7_DOCUMENT_TAG_COLUMNS = ['association_id', 'document_id', 'tag_id'] as const
 const EMBEDDING_COLUMNS = ['document_id', 'content_hash', 'model', 'embedding', 'indexed_at'] as const
 const MIGRATION_COLUMNS = [
   'path', 'document_id', 'original_path', 'status', 'source_hash', 'error', 'updated_at', 'frontmatter_backup', 'cleaned_hash',
@@ -406,9 +414,51 @@ function isTagRow(row: unknown): row is Record<string, unknown> {
 }
 
 function isDocumentTagRow(row: unknown): row is Record<string, unknown> {
-  return hasExactColumns(row, DOCUMENT_TAG_COLUMNS)
+  const legacy = hasExactColumns(row, LEGACY_DOCUMENT_TAG_COLUMNS)
     && isNonEmptyString(row.document_id)
     && isPositiveSafeInteger(row.tag_id)
+  const v7 = hasExactColumns(row, V7_DOCUMENT_TAG_COLUMNS)
+    && isPositiveSafeInteger(row.association_id)
+    && isNonEmptyString(row.document_id)
+    && isPositiveSafeInteger(row.tag_id)
+  return legacy || v7
+}
+
+function hasSnapshotColumns(snapshot: unknown): snapshot is Record<string, unknown> {
+  if (!isPlainRecord(snapshot)) return false
+  const keys = new Set(Object.keys(snapshot))
+  const base = [...SNAPSHOT_COLUMNS].every((key) => keys.has(key))
+  if (!base) return false
+  if (keys.size === SNAPSHOT_COLUMNS.size) return true
+  return keys.size === SNAPSHOT_VERSIONED_COLUMNS.size && keys.has('documentTagsVersion')
+}
+
+/** Classify the exact durable row generation. A mixed v6/v7 array is never
+ * normalized heuristically: it is rejected as malformed. */
+export function getDocumentTagsSnapshotGeneration(
+  snapshot: unknown,
+): DocumentTagsSnapshotGeneration | null {
+  if (!hasSnapshotColumns(snapshot)) return null
+  const entry = snapshot as Record<string, unknown>
+  const marker = entry.documentTagsVersion
+  if (marker !== undefined && marker !== 6 && marker !== 7) return null
+  const generations = new Set<DocumentTagsSnapshotGeneration>()
+  const rows = entry.documentTags
+  if (!Array.isArray(rows)) return null
+  for (const row of rows) {
+    if (hasExactColumns(row, LEGACY_DOCUMENT_TAG_COLUMNS)) generations.add('v6')
+    else if (hasExactColumns(row, V7_DOCUMENT_TAG_COLUMNS)) generations.add('v7')
+    else return null
+  }
+  if (generations.size > 1) return null
+  const inferred = generations.values().next().value as DocumentTagsSnapshotGeneration | undefined
+  if (marker !== undefined && inferred !== undefined && marker !== (inferred === 'v7' ? 7 : 6)) return null
+  if (marker === 7) return 'v7'
+  if (marker === 6) return 'v6'
+  // An empty unmarked snapshot predates the explicit marker. It has no
+  // physical rows whose provenance could be restored, so treating it as v6
+  // is the conservative legacy interpretation.
+  return inferred ?? 'v6'
 }
 
 function isEmbeddingRow(row: unknown): row is Record<string, unknown> {
@@ -453,8 +503,7 @@ function isStableUniquePositiveIntegers(value: unknown): value is number[] {
 export function isSerializedMetadataSnapshot(
   snapshot: unknown,
 ): snapshot is SerializedMetadataSnapshot {
-  if (!isPlainRecord(snapshot)
-    || !hasExactColumns(snapshot, [...SNAPSHOT_COLUMNS])) return false
+  if (!hasSnapshotColumns(snapshot)) return false
   const item = snapshot as Partial<SerializedMetadataSnapshot>
   const isArrayOf = (
     value: unknown,
@@ -471,6 +520,8 @@ export function isSerializedMetadataSnapshot(
     || !isArrayOf(item.migrations, isMigrationRow)) {
     return false
   }
+  const generation = getDocumentTagsSnapshotGeneration(snapshot)
+  if (!generation) return false
   const parsed = item as SerializedMetadataSnapshot
 
   const documentIds = new Set(parsed.documents.map(row => row.id as string))
@@ -488,6 +539,7 @@ export function isSerializedMetadataSnapshot(
     return false
   }
   const documentTagKeys = new Set<string>()
+  const associationIds = new Set<number>()
   for (const row of parsed.documentTags) {
     if (!documentIds.has(row.document_id as string)
       || (!tagIds.has(row.tag_id as number)
@@ -497,6 +549,11 @@ export function isSerializedMetadataSnapshot(
     const key = `${row.document_id}\0${row.tag_id}`
     if (documentTagKeys.has(key)) return false
     documentTagKeys.add(key)
+    if (generation === 'v7') {
+      const associationId = row.association_id
+      if (!isPositiveSafeInteger(associationId) || associationIds.has(associationId)) return false
+      associationIds.add(associationId)
+    }
   }
   const embeddingIds = new Set<string>()
   for (const row of parsed.embeddings) {
@@ -525,8 +582,7 @@ export function isSerializedMetadataSnapshot(
 export function hasValidSnapshotRowSchema(
   snapshot: unknown,
 ): snapshot is SerializedMetadataSnapshot {
-  if (!isPlainRecord(snapshot)
-    || !hasExactColumns(snapshot, [...SNAPSHOT_COLUMNS])) return false
+  if (!hasSnapshotColumns(snapshot)) return false
   const item = snapshot as Partial<SerializedMetadataSnapshot>
   return Array.isArray(item.paths)
     && item.paths.every(value =>
@@ -545,6 +601,7 @@ export function hasValidSnapshotRowSchema(
     && item.embeddings.every(isEmbeddingRow)
     && Array.isArray(item.migrations)
     && item.migrations.every(isMigrationRow)
+    && getDocumentTagsSnapshotGeneration(snapshot) !== null
 }
 
 function setEquals(a: Set<unknown>, b: Set<unknown>): boolean {

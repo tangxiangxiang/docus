@@ -11,6 +11,7 @@ import { loadAuthConfig } from './auth/config.ts'
 import { initializeAuthRuntime } from './auth/runtime.ts'
 import { migrateVaultMetadata } from './metadataMigration.ts'
 import { initializeTagIdentityAndHealth } from './tagIdentityMigration.ts'
+import { initializeTagUndoFoundationHealth } from './tagUndoHealth.ts'
 import { recoverInterruptedOperations } from './crashRecovery.ts'
 import {
   acquireVaultWriterOwnership,
@@ -42,6 +43,8 @@ export function serverPlugin(): Plugin {
         console.log(`[docus] metadata migration: ${JSON.stringify(report)}`)
         const tagIdentityHealth = await initializeTagIdentityAndHealth(getDb(), CONTENT_DIR, report)
         console.log(`[docus] tag identity health: ${JSON.stringify(tagIdentityHealth)}`)
+        const tagUndoFoundationHealth = initializeTagUndoFoundationHealth(getDb())
+        console.log(`[docus] tag Undo foundation health: ${JSON.stringify(tagUndoFoundationHealth)}`)
         server.middlewares.use(async (req, res, next) => {
           if (!req.url?.startsWith('/api/')) return next()
           const url = `http://localhost${req.url}`

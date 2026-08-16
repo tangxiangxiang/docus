@@ -310,13 +310,65 @@ function rowsExactlyEqual(
     && currentRows.every((row, index) => row === expectedRows[index])
 }
 
+function hasAssociationIdentity(row: Record<string, unknown>): boolean {
+  return Object.hasOwn(row, 'association_id')
+}
+
+function logicalDocumentTagRowsExactlyEqual(
+  current: readonly Record<string, unknown>[],
+  expected: readonly Record<string, unknown>[],
+): boolean {
+  // A legacy v6 snapshot has no physical identity. Its CAS comparison is
+  // therefore logical, while a v7 snapshot compares the exact physical row.
+  if (!expected.some((row) => !hasAssociationIdentity(row))) {
+    return rowsExactlyEqual(current, expected)
+  }
+  const key = (row: Record<string, unknown>) => `${String(row.document_id)}\0${String(row.tag_id)}`
+  const currentKeys = current.map(key).sort()
+  const expectedKeys = expected.map(key).sort()
+  return currentKeys.length === expectedKeys.length
+    && currentKeys.every((value, index) => value === expectedKeys[index])
+}
+
+/**
+ * Normalize a legacy v6 snapshot only at the recovery boundary. An existing
+ * live logical row may keep its current v7 association_id; a missing row is
+ * left without an ID so SQLite allocates a new one. No historical ID is
+ * guessed or manufactured.
+ */
+function normalizeLegacySnapshotAssociationIds(
+  db: DatabaseT,
+  snapshot: DocumentMetadataMutationSnapshot,
+): DocumentMetadataMutationSnapshot {
+  if (!snapshot.documentTags.length || snapshot.documentTags.some(hasAssociationIdentity)) return snapshot
+  const documentIds = [...new Set(snapshot.documentTags.map((row) => String(row.document_id)))]
+  const currentRows = documentIds.length
+    ? db.prepare(`
+        SELECT association_id, document_id, tag_id
+        FROM document_tags
+        WHERE document_id IN (${placeholders(documentIds)})
+      `).all(...documentIds) as Array<{ association_id: number; document_id: string; tag_id: number }>
+    : []
+  const currentByKey = new Map(currentRows.map((row) => [
+    `${row.document_id}\0${row.tag_id}`,
+    row.association_id,
+  ]))
+  return {
+    ...snapshot,
+    documentTags: snapshot.documentTags.map((row) => {
+      const associationId = currentByKey.get(`${String(row.document_id)}\0${String(row.tag_id)}`)
+      return associationId === undefined ? row : { ...row, association_id: associationId }
+    }),
+  }
+}
+
 export function metadataSnapshotsExactlyEqual(
   current: DocumentMetadataMutationSnapshot,
   expected: DocumentMetadataMutationSnapshot,
 ): boolean {
   return rowsExactlyEqual(current.documents, expected.documents)
     && rowsExactlyEqual(current.tags, expected.tags)
-    && rowsExactlyEqual(current.documentTags, expected.documentTags)
+    && logicalDocumentTagRowsExactlyEqual(current.documentTags, expected.documentTags)
     && rowsExactlyEqual(current.embeddings, expected.embeddings)
     && rowsExactlyEqual(current.migrations, expected.migrations)
 }
@@ -339,7 +391,11 @@ export function validateSnapshotOwnership(
 ): boolean {
   return liveRowsAreExpectedSubset(current.documents, expected.documents)
     && liveRowsAreExpectedSubset(current.tags, expected.tags)
-    && liveRowsAreExpectedSubset(current.documentTags, expected.documentTags)
+    && (expected.documentTags.some((row) => !hasAssociationIdentity(row))
+      ? current.documentTags.every((row) => expected.documentTags.some((expectedRow) =>
+          row.document_id === expectedRow.document_id
+          && row.tag_id === expectedRow.tag_id))
+      : liveRowsAreExpectedSubset(current.documentTags, expected.documentTags))
     && liveRowsAreExpectedSubset(current.embeddings, expected.embeddings)
     && liveRowsAreExpectedSubset(current.migrations, expected.migrations)
 }
@@ -350,6 +406,14 @@ function insertRows(db: DatabaseT, table: string, rows: Record<string, unknown>[
   const sql = `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${columns.map((column) => `@${column}`).join(', ')})`
   const insert = db.prepare(sql)
   for (const row of rows) insert.run(row)
+}
+
+/** Insert v6/v7 durable rows without turning a mixed normalized snapshot into
+ * a full-ID rewrite. A v6 row without association_id deliberately lets
+ * SQLite allocate a fresh v7 identity; a proven live v7 row keeps its ID. */
+function insertDocumentTagRows(db: DatabaseT, rows: Record<string, unknown>[]): void {
+  insertRows(db, 'document_tags', rows.filter(hasAssociationIdentity))
+  insertRows(db, 'document_tags', rows.filter((row) => !hasAssociationIdentity(row)))
 }
 
 export function restoreDocumentMetadataDatabase(
@@ -366,7 +430,7 @@ export function restoreDocumentMetadataDatabase(
     `)
     insertRows(db, 'documents', snapshot.documents)
     insertRows(db, 'tags', snapshot.tags)
-    insertRows(db, 'document_tags', snapshot.documentTags)
+    insertDocumentTagRows(db, snapshot.documentTags)
     insertRows(db, 'document_embeddings', snapshot.embeddings)
     insertRows(db, 'metadata_migrations', snapshot.migrations)
   })()
@@ -378,6 +442,7 @@ export function restoreDocumentMetadataMutation(
   snapshot: DocumentMetadataMutationSnapshot,
 ): void {
   db.transaction(() => {
+    const effectiveSnapshot = normalizeLegacySnapshotAssociationIds(db, snapshot)
     const currentDocuments = snapshot.paths.length
       ? db.prepare(`SELECT id FROM documents WHERE path IN (${placeholders(snapshot.paths)})`).all(...snapshot.paths) as Array<{ id: string }>
       : []
@@ -392,14 +457,14 @@ export function restoreDocumentMetadataMutation(
       db.prepare(`DELETE FROM metadata_migrations WHERE ${clauses.join(' OR ')}`)
         .run(...snapshot.paths, ...snapshot.paths, ...affectedIds.map((id) => `@deleted/${id}`), ...affectedIds)
     }
-    insertRows(db, 'documents', snapshot.documents)
-    for (const tag of snapshot.tags) {
+    insertRows(db, 'documents', effectiveSnapshot.documents)
+    for (const tag of effectiveSnapshot.tags) {
       const columns = Object.keys(tag)
       db.prepare(`INSERT OR IGNORE INTO tags (${columns.join(', ')}) VALUES (${columns.map((key) => `@${key}`).join(', ')})`).run(tag)
     }
-    insertRows(db, 'document_tags', snapshot.documentTags)
-    insertRows(db, 'document_embeddings', snapshot.embeddings)
-    insertRows(db, 'metadata_migrations', snapshot.migrations)
+    insertDocumentTagRows(db, effectiveSnapshot.documentTags)
+    insertRows(db, 'document_embeddings', effectiveSnapshot.embeddings)
+    insertRows(db, 'metadata_migrations', effectiveSnapshot.migrations)
 
     // Tags created solely by the failed mutation are safe to remove only
     // when no successful document currently references them.
@@ -426,6 +491,7 @@ export function restoreDocumentMetadataMutationWithinFootprint(
   },
 ): void {
   db.transaction(() => {
+    const effectiveSnapshot = normalizeLegacySnapshotAssociationIds(db, snapshot)
     const footprintDocumentIds = [...new Set(
       ownershipFootprint.documentIds,
     )].sort()
@@ -489,15 +555,15 @@ export function restoreDocumentMetadataMutationWithinFootprint(
         .run(...migrationArgs)
     }
 
-    insertRows(db, 'documents', snapshot.documents)
-    for (const tag of snapshot.tags) {
+    insertRows(db, 'documents', effectiveSnapshot.documents)
+    for (const tag of effectiveSnapshot.tags) {
       const columns = Object.keys(tag)
       db.prepare(`INSERT OR IGNORE INTO tags (${columns.join(', ')}) VALUES (${columns.map(key => `@${key}`).join(', ')})`)
         .run(tag)
     }
-    insertRows(db, 'document_tags', snapshot.documentTags)
-    insertRows(db, 'document_embeddings', snapshot.embeddings)
-    insertRows(db, 'metadata_migrations', snapshot.migrations)
+    insertDocumentTagRows(db, effectiveSnapshot.documentTags)
+    insertRows(db, 'document_embeddings', effectiveSnapshot.embeddings)
+    insertRows(db, 'metadata_migrations', effectiveSnapshot.migrations)
 
     const createdTagIds = [...new Set(createdMetadataIds.tagIds)]
     if (createdTagIds.length) {
@@ -595,10 +661,12 @@ export function restoreDocumentMetadataMutationCASIdempotent(
         options?.ownershipFootprint,
       )
     const current = readCurrent()
-    if (metadataSnapshotsExactlyEqual(current, restoreSnapshot)) {
+    const effectiveRestoreSnapshot = normalizeLegacySnapshotAssociationIds(db, restoreSnapshot)
+    const effectiveExpectedSnapshot = normalizeLegacySnapshotAssociationIds(db, expectedCurrentSnapshot)
+    if (metadataSnapshotsExactlyEqual(current, effectiveRestoreSnapshot)) {
       return { kind: 'already-restored' }
     }
-    if (!metadataSnapshotsExactlyEqual(current, expectedCurrentSnapshot)) {
+    if (!metadataSnapshotsExactlyEqual(current, effectiveExpectedSnapshot)) {
       return {
         kind: 'conflict',
         reason: 'live metadata graph matches neither expected-current nor restore snapshot',
@@ -607,14 +675,14 @@ export function restoreDocumentMetadataMutationCASIdempotent(
     if (options) {
       restoreDocumentMetadataMutationWithinFootprint(
         db,
-        restoreSnapshot,
+        effectiveRestoreSnapshot,
         options.ownershipFootprint,
         options.createdMetadataIds,
       )
     } else {
-      restoreDocumentMetadataMutation(db, restoreSnapshot)
+      restoreDocumentMetadataMutation(db, effectiveRestoreSnapshot)
     }
-    if (!metadataSnapshotsExactlyEqual(readCurrent(), restoreSnapshot)) {
+    if (!metadataSnapshotsExactlyEqual(readCurrent(), effectiveRestoreSnapshot)) {
       throw new Error('metadata restore transaction did not produce the durable restore snapshot')
     }
     return { kind: 'restored-now' }
@@ -687,6 +755,71 @@ function replaceDocumentTags(db: DatabaseT, documentId: string, tags: readonly N
     SELECT ?, id FROM tags WHERE normalized_name = ?
   `)
   for (const tag of tags) insertAssociation.run(documentId, tag.normalizedName)
+}
+
+export type DocumentTagSetDiff = {
+  unchangedAssociationIds: number[]
+  addedAssociationIds: number[]
+  removedAssociationIds: number[]
+}
+
+/**
+ * Ordinary existing-document tag writes preserve the physical identity of
+ * every logical association that remains requested.  This is deliberately a
+ * separate primitive from replaceDocumentTags(), which remains a full
+ * snapshot/fixture/recovery writer.
+ */
+export function applyDocumentTagsSetDiff(
+  db: DatabaseT,
+  documentId: string,
+  tags: readonly NormalizedTag[],
+): DocumentTagSetDiff {
+  insertOrGetTags(db, tags)
+  const current = db.prepare(`
+    SELECT dt.association_id AS associationId,
+           dt.tag_id AS tagId,
+           t.normalized_name AS normalizedName
+    FROM document_tags dt
+    JOIN tags t ON t.id = dt.tag_id
+    WHERE dt.document_id = ?
+    ORDER BY dt.association_id
+  `).all(documentId) as Array<{
+    associationId: number
+    tagId: number
+    normalizedName: string
+  }>
+  const requestedIds = new Map<string, number>()
+  const selectTagId = db.prepare('SELECT id FROM tags WHERE normalized_name = ?')
+  for (const tag of tags) {
+    const row = selectTagId.get(tag.normalizedName) as { id: number } | undefined
+    if (!row) throw new DocumentMetadataError('INVALID_TAG', 'tag identity row was not created')
+    requestedIds.set(tag.normalizedName, row.id)
+  }
+
+  const currentByIdentity = new Map(current.map((row) => [row.normalizedName, row]))
+  const unchangedAssociationIds: number[] = []
+  const removedAssociationIds: number[] = []
+  for (const row of current) {
+    if (requestedIds.has(row.normalizedName)) unchangedAssociationIds.push(row.associationId)
+    else {
+      db.prepare('DELETE FROM document_tags WHERE association_id = ?').run(row.associationId)
+      removedAssociationIds.push(row.associationId)
+    }
+  }
+
+  const addedAssociationIds: number[] = []
+  const insert = db.prepare('INSERT INTO document_tags (document_id, tag_id) VALUES (?, ?)')
+  for (const [normalizedName, tagId] of requestedIds) {
+    if (currentByIdentity.has(normalizedName)) continue
+    const result = insert.run(documentId, tagId)
+    addedAssociationIds.push(Number(result.lastInsertRowid))
+  }
+
+  return {
+    unchangedAssociationIds,
+    addedAssociationIds,
+    removedAssociationIds,
+  }
 }
 
 function currentTagIdentities(db: DatabaseT, documentId: string): string[] {
@@ -884,8 +1017,7 @@ export function patchDocumentMetadataWithinTransaction(
     UPDATE documents SET title = ?, summary = ?, updated_at = ? WHERE id = ?
   `).run(nextTitle, nextSummary, updatedAt, current.id)
   if (tagsChanged && normalizedTags) {
-    insertOrGetTags(db, normalizedTags)
-    replaceDocumentTags(db, current.id, normalizedTags)
+    applyDocumentTagsSetDiff(db, current.id, normalizedTags)
   }
   return getDocumentMetadata(db, path)!
 }
