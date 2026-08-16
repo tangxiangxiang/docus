@@ -1,12 +1,13 @@
 # Docus Tags Management Phase 2 Closure
 
-Closure candidate prepared. Pending final closure review.
+Final closure review completed.
+Tags Management Phase 2 COMPLETE.
 
 ## 1. Closure Status
 
 | Field | Value |
 | --- | --- |
-| Status | Release Candidate Closure |
+| Status | Final Closure — Complete |
 | Phase | Tags Management Phase 2 / T2-7 Closure and Rollout Evidence |
 | Approved PRD | [`docs/design/tags-management-prd.md`](../../design/tags-management-prd.md) |
 | Approved implementation plan | [`docs/design/tags-management-implementation-plan.md`](../../design/tags-management-implementation-plan.md) |
@@ -77,9 +78,13 @@ to the repository history.
 | T2-0 | [`2e3a9d1`](https://github.com/tangxiangxiang/docus/commit/2e3a9d1f19388f3b3587b722f7420bb4c6731c3d) | `fix(tags): preserve identity migration failure diagnostics` | Preserved sanitized failure state and diagnostics while keeping management unavailable. |
 | T2-1 | [`86c0816`](https://github.com/tangxiangxiang/docus/commit/86c08165bff53403dd8f812c5585549784ad9a50) | `feat(tags): add phase 2 planner and preview` | Added stable-ID read model, set-based planner, read-only Preview, canonical fingerprints, and health-gated routes. |
 | T2-1 | [`32d4f41`](https://github.com/tangxiangxiang/docus/commit/32d4f41cefe0010a390c54dd8f12db7fa30a9011) | `fix(tags): harden phase 2 planner and preview` | Hardened snapshot consistency, pagination, stale continuation, input validation, and query-shape evidence. |
+| T2-1 | [`b3ec972`](https://github.com/tangxiangxiang/docus/commit/b3ec972de084650556d3f028899b41c0bf58abf8) | `test(tags): stabilize 10k health preflight evidence on Windows` | T2-1 planner/Preview gate-support for the large-vault health preflight; this predates T2-2. |
 | T2-2 | [`8f46267`](https://github.com/tangxiangxiang/docus/commit/8f4626705f6d7846006c833479f58472a561cba8) | `feat(tags): add atomic phase 2 tag operations` | Added one-transaction Rename, Display Rename, Merge, and Remove Apply semantics and API wiring. |
 | T2-2 | [`54556e5`](https://github.com/tangxiangxiang/docus/commit/54556e5a1d333180b339eab3915e89b9e7404da3) | `test(tags): expand atomic apply evidence` | Added atomicity, version, duplicate-Apply, stale-writer, and rollback evidence. |
 | T2-2 | [`48ed954`](https://github.com/tangxiangxiang/docus/commit/48ed954120b9157874df86abf70e3c6d1df0bc8a) | `fix(tags): harden atomic apply review evidence` | Added the scale lane and tightened planner/Apply evidence and CI discovery. |
+| T2-2 | [`38e641a`](https://github.com/tangxiangxiang/docus/commit/38e641a49948494a3171cac90ec9736719ed6cac) | `test(tags): stabilize scale worker lifecycle` | Temporary tags-scale worker-lifecycle adjustment during the T2-2 scale/CI evidence period. |
+| T2-2 | [`90955cf`](https://github.com/tangxiangxiang/docus/commit/90955cf6a7f2000337af80e36224278eb12cabd0) | `Revert "test(tags): stabilize scale worker lifecycle"` | T2-2 scale/CI support; explicitly reverted the temporary worker-lifecycle experiment. |
+| T2-2 | [`05338c0`](https://github.com/tangxiangxiang/docus/commit/05338c0e23ea9b7004c291b1169d9fcfa4c22687) | `fix(deps): update better-sqlite3 to version 12.11.1 and increase timeout for write route tests` | T2-2/cross-platform CI compatibility support before T2-3; removed the Node 24 native teardown risk and stabilized long write-route tests. |
 | T2-3 | [`dd75cad`](https://github.com/tangxiangxiang/docus/commit/dd75cadc1e018c0ea1e912c156e4d57bd6aa0d35) | `feat(tags): add phase 2 rename management shell` | Added the dialog shell, typed client API, Rename flow, accessibility foundation, and bilingual management copy. |
 | T2-3 | [`fd9bde7`](https://github.com/tangxiangxiang/docus/commit/fd9bde75181fcfa1cc0224bf7bd20e0921f2f6ac) | `fix(tags): complete phase 2 rename UI contract` | Added Display Rename, Preview invalidation, production-owned dialog seam, harness, and Rename browser evidence. |
 | T2-4 | [`15087f7`](https://github.com/tangxiangxiang/docus/commit/15087f7f9672e7100f3ecf0f0ef4e36081d3586b) | `feat(tags): add phase 2 merge management UI` | Extended the reviewed manager with stable-ID destination selection, overlap Preview, Merge Apply, and reconciliation. |
@@ -89,10 +94,6 @@ to the repository history.
 | T2-5 | [`99fb454`](https://github.com/tangxiangxiang/docus/commit/99fb4546ddc2e53a85632a9bfebb977b4f3e0058) | `feat(tags): add remove management UI` | Added destructive Remove Preview, confirmation, synchronization, selection clearing, production entry, i18n, and browser flow. |
 | T2-5 | [`af45beb`](https://github.com/tangxiangxiang/docus/commit/af45beb8594bc78def03e9997908417d398d8ef7) | `test(tags): close phase 2 remove UI gate` | Added Remove-specific zh/en copy and production confirmation keyboard coverage. |
 | T2-5 | [`0042be5`](https://github.com/tangxiangxiang/docus/commit/0042be55dd446053a3bc5b91bf213109e208448d) | `test(tags): assert remove apply exactly once` | Proved the production Remove flow sends exactly one Apply after Escape cancellation. |
-| T2-1 | [`b3ec972`](https://github.com/tangxiangxiang/docus/commit/b3ec972de084650556d3f028899b41c0bf58abf8) | `test(tags): stabilize 10k health preflight evidence on Windows` | T2-1 planner/Preview gate-support for the large-vault health preflight; this predates T2-2. |
-| T2-2 | [`38e641a`](https://github.com/tangxiangxiang/docus/commit/38e641a49948494a3171cac90ec9736719ed6cac) | `test(tags): stabilize scale worker lifecycle` | Temporary tags-scale worker-lifecycle adjustment during the T2-2 scale/CI evidence period. |
-| T2-2 | [`90955cf`](https://github.com/tangxiangxiang/docus/commit/90955cf6a7f2000337af80e36224278eb12cabd0) | `Revert "test(tags): stabilize scale worker lifecycle"` | T2-2 scale/CI support; explicitly reverted the temporary worker-lifecycle experiment. |
-| T2-2 | [`05338c0`](https://github.com/tangxiangxiang/docus/commit/05338c0e23ea9b7004c291b1169d9fcfa4c22687) | `fix(deps): update better-sqlite3 to version 12.11.1 and increase timeout for write route tests` | T2-2/cross-platform CI compatibility support before T2-3; removed the Node 24 native teardown risk and stabilized long write-route tests. |
 | T2-6 | [`99f4d73`](https://github.com/tangxiangxiang/docus/commit/99f4d73154349f8ebc99cb609f1a88b07937fb26) | `test(tags): harden phase 2 tag management` | Added the final hardening matrices for stale writers, health, security, browser boundaries, recovery, and cross-phase regression. |
 
 The plan-only commits before `e107fc0` are authority history, not Phase 2
@@ -781,8 +782,8 @@ Architecture / PRD Conflict: None
 ```
 
 No unexplained P2 or release-blocking defect remains in the reviewed evidence.
-These counts are the candidate's pre-review defect counts; final closure still
-requires the review called out in §23.
+The Final Closure Review on 2026-08-16 confirmed these counts and passed the
+Phase 2 release gate.
 
 ## 23. Final Release Gate
 
@@ -795,20 +796,22 @@ The evidence-backed gate is:
 - [x] No open P0/P1, Architecture / PRD Conflict, or unexplained P2 remains (§22).
 - [x] Known limitations include the DB updated-date consequence, no durable operation history, and Undo Deferred to Phase 2.1 (§20 and §21).
 - [x] Final full CI and browser evidence is attached/referenced (§13 and §16).
-- [ ] Closure is reviewed before the feature is declared complete — OPEN; this record is pending final closure review.
+- [x] Closure is reviewed before the feature is declared complete — Final Closure Review PASS on 2026-08-16.
 
 ## 24. Final Closure Decision
 
 ```text
-T2-7 CLOSURE CANDIDATE READY FOR REVIEW
-Pending final closure review.
+T2-7 COMPLETE
+Tags Management Phase 2 COMPLETE
+Final Closure Review: PASS — 2026-08-16
 ```
 
-This record must be reviewed before anyone declares:
+The final closure review authorizes the Phase 2 completion decision:
 
 ```text
 Tags Management Phase 2 COMPLETE
 ```
 
-The record does not start T2-6, T2.1, or Phase 2.1 work. In particular, Undo
-remains deferred to Phase 2.1.
+This record does not start T2-6 or Phase 2.1 implementation work. In
+particular, Undo remains deferred to Phase 2.1 and requires its own reviewed
+PRD before implementation.
