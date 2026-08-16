@@ -1,6 +1,6 @@
 # Docus Tags Management Phase 2.1 — Undo Implementation Plan
 
-**Status:** Draft for Review
+**Status:** Approved for Implementation
 
 **Date:** 2026-08-16
 
@@ -10,26 +10,26 @@
 
 **Phase 2 production baseline:** `99f4d73154349f8ebc99cb609f1a88b07937fb26`
 
-**Planning HEAD:** `b850d0a0559d361ec87f721faf681ba33303824f`
+**Planning HEAD:** `841dbbf2741f65df1dec73d01c01f56237efba5d`
 
 This document is an implementation-planning artifact only. It does not create
 Undo behavior, a migration, an endpoint, a test, or a production code change.
-Implementation is not started until this plan receives a separate external
-review and approval.
+The plan is approved for implementation, but implementation has not started;
+the next authorized phase is T2.1-0 after this approval commit is reviewed.
 
 ## 1. Document Information
 
 | Field | Value |
 | --- | --- |
 | Document | Docus Tags Management Phase 2.1 — Undo Implementation Plan |
-| Status | Draft for Review |
+| Status | Approved for Implementation |
 | Date | 2026-08-16 |
 | Approved product authority | `docs/design/tags-management-undo-prd.md` |
 | Phase 2 PRD | `docs/design/tags-management-prd.md` |
 | Phase 2 Implementation Plan | `docs/design/tags-management-implementation-plan.md` |
 | Phase 2 closure | `docs/archive/closures/tags-management-phase-2-closure.md` |
 | Backup authority | `docs/deployment/backup-and-restore.md` |
-| Current planning HEAD | `b850d0a0559d361ec87f721faf681ba33303824f` |
+| Current planning HEAD | `841dbbf2741f65df1dec73d01c01f56237efba5d` |
 | Production implementation baseline | `99f4d73154349f8ebc99cb609f1a88b07937fb26` |
 | Implementation state | Not started |
 
@@ -44,16 +44,58 @@ The authority order for the Phase 2.1 behavior in this plan is:
 ```text
 Approved Phase 2.1 Undo PRD
 >
-this reviewed Phase 2.1 Implementation Plan
+Approved Phase 2.1 Undo Implementation Plan
 >
-current implementation
+future Phase 2.1 implementation
 ```
 
 The Approved Phase 2 PRD, Approved Phase 2 Implementation Plan, and Phase 2
 closure remain binding for the protected Phase 2 surface and existing behavior.
-The Phase 2.1 Undo PRD is product authority for new behavior. This plan chooses
-schema, provenance, transaction, API, client, UI, test, and delivery details,
-but may not weaken or reinterpret the approved product contract.
+The Phase 2.1 Undo PRD is product authority for new behavior. The approved
+Phase 2.1 Implementation Plan chooses schema, provenance, transaction, API,
+client, UI, test, and delivery details, but may not weaken or reinterpret the
+approved product contract.
+
+### Final Implementation Plan Review
+
+```text
+Final Implementation Plan Review: PASS
+Review date: 2026-08-16
+
+P0: 0
+P1: 0
+P2 blocking: 0
+P3: 1 editorial — resolved in approval commit
+
+Architecture blocker: 0
+Plan ↔ Approved PRD Conflict: 0
+```
+
+The Phase 2.1 Undo Implementation Plan is approved as the implementation
+authority beneath the Approved Phase 2.1 Undo PRD. This approval authorizes
+implementation to begin at T2.1-0 after this approval commit itself is
+reviewed. It does not authorize skipping T2.1-0, working ahead into T2.1-1,
+exposing Undo, combining phase gates, or declaring Phase 2.1 complete.
+
+The strict sequence remains:
+
+```text
+T2.1-0
+↓ PASS
+T2.1-1
+↓ PASS
+T2.1-2
+↓ PASS
+T2.1-3
+↓ PASS
+T2.1-4
+↓ PASS
+T2.1-5
+↓ PASS
+T2.1-6
+↓ PASS
+T2.1-7 external closure review
+```
 
 If implementation evidence cannot satisfy stable-ID restoration, durable
 provenance, atomicity, later-change preservation, or the protected-area
@@ -96,7 +138,8 @@ The approved product decisions carried into implementation are:
 
 The following are **CURRENT FACTS**, verified from the repository at planning
 HEAD and the unchanged Phase 2 production tree. The **IMPLEMENTATION
-DECISIONS** in later sections are proposals for review, not current behavior.
+DECISIONS** in later sections are approved plan decisions, not current
+behavior.
 
 ### 4.1 Persistence and migrations — CURRENT FACT
 
@@ -245,6 +288,13 @@ accepts physical provenance from the caller.
 - The current CI matrix is Ubuntu Node 22 and 24, macOS Node 24, Windows Node
   24, `tags-scale`, `docker-smoke`, `auth-browser`, and `visual`.
 - Existing scale fixtures target 10,000 documents and 50,000 associations.
+- CI #343 (`31956420785`) for planning HEAD
+  `841dbbf2741f65df1dec73d01c01f56237efba5d` was checked during this approval
+  update and was still `in_progress`: `auth-browser`, `visual`, `docker-smoke`,
+  `tags-scale`, and Ubuntu Node 22/24 verify had succeeded; macOS Node 24
+  verify had failed in Draft Store browser E2E; Windows Node 24 verify was
+  still running. This run is not recorded as green, and its status does not
+  change the implementation phase status.
 
 ### 4.7 Phase 2.1 implementation boundary — DECISION
 
@@ -1731,7 +1781,9 @@ T2.1-0 PASS
 - **Sequence:** run migration/writer/atomicity/concurrency/security/a11y/browser/
   scale/Docker/backup/restore/downgrade matrices; assign defects back to their
   owning phase; never weaken assertions.
-- **Tests/failure/concurrency:** all required PRD regressions A–AG, 10k/50k,
+- **Tests/failure/concurrency:** all required regressions A–AP, including the
+  approved PRD regressions A–AG and implementation-plan regressions AH–AP,
+  10k/50k,
   old/new compatibility, editor Undo, actual matching old-image restore
   rehearsal, and no-open-defect review.
 - **Security/performance/protected audit:** verify provenance/error hygiene,
@@ -1900,9 +1952,9 @@ Architecture blocker: 0
 Plan ↔ Approved PRD Conflict: 0
 ```
 
-These counts remain subject to external final plan review; they are not an
-implementation PASS. The following required feasibility answers are all
-**Yes**, subject to the gates:
+These counts record the passed plan review; they are not an implementation
+PASS. The following required feasibility answers are all **Yes**, subject to
+the implementation gates:
 
 | Required answer | Planning conclusion |
 | --- | --- |
@@ -1938,51 +1990,62 @@ Phase 2.1 may eventually be declared complete only after:
 
 ## 51. Review Checklist
 
-The following checklist is intentionally **unchecked**. External plan review
-must decide whether the choices satisfy the approved PRD.
+The external final plan review passed. The following checklist records the
+reviewed plan decisions; these are plan-review checks, not implementation
+acceptance gates.
 
-- [ ] Approved PRD remains unchanged
-- [ ] Current architecture facts verified
-- [ ] Association provenance design is safe
-- [ ] delete→re-add is provably detectable
-- [ ] migration preserves logical associations
-- [ ] record storage is bounded
-- [ ] ordinary Apply + record is one transaction
-- [ ] latest target transition is atomic
-- [ ] Undo fingerprint ignores unrelated state appropriately
-- [ ] Merge/Remove algorithms preserve later unrelated changes
-- [ ] exact stable-ID restoration is implementable
-- [ ] dynamic conflicts are non-consuming
-- [ ] exactly-once recovery is implementable
-- [ ] all association writers are covered
-- [ ] ordinary metadata tag writers preserve unchanged association IDs
-- [ ] unrelated tag additions/removals do not false-conflict Undo
-- [ ] legacy v6 durable recovery snapshots are compatible with v7
-- [ ] legacy recovery never invents historical provenance
-- [ ] T2.1-0 is foundation-only and does not activate Undo guarantees
-- [ ] T2.1-1 is the atomic Phase 2.1 activation cutover
-- [ ] public Undo HTTP routes are owned only by T2.1-4
-- [ ] `database_generation` naming is consistent
-- [ ] API/client contracts are explicit
-- [ ] UI integrates existing state/sync seams
-- [ ] concurrency matrix is complete
-- [ ] 10k/50k plan is set-based
-- [ ] backup/downgrade rehearsal is defined
-- [ ] protected areas are covered
-- [ ] PRD traceability is complete
-- [ ] no Architecture / PRD Conflict
-- [ ] implementation has NOT started
+- [x] Approved PRD remains unchanged
+- [x] Current architecture facts verified
+- [x] Association provenance design is safe
+- [x] delete→re-add is provably detectable
+- [x] migration preserves logical associations
+- [x] record storage is bounded
+- [x] ordinary Apply + record is one transaction
+- [x] latest target transition is atomic
+- [x] Undo fingerprint ignores unrelated state appropriately
+- [x] Merge/Remove algorithms preserve later unrelated changes
+- [x] exact stable-ID restoration is implementable
+- [x] dynamic conflicts are non-consuming
+- [x] exactly-once recovery is implementable
+- [x] all association writers are covered
+- [x] ordinary metadata tag writers preserve unchanged association IDs
+- [x] unrelated tag additions/removals do not false-conflict Undo
+- [x] legacy v6 durable recovery snapshots are compatible with v7
+- [x] legacy recovery never invents historical provenance
+- [x] T2.1-0 is foundation-only and does not activate Undo guarantees
+- [x] T2.1-1 is the atomic Phase 2.1 activation cutover
+- [x] public Undo HTTP routes are owned only by T2.1-4
+- [x] `database_generation` naming is consistent
+- [x] API/client contracts are explicit
+- [x] UI integrates existing state/sync seams
+- [x] concurrency matrix is complete
+- [x] 10k/50k plan is set-based
+- [x] backup/downgrade rehearsal is defined
+- [x] protected areas are covered
+- [x] PRD traceability is complete
+- [x] no Architecture / PRD Conflict
+- [x] implementation has NOT started
 
 ## Plan Status
 
 ```text
-PHASE 2.1 UNDO IMPLEMENTATION PLAN DRAFT READY FOR FINAL REVIEW
-```
+PHASE 2.1 UNDO IMPLEMENTATION PLAN APPROVED FOR IMPLEMENTATION
 
-Status: Draft for Review
+Final Implementation Plan Review: PASS — 2026-08-16
 
-Implementation Plan: NOT APPROVED
+P0: 0
+P1: 0
+P2 blocking: 0
+Architecture blocker: 0
+Plan ↔ Approved PRD Conflict: 0
+
+PRD: APPROVED
+Implementation Plan: APPROVED
 Implementation: NOT STARTED
 T2.1-0: NOT STARTED
 Phase 2.1: NOT COMPLETE
 Undo: NOT IMPLEMENTED
+
+NEXT AUTHORIZED PHASE:
+T2.1-0 — Reversible State and Association Provenance Foundation
+```
