@@ -210,6 +210,8 @@ Phase 2.1 goals are:
    synchronization, accessibility, i18n, auth, and protected-area contracts.
 7. Keep the first release bounded to one user-facing Undo level, with no Redo
    or arbitrary history browser.
+8. When Undo record health is enabled and healthy, prevent a supported ordinary
+   Tag Management Apply from succeeding without its durable reversible record.
 
 ## 7. Non-Goals
 
@@ -244,8 +246,12 @@ Phase 2.1 does not include:
 | Undo Preview | A read-only server plan describing the inverse operation against current state. |
 | Undo Apply | A new atomic forward mutation that commits the inverse delta. |
 | Operation-owned delta | The exact associations, tag-row changes, or identity effects created or removed by the original operation. |
+| Operation-owned association | An association effect that the original operation created, removed, or preserved as part of its reviewed delta. |
+| Association provenance | Server-owned durable evidence, such as a generation, ownership, or equivalent bounded record, that proves an association is still the operation-owned effect under review. |
 | Unrelated later change | A later change outside the operation-owned state needed to derive and validate the inverse. |
 | Relevant conflict | A current change that makes the inverse ambiguous, unsafe, or impossible to apply exactly. |
+| Record lifecycle | The durable lifecycle of a reversible record: latest user-facing, superseded, consumed, or permanently unavailable. |
+| Current validation result | The current-state evaluation of a record: safe, stale, conflict, or temporarily unavailable. It is separate from record lifecycle. |
 | User Undo window | The period during which the latest reversible record is exposed to the user. |
 | Internal record retention | How long the server keeps metadata or delta data after the user-facing Undo is no longer available. |
 | Stable tag ID | The numeric tags.id identity that must not be silently replaced by a display-string match. |
@@ -284,7 +290,8 @@ it is not a separate fourth server operation kind.
 An original operation is not reversible merely because its Apply response was
 successful. It becomes user-undoable only when the server durably records the
 minimum inverse delta in the same logical commit boundary as the original
-mutation.
+mutation. The atomic durability and fail-closed health contract for new
+ordinary Applies is defined in §12.
 
 ## 11. Single-Level Undo Product Model
 
@@ -303,15 +310,28 @@ The decision remains a proposal until this PRD is approved.
 
 - Only the latest successful ordinary Rename, Display Rename, Merge, or Remove
   is user-undoable.
+- After Phase 2.1 is enabled and its durable-record health is healthy, an
+  ordinary Apply is successful only when the tag mutation, association changes,
+  monotonic document-version updates, reversible record, and latest-Undo target
+  transition commit together.
 - A later successful ordinary Tag Management operation supersedes the prior
   user Undo.
 - A failed, stale, cancelled, or preview-only operation does not supersede an
   available Undo.
+- If required reversible-record persistence or latest-target persistence fails,
+  the entire ordinary Apply rolls back. If Undo-record migration or health is
+  unavailable before a new supported mutation, that mutation fails closed;
+  Tag Management reads and diagnostics may remain available under the existing
+  health boundary.
 - Undo itself is a new successful Tag Management mutation, but it consumes the
   prior user-facing Undo and does not create a user-facing Redo target.
 - There is no Undo stack browser and no arbitrary operation selection.
 - Undo availability is server-derived; the client never reconstructs it from a
   toast, local storage, or stale posts.
+- This rule applies to new supported commits after Phase 2.1 is healthy. It
+  does not make pre-Phase-2.1 operations retroactively undoable, make an old
+  client expose Undo, or turn a superseded record or a temporary current-state
+  conflict into a new mutation-health failure.
 
 ## 12. Durable Undo Availability
 
@@ -322,8 +342,10 @@ The proposed product behavior is:
 - Undo survives a normal server restart because startup opens the same database
   and validates the current record against the current graph before advertising
   it.
-- A record whose validation fails after restart is shown as conflict or
-  unavailable, never optimistically applied.
+- A record whose current validation fails after restart is shown as stale,
+  conflict, or unavailable, never optimistically applied. A current conflict
+  does not by itself consume the record; if it later clears and all other
+  preconditions remain valid, a new Preview may make Undo available again.
 - A database restore restores the Undo availability corresponding to that
   database generation. A backup taken before an operation has no record for
   that operation; a backup taken after it and before Undo may retain the Undo.
@@ -332,6 +354,46 @@ The proposed product behavior is:
 
 The implementation plan may choose a compact read model and child delta rows,
 but it must not use browser storage or logs as the authority.
+
+### Ordinary Apply durability and fail-closed health
+
+After Phase 2.1 is enabled and Undo-record migration/health is available, every
+new supported ordinary Rename, Display Rename, Merge, or Remove Apply must
+atomically commit all of the following in one SQLite transaction:
+
+1. the tag-row mutation;
+2. all document-association changes;
+3. all required monotonic document-version updates;
+4. the server-owned reversible operation record; and
+5. the state identifying that operation as the latest user-facing Undo target.
+
+Conceptually:
+
+~~~
+BEGIN IMMEDIATE
+tag mutation
++ association mutation
++ document version updates
++ reversible operation record
++ latest Undo target transition
+COMMIT
+~~~
+
+If any required reversible-record write or latest-target transition fails, the
+entire ordinary Apply rolls back. The product must never report “Rename,
+Merge, or Remove succeeded but Undo was lost” for a new supported operation
+while Phase 2.1 Undo is healthy and enabled.
+
+If the Phase 2.1 record migration or health precondition is unavailable before
+an ordinary mutation, the server fails closed for new supported Tag Management
+mutations rather than creating irreversible state. Read-only Tag Management
+resources and diagnostics may remain available according to the existing
+health boundary. Exact HTTP error names remain Implementation Plan scope.
+
+This is not a retroactive requirement for successful Phase 2 operations from
+before the feature was enabled, an old client that cannot request Undo, a
+superseded record that is no longer user-facing, or a current dynamic conflict
+that can be revalidated after the conflicting state changes.
 
 ## 13. Undo Is a New Forward Mutation
 
@@ -384,6 +446,21 @@ Later unrelated associations to tag ID 7 survive. A later title or summary
 change survives. If another actor independently changed tag ID 7 away from the
 reviewed post-Rename state, the Undo is a relevant conflict rather than an
 automatic second rename.
+
+The stable ID makes the display consequence global. For example:
+
+~~~
+10:00  Java(id=7) → Backend(id=7)
+10:05  A user associates doc-X with Backend(id=7)
+10:10  Undo Rename
+~~~
+
+The doc-X association survives because it is still attached to tag ID 7. The
+global tag row becomes Java(id=7), so doc-X now observes Java, not Backend.
+Undo does not preserve the old display only for doc-X; tag identity/display is
+global per stable tag row. Documents whose visible/global tag metadata changes
+receive the normal new monotonic metadata version under the accepted version
+contract. This is not snapshot rollback.
 
 If the original java identity is now owned by another incompatible stable tag
 row, Undo fails safely. It does not merge rows, retarget associations, or
@@ -468,6 +545,21 @@ document was deleted, the destination was independently renamed/removed, the
 source ID is occupied, or the original source identity is occupied by another
 row, the entire Undo is a conflict and no partial restoration is committed.
 
+Final row equality is not sufficient proof of operation ownership. For example:
+
+~~~
+Before: doc-A → Java(id=7)
+10:00  Merge Java(id=7) → Backend(id=9)
+10:05  A later user removes doc-A → Backend(id=9)
+10:06  A later user independently adds doc-A → Backend(id=9)
+10:10  Undo Merge
+~~~
+
+The final `(doc-A, Backend)` key looks identical to the Merge-created row, but
+the 10:06 row is a later user change. Undo may remove it only if server-owned
+provenance proves it is still the original operation-owned effect. Otherwise
+Undo fails safely with a conflict; it never guesses from the composite key.
+
 The source tag is restored with its original stable ID 7 when safe. An
 explicitly occupied ID is never replaced with an auto-generated ID.
 
@@ -505,6 +597,13 @@ normalized identity is occupied by another incompatible row, or if current
 state makes an operation-owned association ambiguous, the whole Undo fails as
 a conflict. It does not restore the remaining documents partially.
 
+The same provenance rule applies to Remove. Restoring an originally removed
+source association is allowed only when the server can prove the inverse still
+refers to that operation-owned effect and not to a later independently
+recreated or otherwise changed association/state. Final `(document_id, tag_id)`
+equality, or a matching final set alone, is never enough. If safe ownership
+cannot be proven, the entire Remove Undo fails closed.
+
 An orphan Remove is also reversible: its source tag row is restored with the
 same ID and no document associations, provided the identity and ID are free.
 
@@ -538,6 +637,10 @@ The product does not silently create a new ID and label it as the old identity.
 Any proposal to do that would be an explicit Architecture / PRD Conflict and
 would require review before implementation.
 
+Stable-ID restoration does not replace association provenance. Even when the
+original numeric ID is available, the server must prove that every association
+it removes or restores is still the operation-owned effect being reversed.
+
 ## 19. Unrelated Later Change Preservation
 
 Undo changes only the operation-owned delta and the current tag-row state
@@ -560,6 +663,11 @@ For a later unrelated tag added to the same document, Undo may still proceed if
 the operation-owned source/destination state is unchanged. Undo removes or
 adds only the exact association rows named by its delta, leaving the unrelated
 tag row intact.
+
+For a later association to a renamed stable ID, the later association also
+survives, but it observes the globally restored tag row. A document associated
+with Backend(id=7) after `Java(id=7) → Backend(id=7)` will observe Java(id=7)
+after Rename Undo. Undo never creates a per-document display exception.
 
 The inverse may legitimately version a document again because its tag
 associations or global tag display changed. Versioning is a new forward effect,
@@ -590,7 +698,28 @@ Undo must distinguish disjoint later changes from relevant changes.
 
 These changes survive the inverse.
 
-### Changes that block or stale Undo
+### Dynamic, non-consuming current conflicts
+
+A relevant current-state conflict normally does not consume the latest
+reversible record. For example:
+
+~~~
+10:00  Remove Java(id=7)
+10:05  Another current tag temporarily occupies normalized identity `java`
+10:10  Undo Preview → conflict
+10:15  The conflicting tag is safely removed or renamed
+10:20  Undo Preview again
+~~~
+
+If the original record is still latest, has not been consumed or superseded,
+provenance remains valid, required documents still exist, and the current state
+is safe, the second Preview may make Undo available again. `UNDO_CONFLICT` is
+therefore normally a current validation result, not a permanent lifecycle
+transition. The same non-consuming rule applies to a stale Preview: the user
+must obtain a fresh Preview, but the record is not consumed merely because a
+reviewed Preview became invalid.
+
+### Changes that block or stale the current Preview
 
 - a later successful Tag Management operation superseded the current record;
 - the source or destination tag row changed away from its recorded post-state;
@@ -603,16 +732,34 @@ These changes survive the inverse.
   unrelated;
 - the durable record is malformed, unsupported, or missing required delta data.
 
-The product-level outcomes are:
+The product-level current validation outcomes are:
 
 | Outcome | Meaning |
 | --- | --- |
-| UNDO_AVAILABLE | A current durable record exists and can be Previewed. |
-| UNDO_STALE | The reviewed Undo Preview no longer matches relevant current state. |
-| UNDO_CONFLICT | Identity, document, association, or record preconditions make reversal unsafe. |
-| UNDO_SUPERSEDED | A later successful Tag Management operation consumed the user Undo window. |
-| UNDO_ALREADY_APPLIED | The record was already consumed by a committed Undo. |
-| UNDO_UNAVAILABLE | No safe reversible record is available or health/compatibility is unavailable. |
+| UNDO_AVAILABLE | The latest user-facing record exists and current validation says the inverse is safe to Preview/Apply. |
+| UNDO_STALE | The reviewed Undo Preview no longer matches relevant current state; the record remains unconsumed and requires a fresh Preview. |
+| UNDO_CONFLICT | Identity, document, association, or record preconditions currently make reversal unsafe; this normally does not consume the record. |
+| UNDO_SUPERSEDED | A later successful ordinary Tag Management operation became the latest target; this is terminal for the prior user-facing Undo. |
+| UNDO_ALREADY_APPLIED | The record was consumed by a committed Undo; this is terminal and does not expose Redo. |
+| UNDO_UNAVAILABLE | No safe record can currently be advertised, including temporary health/compatibility unavailability or a permanently unsupported/corrupt record; the reason determines whether retry can help. |
+
+The durable record lifecycle and current validation result are separate:
+
+~~~
+Record lifecycle:
+latest user-facing → superseded | consumed | permanently unavailable
+
+Current validation:
+safe | stale | conflict | temporarily unavailable
+~~~
+
+Terminal lifecycle reasons include supersession, consumption, an unsupported
+or corrupt record, irrecoverable provenance loss, and a database-generation
+mismatch that cannot be safely related to the record. Exact persisted states
+and enum names belong to the future Implementation Plan. A client retry cannot
+make an irrecoverable record or provenance/generation failure safe, but it may
+revalidate a temporary health condition or a dynamic conflict after the
+underlying state changes.
 
 These names are product-level concepts. Exact HTTP/error names belong in the
 future reviewed Implementation Plan and must remain compatible with the
@@ -709,15 +856,18 @@ the user Undo window.
 | Preview only | No change |
 | Cancelled confirmation | No change |
 | Failed/stale Apply | No change |
-| Successful Rename/Display Rename/Merge/Remove | New operation becomes the only Undo target; prior target is superseded |
+| Successful Rename/Display Rename/Merge/Remove | After its durable reversible record and latest-target transition commit atomically, the new operation becomes the only Undo target; prior target is superseded |
 | Successful Undo | Prior target becomes consumed; no Redo target is exposed |
 | Title/summary edit | Does not supersede by itself |
-| Unrelated tag edit | Does not supersede by itself; may create a relevant conflict if it overlaps the recorded delta |
+| Unrelated tag edit | Does not supersede by itself; may create a dynamic, non-consuming relevant conflict if it overlaps the recorded delta |
 | Restore of a matching backup | Availability becomes the state contained by that backup |
 | Restore of a different/unknown database generation | Undo fails closed until a matching durable record/current graph is established |
 
-The user-facing Undo remains available without an arbitrary timeout until it is
-successfully superseded, consumed, or becomes a relevant conflict/unavailable.
+The latest user-facing record remains in its Undo window without an arbitrary
+timeout until it is successfully superseded, consumed, or becomes permanently
+unavailable. A temporary health condition, stale Preview, or dynamic conflict
+does not by itself consume the record; a later Preview may succeed if the
+condition clears and all reversible preconditions remain valid.
 
 The product does not promise a browsable history after supersession. The
 internal full reversible payload may be removed or compacted atomically when a
@@ -737,6 +887,10 @@ numbers. A durable reversible record must contain or reference:
 - destination stable ID, display name, and normalized identity where applicable;
 - the original post-operation source/destination state required for validation;
 - the exact operation-owned association delta created and removed;
+- server-owned association provenance or equivalent generation/ownership
+  evidence sufficient to prove that each inverse association is still the
+  original operation-owned effect; final `(document_id, tag_id)` equality alone
+  is explicitly insufficient;
 - Merge overlap/source-only/destination-only information;
 - Remove deleted-tag identity/display information;
 - stable document identities required for inverse validation;
@@ -744,7 +898,8 @@ numbers. A durable reversible record must contain or reference:
   to distinguish relevant changes from disjoint later changes;
 - current metadata/version evidence needed for conflict detection, without
   treating old timestamps as values to restore;
-- reversible/available/superseded/consumed state;
+- durable lifecycle/consumption/supersession state separate from the current
+  validation result; a dynamic conflict is not a terminal consumed state;
 - the relationship between an original operation and its Undo result;
 - the identity-contract version under which the record was created.
 
@@ -756,6 +911,12 @@ The reversible delta may be represented with a parent operation record and
 set-oriented child data. The implementation must keep the server-owned full
 delta available for correctness while returning only bounded samples and
 counts over the API.
+
+The future Implementation Plan must define a bounded server-owned provenance
+mechanism for these association effects. This PRD intentionally does not
+choose a final table, journal, generation, or ownership representation, but it
+does freeze that client state, display equality, and a reconstructed snapshot
+are never provenance authority.
 
 ## 25. UX / State Machine
 
@@ -781,7 +942,7 @@ Proposed states:
 
 | State | Behavior |
 | --- | --- |
-| undo-unavailable | No safe record, old server, failed health, or unsupported record; no mutation control. |
+| undo-unavailable | No safe record, old server, failed health, or unsupported record; no mutation control. The UI distinguishes retryable health/compatibility unavailability from a terminal unsupported or corrupt record. |
 | undo-available | Latest record can be inspected and Previewed. |
 | undo-previewing | Server builds a current inverse Preview; inputs are locked as appropriate. |
 | undo-preview-ready | Counts, delta, sample, warnings, fingerprint, and confirmation action are visible. |
@@ -789,10 +950,11 @@ Proposed states:
 | undo-applying | Undo Apply is in flight; duplicate submission is disabled. |
 | undo-committed-refreshing | Undo committed; canonical posts/tag reads are refreshing. |
 | undo-sync-pending | Commit is known; Retry performs synchronization only. |
-| undo-conflict | Relevant current state blocks safe reversal; user must inspect current state. |
+| undo-conflict | A relevant current-state condition blocks safe reversal. This normally does not consume the record; after the condition is resolved, the user may request a new Preview. |
 | undo-stale | Reviewed Preview is invalid; the user must Preview again. |
 | undo-success | Inverse committed and authoritative state is synchronized. |
 | undo-superseded | A later successful Tag Management operation consumed the user Undo window. |
+| undo-terminal-unavailable | The record is permanently unsupported/corrupt, has irrecoverable provenance loss, or cannot be related to the current database generation; retry cannot make it user-undoable. |
 
 No global Ctrl/Cmd+Z binding is added. Monaco/editor Undo remains untouched.
 
@@ -803,10 +965,15 @@ The UI must tell the user which of these occurred:
 - no latest reversible operation;
 - operation was superseded;
 - Undo Preview became stale;
+- a temporary current conflict that does not consume the latest Undo and may be
+  retried after the relevant state changes;
 - stable ID or normalized identity conflict;
 - required document disappeared;
 - operation-owned association changed;
+- association provenance cannot prove ownership after a delete/re-add;
 - management health or compatibility is unavailable;
+- the reversible record is permanently unsupported, corrupt, or from an
+  irreconcilable database generation;
 - Undo committed but the view is still synchronizing.
 
 Messages must say that a conflict prevented mutation, not that the original
@@ -896,6 +1063,9 @@ Undo Apply must satisfy all of the following:
 - no partial Merge restoration;
 - no partial Remove restoration;
 - source tag row restoration and associations commit together;
+- every inverse association is changed only when server-owned provenance proves
+  it is still the operation-owned effect; final composite-key equality is not
+  ownership proof, including after delete-and-recreate;
 - a Rename/Display Rename inverse cannot silently merge with another identity;
 - each affected document version advances exactly once for this Undo;
 - unaffected documents receive no version bump;
@@ -909,6 +1079,14 @@ Undo Apply must satisfy all of the following:
 - successful commit consumes the current user-facing reversible record in the
   same durable state transition;
 - client refresh failure cannot turn a committed Undo into a second mutation.
+
+While Phase 2.1 Undo is enabled and healthy, ordinary Rename, Display Rename,
+Merge, and Remove Apply must also commit the tag mutation, association changes,
+monotonic document versions, reversible record, and latest-Undo target
+transition in the same SQLite transaction. Failure of any required reversible
+state write rolls back the entire ordinary Apply. If record migration or health
+is unavailable before the mutation, new supported ordinary Applies fail closed
+rather than creating irreversible state.
 
 ## 31. Metadata Version Consequences
 
@@ -949,6 +1127,9 @@ Upgrade requirements:
   undoable unless the complete reversible delta was actually captured;
 - the first successful supported Tag Management operation after deployment
   establishes the first safe user-facing Undo record;
+- while durable-record health is unavailable, new supported ordinary Tag
+  Management mutations fail closed; no ordinary Apply may create a mutation
+  without the reversible record and latest-target transition;
 - a migration failure leaves existing Phase 2 operations intact and makes
   Undo unavailable/fail closed;
 - a completed migration is idempotent and health-checked;
@@ -973,6 +1154,8 @@ matching vault and required key/configuration.
 Requirements:
 
 - the operation record and tag/document mutation commit consistently;
+- the reversible record and latest user-facing target transition are included
+  in the same transaction as each new supported ordinary mutation;
 - a matching backup never contains a durable record for a mutation absent from
   its tag/document state;
 - restoring an older backup restores its corresponding Undo availability;
@@ -1062,6 +1245,8 @@ The future implementation should provide bounded, supportable diagnostics:
 - affected/added/removed/restored counts;
 - version-update count;
 - commit timestamp and identity-contract version;
+- association provenance/conflict category without logging an unbounded
+  association list;
 - migration/health state for durable record availability;
 - sync-pending and recovery attempts.
 
@@ -1069,11 +1254,20 @@ Diagnostics must not log Markdown bodies, full document contents, raw SQL,
 filesystem secrets, session tokens, stack traces in responses, or unbounded
 association lists. A log entry is not the product authority for Undo.
 
-The record status must make these states distinguishable:
+Diagnostics must distinguish durable record lifecycle from current validation:
 
 ~~~
-available → superseded | consumed | conflicted | unavailable
+Record lifecycle:
+latest user-facing → superseded | consumed | permanently unavailable
+
+Current validation:
+safe | stale | conflict | temporarily unavailable
 ~~~
+
+A dynamic conflict or stale Preview is not a durable consumed state. Terminal
+diagnostics must identify supersession, consumption, unsupported/corrupt record,
+irrecoverable provenance loss, or database-generation mismatch separately from
+retryable health or current-state conditions.
 
 ## 38. Acceptance Criteria
 
@@ -1088,6 +1282,15 @@ The following are product acceptance criteria for a future implementation:
 - [ ] Undo itself consumes the target and does not expose Redo.
 - [ ] Existing Phase 2 operations before deployment are not retroactively
       undoable without a complete durable delta.
+- [ ] Every new Phase 2.1 Rename, Display Rename, Merge, or Remove durably
+      creates its reversible record and latest-Undo state in the same atomic
+      SQLite transaction as the ordinary mutation.
+- [ ] Failure to persist required reversible state rolls back the entire
+      ordinary Tag Management Apply.
+- [ ] No successful Phase 2.1 management mutation can return with an
+      unexpectedly missing reversible record.
+- [ ] Undo-record subsystem health failure prevents new supported mutations
+      from creating irreversible state.
 
 ### Semantics
 
@@ -1103,6 +1306,15 @@ The following are product acceptance criteria for a future implementation:
 - [ ] Later unrelated title, summary, tag, Markdown, and Git changes survive.
 - [ ] A later unrelated tag on the same document survives when the
       operation-owned delta remains valid.
+- [ ] A later delete-and-recreate of an operation-owned association is not
+      treated as the original association merely because its composite key
+      matches.
+- [ ] Undo changes an association only when server-owned evidence proves that
+      it is still the operation-owned effect; ambiguous provenance fails closed.
+- [ ] The future Implementation Plan defines a bounded provenance mechanism;
+      client state is never provenance authority.
+- [ ] A later association to a renamed stable ID survives and observes the
+      globally restored tag display/identity after Rename Undo.
 - [ ] Old updated_at values are never restored.
 
 ### Preview, Apply, and recovery
@@ -1114,6 +1326,11 @@ The following are product acceptance criteria for a future implementation:
 - [ ] Undo Apply is one atomic SQLite mutation with one version bump per
       affected document.
 - [ ] Preview stale/conflict leaves the post-original state unchanged.
+- [ ] A dynamic conflict Preview does not consume the latest reversible record;
+      after the conflict clears, a fresh Preview may make Undo available again.
+- [ ] Superseded, consumed, unsupported/corrupt, irrecoverable-provenance, and
+      irreconcilable-generation outcomes are terminal for the current
+      user-facing Undo and cannot be revived by client retry.
 - [ ] Committed + refresh failure enters sync-pending and retries sync only.
 - [ ] Contradictory committed responses use trusted record identity for
       recovery and never re-Apply.
@@ -1195,12 +1412,16 @@ are not implementation-plan details and must not be silently changed in code.
 | 12. Can Undo proceed when an unrelated tag was added to the same document? | Yes, if the operation-owned association preconditions still hold; preserve the unrelated association. |
 | 13. Is Preview mandatory? | Yes, for every Undo. |
 | 14. Does Undo require confirmation? | Yes, explicit confirmation after Preview; destructive cases use the existing confirmation host. |
-| 15. How long is user-facing Undo available? | Until superseded, consumed, or made unavailable/conflicted; no arbitrary timeout is introduced. |
+| 15. How long is user-facing Undo available? | Until superseded, consumed, or permanently unavailable; a temporary health condition, stale Preview, or dynamic conflict does not consume it, and no arbitrary timeout is introduced. |
 | 16. Is Redo deferred? | Yes. It is explicitly out of scope. |
 | 17. What does sync-pending mean? | Undo committed; only authoritative synchronization remains and Retry never Applies again. |
 | 18. How does old-client/new-server compatibility work? | Old clients continue approved Phase 2 behavior and do not invoke Undo; no automatic Undo is attempted. |
 | 19. How does new-client/old-server compatibility work? | Undo reads/mutations are unavailable or 404/503; the client hides/disables Undo and does not mutate. |
 | 20. What happens to Undo after backup restore? | Availability equals the matching restored database generation; mismatched/unknown records fail closed. |
+| 21. What happens if the reversible record cannot be persisted during an ordinary Rename/Merge/Remove Apply? | The ordinary Apply rolls back atomically; no irreversible successful mutation is allowed while Phase 2.1 reversible-record health is required. |
+| 22. Can a matching `(document_id, tag_id)` row be assumed to still belong to the original operation after delete/re-add? | No. Final equality is insufficient; server-owned provenance is required or Undo fails safely. |
+| 23. Does a temporary Undo conflict permanently consume the Undo? | No. Conflict is normally non-consuming. If it later disappears and the record remains latest, unconsumed, supported, and provably reversible, Undo can become available again. |
+| 24. What happens to a document associated with a renamed stable tag after the original Rename but before Undo? | Its association survives because the stable ID is unchanged; after Undo it observes the globally restored tag identity/display. |
 
 The review may reject or amend these answers, but implementation must wait for
 that decision.
@@ -1245,13 +1466,24 @@ Architecture / PRD Conflict: None identified; final status pending PRD review.
 - [ ] Rename, Display Rename, Merge, and Remove inverse semantics are clear.
 - [ ] Stable-ID restoration and identity-conflict behavior are clear.
 - [ ] Later unrelated changes survive without snapshot rollback.
+- [ ] Rename Undo behavior for later associations to the same stable ID is
+      clear: the association survives and observes the globally restored
+      display/identity.
 - [ ] Relevant stale/conflict cases fail closed.
+- [ ] Dynamic current conflicts are non-consuming and may be re-Previewed after
+      the conflicting state clears; terminal record failures remain terminal.
 - [ ] Undo of Undo/Redo remains deferred.
 
 ### Safety and operations
 
 - [ ] Preview and explicit confirmation are mandatory.
 - [ ] Exactly-once committed semantics and sync-only retry are clear.
+- [ ] Ordinary Apply and durable reversible-record/latest-target state commit
+      atomically, or the entire ordinary Apply rolls back.
+- [ ] New supported mutations fail closed when reversible-state persistence or
+      health is unavailable.
+- [ ] Association provenance is server-owned; final row equality and
+      delete/re-add cannot establish ownership.
 - [ ] Migration, backup, restore, downgrade, and stale-browser behavior are
       implementable without inventing reverse identity migration.
 - [ ] Auth, CSRF, bounded samples, error hygiene, and protected areas remain
