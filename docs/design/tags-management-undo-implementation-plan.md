@@ -10,7 +10,7 @@
 
 **Phase 2 production baseline:** `99f4d73154349f8ebc99cb609f1a88b07937fb26`
 
-**Planning HEAD:** `874eb36642d6a2407b81986efb056f8832adb06e`
+**Planning HEAD:** `b850d0a0559d361ec87f721faf681ba33303824f`
 
 This document is an implementation-planning artifact only. It does not create
 Undo behavior, a migration, an endpoint, a test, or a production code change.
@@ -29,7 +29,7 @@ review and approval.
 | Phase 2 Implementation Plan | `docs/design/tags-management-implementation-plan.md` |
 | Phase 2 closure | `docs/archive/closures/tags-management-phase-2-closure.md` |
 | Backup authority | `docs/deployment/backup-and-restore.md` |
-| Current planning HEAD | `874eb36642d6a2407b81986efb056f8832adb06e` |
+| Current planning HEAD | `b850d0a0559d361ec87f721faf681ba33303824f` |
 | Production implementation baseline | `99f4d73154349f8ebc99cb609f1a88b07937fb26` |
 | Implementation state | Not started |
 
@@ -39,25 +39,21 @@ The production facts in this plan are therefore read from the unchanged Phase
 
 ## 2. Status / Authority
 
-The authority order for this plan is:
+The authority order for the Phase 2.1 behavior in this plan is:
 
 ```text
-Approved Phase 2 PRD
->
-Approved Phase 2 Implementation Plan
->
-Completed Phase 2 implementation and closure evidence
->
 Approved Phase 2.1 Undo PRD
 >
 this reviewed Phase 2.1 Implementation Plan
 >
-future implementation
+current implementation
 ```
 
-The Phase 2.1 Undo PRD is product authority for the new behavior. This plan
-chooses schema, provenance, transaction, API, client, UI, test, and delivery
-details, but may not weaken or reinterpret the approved product contract.
+The Approved Phase 2 PRD, Approved Phase 2 Implementation Plan, and Phase 2
+closure remain binding for the protected Phase 2 surface and existing behavior.
+The Phase 2.1 Undo PRD is product authority for new behavior. This plan chooses
+schema, provenance, transaction, API, client, UI, test, and delivery details,
+but may not weaken or reinterpret the approved product contract.
 
 If implementation evidence cannot satisfy stable-ID restoration, durable
 provenance, atomicity, later-change preservation, or the protected-area
@@ -152,8 +148,8 @@ The complete production writer inventory found by searching the repository is:
 
 | Writer/path | Current behavior | Phase 2.1 requirement |
 | --- | --- | --- |
-| `server/documentMetadata.ts`: `createDocumentMetadata`, `observeDocumentMetadata`, `saveDocumentMetadata` fixtures/recovery, `replaceDocumentTags` | Inserts tags and associations; ordinary new rows omit an association identity; the compatibility full writer deletes/rebuilds associations | New forward rows omit `association_id` and receive a new server identity; full replacement remains a non-management/recovery path and is audited separately |
-| `server/documentMetadata.ts`: `patchDocumentMetadataWithinTransaction` | Explicit tag changes require `expectedUpdatedAt`; unchanged tag sets are not rewritten; changed sets delete/reinsert | Keep field-scoped version safety; delete/reinsert must create new association IDs |
+| `server/documentMetadata.ts`: `createDocumentMetadata`, `observeDocumentMetadata`, `saveDocumentMetadata` fixtures/recovery, `replaceDocumentTags` | Inserts tags and associations; ordinary new rows omit an association identity; the compatibility full writer currently deletes/rebuilds associations | New-document/import paths may insert fresh rows; full replacement is restricted to recovery/fixture/full-snapshot compensation. It is not the ordinary existing-document writer |
+| `server/documentMetadata.ts`: `patchDocumentMetadataWithinTransaction` | Explicit tag changes require `expectedUpdatedAt`; unchanged tag sets are not rewritten at the document level, but the current changed-set helper deletes/reinserts the complete association set | T2.1-0 changes the ordinary existing-document path to set-diff: unchanged logical rows preserve `association_id`; only true removals are deleted and only true additions receive new IDs |
 | `server/metadataMigration.ts` | Imports absent metadata through `ensureDocumentMetadata`; does not rebuild an existing database-owned row | New imported associations receive fresh IDs; no Undo record is created for import |
 | `server/tagManagement.ts` | Merge inserts destination rows with `ON CONFLICT DO NOTHING`; Merge/Remove delete source associations/tags; Rename updates a tag row | Capture exact created/removed association IDs inside the same Apply transaction |
 | `server/tagIdentityMigration.ts` | Repoints legacy tag rows with `INSERT OR IGNORE`, collapses duplicate logical memberships, and deletes losing tags | Runs after the schema migration; new repointed rows receive new IDs, existing rows retain IDs; migration is never an Undo record |
@@ -166,11 +162,47 @@ and assertions to ignore or intentionally assert the new physical identity.
 No Markdown, Frontmatter, Git History, TagPanel, FileTree, or editor Undo path
 is a Tag Management mutation writer.
 
+#### Ordinary existing-document writer contract — T2.1-0 decision
+
+The current full-replacement behavior is a pre-implementation finding, not an
+acceptable Phase 2.1 writer contract. In T2.1-0, the ordinary REST explicit-tag
+patch and AI metadata tag patch must use one centralized set-diff helper. For an
+existing document, compare the current normalized tag-ID set with the requested
+set before any association SQL:
+
+- a requested tag already present is **unchanged**; its existing
+  `document_tags.association_id` is retained;
+- a requested tag absent from the current set is an **add**; insert only that
+  `(document_id, tag_id)` row without `association_id` so SQLite allocates a new
+  identity;
+- a current tag absent from the requested set is a **remove**; delete only that
+  association row;
+- an identical requested set is a no-op for `document_tags`; no association row
+  or physical identity is rewritten.
+
+For example, `Backend(association_id=51) → Backend, Python` preserves 51 and
+allocates a new identity only for Python. `Backend, Python → Backend, Vue`
+preserves Backend, deletes Python, and allocates a new identity for Vue. A
+logical association that remains in the requested set must therefore keep its
+physical identity. Only a true logical delete followed by a later true add
+creates a new `association_id`.
+
+`replaceDocumentTags` may remain as a separately named recovery/fixture or
+full-snapshot compensation primitive only when exact snapshot ownership/CAS
+semantics require it. It must not be reachable from ordinary existing-document
+REST or AI tag patches. Snapshot/CAS restoration and ordinary production tag
+writing are separate contracts: the former may restore an explicitly captured
+physical row, while the latter preserves unchanged associations and never
+accepts physical provenance from the caller.
+
 ### 4.4 Startup, health, and security — CURRENT FACT
 
 - `server/prod.ts` and `server/vite-plugin.ts` acquire writer ownership, run
   crash recovery, run `migrateVaultMetadata`, and then call
   `initializeTagIdentityAndHealth` before serving.
+- The first `getDb()` call applies numbered SQLite migrations before the caller
+  enters crash recovery; therefore a v6 durable metadata journal can reach the
+  recovery parser after migration 0007 has already rebuilt `document_tags`.
 - `preflightTagIdentityHealth` is the read-only health seam used by the current
   tag routes; it checks marker validity, canonical tag rows, foreign keys, safe
   tag IDs, and live Markdown metadata ownership.
@@ -178,6 +210,10 @@ is a Tag Management mutation writer.
   requests require the owner session, unsafe methods use same-origin CSRF checks,
   body-bearing writes require JSON, and protected responses receive
   `Cache-Control: no-store`.
+- `server/folderMoveTransaction.ts` currently validates durable metadata snapshot
+  rows with exact v6 `document_tags` columns, and `server/crashRecovery.ts`
+  revives those rows before CAS restore; T2.1-0 must make this parser
+  version-aware rather than accepting a permissive mixed shape.
 - Management routes currently are `/api/tags`,
   `/api/tags/operations/preview`, `/api/tags/operations/preview/page`, and
   `/api/tags/operations/apply`.
@@ -262,15 +298,21 @@ The following are non-negotiable implementation invariants:
   records, and Undo results.
 - `tag-identity-v1` remains exactly `trim → remove exactly one leading # → trim
   → toLowerCase()`, with no NFKC.
-- Every supported ordinary Apply commits its tag mutation, association changes,
-  monotonic version updates, reversible record, child deltas, and latest-target
-  transition together.
+- After T2.1-1 activation, every supported ordinary Apply commits its tag
+  mutation, association changes, monotonic version updates, reversible record,
+  child deltas, and latest-target transition together. T2.1-0 foundation
+  installation does not make this requirement active.
 - Every Undo Apply is a new one-transaction forward mutation; old timestamps
   are never restored.
 - The server derives complete scope. The wire sample and pagination are never
   mutation authority.
+- An ordinary existing-document tag writer is set-diff based: every logical
+  association that remains requested preserves its existing `association_id`,
+  only true removals are deleted, and only true additions receive a new
+  `association_id`. An identical set is a physical no-op.
 - A physical association inserted by a normal forward writer gets a new
-  `association_id`; `INSERT OR IGNORE` preserves an existing row and identity.
+  `association_id`; `INSERT OR IGNORE` preserves an existing row and identity
+  when used for an idempotent add, never as a full-set replacement strategy.
 - A server-owned association ID is evidence for ownership, not a client token
   that can be forged or supplied as an inverse scope.
 - Merge and Remove restore source tag IDs by explicit `INSERT ... (id, ...)` or
@@ -313,12 +355,19 @@ set-oriented, and does not introduce event sourcing.
 
 ### 8.2 Ownership rules
 
-- All normal forward inserts omit `association_id`; SQLite allocates a new one.
-- A no-op `INSERT OR IGNORE` leaves the existing `(document_id, tag_id)` row and
-  its ID unchanged.
+- Ordinary existing-document metadata writes use set-diff. A logical row that
+  remains in the requested set is not deleted and keeps its existing
+  `association_id`; only additions omit `association_id` and let SQLite allocate
+  a new one, and only removals delete a row.
+- An identical requested set performs no association SQL. Where an idempotent
+  add helper is used, `INSERT OR IGNORE` leaves the existing `(document_id,
+  tag_id)` row and its ID unchanged; it is not permission to rebuild the set.
 - A delete followed by a later insert receives a new ID, even if the pair is
   identical.
 - Ordinary metadata writers never update `association_id` in place.
+- REST and AI explicit tag patches share this same set-diff contract. Full
+  snapshot/CAS recovery writers are separately classified and may restore an
+  explicitly captured physical row only after their existing ownership proof.
 - Tag Apply captures IDs from the actual committed rows, not predicted IDs.
 - Undo removes a Merge-created destination row only when the exact recorded
   `association_id`, document, and tag still match.
@@ -365,7 +414,8 @@ transaction:
    `idx_document_tags_document(document_id, tag_id)` for ownership/read paths.
    The unique constraint supplies its own uniqueness index.
 6. Create the Undo state, parent, and child tables described in §10 and seed
-   exactly one `tag_undo_state` row with `generation_id = lower(hex(randomblob(16)))`.
+   exactly one `tag_undo_state` row with
+   `database_generation = lower(hex(randomblob(16)))`.
 7. Run schema/foreign-key validation in the application health initializer
    before management is served; the migration test also runs
    `PRAGMA integrity_check` and `PRAGMA foreign_key_check`.
@@ -389,6 +439,54 @@ operation is retroactively reversible.
 - The migration must not use `INSERT OR IGNORE` for unexpected duplicate source
   pairs; a corrupted v6 database fails closed rather than silently losing a
   logical association.
+
+### 9.4 Durable recovery journal compatibility — v6 and v7
+
+The application opens the database through `getDb()`, which applies numbered
+migrations before `recoverInterruptedOperations()` runs in both production and
+Vite startup. A pre-upgrade durable folder/recovery journal can therefore be
+written against the v6 metadata shape and be consumed after the database has
+already migrated to v7. The parser must not assume every durable journal is a
+v7 journal.
+
+T2.1-0 freezes two exact `documentTags` row generations inside the existing
+durable snapshot envelope:
+
+| Row generation | Exact row columns | Physical provenance |
+| --- | --- | --- |
+| Legacy v6 | `document_id`, `tag_id` | None; the journal predates explicit association provenance |
+| Phase 2.1 v7 | `association_id`, `document_id`, `tag_id` | Exact positive `association_id` is captured |
+
+Parsing is version-aware and closed: classify a snapshot by its exact row
+columns (and by the explicit v7 format marker if the new journal shape adds
+one), reject mixed-generation rows, reject unknown columns, and normalize both
+forms into an internal representation that records whether physical provenance
+is present. Expanding one exact-column allow-list to a permissive union is not
+valid compatibility.
+
+Legacy v6 recovery has deliberately weaker physical semantics:
+
+- if the logical `(document_id, tag_id)` row is already present in the migrated
+  v7 graph and the existing ownership/CAS proof establishes that it is the
+  expected state, preserve its current `association_id`;
+- if the snapshot must recreate a missing logical row, insert it without
+  `association_id` and let SQLite allocate a new v7 identity;
+- never invent, derive, or guess an historical association ID from a v6 row;
+- v6 crash recovery is not user-facing Undo, creates no `tag_undo_record`, and
+  retains the existing recovery ownership/CAS contract;
+- if the live graph cannot be proven safe under the legacy snapshot model,
+  fail closed or quarantine using the existing recovery contract rather than
+  overwrite an external change merely because the old journal lacks an ID.
+
+A v7 snapshot contains the explicit association identity. Snapshot/CAS crash
+compensation may restore those captured physical IDs when its existing
+ownership protocol proves that an exact prior database state must be restored.
+That is distinct from user-facing Undo, whose inverse additions are new
+forward rows with new IDs. The v6/v7 upgrade test must construct a real v6
+database and durable journal, start the migrated application so migration 0007
+runs before recovery, and verify successful safe normalization, valid v7 IDs,
+no invented Undo record, integrity/FK checks, and fail-closed behavior when
+external current-state drift makes the legacy ownership proof unsafe.
 
 ## 10. Durable Undo Record Schema
 
@@ -517,6 +615,10 @@ Inside the ordinary Apply transaction:
 
 - insert the new parent using the pre-operation plan state and the existing
   `operationId`/`resultId`;
+- for every ordinary existing-document tag patch, first derive the requested
+  set-diff and preserve every unchanged association row and ID; record only
+  the true additions/removals caused by that writer. The helper must never
+  delete/reinsert a complete existing set merely because one tag changed;
 - for Merge/Remove, bulk-insert `removed-source` children from the current
   `document_tags` rows before deleting them;
 - for Merge, stage source-only document IDs and after the destination insert
@@ -548,7 +650,8 @@ The retention policy is:
 
 | Event | Durable state after commit |
 | --- | --- |
-| New successful ordinary Apply | New parent + complete children; previous parent/children deleted; previous ID in singleton tombstone |
+| New successful post-activation ordinary Apply | New parent + complete children; previous parent/children deleted; previous ID in singleton tombstone |
+| Successful T2.1-0 pre-activation ordinary Apply | Existing Phase 2 mutation semantics; no reversible record or user-facing Undo claim |
 | Failed/cancelled/stale ordinary Apply | Previous parent/children unchanged; no new record |
 | Dynamic Undo conflict/stale Preview | Current parent/children unchanged |
 | Successful Undo | Current parent summary marked consumed, `undo_result_id` stored, child rows deleted, no Redo |
@@ -562,8 +665,11 @@ bounded correlation data.
 ## 14. Ordinary Apply Atomic Recording
 
 The existing `applyTagOperation` in `server/tagManagement.ts` remains the
-single public ordinary Apply path. Phase T2.1-1 will split small synchronous
-helpers from it but will not create a second mutation path.
+single public ordinary Apply path. T2.1-0 first changes the ordinary metadata
+writer used by REST and AI tag patches to set-diff semantics; it does not create
+a second mutation path. T2.1-1 is the Phase 2.1 activation cutover: only from
+that reviewed commit onward does the no-record-no-commit invariant apply to
+supported ordinary Tag Management operations.
 
 The exact transaction sequence is:
 
@@ -571,10 +677,14 @@ The exact transaction sequence is:
 2. Acquire the same sorted document locks and enter the existing
    `db.transaction(...).immediate()` boundary.
 3. Rebuild and validate the Phase 2 plan against the reviewed fingerprint.
-4. Insert a new parent record with `lifecycle = latest`, using the pre-state
-   rows and new record ID. Do not change `tag_undo_state` yet.
+4. In the active T2.1-1 path, insert a new parent record with
+   `lifecycle = latest`, using the pre-state rows and new record ID. Do not
+   change `tag_undo_state` yet. In the T2.1-0 foundation-only path, this step
+   is deliberately not enabled and the ordinary Phase 2 operation remains
+   pre-activation/non-Undoable.
 5. Bulk-capture `removed-source` IDs and any Merge source-only staging rows.
-6. Perform the existing version update and Rename/Merge/Remove mutation.
+6. Perform the set-diff-preserving metadata/tag mutation and the existing
+   version update.
 7. Capture actual Merge-created destination IDs and complete the child delta.
 8. Run the existing plus new reversible-record postconditions: exact source/
    destination rows, association counts, child counts, versions, identity,
@@ -586,9 +696,10 @@ The exact transaction sequence is:
 
 The state pointer is moved before old-row deletion, so its foreign key always
 points at the new parent. If any parent/child/transition/postcondition write
-fails, the entire transaction rolls back: the tag graph, versions, old Undo
-target, and old delta remain exactly as before. There is no post-commit record
-write.
+fails after activation, the entire transaction rolls back: the tag graph,
+versions, old Undo target, and old delta remain exactly as before. There is no
+post-commit record write. T2.1-0 intentionally has no reversible-record
+requirement yet; it must not advertise those operations as user-undoable.
 
 The current Apply result remains the client-facing result. Its `operationId` and
 `resultId` are stored in the parent; the client does not receive the child delta.
@@ -644,9 +755,13 @@ The planner uses one deferred read transaction containing:
 - current source-tag document IDs for Rename/Display Rename;
 - derived inverse counts, warnings, conflict category, and bounded sample.
 
-The planner is deterministic and set-based. It returns a plan containing the
-record identity, inverse kind, complete internal document/association scope,
-status, counts, sample, next cursor, and the separate Undo fingerprint.
+The planner is deterministic and set-based. It returns an internal plan
+containing the record identity, inverse kind, complete internal
+document/association scope, status, counts, sample, next cursor, and the
+separate Undo fingerprint. T2.1-2 exposes no public HTTP handler; it is a
+domain-only phase. Public availability, Preview, Preview/page, and Apply
+routes are all owned by T2.1-4, which wires the planner to the authenticated
+protocol after the internal Undo Apply layer is complete.
 
 Conflict classification is explicit:
 
@@ -822,22 +937,26 @@ current. A version overflow or missing row fails the whole transaction.
 
 | Writer | Association identity rule | Undo interaction |
 | --- | --- | --- |
-| REST explicit tag patch | Requires current `expectedUpdatedAt`; delete/reinsert on a real set change | New rows get new IDs; may intentionally cause provenance conflict |
+| REST explicit tag patch | Requires current `expectedUpdatedAt`; set-diff preserves unchanged rows and IDs, deletes only true removals, inserts only true additions | Unrelated additions/removals do not rewrite operation-owned unchanged rows; a true delete→re-add has a new ID and can produce a provenance conflict |
 | REST title/summary patch | Does not touch `document_tags` | Must not supersede or false-conflict Undo; current version is ignored by Undo fingerprint |
-| AI `update_metadata` | Same field-scoped primitive and explicit tag version token | Same as REST |
+| AI `update_metadata` | Same field-scoped primitive, set-diff helper, and explicit tag version token | Same identity-preserving behavior as REST |
 | Create/import/frontmatter | Inserts absent rows and associations | New IDs; no Undo record |
 | Lifecycle/body/path mutation | Uses targeted metadata/touch or ownership restore | Must not rebuild live tags from stale Frontmatter |
-| Folder/history/frontmatter recovery | Existing snapshot/CAS compensation | May restore explicit physical IDs only inside rollback ownership; no Undo record |
+| Folder/history/frontmatter recovery | Existing snapshot/CAS compensation, including version-aware v6/v7 snapshot restore | May restore explicit v7 physical IDs only inside rollback ownership; v6 rows preserve current IDs or allocate new ones; no Undo record |
 | Tag Management ordinary Apply | Omitted-ID inserts; captures actual removed/created IDs | One parent/child record in the same transaction |
 | Tag identity migration | Repoints with current uniqueness semantics | No user-facing Undo; health and logical membership checks remain |
 
 ### 24.2 Safety assertions
 
-The implementation must prove that `INSERT OR IGNORE` does not replace an
-existing ID, delete→re-add creates a new ID, arbitrary callers cannot set a
-provenance owner, and all current direct `document_tags` SQL sites are covered.
-Any new writer discovered during implementation is assigned to T2.1-0 before
-recording is enabled.
+The implementation must prove that the ordinary REST and AI writer preserves
+unchanged IDs, performs no physical work for a no-op set, gives a new ID only
+to a true addition, and gives a new ID to a true delete→re-add. It must also
+prove that `INSERT OR IGNORE` does not replace an existing ID, arbitrary callers
+cannot set a provenance owner, and all current direct `document_tags` SQL sites
+are covered. Snapshot/CAS recovery is tested as a separate exact-restore
+contract, including legacy v6 normalization. Any new ordinary writer
+discovered during implementation is assigned to T2.1-0 before recording is
+enabled.
 
 ## 25. Health / Startup Integration
 
@@ -857,7 +976,8 @@ Startup ordering becomes:
 
 ```text
 writer ownership
-→ crash recovery
+→ getDb() schema migrations (including 0007)
+→ crash recovery, including v6/v7 journal normalization
 → metadata migration
 → tag identity migration/health
 → Undo schema/provenance/record health
@@ -865,18 +985,31 @@ writer ownership
 ```
 
 The health initializer verifies migration 0007 schema/indexes, singleton
-generation, current pointer/lifecycle, record/delta contract versions,
-positive association IDs, child-parent completeness, and
-`PRAGMA foreign_key_check`. It does not repair malformed records or infer
-ownership. A corrupt/unsupported record is terminal/unavailable.
+`database_generation`, current pointer/lifecycle, record/delta contract
+versions, positive association IDs, child-parent completeness, version-aware
+v6/v7 recovery parser support, and `PRAGMA foreign_key_check`. It does not
+repair malformed records or infer ownership. A corrupt/unsupported record is
+terminal/unavailable.
 
-The current read-only management preflight is extended to require healthy
-Undo schema/provenance for new supported Preview/Apply mutations. The Undo
-availability endpoint can return a bounded unavailable diagnostic when there is
-no current record. If Undo health is unavailable, ordinary new supported Tag
-Management mutations return the existing 503 fail-closed envelope; no mutation
-without a record is allowed. Ordinary reads remain available only to the extent
-the existing application health boundary permits.
+Health has an explicit activation boundary:
+
+- T2.1-0 exposes **foundation health** only: migration, provenance, schema,
+  parser compatibility, and integrity are healthy, but Undo is not activated;
+  there is no Undo API/UI, and ordinary Phase 2 operations remain explicitly
+  pre-activation and are not claimed to be undoable.
+- T2.1-1 atomically enables **reversible-record health** together with ordinary
+  record persistence, latest-target transition, and the no-record-no-commit
+  mutation precondition. From that same reviewed cutover, a supported successful
+  Rename/Display Rename/Merge/Remove must have its complete record, or the
+  server rolls the operation back/fails closed.
+
+The read-only management preflight may report foundation or reversible-record
+diagnostics according to this phase. After T2.1-1 activation, unavailable
+reversible-record health returns the existing 503 fail-closed envelope for new
+supported mutations; no mutation without a record is allowed. Ordinary reads
+remain available only to the extent the existing application health boundary
+permits. There is no split deployment in which record writes are enabled
+without the latest-target transition or vice versa.
 
 The Vite and production startup seams are changed identically. A test-only
 health reset/injection seam is allowed; no feature flag or operator bypass is
@@ -933,7 +1066,9 @@ Two concurrent Apply calls can commit at most one inverse.
 
 ## 28. API Contract
 
-Add parallel routes in the existing authenticated `server/routes/tags.ts`:
+T2.1-4 is the single public protocol-exposure phase. It adds parallel routes
+in the existing authenticated `server/routes/tags.ts`; T2.1-2 and T2.1-3
+provide only internal domain planner/apply functions and add no public route.
 
 ```text
 GET  /api/tags/undo
@@ -1124,17 +1259,24 @@ post-Undo state. It covers:
 - WAL mode with writers quiesced, migration restart, and idempotent rerun;
 - exact logical tags/document memberships and unchanged document/tag IDs;
 - explicit association IDs assigned to every existing association;
+- version-aware processing of a real pre-upgrade v6 durable metadata recovery
+  journal after migration 0007, including safe normalization and an unsafe
+  external-drift quarantine case;
 - schema, index, integrity, foreign-key, and singleton-generation checks;
 - interrupted/failed migration rollback to v6 and successful retry;
-- first successful supported Apply creating the first record; pre-Phase-2.1
-  operations remaining non-Undoable;
+- T2.1-0 foundation-only startup with no Undo route/UI and ordinary operations
+  explicitly remaining pre-activation/non-Undoable;
+- the T2.1-1 activation cutover, where the first successful supported Apply
+  creates the first record and record health becomes a mutation precondition;
 - startup order and health behavior when schema/provenance/record checks fail.
 
 The implementation may add a test-only migration failure hook in `server/db.ts`
 or `server/__tests__/db.test.ts`, but no operator bypass. A failed migration
 does not delete existing data and leaves management unavailable or startup
 blocked according to the existing migration runner boundary. No reverse
-identity migration is introduced.
+identity migration is introduced. A foundation-only T2.1-0 deployment must not
+be treated as a partially active Undo deployment; T2.1-1 is the single
+reviewed activation cutover.
 
 ## 35. Backup / Restore / Downgrade
 
@@ -1147,7 +1289,8 @@ The implementation rehearsal must execute:
 
 1. v6 pre-upgrade snapshot and consistent backup with integrity/FK checks;
 2. deploy the matching new image, apply 0007, and verify healthy Undo schema;
-3. perform an ordinary management operation and verify its durable record;
+3. after the T2.1-1 activation cutover, perform an ordinary management
+   operation and verify its durable record;
 4. optionally perform committed Undo and verify consumed state in a backup;
 5. stop the new image and restore the matching pre-upgrade database/vault set;
 6. run the matching old application image/runtime against that restored state;
@@ -1289,6 +1432,33 @@ Map implementation to concrete test layers and expected files:
 | Scale | `server/__tests__/tagManagement.scale.test.ts`, `tags-api.scale.test.ts`, and new Undo scale suite |
 | Rehearsal | Disposable backup/upgrade/failure/restore/old-image rehearsal evidence, never a fake fixture-only assertion |
 
+### Master regression additions for this repair
+
+The implementation must add these named cases to the master regression matrix;
+they are not optional prose examples:
+
+| Case | Required evidence |
+| --- | --- |
+| AH | Merge-created Backend association → later unrelated Python addition through REST tag patch → Backend `association_id` unchanged → Undo Merge succeeds → Python survives |
+| AI | The same later-unrelated-Python scenario through the AI metadata tag writer; unchanged operation-owned provenance remains valid and Undo succeeds |
+| AJ | Backend remains in the requested tag set across a tag replacement; Backend `association_id` is unchanged |
+| AK | Backend is truly removed and later re-added; its `association_id` changes and Undo reports a provenance conflict |
+| AL | Real v6 durable metadata recovery journal without `association_id` → v7 migration → startup recovery succeeds safely, creates no Undo record, and leaves valid v7 IDs |
+| AM | The same v6 journal with unsafe external current-state drift → v7 startup recovery fails closed/quarantines without overwriting the drift |
+| AN | T2.1-0 intermediate build → migration/provenance foundation healthy, no public Undo API/UI, and no claim that new ordinary operations are Phase 2.1-undoable |
+| AO | T2.1-1 activation → the first successful supported ordinary operation has one complete durable record and latest-target transition |
+| AP | T2.1-1 reversible-record subsystem unhealthy → the supported ordinary mutation does not commit and no record-less success is observable |
+
+AH–AK belong to the T2.1-0 writer/provenance foundation plus the T2.1-2/3
+Undo behavior; AL–AN are T2.1-0/T2.1-6 migration and activation rehearsal;
+AO–AP are the T2.1-1 activation gate. Each case must retain exact database,
+association-ID, lifecycle, and integrity assertions rather than snapshots.
+
+The writer suite also contains an explicit no-op case: an identical requested
+logical set performs zero `document_tags` rewrites and changes no provenance
+ID. It separately verifies that snapshot/CAS compensation is not used as the
+ordinary REST/AI writer.
+
 ## 42. Failure Injection
 
 Use deterministic test-only hooks, never sleeps. Ordinary Apply hooks must cover:
@@ -1336,6 +1506,8 @@ second Apply.
 | Accessibility/i18n | T2.1-5/6 | dialog/ConfirmHost/useI18n | keyboard/live/zh/en tests |
 | Scale/no N+1 | T2.1-0/1/2/3/6 | set SQL/temp tables/scale suite | 10k/50k observations |
 | Migration/backup/restore/downgrade | T2.1-0/6/7 | 0007, startup, operator rehearsal | AD and isolated old-image rehearsal |
+| Legacy v6 durable recovery compatibility | T2.1-0/6 | version-aware snapshot parser/normalizer and existing CAS recovery | AL/AM real v6-journal upgrade/recovery rehearsal |
+| Phase 2.1 activation cutover | T2.1-0/1 | foundation health then reversible-record health | AN/AO/AP intermediate-build and first-record tests |
 | Compatibility/protected areas | T2.1-4/6/7 | atomic image and existing seams | AE/AF/AG, full CI/browser/visual |
 
 No approved PRD requirement is intentionally left without a phase, module, and
@@ -1346,6 +1518,9 @@ gate.
 | Decision | Alternatives considered | Chosen option and reason | Trade-off / evidence |
 | --- | --- | --- | --- |
 | Association provenance | Pair equality, implicit rowid, generation column, event log | Explicit `association_id AUTOINCREMENT`; exact delete/re-add identity without event sourcing | Rebuilds table and touches every writer; migration/writer tests required |
+| Ordinary metadata tag writer | Full delete/reinsert, set-diff | Set-diff preserving every unchanged `association_id`; true delete→re-add receives a new ID | Required to preserve unrelated later tag edits and avoid false Undo provenance conflicts; AH–AK and REST/AI writer tests |
+| Legacy recovery snapshot compatibility | Reject v6 journals, pretend missing IDs are historical, permissive mixed parser | Version-aware exact v6/v7 normalization; v6 preserves a proven current ID or allocates a new one and never invents provenance | Keeps pre-upgrade durable journals recoverable after migration without weakening CAS; AL/AM |
+| Phase 2.1 activation | Activate at schema migration, disable all management temporarily, split recording and health | Explicit T2.1-1 atomic activation cutover | T2.1-0 is foundation-only; T2.1-1 jointly enables recording, latest-target transition, reversible-record health gating, and no-record-no-commit; AN–AP |
 | `document_tags` migration | Add column, retain rowid, rebuild | Transactional v7 rebuild with logical copy and new IDs | DDL/backup risk; v6/v7 rehearsal and integrity checks |
 | Record storage | Full JSON snapshot, event sourcing, per-operation history | One parent plus set-oriented child delta | Heavy latest operation still uses rows; bounded at one target |
 | Latest target | Unlimited history, singleton JSON, pointer plus records | Singleton pointer + one current parent + compact previous ID | Older superseded diagnostics are intentionally discarded |
@@ -1354,7 +1529,7 @@ gate.
 | Undo fingerprint | Reuse Phase 2 fingerprint, timestamp token, full snapshot | Separate v1 relevant-graph fingerprint excluding title/summary/version | Path/association changes can stale; unrelated edits survive |
 | Health integration | Overload identity module, feature flag, ignore health | Narrow Undo health seam after identity health | More startup checks; no unsafe bypass |
 | Transaction boundary | Record after commit, second transaction | Record/children/latest transition inside existing Apply transaction | Larger transaction; failure injection proves rollback |
-| API layout | Overload Phase 2 operations, client reconstruction | Parallel `/api/tags/undo*` routes and dedicated client module | Additional guarded contract; old server safely unavailable |
+| API layout | Overload Phase 2 operations, client reconstruction, expose Preview early | T2.1-2/3 domain-only planner/apply; T2.1-4 exposes all public `/api/tags/undo*` routes and the dedicated client module | Clean ownership prevents a partially exposed protocol; old server safely unavailable |
 | UI ownership | Global Undo store, TagPanel state, global shortcut | Existing dialog + VaultView sync/recovery seams | Dialog gains a second sub-state but no new architecture |
 | Versioning | Restore old timestamps, increment all rows | Existing monotonic helper and operation-specific affected set | Newer DB versions remain visible and unrelated rows untouched |
 
@@ -1376,50 +1551,71 @@ T2.1-0 PASS
 ### T2.1-0 — Reversible State and Association Provenance Foundation
 
 - **Goal / why:** add migration 0007, explicit association identity, durable
-  parent/child/state schema, health checks, and writer compatibility before any
-  reversible record is exposed.
+  parent/child/state schema, v6/v7 recovery compatibility, and set-diff writer
+  provenance before any reversible record is exposed. This phase installs the
+  foundation only; it does not activate user-facing Undo guarantees.
 - **Expected files/modules:** `server/migrations/0007_tag_management_undo.sql`,
   `server/tagUndoHealth.ts`, `server/db.ts` test seam,
   `server/documentMetadata.ts`, `server/tagIdentityMigration.ts`, all audited
   association writers, migration/writer tests. No UI/API exposure.
 - **Schema/API:** rebuild `document_tags`; create the three Undo tables and
-  contract constants; no HTTP route and no client contract.
-- **Sequence:** apply v7; verify logical graph; update central insert/snapshot
-  helpers; audit every writer; add startup health after identity health; keep
-  management UI and routes unchanged.
+  contract constants; add version-aware v6/v7 durable snapshot parsing; no
+  HTTP route, client contract, Undo Preview, or Undo UI.
+- **Sequence:** apply v7; verify logical graph; replace the ordinary existing-
+  document tag writer with set-diff; classify full-snapshot/CAS recovery as a
+  separate writer contract; add v6/v7 snapshot normalization; add foundation
+  health after identity health; keep management UI/routes and reversible-record
+  activation unchanged.
+- **Activation:** this is `FOUNDATION INSTALLED, PHASE 2.1 UNDO NOT ACTIVATED`.
+  Existing ordinary Rename/Display Rename/Merge/Remove behavior remains the
+  explicit pre-activation Phase 2 behavior and is not claimed to be undoable.
 - **Tests/failure/concurrency:** v6→v7 clean/dirty/large/WAL/retry/interruption,
-  association IDs, delete→re-add, no-op insert, FK/integrity, writer matrix,
-  compensation exact restore, two-connection identity uniqueness.
+  association IDs, set-diff/no-op/delete→re-add, REST/AI writer matrix,
+  v6 durable-journal recovery and unsafe-drift quarantine, compensation exact
+  restore, foundation-only no-API/UI, and two-connection identity uniqueness.
 - **Security/performance/protected audit:** no new input surface; schema checks
   reject malformed state; copy and health are set-based; all Phase 1/file/Git/
   auth/Draft Recovery tests remain green.
 - **Gate/exit:** migration clean and idempotent, logical associations unchanged,
-  every forward writer allocates correct new identity, health fail-closed,
-  Phase 2 green. No Undo UI, Preview, or Apply is in scope.
+  every ordinary existing-document writer preserves unchanged IDs and allocates
+  only true additions, v6 journals remain safely recoverable, foundation health
+  is correct, no Undo API/UI is exposed, reversible recording is not activated,
+  and Phase 2 remains green.
 - **Commit boundary/dependency:** `feat(tags): add undo provenance foundation`;
   starts only after this plan is approved and Phase 2 remains green.
 
 ### T2.1-1 — Atomic Ordinary Apply Recording
 
-- **Goal / why:** make every new successful Rename, Display Rename, Merge, and
-  Remove durably reversible without a second transaction.
+- **Goal / why:** perform the single Phase 2.1 activation cutover and make every
+  new successful Rename, Display Rename, Merge, and Remove durably reversible
+  without a second transaction.
 - **Expected files/modules:** `server/tagManagement.ts`, `server/tagUndo.ts`
   persistence helpers, current tag-management tests, failure-injection tests.
 - **Schema/API:** populate the v1 parent/child records and atomically advance
-  `tag_undo_state`; no public Undo endpoint yet.
+  `tag_undo_state`; no public Undo endpoint yet. Activate reversible-record
+  health as a mutation precondition in the same reviewed commit.
+- **Activation cutover:** atomically enable (1) durable reversible recording,
+  (2) latest-target transition, (3) reversible-record health gating for
+  supported ordinary mutations, and (4) the fail-closed no-record-no-commit
+  invariant. There is no intermediate commit that enables only one of these.
 - **Sequence:** preserve current plan/lock/IMMEDIATE boundary; insert new parent;
-  capture removed/created IDs; mutate; verify; pointer-swap; purge old target;
-  commit. Roll back all on any record/transition failure.
+  capture removed/created IDs; perform the set-diff-preserving mutation; verify;
+  pointer-swap; purge old target; commit. Roll back all on any
+  record/transition/health failure.
 - **Tests/failure/concurrency:** four operation record shapes, orphan Remove,
   source/overlap/destination delta, failed ordinary Apply leaves old target,
-  failures at every parent/child/pointer stage, duplicate Apply, WAL race,
-  exact counts and versions.
+  failures at every parent/child/pointer stage, first post-activation record,
+  record-health unavailable, old-client/new-server server-side recording,
+  duplicate Apply, WAL race, exact counts and versions.
 - **Security/performance/protected audit:** record is server-created and bounded;
   child capture is bulk SQL; no client payload changes; file/Git/Phase 1 tests
   stay green.
-- **Gate/exit:** every successful supported Apply has one complete matching
-  record; no mutation can commit without it; previous target transition is
-  atomic. No Undo Preview or mutation is exposed.
+- **Gate/exit:** activation is atomic; every successful post-activation
+  supported Apply has one complete matching record; record/child/latest
+  transition failure rolls back the ordinary mutation; reversible-record health
+  is a mutation precondition; old clients still get server-side recording; no
+  record-less success exists. Public Undo Preview/Apply remains hidden until
+  later protocol phases.
 - **Commit boundary/dependency:** `feat(tags): record reversible tag operations atomically`;
   requires T2.1-0 PASS.
 
@@ -1427,10 +1623,12 @@ T2.1-0 PASS
 
 - **Goal / why:** derive a safe inverse from durable state and current SQLite
   state before adding any mutation endpoint.
-- **Expected files/modules:** `server/tagUndo.ts`, `server/routes/tags.ts` read/
-  Preview handlers, `server/__tests__/tagUndo.test.ts`, API route tests.
-- **Schema/API:** availability, Preview, and bounded page read contracts may be
-  added; no Undo Apply endpoint and no production UI.
+- **Expected files/modules:** `server/tagUndo.ts`,
+  `server/__tests__/tagUndo.test.ts`, and internal planner/contract tests. No
+  public route module or API route test is owned here.
+- **Schema/API:** internal availability read model, Preview, bounded page
+  computation, and fingerprint contracts only; no public HTTP route, Undo Apply
+  endpoint, client contract, or production UI.
 - **Sequence:** implement current validation, operation-specific inverse counts,
   association-ID checks, stable-ID checks, separate fingerprint, bounded sample,
   and dynamic conflict/non-consuming lifecycle.
@@ -1438,11 +1636,13 @@ T2.1-0 PASS
   dynamic conflict clear/re-Preview, unrelated title/summary/tag/Markdown/Git
   changes, missing document, occupied ID/identity, pagination tamper, two WAL
   connections, record corruption.
-- **Security/performance/protected audit:** exact request guards, no delta in
-  wire response, set query shape/no N+1, no UI/shortcut/file mutation.
+- **Security/performance/protected audit:** internal domain bounds and
+  fingerprint checks, no delta in any future wire response, set query shape/no
+  N+1, no public HTTP surface, UI, shortcut, or file mutation.
 - **Gate/exit:** all four inverse plans are complete and deterministic; unrelated
   changes do not false-conflict; provenance mismatch is proven; Preview remains
-  mandatory and read-only. No Apply mutation.
+  mandatory and read-only when later exposed; no public HTTP route or Apply
+  mutation is exposed in this phase.
 - **Commit boundary/dependency:** `feat(tags): add undo planner and preview`;
   requires T2.1-1 PASS.
 
@@ -1454,7 +1654,7 @@ T2.1-0 PASS
   version/temp-table helpers, `server/documentWriteLock.ts` only if the same
   lock seam needs typed reuse, domain tests.
 - **Schema/API:** internal domain Apply result and consumed parent state; HTTP
-  mutation remains hidden until T2.1-4.
+  mutation remains hidden until T2.1-4; no public route is added here.
 - **Sequence:** discovery → sorted locks → IMMEDIATE → reload/replan/fingerprint
   → operation inverse → one version bump per affected document → postcondition
   → consumed IDs/child purge → commit.
@@ -1476,8 +1676,10 @@ T2.1-0 PASS
   authenticated clients without exposing inverse authority.
 - **Expected files/modules:** `server/routes/tags.ts`, `src/lib/tag-undo-api.ts`,
   client/API tests, auth/CSRF tests, compatibility fixtures.
-- **Schema/API:** add the four `/api/tags/undo*` routes, error mapping,
-  `UndoAvailability`, `UndoPreview`, and `UndoApplyResult` runtime guards.
+- **Schema/API:** this is the sole public protocol-exposure phase: add all four
+  `/api/tags/undo*` routes (`GET /undo`, `POST /preview`, `POST /preview/page`,
+  `POST /apply`), error mapping, `UndoAvailability`, `UndoPreview`, and
+  `UndoApplyResult` runtime guards. T2.1-2 owns no HTTP handler.
 - **Sequence:** route health/auth; parse exact body; call domain planner/apply;
   map stable errors; enforce no-store; validate client identities/fingerprints;
   add trusted-record recovery handling.
@@ -1564,24 +1766,43 @@ The following gates are cumulative and remain pending until implementation:
 
 ### T2.1-0 gate
 
-Migration v7 is clean/retry-safe; all logical associations are preserved;
-explicit association IDs are valid; every production writer is inventoried and
-covered; delete→re-add gets a new identity; Undo schema health fails closed;
-all Phase 2 tests remain green; no UI/API exposure exists.
+- [ ] v7 migration preserves all logical associations.
+- [ ] Every existing association has a valid explicit `association_id`.
+- [ ] Unchanged logical associations preserve `association_id` during ordinary
+      metadata tag edits.
+- [ ] A true delete→re-add receives a new `association_id`.
+- [ ] REST and AI tag writers use set-diff semantics.
+- [ ] Recovery/full-snapshot writers are separately classified and tested.
+- [ ] Legacy v6 durable metadata snapshots remain recoverable after v7 upgrade.
+- [ ] No Undo API/UI is exposed.
+- [ ] Phase 2.1 reversible recording is **not activated yet**.
+- [ ] Existing Phase 2 behavior remains green.
+
+This is the foundation-only gate. Passing it does not make any new ordinary
+operation user-undoable and does not enable the no-record-no-commit invariant.
 
 ### T2.1-1 gate
 
-Every successful new supported ordinary Apply has a complete server-owned record
-and latest-target transition in the same transaction. Record/child/transition
-failure rolls back the ordinary mutation. A failed/stale/cancelled Apply does
-not supersede the old target.
+- [ ] Phase 2.1 activation occurs here.
+- [ ] Every new successful supported ordinary operation has one complete
+      reversible record.
+- [ ] Reversible-record health is now a mutation precondition.
+- [ ] Record/child/latest-transition failure rolls back the ordinary mutation.
+- [ ] Old client/new server operations are recorded by the server.
+- [ ] No successful post-activation management operation exists without a
+      record.
+- [ ] A failed/stale/cancelled Apply does not supersede the old target.
+
+The four activation items—recording, latest-target transition, health gating,
+and no-record-no-commit—ship as one reviewed cutover.
 
 ### T2.1-2 gate
 
 Rename, Display Rename, Merge, and Remove Preview inverse semantics are complete;
 stable-ID and association provenance conflicts are detected; dynamic conflict is
 non-consuming; unrelated later changes do not false-conflict; samples/pages are
-bounded and no N+1 exists.
+bounded and no N+1 exists. This gate exposes no public HTTP route; all public
+Undo protocol ownership is deferred to T2.1-4.
 
 ### T2.1-3 gate
 
@@ -1635,12 +1856,24 @@ needed. Do not squash approved PRD/plan history, mix closure evidence into
 production commits, or commit databases, WAL/SHM files, vaults, backups,
 screenshots, or generated runtime state.
 
+The planner commit is domain-only: `feat(tags): add undo planner and preview`
+must not add `/api/tags/undo*` handlers. The protocol commit is the single
+public route boundary: `feat(tags): expose tag undo protocol` adds all four
+routes and their client/runtime guards after T2.1-3. The T2.1-0 and T2.1-1
+commits are also distinct: T2.1-0 installs foundation/provenance without Undo
+activation, while T2.1-1 is the atomic recording/health/latest-target cutover.
+
 ## 48. Risks
 
 | Risk | Mitigation | Required evidence |
 | --- | --- | --- |
 | `document_tags` rebuild loses rows | Transactional ordered copy and before/after logical set comparison | v6/v7 migration tests, integrity/FK checks |
 | Association writer is missed | Repository-wide SQL/caller inventory and T2.1-0 writer matrix | Writer tests and code review |
+| Full-set tag rewrites accidentally destroy provenance | T2.1-0 set-diff helper for ordinary REST/AI writers; full replacement restricted to separately proven recovery/fixture paths | AH–AK, no-op, unchanged-ID, and delete→re-add writer tests |
+| Legacy v6 durable journal is rejected after v7 migration | Exact version-aware v6/v7 row parsing and normalization before CAS restore; no permissive column union | AL upgrade/recovery success and AM unsafe-drift quarantine |
+| Legacy recovery invents unsafe physical provenance | v6 rows never supply an historical `association_id`; preserve only a proven live row or insert a new v7 row; otherwise fail closed | v6 missing-row, existing-row, external-drift, and no-Undo-record assertions |
+| Intermediate T2.1-0 build accidentally claims active Undo semantics | Foundation-only health/state and no API/UI; T2.1-1 is the sole activation cutover | AN intermediate-build test and explicit activation health diagnostics |
+| Public API is partially exposed before domain Apply is complete | T2.1-2/3 have no HTTP handlers; T2.1-4 owns all four public routes after internal Apply passes | route inventory, build boundary, and API exposure tests |
 | Large child delta consumes storage | One current parent, relational rows, purge on supersede/consume | 10k/50k storage/scale observation |
 | Long SQLite transaction | Sorted locks, set SQL, observed duration, no fixed SLA | WAL/concurrency/scale tests |
 | Explicit stable-ID insert conflicts | Preflight ID/identity checks and whole-transaction rollback | occupied ID/identity tests |
@@ -1657,8 +1890,19 @@ screenshots, or generated runtime state.
 
 ## 49. Architecture Blockers
 
-At this planning baseline, no Architecture / PRD Conflict is identified. The
-following required feasibility answers are all **Yes**, subject to the gates:
+After this repair, the plan closes the unrelated-tag provenance contradiction
+with set-diff writers, defines v6/v7 recovery compatibility, freezes the
+T2.1-1 activation boundary, and assigns public route ownership only to
+T2.1-4. The planning review status is:
+
+```text
+Architecture blocker: 0
+Plan ↔ Approved PRD Conflict: 0
+```
+
+These counts remain subject to external final plan review; they are not an
+implementation PASS. The following required feasibility answers are all
+**Yes**, subject to the gates:
 
 | Required answer | Planning conclusion |
 | --- | --- |
@@ -1671,9 +1915,8 @@ following required feasibility answers are all **Yes**, subject to the gates:
 | Can migration preserve all existing associations? | Yes: transactional v6 logical copy and checks |
 | Can backup/downgrade follow current operator practice? | Yes: matching full backup plus matching old runtime/image; no reverse migration |
 
-This is not an implementation PASS. If any answer becomes No, work stops,
-`Architecture / PRD Conflict` is reopened, and no later phase is patched around
-the blocker.
+If any answer becomes No, work stops, `Architecture / PRD Conflict` is reopened,
+and no later phase is patched around the blocker.
 
 ## 50. Definition of Done
 
@@ -1712,6 +1955,14 @@ must decide whether the choices satisfy the approved PRD.
 - [ ] dynamic conflicts are non-consuming
 - [ ] exactly-once recovery is implementable
 - [ ] all association writers are covered
+- [ ] ordinary metadata tag writers preserve unchanged association IDs
+- [ ] unrelated tag additions/removals do not false-conflict Undo
+- [ ] legacy v6 durable recovery snapshots are compatible with v7
+- [ ] legacy recovery never invents historical provenance
+- [ ] T2.1-0 is foundation-only and does not activate Undo guarantees
+- [ ] T2.1-1 is the atomic Phase 2.1 activation cutover
+- [ ] public Undo HTTP routes are owned only by T2.1-4
+- [ ] `database_generation` naming is consistent
 - [ ] API/client contracts are explicit
 - [ ] UI integrates existing state/sync seams
 - [ ] concurrency matrix is complete
@@ -1725,7 +1976,7 @@ must decide whether the choices satisfy the approved PRD.
 ## Plan Status
 
 ```text
-PHASE 2.1 UNDO IMPLEMENTATION PLAN DRAFT READY FOR REVIEW
+PHASE 2.1 UNDO IMPLEMENTATION PLAN DRAFT READY FOR FINAL REVIEW
 ```
 
 Status: Draft for Review
