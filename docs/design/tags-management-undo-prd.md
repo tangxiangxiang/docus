@@ -1,22 +1,22 @@
 # Docus Tags Management Phase 2.1 — Undo PRD
 
-**Status:** Draft for Review
+**Status:** Approved for Implementation
 **Date:** 2026-08-16
 **Product area:** Tags Management Phase 2.1 — Undo
 **Research baseline:** 851624ba39aca5725b7b527a782ac1fd163583e4
 **Production implementation baseline:** 99f4d73154349f8ebc99cb609f1a88b07937fb26
-**Owner:** Docus product owner / architecture review pending
+**Owner:** Docus product owner / architecture review complete
 
-This document is a product and architecture proposal for review. It is not
-approved for implementation. It does not create an implementation plan, a
-schema migration, an API endpoint, or production behavior.
+This document is the approved product and architecture authority for future
+Phase 2.1 implementation planning. It does not create an implementation plan,
+a schema migration, an API endpoint, or production behavior.
 
 ## 1. Document Information
 
 | Field | Value |
 | --- | --- |
 | Document | Docus Tags Management Phase 2.1 — Undo PRD |
-| Status | Draft for Review |
+| Status | Approved for Implementation |
 | Date | 2026-08-16 |
 | Research HEAD | 851624ba39aca5725b7b527a782ac1fd163583e4 |
 | Phase 2 production baseline | 99f4d73154349f8ebc99cb609f1a88b07937fb26 |
@@ -25,12 +25,13 @@ schema migration, an API endpoint, or production behavior.
 | Phase 2 closure | docs/archive/closures/tags-management-phase-2-closure.md |
 | Backup authority | docs/deployment/backup-and-restore.md |
 
-The Phase 2 closure was finalized separately. This draft starts a new review
-sequence and does not reopen or redesign the completed Phase 2 product.
+The Phase 2 closure was finalized separately. This approved PRD records the
+distinct Phase 2.1 Undo product contract and does not reopen or redesign the
+completed Phase 2 product.
 
 ## 2. Status / Authority
 
-The authority order for this draft is:
+The authority order for this approved PRD is:
 
 ~~~
 Approved Phase 2 PRD
@@ -39,13 +40,17 @@ Approved Phase 2 Implementation Plan
 >
 Completed Phase 2 implementation and closure evidence
 >
-This Phase 2.1 Undo PRD Draft
+Approved Phase 2.1 Undo PRD
+>
+future reviewed Phase 2.1 Implementation Plan
+>
+future implementation
 ~~~
 
 The Phase 2 documents remain authoritative for the existing Rename, Display
 Rename, Merge, Remove, Preview, Apply, identity, writer-safety, health,
-selection, file-boundary, and compatibility contracts. This document proposes
-additional Phase 2.1 behavior only.
+selection, file-boundary, and compatibility contracts. This approved PRD
+defines additional Phase 2.1 behavior only.
 
 The required workflow is:
 
@@ -58,8 +63,30 @@ Phase 2.1 PRD Draft
 → Implementation
 ~~~
 
-This draft is Draft for Review and is not Approved for Implementation. No
-implementation plan is created by this task.
+This PRD is approved for implementation planning. No implementation plan is
+created by this task, and no implementation has started.
+
+### Final PRD Review Record
+
+Final PRD Review: PASS
+Review date: 2026-08-16
+
+Defect status:
+
+- P0: 0
+- P1: 0
+- P2: 0
+- Architecture / PRD Conflict: None
+
+The Phase 2.1 Undo PRD is approved as the product authority for the future
+Phase 2.1 Implementation Plan. The separate Implementation Plan does not yet
+exist and must be created and reviewed after this approval.
+
+Supporting evidence: GitHub Actions CI #340, run `31931010498`, completed with
+success for the preceding documentation-only PRD repair commit
+`59d99687a675663f70448435f89c80d8ad3b253e`. This CI validates the current
+documentation baseline against the unchanged Phase 2 repository; it does not
+validate a future Undo implementation.
 
 ## 3. Background
 
@@ -1371,7 +1398,9 @@ Phase 2.1 cannot be declared complete until:
 8. The closure record explicitly distinguishes the Phase 2.1 implementation
    baseline, operation record evidence, and backup/restore behavior.
 
-This draft alone is not a release gate and does not authorize coding.
+This approved PRD is not a Phase 2.1 release gate and does not by itself
+authorize implementation; it authorizes the separate Implementation Plan to be
+created and reviewed.
 
 ## 40. Explicit Deferred Scope
 
@@ -1423,8 +1452,8 @@ are not implementation-plan details and must not be silently changed in code.
 | 23. Does a temporary Undo conflict permanently consume the Undo? | No. Conflict is normally non-consuming. If it later disappears and the record remains latest, unconsumed, supported, and provably reversible, Undo can become available again. |
 | 24. What happens to a document associated with a renamed stable tag after the original Rename but before Undo? | Its association survives because the stable ID is unchanged; after Undo it observes the globally restored tag identity/display. |
 
-The review may reject or amend these answers, but implementation must wait for
-that decision.
+These approved product decisions are recorded here; implementation remains
+gated on a separately reviewed Phase 2.1 Implementation Plan.
 
 ## 42. Architecture / PRD Conflict
 
@@ -1447,62 +1476,64 @@ snapshots, overwriting unrelated changes, changing Markdown/Git authority, or
 breaking stable-ID restoration, the work must stop and this section must be
 reopened. The fallback is not to weaken conflict checks.
 
-Architecture / PRD Conflict: None identified; final status pending PRD review.
+Architecture / PRD Conflict: None
 
 ## 43. Review Checklist
 
 ### Authority and scope
 
-- [ ] Phase 2 approved PRD and Implementation Plan remain unchanged.
-- [ ] Phase 2 closure remains final and Undo remains a separate Phase 2.1
+- [x] Phase 2 approved PRD and Implementation Plan remain unchanged.
+- [x] Phase 2 closure remains final and Undo remains a separate Phase 2.1
       review item.
-- [ ] This document is marked Draft for Review, not Approved for
-      Implementation.
-- [ ] No Phase 2.1 implementation plan exists yet.
+- [x] This document is marked Approved for Implementation.
+- [x] No Phase 2.1 implementation plan exists yet.
 
 ### Product model
 
-- [ ] Single-level durable Undo is accepted or explicitly amended.
-- [ ] Rename, Display Rename, Merge, and Remove inverse semantics are clear.
-- [ ] Stable-ID restoration and identity-conflict behavior are clear.
-- [ ] Later unrelated changes survive without snapshot rollback.
-- [ ] Rename Undo behavior for later associations to the same stable ID is
+- [x] Single-level durable Undo is accepted or explicitly amended.
+- [x] Rename, Display Rename, Merge, and Remove inverse semantics are clear.
+- [x] Stable-ID restoration and identity-conflict behavior are clear.
+- [x] Later unrelated changes survive without snapshot rollback.
+- [x] Rename Undo behavior for later associations to the same stable ID is
       clear: the association survives and observes the globally restored
       display/identity.
-- [ ] Relevant stale/conflict cases fail closed.
-- [ ] Dynamic current conflicts are non-consuming and may be re-Previewed after
+- [x] Relevant stale/conflict cases fail closed.
+- [x] Dynamic current conflicts are non-consuming and may be re-Previewed after
       the conflicting state clears; terminal record failures remain terminal.
-- [ ] Undo of Undo/Redo remains deferred.
+- [x] Undo of Undo/Redo remains deferred.
 
 ### Safety and operations
 
-- [ ] Preview and explicit confirmation are mandatory.
-- [ ] Exactly-once committed semantics and sync-only retry are clear.
-- [ ] Ordinary Apply and durable reversible-record/latest-target state commit
+- [x] Preview and explicit confirmation are mandatory.
+- [x] Exactly-once committed semantics and sync-only retry are clear.
+- [x] Ordinary Apply and durable reversible-record/latest-target state commit
       atomically, or the entire ordinary Apply rolls back.
-- [ ] New supported mutations fail closed when reversible-state persistence or
+- [x] New supported mutations fail closed when reversible-state persistence or
       health is unavailable.
-- [ ] Association provenance is server-owned; final row equality and
+- [x] Association provenance is server-owned; final row equality and
       delete/re-add cannot establish ownership.
-- [ ] Migration, backup, restore, downgrade, and stale-browser behavior are
+- [x] Migration, backup, restore, downgrade, and stale-browser behavior are
       implementable without inventing reverse identity migration.
-- [ ] Auth, CSRF, bounded samples, error hygiene, and protected areas remain
+- [x] Auth, CSRF, bounded samples, error hygiene, and protected areas remain
       covered.
 
 ### Implementation readiness
 
-- [ ] A separate Implementation Plan is written only after this PRD is
+- [x] A separate Implementation Plan is written only after this PRD is
       approved.
-- [ ] The plan defines schema/migration and record retention without changing
+- [x] The plan defines schema/migration and record retention without changing
       this product contract by assumption.
-- [ ] Tests and release gates trace to each accepted requirement.
+- [x] Tests and release gates trace to each accepted requirement.
 
-## Final Draft State
+## Final Approved State
 
 ~~~
-PHASE 2.1 UNDO PRD DRAFT READY FOR REVIEW
+PHASE 2.1 UNDO PRD APPROVED
+READY FOR IMPLEMENTATION PLANNING
 ~~~
 
-This document is not approved for implementation. Phase 2.1 is not complete,
-Undo is not implemented, and no Phase 2.1 implementation plan has been
-created.
+PRD: APPROVED
+Implementation Plan: NOT YET CREATED
+Implementation: NOT STARTED
+Phase 2.1: NOT COMPLETE
+Undo: NOT IMPLEMENTED
