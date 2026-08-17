@@ -7,6 +7,15 @@ import {
   validatePersistentTag,
   type PersistentTagValidation,
 } from '../shared/tagNormalization.js'
+import {
+  beginTagUndoRecording,
+  captureTagUndoCreatedDestinationDeltas,
+  captureTagUndoRemovedSourceDeltas,
+  finalizeTagUndoRecording,
+  stageTagUndoMergeSourceOnlyDocuments,
+  TagUndoRecordingError,
+  updateTagUndoVersionCount,
+} from './tagUndo.js'
 
 export const MANAGEMENT_PREVIEW_SAMPLE_LIMIT = 20
 export const MANAGEMENT_PREVIEW_PAGE_DEFAULT_LIMIT = 50
@@ -127,6 +136,14 @@ export type TagManagementApplyFailureStage =
   | 'after-tag-row-mutation'
   | 'before-postcondition'
   | 'before-commit'
+  | 'parent-insert'
+  | 'removed-source-capture'
+  | 'merge-source-staging'
+  | 'created-destination-capture'
+  | 'state-current-record'
+  | 'state-last-superseded'
+  | 'old-target-delete'
+  | 'final-postcondition'
 
 export type TagManagementApplyTestHooks = {
   afterDiscovery?: (state: TagOperationPlanState) => void
@@ -1182,6 +1199,16 @@ export async function applyTagOperation(
         if (!plan.allowedToApply) conflictFromApplyPlan(plan)
 
         const commitTimestamp = Date.now()
+        const recording = beginTagUndoRecording(
+          db,
+          operation,
+          plan,
+          operationId,
+          commitTimestamp,
+          (stage) => throwInjectedApplyFailure(stage),
+        )
+        captureTagUndoRemovedSourceDeltas(db, recording)
+        stageTagUndoMergeSourceOnlyDocuments(db, recording)
         captureApplyAffectedDocuments(db, plan, commitTimestamp)
         let beforeDestinationAssociationCount: number | null = null
         if (plan.operation.kind === 'merge') {
@@ -1207,6 +1234,7 @@ export async function applyTagOperation(
         if (versionUpdate.changes !== plan.affectedCount) {
           throw transactionFailed()
         }
+        updateTagUndoVersionCount(db, recording, versionUpdate.changes)
         throwInjectedApplyFailure('after-version-update')
 
         if (plan.operation.kind === 'rename') {
@@ -1235,6 +1263,7 @@ export async function applyTagOperation(
             ON CONFLICT(document_id, tag_id) DO NOTHING
           `).run(plan.operation.destinationTagId, plan.operation.sourceTagId)
           if (insertAssociations.changes !== plan.associationAdds) throw transactionFailed()
+          captureTagUndoCreatedDestinationDeltas(db, recording)
           const deleteAssociations = db.prepare('DELETE FROM document_tags WHERE tag_id = ?')
             .run(plan.operation.sourceTagId)
           if (deleteAssociations.changes !== plan.associationRemoves) throw transactionFailed()
@@ -1257,6 +1286,7 @@ export async function applyTagOperation(
           plan,
           beforeDestinationAssociationCount,
         )
+        finalizeTagUndoRecording(db, recording)
         const finalSourceTag = plan.operation.kind === 'merge' || plan.operation.kind === 'remove'
           ? null
           : readApplyTag(db, plan.sourceTag.id)
@@ -1288,6 +1318,9 @@ export async function applyTagOperation(
     return result
   } catch (error) {
     if (error instanceof TagManagementError) throw error
+    if (error instanceof TagUndoRecordingError) {
+      throw new TagManagementError(error.code, error.message, error.details)
+    }
     throw transactionFailed()
   }
 }
