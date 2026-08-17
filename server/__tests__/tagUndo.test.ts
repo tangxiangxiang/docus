@@ -14,6 +14,13 @@ import {
   type TagManagementApplyFailureStage,
   type TagOperationRequest,
 } from '../tagManagement'
+import {
+  buildTagUndoPlan,
+  getTagUndoAvailability,
+  previewTagUndo,
+  previewTagUndoPage,
+  TagUndoPlannerError,
+} from '../tagUndo'
 import { resetTagUndoFoundationHealthForTesting } from '../tagUndoHealth'
 
 let db: Database.Database
@@ -725,6 +732,418 @@ describe('T2.1-1 health and compatibility gates', () => {
       if (thirdConnection?.open) thirdConnection.close()
       if (gateConnection?.open) gateConnection.close()
       if (setupConnection?.open) setupConnection.close()
+      await fs.rm(temporaryRoot, { recursive: true, force: true })
+    }
+  }, 45_000)
+})
+
+describe('T2.1-2 Undo planner and Preview', () => {
+  it('returns a bounded unavailable read model before any operation exists', () => {
+    const availability = getTagUndoAvailability(db)
+    expect(availability).toMatchObject({
+      supported: true,
+      state: 'unavailable',
+      validation: 'temporary-unavailable',
+      recordId: null,
+      originalOperationId: null,
+      originalResultId: null,
+      kind: null,
+      affectedCount: 0,
+      associationAdds: 0,
+      associationRemoves: 0,
+      versionUpdateCount: 0,
+    })
+  })
+
+  it('builds Rename and Display Rename previews from the current stable-ID membership', async () => {
+    seedTag(7, 'Java', 'java')
+    seedDocument('doc-b', [7])
+    seedDocument('doc-a', [7])
+    await apply({ kind: 'rename', sourceTagId: 7, destinationName: 'Backend' })
+
+    const preview = previewTagUndo(db)
+    expect(preview).toMatchObject({
+      state: 'available',
+      validation: 'safe',
+      kind: 'rename',
+      displayOnly: false,
+      sourceBefore: { id: 7, displayName: 'Java', normalizedName: 'java' },
+      sourceAfter: { id: 7, displayName: 'Backend', normalizedName: 'backend' },
+      affectedCount: 2,
+      associationAdds: 0,
+      associationRemoves: 0,
+      versionUpdateCount: 2,
+      sample: [
+        { id: 'doc-a', path: 'doc-a/note', title: 'doc-a' },
+        { id: 'doc-b', path: 'doc-b/note', title: 'doc-b' },
+      ],
+    })
+    expect(preview.undoFingerprint).toMatch(/^[0-9a-f]{64}$/)
+    expect(preview.undoContractVersion).toBe('tag-undo-fingerprint-v1')
+    expect(Object.hasOwn(preview, 'requiredDocuments')).toBe(false)
+    expect(Object.hasOwn(preview, 'operationOwnedAssociations')).toBe(false)
+
+    const pageOne = previewTagUndoPage(db, {
+      recordId: preview.recordId,
+      undoFingerprint: preview.undoFingerprint!,
+      limit: 1,
+    })
+    expect(pageOne.sample).toEqual([{ id: 'doc-a', path: 'doc-a/note', title: 'doc-a' }])
+    expect(pageOne.nextCursor).toBe('doc-a')
+    const pageTwo = previewTagUndoPage(db, {
+      recordId: preview.recordId,
+      undoFingerprint: preview.undoFingerprint!,
+      afterDocumentId: pageOne.nextCursor,
+      limit: 1,
+    })
+    expect(pageTwo.sample).toEqual([{ id: 'doc-b', path: 'doc-b/note', title: 'doc-b' }])
+    expect(pageTwo.nextCursor).toBeNull()
+
+    db.prepare('UPDATE documents SET title = ?, summary = ?, updated_at = ? WHERE id = ?')
+      .run('changed title', 'changed summary', 999, 'doc-a')
+    expect(previewTagUndo(db).undoFingerprint).toBe(preview.undoFingerprint)
+
+    seedTag(20, 'Python', 'python')
+    seedDocument('doc-c', [7, 20])
+    const changedMembership = previewTagUndo(db)
+    expect(changedMembership.validation).toBe('safe')
+    expect(changedMembership.undoFingerprint).not.toBe(preview.undoFingerprint)
+    expect(() => previewTagUndoPage(db, {
+      recordId: preview.recordId,
+      undoFingerprint: preview.undoFingerprint!,
+      limit: 1,
+    })).toThrowError(expect.objectContaining({ code: 'UNDO_STALE' }))
+
+    db.exec('DELETE FROM documents; DELETE FROM tags;')
+    seedTag(7, 'Java', 'java')
+    seedDocument('display-doc', [7])
+    await apply({ kind: 'rename', sourceTagId: 7, destinationName: 'JAVA' })
+    const displayPreview = previewTagUndo(db)
+    expect(displayPreview).toMatchObject({
+      validation: 'safe',
+      kind: 'rename',
+      displayOnly: true,
+      sourceBefore: { id: 7, displayName: 'Java', normalizedName: 'java' },
+      sourceAfter: { id: 7, displayName: 'JAVA', normalizedName: 'java' },
+      affectedCount: 1,
+    })
+  })
+
+  it('plans Merge inverse scope with exact created-destination provenance', async () => {
+    seedTag(7, 'Java', 'java')
+    seedTag(9, 'Backend', 'backend')
+    seedTag(20, 'Python', 'python')
+    seedDocument('source-only', [7])
+    seedDocument('overlap', [7, 9])
+    seedDocument('destination-only', [9, 20])
+    await apply({ kind: 'merge', sourceTagId: 7, destinationTagId: 9 })
+
+    const plan = buildTagUndoPlan(db)
+    expect(plan).toMatchObject({
+      state: 'available',
+      validation: 'safe',
+      kind: 'merge',
+      sourceBefore: { id: 7, displayName: 'Java', normalizedName: 'java' },
+      sourceAfter: null,
+      destinationBefore: { id: 9, displayName: 'Backend', normalizedName: 'backend' },
+      destinationAfter: { id: 9, displayName: 'Backend', normalizedName: 'backend' },
+      affectedCount: 2,
+      associationAdds: 2,
+      associationRemoves: 1,
+      versionUpdateCount: 2,
+      requiredDocumentIds: ['overlap', 'source-only'],
+    })
+    expect(plan.requiredDocuments.map((document) => document.id)).toEqual(['overlap', 'source-only'])
+    expect(plan.currentCreatedDestinationAssociations).toHaveLength(1)
+    expect(plan.currentCreatedDestinationAssociations[0]).toMatchObject({
+      documentId: 'source-only',
+      tagId: 9,
+    })
+    expect(plan.requiredDocumentIds).not.toContain('destination-only')
+    expect(previewTagUndo(db).sample.map((document) => document.id)).toEqual(['overlap', 'source-only'])
+  })
+
+  it('plans Remove, including an orphan, without allocating a replacement ID', async () => {
+    seedTag(7, 'Java', 'java')
+    seedDocument('doc-a', [7])
+    seedDocument('doc-b', [7])
+    await apply({ kind: 'remove', sourceTagId: 7 })
+    const preview = previewTagUndo(db)
+    expect(preview).toMatchObject({
+      state: 'available',
+      validation: 'safe',
+      kind: 'remove',
+      sourceBefore: { id: 7, displayName: 'Java', normalizedName: 'java' },
+      sourceAfter: null,
+      affectedCount: 2,
+      associationAdds: 2,
+      associationRemoves: 0,
+      versionUpdateCount: 2,
+    })
+
+    db.exec('DELETE FROM documents; DELETE FROM tags;')
+    seedTag(20, 'Orphan', 'orphan')
+    await apply({ kind: 'remove', sourceTagId: 20 })
+    const orphan = previewTagUndo(db)
+    expect(orphan).toMatchObject({
+      state: 'available',
+      validation: 'safe',
+      kind: 'remove',
+      sourceBefore: { id: 20, displayName: 'Orphan', normalizedName: 'orphan' },
+      affectedCount: 0,
+      associationAdds: 0,
+      associationRemoves: 0,
+      versionUpdateCount: 0,
+      sample: [],
+      nextCursor: null,
+    })
+  })
+
+  it('classifies stable-ID, identity, document, and association provenance conflicts without consuming', async () => {
+    seedTag(7, 'Java', 'java')
+    seedTag(9, 'Backend', 'backend')
+    seedDocument('source-only', [7])
+    await apply({ kind: 'merge', sourceTagId: 7, destinationTagId: 9 })
+    const created = db.prepare(`
+      SELECT association_id
+      FROM document_tags
+      WHERE document_id = 'source-only' AND tag_id = 9
+    `).get() as { association_id: number }
+    const recordId = (getTagUndoAvailability(db).recordId)
+
+    db.prepare('DELETE FROM document_tags WHERE association_id = ?').run(created.association_id)
+    db.prepare('INSERT INTO document_tags (document_id, tag_id) VALUES (?, ?)').run('source-only', 9)
+    const readded = previewTagUndo(db)
+    expect(readded.validation).toBe('conflict')
+    expect(readded.reasonCode).toBe('UNDO_ASSOCIATION_CONFLICT')
+    expect((state() as { current_record_id: string }).current_record_id).toBe(recordId)
+
+    db.exec('DELETE FROM documents; DELETE FROM tags;')
+    seedTag(7, 'Java', 'java')
+    seedDocument('doc', [7])
+    await apply({ kind: 'remove', sourceTagId: 7 })
+    const removeRecordId = getTagUndoAvailability(db).recordId
+    seedTag(7, 'Other', 'other')
+    expect(previewTagUndo(db)).toMatchObject({
+      validation: 'conflict',
+      reasonCode: 'UNDO_SOURCE_ID_OCCUPIED',
+    })
+    db.prepare('DELETE FROM tags WHERE id = 7').run()
+    seedTag(20, 'Java', 'java')
+    expect(previewTagUndo(db)).toMatchObject({
+      validation: 'conflict',
+      reasonCode: 'UNDO_SOURCE_IDENTITY_OCCUPIED',
+    })
+    db.prepare('DELETE FROM tags WHERE id = 20').run()
+    db.prepare('DELETE FROM documents WHERE id = ?').run('doc')
+    expect(previewTagUndo(db)).toMatchObject({
+      validation: 'conflict',
+      reasonCode: 'UNDO_MISSING_DOCUMENT',
+    })
+    expect((state() as { current_record_id: string }).current_record_id).toBe(removeRecordId)
+  })
+
+  it('keeps dynamic conflicts non-consuming and allows a safe fresh Preview after they clear', async () => {
+    seedTag(7, 'Java', 'java')
+    seedDocument('doc', [7])
+    await apply({ kind: 'rename', sourceTagId: 7, destinationName: 'Backend' })
+    const recordId = getTagUndoAvailability(db).recordId
+    seedTag(20, 'Java', 'java')
+    expect(previewTagUndo(db)).toMatchObject({
+      state: 'available',
+      validation: 'conflict',
+      reasonCode: 'UNDO_SOURCE_IDENTITY_OCCUPIED',
+    })
+    expect((state() as { current_record_id: string }).current_record_id).toBe(recordId)
+    db.prepare('DELETE FROM tags WHERE id = 20').run()
+    expect(previewTagUndo(db)).toMatchObject({
+      state: 'available',
+      validation: 'safe',
+      recordId,
+    })
+  })
+
+  it('proves availability, Preview, and page are read-only and exclude unrelated state', async () => {
+    seedTag(7, 'Java', 'java')
+    seedTag(20, 'Python', 'python')
+    seedDocument('doc', [7, 20])
+    await apply({ kind: 'rename', sourceTagId: 7, destinationName: 'Backend' })
+    const before = durableSnapshot()
+    const availability = getTagUndoAvailability(db)
+    const preview = previewTagUndo(db)
+    expect(previewTagUndoPage(db, {
+      recordId: preview.recordId,
+      undoFingerprint: preview.undoFingerprint!,
+      limit: 100,
+    }).sample).toHaveLength(1)
+    expect(availability.validation).toBe('safe')
+    expect(durableSnapshot()).toEqual(before)
+
+    db.prepare('DELETE FROM document_tags WHERE document_id = ? AND tag_id = ?').run('doc', 20)
+    const afterUnrelatedAssociation = previewTagUndo(db)
+    expect(afterUnrelatedAssociation.validation).toBe('safe')
+    expect(afterUnrelatedAssociation.undoFingerprint).toBe(preview.undoFingerprint)
+    expect(durableSnapshot()).not.toEqual(before)
+    expect(db.prepare('SELECT lifecycle FROM tag_undo_records').get()).toEqual({ lifecycle: 'latest' })
+  })
+
+  it('rejects malformed bounds and tampered page fingerprints without reading a different plan', async () => {
+    seedTag(7, 'Java', 'java')
+    seedDocument('doc', [7])
+    await apply({ kind: 'rename', sourceTagId: 7, destinationName: 'Backend' })
+    const preview = previewTagUndo(db)
+    expect(() => previewTagUndo(db, { limit: 0 })).toThrow(TagUndoPlannerError)
+    expect(() => previewTagUndo(db, { limit: 21 })).toThrow(TagUndoPlannerError)
+    expect(() => previewTagUndoPage(db, {
+      recordId: preview.recordId,
+      undoFingerprint: 'f'.repeat(64),
+      limit: 1,
+    })).toThrowError(expect.objectContaining({ code: 'UNDO_STALE' }))
+    expect(() => previewTagUndoPage(db, {
+      recordId: preview.recordId,
+      undoFingerprint: preview.undoFingerprint!,
+      afterDocumentId: 'missing',
+      limit: 1,
+    })).toThrow(TagUndoPlannerError)
+  })
+
+  it('classifies consumed, terminal, and superseded targets without mutating them', async () => {
+    seedTag(7, 'Java', 'java')
+    seedDocument('doc', [7])
+    await apply({ kind: 'rename', sourceTagId: 7, destinationName: 'Backend' })
+    const firstRecordId = getTagUndoAvailability(db).recordId!
+    db.prepare(`
+      UPDATE tag_undo_records
+      SET lifecycle = 'consumed', undo_operation_id = ?, undo_result_id = ?, consumed_at = 200
+      WHERE record_id = ?
+    `).run('undo-op', 'undo-result', firstRecordId)
+    expect(previewTagUndo(db)).toMatchObject({
+      state: 'consumed',
+      validation: 'terminal-unavailable',
+      reasonCode: 'UNDO_ALREADY_APPLIED',
+    })
+
+    db.prepare(`
+      UPDATE tag_undo_records
+      SET lifecycle = 'terminal', terminal_code = ?, undo_operation_id = NULL,
+          undo_result_id = NULL, consumed_at = NULL
+      WHERE record_id = ?
+    `).run('UNDO_CORRUPT', firstRecordId)
+    expect(previewTagUndo(db)).toMatchObject({
+      state: 'terminal-unavailable',
+      validation: 'terminal-unavailable',
+      reasonCode: 'UNDO_CORRUPT',
+    })
+
+    db.prepare('UPDATE tag_undo_state SET current_record_id = NULL, last_superseded_record_id = NULL').run()
+    db.exec('DELETE FROM tag_undo_association_deltas; DELETE FROM tag_undo_records; DELETE FROM documents; DELETE FROM tags;')
+    seedTag(7, 'Java', 'java')
+    seedDocument('doc-a', [7])
+    await apply({ kind: 'rename', sourceTagId: 7, destinationName: 'Backend' })
+    const supersededId = getTagUndoAvailability(db).recordId!
+    await apply({ kind: 'rename', sourceTagId: 7, destinationName: 'Kotlin' })
+    expect(getTagUndoAvailability(db, supersededId)).toMatchObject({
+      state: 'superseded',
+      validation: 'terminal-unavailable',
+      recordId: null,
+      reasonCode: 'UNDO_SUPERSEDED',
+    })
+  })
+
+  it('keeps Preview query shape bounded as the affected scope grows', async () => {
+    seedTag(7, 'Java', 'java')
+    for (let index = 0; index < 250; index++) seedDocument(`doc-${String(index).padStart(3, '0')}`, [7])
+    await apply({ kind: 'rename', sourceTagId: 7, destinationName: 'Backend' })
+
+    const queries: string[] = []
+    const tracedDb = new Proxy(db, {
+      get(target, property) {
+        if (property === 'prepare') {
+          return (sql: string) => {
+            queries.push(sql)
+            return target.prepare(sql)
+          }
+        }
+        const value = Reflect.get(target, property, target)
+        return typeof value === 'function' ? value.bind(target) : value
+      },
+    }) as unknown as Database.Database
+    const preview = previewTagUndo(tracedDb)
+    expect(preview.sample).toHaveLength(20)
+    expect(queries.length).toBeLessThan(40)
+    expect(queries.filter((query) => query.includes('WHERE d.id = ?'))).toHaveLength(0)
+    const page = previewTagUndoPage(tracedDb, {
+      recordId: preview.recordId,
+      undoFingerprint: preview.undoFingerprint!,
+      limit: 100,
+    })
+    expect(page.sample).toHaveLength(100)
+    expect(page.nextCursor).toBe('doc-099')
+  })
+})
+
+describe('T2.1-2 Undo planner WAL/read-snapshot evidence', () => {
+  it('rejects a stale page across two WAL connections and recovers after the conflict clears', async () => {
+    const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-tag-undo-planner-wal-'))
+    const databasePath = path.join(temporaryRoot, 'docus.db')
+    let connectionA: Database.Database | null = null
+    let connectionB: Database.Database | null = null
+    try {
+      connectionA = new Database(databasePath)
+      connectionA.pragma('foreign_keys = ON')
+      expect(String(connectionA.pragma('journal_mode = WAL', { simple: true })).toLowerCase()).toBe('wal')
+      applyMigrations(connectionA)
+      connectionA.prepare('INSERT INTO tags (id, name, normalized_name) VALUES (?, ?, ?)')
+        .run(7, 'Java', 'java')
+      connectionA.prepare('INSERT INTO tags (id, name, normalized_name) VALUES (?, ?, ?)')
+        .run(9, 'Backend', 'backend')
+      connectionA.prepare(`
+        INSERT INTO documents (id, path, title, summary, created_at, updated_at)
+        VALUES ('doc', 'doc/note', 'doc', '', 1, 100)
+      `).run()
+      connectionA.prepare('INSERT INTO document_tags (document_id, tag_id) VALUES (?, ?)').run('doc', 7)
+      const operation = { kind: 'merge', sourceTagId: 7, destinationTagId: 9 } as const
+      const operationPreview = previewTagOperation(connectionA, operation)
+      await applyTagOperation(connectionA, operation, operationPreview.planFingerprint)
+      const reviewed = previewTagUndo(connectionA)
+      const created = connectionA.prepare(`
+        SELECT association_id
+        FROM tag_undo_association_deltas
+        WHERE effect = 'created-destination'
+      `).get() as { association_id: number }
+
+      connectionB = new Database(databasePath)
+      connectionB.pragma('foreign_keys = ON')
+      expect(String(connectionB.pragma('journal_mode', { simple: true })).toLowerCase()).toBe('wal')
+      connectionB.prepare('DELETE FROM document_tags WHERE association_id = ?').run(created.association_id)
+      connectionB.prepare('INSERT INTO document_tags (document_id, tag_id) VALUES (?, ?)').run('doc', 9)
+
+      expect(() => previewTagUndoPage(connectionA!, {
+        recordId: reviewed.recordId,
+        undoFingerprint: reviewed.undoFingerprint!,
+        limit: 1,
+      })).toThrowError(expect.objectContaining({ code: 'UNDO_STALE' }))
+      expect(previewTagUndo(connectionA!)).toMatchObject({
+        state: 'available',
+        validation: 'conflict',
+        reasonCode: 'UNDO_ASSOCIATION_CONFLICT',
+      })
+      expect(connectionA!.prepare('SELECT lifecycle FROM tag_undo_records').get())
+        .toEqual({ lifecycle: 'latest' })
+
+      connectionB.prepare('DELETE FROM document_tags WHERE document_id = ? AND tag_id = ?').run('doc', 9)
+      connectionB.prepare(`
+        INSERT INTO document_tags (association_id, document_id, tag_id)
+        VALUES (?, ?, ?)
+      `).run(created.association_id, 'doc', 9)
+      const fresh = previewTagUndo(connectionA!)
+      expect(fresh).toMatchObject({ state: 'available', validation: 'safe' })
+      expect(fresh.undoFingerprint).toBe(reviewed.undoFingerprint)
+      expect(connectionA!.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+      expect(connectionA!.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' })
+    } finally {
+      if (connectionB?.open) connectionB.close()
+      if (connectionA?.open) connectionA.close()
       await fs.rm(temporaryRoot, { recursive: true, force: true })
     }
   }, 45_000)
