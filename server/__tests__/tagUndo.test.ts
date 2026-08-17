@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import Database from 'better-sqlite3'
 import { promises as fs } from 'node:fs'
-import { fileURLToPath } from 'node:url'
 import { spawn, type ChildProcess } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
@@ -19,7 +18,7 @@ import { resetTagUndoFoundationHealthForTesting } from '../tagUndoHealth'
 
 let db: Database.Database
 
-const TSX_ESM_LOADER = fileURLToPath(import.meta.resolve('tsx/esm'))
+const TSX_ESM_LOADER = import.meta.resolve('tsx/esm')
 const TAG_UNDO_WAL_WORKER = path.join(import.meta.dirname, 'fixtures', 'tag-undo-wal-worker.ts')
 
 type WalWorkerReady = {
