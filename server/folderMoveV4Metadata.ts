@@ -35,6 +35,7 @@ import {
 } from './folderMoveTransaction.js'
 import {
   deriveCommittedPrefixSnapshot,
+  getDocumentTagsSnapshotGeneration,
   reviveMetadataSnapshot,
   serializeMetadataSnapshot,
   validateRound17SnapshotRestoreDisposition,
@@ -268,6 +269,18 @@ function rowsAreExpectedSubset(
   return live.every((row) => expectedRows.has(canonicalRow(row)))
 }
 
+function logicalDocumentTagKey(row: Record<string, unknown>): string {
+  return `${String(row.document_id)}\0${String(row.tag_id)}`
+}
+
+function logicalDocumentTagsAreExpectedSubset(
+  live: readonly Record<string, unknown>[],
+  expected: readonly Record<string, unknown>[],
+): boolean {
+  const expectedRows = new Set(expected.map(logicalDocumentTagKey))
+  return live.every((row) => expectedRows.has(logicalDocumentTagKey(row)))
+}
+
 export function verifyMetadataSnapshotGraphExact(
   db: DatabaseT,
   snapshot: DocumentMetadataMutationSnapshot,
@@ -304,8 +317,13 @@ function snapshotRestoreOwnershipMatches(
     if (canonicalRow(normalized) !== canonicalRow(expectedRow)) return false
   }
 
+  const legacySnapshot = journal.metadataDisposition.kind === 'snapshot-restore'
+    && getDocumentTagsSnapshotGeneration(journal.metadataDisposition.snapshot) === 'v6'
+  const documentTagsAreExpected = legacySnapshot
+    ? logicalDocumentTagsAreExpectedSubset(current.documentTags, expected.documentTags)
+    : rowsAreExpectedSubset(current.documentTags, expected.documentTags)
   if (!rowsAreExpectedSubset(current.tags, expected.tags)
-    || !rowsAreExpectedSubset(current.documentTags, expected.documentTags)
+    || !documentTagsAreExpected
     || !rowsAreExpectedSubset(current.embeddings, expected.embeddings)) {
     return false
   }
@@ -424,9 +442,15 @@ export async function finalizeFolderMoveV4Cleanup(
     )
     const comparableLiveTags = live.tags.filter(row =>
       !externallyReferencedCreatedTagIds.has(Number(row.id)))
+    const liveLogicalDocumentTags = live.documentTags.map(logicalDocumentTagKey).sort()
+    const revivedLogicalDocumentTags = revived.documentTags.map(logicalDocumentTagKey).sort()
+    const documentTagsMatch = getDocumentTagsSnapshotGeneration(disposition.snapshot) === 'v6'
+      ? liveLogicalDocumentTags.length === revivedLogicalDocumentTags.length
+        && liveLogicalDocumentTags.every((key, index) => key === revivedLogicalDocumentTags[index])
+      : rowsExactlyEqualSnapshot(live.documentTags, revived.documentTags)
     if (!rowsExactlyEqualSnapshot(live.documents, revived.documents)
       || !rowsExactlyEqualSnapshot(comparableLiveTags, revived.tags)
-      || !rowsExactlyEqualSnapshot(live.documentTags, revived.documentTags)
+      || !documentTagsMatch
       || !rowsExactlyEqualSnapshot(live.embeddings, revived.embeddings)
       || !rowsExactlyEqualSnapshot(live.migrations, revived.migrations)) {
       return result(

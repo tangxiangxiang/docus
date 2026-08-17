@@ -6,15 +6,21 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
 import { applyMigrations } from '../db'
-import { deleteDocumentMetadataPrefix, getDocumentMetadata, saveDocumentMetadata, snapshotDocumentMetadataDatabase, snapshotDocumentMetadataPrefixMutation } from '../documentMetadata'
+import { deleteDocumentMetadataPrefix, getDocumentMetadata, saveDocumentMetadata, snapshotDocumentMetadataDatabase, snapshotDocumentMetadataMutation, snapshotDocumentMetadataPrefixMutation } from '../documentMetadata'
 import {
   rewriteDurableJournal,
   sha256Hex,
   sha256HexBuffer,
+  writeDurableJournal,
 } from '../atomicTextWrite'
 import { recoverInterruptedOperations } from '../crashRecovery'
 import { prepareRenameReferenceJournal } from '../renameReferenceJournal'
-import { serializeMetadataSnapshot } from '../folderMoveTransaction'
+import {
+  createFolderMoveGateProof,
+  FOLDER_MOVE_JOURNAL_VERSION,
+  serializeMetadataSnapshot,
+  type FolderMoveJournalV4,
+} from '../folderMoveTransaction'
 import { parseFolderMoveJournalV4Object } from '../folderMoveV4DurableJournal'
 import { __setCreateOnlyMoveHooksForTesting, FOLDER_MOVE_STRATEGIES, platformDirectoryMoveStrategy } from '../documentFileLifecycle'
 import {
@@ -98,6 +104,213 @@ function expectWeakLegacyFolderJournal(
     detail: 'legacy journal lacks sufficient durable ownership proof',
   })
 }
+
+async function createLegacyV6JournalFixture(contentDir: string): Promise<{
+  db: InstanceType<typeof Database>
+  dbRoot: string
+  journalAbs: string
+  journalName: string
+}> {
+  const dbRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-t21-v6-db-'))
+  const dbPath = path.join(dbRoot, 'docus.db')
+  const legacyDb = new Database(dbPath)
+  legacyDb.pragma('foreign_keys = ON')
+  legacyDb.exec(`
+    CREATE TABLE schema_version (version INTEGER NOT NULL);
+    INSERT INTO schema_version (version) VALUES (6);
+    CREATE TABLE documents (
+      id TEXT PRIMARY KEY,
+      path TEXT NOT NULL UNIQUE,
+      title TEXT NOT NULL,
+      summary TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE tags (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      normalized_name TEXT NOT NULL UNIQUE
+    );
+    CREATE TABLE document_tags (
+      document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+      tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+      PRIMARY KEY (document_id, tag_id)
+    );
+    CREATE INDEX idx_document_tags_tag ON document_tags(tag_id, document_id);
+    CREATE TABLE document_embeddings (
+      document_id TEXT PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,
+      content_hash TEXT NOT NULL,
+      model TEXT NOT NULL,
+      embedding BLOB NOT NULL,
+      indexed_at INTEGER NOT NULL
+    );
+    CREATE TABLE metadata_migrations (
+      path TEXT PRIMARY KEY,
+      document_id TEXT REFERENCES documents(id) ON DELETE SET NULL,
+      original_path TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL CHECK (status IN ('legacy', 'imported', 'verified', 'cleaned', 'failed', 'orphaned')),
+      source_hash TEXT NOT NULL DEFAULT '',
+      error TEXT NOT NULL DEFAULT '',
+      updated_at INTEGER NOT NULL,
+      frontmatter_backup TEXT NOT NULL DEFAULT '',
+      cleaned_hash TEXT NOT NULL DEFAULT ''
+    );
+  `)
+  legacyDb.exec(`
+    INSERT INTO documents (id, path, title, summary, created_at, updated_at)
+    VALUES
+      ('doc-existing', 'gone/a', 'A', '', 1, 10),
+      ('doc-missing', 'gone/b', 'B', '', 2, 20);
+    INSERT INTO tags (id, name, normalized_name) VALUES (1, 'Backend', 'backend');
+    INSERT INTO document_tags (document_id, tag_id)
+    VALUES ('doc-existing', 1), ('doc-missing', 1);
+  `)
+
+  const serialized = serializeMetadataSnapshot(
+    snapshotDocumentMetadataMutation(legacyDb, ['gone/a', 'gone/b']),
+  )
+  const { documentTagsVersion: _legacyMarker, ...legacySnapshot } = serialized
+  const stageRel = '.gone.docus-delete-inflight-abcdef012345'
+  const stageAbs = path.join(contentDir, stageRel)
+  await fs.mkdir(stageAbs, { recursive: true })
+  await fs.writeFile(path.join(stageAbs, 'a.md'), '# A\n', 'utf8')
+  await fs.writeFile(path.join(stageAbs, 'b.md'), '# B\n', 'utf8')
+  const [sourceStat, aStat, bStat] = await Promise.all([
+    fs.stat(stageAbs, { bigint: true }),
+    fs.stat(path.join(stageAbs, 'a.md'), { bigint: true }),
+    fs.stat(path.join(stageAbs, 'b.md'), { bigint: true }),
+  ])
+  const gateProof = createFolderMoveGateProof()
+  const journalName = `.${stageRel}.docus-journal-abcdef012345`
+  const journalAbs = path.join(contentDir, journalName)
+  const journal: FolderMoveJournalV4 = {
+    version: FOLDER_MOVE_JOURNAL_VERSION,
+    op: 'folder-move',
+    phase: 'prepared',
+    srcRel: stageRel,
+    destRel: 'gone',
+    strategy: 'replayable-move',
+    sourceDev: sourceStat.dev.toString(),
+    sourceIno: sourceStat.ino.toString(),
+    sourceBirthtimeNs: sourceStat.birthtimeNs.toString(),
+    gateProof,
+    entries: [
+      {
+        relativeFilePath: 'a.md',
+        sourceHash: sha256Hex('# A\n'),
+        sourceDev: aStat.dev.toString(),
+        sourceIno: aStat.ino.toString(),
+        documentId: 'doc-existing',
+        documentPath: 'gone/a',
+      },
+      {
+        relativeFilePath: 'b.md',
+        sourceHash: sha256Hex('# B\n'),
+        sourceDev: bStat.dev.toString(),
+        sourceIno: bStat.ino.toString(),
+        documentId: 'doc-missing',
+        documentPath: 'gone/b',
+      },
+    ],
+    directories: [],
+    directoryGenerations: [],
+    metadataDisposition: {
+      kind: 'snapshot-restore',
+      snapshot: legacySnapshot,
+    },
+  }
+  await writeDurableJournal(journalAbs, journal)
+
+  // The delete rollback journal is durable before the interrupted metadata
+  // delete.  Reproduce the post-crash state, then let the real migration
+  // runner upgrade the on-disk v6 database before recovery sees the journal.
+  deleteDocumentMetadataPrefix(legacyDb, 'gone', 30)
+  applyMigrations(legacyDb)
+  return { db: legacyDb, dbRoot, journalAbs, journalName }
+}
+
+async function closeLegacyV6JournalFixture(
+  fixture: Awaited<ReturnType<typeof createLegacyV6JournalFixture>>,
+): Promise<void> {
+  fixture.db.close()
+  await fs.rm(fixture.dbRoot, { recursive: true, force: true })
+}
+
+describe('T2.1-0 real v6 durable-journal upgrade recovery', () => {
+  it('migrates a v6 journal and recovers it through recoverInterruptedOperations', async () => {
+    const fixture = await createLegacyV6JournalFixture(vault)
+    try {
+      expect((fixture.db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(8)
+
+      // A logically proven live v7 row keeps its current physical ID.  The
+      // missing v6 row is recreated as a new v7 association.
+      fixture.db.prepare(`
+        INSERT INTO documents (id, path, title, summary, created_at, updated_at)
+        VALUES ('doc-existing', 'gone/a', 'A', '', 1, 10)
+      `).run()
+      fixture.db.prepare(`
+        INSERT INTO document_tags (association_id, document_id, tag_id)
+        VALUES (700, 'doc-existing', 1)
+      `).run()
+
+      const report = await recoverInterruptedOperations(vault, fixture.db)
+
+      expect(report.actions.some((action) => action.action === 'completed-rename')).toBe(true)
+      expect(await fs.stat(path.join(vault, 'gone', 'a.md'))).toBeDefined()
+      expect(await fs.stat(path.join(vault, 'gone', 'b.md'))).toBeDefined()
+      await expect(fs.stat(fixture.journalAbs)).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(fixture.db.prepare(`
+        SELECT document_id, tag_id, association_id
+        FROM document_tags
+        ORDER BY document_id
+      `).all()).toEqual([
+        { document_id: 'doc-existing', tag_id: 1, association_id: 700 },
+        { document_id: 'doc-missing', tag_id: 1, association_id: 701 },
+      ])
+      expect(fixture.db.prepare('SELECT COUNT(*) AS count FROM tag_undo_records').get()).toEqual({ count: 0 })
+      expect(fixture.db.prepare('SELECT current_record_id FROM tag_undo_state').get()).toEqual({ current_record_id: null })
+      expect(fixture.db.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+      expect((fixture.db.prepare('PRAGMA integrity_check').get() as { integrity_check: string }).integrity_check).toBe('ok')
+    } finally {
+      await closeLegacyV6JournalFixture(fixture)
+    }
+  })
+
+  it('fails closed on unsafe live drift without overwriting the external owner', async () => {
+    const fixture = await createLegacyV6JournalFixture(vault)
+    try {
+      fixture.db.prepare(`
+        INSERT INTO documents (id, path, title, summary, created_at, updated_at)
+        VALUES ('external-owner', 'gone/a', 'External', 'do not overwrite', 9, 99)
+      `).run()
+
+      const report = await recoverInterruptedOperations(vault, fixture.db)
+
+      expect(report.actions.some((action) =>
+        action.action === 'quarantined'
+        && action.detail?.includes('snapshot metadata CAS failed'))).toBe(true)
+      expect(await fs.stat(fixture.journalAbs)).toBeDefined()
+      expect(fixture.db.prepare(`
+        SELECT id, path, title, summary, created_at, updated_at
+        FROM documents
+        WHERE path = 'gone/a'
+      `).get()).toEqual({
+        id: 'external-owner',
+        path: 'gone/a',
+        title: 'External',
+        summary: 'do not overwrite',
+        created_at: 9,
+        updated_at: 99,
+      })
+      expect(fixture.db.prepare('SELECT COUNT(*) AS count FROM tag_undo_records').get()).toEqual({ count: 0 })
+      expect(fixture.db.prepare('SELECT current_record_id FROM tag_undo_state').get()).toEqual({ current_record_id: null })
+      expect(fixture.db.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+      expect((fixture.db.prepare('PRAGMA integrity_check').get() as { integrity_check: string }).integrity_check).toBe('ok')
+    } finally {
+      await closeLegacyV6JournalFixture(fixture)
+    }
+  })
+})
 
 describe('recoverInterruptedOperations (journaled replace)', () => {
   it('completes an interrupted save when both generations verify (nested dir)', async () => {

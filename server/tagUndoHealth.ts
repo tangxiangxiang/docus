@@ -3,7 +3,7 @@ import { TAG_IDENTITY_CONTRACT_VERSION } from '../shared/tagNormalization.js'
 
 export const TAG_UNDO_RECORD_CONTRACT_VERSION = 'tag-undo-record-v1'
 export const UNDO_FINGERPRINT_CONTRACT_VERSION = 'tag-undo-fingerprint-v1'
-export const TAG_UNDO_FOUNDATION_SCHEMA_VERSION = 7
+export const TAG_UNDO_FOUNDATION_SCHEMA_VERSION = 8
 
 export type TagUndoFoundationHealthState = 'checking' | 'healthy' | 'unavailable'
 
@@ -58,9 +58,155 @@ function hasUniqueDocumentTagConstraint(db: DatabaseT): boolean {
   })
 }
 
+type FoundationRecord = {
+  record_id: string
+  original_operation_id: string
+  original_result_id: string
+  kind: string
+  display_only: number
+  identity_contract_version: string
+  record_contract_version: string
+  database_generation: string
+  operation_json: string
+  committed_at: number
+  source_tag_id: number
+  source_before_name: string
+  source_before_normalized_name: string
+  source_after_exists: number
+  source_after_name: string | null
+  source_after_normalized_name: string | null
+  destination_tag_id: number | null
+  destination_before_name: string | null
+  destination_before_normalized_name: string | null
+  destination_after_name: string | null
+  destination_after_normalized_name: string | null
+  lifecycle: string
+  terminal_code: string | null
+  undo_operation_id: string | null
+  undo_result_id: string | null
+  consumed_at: number | null
+  association_remove_count: number
+  association_add_count: number
+  version_update_count: number
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function hasKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  return Object.keys(value).sort().join('\0') === [...keys].sort().join('\0')
+}
+
+function isBoundedName(value: unknown): value is string {
+  return typeof value === 'string' && value.length >= 1 && value.length <= 200
+}
+
+function isValidNormalizedOperation(record: FoundationRecord): boolean {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(record.operation_json)
+  } catch {
+    return false
+  }
+  if (!isPlainObject(parsed) || typeof parsed.kind !== 'string'
+    || parsed.sourceTagId !== record.source_tag_id) return false
+
+  if (record.kind === 'rename') {
+    return parsed.kind === 'rename'
+      && hasKeys(parsed, ['kind', 'sourceTagId', 'destinationName'])
+      && isBoundedName(parsed.destinationName)
+  }
+  if (record.kind === 'merge') {
+    return parsed.kind === 'merge'
+      && hasKeys(parsed, ['kind', 'sourceTagId', 'destinationTagId'])
+      && Number.isSafeInteger(parsed.destinationTagId)
+      && parsed.destinationTagId === record.destination_tag_id
+      && Number(parsed.destinationTagId) > 0
+  }
+  if (record.kind === 'remove') {
+    return parsed.kind === 'remove'
+      && hasKeys(parsed, ['kind', 'sourceTagId'])
+  }
+  return false
+}
+
+function hasNullDestination(record: FoundationRecord): boolean {
+  return record.destination_tag_id === null
+    && record.destination_before_name === null
+    && record.destination_before_normalized_name === null
+    && record.destination_after_name === null
+    && record.destination_after_normalized_name === null
+}
+
+function hasAbsentSourceAfter(record: FoundationRecord): boolean {
+  return record.source_after_exists === 0
+    && record.source_after_name === null
+    && record.source_after_normalized_name === null
+}
+
+function hasPresentSourceAfter(record: FoundationRecord): boolean {
+  return record.source_after_exists === 1
+    && isBoundedName(record.source_after_name)
+    && isBoundedName(record.source_after_normalized_name)
+}
+
+function validateKindSpecificRecord(record: FoundationRecord): boolean {
+  if (record.kind === 'rename') {
+    return hasNullDestination(record)
+      && hasPresentSourceAfter(record)
+      && record.association_remove_count === 0
+      && record.association_add_count === 0
+  }
+  if (record.kind === 'merge') {
+    return record.display_only === 0
+      && hasAbsentSourceAfter(record)
+      && Number.isSafeInteger(record.destination_tag_id)
+      && Number(record.destination_tag_id) > 0
+      && isBoundedName(record.destination_before_name)
+      && isBoundedName(record.destination_before_normalized_name)
+      && isBoundedName(record.destination_after_name)
+      && isBoundedName(record.destination_after_normalized_name)
+  }
+  if (record.kind === 'remove') {
+    return record.display_only === 0
+      && hasAbsentSourceAfter(record)
+      && hasNullDestination(record)
+      && record.association_add_count === 0
+  }
+  return false
+}
+
+function validateLifecycle(record: FoundationRecord): boolean {
+  if (record.lifecycle === 'latest') {
+    return record.terminal_code === null
+      && record.undo_operation_id === null
+      && record.undo_result_id === null
+      && record.consumed_at === null
+  }
+  if (record.lifecycle === 'consumed') {
+    return record.terminal_code === null
+      && typeof record.undo_operation_id === 'string'
+      && record.undo_operation_id.length > 0
+      && typeof record.undo_result_id === 'string'
+      && record.undo_result_id.length > 0
+      && typeof record.consumed_at === 'number'
+      && Number.isSafeInteger(record.consumed_at)
+      && record.consumed_at >= 0
+  }
+  if (record.lifecycle === 'terminal') {
+    return typeof record.terminal_code === 'string'
+      && record.terminal_code.length > 0
+      && record.undo_operation_id === null
+      && record.undo_result_id === null
+      && record.consumed_at === null
+  }
+  return false
+}
+
 function validateFoundationSchema(db: DatabaseT): string | null {
   const version = db.prepare('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | undefined
-  if (!version || version.version < TAG_UNDO_FOUNDATION_SCHEMA_VERSION) return 'tag Undo foundation migration is not applied'
+  if (!version || version.version < TAG_UNDO_FOUNDATION_SCHEMA_VERSION) return 'tag Undo foundation migration is not the repaired current version'
 
   for (const table of ['document_tags', 'tag_undo_records', 'tag_undo_association_deltas', 'tag_undo_state']) {
     if (!tableExists(db, table)) return `tag Undo foundation table is missing: ${table}`
@@ -91,24 +237,35 @@ function validateFoundationSchema(db: DatabaseT): string | null {
   }
   if (!hasUniqueDocumentTagConstraint(db)) return 'document_tags logical uniqueness constraint is missing'
 
-  const states = db.prepare('SELECT state_id, database_generation, current_record_id FROM tag_undo_state').all() as Array<{
+  const states = db.prepare('SELECT state_id, database_generation, current_record_id, last_superseded_record_id, updated_at FROM tag_undo_state').all() as Array<{
     state_id: number
     database_generation: string
     current_record_id: string | null
+    last_superseded_record_id: string | null
+    updated_at: number
   }>
-  if (states.length !== 1 || states[0].state_id !== 1 || !/^[0-9a-f]{32}$/.test(states[0].database_generation)) {
+  if (states.length !== 1 || states[0].state_id !== 1
+    || !/^[0-9a-f]{32}$/.test(states[0].database_generation)
+    || !Number.isSafeInteger(states[0].updated_at)
+    || states[0].updated_at < 0
+    || (states[0].last_superseded_record_id !== null
+      && (typeof states[0].last_superseded_record_id !== 'string'
+        || states[0].last_superseded_record_id.length < 1
+        || states[0].last_superseded_record_id.length > 128))) {
     return 'tag Undo foundation state singleton is invalid'
-  }
-  if (states[0].current_record_id !== null && !db.prepare(
-    'SELECT 1 FROM tag_undo_records WHERE record_id = ?',
-  ).get(states[0].current_record_id)) {
-    return 'tag Undo foundation state points at a missing record'
   }
   const records = db.prepare(`
     SELECT record_id, original_operation_id, original_result_id, kind,
            display_only, identity_contract_version, record_contract_version,
-           database_generation, lifecycle, source_tag_id,
-           association_remove_count, association_add_count, version_update_count
+           database_generation, operation_json, committed_at, source_tag_id,
+           source_before_name, source_before_normalized_name,
+           source_after_exists, source_after_name,
+           source_after_normalized_name, destination_tag_id,
+           destination_before_name, destination_before_normalized_name,
+           destination_after_name, destination_after_normalized_name,
+           lifecycle, terminal_code, undo_operation_id, undo_result_id,
+           consumed_at, association_remove_count, association_add_count,
+           version_update_count
     FROM tag_undo_records
   `).all() as Array<{
     record_id: string
@@ -119,42 +276,77 @@ function validateFoundationSchema(db: DatabaseT): string | null {
     identity_contract_version: string
     record_contract_version: string
     database_generation: string
-    lifecycle: string
+    operation_json: string
+    committed_at: number
     source_tag_id: number
+    source_before_name: string
+    source_before_normalized_name: string
+    source_after_exists: number
+    source_after_name: string | null
+    source_after_normalized_name: string | null
+    destination_tag_id: number | null
+    destination_before_name: string | null
+    destination_before_normalized_name: string | null
+    destination_after_name: string | null
+    destination_after_normalized_name: string | null
+    lifecycle: string
+    terminal_code: string | null
+    undo_operation_id: string | null
+    undo_result_id: string | null
+    consumed_at: number | null
     association_remove_count: number
     association_add_count: number
     version_update_count: number
   }>
+  if (records.length > 1) return 'tag Undo foundation retains more than one parent record'
+  if (records.length === 0 && states[0].current_record_id !== null) {
+    return 'tag Undo foundation state points at a missing record'
+  }
+  if (records.length === 1 && states[0].current_record_id !== records[0].record_id) {
+    return 'tag Undo foundation current pointer does not identify the sole retained record'
+  }
   for (const record of records) {
     if (record.identity_contract_version !== TAG_IDENTITY_CONTRACT_VERSION
       || record.record_contract_version !== TAG_UNDO_RECORD_CONTRACT_VERSION
       || record.database_generation !== states[0].database_generation
       || !['rename', 'merge', 'remove'].includes(record.kind)
       || (record.kind !== 'rename' && record.display_only !== 0)
-      || !['latest', 'consumed', 'terminal'].includes(record.lifecycle)
+      || !Number.isSafeInteger(record.display_only)
+      || !Number.isSafeInteger(record.committed_at) || record.committed_at < 0
       || !Number.isSafeInteger(record.source_tag_id) || record.source_tag_id <= 0
       || ![record.association_remove_count, record.association_add_count, record.version_update_count]
-        .every((value) => Number.isSafeInteger(value) && value >= 0)) {
+        .every((value) => Number.isSafeInteger(value) && value >= 0)
+      || !isValidNormalizedOperation(record)
+      || !validateLifecycle(record)
+      || !validateKindSpecificRecord(record)) {
       return 'tag Undo foundation record contract is invalid'
     }
-    const deltaCounts = db.prepare(`
-      SELECT effect, COUNT(*) AS count
+    const deltas = db.prepare(`
+      SELECT effect, association_id, document_id, tag_id
       FROM tag_undo_association_deltas
       WHERE record_id = ?
-      GROUP BY effect
-    `).all(record.record_id) as Array<{ effect: string; count: number }>
-    const removedCount = deltaCounts.find((row) => row.effect === 'removed-source')?.count ?? 0
-    const addedCount = deltaCounts.find((row) => row.effect === 'created-destination')?.count ?? 0
+      ORDER BY effect, association_id
+    `).all(record.record_id) as Array<{
+      effect: string
+      association_id: number
+      document_id: string
+      tag_id: number
+    }>
+    if (deltas.some((delta) =>
+      !['removed-source', 'created-destination'].includes(delta.effect)
+      || !Number.isSafeInteger(delta.association_id) || delta.association_id <= 0
+      || typeof delta.document_id !== 'string'
+      || delta.document_id.length < 1 || delta.document_id.length > 512
+      || !Number.isSafeInteger(delta.tag_id) || delta.tag_id <= 0
+      || (record.kind === 'rename')
+      || (record.kind === 'remove' && delta.effect !== 'removed-source'))) {
+      return 'tag Undo foundation association delta is invalid for its record kind'
+    }
+    const removedCount = deltas.filter((row) => row.effect === 'removed-source').length
+    const addedCount = deltas.filter((row) => row.effect === 'created-destination').length
     if (removedCount !== record.association_remove_count || addedCount !== record.association_add_count) {
       return 'tag Undo foundation record/delta counts are inconsistent'
     }
-    if (record.kind === 'rename' && (removedCount !== 0 || addedCount !== 0)) {
-      return 'tag Undo rename record has association deltas'
-    }
-  }
-  if (states[0].current_record_id !== null) {
-    const current = records.find((record) => record.record_id === states[0].current_record_id)
-    if (!current || current.lifecycle !== 'latest') return 'tag Undo foundation latest pointer is invalid'
   }
   const orphanDelta = db.prepare(`
     SELECT d.record_id
@@ -179,7 +371,7 @@ function validateFoundationSchema(db: DatabaseT): string | null {
     'SELECT association_id FROM document_tags WHERE association_id <= 0 OR association_id IS NULL LIMIT 1',
   ).get()
   if (invalidAssociation) return 'document-tag association identity is invalid'
-  if (db.prepare('PRAGMA foreign_key_check').get()) return 'foreign-key check failed'
+  if ((db.prepare('PRAGMA foreign_key_check').all() as unknown[]).length > 0) return 'foreign-key check failed'
   const integrity = db.prepare('PRAGMA integrity_check').get() as { integrity_check?: string } | undefined
   if (integrity?.integrity_check !== 'ok') return 'SQLite integrity check failed'
   return null
