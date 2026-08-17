@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import Database from 'better-sqlite3'
+import { promises as fs } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { spawn, type ChildProcess } from 'node:child_process'
+import os from 'node:os'
+import path from 'node:path'
+import { createInterface } from 'node:readline'
 import { applyMigrations } from '../db'
 import {
   __setTagManagementApplyHooksForTesting,
@@ -12,6 +18,118 @@ import {
 import { resetTagUndoFoundationHealthForTesting } from '../tagUndoHealth'
 
 let db: Database.Database
+
+const TSX_ESM_LOADER = fileURLToPath(import.meta.resolve('tsx/esm'))
+const TAG_UNDO_WAL_WORKER = path.join(import.meta.dirname, 'fixtures', 'tag-undo-wal-worker.ts')
+
+type WalWorkerReady = {
+  workerName: string
+  pid: number
+  connectionId: string
+  journalMode: string
+  databaseGeneration: string
+}
+
+type WalWorkerResult = {
+  ok: boolean
+  workerName: string
+  pid: number
+  connectionId?: string
+  journalMode?: string
+  databaseGeneration?: string
+  result?: {
+    operationId: string
+    resultId: string
+  }
+  error?: {
+    code?: string
+    message?: string
+  }
+}
+
+type WalWorkerHandle = {
+  child: ChildProcess
+  ready: Promise<WalWorkerReady>
+  result: Promise<WalWorkerResult>
+  close: Promise<void>
+}
+
+function spawnWalWorker(
+  databasePath: string,
+  operation: TagOperationRequest,
+  planFingerprint: string,
+  workerName: string,
+): WalWorkerHandle {
+  const child = spawn(process.execPath, ['--import', TSX_ESM_LOADER, TAG_UNDO_WAL_WORKER], {
+    env: {
+      ...process.env,
+      DOCUS_TAG_WAL_DB: databasePath,
+      DOCUS_TAG_WAL_OPERATION: JSON.stringify(operation),
+      DOCUS_TAG_WAL_FINGERPRINT: planFingerprint,
+      DOCUS_TAG_WAL_WORKER: workerName,
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+  })
+  const lineReader = createInterface({ input: child.stdout! })
+  let stderr = ''
+  child.stderr?.on('data', (chunk: Buffer | string) => {
+    stderr += chunk.toString()
+  })
+
+  let readyPayload: WalWorkerReady | undefined
+  let resultPayload: WalWorkerResult | undefined
+  let resolveReady!: (value: WalWorkerReady) => void
+  let rejectReady!: (error: Error) => void
+  let resolveResult!: (value: WalWorkerResult) => void
+  let rejectResult!: (error: Error) => void
+  let resolveClose!: () => void
+  const ready = new Promise<WalWorkerReady>((resolve, reject) => {
+    resolveReady = resolve
+    rejectReady = reject
+  })
+  const result = new Promise<WalWorkerResult>((resolve, reject) => {
+    resolveResult = resolve
+    rejectResult = reject
+  })
+  const close = new Promise<void>((resolve) => {
+    resolveClose = resolve
+  })
+
+  lineReader.on('line', (line) => {
+    try {
+      if (line.startsWith('READY:')) {
+        readyPayload = JSON.parse(line.slice('READY:'.length)) as WalWorkerReady
+        resolveReady(readyPayload)
+      } else if (line.startsWith('RESULT:')) {
+        resultPayload = JSON.parse(line.slice('RESULT:'.length)) as WalWorkerResult
+        resolveResult(resultPayload)
+      }
+    } catch (error) {
+      const parsedError = error instanceof Error ? error : new Error(String(error))
+      if (!readyPayload) rejectReady(parsedError)
+      if (!resultPayload) rejectResult(parsedError)
+    }
+  })
+
+  child.once('error', (error) => {
+    if (!readyPayload) rejectReady(error)
+    if (!resultPayload) rejectResult(error)
+    resolveClose()
+  })
+  child.once('close', (code, signal) => {
+    lineReader.close()
+    if (!readyPayload) {
+      rejectReady(new Error(`${workerName} exited before WAL barrier: code=${code} signal=${signal} stderr=${stderr}`))
+    }
+    if (!resultPayload) {
+      rejectResult(new Error(`${workerName} exited without result: code=${code} signal=${signal} stderr=${stderr}`))
+    }
+    resolveClose()
+  })
+
+  return { child, ready, result, close }
+}
 
 beforeEach(() => {
   db = new Database(':memory:')
@@ -422,4 +540,193 @@ describe('T2.1-1 health and compatibility gates', () => {
     expect(db.prepare('SELECT COUNT(*) AS count FROM tag_undo_association_deltas').get()).toEqual({ count: 0 })
     expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([])
   })
+
+  it('serializes a real two-process WAL Apply race with one winner and one stale loser', async () => {
+    const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-tag-undo-wal-'))
+    const databasePath = path.join(temporaryRoot, 'docus.db')
+    let setupConnection: Database.Database | null = null
+    let gateConnection: Database.Database | null = null
+    let thirdConnection: Database.Database | null = null
+    const workers: WalWorkerHandle[] = []
+
+    try {
+      setupConnection = new Database(databasePath)
+      setupConnection.pragma('foreign_keys = ON')
+      expect(String(setupConnection.pragma('journal_mode = WAL', { simple: true })).toLowerCase()).toBe('wal')
+      applyMigrations(setupConnection)
+      setupConnection.prepare('INSERT INTO tags (id, name, normalized_name) VALUES (?, ?, ?)')
+        .run(7, 'Java', 'java')
+      const insertDocument = setupConnection.prepare(`
+        INSERT INTO documents (id, path, title, summary, created_at, updated_at)
+        VALUES (?, ?, ?, '', 1, 100)
+      `)
+      const insertAssociation = setupConnection.prepare(
+        'INSERT INTO document_tags (document_id, tag_id) VALUES (?, ?)',
+      )
+      for (const documentId of ['doc-a', 'doc-b']) {
+        insertDocument.run(documentId, `${documentId}/note`, documentId)
+        insertAssociation.run(documentId, 7)
+      }
+
+      const operation = {
+        kind: 'rename',
+        sourceTagId: 7,
+        destinationName: 'Backend',
+      } as const
+      const preview = previewTagOperation(setupConnection, operation)
+      const databaseGeneration = (setupConnection.prepare(`
+        SELECT database_generation
+        FROM tag_undo_state
+        WHERE state_id = 1
+      `).get() as { database_generation: string }).database_generation
+      const beforeAssociations = setupConnection.prepare(`
+        SELECT document_id, association_id
+        FROM document_tags
+        ORDER BY document_id
+      `).all()
+      const beforeVersions = setupConnection.prepare(`
+        SELECT id, updated_at
+        FROM documents
+        ORDER BY id
+      `).all()
+
+      // Hold the SQLite writer slot while both independent runtimes finish
+      // discovery, acquire their own document locks, and reach BEGIN IMMEDIATE.
+      // This is a deterministic SQLite barrier, not a timing-based sleep.
+      gateConnection = new Database(databasePath)
+      gateConnection.pragma('foreign_keys = ON')
+      gateConnection.pragma('busy_timeout = 15000')
+      expect(String(gateConnection.pragma('journal_mode', { simple: true })).toLowerCase()).toBe('wal')
+      gateConnection.exec('BEGIN IMMEDIATE')
+
+      workers.push(spawnWalWorker(databasePath, operation, preview.planFingerprint, 'A'))
+      workers.push(spawnWalWorker(databasePath, operation, preview.planFingerprint, 'B'))
+      let readyTimeoutHandle: ReturnType<typeof setTimeout> | undefined
+      const readyTimeout = new Promise<never>((_, reject) => {
+        readyTimeoutHandle = setTimeout(
+          () => reject(new Error('two-process WAL workers did not reach the transaction barrier')),
+          15_000,
+        )
+      })
+      let ready: WalWorkerReady[]
+      try {
+        ready = await Promise.race([
+          Promise.all(workers.map((worker) => worker.ready)),
+          readyTimeout,
+        ])
+      } finally {
+        if (readyTimeoutHandle) clearTimeout(readyTimeoutHandle)
+      }
+      expect(ready).toHaveLength(2)
+      expect(new Set(ready.map((worker) => worker.pid)).size).toBe(2)
+      expect(new Set(ready.map((worker) => worker.connectionId)).size).toBe(2)
+      expect(ready.every((worker) => worker.journalMode === 'wal')).toBe(true)
+      expect(ready.every((worker) => worker.databaseGeneration === databaseGeneration)).toBe(true)
+
+      // Both workers have reached the real transaction boundary in separate
+      // Node runtimes. Releasing this lock lets SQLite serialize the writers.
+      gateConnection.exec('ROLLBACK')
+      const outcomes = await Promise.all(workers.map((worker) => worker.result))
+      await Promise.all(workers.map((worker) => worker.close))
+
+      const winners = outcomes.filter((outcome) => outcome.ok)
+      const losers = outcomes.filter((outcome) => !outcome.ok)
+      expect(winners).toHaveLength(1)
+      expect(losers).toHaveLength(1)
+      expect(losers[0]!.error?.code).toBe('PREVIEW_STALE')
+      const winningResult = winners[0]!.result
+      expect(winningResult).toBeDefined()
+
+      thirdConnection = new Database(databasePath)
+      thirdConnection.pragma('foreign_keys = ON')
+      expect(String(thirdConnection.pragma('journal_mode', { simple: true })).toLowerCase()).toBe('wal')
+
+      expect(thirdConnection.prepare('SELECT id, name, normalized_name FROM tags ORDER BY id').all())
+        .toEqual([{ id: 7, name: 'Backend', normalized_name: 'backend' }])
+      const afterAssociations = thirdConnection.prepare(`
+        SELECT document_id, association_id
+        FROM document_tags
+        ORDER BY document_id
+      `).all()
+      expect(afterAssociations).toEqual(beforeAssociations)
+
+      const records = thirdConnection.prepare(`
+        SELECT *
+        FROM tag_undo_records
+        ORDER BY record_id
+      `).all() as Array<Record<string, unknown>>
+      expect(records).toHaveLength(1)
+      const record = records[0]!
+      expect(record).toMatchObject({
+        original_operation_id: winningResult!.operationId,
+        original_result_id: winningResult!.resultId,
+        kind: 'rename',
+        lifecycle: 'latest',
+        source_tag_id: 7,
+        source_before_name: 'Java',
+        source_before_normalized_name: 'java',
+        source_after_exists: 1,
+        source_after_name: 'Backend',
+        source_after_normalized_name: 'backend',
+        association_remove_count: 0,
+        association_add_count: 0,
+        version_update_count: 2,
+      })
+      expect(thirdConnection.prepare('SELECT COUNT(*) AS count FROM tag_undo_association_deltas').get())
+        .toEqual({ count: 0 })
+
+      const undoState = thirdConnection.prepare(`
+        SELECT database_generation, current_record_id, last_superseded_record_id
+        FROM tag_undo_state
+        WHERE state_id = 1
+      `).get() as {
+        database_generation: string
+        current_record_id: string | null
+        last_superseded_record_id: string | null
+      }
+      expect(undoState.database_generation).toBe(databaseGeneration)
+      expect(undoState.current_record_id).toBe(record.record_id)
+      expect(undoState.last_superseded_record_id).toBeNull()
+
+      const afterVersions = thirdConnection.prepare(`
+        SELECT id, updated_at
+        FROM documents
+        ORDER BY id
+      `).all() as Array<{ id: string; updated_at: number }>
+      expect(afterVersions).toHaveLength(2)
+      for (const [index, version] of afterVersions.entries()) {
+        const before = (beforeVersions[index] as { id: string; updated_at: number })
+        expect(version.id).toBe(before.id)
+        expect(version.updated_at).toBeGreaterThan(before.updated_at)
+      }
+
+      expect(thirdConnection.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+      expect(thirdConnection.prepare('PRAGMA integrity_check').get())
+        .toEqual({ integrity_check: 'ok' })
+
+      // A fresh third connection sees the same committed state, proving the
+      // result was durable and not a connection-local artifact.
+      expect(thirdConnection.prepare('SELECT COUNT(*) AS count FROM tag_undo_records').get())
+        .toEqual({ count: 1 })
+      expect(thirdConnection.prepare('SELECT current_record_id FROM tag_undo_state').get())
+        .toEqual({ current_record_id: record.record_id })
+    } finally {
+      if (gateConnection?.open) {
+        try {
+          gateConnection.exec('ROLLBACK')
+        } catch {
+          // The normal path releases the barrier before the workers finish.
+        }
+      }
+      for (const worker of workers) {
+        if (!worker.child.killed) worker.child.kill()
+      }
+      await Promise.allSettled(workers.map((worker) => worker.result))
+      await Promise.allSettled(workers.map((worker) => worker.close))
+      if (thirdConnection?.open) thirdConnection.close()
+      if (gateConnection?.open) gateConnection.close()
+      if (setupConnection?.open) setupConnection.close()
+      await fs.rm(temporaryRoot, { recursive: true, force: true })
+    }
+  }, 45_000)
 })
