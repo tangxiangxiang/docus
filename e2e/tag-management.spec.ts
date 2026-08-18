@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { expect, test } from './fixtures/auth'
-import type { APIRequestContext, Page } from '@playwright/test'
+import type { APIRequestContext, Locator, Page } from '@playwright/test'
 import {
   cleanupCreatedPaths,
   createDoc,
@@ -62,6 +62,62 @@ async function setDocumentTags(
   })
   expect(response.status(), await response.text()).toBe(200)
   return readPostDetail(pageRequest, slug)
+}
+
+async function undoLatestChange(
+  page: Page,
+  dialog: Locator,
+  expectedOperation: string,
+  cancelFirst = false,
+): Promise<void> {
+  await expect(dialog).toHaveAttribute('data-undo-state', 'undo-available')
+  const previewResponse = page.waitForResponse((response) => (
+    response.request().method() === 'POST'
+    && new URL(response.url()).pathname === '/api/tags/undo/preview'
+  ))
+  await dialog.locator('[data-action="undo-preview"]').click()
+  const preview = await previewResponse
+  expect(preview.status(), await preview.text()).toBe(200)
+  await expect(dialog).toHaveAttribute('data-undo-state', 'undo-preview-ready')
+  await expect(dialog.locator('[data-undo-preview]')).toContainText(expectedOperation)
+  await expect(dialog.locator('[data-undo-preview]')).toContainText('Documents and Markdown content are preserved.')
+  await expect(dialog.locator('[data-undo-preview]')).toContainText('Git History is preserved.')
+
+  let applyRequests = 0
+  const onRequest = (requestEvent: import('@playwright/test').Request) => {
+    if (requestEvent.method() === 'POST' && new URL(requestEvent.url()).pathname === '/api/tags/undo/apply') {
+      applyRequests += 1
+    }
+  }
+  page.on('request', onRequest)
+  try {
+    if (cancelFirst) {
+      await dialog.locator('[data-action="undo-apply"]').click()
+      const cancelledConfirmation = page.getByRole('alertdialog')
+      await expect(cancelledConfirmation).toBeVisible()
+      await expect(cancelledConfirmation.getByRole('button', { name: 'Cancel' })).toBeFocused()
+      await page.keyboard.press('Escape')
+      await expect(cancelledConfirmation).toHaveCount(0)
+      await expect(dialog).toHaveAttribute('data-undo-state', 'undo-preview-ready')
+      expect(applyRequests).toBe(0)
+      await expect(dialog.locator('[data-action="undo-apply"]')).toBeFocused()
+    }
+
+    const applyResponse = page.waitForResponse((response) => (
+      response.request().method() === 'POST'
+      && new URL(response.url()).pathname === '/api/tags/undo/apply'
+    ))
+    await dialog.locator('[data-action="undo-apply"]').click()
+    const confirmation = page.getByRole('alertdialog')
+    await expect(confirmation).toContainText(`Confirm ${expectedOperation}?`)
+    await confirmation.getByRole('button', { name: 'Confirm Undo' }).click()
+    const applied = await applyResponse
+    expect(applied.status(), await applied.text()).toBe(200)
+    expect(applyRequests).toBe(1)
+    await expect(dialog).toHaveAttribute('data-undo-state', 'undo-success')
+  } finally {
+    page.off('request', onRequest)
+  }
 }
 
 test('authenticated Rename transport preserves Markdown and Git boundaries', async ({ page, request }) => {
@@ -696,6 +752,159 @@ test('production Remove previews, confirms once, clears selection, and preserves
     await dialog.locator('[data-action="close"]').click()
     await expect(page.locator('.results')).toHaveCount(0)
     await expect(page.locator('.tag-entry').filter({ hasText: `#${sourceName}` })).toHaveCount(0)
+  } finally {
+    await cleanupCreatedPaths(request, createdPaths)
+  }
+})
+
+test('production Undo previews, confirms, and restores Rename, Display Rename, Merge, and Remove', async ({ page, request }) => {
+  const stamp = Date.now()
+  const renameSourceName = `undo-rename-source-${stamp}`
+  const renameDestinationName = `undo-rename-destination-${stamp}`
+  const displaySourceName = `undo-display-source-${stamp}`
+  const displayDestinationName = displaySourceName.toUpperCase()
+  const mergeSourceName = `undo-merge-source-${stamp}`
+  const mergeDestinationName = `undo-merge-destination-${stamp}`
+  const removeSourceName = `undo-remove-source-${stamp}`
+  const fixtures = [
+    { slug: `inbox/t2-1-5-undo-rename-${stamp}`, tags: [renameSourceName], body: 'Undo Rename fixture.\n' },
+    { slug: `inbox/t2-1-5-undo-display-${stamp}`, tags: [displaySourceName], body: 'Undo Display Rename fixture.\n' },
+    { slug: `inbox/t2-1-5-undo-merge-source-${stamp}`, tags: [mergeSourceName], body: 'Undo Merge source fixture.\n' },
+    { slug: `inbox/t2-1-5-undo-merge-destination-${stamp}`, tags: [mergeDestinationName], body: 'Undo Merge destination fixture.\n' },
+    { slug: `inbox/t2-1-5-undo-merge-overlap-${stamp}`, tags: [mergeSourceName, mergeDestinationName], body: 'Undo Merge overlap fixture.\n' },
+    { slug: `inbox/t2-1-5-undo-remove-${stamp}`, tags: [removeSourceName], body: 'Undo Remove fixture.\n' },
+  ]
+  const createdPaths: string[] = []
+
+  const tagByName = async (name: string): Promise<{ id: number; displayName: string }> => {
+    const response = await request.get('/api/tags')
+    expect(response.status(), await response.text()).toBe(200)
+    const tags = await response.json() as Array<{ id: number; displayName: string }>
+    const tag = tags.find((candidate) => candidate.displayName === name)
+    expect(tag, `managed tag ${name}`).toBeTruthy()
+    return tag!
+  }
+
+  const openDialog = async (): Promise<Locator> => {
+    const manageTags = page.getByRole('button', { name: /manage tags/i })
+    await expect(manageTags).toHaveCount(1)
+    await manageTags.click()
+    const dialog = page.getByRole('dialog')
+    await expect(dialog).toHaveAttribute('data-state', 'ready')
+    return dialog
+  }
+
+  const closeDialog = async (dialog: Locator): Promise<void> => {
+    await dialog.locator('[data-action="close"]').click()
+    await expect(dialog).toHaveCount(0)
+  }
+
+  const ordinaryRename = async (
+    dialog: Locator,
+    sourceId: number,
+    destinationName: string,
+  ): Promise<void> => {
+    await dialog.locator('[data-operation="rename"]').click()
+    await dialog.locator('#tag-management-source').selectOption(String(sourceId))
+    await dialog.locator('#tag-management-destination').fill(destinationName)
+    const previewResponse = page.waitForResponse((response) => (
+      response.request().method() === 'POST'
+      && new URL(response.url()).pathname === '/api/tags/operations/preview'
+    ))
+    await dialog.locator('form button[type="submit"]').click()
+    expect((await previewResponse).status()).toBe(200)
+    const applyResponse = page.waitForResponse((response) => (
+      response.request().method() === 'POST'
+      && new URL(response.url()).pathname === '/api/tags/operations/apply'
+    ))
+    await dialog.locator('.tag-management-preview .primary').click()
+    expect((await applyResponse).status()).toBe(200)
+    await expect(dialog).toHaveAttribute('data-state', 'success')
+    await expect(dialog).toHaveAttribute('data-undo-state', 'undo-available')
+  }
+
+  try {
+    for (const fixture of fixtures) {
+      await createDoc(request, fixture.slug, `# ${fixture.slug}\n\n${fixture.body}`, createdPaths)
+      await setDocumentTags(request, fixture.slug, fixture.tags)
+    }
+
+    await page.goto('/vault')
+    await waitForVaultReady(page)
+    await page.locator('.activity-bar .ab-btn').nth(1).click()
+
+    const renameSource = await tagByName(renameSourceName)
+    await page.locator('.tag-entry').filter({ hasText: `#${renameSourceName}` }).click()
+    let dialog = await openDialog()
+    await ordinaryRename(dialog, renameSource.id, renameDestinationName)
+    await undoLatestChange(page, dialog, 'Undo Rename', true)
+    await closeDialog(dialog)
+    expect(await tagByName(renameSourceName)).toMatchObject({ id: renameSource.id, displayName: renameSourceName })
+    await expect(page.locator('.tag-entry').filter({ hasText: `#${renameSourceName}` })).toHaveCount(1)
+
+    const displaySource = await tagByName(displaySourceName)
+    await page.locator('.tag-entry').filter({ hasText: `#${displaySourceName}` }).click()
+    dialog = await openDialog()
+    await ordinaryRename(dialog, displaySource.id, displayDestinationName)
+    await undoLatestChange(page, dialog, 'Undo Display Rename')
+    await closeDialog(dialog)
+    expect(await tagByName(displaySourceName)).toMatchObject({ id: displaySource.id, displayName: displaySourceName })
+
+    const mergeSource = await tagByName(mergeSourceName)
+    const mergeDestination = await tagByName(mergeDestinationName)
+    await page.locator('.tag-entry').filter({ hasText: `#${mergeSourceName}` }).click()
+    dialog = await openDialog()
+    await dialog.locator('[data-operation="merge"]').click()
+    await dialog.locator('#tag-management-source').selectOption(String(mergeSource.id))
+    await dialog.locator('#tag-management-destination-search').fill(mergeDestinationName)
+    await dialog.locator('#tag-management-destination').selectOption(String(mergeDestination.id))
+    let previewResponse = page.waitForResponse((response) => (
+      response.request().method() === 'POST'
+      && new URL(response.url()).pathname === '/api/tags/operations/preview'
+    ))
+    await dialog.locator('form button[type="submit"]').click()
+    expect((await previewResponse).status()).toBe(200)
+    let applyResponse = page.waitForResponse((response) => (
+      response.request().method() === 'POST'
+      && new URL(response.url()).pathname === '/api/tags/operations/apply'
+    ))
+    await dialog.locator('.tag-management-preview .primary').click()
+    expect((await applyResponse).status()).toBe(200)
+    await expect(dialog).toHaveAttribute('data-state', 'success')
+    await expect(dialog).toHaveAttribute('data-undo-state', 'undo-available')
+    await undoLatestChange(page, dialog, 'Undo Merge')
+    await closeDialog(dialog)
+    expect(await tagByName(mergeSourceName)).toMatchObject({ id: mergeSource.id, displayName: mergeSourceName })
+    expect(await tagByName(mergeDestinationName)).toMatchObject({ id: mergeDestination.id, displayName: mergeDestinationName })
+    await expect((await readPostDetail(request, fixtures[2].slug)).metadata.tags).toEqual([mergeSourceName])
+    await expect((await readPostDetail(request, fixtures[3].slug)).metadata.tags).toEqual([mergeDestinationName])
+    expect((await readPostDetail(request, fixtures[4].slug)).metadata.tags.sort()).toEqual([mergeSourceName, mergeDestinationName].sort())
+
+    const removeSource = await tagByName(removeSourceName)
+    await page.locator('.tag-entry').filter({ hasText: `#${removeSourceName}` }).click()
+    dialog = await openDialog()
+    await dialog.locator('[data-operation="remove"]').click()
+    await dialog.locator('#tag-management-source').selectOption(String(removeSource.id))
+    previewResponse = page.waitForResponse((response) => (
+      response.request().method() === 'POST'
+      && new URL(response.url()).pathname === '/api/tags/operations/preview'
+    ))
+    await dialog.locator('form button[type="submit"]').click()
+    expect((await previewResponse).status()).toBe(200)
+    applyResponse = page.waitForResponse((response) => (
+      response.request().method() === 'POST'
+      && new URL(response.url()).pathname === '/api/tags/operations/apply'
+    ))
+    await dialog.locator('[data-action="remove-apply"]').click()
+    const removeConfirmation = page.getByRole('alertdialog')
+    await removeConfirmation.getByRole('button', { name: `Remove #${removeSourceName}` }).click()
+    expect((await applyResponse).status()).toBe(200)
+    await expect(dialog).toHaveAttribute('data-state', 'success')
+    await expect(dialog).toHaveAttribute('data-undo-state', 'undo-available')
+    await undoLatestChange(page, dialog, 'Undo Remove')
+    await closeDialog(dialog)
+    expect(await tagByName(removeSourceName)).toMatchObject({ id: removeSource.id, displayName: removeSourceName })
+    await expect((await readPostDetail(request, fixtures[5].slug)).metadata.tags).toEqual([removeSourceName])
   } finally {
     await cleanupCreatedPaths(request, createdPaths)
   }

@@ -103,7 +103,15 @@ import {
   type TagOperationRequest,
 } from '../lib/tag-management-api'
 import {
+  getUndoAvailability,
+  recoverCommittedUndo as recoverCommittedUndoStatus,
+  type UndoApplyResult,
+  type UndoAvailability,
+} from '../lib/tag-undo-api'
+import {
+  reconcileCommittedUndoTagSelection,
   reconcileCommittedTagSelectionFromOperation,
+  reconcileUndoTagSelection,
   reconcileTagSelection,
   type TagSelectionSnapshot,
 } from '../lib/tag-selection-reconciliation'
@@ -1576,10 +1584,11 @@ function selectTag(tag: string): void {
 async function synchronizeCommittedTagOperation(
   result: TagOperationApplyResult,
   snapshot: TagSelectionSnapshot,
-): Promise<{ managedTags: ManagedTag[]; selectedTag: string | null }> {
-  const [, freshTags] = await Promise.all([
+): Promise<{ managedTags: ManagedTag[]; selectedTag: string | null; undoAvailability: UndoAvailability }> {
+  const [, freshTags, undoAvailability] = await Promise.all([
     refresh(),
     listManagedTags(),
+    getUndoAvailability(),
   ])
   const reconciled = reconcileTagSelection({
     snapshot,
@@ -1590,7 +1599,7 @@ async function synchronizeCommittedTagOperation(
     managedTags: freshTags,
   })
   selectedTag.value = reconciled
-  return { managedTags: freshTags, selectedTag: reconciled }
+  return { managedTags: freshTags, selectedTag: reconciled, undoAvailability }
 }
 
 /**
@@ -1601,10 +1610,11 @@ async function synchronizeCommittedTagOperation(
 async function recoverCommittedTagOperation(
   operation: TagOperationRequest,
   snapshot: TagSelectionSnapshot,
-): Promise<{ managedTags: ManagedTag[]; selectedTag: string | null }> {
-  const [, freshTags] = await Promise.all([
+): Promise<{ managedTags: ManagedTag[]; selectedTag: string | null; undoAvailability: UndoAvailability }> {
+  const [, freshTags, undoAvailability] = await Promise.all([
     refresh(),
     listManagedTags(),
+    getUndoAvailability(),
   ])
   const reconciled = reconcileCommittedTagSelectionFromOperation({
     snapshot,
@@ -1614,7 +1624,95 @@ async function recoverCommittedTagOperation(
     managedTags: freshTags,
   })
   selectedTag.value = reconciled
-  return { managedTags: freshTags, selectedTag: reconciled }
+  return { managedTags: freshTags, selectedTag: reconciled, undoAvailability }
+}
+
+interface UndoSynchronizationResult {
+  managedTags: ManagedTag[]
+  selectedTag: string | null
+  undoAvailability: UndoAvailability
+}
+
+interface CommittedUndoRecoveryResult extends UndoSynchronizationResult {
+  outcome: 'consumed' | 'superseded' | 'terminal-unavailable'
+}
+
+/** VaultView owns the authoritative post/managed-tag/Undo read cycle after a
+ * trusted Undo Apply. The dialog never mutates production selection or tag
+ * projections optimistically. */
+async function synchronizeCommittedUndo(
+  result: UndoApplyResult,
+  snapshot: TagSelectionSnapshot,
+): Promise<UndoSynchronizationResult> {
+  const [, freshTags, undoAvailability] = await Promise.all([
+    refresh(),
+    listManagedTags(),
+    getUndoAvailability(),
+  ])
+  const reconciled = reconcileUndoTagSelection({
+    snapshot,
+    currentSelectedTag: selectedTag.value,
+    currentSelectionEpoch: tagSelectionEpoch.value,
+    result,
+    managedTags: freshTags,
+  })
+  selectedTag.value = reconciled
+  return { managedTags: freshTags, selectedTag: reconciled, undoAvailability }
+}
+
+/** Read-only recovery for an Apply response that may have committed. The
+ * submitted record ID is the only recovery anchor; no Undo Apply is issued
+ * from this seam. */
+async function recoverCommittedUndo(
+  recordId: string,
+  snapshot: TagSelectionSnapshot,
+): Promise<CommittedUndoRecoveryResult> {
+  const recovered = await recoverCommittedUndoStatus(recordId)
+  const [, freshTags, undoAvailability] = await Promise.all([
+    refresh(),
+    listManagedTags(),
+    getUndoAvailability(),
+  ])
+
+  if (recovered.state === 'consumed' && recovered.reasonCode === 'UNDO_ALREADY_APPLIED') {
+    const reconciled = reconcileCommittedUndoTagSelection({
+      snapshot,
+      currentSelectedTag: selectedTag.value,
+      currentSelectionEpoch: tagSelectionEpoch.value,
+      availability: recovered,
+      managedTags: freshTags,
+    })
+    selectedTag.value = reconciled
+    return {
+      managedTags: freshTags,
+      selectedTag: reconciled,
+      undoAvailability,
+      outcome: 'consumed',
+    }
+  }
+
+  if (recovered.state === 'superseded') {
+    return {
+      managedTags: freshTags,
+      selectedTag: selectedTag.value,
+      undoAvailability,
+      outcome: 'superseded',
+    }
+  }
+
+  if (recovered.state === 'terminal-unavailable') {
+    return {
+      managedTags: freshTags,
+      selectedTag: selectedTag.value,
+      undoAvailability,
+      outcome: 'terminal-unavailable',
+    }
+  }
+
+  // A read that cannot prove consumed/superseded status must not be treated
+  // as evidence that the mutation committed. The dialog keeps the operation
+  // in read-only synchronization-pending recovery.
+  throw new Error('Committed Undo could not be proven by authoritative recovery')
 }
 
 /* ---------- Bi-directional links ---------- */
@@ -1690,6 +1788,8 @@ watch(isReadMode, async (reading) => {
       :selection-epoch="tagSelectionEpoch"
       :sync-after-commit="synchronizeCommittedTagOperation"
       :recover-committed-operation="recoverCommittedTagOperation"
+      :sync-after-undo="synchronizeCommittedUndo"
+      :recover-committed-undo="recoverCommittedUndo"
       @close="tagManagementOpen = false"
     />
 

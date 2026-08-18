@@ -3,11 +3,14 @@
 import { describe, expect, it } from 'vitest'
 import {
   captureTagSelection,
+  reconcileCommittedUndoTagSelection,
   reconcileCommittedTagSelectionFromOperation,
+  reconcileUndoTagSelection,
   reconcileTagSelection,
   resolveManagedTagId,
 } from '../tag-selection-reconciliation'
 import type { ManagedTag, TagOperationApplyResult, TagOperationRequest } from '../tag-management-api'
+import type { UndoApplyResult, UndoAvailability, UndoPreview } from '../tag-undo-api'
 
 const tags: ManagedTag[] = [
   { id: 7, normalizedName: 'java', displayName: 'Java', documentCount: 4 },
@@ -15,6 +18,62 @@ const tags: ManagedTag[] = [
   { id: 20, normalizedName: 'python', displayName: 'Python', documentCount: 2 },
 ]
 const workTag: ManagedTag = { id: 30, normalizedName: 'work', displayName: 'Work', documentCount: 1 }
+
+const undoAvailability: UndoAvailability = {
+  supported: true,
+  state: 'available',
+  validation: 'safe',
+  recordId: 'record-1',
+  originalOperationId: 'operation-1',
+  originalResultId: 'result-1',
+  kind: 'rename',
+  displayOnly: false,
+  committedAt: 1,
+  sourceBefore: { id: 7, normalizedName: 'java', displayName: 'Java' },
+  sourceAfter: { id: 7, normalizedName: 'backend', displayName: 'Backend' },
+  destinationBefore: null,
+  destinationAfter: null,
+  affectedCount: 1,
+  associationAdds: 0,
+  associationRemoves: 0,
+  versionUpdateCount: 1,
+  reasonCode: null,
+}
+
+function undoPreview(overrides: Partial<UndoPreview> = {}): UndoPreview {
+  return {
+    ...undoAvailability,
+    warnings: [],
+    sample: [],
+    nextCursor: null,
+    undoFingerprint: 'a'.repeat(64),
+    undoContractVersion: 'tag-undo-fingerprint-v1',
+    allowedToApply: true,
+    ...overrides,
+  }
+}
+
+function undoResult(overrides: Partial<UndoApplyResult> = {}): UndoApplyResult {
+  return {
+    undoRecordId: 'record-1',
+    originalOperationId: 'operation-1',
+    originalResultId: 'result-1',
+    undoOperationId: 'undo-operation-1',
+    undoResultId: 'undo-result-1',
+    kind: 'rename',
+    displayOnly: false,
+    sourceTag: { id: 7, normalizedName: 'java', displayName: 'Java' },
+    destinationTag: null,
+    affectedCount: 1,
+    associationAdds: 0,
+    associationRemoves: 0,
+    versionUpdateCount: 1,
+    committedAt: 2,
+    appliedUndoFingerprint: 'a'.repeat(64),
+    lifecycle: 'consumed',
+    ...overrides,
+  }
+}
 
 function result(operation: TagOperationRequest, overrides: Partial<TagOperationApplyResult> = {}): TagOperationApplyResult {
   return {
@@ -237,5 +296,140 @@ describe('tag selection reconciliation', () => {
       operation,
       managedTags: freshTags,
     })).toBe('Python')
+  })
+
+  it('reconciles Rename Undo and Display Rename Undo by the original stable source ID', () => {
+    const rename = undoPreview()
+    expect(reconcileUndoTagSelection({
+      snapshot: captureTagSelection('Backend', [{ ...tags[0]!, normalizedName: 'backend', displayName: 'Backend' }, tags[1]!], 1),
+      currentSelectedTag: 'Backend',
+      currentSelectionEpoch: 1,
+      preview: rename,
+      result: undoResult(),
+      managedTags: tags,
+    })).toBe('Java')
+
+    const displayRename = undoPreview({
+      displayOnly: true,
+      sourceAfter: { id: 7, normalizedName: 'java', displayName: 'JAVA' },
+    })
+    expect(reconcileCommittedUndoTagSelection({
+      snapshot: captureTagSelection('JAVA', [{ ...tags[0]! }], 1),
+      currentSelectedTag: 'JAVA',
+      currentSelectionEpoch: 1,
+      availability: displayRename,
+      managedTags: tags,
+    })).toBe('Java')
+  })
+
+  it('restores Merge source, preserves destination, and preserves unrelated stable selection', () => {
+    const merge = undoPreview({
+      kind: 'merge',
+      sourceBefore: { id: 7, normalizedName: 'java', displayName: 'Java' },
+      sourceAfter: null,
+      destinationBefore: { id: 9, normalizedName: 'backend', displayName: 'Backend' },
+      destinationAfter: { id: 9, normalizedName: 'backend', displayName: 'Backend' },
+    })
+    const mergeResult = undoResult({
+      kind: 'merge',
+      sourceTag: merge.sourceBefore!,
+      destinationTag: merge.destinationAfter,
+    })
+    const fresh = [tags[0]!, tags[1]!, { id: 9, normalizedName: 'backend', displayName: 'Backend', documentCount: 1 }]
+    expect(reconcileUndoTagSelection({
+      snapshot: captureTagSelection('Java', tags, 1),
+      currentSelectedTag: 'Java',
+      currentSelectionEpoch: 1,
+      preview: merge,
+      result: mergeResult,
+      managedTags: fresh,
+    })).toBe('Java')
+    expect(reconcileUndoTagSelection({
+      snapshot: captureTagSelection('Backend', fresh, 1),
+      currentSelectedTag: 'Backend',
+      currentSelectionEpoch: 1,
+      preview: merge,
+      result: mergeResult,
+      managedTags: fresh,
+    })).toBe('Backend')
+    expect(reconcileUndoTagSelection({
+      snapshot: captureTagSelection('Python', tags, 1),
+      currentSelectedTag: 'Python',
+      currentSelectionEpoch: 1,
+      preview: merge,
+      result: mergeResult,
+      managedTags: tags,
+    })).toBe('Python')
+  })
+
+  it('restores Remove source only when the stable ID was resolved, never by display coincidence', () => {
+    const remove = undoPreview({
+      kind: 'remove',
+      sourceBefore: { id: 7, normalizedName: 'java', displayName: 'Java' },
+      sourceAfter: null,
+      destinationBefore: null,
+      destinationAfter: null,
+    })
+    const result = undoResult({ kind: 'remove', sourceTag: remove.sourceBefore! })
+    const restored = [...tags]
+    expect(reconcileUndoTagSelection({
+      snapshot: { selectedTag: 'Java', selectedTagId: 7, selectionEpoch: 1 },
+      currentSelectedTag: 'Java',
+      currentSelectionEpoch: 1,
+      preview: remove,
+      result,
+      managedTags: restored,
+    })).toBe('Java')
+    expect(reconcileUndoTagSelection({
+      snapshot: { selectedTag: 'Java', selectedTagId: null, selectionEpoch: 1 },
+      currentSelectedTag: 'Java',
+      currentSelectionEpoch: 1,
+      preview: remove,
+      result,
+      managedTags: restored,
+    })).toBeNull()
+  })
+
+  it('lets a newer user selection win and fails closed when the expected stable ID is absent', () => {
+    const preview = undoPreview()
+    const result = undoResult()
+    expect(reconcileUndoTagSelection({
+      snapshot: captureTagSelection('Backend', [{ ...tags[0]!, normalizedName: 'backend' }], 4),
+      currentSelectedTag: 'Python',
+      currentSelectionEpoch: 5,
+      preview,
+      result,
+      managedTags: tags,
+    })).toBe('Python')
+    expect(reconcileUndoTagSelection({
+      snapshot: { selectedTag: 'Backend', selectedTagId: 7, selectionEpoch: 4 },
+      currentSelectedTag: 'Backend',
+      currentSelectionEpoch: 4,
+      preview,
+      result,
+      managedTags: tags.filter((tag) => tag.id !== 7),
+    })).toBeNull()
+  })
+
+  it('ignores contradictory Apply identity during committed recovery', () => {
+    const consumed = {
+      ...undoAvailability,
+      state: 'consumed' as const,
+      validation: 'terminal-unavailable' as const,
+      reasonCode: 'UNDO_ALREADY_APPLIED',
+      sourceBefore: { id: 7, normalizedName: 'java', displayName: 'Java' },
+      sourceAfter: { id: 7, normalizedName: 'backend', displayName: 'Backend' },
+    }
+    const contradictory = undoResult({
+      sourceTag: { id: 999, normalizedName: 'wrong', displayName: 'Wrong' },
+    })
+    expect(contradictory.sourceTag.id).toBe(999)
+    expect(reconcileCommittedUndoTagSelection({
+      snapshot: { selectedTag: 'Backend', selectedTagId: 7, selectionEpoch: 1 },
+      currentSelectedTag: 'Backend',
+      currentSelectionEpoch: 1,
+      availability: consumed,
+      managedTags: tags,
+    })).toBe('Java')
   })
 })

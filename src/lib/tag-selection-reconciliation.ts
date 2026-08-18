@@ -4,12 +4,22 @@ import type {
   TagOperationApplyResult,
   TagOperationRequest,
 } from './tag-management-api'
+import type {
+  UndoApplyResult,
+  UndoAvailability,
+  UndoPreview,
+} from './tag-undo-api'
 
 export interface TagSelectionSnapshot {
   selectedTag: string | null
   selectedTagId: number | null
   selectionEpoch: number
 }
+
+/** Undo uses the same stable selection snapshot contract as ordinary Tag
+ * Management. The alias makes the ownership boundary explicit at call sites
+ * without creating a second, display-string-based selection model. */
+export type UndoSelectionSnapshot = TagSelectionSnapshot
 
 export interface ReconcileTagSelectionInput {
   snapshot: TagSelectionSnapshot
@@ -25,6 +35,27 @@ export interface ReconcileCommittedTagSelectionInput {
   currentSelectedTag: string | null
   currentSelectionEpoch: number
   operation: TagOperationRequest
+  managedTags: readonly ManagedTag[]
+}
+
+export interface ReconcileUndoTagSelectionInput {
+  snapshot: UndoSelectionSnapshot
+  currentSelectedTag: string | null
+  currentSelectionEpoch: number
+  /** The reviewed Preview is preferred. A trusted Apply result is sufficient
+   * for the normal committed path when VaultView does not retain the Preview. */
+  preview?: UndoPreview | null
+  result: UndoApplyResult
+  managedTags: readonly ManagedTag[]
+}
+
+export interface ReconcileCommittedUndoTagSelectionInput {
+  snapshot: UndoSelectionSnapshot
+  currentSelectedTag: string | null
+  currentSelectionEpoch: number
+  /** Recovery is read-only. This is the authoritative consumed-record state,
+   * never an untrusted contradictory Apply response. */
+  availability: UndoAvailability
   managedTags: readonly ManagedTag[]
 }
 
@@ -133,4 +164,82 @@ export function reconcileCommittedTagSelectionFromOperation(
     committedReconciledId(input.snapshot, input.operation),
     input.managedTags,
   )
+}
+
+function undoSourceId(
+  preview: UndoPreview | null | undefined,
+  result: UndoApplyResult | null,
+): number | null {
+  return preview?.sourceBefore?.id ?? result?.sourceTag.id ?? null
+}
+
+function undoDestinationId(
+  preview: UndoPreview | null | undefined,
+  result: UndoApplyResult | null,
+): number | null {
+  return preview?.destinationAfter?.id ?? result?.destinationTag?.id ?? null
+}
+
+function reconciledUndoId(
+  snapshot: UndoSelectionSnapshot,
+  preview: UndoPreview | null | undefined,
+  result: UndoApplyResult | null,
+): number | null {
+  const selectedId = snapshot.selectedTagId
+  if (selectedId === null) return null
+
+  const sourceId = undoSourceId(preview, result)
+  if (sourceId !== null && selectedId === sourceId) return sourceId
+
+  // Merge Undo restores the source row but leaves the destination row in
+  // place. Stable IDs, rather than the current display strings, distinguish
+  // those two valid selection outcomes.
+  if ((preview?.kind ?? result?.kind) === 'merge') {
+    const destinationId = undoDestinationId(preview, result)
+    if (destinationId !== null && selectedId === destinationId) return destinationId
+  }
+
+  // Remove Undo and all unrelated selections preserve the same stable ID.
+  // displayForId below intentionally returns null when the fresh list cannot
+  // prove that the row still exists.
+  return selectedId
+}
+
+/** Reconcile a trusted, normally committed Undo against fresh managed tags.
+ * The preview is used when available; the validated Apply result is the
+ * fallback for VaultView's post-commit seam. */
+export function reconcileUndoTagSelection(input: ReconcileUndoTagSelectionInput): string | null {
+  if (input.currentSelectionEpoch !== input.snapshot.selectionEpoch) {
+    return input.currentSelectedTag
+  }
+
+  return displayForId(
+    reconciledUndoId(input.snapshot, input.preview, input.result),
+    input.managedTags,
+  )
+}
+
+/** Reconcile a committed-but-untrusted Apply response using only the
+ * read-only consumed record and fresh tags. Contradictory response identity
+ * fields never enter this function. */
+export function reconcileCommittedUndoTagSelection(
+  input: ReconcileCommittedUndoTagSelectionInput,
+): string | null {
+  if (input.currentSelectionEpoch !== input.snapshot.selectionEpoch) {
+    return input.currentSelectedTag
+  }
+
+  const availability = input.availability
+  const sourceId = availability.sourceBefore?.id ?? null
+  let selectedId = input.snapshot.selectedTagId
+  if (selectedId !== null && sourceId !== null && selectedId === sourceId) {
+    selectedId = sourceId
+  } else if (availability.kind === 'merge') {
+    const destinationId = availability.destinationAfter?.id ?? null
+    if (selectedId !== null && destinationId !== null && selectedId === destinationId) {
+      selectedId = destinationId
+    }
+  }
+
+  return displayForId(selectedId, input.managedTags)
 }

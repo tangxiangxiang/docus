@@ -15,6 +15,11 @@ import {
   reconcileTagSelection,
   type TagSelectionSnapshot,
 } from '../../../lib/tag-selection-reconciliation'
+import type {
+  UndoApplyResult,
+  UndoAvailability,
+  UndoPreview,
+} from '../../../lib/tag-undo-api'
 
 const mocks = vi.hoisted(() => ({
   listManagedTags: vi.fn(),
@@ -22,6 +27,11 @@ const mocks = vi.hoisted(() => ({
   getTagOperationPreviewPage: vi.fn(),
   applyTagOperation: vi.fn(),
   assertApplyResultMatchesReviewedPreview: vi.fn(),
+  getUndoAvailability: vi.fn(),
+  previewUndo: vi.fn(),
+  getUndoPreviewPage: vi.fn(),
+  applyUndo: vi.fn(),
+  recoverCommittedUndo: vi.fn(),
   confirmCancellable: vi.fn(),
   TagManagementApiError: class extends Error {
     readonly status: number
@@ -33,9 +43,22 @@ const mocks = vi.hoisted(() => ({
       this.code = code
     }
   },
+  TagUndoApiError: class extends Error {
+    readonly status: number
+    readonly code: string
+    readonly recoveryRecordId: string | null
+    constructor(message: string, status: number, code: string, recoveryRecordId: string | null = null) {
+      super(message)
+      this.name = 'TagUndoApiError'
+      this.status = status
+      this.code = code
+      this.recoveryRecordId = recoveryRecordId
+    }
+  },
 }))
 
 vi.mock('../../../lib/tag-management-api', () => mocks)
+vi.mock('../../../lib/tag-undo-api', () => mocks)
 vi.mock('../../../composables/useConfirm', () => ({
   useConfirm: () => ({ confirmCancellable: mocks.confirmCancellable }),
 }))
@@ -214,6 +237,71 @@ function makeRemoveResult(overrides: Partial<TagOperationApplyResult> = {}): Tag
   }
 }
 
+const undoRecordId = 'undo-record-1'
+const undoFingerprint = 'b'.repeat(64)
+const undoSourceBefore = { id: 7, normalizedName: 'java', displayName: 'Java' }
+const undoSourceAfter = { id: 7, normalizedName: 'backend', displayName: 'Backend' }
+const undoDestination = { id: 20, normalizedName: 'python', displayName: 'Python' }
+
+function makeUndoAvailability(overrides: Partial<UndoAvailability> = {}): UndoAvailability {
+  return {
+    supported: true,
+    state: 'available',
+    validation: 'safe',
+    recordId: undoRecordId,
+    originalOperationId: 'original-operation-1',
+    originalResultId: 'original-result-1',
+    kind: 'rename',
+    displayOnly: false,
+    committedAt: 1_700_000_000_000,
+    sourceBefore: undoSourceBefore,
+    sourceAfter: undoSourceAfter,
+    destinationBefore: null,
+    destinationAfter: null,
+    affectedCount: 3,
+    associationAdds: 0,
+    associationRemoves: 0,
+    versionUpdateCount: 3,
+    reasonCode: null,
+    ...overrides,
+  }
+}
+
+function makeUndoPreview(overrides: Partial<UndoPreview> = {}): UndoPreview {
+  return {
+    ...makeUndoAvailability(),
+    warnings: [],
+    sample: [{ id: 'doc-undo-1', path: 'inbox/undo-one', title: 'Undo One' }],
+    nextCursor: null,
+    undoFingerprint,
+    undoContractVersion: 'tag-undo-fingerprint-v1',
+    allowedToApply: true,
+    ...overrides,
+  }
+}
+
+function makeUndoResult(overrides: Partial<UndoApplyResult> = {}): UndoApplyResult {
+  return {
+    undoRecordId,
+    originalOperationId: 'original-operation-1',
+    originalResultId: 'original-result-1',
+    undoOperationId: 'undo-operation-1',
+    undoResultId: 'undo-result-1',
+    kind: 'rename',
+    displayOnly: false,
+    sourceTag: undoSourceBefore,
+    destinationTag: null,
+    affectedCount: 3,
+    associationAdds: 0,
+    associationRemoves: 0,
+    versionUpdateCount: 3,
+    committedAt: 1_700_000_000_100,
+    appliedUndoFingerprint: undoFingerprint,
+    lifecycle: 'consumed',
+    ...overrides,
+  }
+}
+
 function mountDialog(options: {
   selectedTag?: string | null
   selectionEpoch?: number
@@ -226,6 +314,23 @@ function mountDialog(options: {
     operation: TagOperationRequest,
     snapshot: TagSelectionSnapshot,
   ) => Promise<{ managedTags: ManagedTag[]; selectedTag: string | null }>
+  syncAfterUndo?: (
+    result: UndoApplyResult,
+    snapshot: TagSelectionSnapshot,
+  ) => Promise<{
+    managedTags: ManagedTag[]
+    selectedTag: string | null
+    undoAvailability: UndoAvailability
+  }>
+  recoverCommittedUndo?: (
+    recordId: string,
+    snapshot: TagSelectionSnapshot,
+  ) => Promise<{
+    managedTags: ManagedTag[]
+    selectedTag: string | null
+    undoAvailability: UndoAvailability
+    outcome: 'consumed' | 'superseded' | 'terminal-unavailable'
+  }>
 } = {}): VueWrapper {
   const syncAfterCommit = options.syncAfterCommit ?? (async (
     result: TagOperationApplyResult,
@@ -273,6 +378,8 @@ function mountDialog(options: {
       selectionEpoch: options.selectionEpoch ?? 0,
       syncAfterCommit,
       recoverCommittedOperation,
+      ...(options.syncAfterUndo ? { syncAfterUndo: options.syncAfterUndo } : {}),
+      ...(options.recoverCommittedUndo ? { recoverCommittedUndo: options.recoverCommittedUndo } : {}),
     },
   })
 }
@@ -289,12 +396,31 @@ function resolveRemovalConfirmation(value: boolean): void {
   })
 }
 
+function resolveUndoConfirmation(value: boolean): void {
+  mocks.confirmCancellable.mockReturnValueOnce({
+    promise: Promise.resolve(value),
+    cancel: vi.fn(),
+  })
+}
+
 function pendingRemovalConfirmation(): { resolve: (value: boolean) => void; cancel: ReturnType<typeof vi.fn> } {
   let resolve!: (value: boolean) => void
   const promise = new Promise<boolean>((next) => { resolve = next })
   const cancel = vi.fn(() => resolve(false))
   mocks.confirmCancellable.mockReturnValueOnce({ promise, cancel })
   return { resolve, cancel }
+}
+
+function pendingUndoConfirmation(): { resolve: (value: boolean) => void; cancel: ReturnType<typeof vi.fn> } {
+  let resolve!: (value: boolean) => void
+  const promise = new Promise<boolean>((next) => { resolve = next })
+  const cancel = vi.fn(() => resolve(false))
+  mocks.confirmCancellable.mockReturnValueOnce({ promise, cancel })
+  return { resolve, cancel }
+}
+
+function enableUndoAvailability(overrides: Partial<UndoAvailability> = {}): void {
+  mocks.getUndoAvailability.mockReset().mockResolvedValue(makeUndoAvailability(overrides))
 }
 
 describe('TagManagementDialog', () => {
@@ -310,6 +436,14 @@ describe('TagManagementDialog', () => {
     }))
     mocks.applyTagOperation.mockReset().mockResolvedValue(makeResult())
     mocks.assertApplyResultMatchesReviewedPreview.mockReset()
+    mocks.getUndoAvailability.mockReset().mockRejectedValue(new mocks.TagUndoApiError('old server', 404, 'UNDO_UNAVAILABLE'))
+    mocks.previewUndo.mockReset().mockResolvedValue(makeUndoPreview())
+    mocks.getUndoPreviewPage.mockReset().mockResolvedValue(makeUndoPreview({
+      sample: [{ id: 'doc-undo-2', path: 'inbox/undo-two', title: 'Undo Two' }],
+      nextCursor: null,
+    }))
+    mocks.applyUndo.mockReset().mockResolvedValue(makeUndoResult())
+    mocks.recoverCommittedUndo.mockReset()
     mocks.confirmCancellable.mockReset()
   })
 
@@ -335,6 +469,250 @@ describe('TagManagementDialog', () => {
     expect(wrapper.text()).toContain('Manage tags')
     expect(wrapper.find('[data-operation="remove"]').exists()).toBe(true)
     expect(wrapper.find('[data-operation="merge"]').exists()).toBe(true)
+  })
+
+  it('hides Undo when authoritative availability is unavailable', async () => {
+    const wrapper = mountTracked()
+    await settle()
+    expect(mocks.getUndoAvailability).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('[data-action="undo-preview"]').exists()).toBe(false)
+    expect(wrapper.find('[data-undo-last-change]').exists()).toBe(false)
+  })
+
+  it('does not expose Preview while availability is temporarily unavailable', async () => {
+    enableUndoAvailability({ validation: 'temporary-unavailable' })
+    const wrapper = mountTracked()
+    await settle()
+    expect(wrapper.get('[data-undo-state]').attributes('data-undo-state')).toBe('undo-unavailable')
+    expect(wrapper.find('[data-action="undo-preview"]').exists()).toBe(false)
+    expect(wrapper.find('[data-undo-last-change]').exists()).toBe(false)
+  })
+
+  it('renders an authoritative Last Change and requires Preview before Undo Apply', async () => {
+    enableUndoAvailability()
+    const wrapper = mountTracked()
+    await settle()
+    expect(wrapper.get('[data-undo-state]').attributes('data-undo-state')).toBe('undo-available')
+    expect(wrapper.get('[data-undo-last-change]').text()).toContain('Last change')
+    expect(wrapper.get('[data-undo-last-change]').text()).toContain('Undo Rename')
+    expect(wrapper.get('[data-undo-last-change]').text()).toContain('Java')
+    expect(wrapper.get('[data-undo-last-change]').text()).toContain('Backend')
+    expect(wrapper.find('[data-action="undo-apply"]').exists()).toBe(false)
+    expect(mocks.applyUndo).not.toHaveBeenCalled()
+
+    await wrapper.get('[data-action="undo-preview"]').trigger('click')
+    await settle()
+    expect(mocks.previewUndo).toHaveBeenCalledWith(undoRecordId, 20)
+    expect(wrapper.get('[data-undo-state]').attributes('data-undo-state')).toBe('undo-preview-ready')
+    expect(wrapper.get('[data-undo-preview]').text()).toContain('Undo Preview ready')
+    expect(wrapper.get('[data-undo-preview]').text()).toContain('Documents and Markdown content are preserved')
+    expect(wrapper.get('[data-undo-preview]').text()).toContain('Undo One')
+  })
+
+  it('keeps Display Rename visibly distinct in Last Change and Preview', async () => {
+    enableUndoAvailability({
+      displayOnly: true,
+      sourceAfter: { id: 7, normalizedName: 'java', displayName: 'JAVA' },
+    })
+    mocks.previewUndo.mockResolvedValueOnce(makeUndoPreview({
+      displayOnly: true,
+      sourceAfter: { id: 7, normalizedName: 'java', displayName: 'JAVA' },
+    }))
+    const wrapper = mountTracked()
+    await settle()
+    expect(wrapper.get('[data-undo-last-change]').text()).toContain('Undo Display Rename')
+    await wrapper.get('[data-action="undo-preview"]').trigger('click')
+    await settle()
+    expect(wrapper.get('[data-undo-preview]').text()).toContain('Undo Display Rename')
+    expect(wrapper.get('[data-undo-preview]').text()).not.toContain('Undo Rename')
+  })
+
+  it('renders bounded Merge and Remove Undo summaries and warning meanings', async () => {
+    enableUndoAvailability({
+      kind: 'merge',
+      sourceBefore: undoSourceBefore,
+      sourceAfter: null,
+      destinationBefore: undoDestination,
+      destinationAfter: undoDestination,
+      associationAdds: 2,
+      associationRemoves: 3,
+      versionUpdateCount: 4,
+    })
+    mocks.previewUndo.mockResolvedValueOnce(makeUndoPreview({
+      kind: 'merge',
+      sourceBefore: undoSourceBefore,
+      sourceAfter: null,
+      destinationBefore: undoDestination,
+      destinationAfter: undoDestination,
+      associationAdds: 2,
+      associationRemoves: 3,
+      versionUpdateCount: 4,
+      warnings: ['DESTRUCTIVE', 'HIGH_IMPACT', 'DYNAMIC_CONFLICT'],
+    }))
+    const wrapper = mountTracked()
+    await settle()
+    expect(wrapper.get('[data-undo-last-change]').text()).toContain('Undo Merge')
+    await wrapper.get('[data-action="undo-preview"]').trigger('click')
+    await settle()
+    const text = wrapper.get('[data-undo-preview]').text()
+    expect(text).toContain('Undo Merge')
+    expect(text).toContain('Destructive impact')
+    expect(text).toContain('High impact')
+    expect(text).toContain('Current-state conflict')
+
+    enableUndoAvailability({
+      kind: 'remove',
+      sourceBefore: undoSourceBefore,
+      sourceAfter: null,
+      destinationBefore: null,
+      destinationAfter: null,
+      associationRemoves: 3,
+    })
+    await wrapper.setProps({ open: false })
+    await wrapper.setProps({ open: true })
+    await settle()
+    expect(wrapper.get('[data-undo-last-change]').text()).toContain('Undo Remove')
+  })
+
+  it('uses ConfirmHost semantics, keeps Preview after Cancel, and Applies Undo once on confirmation', async () => {
+    enableUndoAvailability()
+    const undoAvailabilityAfterCommit = makeUndoAvailability({
+      state: 'consumed',
+      validation: 'terminal-unavailable',
+      reasonCode: 'UNDO_ALREADY_APPLIED',
+    })
+    const syncAfterUndo = vi.fn(async () => ({
+      managedTags: RENAMED_TAGS,
+      selectedTag: 'Backend',
+      undoAvailability: undoAvailabilityAfterCommit,
+    }))
+    const wrapper = mountTracked({ selectedTag: 'Backend', selectionEpoch: 7, syncAfterUndo })
+    await settle()
+    await wrapper.get('[data-action="undo-preview"]').trigger('click')
+    await settle()
+
+    const cancel = pendingUndoConfirmation()
+    await wrapper.get('[data-action="undo-apply"]').trigger('click')
+    await settle()
+    expect(wrapper.get('[data-undo-state]').attributes('data-undo-state')).toBe('undo-confirming')
+    expect(mocks.confirmCancellable).toHaveBeenLastCalledWith(
+      'Confirm Undo Rename?',
+      expect.stringContaining('Document content, Markdown, and Git History are not rolled back'),
+      expect.objectContaining({
+        cancelLabel: 'Cancel',
+        confirmLabel: 'Confirm Undo',
+        destructive: true,
+      }),
+    )
+    cancel.resolve(false)
+    await settle()
+    expect(mocks.applyUndo).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-undo-state]').attributes('data-undo-state')).toBe('undo-preview-ready')
+    expect(wrapper.find('[data-undo-preview]').exists()).toBe(true)
+
+    const confirm = pendingUndoConfirmation()
+    await wrapper.get('[data-action="undo-apply"]').trigger('click')
+    await settle()
+    confirm.resolve(true)
+    await settle()
+    expect(mocks.applyUndo).toHaveBeenCalledTimes(1)
+    expect(mocks.applyUndo).toHaveBeenCalledWith(expect.objectContaining({
+      recordId: undoRecordId,
+      undoFingerprint,
+    }))
+    expect(syncAfterUndo).toHaveBeenCalledTimes(1)
+    expect(wrapper.get('[data-undo-state]').attributes('data-undo-state')).toBe('undo-success')
+    expect(wrapper.get('.tag-management-live').text()).toContain('Undo successful')
+  })
+
+  it('maps conflict and stale Apply failures without a second Apply', async () => {
+    enableUndoAvailability()
+    mocks.applyUndo.mockRejectedValueOnce(new mocks.TagUndoApiError('conflict', 409, 'UNDO_CONFLICT'))
+    const wrapper = mountTracked()
+    await settle()
+    await wrapper.get('[data-action="undo-preview"]').trigger('click')
+    await settle()
+    resolveUndoConfirmation(true)
+    await wrapper.get('[data-action="undo-apply"]').trigger('click')
+    await settle()
+    expect(mocks.applyUndo).toHaveBeenCalledTimes(1)
+    expect(wrapper.get('[data-undo-state]').attributes('data-undo-state')).toBe('undo-conflict')
+    expect(wrapper.find('[data-action="undo-apply"]').exists()).toBe(false)
+
+    enableUndoAvailability()
+    mocks.previewUndo.mockRejectedValueOnce(new mocks.TagUndoApiError('stale', 409, 'UNDO_STALE'))
+    await wrapper.setProps({ open: false })
+    await wrapper.setProps({ open: true })
+    await settle()
+    await wrapper.get('[data-action="undo-preview"]').trigger('click')
+    await settle()
+    expect(wrapper.get('[data-undo-state]').attributes('data-undo-state')).toBe('undo-stale')
+    expect(mocks.applyUndo).toHaveBeenCalledTimes(1)
+  })
+
+  it('recovers a malformed committed response with READ only and never Applies again', async () => {
+    enableUndoAvailability()
+    const recoveredAvailability = makeUndoAvailability({
+      state: 'consumed',
+      validation: 'terminal-unavailable',
+      reasonCode: 'UNDO_ALREADY_APPLIED',
+    })
+    mocks.applyUndo.mockRejectedValueOnce(new mocks.TagUndoApiError(
+      'invalid committed response',
+      200,
+      'CLIENT_PROTOCOL_ERROR',
+      undoRecordId,
+    ))
+    const recoverCommittedUndo = vi.fn(async () => ({
+      managedTags: RENAMED_TAGS,
+      selectedTag: 'Backend',
+      undoAvailability: recoveredAvailability,
+      outcome: 'consumed' as const,
+    }))
+    const wrapper = mountTracked({ recoverCommittedUndo })
+    await settle()
+    await wrapper.get('[data-action="undo-preview"]').trigger('click')
+    await settle()
+    resolveUndoConfirmation(true)
+    await wrapper.get('[data-action="undo-apply"]').trigger('click')
+    await settle()
+    expect(mocks.applyUndo).toHaveBeenCalledTimes(1)
+    expect(recoverCommittedUndo).toHaveBeenCalledWith(undoRecordId, expect.objectContaining({ selectionEpoch: 0 }))
+    expect(wrapper.get('[data-undo-state]').attributes('data-undo-state')).toBe('undo-success')
+    expect(wrapper.find('[data-action="undo-retry-sync"]').exists()).toBe(false)
+  })
+
+  it('enters sync-pending after a known commit and retries synchronization only', async () => {
+    enableUndoAvailability()
+    let attempts = 0
+    const syncAfterUndo = vi.fn(async () => {
+      attempts += 1
+      if (attempts === 1) throw new Error('refresh failed')
+      return {
+        managedTags: RENAMED_TAGS,
+        selectedTag: 'Backend',
+        undoAvailability: makeUndoAvailability({
+          state: 'consumed',
+          validation: 'terminal-unavailable',
+          reasonCode: 'UNDO_ALREADY_APPLIED',
+        }),
+      }
+    })
+    const wrapper = mountTracked({ syncAfterUndo })
+    await settle()
+    await wrapper.get('[data-action="undo-preview"]').trigger('click')
+    await settle()
+    resolveUndoConfirmation(true)
+    await wrapper.get('[data-action="undo-apply"]').trigger('click')
+    await settle()
+    expect(wrapper.get('[data-undo-state]').attributes('data-undo-state')).toBe('undo-sync-pending')
+    expect(wrapper.get('[data-action="undo-retry-sync"]').text()).toBe('Retry synchronization')
+    expect(mocks.applyUndo).toHaveBeenCalledTimes(1)
+    await wrapper.get('[data-action="undo-retry-sync"]').trigger('click')
+    await settle()
+    expect(syncAfterUndo).toHaveBeenCalledTimes(2)
+    expect(mocks.applyUndo).toHaveBeenCalledTimes(1)
+    expect(wrapper.get('[data-undo-state]').attributes('data-undo-state')).toBe('undo-success')
   })
 
   it('renders a safe unavailable state and makes Preview/Apply impossible', async () => {
