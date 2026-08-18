@@ -547,6 +547,11 @@ export type TagUndoPlannerErrorCode =
   | 'INVALID_PREVIEW'
   | 'UNDO_STALE'
   | 'UNDO_TARGET_UNAVAILABLE'
+  | 'UNDO_UNAVAILABLE'
+  | 'UNDO_SUPERSEDED'
+  | 'UNDO_ALREADY_APPLIED'
+  | 'UNDO_RECORD_CORRUPT'
+  | 'TAG_MANAGEMENT_UNAVAILABLE'
 
 export class TagUndoPlannerError extends Error {
   readonly code: TagUndoPlannerErrorCode
@@ -1064,26 +1069,21 @@ function emptyPlan(
 }
 
 function healthFailurePlan(
-  db: DatabaseT,
-  healthCode: string | undefined,
-  healthReason: string | undefined,
-  requestedRecordId: string | undefined,
+  health: ReturnType<typeof initializeTagUndoFoundationHealth>,
 ): TagUndoPlan {
-  const state = readUndoState(db)
-  const record = requestedRecordId && state?.current_record_id === requestedRecordId
-    ? readCurrentRecord(db, requestedRecordId)
-    : null
-  const reasonCode = healthCode ?? 'TAG_UNDO_FOUNDATION_UNHEALTHY'
-  const terminal = Boolean(
-    healthReason && /record contract|record\/delta|delta counts|unsupported|generation|corrupt|association delta|association identity|current pointer|integrity|foreign-key/i.test(healthReason),
-  )
+  const terminal = health.category === 'terminal'
   const availability = baseAvailability(
     terminal ? 'terminal-unavailable' : 'unavailable',
     terminal ? 'terminal-unavailable' : 'temporary-unavailable',
-    reasonCode,
-    record,
+    terminal ? 'UNDO_RECORD_CORRUPT' : 'TAG_MANAGEMENT_UNAVAILABLE',
   )
   return emptyPlan(availability)
+}
+
+function boundedTerminalReasonCode(value: string | null): string {
+  return value && /^[A-Z0-9][A-Z0-9._:-]{0,127}$/.test(value)
+    ? value
+    : 'UNDO_RECORD_CORRUPT'
 }
 
 function readCanonicalCurrentTag(
@@ -1233,7 +1233,7 @@ function buildUndoPlanInTransaction(
 ): TagUndoPlan {
   const health = initializeTagUndoFoundationHealth(db)
   if (health.state !== 'healthy') {
-    return healthFailurePlan(db, health.code, health.reason, requestedRecordId)
+    return healthFailurePlan(health)
   }
   const state = readUndoState(db)
   if (!state) {
@@ -1279,7 +1279,7 @@ function buildUndoPlanInTransaction(
     return emptyPlan(baseAvailability(
       'terminal-unavailable',
       'terminal-unavailable',
-      record.terminal_code ?? 'UNDO_TERMINAL_UNAVAILABLE',
+      boundedTerminalReasonCode(record.terminal_code),
       record,
       views,
       inverse,
@@ -1440,6 +1440,31 @@ function buildUndoPlanInTransaction(
   return withPreviewWindow(plan, sampleLimit)
 }
 
+function assertPreviewPageTargetIsCurrent(plan: TagUndoPlan): void {
+  let code: TagUndoPlannerErrorCode | null = null
+  if (plan.state === 'superseded' || plan.reasonCode === 'UNDO_SUPERSEDED') {
+    code = 'UNDO_SUPERSEDED'
+  } else if (plan.state === 'consumed' || plan.reasonCode === 'UNDO_ALREADY_APPLIED') {
+    code = 'UNDO_ALREADY_APPLIED'
+  } else if (plan.state === 'terminal-unavailable') {
+    code = 'UNDO_RECORD_CORRUPT'
+  } else if (plan.reasonCode === 'TAG_MANAGEMENT_UNAVAILABLE') {
+    code = 'TAG_MANAGEMENT_UNAVAILABLE'
+  } else if (plan.reasonCode === 'UNDO_UNAVAILABLE') {
+    code = 'UNDO_UNAVAILABLE'
+  } else if (plan.reasonCode === 'UNDO_TARGET_UNAVAILABLE') {
+    code = 'UNDO_TARGET_UNAVAILABLE'
+  } else if (!plan.undoFingerprint) {
+    code = 'UNDO_UNAVAILABLE'
+  }
+
+  if (code) {
+    throw new TagUndoPlannerError(code, 'Undo target is not currently pageable', {
+      recordId: plan.recordId,
+    })
+  }
+}
+
 /** Build the full server-only inverse plan from one deferred SQLite snapshot. */
 export function buildTagUndoPlan(
   db: DatabaseT,
@@ -1497,7 +1522,8 @@ export function getTagUndoPreviewPage(
     : assertPreviewLimit(normalized.limit, TAG_UNDO_PREVIEW_PAGE_MAX_LIMIT, 'limit')
   const transaction = db.transaction(() => {
     const plan = buildUndoPlanInTransaction(db, recordId, limit)
-    if (!plan.undoFingerprint || plan.undoFingerprint !== normalized.undoFingerprint) {
+    assertPreviewPageTargetIsCurrent(plan)
+    if (plan.undoFingerprint !== normalized.undoFingerprint) {
       throw new TagUndoPlannerError('UNDO_STALE', 'Undo Preview fingerprint is stale', {
         recordId: plan.recordId,
       })

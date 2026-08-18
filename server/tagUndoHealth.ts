@@ -6,13 +6,21 @@ export const UNDO_FINGERPRINT_CONTRACT_VERSION = 'tag-undo-fingerprint-v1'
 export const TAG_UNDO_FOUNDATION_SCHEMA_VERSION = 8
 
 export type TagUndoFoundationHealthState = 'checking' | 'healthy' | 'unavailable'
+export type TagUndoFoundationHealthCategory = 'temporary' | 'terminal'
 
 export type TagUndoFoundationHealth = {
   state: TagUndoFoundationHealthState
+  /** Stable machine-readable retryability classification for unavailable health. */
+  category?: TagUndoFoundationHealthCategory
   code?: string
   reason?: string
   schemaVersion: number
   checkedAt: number
+}
+
+type FoundationHealthFailure = {
+  category: TagUndoFoundationHealthCategory
+  reason: string
 }
 
 const healthByDb = new WeakMap<object, TagUndoFoundationHealth>()
@@ -21,8 +29,21 @@ function now(): number {
   return Date.now()
 }
 
-function unavailable(code: string, reason: string, schemaVersion = 0): TagUndoFoundationHealth {
-  return { state: 'unavailable', code, reason, schemaVersion, checkedAt: now() }
+function unavailable(
+  code: string,
+  reason: string,
+  schemaVersion = 0,
+  category: TagUndoFoundationHealthCategory = 'temporary',
+): TagUndoFoundationHealth {
+  return { state: 'unavailable', category, code, reason, schemaVersion, checkedAt: now() }
+}
+
+function temporaryFailure(reason: string): FoundationHealthFailure {
+  return { category: 'temporary', reason }
+}
+
+function terminalFailure(reason: string): FoundationHealthFailure {
+  return { category: 'terminal', reason }
 }
 
 function tableExists(db: DatabaseT, name: string): boolean {
@@ -204,15 +225,17 @@ function validateLifecycle(record: FoundationRecord): boolean {
   return false
 }
 
-function validateFoundationSchema(db: DatabaseT): string | null {
+function validateFoundationSchema(db: DatabaseT): FoundationHealthFailure | null {
   const version = db.prepare('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | undefined
-  if (!version || version.version < TAG_UNDO_FOUNDATION_SCHEMA_VERSION) return 'tag Undo foundation migration is not the repaired current version'
+  if (!version || version.version < TAG_UNDO_FOUNDATION_SCHEMA_VERSION) {
+    return temporaryFailure('tag Undo foundation migration is not the repaired current version')
+  }
 
   for (const table of ['document_tags', 'tag_undo_records', 'tag_undo_association_deltas', 'tag_undo_state']) {
-    if (!tableExists(db, table)) return `tag Undo foundation table is missing: ${table}`
+    if (!tableExists(db, table)) return temporaryFailure(`tag Undo foundation table is missing: ${table}`)
   }
   for (const index of ['idx_document_tags_tag', 'idx_document_tags_document', 'idx_tag_undo_records_lifecycle', 'idx_tag_undo_deltas_record_document', 'idx_tag_undo_deltas_record_effect_association']) {
-    if (!indexExists(db, index)) return `tag Undo foundation index is missing: ${index}`
+    if (!indexExists(db, index)) return temporaryFailure(`tag Undo foundation index is missing: ${index}`)
   }
   if (!hasExactTableColumns(db, 'document_tags', ['association_id', 'document_id', 'tag_id'])
     || !hasExactTableColumns(db, 'tag_undo_records', [
@@ -233,9 +256,9 @@ function validateFoundationSchema(db: DatabaseT): string | null {
       'state_id', 'database_generation', 'current_record_id',
       'last_superseded_record_id', 'updated_at',
     ])) {
-    return 'document_tags association provenance schema is invalid'
+    return temporaryFailure('document_tags association provenance schema is invalid')
   }
-  if (!hasUniqueDocumentTagConstraint(db)) return 'document_tags logical uniqueness constraint is missing'
+  if (!hasUniqueDocumentTagConstraint(db)) return temporaryFailure('document_tags logical uniqueness constraint is missing')
 
   const states = db.prepare('SELECT state_id, database_generation, current_record_id, last_superseded_record_id, updated_at FROM tag_undo_state').all() as Array<{
     state_id: number
@@ -252,7 +275,7 @@ function validateFoundationSchema(db: DatabaseT): string | null {
       && (typeof states[0].last_superseded_record_id !== 'string'
         || states[0].last_superseded_record_id.length < 1
         || states[0].last_superseded_record_id.length > 128))) {
-    return 'tag Undo foundation state singleton is invalid'
+    return terminalFailure('tag Undo foundation state singleton is invalid')
   }
   const records = db.prepare(`
     SELECT record_id, original_operation_id, original_result_id, kind,
@@ -298,17 +321,19 @@ function validateFoundationSchema(db: DatabaseT): string | null {
     association_add_count: number
     version_update_count: number
   }>
-  if (records.length > 1) return 'tag Undo foundation retains more than one parent record'
+  if (records.length > 1) return terminalFailure('tag Undo foundation retains more than one parent record')
   if (records.length === 0 && states[0].current_record_id !== null) {
-    return 'tag Undo foundation state points at a missing record'
+    return terminalFailure('tag Undo foundation state points at a missing record')
   }
   if (records.length === 1 && states[0].current_record_id !== records[0].record_id) {
-    return 'tag Undo foundation current pointer does not identify the sole retained record'
+    return terminalFailure('tag Undo foundation current pointer does not identify the sole retained record')
   }
   for (const record of records) {
+    if (record.database_generation !== states[0].database_generation) {
+      return terminalFailure('tag Undo foundation record generation does not match the state generation')
+    }
     if (record.identity_contract_version !== TAG_IDENTITY_CONTRACT_VERSION
       || record.record_contract_version !== TAG_UNDO_RECORD_CONTRACT_VERSION
-      || record.database_generation !== states[0].database_generation
       || !['rename', 'merge', 'remove'].includes(record.kind)
       || (record.kind !== 'rename' && record.display_only !== 0)
       || !Number.isSafeInteger(record.display_only)
@@ -319,7 +344,7 @@ function validateFoundationSchema(db: DatabaseT): string | null {
       || !isValidNormalizedOperation(record)
       || !validateLifecycle(record)
       || !validateKindSpecificRecord(record)) {
-      return 'tag Undo foundation record contract is invalid'
+      return terminalFailure('tag Undo foundation record contract is invalid')
     }
     const deltas = db.prepare(`
       SELECT effect, association_id, document_id, tag_id
@@ -340,12 +365,12 @@ function validateFoundationSchema(db: DatabaseT): string | null {
       || !Number.isSafeInteger(delta.tag_id) || delta.tag_id <= 0
       || (record.kind === 'rename')
       || (record.kind === 'remove' && delta.effect !== 'removed-source'))) {
-      return 'tag Undo foundation association delta is invalid for its record kind'
+      return terminalFailure('tag Undo foundation association delta is invalid for its record kind')
     }
     const removedCount = deltas.filter((row) => row.effect === 'removed-source').length
     const addedCount = deltas.filter((row) => row.effect === 'created-destination').length
     if (removedCount !== record.association_remove_count || addedCount !== record.association_add_count) {
-      return 'tag Undo foundation record/delta counts are inconsistent'
+      return terminalFailure('tag Undo foundation record/delta counts are inconsistent')
     }
   }
   const orphanDelta = db.prepare(`
@@ -357,7 +382,7 @@ function validateFoundationSchema(db: DatabaseT): string | null {
        OR d.tag_id <= 0
     LIMIT 1
   `).get()
-  if (orphanDelta) return 'tag Undo foundation association delta is invalid'
+  if (orphanDelta) return terminalFailure('tag Undo foundation association delta is invalid')
 
   const duplicateAssociation = db.prepare(`
     SELECT document_id, tag_id, COUNT(*) AS count
@@ -366,14 +391,14 @@ function validateFoundationSchema(db: DatabaseT): string | null {
     HAVING count > 1
     LIMIT 1
   `).get()
-  if (duplicateAssociation) return 'duplicate logical document-tag association exists'
+  if (duplicateAssociation) return terminalFailure('duplicate logical document-tag association exists')
   const invalidAssociation = db.prepare(
     'SELECT association_id FROM document_tags WHERE association_id <= 0 OR association_id IS NULL LIMIT 1',
   ).get()
-  if (invalidAssociation) return 'document-tag association identity is invalid'
-  if ((db.prepare('PRAGMA foreign_key_check').all() as unknown[]).length > 0) return 'foreign-key check failed'
+  if (invalidAssociation) return terminalFailure('document-tag association identity is invalid')
+  if ((db.prepare('PRAGMA foreign_key_check').all() as unknown[]).length > 0) return terminalFailure('foreign-key check failed')
   const integrity = db.prepare('PRAGMA integrity_check').get() as { integrity_check?: string } | undefined
-  if (integrity?.integrity_check !== 'ok') return 'SQLite integrity check failed'
+  if (integrity?.integrity_check !== 'ok') return terminalFailure('SQLite integrity check failed')
   return null
 }
 
@@ -387,9 +412,9 @@ export function initializeTagUndoFoundationHealth(db: DatabaseT): TagUndoFoundat
   let schemaVersion = 0
   try {
     schemaVersion = Number((db.prepare('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | undefined)?.version ?? 0)
-    const reason = validateFoundationSchema(db)
-    const result = reason
-      ? unavailable('TAG_UNDO_FOUNDATION_UNHEALTHY', reason, schemaVersion)
+    const failure = validateFoundationSchema(db)
+    const result = failure
+      ? unavailable('TAG_UNDO_FOUNDATION_UNHEALTHY', failure.reason, schemaVersion, failure.category)
       : { state: 'healthy' as const, schemaVersion, checkedAt: now() }
     healthByDb.set(db, result)
     return result

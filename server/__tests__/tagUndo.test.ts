@@ -21,7 +21,10 @@ import {
   previewTagUndoPage,
   TagUndoPlannerError,
 } from '../tagUndo'
-import { resetTagUndoFoundationHealthForTesting } from '../tagUndoHealth'
+import {
+  initializeTagUndoFoundationHealth,
+  resetTagUndoFoundationHealthForTesting,
+} from '../tagUndoHealth'
 
 let db: Database.Database
 
@@ -738,6 +741,112 @@ describe('T2.1-1 health and compatibility gates', () => {
 })
 
 describe('T2.1-2 Undo planner and Preview', () => {
+  it('fails closed when Undo foundation tables are missing', () => {
+    db.exec('DROP TABLE tag_undo_state')
+
+    expect(() => getTagUndoAvailability(db)).not.toThrow()
+    expect(getTagUndoAvailability(db)).toMatchObject({
+      state: 'unavailable',
+      validation: 'temporary-unavailable',
+      reasonCode: 'TAG_MANAGEMENT_UNAVAILABLE',
+      recordId: null,
+    })
+    expect(() => previewTagUndo(db)).not.toThrow()
+    expect(previewTagUndo(db)).toMatchObject({
+      state: 'unavailable',
+      validation: 'temporary-unavailable',
+      reasonCode: 'TAG_MANAGEMENT_UNAVAILABLE',
+      undoFingerprint: null,
+    })
+  })
+
+  it('does not inspect unsafe Undo tables after health fails', () => {
+    db.exec('DROP TABLE tag_undo_state')
+    const queries: string[] = []
+    const tracedDb = new Proxy(db, {
+      get(target, property) {
+        if (property === 'prepare') {
+          return (sql: string) => {
+            queries.push(sql)
+            return target.prepare(sql)
+          }
+        }
+        const value = Reflect.get(target, property, target)
+        return typeof value === 'function' ? value.bind(target) : value
+      },
+    }) as unknown as Database.Database
+
+    expect(() => previewTagUndo(tracedDb)).not.toThrow()
+    expect(queries.some((query) => /FROM tag_undo_(state|records)/i.test(query))).toBe(false)
+  })
+
+  it('fails closed when the Undo records table is missing', () => {
+    db.exec('DROP TABLE tag_undo_association_deltas; DROP TABLE tag_undo_state; DROP TABLE tag_undo_records')
+
+    expect(() => getTagUndoAvailability(db)).not.toThrow()
+    expect(previewTagUndo(db)).toMatchObject({
+      state: 'unavailable',
+      validation: 'temporary-unavailable',
+      reasonCode: 'TAG_MANAGEMENT_UNAVAILABLE',
+      recordId: null,
+    })
+  })
+
+  it('fails closed for an invalid or incompatible Undo schema', () => {
+    db.exec('DROP INDEX idx_tag_undo_deltas_record_document')
+
+    expect(() => previewTagUndo(db)).not.toThrow()
+    expect(previewTagUndo(db)).toMatchObject({
+      state: 'unavailable',
+      validation: 'temporary-unavailable',
+      reasonCode: 'TAG_MANAGEMENT_UNAVAILABLE',
+    })
+  })
+
+  it('classifies unsupported and corrupt retained state without parsing health reason text', async () => {
+    seedTag(7, 'Java', 'java')
+    seedDocument('doc', [7])
+    await apply({ kind: 'rename', sourceTagId: 7, destinationName: 'Backend' })
+    const recordId = getTagUndoAvailability(db).recordId!
+
+    db.prepare('UPDATE tag_undo_records SET record_contract_version = ? WHERE record_id = ?')
+      .run('tag-undo-record-v999', recordId)
+    expect(initializeTagUndoFoundationHealth(db)).toMatchObject({
+      state: 'unavailable',
+      category: 'terminal',
+    })
+    expect(previewTagUndo(db)).toMatchObject({
+      state: 'terminal-unavailable',
+      validation: 'terminal-unavailable',
+      reasonCode: 'UNDO_RECORD_CORRUPT',
+      recordId: null,
+    })
+
+    db.prepare('UPDATE tag_undo_records SET record_contract_version = ?, database_generation = ? WHERE record_id = ?')
+      .run('tag-undo-record-v1', 'deadbeef', recordId)
+    expect(initializeTagUndoFoundationHealth(db)).toMatchObject({
+      state: 'unavailable',
+      category: 'terminal',
+    })
+    expect(previewTagUndo(db)).toMatchObject({
+      state: 'terminal-unavailable',
+      validation: 'terminal-unavailable',
+      reasonCode: 'UNDO_RECORD_CORRUPT',
+    })
+
+    db.prepare('UPDATE tag_undo_records SET database_generation = ?, association_remove_count = ? WHERE record_id = ?')
+      .run((state() as { database_generation: string }).database_generation, 1, recordId)
+    expect(initializeTagUndoFoundationHealth(db)).toMatchObject({
+      state: 'unavailable',
+      category: 'terminal',
+    })
+    expect(previewTagUndo(db)).toMatchObject({
+      state: 'terminal-unavailable',
+      validation: 'terminal-unavailable',
+      reasonCode: 'UNDO_RECORD_CORRUPT',
+    })
+  })
+
   it('returns a bounded unavailable read model before any operation exists', () => {
     const availability = getTagUndoAvailability(db)
     expect(availability).toMatchObject({
@@ -1048,6 +1157,77 @@ describe('T2.1-2 Undo planner and Preview', () => {
       recordId: null,
       reasonCode: 'UNDO_SUPERSEDED',
     })
+  })
+
+  it('returns UNDO_SUPERSEDED instead of UNDO_STALE for a reviewed superseded page', async () => {
+    seedTag(7, 'Java', 'java')
+    seedDocument('doc', [7])
+    await apply({ kind: 'rename', sourceTagId: 7, destinationName: 'Backend' })
+    const reviewed = previewTagUndo(db)
+    const firstRecordId = reviewed.recordId!
+
+    await apply({ kind: 'rename', sourceTagId: 7, destinationName: 'Kotlin' })
+    const before = durableSnapshot()
+
+    expect(() => previewTagUndoPage(db, {
+      recordId: firstRecordId,
+      undoFingerprint: reviewed.undoFingerprint!,
+      limit: 1,
+    })).toThrowError(expect.objectContaining({ code: 'UNDO_SUPERSEDED' }))
+    expect(state()).toMatchObject({
+      current_record_id: expect.not.stringMatching(firstRecordId),
+      last_superseded_record_id: firstRecordId,
+    })
+    expect(durableSnapshot()).toEqual(before)
+  })
+
+  it('returns UNDO_ALREADY_APPLIED instead of UNDO_STALE for a reviewed consumed page', async () => {
+    seedTag(7, 'Java', 'java')
+    seedDocument('doc', [7])
+    await apply({ kind: 'rename', sourceTagId: 7, destinationName: 'Backend' })
+    const reviewed = previewTagUndo(db)
+    db.prepare(`
+      UPDATE tag_undo_records
+      SET lifecycle = 'consumed', undo_operation_id = ?, undo_result_id = ?, consumed_at = ?
+      WHERE record_id = ?
+    `).run('undo-operation', 'undo-result', 200, reviewed.recordId)
+    const before = durableSnapshot()
+
+    expect(() => previewTagUndoPage(db, {
+      recordId: reviewed.recordId,
+      undoFingerprint: reviewed.undoFingerprint!,
+      limit: 1,
+    })).toThrowError(expect.objectContaining({ code: 'UNDO_ALREADY_APPLIED' }))
+    expect(durableSnapshot()).toEqual(before)
+  })
+
+  it('preserves terminal-unavailable classification for a reviewed terminal target', async () => {
+    seedTag(7, 'Java', 'java')
+    seedDocument('doc', [7])
+    await apply({ kind: 'rename', sourceTagId: 7, destinationName: 'Backend' })
+    const reviewed = previewTagUndo(db)
+    db.prepare(`
+      UPDATE tag_undo_records
+      SET lifecycle = 'terminal', terminal_code = ?, undo_operation_id = NULL,
+          undo_result_id = NULL, consumed_at = NULL
+      WHERE record_id = ?
+    `).run('UNDO_CORRUPT', reviewed.recordId)
+    const before = durableSnapshot()
+
+    expect(() => previewTagUndoPage(db, {
+      recordId: reviewed.recordId,
+      undoFingerprint: reviewed.undoFingerprint!,
+      limit: 1,
+    })).toThrowError(expect.objectContaining({ code: 'UNDO_RECORD_CORRUPT' }))
+    expect(durableSnapshot()).toEqual(before)
+  })
+
+  it('returns unavailable for an unknown record instead of stale', () => {
+    expect(() => previewTagUndoPage(db, {
+      recordId: 'unknown-record',
+      undoFingerprint: '0'.repeat(64),
+      limit: 1,
+    })).toThrowError(expect.objectContaining({ code: 'UNDO_TARGET_UNAVAILABLE' }))
   })
 
   it('keeps Preview query shape bounded as the affected scope grows', async () => {
