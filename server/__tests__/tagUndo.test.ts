@@ -34,6 +34,7 @@ let db: Database.Database
 
 const TSX_ESM_LOADER = import.meta.resolve('tsx/esm')
 const TAG_UNDO_WAL_WORKER = path.join(import.meta.dirname, 'fixtures', 'tag-undo-wal-worker.ts')
+const TAG_UNDO_APPLY_WAL_WORKER = path.join(import.meta.dirname, 'fixtures', 'tag-undo-apply-wal-worker.ts')
 
 type WalWorkerReady = {
   workerName: string
@@ -64,6 +65,40 @@ type WalWorkerHandle = {
   child: ChildProcess
   ready: Promise<WalWorkerReady>
   result: Promise<WalWorkerResult>
+  close: Promise<void>
+}
+
+type UndoApplyWalWorkerReady = WalWorkerReady
+
+type UndoApplyWalWorkerResult = {
+  ok: boolean
+  workerName: string
+  pid: number
+  connectionId?: string
+  journalMode?: string
+  databaseGeneration?: string
+  result?: {
+    undoOperationId: string
+    undoResultId: string
+    recordId: string
+    originalOperationId: string
+    originalResultId: string
+    kind: 'rename' | 'merge' | 'remove'
+    affectedCount: number
+    associationAdds: number
+    associationRemoves: number
+    versionUpdateCount: number
+  }
+  error?: {
+    code?: string
+    message?: string
+  }
+}
+
+type UndoApplyWalWorkerHandle = {
+  child: ChildProcess
+  ready: Promise<UndoApplyWalWorkerReady>
+  result: Promise<UndoApplyWalWorkerResult>
   close: Promise<void>
 }
 
@@ -137,6 +172,82 @@ function spawnWalWorker(
     }
     if (!resultPayload) {
       rejectResult(new Error(`${workerName} exited without result: code=${code} signal=${signal} stderr=${stderr}`))
+    }
+    resolveClose()
+  })
+
+  return { child, ready, result, close }
+}
+
+function spawnUndoApplyWalWorker(
+  databasePath: string,
+  reviewed: { recordId: string; undoFingerprint: string },
+  workerName: string,
+): UndoApplyWalWorkerHandle {
+  const child = spawn(process.execPath, ['--import', TSX_ESM_LOADER, TAG_UNDO_APPLY_WAL_WORKER], {
+    env: {
+      ...process.env,
+      DOCUS_TAG_UNDO_WAL_DB: databasePath,
+      DOCUS_TAG_UNDO_WAL_RECORD_ID: reviewed.recordId,
+      DOCUS_TAG_UNDO_WAL_FINGERPRINT: reviewed.undoFingerprint,
+      DOCUS_TAG_UNDO_WAL_WORKER: workerName,
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+  })
+  const lineReader = createInterface({ input: child.stdout! })
+  let stderr = ''
+  child.stderr?.on('data', (chunk: Buffer | string) => {
+    stderr += chunk.toString()
+  })
+
+  let readyPayload: UndoApplyWalWorkerReady | undefined
+  let resultPayload: UndoApplyWalWorkerResult | undefined
+  let resolveReady!: (value: UndoApplyWalWorkerReady) => void
+  let rejectReady!: (error: Error) => void
+  let resolveResult!: (value: UndoApplyWalWorkerResult) => void
+  let rejectResult!: (error: Error) => void
+  let resolveClose!: () => void
+  const ready = new Promise<UndoApplyWalWorkerReady>((resolve, reject) => {
+    resolveReady = resolve
+    rejectReady = reject
+  })
+  const result = new Promise<UndoApplyWalWorkerResult>((resolve, reject) => {
+    resolveResult = resolve
+    rejectResult = reject
+  })
+  const close = new Promise<void>((resolve) => {
+    resolveClose = resolve
+  })
+
+  lineReader.on('line', (line) => {
+    try {
+      if (line.startsWith('READY:')) {
+        readyPayload = JSON.parse(line.slice('READY:'.length)) as UndoApplyWalWorkerReady
+        resolveReady(readyPayload)
+      } else if (line.startsWith('RESULT:')) {
+        resultPayload = JSON.parse(line.slice('RESULT:'.length)) as UndoApplyWalWorkerResult
+        resolveResult(resultPayload)
+      }
+    } catch (error) {
+      const parsedError = error instanceof Error ? error : new Error(String(error))
+      if (!readyPayload) rejectReady(parsedError)
+      if (!resultPayload) rejectResult(parsedError)
+    }
+  })
+
+  child.once('error', (error) => {
+    if (!readyPayload) rejectReady(error)
+    if (!resultPayload) rejectResult(error)
+    resolveClose()
+  })
+  child.once('close', (code, signal) => {
+    lineReader.close()
+    if (!readyPayload) {
+      rejectReady(new Error(`${workerName} exited before Undo WAL barrier: code=${code} signal=${signal} stderr=${stderr}`))
+    }
+    if (!resultPayload) {
+      rejectResult(new Error(`${workerName} exited without Undo result: code=${code} signal=${signal} stderr=${stderr}`))
     }
     resolveClose()
   })
@@ -1775,6 +1886,427 @@ describe('T2.1-3 Atomic Undo Apply', () => {
       await fs.rm(temporaryRoot, { recursive: true, force: true })
     }
   }, 45_000)
+
+  // The P1 reviewer finding: both applyTagUndo calls above run inside the
+  // SAME Node process and share the module-global document write lock state.
+  // The independent-runtime SQLite/WAL exactly-once contract is proven by the
+  // dedicated child-process test below; the same-process pair above is
+  // retained as additional JS-lock serialization coverage.
+  it('serializes two independent Node runtimes against one WAL with a deterministic gate', async () => {
+    const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-tag-undo-apply-runtime-wal-'))
+    const databasePath = path.join(temporaryRoot, 'docus.db')
+    let setupConnection: Database.Database | null = null
+    let gateConnection: Database.Database | null = null
+    let thirdConnection: Database.Database | null = null
+    const workers: UndoApplyWalWorkerHandle[] = []
+
+    try {
+      setupConnection = new Database(databasePath)
+      setupConnection.pragma('foreign_keys = ON')
+      expect(String(setupConnection.pragma('journal_mode = WAL', { simple: true })).toLowerCase()).toBe('wal')
+      applyMigrations(setupConnection)
+      setupConnection.prepare('INSERT INTO tags (id, name, normalized_name) VALUES (?, ?, ?)')
+        .run(7, 'Java', 'java')
+      const insertDocument = setupConnection.prepare(`
+        INSERT INTO documents (id, path, title, summary, created_at, updated_at)
+        VALUES (?, ?, ?, '', 1, 100)
+      `)
+      const insertAssociation = setupConnection.prepare(
+        'INSERT INTO document_tags (document_id, tag_id) VALUES (?, ?)',
+      )
+      for (const documentId of ['doc-a', 'doc-b']) {
+        insertDocument.run(documentId, `${documentId}/note`, documentId)
+        insertAssociation.run(documentId, 7)
+      }
+      await applyTagOperation(
+        setupConnection,
+        { kind: 'rename', sourceTagId: 7, destinationName: 'Backend' },
+        previewTagOperation(
+          setupConnection,
+          { kind: 'rename', sourceTagId: 7, destinationName: 'Backend' },
+        ).planFingerprint,
+      )
+      const preview = previewTagUndo(setupConnection)
+      const reviewed = {
+        recordId: preview.recordId!,
+        undoFingerprint: preview.undoFingerprint!,
+      }
+      const databaseGeneration = (setupConnection.prepare(`
+        SELECT database_generation
+        FROM tag_undo_state
+        WHERE state_id = 1
+      `).get() as { database_generation: string }).database_generation
+      const beforeAssociations = setupConnection.prepare(`
+        SELECT association_id, document_id, tag_id
+        FROM document_tags
+        ORDER BY association_id
+      `).all()
+      const beforeVersions = setupConnection.prepare(`
+        SELECT id, updated_at
+        FROM documents
+        ORDER BY id
+      `).all() as Array<{ id: string; updated_at: number }>
+      const beforeOriginalVersion = beforeVersions[0]!.updated_at
+
+      // Hold the SQLite writer slot while both independent runtimes finish
+      // discovery, acquire their own document locks, and reach BEGIN IMMEDIATE.
+      // This is a deterministic SQLite barrier, not a timing-based sleep.
+      gateConnection = new Database(databasePath)
+      gateConnection.pragma('foreign_keys = ON')
+      gateConnection.pragma('busy_timeout = 15000')
+      expect(String(gateConnection.pragma('journal_mode', { simple: true })).toLowerCase()).toBe('wal')
+      gateConnection.exec('BEGIN IMMEDIATE')
+
+      workers.push(spawnUndoApplyWalWorker(databasePath, reviewed, 'A'))
+      workers.push(spawnUndoApplyWalWorker(databasePath, reviewed, 'B'))
+      let readyTimeoutHandle: ReturnType<typeof setTimeout> | undefined
+      const readyTimeout = new Promise<never>((_, reject) => {
+        readyTimeoutHandle = setTimeout(
+          () => reject(new Error('two-process Undo Apply workers did not reach the transaction barrier')),
+          15_000,
+        )
+      })
+      let ready: UndoApplyWalWorkerReady[]
+      try {
+        ready = await Promise.race([
+          Promise.all(workers.map((worker) => worker.ready)),
+          readyTimeout,
+        ])
+      } finally {
+        if (readyTimeoutHandle) clearTimeout(readyTimeoutHandle)
+      }
+      expect(ready).toHaveLength(2)
+      // Each worker reaches READY in its own Node process with its own module-
+      // global document write lock state, then blocks on its own SQLite
+      // IMMEDIATE transaction while the parent gate owns the writer slot.
+      expect(new Set(ready.map((worker) => worker.pid)).size).toBe(2)
+      expect(new Set(ready.map((worker) => worker.connectionId)).size).toBe(2)
+      expect(ready.every((worker) => worker.journalMode === 'wal')).toBe(true)
+      expect(ready.every((worker) => worker.databaseGeneration === databaseGeneration)).toBe(true)
+
+      // Release the gate so SQLite serializes the two writers at the
+      // transaction boundary, not the JS lock seam.
+      gateConnection.exec('ROLLBACK')
+      const outcomes = await Promise.all(workers.map((worker) => worker.result))
+      await Promise.all(workers.map((worker) => worker.close))
+
+      const winners = outcomes.filter((outcome) => outcome.ok)
+      const losers = outcomes.filter((outcome) => !outcome.ok)
+      expect(winners).toHaveLength(1)
+      expect(losers).toHaveLength(1)
+      expect(losers[0]!.error?.code).toBe('UNDO_ALREADY_APPLIED')
+      const winningResult = winners[0]!.result
+      expect(winningResult).toBeDefined()
+
+      thirdConnection = new Database(databasePath)
+      thirdConnection.pragma('foreign_keys = ON')
+      expect(String(thirdConnection.pragma('journal_mode', { simple: true })).toLowerCase()).toBe('wal')
+
+      // The inverse mutation is committed exactly once.
+      expect(thirdConnection.prepare('SELECT id, name, normalized_name FROM tags ORDER BY id').all())
+        .toEqual([{ id: 7, name: 'Java', normalized_name: 'java' }])
+      const afterAssociations = thirdConnection.prepare(`
+        SELECT association_id, document_id, tag_id
+        FROM document_tags
+        ORDER BY association_id
+      `).all()
+      expect(afterAssociations).toEqual(beforeAssociations)
+
+      const record = thirdConnection.prepare(`
+        SELECT record_id, original_operation_id, original_result_id, kind,
+               lifecycle, terminal_code, undo_operation_id, undo_result_id,
+               consumed_at, association_remove_count, association_add_count,
+               version_update_count
+        FROM tag_undo_records
+      `).get() as {
+        record_id: string
+        original_operation_id: string
+        original_result_id: string
+        kind: string
+        lifecycle: string
+        terminal_code: string | null
+        undo_operation_id: string | null
+        undo_result_id: string | null
+        consumed_at: number | null
+        association_remove_count: number
+        association_add_count: number
+        version_update_count: number
+      }
+      expect(record.lifecycle).toBe('consumed')
+      expect(record.terminal_code).toBeNull()
+      expect(record.undo_operation_id).toBeTruthy()
+      expect(record.undo_result_id).toBeTruthy()
+      expect(record.consumed_at).toBeTruthy()
+      expect(record.kind).toBe('rename')
+      // There is exactly ONE retained Undo parent and ZERO heavy children.
+      expect(thirdConnection.prepare('SELECT COUNT(*) AS count FROM tag_undo_records').get())
+        .toEqual({ count: 1 })
+      expect(thirdConnection.prepare('SELECT COUNT(*) AS count FROM tag_undo_association_deltas').get())
+        .toEqual({ count: 0 })
+
+      const undoState = thirdConnection.prepare(`
+        SELECT database_generation, current_record_id, last_superseded_record_id
+        FROM tag_undo_state
+        WHERE state_id = 1
+      `).get() as {
+        database_generation: string
+        current_record_id: string | null
+        last_superseded_record_id: string | null
+      }
+      expect(undoState.database_generation).toBe(databaseGeneration)
+      expect(undoState.current_record_id).toBe(record.record_id)
+      expect(undoState.last_superseded_record_id).toBeNull()
+
+      // Exactly-once version evidence: every document advances at most once.
+      // The original Rename bumped each document from 100 → 101, then the
+      // winning Undo bumped them to a single new monotonic value. The loser
+      // is a no-op so no second bump is observable.
+      const afterVersions = thirdConnection.prepare(`
+        SELECT id, updated_at
+        FROM documents
+        ORDER BY id
+      `).all() as Array<{ id: string; updated_at: number }>
+      expect(afterVersions).toHaveLength(2)
+      for (const row of afterVersions) {
+        expect(row.updated_at).toBeGreaterThan(beforeOriginalVersion)
+      }
+      // All bumped documents share the single Undo commit timestamp.
+      const uniqueBumpValues = new Set(afterVersions.map((row) => row.updated_at))
+      expect(uniqueBumpValues.size).toBe(1)
+
+      expect(thirdConnection.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+      expect(thirdConnection.prepare('PRAGMA integrity_check').get())
+        .toEqual({ integrity_check: 'ok' })
+    } finally {
+      if (gateConnection?.open) {
+        try {
+          gateConnection.exec('ROLLBACK')
+        } catch {
+          // The normal path releases the barrier before the workers finish.
+        }
+      }
+      for (const worker of workers) {
+        if (!worker.child.killed) worker.child.kill()
+      }
+      await Promise.allSettled(workers.map((worker) => worker.result))
+      await Promise.allSettled(workers.map((worker) => worker.close))
+      if (thirdConnection?.open) thirdConnection.close()
+      if (gateConnection?.open) gateConnection.close()
+      if (setupConnection?.open) setupConnection.close()
+      await fs.rm(temporaryRoot, { recursive: true, force: true })
+    }
+  }, 45_000)
+
+  // P2 reviewer finding: a consumed record must report its historical inverse
+  // association/version counts from the durable parent summary. Heavy child
+  // deltas are intentionally purged at successful Apply, so reading counts
+  // from now-empty child rows would silently report zero for Merge/Remove.
+  it('reports consumed Merge inverse counts from the durable parent summary, not empty children', async () => {
+    seedTag(7, 'Java', 'java')
+    seedTag(9, 'Backend', 'backend')
+    seedTag(20, 'Python', 'python')
+    seedDocument('source-only', [7])
+    seedDocument('overlap', [7, 9])
+    seedDocument('destination-only', [9, 20])
+    await apply({ kind: 'merge', sourceTagId: 7, destinationTagId: 9 })
+    const reviewed = reviewedUndoInput()
+
+    const result = await applyTagUndo(db, reviewed)
+    expect(result).toMatchObject({
+      kind: 'merge',
+      affectedCount: 2,
+      associationAdds: 2,
+      associationRemoves: 1,
+      versionUpdateCount: 2,
+    })
+    // Heavy children were purged at successful Apply.
+    expect(db.prepare('SELECT COUNT(*) AS count FROM tag_undo_association_deltas').get())
+      .toEqual({ count: 0 })
+    // The compact consumed availability must report the SAME inverse counts
+    // as the committed Apply result. This was zero before the fix.
+    const consumed = getTagUndoAvailability(db)
+    expect(consumed).toMatchObject({
+      state: 'consumed',
+      validation: 'terminal-unavailable',
+      reasonCode: 'UNDO_ALREADY_APPLIED',
+      kind: 'merge',
+      affectedCount: 2,
+      associationAdds: 2,
+      associationRemoves: 1,
+      versionUpdateCount: 2,
+    })
+    // Parent original counts remain intact (Merge captures the forward
+    // destination rows it actually created — one source-only destination —
+    // plus the two source rows it removed).
+    expect(parent()).toMatchObject({
+      kind: 'merge',
+      lifecycle: 'consumed',
+      association_remove_count: 2,
+      association_add_count: 1,
+      version_update_count: 2,
+    })
+  })
+
+  it('reports consumed Remove inverse counts from the durable parent summary', async () => {
+    seedTag(7, 'Java', 'java')
+    seedDocument('doc-a', [7])
+    seedDocument('doc-b', [7])
+    await apply({ kind: 'remove', sourceTagId: 7 })
+    const reviewed = reviewedUndoInput()
+
+    const result = await applyTagUndo(db, reviewed)
+    expect(result).toMatchObject({
+      kind: 'remove',
+      affectedCount: 2,
+      associationAdds: 2,
+      associationRemoves: 0,
+      versionUpdateCount: 2,
+    })
+    expect(db.prepare('SELECT COUNT(*) AS count FROM tag_undo_association_deltas').get())
+      .toEqual({ count: 0 })
+
+    const consumed = getTagUndoAvailability(db)
+    expect(consumed).toMatchObject({
+      state: 'consumed',
+      validation: 'terminal-unavailable',
+      reasonCode: 'UNDO_ALREADY_APPLIED',
+      kind: 'remove',
+      affectedCount: 2,
+      associationAdds: 2,
+      associationRemoves: 0,
+      versionUpdateCount: 2,
+    })
+    expect(parent()).toMatchObject({
+      kind: 'remove',
+      lifecycle: 'consumed',
+      association_remove_count: 2,
+      association_add_count: 0,
+      version_update_count: 2,
+    })
+  })
+
+  it('reports consumed orphan Remove with all-zero counts', async () => {
+    seedTag(40, 'Orphan', 'orphan')
+    await apply({ kind: 'remove', sourceTagId: 40 })
+    const reviewed = reviewedUndoInput()
+
+    const result = await applyTagUndo(db, reviewed)
+    expect(result).toMatchObject({
+      kind: 'remove',
+      affectedCount: 0,
+      associationAdds: 0,
+      associationRemoves: 0,
+      versionUpdateCount: 0,
+    })
+    expect(db.prepare('SELECT COUNT(*) AS count FROM tag_undo_association_deltas').get())
+      .toEqual({ count: 0 })
+
+    const consumed = getTagUndoAvailability(db)
+    expect(consumed).toMatchObject({
+      state: 'consumed',
+      validation: 'terminal-unavailable',
+      reasonCode: 'UNDO_ALREADY_APPLIED',
+      kind: 'remove',
+      affectedCount: 0,
+      associationAdds: 0,
+      associationRemoves: 0,
+      versionUpdateCount: 0,
+    })
+    expect(parent()).toMatchObject({
+      kind: 'remove',
+      lifecycle: 'consumed',
+      association_remove_count: 0,
+      association_add_count: 0,
+      version_update_count: 0,
+    })
+  })
+
+  it('reports consumed Rename with zero/zero association counts and version update count', async () => {
+    seedTag(7, 'Java', 'java')
+    seedDocument('doc-a', [7])
+    seedDocument('doc-b', [7])
+    await apply({ kind: 'rename', sourceTagId: 7, destinationName: 'Backend' })
+    const reviewed = reviewedUndoInput()
+
+    const result = await applyTagUndo(db, reviewed)
+    expect(result).toMatchObject({
+      kind: 'rename',
+      affectedCount: 2,
+      associationAdds: 0,
+      associationRemoves: 0,
+      versionUpdateCount: 2,
+    })
+    expect(db.prepare('SELECT COUNT(*) AS count FROM tag_undo_association_deltas').get())
+      .toEqual({ count: 0 })
+
+    const consumed = getTagUndoAvailability(db)
+    expect(consumed).toMatchObject({
+      state: 'consumed',
+      validation: 'terminal-unavailable',
+      reasonCode: 'UNDO_ALREADY_APPLIED',
+      kind: 'rename',
+      affectedCount: 2,
+      associationAdds: 0,
+      associationRemoves: 0,
+      versionUpdateCount: 2,
+    })
+  })
+
+  it('reports consumed Display Rename with zero/zero association counts', async () => {
+    seedTag(7, 'Java', 'java')
+    seedDocument('doc', [7], 300)
+    await apply({ kind: 'rename', sourceTagId: 7, destinationName: 'JAVA' })
+    const reviewed = reviewedUndoInput()
+
+    const result = await applyTagUndo(db, reviewed)
+    expect(result).toMatchObject({
+      kind: 'rename',
+      displayOnly: true,
+      affectedCount: 1,
+      versionUpdateCount: 1,
+      associationAdds: 0,
+      associationRemoves: 0,
+    })
+    expect(db.prepare('SELECT COUNT(*) AS count FROM tag_undo_association_deltas').get())
+      .toEqual({ count: 0 })
+
+    const consumed = getTagUndoAvailability(db)
+    expect(consumed).toMatchObject({
+      state: 'consumed',
+      validation: 'terminal-unavailable',
+      reasonCode: 'UNDO_ALREADY_APPLIED',
+      kind: 'rename',
+      displayOnly: true,
+      affectedCount: 1,
+      associationAdds: 0,
+      associationRemoves: 0,
+      versionUpdateCount: 1,
+    })
+  })
+
+  // The latest planner must still validate child rows for the inverse count
+  // (provenance counts are real evidence before consumption). After Apply
+  // succeeds the consumed summary takes over and the helper switches sources.
+  it('keeps the latest planner validating child rows before Apply commits', async () => {
+    seedTag(7, 'Java', 'java')
+    seedTag(9, 'Backend', 'backend')
+    seedDocument('source-only', [7])
+    seedDocument('overlap', [7, 9])
+    await apply({ kind: 'merge', sourceTagId: 7, destinationTagId: 9 })
+    const livePreview = previewTagUndo(db)
+    expect(livePreview).toMatchObject({
+      state: 'available',
+      validation: 'safe',
+      kind: 'merge',
+      associationAdds: 2,
+      associationRemoves: 1,
+      versionUpdateCount: 2,
+      affectedCount: 2,
+    })
+    // Heavy child rows are still present for the latest planner.
+    expect(db.prepare('SELECT COUNT(*) AS count FROM tag_undo_association_deltas').get())
+      .toEqual({ count: 3 })
+  })
 })
 
 describe('T2.1-2 Undo planner WAL/read-snapshot evidence', () => {

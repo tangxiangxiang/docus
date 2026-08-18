@@ -1055,6 +1055,35 @@ function inverseCounts(
   return { associationAdds: 0, associationRemoves: 0, versionUpdateCount: affectedCount }
 }
 
+/**
+ * Derive the bounded inverse diagnostic counts directly from the durable parent
+ * summary. This is the only correct source for a `consumed` record, because
+ * successful Undo legally purges its heavy child deltas in the same transaction.
+ * Without this helper Merge/Remove consumed availability would report zero
+ * association adds/removes, hiding the historical scope from the post-Undo read
+ * model. Latest planner state must still validate child rows.
+ */
+function inverseCountsFromRecordSummary(
+  record: TagUndoRecordRow,
+): { associationAdds: number; associationRemoves: number; versionUpdateCount: number } {
+  const versionUpdateCount = record.version_update_count
+  if (record.kind === 'merge') {
+    return {
+      associationAdds: record.association_remove_count,
+      associationRemoves: record.association_add_count,
+      versionUpdateCount,
+    }
+  }
+  if (record.kind === 'remove') {
+    return {
+      associationAdds: record.association_remove_count,
+      associationRemoves: 0,
+      versionUpdateCount,
+    }
+  }
+  return { associationAdds: 0, associationRemoves: 0, versionUpdateCount }
+}
+
 function warningCodes(
   kind: string | null,
   affectedCount: number,
@@ -1319,7 +1348,13 @@ function buildUndoPlanInTransaction(
   const addConflict = (code: string) => {
     if (!conflictCodes.includes(code)) conflictCodes.push(code)
   }
-  const inverse = inverseCounts(record, deltas, record.version_update_count)
+  // A consumed or terminal record has no child deltas — they are purged at the
+  // moment of successful Apply. Use the durable parent summary as the bounded
+  // historical inverse counter so consumed availability still reports Merge
+  // and Remove scope correctly.
+  const inverse = (record.lifecycle === 'consumed' || record.lifecycle === 'terminal')
+    ? inverseCountsFromRecordSummary(record)
+    : inverseCounts(record, deltas, record.version_update_count)
   const retainedCounts = {
     affectedCount: record.version_update_count,
     ...inverse,
