@@ -239,6 +239,17 @@ describe('Undo client compatibility and committed recovery', () => {
     expect(calls[0]?.url).toBe('/api/tags/undo')
   })
 
+  it('treats a legacy non-Undo 503 as safe unavailability without fallback mutation', async () => {
+    responses.push({ status: 503, body: { error: 'Service Unavailable' } })
+    await expect(getUndoAvailability()).rejects.toMatchObject({
+      code: 'UNDO_UNAVAILABLE',
+      status: 503,
+    })
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.url).toBe('/api/tags/undo')
+    expect(calls.filter((call) => call.url === '/api/tags/operations/apply')).toHaveLength(0)
+  })
+
   it('retains the submitted record after a contradictory 2xx and recovers with reads only', async () => {
     responses.push({ status: 200, body: { ...applyResult(), undoRecordId: 'wrong-record' } })
     await expect(applyUndo(preview())).rejects.toMatchObject({
@@ -334,5 +345,10 @@ describe('Undo client compatibility and committed recovery', () => {
     responses.push({ status: 503, body: { error: 'Tag management is temporarily unavailable.', code: 'TAG_MANAGEMENT_UNAVAILABLE', details: { healthCode: 'bounded' } } })
     await expect(getUndoAvailability()).rejects.toMatchObject({ code: 'TAG_MANAGEMENT_UNAVAILABLE', status: 503 })
     expect(() => new TagUndoApiError('x', 503, 'TAG_MANAGEMENT_UNAVAILABLE')).not.toThrow()
+  })
+
+  it('keeps malformed 2xx responses strict despite legacy 503 compatibility', async () => {
+    responses.push({ status: 200, body: { error: 'Service Unavailable' } })
+    await expect(getUndoAvailability()).rejects.toMatchObject({ code: 'CLIENT_PROTOCOL_ERROR' })
   })
 })

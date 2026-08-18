@@ -512,8 +512,19 @@ async function requestJson<T>(
       throw error
     }
     if (isSharedJsonError(error)) {
-      if (error.status === 404 && path.startsWith('/api/tags/undo')) {
+      const isUndoPath = path.startsWith('/api/tags/undo')
+      if (error.status === 404 && isUndoPath) {
         throw new TagUndoApiError('Undo is unavailable on this server.', 404, 'UNDO_UNAVAILABLE', {}, recoveryRecordId)
+      }
+      if (error.status === 503 && isUndoPath) {
+        let envelope: UndoError | null = null
+        try {
+          envelope = parseErrorEnvelope(error.body)
+        } catch { /* legacy/non-Undo 503 */ }
+        if (envelope) {
+          throw new TagUndoApiError(envelope.error, error.status, envelope.code, envelope.details, recoveryRecordId)
+        }
+        throw new TagUndoApiError('Undo is unavailable on this server.', 503, 'UNDO_UNAVAILABLE', {}, recoveryRecordId)
       }
       try {
         const envelope = parseErrorEnvelope(error.body)

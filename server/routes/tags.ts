@@ -203,13 +203,26 @@ function mapUndoReasonCode(reasonCode: string | null): string | null {
   return 'UNDO_CONFLICT'
 }
 
+function mapUndoReadModelReasonCode(value: Pick<TagUndoAvailability, 'state' | 'validation' | 'reasonCode'>): string | null {
+  const mapped = mapUndoReasonCode(value.reasonCode)
+  const terminalReadModel = value.state === 'terminal-unavailable'
+    || value.validation === 'terminal-unavailable'
+  if (terminalReadModel
+    && value.reasonCode !== null
+    && mapped === 'UNDO_CONFLICT'
+    && value.reasonCode !== 'UNDO_CONFLICT') {
+    return 'UNDO_RECORD_CORRUPT'
+  }
+  return mapped
+}
+
 function publicUndoAvailability(value: TagUndoAvailability): TagUndoAvailability {
-  return { ...value, reasonCode: mapUndoReasonCode(value.reasonCode) }
+  return { ...value, reasonCode: mapUndoReadModelReasonCode(value) }
 }
 
 function publicUndoPreview(value: TagUndoPreview): Omit<TagUndoPreview, 'nextAfterDocumentId'> {
-  const { nextAfterDocumentId: _nextAfterDocumentId, reasonCode, ...preview } = value
-  return { ...preview, reasonCode: mapUndoReasonCode(reasonCode) }
+  const { nextAfterDocumentId: _nextAfterDocumentId, ...preview } = value
+  return { ...preview, reasonCode: mapUndoReadModelReasonCode(value) }
 }
 
 function publicUndoApplyResult(value: TagUndoApplyResult) {
@@ -262,7 +275,8 @@ function undoRouteErrorCode(error: TagUndoPlannerError): UndoRouteErrorCode {
     if (reasonCode === 'UNDO_STABLE_ID_CONFLICT'
       || reasonCode === 'UNDO_IDENTITY_CONFLICT'
       || reasonCode === 'UNDO_DOCUMENT_MISSING'
-      || reasonCode === 'UNDO_ASSOCIATION_CONFLICT') return reasonCode
+      || reasonCode === 'UNDO_ASSOCIATION_CONFLICT'
+      || reasonCode === 'UNDO_RECORD_CORRUPT') return reasonCode
     return 'UNDO_CONFLICT'
   }
   if (error.code === 'TAG_MANAGEMENT_UNAVAILABLE') return 'TAG_MANAGEMENT_UNAVAILABLE'
