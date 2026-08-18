@@ -125,6 +125,59 @@ async function createRenameRecord(): Promise<{ recordId: string; fingerprint: st
   return { recordId: previewBody.recordId, fingerprint: previewBody.undoFingerprint }
 }
 
+async function createUndoRecord(operation: Record<string, unknown>): Promise<{ recordId: string; fingerprint: string }> {
+  const ordinaryPreview = await authenticated('/api/tags/operations/preview', {
+    method: 'POST', body: operation,
+  })
+  expect(ordinaryPreview.status).toBe(200)
+  const ordinaryPreviewBody = await ordinaryPreview.json() as { planFingerprint: string }
+  const ordinaryApply = await authenticated('/api/tags/operations/apply', {
+    method: 'POST',
+    body: { operation, planFingerprint: ordinaryPreviewBody.planFingerprint },
+  })
+  expect(ordinaryApply.status).toBe(200)
+  const availability = await authenticated('/api/tags/undo')
+  expect(availability.status).toBe(200)
+  const availabilityBody = await availability.json() as { recordId: string | null }
+  expect(availabilityBody.recordId).toEqual(expect.any(String))
+  const preview = await authenticated('/api/tags/undo/preview', {
+    method: 'POST', body: { recordId: availabilityBody.recordId, limit: 20 },
+  })
+  expect(preview.status).toBe(200)
+  const previewBody = await preview.json() as { recordId: string; undoFingerprint: string }
+  return { recordId: previewBody.recordId, fingerprint: previewBody.undoFingerprint }
+}
+
+async function assertApplyConflictMapping(
+  operation: Record<string, unknown>,
+  mutate: () => void,
+  expectedCode: string,
+  expectedReasonCode: string,
+): Promise<void> {
+  const reviewed = await createUndoRecord(operation)
+  mutate()
+  const conflictPreview = await authenticated('/api/tags/undo/preview', {
+    method: 'POST', body: { recordId: reviewed.recordId, limit: 20 },
+  })
+  expect(conflictPreview.status).toBe(200)
+  const conflictPreviewBody = await conflictPreview.json() as {
+    validation: string
+    reasonCode: string
+    undoFingerprint: string
+  }
+  expect(conflictPreviewBody).toMatchObject({ validation: 'conflict', reasonCode: expectedCode })
+
+  const apply = await authenticated('/api/tags/undo/apply', {
+    method: 'POST',
+    body: { recordId: reviewed.recordId, undoFingerprint: conflictPreviewBody.undoFingerprint },
+  })
+  expect(apply.status).toBe(409)
+  expect(await apply.json()).toMatchObject({
+    code: expectedCode,
+    details: { recordId: reviewed.recordId, reasonCode: expectedReasonCode },
+  })
+}
+
 describe('Undo API authentication and protocol boundary', () => {
   it('rejects unauthenticated access to all four Undo endpoints', async () => {
     const requests: Array<[string, string, unknown?]> = [
@@ -235,6 +288,127 @@ describe('Undo API public protocol', () => {
       const response = await authenticated('/api/tags/undo/apply', { method: 'POST', body })
       expect(response.status).toBe(400)
     }
+  })
+
+  it('canonicalizes unknown targets to UNDO_UNAVAILABLE on every public operation route', async () => {
+    seedHealthyGraph()
+    const preview = await authenticated('/api/tags/undo/preview', {
+      method: 'POST', body: { recordId: 'missing-record', limit: 20 },
+    })
+    expect(preview.status).toBe(200)
+    expect(await preview.json()).toMatchObject({
+      state: 'unavailable',
+      reasonCode: 'UNDO_UNAVAILABLE',
+    })
+
+    const page = await authenticated('/api/tags/undo/preview/page', {
+      method: 'POST',
+      body: { recordId: 'missing-record', undoFingerprint: 'a'.repeat(64), limit: 1 },
+    })
+    expect(page.status).toBe(409)
+    expect(await page.json()).toMatchObject({ code: 'UNDO_UNAVAILABLE' })
+
+    const apply = await authenticated('/api/tags/undo/apply', {
+      method: 'POST',
+      body: { recordId: 'missing-record', undoFingerprint: 'a'.repeat(64) },
+    })
+    expect(apply.status).toBe(409)
+    const applyBody = await apply.json() as Record<string, unknown>
+    expect(applyBody.code).toBe('UNDO_UNAVAILABLE')
+    expect(JSON.stringify(applyBody)).not.toContain('UNDO_TARGET_UNAVAILABLE')
+  })
+
+  it('returns a bounded superseded tombstone after the retained parent is deleted', async () => {
+    seedHealthyGraph()
+    const first = await createRenameRecord()
+    await createUndoRecord({ kind: 'rename', sourceTagId: 7, destinationName: 'Kotlin' })
+
+    const response = await authenticated(`/api/tags/undo?recordId=${encodeURIComponent(first.recordId)}`)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      state: 'superseded',
+      validation: 'terminal-unavailable',
+      recordId: null,
+      originalOperationId: null,
+      originalResultId: null,
+      kind: null,
+      displayOnly: false,
+      committedAt: null,
+      sourceBefore: null,
+      sourceAfter: null,
+      destinationBefore: null,
+      destinationAfter: null,
+      affectedCount: 0,
+      associationAdds: 0,
+      associationRemoves: 0,
+      versionUpdateCount: 0,
+      reasonCode: 'UNDO_SUPERSEDED',
+    })
+  })
+
+  it('maps stable-ID conflicts to the approved public code', async () => {
+    seedHealthyGraph()
+    await assertApplyConflictMapping(
+      { kind: 'remove', sourceTagId: 7 },
+      () => db.prepare('INSERT INTO tags (id, name, normalized_name) VALUES (?, ?, ?)').run(7, 'Other', 'other'),
+      'UNDO_STABLE_ID_CONFLICT',
+      'UNDO_SOURCE_ID_OCCUPIED',
+    )
+  })
+
+  it('maps identity, document, association, and post-state conflicts to stable public codes', async () => {
+    seedHealthyGraph()
+    await assertApplyConflictMapping(
+      { kind: 'remove', sourceTagId: 7 },
+      () => db.prepare('INSERT INTO tags (id, name, normalized_name) VALUES (?, ?, ?)').run(21, 'Java', 'java'),
+      'UNDO_IDENTITY_CONFLICT',
+      'UNDO_SOURCE_IDENTITY_OCCUPIED',
+    )
+  })
+
+  it('maps missing-document conflicts without partially applying Undo', async () => {
+    seedHealthyGraph()
+    await assertApplyConflictMapping(
+      { kind: 'remove', sourceTagId: 7 },
+      () => db.prepare('DELETE FROM documents WHERE id = ?').run('doc-000'),
+      'UNDO_DOCUMENT_MISSING',
+      'UNDO_MISSING_DOCUMENT',
+    )
+  })
+
+  it('maps operation-owned association replacement to UNDO_ASSOCIATION_CONFLICT', async () => {
+    seedHealthyGraph()
+    const reviewed = await createUndoRecord({ kind: 'merge', sourceTagId: 7, destinationTagId: 20 })
+    const association = db.prepare(`
+      SELECT association_id FROM document_tags WHERE document_id = ? AND tag_id = ?
+    `).get('doc-000', 20) as { association_id: number }
+    db.prepare('DELETE FROM document_tags WHERE association_id = ?').run(association.association_id)
+    db.prepare('INSERT INTO document_tags (document_id, tag_id) VALUES (?, ?)').run('doc-000', 20)
+
+    const conflictPreview = await authenticated('/api/tags/undo/preview', {
+      method: 'POST', body: { recordId: reviewed.recordId, limit: 20 },
+    })
+    const conflictPreviewBody = await conflictPreview.json() as { reasonCode: string; undoFingerprint: string }
+    expect(conflictPreviewBody.reasonCode).toBe('UNDO_ASSOCIATION_CONFLICT')
+    const apply = await authenticated('/api/tags/undo/apply', {
+      method: 'POST',
+      body: { recordId: reviewed.recordId, undoFingerprint: conflictPreviewBody.undoFingerprint },
+    })
+    expect(apply.status).toBe(409)
+    expect(await apply.json()).toMatchObject({
+      code: 'UNDO_ASSOCIATION_CONFLICT',
+      details: { reasonCode: 'UNDO_ASSOCIATION_CONFLICT' },
+    })
+  })
+
+  it('maps source post-state drift to UNDO_STABLE_ID_CONFLICT', async () => {
+    seedHealthyGraph()
+    await assertApplyConflictMapping(
+      { kind: 'rename', sourceTagId: 7, destinationName: 'Java Runtime' },
+      () => db.prepare('UPDATE tags SET name = ?, normalized_name = ? WHERE id = ?').run('Drift', 'drift', 7),
+      'UNDO_STABLE_ID_CONFLICT',
+      'UNDO_SOURCE_POST_STATE_CHANGED',
+    )
   })
 
   it('supports bounded page continuation and rejects stale fingerprints', async () => {

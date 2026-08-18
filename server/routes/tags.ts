@@ -175,16 +175,32 @@ export function parseTagUndoApplyRouteRequest(value: unknown): TagUndoApplyInput
 
 function mapUndoReasonCode(reasonCode: string | null): string | null {
   if (reasonCode === null) return null
+  if (reasonCode === 'UNDO_TARGET_UNAVAILABLE') return 'UNDO_UNAVAILABLE'
   if (reasonCode === 'UNDO_SOURCE_IDENTITY_OCCUPIED'
     || reasonCode === 'UNDO_DESTINATION_IDENTITY_OCCUPIED') return 'UNDO_IDENTITY_CONFLICT'
-  if (reasonCode === 'UNDO_SOURCE_POST_STATE_CHANGED'
+  if (reasonCode === 'UNDO_SOURCE_ID_OCCUPIED'
+    || reasonCode === 'UNDO_SOURCE_POST_STATE_CHANGED'
     || reasonCode === 'UNDO_SOURCE_POST_STATE_MISSING'
     || reasonCode === 'UNDO_DESTINATION_POST_STATE_CHANGED'
     || reasonCode === 'UNDO_DESTINATION_POST_STATE_MISSING') return 'UNDO_STABLE_ID_CONFLICT'
   if (reasonCode === 'UNDO_MISSING_DOCUMENT') return 'UNDO_DOCUMENT_MISSING'
-  if (reasonCode === 'UNDO_MALFORMED_OWNERSHIP') return 'UNDO_ASSOCIATION_CONFLICT'
-  if (reasonCode === 'UNDO_MALFORMED_TAG') return 'UNDO_RECORD_CORRUPT'
-  return reasonCode
+  if (reasonCode === 'UNDO_ASSOCIATION_CONFLICT'
+    || reasonCode === 'UNDO_MALFORMED_OWNERSHIP') return 'UNDO_ASSOCIATION_CONFLICT'
+  if (reasonCode === 'UNDO_MALFORMED_TAG'
+    || reasonCode === 'UNDO_CORRUPT') return 'UNDO_RECORD_CORRUPT'
+  if (reasonCode === 'TAG_UNDO_FOUNDATION_UNHEALTHY') return 'TAG_MANAGEMENT_UNAVAILABLE'
+  if (reasonCode === 'UNDO_UNAVAILABLE'
+    || reasonCode === 'UNDO_PREVIEW_REQUIRED'
+    || reasonCode === 'UNDO_STALE'
+    || reasonCode === 'UNDO_CONFLICT'
+    || reasonCode === 'UNDO_SUPERSEDED'
+    || reasonCode === 'UNDO_ALREADY_APPLIED'
+    || reasonCode === 'UNDO_RECORD_CORRUPT'
+    || reasonCode === 'UNDO_STABLE_ID_CONFLICT'
+    || reasonCode === 'UNDO_IDENTITY_CONFLICT'
+    || reasonCode === 'UNDO_DOCUMENT_MISSING'
+    || reasonCode === 'TAG_MANAGEMENT_UNAVAILABLE') return reasonCode
+  return 'UNDO_CONFLICT'
 }
 
 function publicUndoAvailability(value: TagUndoAvailability): TagUndoAvailability {
@@ -219,7 +235,6 @@ function publicUndoApplyResult(value: TagUndoApplyResult) {
 
 const UNDO_ERROR_CODES = new Set([
   'UNDO_UNAVAILABLE',
-  'UNDO_TARGET_UNAVAILABLE',
   'UNDO_PREVIEW_REQUIRED',
   'UNDO_STALE',
   'UNDO_CONFLICT',
@@ -239,10 +254,20 @@ type UndoRouteErrorCode = typeof UNDO_ERROR_CODES extends Set<infer T> ? T : nev
 
 function undoRouteErrorCode(error: TagUndoPlannerError): UndoRouteErrorCode {
   if (error.code === 'INVALID_PREVIEW') return 'INVALID_OPERATION'
-  if (error.code === 'UNDO_TARGET_UNAVAILABLE') return 'UNDO_TARGET_UNAVAILABLE'
+  if (error.code === 'UNDO_TARGET_UNAVAILABLE') return 'UNDO_UNAVAILABLE'
+  if (error.code === 'UNDO_CONFLICT') {
+    const reasonCode = typeof error.details.reasonCode === 'string'
+      ? mapUndoReasonCode(error.details.reasonCode)
+      : null
+    if (reasonCode === 'UNDO_STABLE_ID_CONFLICT'
+      || reasonCode === 'UNDO_IDENTITY_CONFLICT'
+      || reasonCode === 'UNDO_DOCUMENT_MISSING'
+      || reasonCode === 'UNDO_ASSOCIATION_CONFLICT') return reasonCode
+    return 'UNDO_CONFLICT'
+  }
   if (error.code === 'TAG_MANAGEMENT_UNAVAILABLE') return 'TAG_MANAGEMENT_UNAVAILABLE'
   if (error.code === 'TRANSACTION_FAILED') return 'TRANSACTION_FAILED'
-  return error.code
+  return error.code as UndoRouteErrorCode
 }
 
 function undoRouteErrorMessage(code: UndoRouteErrorCode): string {
@@ -259,16 +284,30 @@ function undoRouteErrorMessage(code: UndoRouteErrorCode): string {
   if (code === 'UNDO_IDENTITY_CONFLICT') return 'Undo identity validation failed.'
   if (code === 'UNDO_DOCUMENT_MISSING') return 'A required document is missing.'
   if (code === 'UNDO_ASSOCIATION_CONFLICT') return 'Undo association validation failed.'
-  if (code === 'UNDO_TARGET_UNAVAILABLE') return 'The requested Undo target is unavailable.'
   return 'No Undo operation is available.'
 }
+
+const UNDO_REASON_DIAGNOSTIC_CODES = new Set<string>([
+  'UNDO_SOURCE_ID_OCCUPIED',
+  'UNDO_SOURCE_POST_STATE_CHANGED',
+  'UNDO_SOURCE_POST_STATE_MISSING',
+  'UNDO_DESTINATION_POST_STATE_CHANGED',
+  'UNDO_DESTINATION_POST_STATE_MISSING',
+  'UNDO_SOURCE_IDENTITY_OCCUPIED',
+  'UNDO_DESTINATION_IDENTITY_OCCUPIED',
+  'UNDO_MISSING_DOCUMENT',
+  'UNDO_ASSOCIATION_CONFLICT',
+  'UNDO_MALFORMED_OWNERSHIP',
+  'UNDO_MALFORMED_TAG',
+])
 
 function undoErrorDetails(error: TagUndoPlannerError): Record<string, string | number | null> {
   const details: Record<string, string | number | null> = {}
   if (typeof error.details.recordId === 'string') details.recordId = error.details.recordId.slice(0, UNDO_RECORD_ID_MAX_LENGTH)
   if (typeof error.details.healthCode === 'string') details.healthCode = error.details.healthCode.slice(0, 128)
   const reasonCode = typeof error.details.reasonCode === 'string'
-    ? mapUndoReasonCode(error.details.reasonCode)
+    && UNDO_REASON_DIAGNOSTIC_CODES.has(error.details.reasonCode)
+    ? error.details.reasonCode
     : null
   if (reasonCode) details.reasonCode = reasonCode
   return details

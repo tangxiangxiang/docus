@@ -135,10 +135,45 @@ describe('Undo client runtime guards', () => {
       { ...availability(), sourceBefore: { id: 7, normalizedName: 'java' } },
       { ...availability(), affectedCount: -1 },
       { ...availability(), kind: 'remove', sourceAfter },
+      { ...availability(), sourceAfter: sourceBefore },
     ]) {
       responses.push({ status: 200, body })
       await expect(getUndoAvailability()).rejects.toMatchObject({ code: 'CLIENT_PROTOCOL_ERROR' })
     }
+  })
+
+  it('rejects contradictory Merge destination identity rows', async () => {
+    const destination = { id: 20, normalizedName: 'backend', displayName: 'Backend' }
+    for (const destinationAfter of [
+      { ...destination, displayName: 'Other' },
+      { ...destination, normalizedName: 'other' },
+    ]) {
+      responses.push({
+        status: 200,
+        body: availability({
+          kind: 'merge',
+          displayOnly: false,
+          sourceAfter: null,
+          destinationBefore: destination,
+          destinationAfter,
+        }),
+      })
+      await expect(getUndoAvailability()).rejects.toMatchObject({ code: 'CLIENT_PROTOCOL_ERROR' })
+    }
+  })
+
+  it('binds Preview and page responses to the requested record identity', async () => {
+    responses.push({ status: 200, body: preview({ recordId: 'record-2' }) })
+    await expect(previewUndo(recordId)).rejects.toMatchObject({ code: 'CLIENT_PROTOCOL_ERROR' })
+
+    responses.push({ status: 200, body: preview({ recordId: 'record-2' }) })
+    await expect(getUndoPreviewPage({ recordId, undoFingerprint: fingerprint })).rejects.toMatchObject({
+      code: 'CLIENT_PROTOCOL_ERROR',
+    })
+
+    expect(calls).toHaveLength(2)
+    expect(calls[0]?.url).toBe('/api/tags/undo/preview')
+    expect(calls[1]?.url).toBe('/api/tags/undo/preview/page')
   })
 
   it('rejects malformed Preview protocol fields and sample bounds', async () => {
@@ -184,6 +219,12 @@ describe('Undo client runtime guards', () => {
       code: 'CLIENT_PROTOCOL_ERROR',
       recoveryRecordId: recordId,
     })
+
+    responses.push({ status: 409, body: { error: 'target unavailable', code: 'UNDO_TARGET_UNAVAILABLE', details: {} } })
+    await expect(applyUndo(preview())).rejects.toMatchObject({
+      code: 'CLIENT_PROTOCOL_ERROR',
+      recoveryRecordId: recordId,
+    })
   })
 })
 
@@ -217,6 +258,48 @@ describe('Undo client compatibility and committed recovery', () => {
     expect(calls[1]?.url).toBe('/api/tags/undo?recordId=record-1')
     expect(calls[1]?.init.method).toBeUndefined()
     expect(calls.filter((call) => call.url === '/api/tags/undo/apply')).toHaveLength(1)
+  })
+
+  it('accepts a valid superseded tombstone without synthesizing the requested record ID', async () => {
+    const superseded = {
+      supported: true,
+      state: 'superseded',
+      validation: 'terminal-unavailable',
+      recordId: null,
+      originalOperationId: null,
+      originalResultId: null,
+      kind: null,
+      displayOnly: false,
+      committedAt: null,
+      sourceBefore: null,
+      sourceAfter: null,
+      destinationBefore: null,
+      destinationAfter: null,
+      affectedCount: 0,
+      associationAdds: 0,
+      associationRemoves: 0,
+      versionUpdateCount: 0,
+      reasonCode: 'UNDO_SUPERSEDED',
+    }
+    responses.push({ status: 200, body: superseded })
+    await expect(recoverCommittedUndo(recordId)).resolves.toMatchObject({
+      state: 'superseded',
+      validation: 'terminal-unavailable',
+      recordId: null,
+      reasonCode: 'UNDO_SUPERSEDED',
+    })
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.url).toBe('/api/tags/undo?recordId=record-1')
+    expect(calls.filter((call) => call.url === '/api/tags/undo/apply')).toHaveLength(0)
+
+    for (const malformed of [
+      { ...superseded, validation: 'safe' },
+      { ...superseded, affectedCount: 1 },
+      { ...superseded, kind: 'rename' },
+    ]) {
+      responses.push({ status: 200, body: malformed })
+      await expect(recoverCommittedUndo(recordId)).rejects.toMatchObject({ code: 'CLIENT_PROTOCOL_ERROR' })
+    }
   })
 
   it('keeps the reviewed Apply binding strict for source and destination identities', async () => {

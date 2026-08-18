@@ -32,7 +32,6 @@ export type UndoWarningCode = 'DESTRUCTIVE' | 'HIGH_IMPACT' | 'DYNAMIC_CONFLICT'
 
 export type UndoServerErrorCode =
   | 'UNDO_UNAVAILABLE'
-  | 'UNDO_TARGET_UNAVAILABLE'
   | 'UNDO_PREVIEW_REQUIRED'
   | 'UNDO_STALE'
   | 'UNDO_CONFLICT'
@@ -247,7 +246,13 @@ const AVAILABILITY_KEYS = [
 function assertAvailabilitySemantics(value: UndoAvailability): void {
   const hasRecord = value.recordId !== null
   if (!hasRecord) {
-    assert(value.state === 'unavailable', 'missing record has a terminal state')
+    assert(value.state === 'unavailable' || value.state === 'superseded', 'missing record has an invalid state')
+    if (value.state === 'superseded') {
+      assert(value.validation === 'terminal-unavailable', 'superseded tombstone validation is invalid')
+      assert(value.reasonCode === 'UNDO_SUPERSEDED', 'superseded tombstone reason is invalid')
+    } else {
+      assert(value.validation === 'temporary-unavailable' || value.validation === 'stale', 'unavailable state validation is invalid')
+    }
     assert(value.originalOperationId === null && value.originalResultId === null, 'missing record has operation identity')
     assert(value.kind === null && value.displayOnly === false, 'missing record has operation kind')
     assert(value.committedAt === null, 'missing record has commit time')
@@ -265,6 +270,8 @@ function assertAvailabilitySemantics(value: UndoAvailability): void {
       assert(value.sourceAfter.id === value.sourceBefore.id, 'rename source identity changed')
       if (value.displayOnly) {
         assert(value.sourceAfter.normalizedName === value.sourceBefore.normalizedName, 'display rename normalized identity changed')
+      } else {
+        assert(value.sourceAfter.normalizedName !== value.sourceBefore.normalizedName, 'identity rename did not change normalized identity')
       }
       assert(value.destinationBefore === null && value.destinationAfter === null, 'rename has destination identity')
     } else if (value.kind === 'merge') {
@@ -272,6 +279,8 @@ function assertAvailabilitySemantics(value: UndoAvailability): void {
       assert(value.sourceAfter === null, 'merge has sourceAfter')
       assert(value.destinationBefore !== null && value.destinationAfter !== null, 'merge destination identity is incomplete')
       assert(value.destinationAfter.id === value.destinationBefore.id, 'merge destination identity changed')
+      assert(value.destinationAfter.normalizedName === value.destinationBefore.normalizedName, 'merge destination normalized identity changed')
+      assert(value.destinationAfter.displayName === value.destinationBefore.displayName, 'merge destination display identity changed')
     } else {
       assert(value.displayOnly === false, 'remove cannot be display-only')
       assert(value.sourceAfter === null, 'remove has sourceAfter')
@@ -284,6 +293,7 @@ function assertAvailabilitySemantics(value: UndoAvailability): void {
   } else if (value.state === 'consumed' || value.state === 'terminal-unavailable') {
     assert(value.validation === 'terminal-unavailable', 'terminal state validation is invalid')
   } else if (value.state === 'superseded') {
+    assert(!hasRecord, 'superseded state has a retained record')
     assert(value.validation === 'terminal-unavailable', 'superseded validation is invalid')
   } else {
     assert(value.validation === 'temporary-unavailable' || value.validation === 'stale', 'unavailable validation is invalid')
@@ -437,7 +447,7 @@ function parseApplyResult(value: unknown): UndoApplyResult {
 }
 
 const SERVER_ERROR_CODES = new Set<UndoServerErrorCode>([
-  'UNDO_UNAVAILABLE', 'UNDO_TARGET_UNAVAILABLE', 'UNDO_PREVIEW_REQUIRED', 'UNDO_STALE', 'UNDO_CONFLICT',
+  'UNDO_UNAVAILABLE', 'UNDO_PREVIEW_REQUIRED', 'UNDO_STALE', 'UNDO_CONFLICT',
   'UNDO_SUPERSEDED', 'UNDO_ALREADY_APPLIED', 'UNDO_RECORD_CORRUPT', 'UNDO_STABLE_ID_CONFLICT',
   'UNDO_IDENTITY_CONFLICT', 'UNDO_DOCUMENT_MISSING', 'UNDO_ASSOCIATION_CONFLICT',
   'TAG_MANAGEMENT_UNAVAILABLE', 'INVALID_OPERATION', 'TRANSACTION_FAILED',
@@ -659,7 +669,11 @@ export async function previewUndo(
     method: 'POST',
     headers: requestHeaders(),
     body: JSON.stringify(request),
-  }, (response) => parsePreview(response, UNDO_PREVIEW_SAMPLE_LIMIT))
+  }, (response) => {
+    const preview = parsePreview(response, UNDO_PREVIEW_SAMPLE_LIMIT)
+    assert(preview.recordId === request.recordId, 'Preview record identity changed')
+    return preview
+  })
 }
 
 export async function getUndoPreviewPage(
@@ -675,6 +689,8 @@ export async function getUndoPreviewPage(
     body: JSON.stringify(request),
   }, (response) => {
     const page = parsePreview(response, UNDO_PREVIEW_PAGE_MAX_LIMIT)
+    assert(page.state === 'available', 'page state is invalid')
+    assert(page.recordId === request.recordId, 'page record identity changed')
     assert(page.undoFingerprint === request.undoFingerprint, 'page fingerprint changed')
     return page
   })
