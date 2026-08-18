@@ -5,6 +5,8 @@ import type {
   TagOperationRequest,
   TagRowView,
 } from './tagManagement.js'
+import { withDocumentWriteLocks } from './documentWriteLock.js'
+import { MetadataVersionError, nextMetadataUpdatedAt } from './metadataVersion.js'
 import {
   initializeTagUndoFoundationHealth,
   TAG_UNDO_FOUNDATION_SCHEMA_VERSION,
@@ -546,12 +548,14 @@ export type TagUndoPreviewPageRequest = {
 export type TagUndoPlannerErrorCode =
   | 'INVALID_PREVIEW'
   | 'UNDO_STALE'
+  | 'UNDO_CONFLICT'
   | 'UNDO_TARGET_UNAVAILABLE'
   | 'UNDO_UNAVAILABLE'
   | 'UNDO_SUPERSEDED'
   | 'UNDO_ALREADY_APPLIED'
   | 'UNDO_RECORD_CORRUPT'
   | 'TAG_MANAGEMENT_UNAVAILABLE'
+  | 'TRANSACTION_FAILED'
 
 export class TagUndoPlannerError extends Error {
   readonly code: TagUndoPlannerErrorCode
@@ -567,6 +571,58 @@ export class TagUndoPlannerError extends Error {
     this.code = code
     this.details = details
   }
+}
+
+export type TagUndoApplyInput = {
+  recordId: string
+  undoFingerprint: string
+}
+
+export type TagUndoApplyResult = {
+  undoOperationId: string
+  undoResultId: string
+  recordId: string
+  originalOperationId: string
+  originalResultId: string
+  kind: TagOperationRequest['kind']
+  displayOnly: boolean
+  sourceTag: TagRowView
+  destinationTag: TagRowView | null
+  affectedCount: number
+  associationAdds: number
+  associationRemoves: number
+  versionUpdateCount: number
+  committedAt: number
+  appliedUndoFingerprint: string
+  lifecycle: 'consumed'
+}
+
+export type TagUndoApplyFailureStage =
+  | 'after-transactional-replan'
+  | 'after-version-staging'
+  | 'after-source-row-restore'
+  | 'after-created-destination-delete'
+  | 'after-source-association-restore'
+  | 'after-version-update'
+  | 'after-inverse-postcondition'
+  | 'after-consumed-parent-update'
+  | 'after-child-delta-purge'
+  | 'after-final-postcondition'
+  | 'before-commit'
+
+export type TagUndoApplyTestHooks = {
+  afterDiscovery?: (plan: TagUndoPlan) => void
+  afterLocks?: (paths: readonly string[]) => void | Promise<void>
+  failureStage?: TagUndoApplyFailureStage | null
+}
+
+let undoApplyTestHooks: TagUndoApplyTestHooks | null = null
+
+/** Test-only seams for proving the T2.1-3 transaction and lock contract. */
+export function __setTagUndoApplyHooksForTesting(
+  hooks: TagUndoApplyTestHooks | null,
+): void {
+  undoApplyTestHooks = hooks
 }
 
 type TagUndoRecordRow = {
@@ -1264,6 +1320,10 @@ function buildUndoPlanInTransaction(
     if (!conflictCodes.includes(code)) conflictCodes.push(code)
   }
   const inverse = inverseCounts(record, deltas, record.version_update_count)
+  const retainedCounts = {
+    affectedCount: record.version_update_count,
+    ...inverse,
+  }
 
   if (record.lifecycle === 'consumed') {
     return emptyPlan(baseAvailability(
@@ -1272,7 +1332,7 @@ function buildUndoPlanInTransaction(
       'UNDO_ALREADY_APPLIED',
       record,
       views,
-      inverse,
+      retainedCounts,
     ), warningCodes(record.kind, record.version_update_count, 'terminal-unavailable'))
   }
   if (record.lifecycle === 'terminal') {
@@ -1282,7 +1342,7 @@ function buildUndoPlanInTransaction(
       boundedTerminalReasonCode(record.terminal_code),
       record,
       views,
-      inverse,
+      retainedCounts,
     ), warningCodes(record.kind, record.version_update_count, 'terminal-unavailable'))
   }
   if (record.lifecycle !== 'latest') {
@@ -1531,6 +1591,614 @@ export function getTagUndoPreviewPage(
     return publicPreview(withPreviewWindow(plan, limit, afterDocumentId))
   })
   return transaction()
+}
+
+const UNDO_APPLY_AFFECTED_DOCUMENTS_TEMP_TABLE = 'tag_undo_apply_affected_documents'
+const UNDO_APPLY_RENAME_ASSOCIATIONS_TEMP_TABLE = 'tag_undo_apply_rename_associations'
+const SQLITE_MAX_SAFE_INTEGER = 9007199254740991
+
+function applyTransactionFailed(message = 'tag Undo Apply transaction failed'): never {
+  throw new TagUndoPlannerError('TRANSACTION_FAILED', message)
+}
+
+function throwUndoApplyFailure(stage: TagUndoApplyFailureStage): void {
+  if (undoApplyTestHooks?.failureStage === stage) {
+    applyTransactionFailed(`tag Undo Apply failure injected at ${stage}`)
+  }
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** Parse the internal domain input; no inverse scope is accepted from callers. */
+export function parseTagUndoApplyRequest(value: unknown): TagUndoApplyInput {
+  if (!isPlainRecord(value)
+    || Object.keys(value).sort().join('\0') !== 'recordId\0undoFingerprint'
+    || typeof value.recordId !== 'string'
+    || value.recordId.length < 1
+    || value.recordId.length > 128
+    || !isSha256Fingerprint(value.undoFingerprint)) {
+    plannerInvalid('Undo Apply requires exactly recordId and undoFingerprint')
+  }
+  return {
+    recordId: value.recordId,
+    undoFingerprint: value.undoFingerprint,
+  }
+}
+
+function throwCurrentTargetClassification(plan: TagUndoPlan): void {
+  if (plan.reasonCode === 'TAG_MANAGEMENT_UNAVAILABLE'
+    || plan.reasonCode === 'TAG_UNDO_FOUNDATION_UNHEALTHY') {
+    throw new TagUndoPlannerError('TAG_MANAGEMENT_UNAVAILABLE', 'tag management is temporarily unavailable', {
+      recordId: plan.recordId,
+    })
+  }
+  if (plan.state === 'superseded' || plan.reasonCode === 'UNDO_SUPERSEDED') {
+    throw new TagUndoPlannerError('UNDO_SUPERSEDED', 'Undo target was superseded', {
+      recordId: plan.recordId,
+    })
+  }
+  if (plan.state === 'consumed' || plan.reasonCode === 'UNDO_ALREADY_APPLIED') {
+    throw new TagUndoPlannerError('UNDO_ALREADY_APPLIED', 'Undo target was already applied', {
+      recordId: plan.recordId,
+    })
+  }
+  if (plan.state === 'terminal-unavailable'
+    || plan.reasonCode === 'UNDO_RECORD_CORRUPT'
+    || plan.validation === 'terminal-unavailable') {
+    throw new TagUndoPlannerError('UNDO_RECORD_CORRUPT', 'Undo target is permanently unavailable', {
+      recordId: plan.recordId,
+    })
+  }
+  if (plan.reasonCode === 'UNDO_TARGET_UNAVAILABLE' || plan.reasonCode === 'UNDO_UNAVAILABLE'
+    || plan.state === 'unavailable') {
+    throw new TagUndoPlannerError(
+      plan.reasonCode === 'UNDO_TARGET_UNAVAILABLE' ? 'UNDO_TARGET_UNAVAILABLE' : 'UNDO_UNAVAILABLE',
+      'Undo target is unavailable',
+      { recordId: plan.recordId },
+    )
+  }
+}
+
+function assertReviewedUndoPlan(
+  plan: TagUndoPlan,
+  input: TagUndoApplyInput,
+): asserts plan is TagUndoPlan & {
+  recordId: string
+  kind: TagOperationRequest['kind']
+  sourceBefore: TagRowView
+  undoFingerprint: string
+} {
+  throwCurrentTargetClassification(plan)
+  if (plan.recordId !== input.recordId || plan.state !== 'available') {
+    throw new TagUndoPlannerError('UNDO_TARGET_UNAVAILABLE', 'Undo target is unavailable', {
+      recordId: plan.recordId,
+    })
+  }
+  if (!plan.undoFingerprint) {
+    throw new TagUndoPlannerError('UNDO_UNAVAILABLE', 'Undo target has no current fingerprint', {
+      recordId: plan.recordId,
+    })
+  }
+  if (plan.undoFingerprint !== input.undoFingerprint) {
+    throw new TagUndoPlannerError('UNDO_STALE', 'Undo Preview fingerprint is stale', {
+      recordId: plan.recordId,
+    })
+  }
+  if (!plan.allowedToApply || plan.validation !== 'safe') {
+    throw new TagUndoPlannerError('UNDO_CONFLICT', 'Undo current-state preconditions are unsafe', {
+      recordId: plan.recordId,
+      reasonCode: plan.reasonCode,
+    })
+  }
+  if (!plan.kind || !plan.sourceBefore) {
+    throw new TagUndoPlannerError('UNDO_RECORD_CORRUPT', 'Undo record contract is invalid', {
+      recordId: plan.recordId,
+    })
+  }
+}
+
+function dropUndoApplyTempTables(db: DatabaseT): void {
+  db.exec(`
+    DROP TABLE IF EXISTS temp.${UNDO_APPLY_RENAME_ASSOCIATIONS_TEMP_TABLE};
+    DROP TABLE IF EXISTS temp.${UNDO_APPLY_AFFECTED_DOCUMENTS_TEMP_TABLE};
+  `)
+}
+
+type StagedUndoDocument = {
+  document_id: string
+  previous_updated_at: number
+  next_updated_at: number
+}
+
+function stageUndoAffectedDocuments(
+  db: DatabaseT,
+  plan: TagUndoPlan & { recordId: string; kind: TagOperationRequest['kind']; sourceBefore: TagRowView },
+  commitTimestamp: number,
+): StagedUndoDocument[] {
+  dropUndoApplyTempTables(db)
+  db.exec(`
+    CREATE TEMP TABLE ${UNDO_APPLY_AFFECTED_DOCUMENTS_TEMP_TABLE} (
+      document_id TEXT PRIMARY KEY,
+      previous_updated_at INTEGER NOT NULL,
+      next_updated_at INTEGER NOT NULL
+    ) WITHOUT ROWID;
+  `)
+
+  const nextVersionSql = `
+    CASE
+      WHEN d.updated_at < 0 OR d.updated_at >= ${SQLITE_MAX_SAFE_INTEGER} THEN NULL
+      WHEN d.updated_at + 1 > ? THEN d.updated_at + 1
+      ELSE ?
+    END
+  `
+  if (plan.kind === 'rename') {
+    db.prepare(`
+      INSERT INTO temp.${UNDO_APPLY_AFFECTED_DOCUMENTS_TEMP_TABLE} (
+        document_id, previous_updated_at, next_updated_at
+      )
+      SELECT DISTINCT d.id, d.updated_at, ${nextVersionSql}
+      FROM documents d
+      JOIN document_tags dt ON dt.document_id = d.id
+      WHERE dt.tag_id = ?
+      ORDER BY d.id COLLATE BINARY
+    `).run(commitTimestamp, commitTimestamp, plan.sourceBefore.id)
+
+    db.exec(`
+      CREATE TEMP TABLE ${UNDO_APPLY_RENAME_ASSOCIATIONS_TEMP_TABLE} (
+        association_id INTEGER PRIMARY KEY,
+        document_id TEXT NOT NULL,
+        tag_id INTEGER NOT NULL
+      ) WITHOUT ROWID;
+    `)
+    db.prepare(`
+      INSERT INTO temp.${UNDO_APPLY_RENAME_ASSOCIATIONS_TEMP_TABLE} (
+        association_id, document_id, tag_id
+      )
+      SELECT association_id, document_id, tag_id
+      FROM document_tags
+      WHERE tag_id = ?
+      ORDER BY association_id
+    `).run(plan.sourceBefore.id)
+  } else {
+    db.prepare(`
+      INSERT INTO temp.${UNDO_APPLY_AFFECTED_DOCUMENTS_TEMP_TABLE} (
+        document_id, previous_updated_at, next_updated_at
+      )
+      SELECT DISTINCT d.id, d.updated_at, ${nextVersionSql}
+      FROM documents d
+      JOIN (
+        SELECT DISTINCT document_id
+        FROM tag_undo_association_deltas
+        WHERE record_id = ?
+      ) required ON required.document_id = d.id
+      ORDER BY d.id COLLATE BINARY
+    `).run(commitTimestamp, commitTimestamp, plan.recordId)
+  }
+
+  const staged = db.prepare(`
+    SELECT document_id, previous_updated_at, next_updated_at
+    FROM temp.${UNDO_APPLY_AFFECTED_DOCUMENTS_TEMP_TABLE}
+    ORDER BY document_id COLLATE BINARY
+  `).all() as StagedUndoDocument[]
+  const expectedIds = new Set(plan.affectedDocumentIds)
+  if (staged.length !== plan.affectedCount || staged.length !== expectedIds.size
+    || staged.some((row) => !expectedIds.has(row.document_id))) {
+    applyTransactionFailed('Undo affected-document scope changed during Apply')
+  }
+  for (const row of staged) {
+    try {
+      if (nextMetadataUpdatedAt(row.previous_updated_at, commitTimestamp) !== row.next_updated_at) {
+        applyTransactionFailed('Undo metadata version staging is inconsistent')
+      }
+    } catch (error) {
+      if (error instanceof MetadataVersionError) applyTransactionFailed('Undo metadata version cannot advance')
+      throw error
+    }
+  }
+  if (plan.kind === 'rename') {
+    const associationCount = (db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM temp.${UNDO_APPLY_RENAME_ASSOCIATIONS_TEMP_TABLE}
+    `).get() as { count: number }).count
+    if (associationCount !== plan.affectedCount) {
+      applyTransactionFailed('Undo Rename association scope changed during Apply')
+    }
+  }
+  return staged
+}
+
+function applyUndoVersions(
+  db: DatabaseT,
+  plan: TagUndoPlan,
+  stagedCount: number,
+): number {
+  const updated = db.prepare(`
+    UPDATE documents
+    SET updated_at = (
+      SELECT next_updated_at
+      FROM temp.${UNDO_APPLY_AFFECTED_DOCUMENTS_TEMP_TABLE} staged
+      WHERE staged.document_id = documents.id
+    )
+    WHERE id IN (
+      SELECT document_id
+      FROM temp.${UNDO_APPLY_AFFECTED_DOCUMENTS_TEMP_TABLE}
+    )
+  `).run()
+  if (updated.changes !== stagedCount || updated.changes !== plan.versionUpdateCount) {
+    applyTransactionFailed('Undo metadata version update count mismatched')
+  }
+  const verified = (db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM temp.${UNDO_APPLY_AFFECTED_DOCUMENTS_TEMP_TABLE} staged
+    JOIN documents d ON d.id = staged.document_id
+    WHERE d.updated_at = staged.next_updated_at
+  `).get() as { count: number }).count
+  if (verified !== stagedCount) applyTransactionFailed('Undo metadata version postcondition failed')
+  return updated.changes
+}
+
+function restoreUndoSourceTag(
+  db: DatabaseT,
+  plan: TagUndoPlan & { sourceBefore: TagRowView; kind: TagOperationRequest['kind'] },
+): void {
+  if (plan.kind === 'rename') {
+    const updated = db.prepare(`
+      UPDATE tags
+      SET name = ?, normalized_name = ?
+      WHERE id = ?
+        AND name = ?
+        AND normalized_name = ?
+    `).run(
+      plan.sourceBefore.displayName,
+      plan.sourceBefore.normalizedName,
+      plan.sourceBefore.id,
+      plan.sourceAfter!.displayName,
+      plan.sourceAfter!.normalizedName,
+    )
+    if (updated.changes !== 1) applyTransactionFailed('Undo source tag post-state changed')
+    return
+  }
+
+  const inserted = db.prepare(`
+    INSERT INTO tags (id, name, normalized_name)
+    VALUES (?, ?, ?)
+  `).run(
+    plan.sourceBefore.id,
+    plan.sourceBefore.displayName,
+    plan.sourceBefore.normalizedName,
+  )
+  if (inserted.changes !== 1) applyTransactionFailed('Undo source tag could not be restored')
+}
+
+function deleteUndoCreatedDestinationAssociations(
+  db: DatabaseT,
+  plan: TagUndoPlan & { recordId: string; kind: TagOperationRequest['kind'] },
+): number {
+  if (plan.kind !== 'merge') return 0
+  const deleted = db.prepare(`
+    DELETE FROM document_tags
+    WHERE association_id IN (
+      SELECT association_id
+      FROM tag_undo_association_deltas
+      WHERE record_id = ?
+        AND effect = 'created-destination'
+    )
+  `).run(plan.recordId)
+  if (deleted.changes !== plan.associationRemoves) {
+    applyTransactionFailed('Undo Merge destination provenance count mismatched')
+  }
+  return deleted.changes
+}
+
+function restoreUndoSourceAssociations(
+  db: DatabaseT,
+  plan: TagUndoPlan & { recordId: string; kind: TagOperationRequest['kind']; sourceBefore: TagRowView },
+): number {
+  if (plan.kind !== 'merge' && plan.kind !== 'remove') return 0
+  const expected = (db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM tag_undo_association_deltas
+    WHERE record_id = ?
+      AND effect = 'removed-source'
+  `).get(plan.recordId) as { count: number }).count
+  const inserted = db.prepare(`
+    INSERT INTO document_tags (document_id, tag_id)
+    SELECT document_id, ?
+    FROM tag_undo_association_deltas
+    WHERE record_id = ?
+      AND effect = 'removed-source'
+    ORDER BY association_id
+  `).run(plan.sourceBefore.id, plan.recordId)
+  if (inserted.changes !== expected || inserted.changes !== plan.associationAdds) {
+    applyTransactionFailed('Undo source association restore count mismatched')
+  }
+  return inserted.changes
+}
+
+function assertUndoVersions(db: DatabaseT, plan: TagUndoPlan): void {
+  const stagedCount = (db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM temp.${UNDO_APPLY_AFFECTED_DOCUMENTS_TEMP_TABLE}
+  `).get() as { count: number }).count
+  if (stagedCount !== plan.versionUpdateCount) {
+    applyTransactionFailed('Undo affected-document version count mismatched')
+  }
+  const updatedCount = (db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM temp.${UNDO_APPLY_AFFECTED_DOCUMENTS_TEMP_TABLE} staged
+    JOIN documents d ON d.id = staged.document_id
+    WHERE d.updated_at = staged.next_updated_at
+  `).get() as { count: number }).count
+  if (updatedCount !== stagedCount) applyTransactionFailed('Undo version set is incomplete')
+}
+
+function assertUndoInversePostconditions(
+  db: DatabaseT,
+  plan: TagUndoPlan & { recordId: string; kind: TagOperationRequest['kind']; sourceBefore: TagRowView },
+): void {
+  const source = readTagById(db, plan.sourceBefore.id)
+  if (source.malformed || !source.row || !sameTagView(source.row, plan.sourceBefore)) {
+    applyTransactionFailed('Undo source tag postcondition failed')
+  }
+
+  if (plan.kind === 'rename') {
+    const expectedCount = (db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM temp.${UNDO_APPLY_RENAME_ASSOCIATIONS_TEMP_TABLE}
+    `).get() as { count: number }).count
+    const currentCount = (db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM document_tags
+      WHERE tag_id = ?
+    `).get(plan.sourceBefore.id) as { count: number }).count
+    const retainedCount = (db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM temp.${UNDO_APPLY_RENAME_ASSOCIATIONS_TEMP_TABLE} expected
+      JOIN document_tags current
+        ON current.association_id = expected.association_id
+       AND current.document_id = expected.document_id
+       AND current.tag_id = expected.tag_id
+    `).get() as { count: number }).count
+    if (currentCount !== expectedCount || retainedCount !== expectedCount) {
+      applyTransactionFailed('Undo Rename association postcondition failed')
+    }
+  } else if (plan.kind === 'merge') {
+    const sourceAssociations = (db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM document_tags
+      WHERE tag_id = ?
+    `).get(plan.sourceBefore.id) as { count: number }).count
+    const expectedSourceAssociations = (db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM tag_undo_association_deltas
+      WHERE record_id = ?
+        AND effect = 'removed-source'
+    `).get(plan.recordId) as { count: number }).count
+    const restoredSourceAssociations = (db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM tag_undo_association_deltas delta
+      JOIN document_tags current
+        ON current.document_id = delta.document_id
+       AND current.tag_id = ?
+      WHERE delta.record_id = ?
+        AND delta.effect = 'removed-source'
+    `).get(plan.sourceBefore.id, plan.recordId) as { count: number }).count
+    const ownedDestinationRows = (db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM document_tags current
+      JOIN tag_undo_association_deltas delta
+        ON delta.association_id = current.association_id
+      WHERE delta.record_id = ?
+        AND delta.effect = 'created-destination'
+    `).get(plan.recordId) as { count: number }).count
+    if (sourceAssociations !== expectedSourceAssociations
+      || restoredSourceAssociations !== expectedSourceAssociations
+      || ownedDestinationRows !== 0
+      || !plan.destinationAfter
+      || !sameTagView(readTagById(db, plan.destinationAfter.id).row, plan.destinationAfter)) {
+      applyTransactionFailed('Undo Merge inverse postcondition failed')
+    }
+  } else {
+    const sourceAssociations = (db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM document_tags
+      WHERE tag_id = ?
+    `).get(plan.sourceBefore.id) as { count: number }).count
+    const expectedSourceAssociations = (db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM tag_undo_association_deltas
+      WHERE record_id = ?
+        AND effect = 'removed-source'
+    `).get(plan.recordId) as { count: number }).count
+    const restoredSourceAssociations = (db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM tag_undo_association_deltas delta
+      JOIN document_tags current
+        ON current.document_id = delta.document_id
+       AND current.tag_id = ?
+      WHERE delta.record_id = ?
+        AND delta.effect = 'removed-source'
+    `).get(plan.sourceBefore.id, plan.recordId) as { count: number }).count
+    if (sourceAssociations !== expectedSourceAssociations
+      || restoredSourceAssociations !== expectedSourceAssociations) {
+      applyTransactionFailed('Undo Remove inverse postcondition failed')
+    }
+  }
+  assertUndoVersions(db, plan)
+}
+
+function consumeUndoRecord(
+  db: DatabaseT,
+  plan: TagUndoPlan & { recordId: string },
+  undoOperationId: string,
+  undoResultId: string,
+  committedAt: number,
+): void {
+  const state = readUndoState(db)
+  if (!state || state.current_record_id !== plan.recordId) {
+    applyTransactionFailed('Undo state changed before consumption')
+  }
+  const consumed = db.prepare(`
+    UPDATE tag_undo_records
+    SET lifecycle = 'consumed',
+        terminal_code = NULL,
+        undo_operation_id = ?,
+        undo_result_id = ?,
+        consumed_at = ?
+    WHERE record_id = ?
+      AND lifecycle = 'latest'
+  `).run(undoOperationId, undoResultId, committedAt, plan.recordId)
+  if (consumed.changes !== 1) applyTransactionFailed('Undo consumed lifecycle transition failed')
+  throwUndoApplyFailure('after-consumed-parent-update')
+
+  const purged = db.prepare(`
+    DELETE FROM tag_undo_association_deltas
+    WHERE record_id = ?
+  `).run(plan.recordId)
+  if (purged.changes !== plan.operationOwnedAssociations.length) {
+    applyTransactionFailed('Undo child delta purge count mismatched')
+  }
+  throwUndoApplyFailure('after-child-delta-purge')
+
+  const stateUpdated = db.prepare(`
+    UPDATE tag_undo_state
+    SET updated_at = ?
+    WHERE state_id = 1
+      AND database_generation = ?
+      AND current_record_id = ?
+  `).run(committedAt, state.database_generation, plan.recordId)
+  if (stateUpdated.changes !== 1) applyTransactionFailed('Undo state postcondition failed')
+}
+
+function assertConsumedUndoPostconditions(
+  db: DatabaseT,
+  plan: TagUndoPlan & { recordId: string },
+  undoOperationId: string,
+  undoResultId: string,
+  committedAt: number,
+): void {
+  const record = db.prepare(`
+    SELECT lifecycle, terminal_code, undo_operation_id, undo_result_id, consumed_at
+    FROM tag_undo_records
+    WHERE record_id = ?
+  `).get(plan.recordId) as {
+    lifecycle: string
+    terminal_code: string | null
+    undo_operation_id: string | null
+    undo_result_id: string | null
+    consumed_at: number | null
+  } | undefined
+  const childCount = (db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM tag_undo_association_deltas
+    WHERE record_id = ?
+  `).get(plan.recordId) as { count: number }).count
+  const state = readUndoState(db)
+  if (!record
+    || record.lifecycle !== 'consumed'
+    || record.terminal_code !== null
+    || record.undo_operation_id !== undoOperationId
+    || record.undo_result_id !== undoResultId
+    || record.consumed_at !== committedAt
+    || childCount !== 0
+    || !state
+    || state.current_record_id !== plan.recordId) {
+    applyTransactionFailed('Undo consumed-state postcondition failed')
+  }
+  const health = initializeTagUndoFoundationHealth(db)
+  if (health.state !== 'healthy') applyTransactionFailed('Undo final foundation health is unavailable')
+}
+
+function applyUndoInTransaction(
+  db: DatabaseT,
+  input: TagUndoApplyInput,
+): TagUndoApplyResult {
+  const plan = buildUndoPlanInTransaction(db, input.recordId, TAG_UNDO_PREVIEW_SAMPLE_LIMIT)
+  assertReviewedUndoPlan(plan, input)
+  throwUndoApplyFailure('after-transactional-replan')
+
+  const committedAt = Date.now()
+  const staged = stageUndoAffectedDocuments(db, plan, committedAt)
+  throwUndoApplyFailure('after-version-staging')
+
+  restoreUndoSourceTag(db, plan)
+  throwUndoApplyFailure('after-source-row-restore')
+
+  deleteUndoCreatedDestinationAssociations(db, plan)
+  if (plan.kind === 'merge') throwUndoApplyFailure('after-created-destination-delete')
+
+  restoreUndoSourceAssociations(db, plan)
+  if (plan.kind === 'merge' || plan.kind === 'remove') {
+    throwUndoApplyFailure('after-source-association-restore')
+  }
+
+  const versionUpdateCount = applyUndoVersions(db, plan, staged.length)
+  throwUndoApplyFailure('after-version-update')
+
+  assertUndoInversePostconditions(db, plan)
+  throwUndoApplyFailure('after-inverse-postcondition')
+
+  const undoOperationId = randomUUID()
+  const undoResultId = randomUUID()
+  consumeUndoRecord(db, plan, undoOperationId, undoResultId, committedAt)
+  dropUndoApplyTempTables(db)
+  assertConsumedUndoPostconditions(db, plan, undoOperationId, undoResultId, committedAt)
+  throwUndoApplyFailure('after-final-postcondition')
+  throwUndoApplyFailure('before-commit')
+
+  const sourceTag = readTagById(db, plan.sourceBefore.id)
+  if (sourceTag.malformed || !sourceTag.row) applyTransactionFailed('Undo result source tag is unavailable')
+  const destinationTag = plan.kind === 'merge' && plan.destinationAfter
+    ? readTagById(db, plan.destinationAfter.id)
+    : null
+  if (plan.kind === 'merge' && (!destinationTag || destinationTag.malformed || !destinationTag.row)) {
+    applyTransactionFailed('Undo result destination tag is unavailable')
+  }
+  return {
+    undoOperationId,
+    undoResultId,
+    recordId: plan.recordId,
+    originalOperationId: plan.originalOperationId!,
+    originalResultId: plan.originalResultId!,
+    kind: plan.kind,
+    displayOnly: plan.displayOnly,
+    sourceTag: sourceTag.row,
+    destinationTag: destinationTag?.row ?? null,
+    affectedCount: plan.affectedCount,
+    associationAdds: plan.associationAdds,
+    associationRemoves: plan.associationRemoves,
+    versionUpdateCount,
+    committedAt,
+    appliedUndoFingerprint: input.undoFingerprint,
+    lifecycle: 'consumed',
+  }
+}
+
+/** Apply one reviewed Undo as a domain-only atomic forward SQLite mutation. */
+export async function applyTagUndo(db: DatabaseT, value: unknown): Promise<TagUndoApplyResult> {
+  const input = parseTagUndoApplyRequest(value)
+  const discovery = buildTagUndoPlan(db, { recordId: input.recordId, limit: TAG_UNDO_PREVIEW_SAMPLE_LIMIT })
+  undoApplyTestHooks?.afterDiscovery?.(discovery)
+  assertReviewedUndoPlan(discovery, input)
+  const paths = discovery.requiredDocuments.map((document) => document.path)
+
+  try {
+    return await withDocumentWriteLocks(paths, async () => {
+      await undoApplyTestHooks?.afterLocks?.(paths)
+      const mutation = db.transaction(() => applyUndoInTransaction(db, input))
+      return mutation.immediate()
+    })
+  } catch (error) {
+    try {
+      dropUndoApplyTempTables(db)
+    } catch {
+      // The failed transaction is still the authority; cleanup is best effort.
+    }
+    if (error instanceof TagUndoPlannerError) throw error
+    throw new TagUndoPlannerError('TRANSACTION_FAILED', 'tag Undo Apply transaction failed')
+  }
 }
 
 /** Alias matching the existing Phase 2 Preview/page naming convention. */

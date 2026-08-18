@@ -15,10 +15,14 @@ import {
   type TagOperationRequest,
 } from '../tagManagement'
 import {
+  __setTagUndoApplyHooksForTesting,
+  applyTagUndo,
   buildTagUndoPlan,
   getTagUndoAvailability,
+  parseTagUndoApplyRequest,
   previewTagUndo,
   previewTagUndoPage,
+  type TagUndoApplyFailureStage,
   TagUndoPlannerError,
 } from '../tagUndo'
 import {
@@ -148,6 +152,7 @@ beforeEach(() => {
 
 afterEach(() => {
   __setTagManagementApplyHooksForTesting(null)
+  __setTagUndoApplyHooksForTesting(null)
   resetTagUndoFoundationHealthForTesting(db)
   if (db.open) db.close()
 })
@@ -168,6 +173,14 @@ function seedDocument(id: string, tagIds: number[], updatedAt = 100): void {
 async function apply(operation: TagOperationRequest) {
   const preview = previewTagOperation(db, operation)
   return applyTagOperation(db, operation, preview.planFingerprint)
+}
+
+function reviewedUndoInput(): { recordId: string; undoFingerprint: string } {
+  const preview = previewTagUndo(db)
+  return {
+    recordId: preview.recordId!,
+    undoFingerprint: preview.undoFingerprint!,
+  }
 }
 
 function parent(): Record<string, unknown> {
@@ -195,6 +208,16 @@ function durableSnapshot(): Record<string, unknown> {
     deltas: db.prepare('SELECT * FROM tag_undo_association_deltas ORDER BY record_id, effect, association_id').all(),
     undoState: db.prepare('SELECT * FROM tag_undo_state').all(),
   }
+}
+
+function undoApplyTempTables(): string[] {
+  return (db.prepare(`
+    SELECT name
+    FROM sqlite_temp_master
+    WHERE type = 'table'
+      AND name LIKE 'tag_undo_apply_%'
+    ORDER BY name
+  `).all() as Array<{ name: string }>).map((row) => row.name)
 }
 
 function expectTagManagementError(error: unknown, code: string): void {
@@ -1260,6 +1283,498 @@ describe('T2.1-2 Undo planner and Preview', () => {
     expect(page.sample).toHaveLength(100)
     expect(page.nextCursor).toBe('doc-099')
   })
+})
+
+describe('T2.1-3 Atomic Undo Apply', () => {
+  it('accepts only the reviewed identity pair and rejects an unknown target before mutation', async () => {
+    expect(parseTagUndoApplyRequest({
+      recordId: 'record-1',
+      undoFingerprint: 'a'.repeat(64),
+    })).toEqual({
+      recordId: 'record-1',
+      undoFingerprint: 'a'.repeat(64),
+    })
+    expect(() => parseTagUndoApplyRequest({
+      recordId: 'record-1',
+      undoFingerprint: 'a'.repeat(64),
+      requiredDocumentIds: ['doc'],
+    })).toThrowError(expect.objectContaining({ code: 'INVALID_PREVIEW' }))
+
+    const before = durableSnapshot()
+    await expect(applyTagUndo(db, {
+      recordId: 'missing-record',
+      undoFingerprint: '0'.repeat(64),
+    })).rejects.toMatchObject({ code: 'UNDO_TARGET_UNAVAILABLE' })
+    expect(durableSnapshot()).toEqual(before)
+  })
+
+  it('undoes Rename atomically, preserves later membership and metadata, and keeps association IDs', async () => {
+    seedTag(7, 'Java', 'java')
+    seedTag(20, 'Python', 'python')
+    seedDocument('doc-a', [7, 20])
+    seedDocument('doc-b', [7])
+    await apply({ kind: 'rename', sourceTagId: 7, destinationName: 'Backend' })
+
+    seedDocument('doc-c', [7], 200)
+    const reviewed = reviewedUndoInput()
+    const beforeAssociations = db.prepare(`
+      SELECT association_id, document_id, tag_id
+      FROM document_tags
+      WHERE tag_id = 7
+      ORDER BY association_id
+    `).all()
+    const beforeVersions = db.prepare(`
+      SELECT id, updated_at
+      FROM documents
+      WHERE id IN ('doc-a', 'doc-b', 'doc-c')
+      ORDER BY id
+    `).all() as Array<{ id: string; updated_at: number }>
+    db.prepare('UPDATE documents SET title = ?, summary = ? WHERE id = ?')
+      .run('Later title', 'Later summary', 'doc-a')
+
+    const result = await applyTagUndo(db, reviewed)
+
+    expect(result).toMatchObject({
+      recordId: reviewed.recordId,
+      kind: 'rename',
+      displayOnly: false,
+      sourceTag: { id: 7, displayName: 'Java', normalizedName: 'java' },
+      destinationTag: null,
+      affectedCount: 3,
+      associationAdds: 0,
+      associationRemoves: 0,
+      versionUpdateCount: 3,
+      lifecycle: 'consumed',
+    })
+    expect(db.prepare('SELECT id, name, normalized_name FROM tags WHERE id = 7').get())
+      .toEqual({ id: 7, name: 'Java', normalized_name: 'java' })
+    expect(db.prepare(`
+      SELECT association_id, document_id, tag_id
+      FROM document_tags
+      WHERE tag_id = 7
+      ORDER BY association_id
+    `).all()).toEqual(beforeAssociations)
+    expect(db.prepare('SELECT title, summary FROM documents WHERE id = ?').get('doc-a'))
+      .toEqual({ title: 'Later title', summary: 'Later summary' })
+    const afterVersions = db.prepare(`
+      SELECT id, updated_at
+      FROM documents
+      WHERE id IN ('doc-a', 'doc-b', 'doc-c')
+      ORDER BY id
+    `).all() as Array<{ id: string; updated_at: number }>
+    expect(afterVersions).toHaveLength(3)
+    for (const [index, row] of afterVersions.entries()) {
+      expect(row.updated_at).toBeGreaterThan(beforeVersions[index]!.updated_at)
+    }
+    expect(parent()).toMatchObject({
+      record_id: reviewed.recordId,
+      lifecycle: 'consumed',
+      terminal_code: null,
+      consumed_at: result.committedAt,
+      undo_operation_id: result.undoOperationId,
+      undo_result_id: result.undoResultId,
+    })
+    expect(deltas()).toEqual([])
+    expect(initializeTagUndoFoundationHealth(db).state).toBe('healthy')
+  })
+
+  it('undoes Display Rename without changing physical memberships', async () => {
+    seedTag(7, 'Java', 'java')
+    seedDocument('doc', [7], 300)
+    await apply({ kind: 'rename', sourceTagId: 7, destinationName: 'JAVA' })
+    const reviewed = reviewedUndoInput()
+    const association = db.prepare(`
+      SELECT association_id
+      FROM document_tags
+      WHERE document_id = 'doc' AND tag_id = 7
+    `).get()
+    const beforeVersion = (db.prepare('SELECT updated_at FROM documents WHERE id = ?').get('doc') as { updated_at: number }).updated_at
+
+    const result = await applyTagUndo(db, reviewed)
+
+    expect(result).toMatchObject({
+      kind: 'rename',
+      displayOnly: true,
+      sourceTag: { id: 7, displayName: 'Java', normalizedName: 'java' },
+      affectedCount: 1,
+      versionUpdateCount: 1,
+    })
+    expect(db.prepare('SELECT name, normalized_name FROM tags WHERE id = 7').get())
+      .toEqual({ name: 'Java', normalized_name: 'java' })
+    expect(db.prepare(`
+      SELECT association_id
+      FROM document_tags
+      WHERE document_id = 'doc' AND tag_id = 7
+    `).get()).toEqual(association)
+    expect((db.prepare('SELECT updated_at FROM documents WHERE id = ?').get('doc') as { updated_at: number }).updated_at)
+      .toBeGreaterThan(beforeVersion)
+  })
+
+  it('undoes mixed Merge scope with exact destination provenance and preserves unrelated changes', async () => {
+    seedTag(7, 'Java', 'java')
+    seedTag(9, 'Backend', 'backend')
+    seedTag(20, 'Python', 'python')
+    seedDocument('source-only', [7])
+    seedDocument('overlap', [7, 9])
+    seedDocument('destination-only', [9])
+    await apply({ kind: 'merge', sourceTagId: 7, destinationTagId: 9 })
+    const reviewed = reviewedUndoInput()
+    const createdDestination = (db.prepare(`
+      SELECT association_id
+      FROM tag_undo_association_deltas
+      WHERE effect = 'created-destination'
+    `).get() as { association_id: number }).association_id
+    const originalSource = db.prepare(`
+      SELECT association_id
+      FROM tag_undo_association_deltas
+      WHERE effect = 'removed-source' AND document_id = 'source-only'
+    `).get() as { association_id: number }
+    const overlapDestination = db.prepare(`
+      SELECT association_id
+      FROM document_tags
+      WHERE document_id = 'overlap' AND tag_id = 9
+    `).get()
+    const destinationOnlyDestination = db.prepare(`
+      SELECT association_id
+      FROM document_tags
+      WHERE document_id = 'destination-only' AND tag_id = 9
+    `).get()
+    const beforeVersions = db.prepare(`
+      SELECT id, updated_at
+      FROM documents
+      ORDER BY id
+    `).all() as Array<{ id: string; updated_at: number }>
+    db.prepare('INSERT INTO document_tags (document_id, tag_id) VALUES (?, ?)').run('source-only', 20)
+    db.prepare('UPDATE documents SET title = ? WHERE id = ?').run('later title', 'overlap')
+
+    const result = await applyTagUndo(db, reviewed)
+
+    expect(result).toMatchObject({
+      kind: 'merge',
+      sourceTag: { id: 7, displayName: 'Java', normalizedName: 'java' },
+      destinationTag: { id: 9, displayName: 'Backend', normalizedName: 'backend' },
+      affectedCount: 2,
+      associationAdds: 2,
+      associationRemoves: 1,
+      versionUpdateCount: 2,
+    })
+    expect(db.prepare('SELECT id, name, normalized_name FROM tags WHERE id = 7').get())
+      .toEqual({ id: 7, name: 'Java', normalized_name: 'java' })
+    expect(db.prepare('SELECT association_id FROM document_tags WHERE association_id = ?').get(createdDestination))
+      .toBeUndefined()
+    expect(db.prepare(`
+      SELECT association_id
+      FROM document_tags
+      WHERE document_id = 'overlap' AND tag_id = 9
+    `).get()).toEqual(overlapDestination)
+    expect(db.prepare(`
+      SELECT association_id
+      FROM document_tags
+      WHERE document_id = 'destination-only' AND tag_id = 9
+    `).get()).toEqual(destinationOnlyDestination)
+    expect(db.prepare('SELECT 1 FROM document_tags WHERE document_id = ? AND tag_id = ?').get('source-only', 20))
+      .toEqual({ 1: 1 })
+    const restoredSource = db.prepare(`
+      SELECT association_id
+      FROM document_tags
+      WHERE document_id = 'source-only' AND tag_id = 7
+    `).get() as { association_id: number }
+    expect(restoredSource.association_id).not.toBe(originalSource.association_id)
+    const afterVersions = db.prepare(`
+      SELECT id, updated_at
+      FROM documents
+      ORDER BY id
+    `).all() as Array<{ id: string; updated_at: number }>
+    for (const row of afterVersions) {
+      const before = beforeVersions.find((candidate) => candidate.id === row.id)!
+      if (row.id === 'destination-only') expect(row.updated_at).toBe(before.updated_at)
+      else expect(row.updated_at).toBeGreaterThan(before.updated_at)
+    }
+    expect(deltas()).toEqual([])
+  })
+
+  it('undoes Remove with a new source ID association and permits orphan Remove', async () => {
+    seedTag(7, 'Java', 'java')
+    seedTag(20, 'Python', 'python')
+    seedDocument('doc-a', [7, 20])
+    seedDocument('doc-b', [7])
+    await apply({ kind: 'remove', sourceTagId: 7 })
+    const reviewed = reviewedUndoInput()
+    db.prepare('INSERT INTO tags (id, name, normalized_name) VALUES (?, ?, ?)').run(30, 'Vue', 'vue')
+    db.prepare('INSERT INTO document_tags (document_id, tag_id) VALUES (?, ?)').run('doc-a', 30)
+    const beforeVersions = db.prepare('SELECT id, updated_at FROM documents ORDER BY id').all() as Array<{ id: string; updated_at: number }>
+
+    const result = await applyTagUndo(db, reviewed)
+
+    expect(result).toMatchObject({
+      kind: 'remove',
+      sourceTag: { id: 7, displayName: 'Java', normalizedName: 'java' },
+      affectedCount: 2,
+      associationAdds: 2,
+      associationRemoves: 0,
+      versionUpdateCount: 2,
+    })
+    expect(db.prepare('SELECT id, name, normalized_name FROM tags WHERE id = 7').get())
+      .toEqual({ id: 7, name: 'Java', normalized_name: 'java' })
+    expect(db.prepare('SELECT 1 FROM document_tags WHERE document_id = ? AND tag_id = ?').get('doc-a', 20))
+      .toEqual({ 1: 1 })
+    expect(db.prepare('SELECT 1 FROM document_tags WHERE document_id = ? AND tag_id = ?').get('doc-a', 30))
+      .toEqual({ 1: 1 })
+    const restored = db.prepare(`
+      SELECT association_id
+      FROM document_tags
+      WHERE document_id = 'doc-a' AND tag_id = 7
+    `).get() as { association_id: number }
+    expect(restored.association_id).not.toBeUndefined()
+    const afterVersions = db.prepare('SELECT id, updated_at FROM documents ORDER BY id').all() as Array<{ id: string; updated_at: number }>
+    for (const row of afterVersions) {
+      expect(row.updated_at).toBeGreaterThan(beforeVersions.find((before) => before.id === row.id)!.updated_at)
+    }
+
+    seedTag(40, 'Orphan', 'orphan')
+    await apply({ kind: 'remove', sourceTagId: 40 })
+    const orphan = reviewedUndoInput()
+    const orphanResult = await applyTagUndo(db, orphan)
+    expect(orphanResult).toMatchObject({
+      kind: 'remove',
+      affectedCount: 0,
+      versionUpdateCount: 0,
+      sourceTag: { id: 40, displayName: 'Orphan', normalizedName: 'orphan' },
+    })
+  })
+
+  it('rejects stale and dynamic-conflict Apply without consuming the parent', async () => {
+    seedTag(7, 'Java', 'java')
+    seedDocument('doc', [7])
+    await apply({ kind: 'rename', sourceTagId: 7, destinationName: 'Backend' })
+    const reviewed = reviewedUndoInput()
+    db.prepare('UPDATE tags SET name = ?, normalized_name = ? WHERE id = 7').run('Drift', 'drift')
+    await expect(applyTagUndo(db, reviewed)).rejects.toMatchObject({ code: 'UNDO_STALE' })
+    expect(parent()).toMatchObject({ lifecycle: 'latest', record_id: reviewed.recordId })
+
+    db.prepare('UPDATE tags SET name = ?, normalized_name = ? WHERE id = 7').run('Backend', 'backend')
+    seedTag(20, 'Java', 'java')
+    const conflicted = reviewedUndoInput()
+    await expect(applyTagUndo(db, conflicted)).rejects.toMatchObject({ code: 'UNDO_CONFLICT' })
+    expect(parent()).toMatchObject({ lifecycle: 'latest', record_id: reviewed.recordId })
+    expect(db.prepare('SELECT id, name, normalized_name FROM tags ORDER BY id').all()).toEqual([
+      { id: 7, name: 'Backend', normalized_name: 'backend' },
+      { id: 20, name: 'Java', normalized_name: 'java' },
+    ])
+  })
+
+  it('returns already-applied for duplicate Apply without a second mutation', async () => {
+    seedTag(7, 'Java', 'java')
+    seedDocument('doc', [7])
+    await apply({ kind: 'rename', sourceTagId: 7, destinationName: 'Backend' })
+    const reviewed = reviewedUndoInput()
+    const first = await applyTagUndo(db, reviewed)
+    const afterFirst = durableSnapshot()
+
+    await expect(applyTagUndo(db, reviewed)).rejects.toMatchObject({ code: 'UNDO_ALREADY_APPLIED' })
+
+    expect(durableSnapshot()).toEqual(afterFirst)
+    expect(parent()).toMatchObject({
+      lifecycle: 'consumed',
+      undo_operation_id: first.undoOperationId,
+      undo_result_id: first.undoResultId,
+    })
+    expect(db.prepare('SELECT COUNT(*) AS count FROM tag_undo_records').get()).toEqual({ count: 1 })
+  })
+
+  it.each([
+    'after-transactional-replan',
+    'after-version-staging',
+    'after-source-row-restore',
+    'after-version-update',
+    'after-inverse-postcondition',
+    'after-consumed-parent-update',
+    'after-child-delta-purge',
+    'after-final-postcondition',
+    'before-commit',
+  ] as TagUndoApplyFailureStage[])('rolls back every Rename Apply failure at %s', async (stage) => {
+    seedTag(7, 'Java', 'java')
+    seedDocument('doc', [7])
+    await apply({ kind: 'rename', sourceTagId: 7, destinationName: 'Backend' })
+    const reviewed = reviewedUndoInput()
+    const before = durableSnapshot()
+    __setTagUndoApplyHooksForTesting({ failureStage: stage })
+
+    await expect(applyTagUndo(db, reviewed)).rejects.toMatchObject({ code: 'TRANSACTION_FAILED' })
+
+    __setTagUndoApplyHooksForTesting(null)
+    expect(durableSnapshot()).toEqual(before)
+    expect(undoApplyTempTables()).toEqual([])
+  })
+
+  it.each(['after-created-destination-delete', 'after-source-association-restore'] as TagUndoApplyFailureStage[])('rolls back Merge inverse failure at %s', async (stage) => {
+    seedTag(7, 'Java', 'java')
+    seedTag(9, 'Backend', 'backend')
+    seedDocument('doc', [7])
+    await apply({ kind: 'merge', sourceTagId: 7, destinationTagId: 9 })
+    const reviewed = reviewedUndoInput()
+    const before = durableSnapshot()
+    __setTagUndoApplyHooksForTesting({ failureStage: stage })
+
+    await expect(applyTagUndo(db, reviewed)).rejects.toMatchObject({ code: 'TRANSACTION_FAILED' })
+
+    __setTagUndoApplyHooksForTesting(null)
+    expect(durableSnapshot()).toEqual(before)
+    expect(undoApplyTempTables()).toEqual([])
+  })
+
+  it('re-plans after locks and rejects a relevant writer race without inverse SQL', async () => {
+    seedTag(7, 'Java', 'java')
+    seedDocument('doc', [7])
+    await apply({ kind: 'rename', sourceTagId: 7, destinationName: 'Backend' })
+    const reviewed = reviewedUndoInput()
+    __setTagUndoApplyHooksForTesting({
+      afterLocks: () => db.prepare('UPDATE tags SET name = ?, normalized_name = ? WHERE id = 7').run('Drift', 'drift'),
+    })
+
+    await expect(applyTagUndo(db, reviewed)).rejects.toMatchObject({ code: 'UNDO_STALE' })
+
+    __setTagUndoApplyHooksForTesting(null)
+    expect(parent()).toMatchObject({ lifecycle: 'latest', record_id: reviewed.recordId })
+    expect(db.prepare('SELECT name, normalized_name FROM tags WHERE id = 7').get())
+      .toEqual({ name: 'Drift', normalized_name: 'drift' })
+  })
+
+  it('serializes an Undo versus ordinary Apply race and reports the old target superseded', async () => {
+    seedTag(7, 'Java', 'java')
+    seedTag(40, 'Orphan', 'orphan')
+    seedDocument('doc', [7])
+    await apply({ kind: 'rename', sourceTagId: 7, destinationName: 'Backend' })
+    const reviewed = reviewedUndoInput()
+    __setTagUndoApplyHooksForTesting({
+      afterLocks: async () => {
+        await apply({ kind: 'remove', sourceTagId: 40 })
+      },
+    })
+
+    await expect(applyTagUndo(db, reviewed)).rejects.toMatchObject({ code: 'UNDO_SUPERSEDED' })
+
+    __setTagUndoApplyHooksForTesting(null)
+    expect(state()).toMatchObject({
+      current_record_id: expect.not.stringMatching(reviewed.recordId),
+      last_superseded_record_id: reviewed.recordId,
+    })
+    expect(parent()).toMatchObject({ kind: 'remove', lifecycle: 'latest' })
+    expect(db.prepare('SELECT name FROM tags WHERE id = 7').get()).toEqual({ name: 'Backend' })
+    expect(db.prepare('SELECT id FROM tags WHERE id = 40').get()).toBeUndefined()
+  })
+
+  it('rejects Merge delete-readd provenance races without deleting the replacement ID', async () => {
+    seedTag(7, 'Java', 'java')
+    seedTag(9, 'Backend', 'backend')
+    seedDocument('doc', [7])
+    await apply({ kind: 'merge', sourceTagId: 7, destinationTagId: 9 })
+    const reviewed = reviewedUndoInput()
+    const created = (db.prepare(`
+      SELECT association_id
+      FROM tag_undo_association_deltas
+      WHERE effect = 'created-destination'
+    `).get() as { association_id: number }).association_id
+    __setTagUndoApplyHooksForTesting({
+      afterLocks: () => {
+        db.prepare('DELETE FROM document_tags WHERE association_id = ?').run(created)
+        db.prepare('INSERT INTO document_tags (document_id, tag_id) VALUES (?, ?)').run('doc', 9)
+      },
+    })
+
+    await expect(applyTagUndo(db, reviewed)).rejects.toMatchObject({ code: 'UNDO_STALE' })
+
+    __setTagUndoApplyHooksForTesting(null)
+    const replacement = db.prepare(`
+      SELECT association_id
+      FROM document_tags
+      WHERE document_id = 'doc' AND tag_id = 9
+    `).get() as { association_id: number }
+    expect(replacement.association_id).not.toBe(created)
+    expect(parent()).toMatchObject({ lifecycle: 'latest', record_id: reviewed.recordId })
+    expect(db.prepare('SELECT id FROM tags WHERE id = 7').get()).toBeUndefined()
+  })
+
+  it('fails closed on temporary Undo health before acquiring or mutating the graph', async () => {
+    seedTag(7, 'Java', 'java')
+    seedDocument('doc', [7])
+    await apply({ kind: 'rename', sourceTagId: 7, destinationName: 'Backend' })
+    const reviewed = reviewedUndoInput()
+    const before = durableSnapshot()
+    db.exec('DROP TABLE tag_undo_state')
+
+    await expect(applyTagUndo(db, reviewed)).rejects.toMatchObject({ code: 'TAG_MANAGEMENT_UNAVAILABLE' })
+    expect(db.prepare('SELECT * FROM tags ORDER BY id').all()).toEqual(before.tags)
+    expect(db.prepare('SELECT * FROM documents ORDER BY id').all()).toEqual(before.documents)
+    expect(db.prepare('SELECT * FROM document_tags ORDER BY document_id, tag_id').all()).toEqual(before.documentTags)
+    expect(db.prepare('SELECT * FROM tag_undo_records ORDER BY record_id').all()).toEqual(before.records)
+    expect(db.prepare('SELECT * FROM tag_undo_association_deltas ORDER BY record_id, effect, association_id').all())
+      .toEqual(before.deltas)
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'tag_undo_state'").get())
+      .toBeUndefined()
+  })
+
+  it('allows exactly one Apply across two independent WAL connections', async () => {
+    const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-tag-undo-apply-wal-'))
+    const databasePath = path.join(temporaryRoot, 'docus.db')
+    let connectionA: Database.Database | null = null
+    let connectionB: Database.Database | null = null
+    let verification: Database.Database | null = null
+    try {
+      connectionA = new Database(databasePath)
+      connectionA.pragma('foreign_keys = ON')
+      connectionA.pragma('busy_timeout = 15000')
+      expect(String(connectionA.pragma('journal_mode = WAL', { simple: true })).toLowerCase()).toBe('wal')
+      applyMigrations(connectionA)
+      connectionA.prepare('INSERT INTO tags (id, name, normalized_name) VALUES (?, ?, ?)')
+        .run(7, 'Java', 'java')
+      connectionA.prepare(`
+        INSERT INTO documents (id, path, title, summary, created_at, updated_at)
+        VALUES ('doc', 'doc/note', 'doc', '', 1, 100)
+      `).run()
+      connectionA.prepare('INSERT INTO document_tags (document_id, tag_id) VALUES (?, ?)').run('doc', 7)
+      await applyTagOperation(
+        connectionA,
+        { kind: 'rename', sourceTagId: 7, destinationName: 'Backend' },
+        previewTagOperation(connectionA, { kind: 'rename', sourceTagId: 7, destinationName: 'Backend' }).planFingerprint,
+      )
+      const preview = previewTagUndo(connectionA)
+      const reviewed = {
+        recordId: preview.recordId!,
+        undoFingerprint: preview.undoFingerprint!,
+      }
+
+      connectionB = new Database(databasePath)
+      connectionB.pragma('foreign_keys = ON')
+      connectionB.pragma('busy_timeout = 15000')
+      expect(String(connectionB.pragma('journal_mode', { simple: true })).toLowerCase()).toBe('wal')
+
+      const outcomes = await Promise.allSettled([
+        applyTagUndo(connectionA, reviewed),
+        applyTagUndo(connectionB, reviewed),
+      ])
+      const successes = outcomes.filter((outcome) => outcome.status === 'fulfilled')
+      const failures = outcomes.filter((outcome) => outcome.status === 'rejected')
+      expect(successes).toHaveLength(1)
+      expect(failures).toHaveLength(1)
+      expect((failures[0] as PromiseRejectedResult).reason).toMatchObject({ code: 'UNDO_ALREADY_APPLIED' })
+
+      verification = new Database(databasePath)
+      verification.pragma('foreign_keys = ON')
+      expect(verification.prepare('SELECT name FROM tags WHERE id = 7').get()).toEqual({ name: 'Java' })
+      expect(verification.prepare('SELECT lifecycle FROM tag_undo_records').get())
+        .toEqual({ lifecycle: 'consumed' })
+      expect(verification.prepare('SELECT COUNT(*) AS count FROM tag_undo_association_deltas').get())
+        .toEqual({ count: 0 })
+      expect(verification.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+      expect(verification.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' })
+    } finally {
+      if (verification?.open) verification.close()
+      if (connectionB?.open) connectionB.close()
+      if (connectionA?.open) connectionA.close()
+      await fs.rm(temporaryRoot, { recursive: true, force: true })
+    }
+  }, 45_000)
 })
 
 describe('T2.1-2 Undo planner WAL/read-snapshot evidence', () => {

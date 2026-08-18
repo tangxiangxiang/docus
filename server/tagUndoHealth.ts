@@ -369,7 +369,16 @@ function validateFoundationSchema(db: DatabaseT): FoundationHealthFailure | null
     }
     const removedCount = deltas.filter((row) => row.effect === 'removed-source').length
     const addedCount = deltas.filter((row) => row.effect === 'created-destination').length
-    if (removedCount !== record.association_remove_count || addedCount !== record.association_add_count) {
+    if (record.lifecycle === 'consumed') {
+      // Successful Undo compacts the consumed parent and purges its heavy
+      // child rows in the same transaction.  The parent counts remain as
+      // bounded diagnostics, so a consumed record is healthy only when its
+      // child payload has been completely removed.
+      if (deltas.length !== 0) {
+        return terminalFailure('consumed tag Undo record still retains child deltas')
+      }
+    } else if (removedCount !== record.association_remove_count
+      || addedCount !== record.association_add_count) {
       return terminalFailure('tag Undo foundation record/delta counts are inconsistent')
     }
   }

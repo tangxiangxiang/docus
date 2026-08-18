@@ -9,6 +9,7 @@ import {
   previewTagOperation,
   type TagOperationRequest,
 } from '../tagManagement'
+import { applyTagUndo, previewTagUndo } from '../tagUndo'
 
 const SCALE_TEST_TIMEOUT_MS = 30_000
 
@@ -97,5 +98,42 @@ describe('Tags scale evidence', { timeout: SCALE_TEST_TIMEOUT_MS }, () => {
     expect(db.prepare('SELECT COUNT(*) AS count FROM document_tags WHERE tag_id = 1').get()).toEqual({ count: 0 })
     expect(db.prepare('SELECT COUNT(*) AS count FROM document_tags').get()).toEqual({ count: 40000 })
     expect(db.prepare('SELECT COUNT(*) AS count FROM documents WHERE updated_at = 1').get()).toEqual({ count: 0 })
+  })
+
+  it('keeps Undo Apply set-based at the 10k-document/50k-association scale', async () => {
+    seedScaleFixture(db)
+    const operation: TagOperationRequest = { kind: 'remove', sourceTagId: 1 }
+    const preview = previewTagOperation(db, operation)
+    await applyTagOperation(db, operation, preview.planFingerprint)
+    const undoPreview = previewTagUndo(db)
+    const startedAt = performance.now()
+    const result = await applyTagUndo(db, {
+      recordId: undoPreview.recordId!,
+      undoFingerprint: undoPreview.undoFingerprint!,
+    })
+    const evidence = {
+      documents: 10000,
+      associations: 50000,
+      affectedCount: result.affectedCount,
+      versionUpdateCount: result.versionUpdateCount,
+      elapsedMs: Number((performance.now() - startedAt).toFixed(2)),
+    }
+    console.info('[tag-undo-perf]', JSON.stringify(evidence))
+
+    expect(result).toMatchObject({
+      kind: 'remove',
+      affectedCount: 10000,
+      associationAdds: 10000,
+      associationRemoves: 0,
+      versionUpdateCount: 10000,
+      lifecycle: 'consumed',
+    })
+    expect(db.prepare('SELECT COUNT(*) AS count FROM document_tags').get()).toEqual({ count: 50000 })
+    expect(db.prepare('SELECT COUNT(*) AS count FROM document_tags WHERE tag_id = 1').get()).toEqual({ count: 10000 })
+    expect(db.prepare('SELECT COUNT(*) AS count FROM tag_undo_association_deltas').get()).toEqual({ count: 0 })
+    expect(db.prepare('SELECT lifecycle FROM tag_undo_records').get()).toEqual({ lifecycle: 'consumed' })
+    expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+    expect(db.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' })
+    expect(Number.isFinite(evidence.elapsedMs)).toBe(true)
   })
 })
