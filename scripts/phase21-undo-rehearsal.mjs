@@ -37,6 +37,11 @@ const TSX_CLI = path.join(REPO_ROOT, 'node_modules', 'tsx', 'dist', 'cli.mjs')
 const SETUP_TOKEN = 'phase21-rehearsal-setup-token-0123456789abcdef'
 const OWNER_USERNAME = 'phase21-owner'
 const OWNER_PASSWORD = 'phase21-rehearsal-password-0123456789'
+const HISTORY_DOCUMENT_PATH = 'inbox/note.md'
+const HISTORY_H1_SUBJECT = 'phase21 history H1'
+const HISTORY_H2_SUBJECT = 'phase21 history H2'
+const HISTORY_H1_CONTENT = 'Phase 2.1 History H1\n'
+const HISTORY_H2_CONTENT = 'Phase 2.1 History H2\n'
 
 const worktrees = []
 const activeRuntimes = new Set()
@@ -283,6 +288,55 @@ async function fileEvidence(vault, relativePath) {
   }
 }
 
+async function createHistoryCommit(runtime, cookie, vault, documentPath, message) {
+  const evidence = await fileEvidence(vault, documentPath)
+  const committed = await api(runtime, '/api/history/commits', {
+    method: 'POST',
+    cookie,
+    body: {
+      paths: [documentPath],
+      message,
+      expected: { [documentPath]: evidence.sha256 },
+    },
+  })
+  expectStatus(committed, 201, `History commit ${message}`)
+  assert(typeof committed.json?.sha === 'string' && /^[0-9a-f]{40}$/.test(committed.json.sha), `History commit ${message} omitted its SHA`)
+  return committed.json
+}
+
+async function readHistoryEvidence(runtime, cookie, documentPath, label) {
+  const log = await api(runtime, `/api/history/log?path=${encodeURIComponent(documentPath)}`, { cookie })
+  expectStatus(log, 200, `${label} History log`)
+  const commits = Array.isArray(log.json?.commits) ? log.json.commits : null
+  assert(commits, `${label} History log did not return a commit list`)
+  const selected = commits.filter((commit) => (
+    commit?.subject === HISTORY_H1_SUBJECT || commit?.subject === HISTORY_H2_SUBJECT
+  ))
+  assert(selected.length === 2, `${label} History log did not preserve both representative revisions`)
+
+  const expectedContent = new Map([
+    [HISTORY_H1_SUBJECT, HISTORY_H1_CONTENT],
+    [HISTORY_H2_SUBJECT, HISTORY_H2_CONTENT],
+  ])
+  const evidence = []
+  for (const commit of selected) {
+    assert(typeof commit?.sha === 'string' && /^[0-9a-f]{40}$/.test(commit.sha), `${label} History revision has no valid SHA`)
+    assert(Array.isArray(commit.parents), `${label} History revision has no parent list`)
+    assert(Array.isArray(commit.files) && commit.files.includes(documentPath), `${label} History revision does not name ${documentPath}`)
+    const file = await api(runtime, `/api/history/file?path=${encodeURIComponent(documentPath)}&ref=${encodeURIComponent(commit.sha)}`, { cookie })
+    expectStatus(file, 200, `${label} History file at ${commit.subject}`)
+    assert(file.json?.content === expectedContent.get(commit.subject), `${label} ${commit.subject} content was not restored through the History API`)
+    evidence.push({
+      sha: commit.sha,
+      parents: [...commit.parents],
+      subject: commit.subject,
+      files: [...commit.files],
+      content: file.json.content,
+    })
+  }
+  return evidence
+}
+
 function tableExists(db, name) {
   return Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name))
 }
@@ -416,6 +470,7 @@ async function initializeVault(vault) {
   await writeFile(path.join(vault, '.gitignore'), [
     '.docus/vault-writer.json',
     '.docus/vault-writer.takeover/',
+    '.docus/vault-id',
     '',
   ].join('\n'), 'utf8')
   await git(['init', '--quiet'], { cwd: vault })
@@ -428,6 +483,10 @@ async function commitVaultBaseline(vault) {
   await git(['commit', '--quiet', '-m', 'phase 2 rehearsal baseline'], { cwd: vault })
   const status = await gitText(['status', '--porcelain'], vault)
   assert(status === '', 'baseline vault is not clean after its initial History commit')
+  return captureGitBaseline(vault)
+}
+
+async function captureGitBaseline(vault) {
   return {
     head: await gitText(['rev-parse', 'HEAD'], vault),
     history: await gitText(['log', '--format=%H'], vault),
@@ -540,7 +599,7 @@ async function runActivationBoundary({ foundationTree, activationTree, backup, c
   assert(afterUnhealthy.undoRecordCount === 0, 'unhealthy foundation produced a record-less ordinary success')
 }
 
-async function runUpgradeBackupRestore({ oldTree, currentTree, backup, cookie, gitBaseline, originalEvidence, oldGraph }) {
+async function runUpgradeBackupRestore({ oldTree, currentTree, backup, cookie, gitBaseline, originalEvidence, oldGraph, oldHistoryEvidence }) {
   const upgraded = instance('upgraded')
   await copyInstance(backup, upgraded)
   assert(JSON.stringify(await fileEvidence(upgraded.vault, 'inbox/note.md')) === JSON.stringify(originalEvidence), 'complete backup copy changed Markdown evidence before current startup')
@@ -561,6 +620,8 @@ async function runUpgradeBackupRestore({ oldTree, currentTree, backup, cookie, g
     assert((await fileEvidence(upgraded.vault, 'inbox/note.md')).sha256 === originalEvidence.sha256, 'upgrade changed Markdown bytes')
     assert((await fileEvidence(upgraded.vault, 'inbox/note.md')).mtimeNs === originalEvidence.mtimeNs, 'upgrade changed Markdown mtime')
     await assertGitUnchanged(upgraded.vault, gitBaseline, 'current migration')
+    const currentHistoryBefore = await readHistoryEvidence(currentRuntime, cookie, HISTORY_DOCUMENT_PATH, 'current pre-management')
+    assert(JSON.stringify(currentHistoryBefore) === JSON.stringify(oldHistoryEvidence), 'current startup did not expose the restored representative History revisions')
 
     const merge = await applyMerge(currentRuntime, cookie)
     assert(merge?.kind === 'merge', 'current runtime did not accept the old ordinary Merge request shape')
@@ -594,6 +655,8 @@ async function runUpgradeBackupRestore({ oldTree, currentTree, backup, cookie, g
     assert(sourceAfterMerge.raw === sourceAfterUndo.raw, 'metadata-only Merge/Undo changed Markdown bytes')
     assert((await fileEvidence(upgraded.vault, 'inbox/note.md')).sha256 === originalEvidence.sha256, 'Merge/Undo changed Markdown bytes')
     assert((await fileEvidence(upgraded.vault, 'inbox/note.md')).mtimeNs === originalEvidence.mtimeNs, 'Merge/Undo changed Markdown mtime')
+    const currentHistoryAfter = await readHistoryEvidence(currentRuntime, cookie, HISTORY_DOCUMENT_PATH, 'current post-Undo')
+    assert(JSON.stringify(currentHistoryAfter) === JSON.stringify(oldHistoryEvidence), 'Tag Management or Undo added or changed an application History revision')
     await assertGitUnchanged(upgraded.vault, gitBaseline, 'current ordinary Merge and Undo')
   } finally {
     await stopRuntime(currentRuntime)
@@ -619,6 +682,8 @@ async function runUpgradeBackupRestore({ oldTree, currentTree, backup, cookie, g
     assert(new Set(restoredSource.metadata?.tags).has('Java'), 'restored old runtime lost the source tag')
     assert(restoredSource.metadata?.summary !== 'later unrelated summary', 'restored old runtime is reading upgraded data instead of the backup')
     await assertOldUndoUnavailable(oldRuntime, restoredCookie, 'restored Phase 2')
+    const restoredHistory = await readHistoryEvidence(oldRuntime, restoredCookie, HISTORY_DOCUMENT_PATH, 'restored Phase 2')
+    assert(JSON.stringify(restoredHistory) === JSON.stringify(oldHistoryEvidence), 'restored old runtime did not expose the original application History revisions')
   } finally {
     await stopRuntime(oldRuntime)
   }
@@ -682,8 +747,21 @@ async function main() {
     await stopRuntime(oldRuntime)
   }
   await insertOrphanTag(old.data)
-  const gitBaseline = await commitVaultBaseline(old.vault)
-  const originalEvidence = await fileEvidence(old.vault, 'inbox/note.md')
+  await commitVaultBaseline(old.vault)
+  let oldHistoryEvidence
+  try {
+    oldRuntime = await startRuntime('Phase 2 baseline History', oldTree, old)
+    await expectAuthenticated(oldRuntime, cookie, 'Phase 2 baseline History')
+    await writeFile(path.join(old.vault, HISTORY_DOCUMENT_PATH), HISTORY_H1_CONTENT, 'utf8')
+    await createHistoryCommit(oldRuntime, cookie, old.vault, HISTORY_DOCUMENT_PATH, HISTORY_H1_SUBJECT)
+    await writeFile(path.join(old.vault, HISTORY_DOCUMENT_PATH), HISTORY_H2_CONTENT, 'utf8')
+    await createHistoryCommit(oldRuntime, cookie, old.vault, HISTORY_DOCUMENT_PATH, HISTORY_H2_SUBJECT)
+    oldHistoryEvidence = await readHistoryEvidence(oldRuntime, cookie, HISTORY_DOCUMENT_PATH, 'Phase 2 baseline')
+  } finally {
+    await stopRuntime(oldRuntime)
+  }
+  const gitBaseline = await captureGitBaseline(old.vault)
+  const originalEvidence = await fileEvidence(old.vault, HISTORY_DOCUMENT_PATH)
   const oldGraph = databaseSnapshot(path.join(old.data, 'docus.db'))
   assertHealthyDatabase(oldGraph, 'Phase 2 baseline')
   assert(oldGraph.version === 6, 'Phase 2 baseline did not create a v6 database')
@@ -703,6 +781,7 @@ async function main() {
     gitBaseline,
     originalEvidence,
     oldGraph,
+    oldHistoryEvidence,
   })
 
   console.log(JSON.stringify({
@@ -717,6 +796,7 @@ async function main() {
       noReverseMigration: true,
       activationBoundary: true,
       sessionRevocationOnRestoredStartup: true,
+      applicationHistoryRestore: true,
     },
   }, null, 2))
 }
