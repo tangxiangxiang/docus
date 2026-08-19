@@ -32,10 +32,11 @@ import {
 import SettingsAiSection from './SettingsAiSection.vue'
 import SettingsEditorSection from './SettingsEditorSection.vue'
 import SettingsMetadataSection from './SettingsMetadataSection.vue'
-import { ICON_AI, ICON_EDIT, ICON_TOC } from './icons'
+import SettingsTagsSection from './SettingsTagsSection.vue'
+import { ICON_AI, ICON_EDIT, ICON_TAG, ICON_TOC } from './icons'
 
 const props = defineProps<{ open: boolean }>()
-const emit = defineEmits<{ close: [] }>()
+const emit = defineEmits<{ close: []; 'manage-tags': [] }>()
 
 const toast = useToast()
 const aiHistory = useAiHistory()
@@ -65,15 +66,17 @@ const mutatingMetadata = ref(false)
 const cleanedPaths = ref<string[]>([])
 
 /* Left nav + right detail. Each section is its own .vue file
-   (SettingsAiSection / SettingsEditorSection / SettingsMetadataSection)
+   (SettingsAiSection / SettingsEditorSection / SettingsMetadataSection /
+   SettingsTagsSection)
    so the shell stays a routing layer — no inline form templates.
    The active pane resets to AI every time the modal opens so a
    returning user always lands somewhere predictable. */
-type SectionId = 'ai' | 'editor' | 'metadata'
+type SectionId = 'ai' | 'editor' | 'metadata' | 'tags'
 const SECTIONS: ReadonlyArray<{ id: SectionId; labelKey: string; icon: string }> = [
   { id: 'ai', labelKey: 'settings.ai', icon: ICON_AI },
   { id: 'editor', labelKey: 'settings.editor', icon: ICON_EDIT },
   { id: 'metadata', labelKey: 'settings.metadata', icon: ICON_TOC },
+  { id: 'tags', labelKey: 'settings.tags', icon: ICON_TAG },
 ]
 const active = ref<SectionId>('ai')
 
@@ -366,6 +369,10 @@ function closeSettings() {
   emit('close')
 }
 
+function openTagManagement() {
+  emit('manage-tags')
+}
+
 onBeforeUnmount(() => {
   abortConnectionTest()
   void trap.deactivate()
@@ -441,7 +448,7 @@ onBeforeUnmount(() => {
             />
             <SettingsEditorSection v-else-if="active === 'editor'" />
             <SettingsMetadataSection
-              v-else
+              v-else-if="active === 'metadata'"
               :migrationSummary="migrationSummary"
               :cleanupPreview="cleanupPreview"
               :cleanedPaths="cleanedPaths"
@@ -450,6 +457,10 @@ onBeforeUnmount(() => {
               @preview="previewCleanup"
               @restore="restoreOriginalFrontmatter"
               @remove="removeFrontmatter"
+            />
+            <SettingsTagsSection
+              v-else
+              @manage-tags="openTagManagement"
             />
           </div>
         </div>

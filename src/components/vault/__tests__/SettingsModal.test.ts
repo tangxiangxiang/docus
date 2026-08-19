@@ -317,7 +317,7 @@ describe('SettingsModal', () => {
   })
 
   it('switches to the Editor and Metadata sections without changing their behavior surfaces', async () => {
-    mountSettings()
+    const wrapper = mountSettings()
     await flushPromises()
 
     findButton('编辑器').click()
@@ -333,6 +333,15 @@ describe('SettingsModal', () => {
     expect(document.body.textContent).toContain('SQLite 迁移与 Frontmatter 安全检查')
     expect(document.body.textContent).toContain('迁移状态')
     expect(document.body.textContent).toContain('3 已验证')
+
+    findButton('标签').click()
+    await flushPromises()
+    expect(document.body.querySelector('[aria-current="page"]')?.textContent?.trim()).toBe('标签')
+    expect(document.body.textContent).toContain('管理标签及其历史变更')
+    expect(document.body.querySelector('[data-action="manage-tags"]')?.textContent?.trim()).toBe('管理标签')
+
+    findButton('管理标签').click()
+    expect(wrapper.emitted('manage-tags')).toHaveLength(1)
   })
 
   it('closes on Escape and continues routing Tab through the focus trap', async () => {

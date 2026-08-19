@@ -1567,12 +1567,17 @@ const selectedTag = ref<string | null>(null)
 const tagManagementOpen = ref(false)
 // Phase 2 management dialogs use this local monotonic epoch to distinguish
 // an actual user selection change from an asynchronous Apply completion.
-// The manager remains owned by VaultView while TagPanel only emits its entry
+// The manager remains owned by VaultView while Settings provides its entry
 // action.
 const tagSelectionEpoch = ref(0)
 function selectTag(tag: string): void {
   selectedTag.value = selectedTag.value === tag ? null : tag
   tagSelectionEpoch.value += 1
+}
+
+function openTagManagementFromSettings(): void {
+  settingsOpen.value = false
+  tagManagementOpen.value = true
 }
 
 /**
@@ -1777,6 +1782,7 @@ watch(isReadMode, async (reading) => {
     <SettingsModal
       :open="settingsOpen"
       @close="settingsOpen = false"
+      @manage-tags="openTagManagementFromSettings"
     />
 
     <!-- VaultView owns dialog lifetime and both post-commit synchronization
@@ -1825,7 +1831,6 @@ watch(isReadMode, async (reading) => {
       :path="activePath"
       @select="selectTag"
       @open="openPost"
-      @manage="tagManagementOpen = true"
     />
     <HistoryPanel
       v-else-if="activePanel === 'history'"
