@@ -486,6 +486,25 @@ function setUndoUnavailable(error: unknown): void {
       : 'undo-unavailable'
 }
 
+function settleUndoStateAfterCommittedSync(
+  availability: UndoAvailability,
+  completedRecordId: string,
+  outcome: 'success' | 'consumed' | 'superseded' | 'terminal-unavailable',
+): void {
+  setUndoAvailability(availability)
+
+  // The outcome belongs to the submitted record. It may decorate the
+  // announcement, but it cannot override a newer authoritative target. Keep
+  // the success presentation only when the fresh read proves that the same
+  // submitted record is the current consumed record.
+  if (outcome === 'success' || outcome === 'consumed') {
+    const isCurrentConsumedRecord = availability.state === 'consumed'
+      && availability.recordId === completedRecordId
+      && availability.reasonCode === 'UNDO_ALREADY_APPLIED'
+    if (isCurrentConsumedRecord) undoState.value = 'undo-success'
+  }
+}
+
 async function refreshUndoAuthoritativeState(): Promise<void> {
   const run = ++undoRefreshRun
   const [tagsResult, undoResult] = await Promise.allSettled([
@@ -1136,7 +1155,6 @@ function applyUndoSynchronizationResult(synchronized: UndoSyncResult): void {
   finalTags.value = synchronized.managedTags
   managedTags.value = synchronized.managedTags
   reconciledSelectedTag.value = synchronized.selectedTag
-  setUndoAvailability(synchronized.undoAvailability)
 }
 
 async function runUndoSynchronization(
@@ -1152,10 +1170,10 @@ async function runUndoSynchronization(
     const synchronized = await props.syncAfterUndo(result, snapshot)
     if (run !== undoSyncRun || !props.open) return
     applyUndoSynchronizationResult(synchronized)
+    settleUndoStateAfterCommittedSync(synchronized.undoAvailability, result.undoRecordId, 'success')
     undoSelectionSnapshot.value = null
     undoRecoveryRecordId.value = null
     undoRecoveryPending.value = false
-    undoState.value = 'undo-success'
     setDiagnostic('undo-success')
     announce(t('tags.manage.undo_success'))
   } catch {
@@ -1185,13 +1203,10 @@ async function recoverCommittedUndoReadOnly(): Promise<void> {
     finalTags.value = recovered.managedTags
     managedTags.value = recovered.managedTags
     reconciledSelectedTag.value = recovered.selectedTag
-    setUndoAvailability(
+    settleUndoStateAfterCommittedSync(
       recovered.undoAvailability,
-      recovered.outcome === 'consumed'
-        ? 'undo-success'
-        : recovered.outcome === 'terminal-unavailable'
-          ? 'undo-terminal-unavailable'
-          : undefined,
+      recordId,
+      recovered.outcome,
     )
     undoRecoveryPending.value = false
     undoRecoveryRecordId.value = null
