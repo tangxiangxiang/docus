@@ -16,6 +16,7 @@ import {
   previewTagOperation,
   type TagOperationRequest,
 } from '../tagManagement'
+import { applyTagUndo, getTagUndoAvailability, previewTagUndo } from '../tagUndo'
 import { closeAuthTestContext, createAuthenticatedTestContext, type AuthenticatedTestContext } from './helpers/auth'
 
 const mockPathState = vi.hoisted(() => ({ root: '' }))
@@ -162,6 +163,89 @@ describe('PATCH /api/metadata/documents/*', () => {
       WHERE dt.document_id = ? AND t.normalized_name = 'backend'
     `).get(initial.id)).toEqual(backendBefore)
     expect(db.prepare('SELECT 1 FROM document_tags WHERE association_id = ?').get(pythonBeforeRemove.association_id)).toBeUndefined()
+  })
+
+  it('preserves a Merge-owned association across a REST tag addition so Undo retains the later tag', async () => {
+    await fs.writeFile(path.join(root, 'inbox', 'note.md'), '# Note\n', 'utf8')
+    const source = saveDocumentMetadata(db, {
+      id: 'rest-undo-source', path: 'inbox/note', title: 'Note', tags: ['Java'], updatedAt: 100,
+    })
+    saveDocumentMetadata(db, {
+      id: 'rest-undo-destination', path: 'inbox/destination', title: 'Destination', tags: ['Backend'], updatedAt: 101,
+    })
+    const sourceTagId = (db.prepare('SELECT id FROM tags WHERE normalized_name = ?').get('java') as { id: number }).id
+    const destinationTagId = (db.prepare('SELECT id FROM tags WHERE normalized_name = ?').get('backend') as { id: number }).id
+    const operation: TagOperationRequest = { kind: 'merge', sourceTagId, destinationTagId }
+    const ordinaryPreview = previewTagOperation(db, operation)
+    await applyTagOperation(db, operation, ordinaryPreview.planFingerprint)
+
+    const recordId = getTagUndoAvailability(db).recordId
+    expect(recordId).not.toBeNull()
+    const ownedBackend = db.prepare(`
+      SELECT association_id
+      FROM tag_undo_association_deltas
+      WHERE record_id = ? AND effect = 'created-destination' AND document_id = ?
+    `).get(recordId, source.id) as { association_id: number }
+    expect(db.prepare(`
+      SELECT dt.association_id
+      FROM document_tags dt JOIN tags t ON t.id = dt.tag_id
+      WHERE dt.document_id = ? AND t.normalized_name = 'backend'
+    `).get(source.id)).toEqual(ownedBackend)
+
+    const afterMerge = getDocumentMetadata(db, source.path)!
+    const added = await patch(source.path, {
+      tags: ['Backend', 'Python'], expectedUpdatedAt: afterMerge.updatedAt,
+    })
+    expect(added.status).toBe(200)
+    expect(db.prepare(`
+      SELECT dt.association_id
+      FROM document_tags dt JOIN tags t ON t.id = dt.tag_id
+      WHERE dt.document_id = ? AND t.normalized_name = 'backend'
+    `).get(source.id)).toEqual(ownedBackend)
+
+    const undoPreview = previewTagUndo(db, { recordId })
+    expect(undoPreview).toMatchObject({ state: 'available', validation: 'safe', allowedToApply: true })
+    await applyTagUndo(db, { recordId: recordId!, undoFingerprint: undoPreview.undoFingerprint! })
+    expect(new Set(getDocumentMetadata(db, source.path)?.tags)).toEqual(new Set(['Java', 'Python']))
+  })
+
+  it('gives a REST delete and later re-add a new association ID and rejects stale Merge Undo provenance', async () => {
+    await fs.writeFile(path.join(root, 'inbox', 'note.md'), '# Note\n', 'utf8')
+    const source = saveDocumentMetadata(db, {
+      id: 'rest-readd-source', path: 'inbox/note', title: 'Note', tags: ['Java'], updatedAt: 100,
+    })
+    saveDocumentMetadata(db, {
+      id: 'rest-readd-destination', path: 'inbox/destination', title: 'Destination', tags: ['Backend'], updatedAt: 101,
+    })
+    const sourceTagId = (db.prepare('SELECT id FROM tags WHERE normalized_name = ?').get('java') as { id: number }).id
+    const destinationTagId = (db.prepare('SELECT id FROM tags WHERE normalized_name = ?').get('backend') as { id: number }).id
+    const operation: TagOperationRequest = { kind: 'merge', sourceTagId, destinationTagId }
+    const ordinaryPreview = previewTagOperation(db, operation)
+    await applyTagOperation(db, operation, ordinaryPreview.planFingerprint)
+
+    const recordId = getTagUndoAvailability(db).recordId
+    expect(recordId).not.toBeNull()
+    const ownedBackend = db.prepare(`
+      SELECT association_id
+      FROM tag_undo_association_deltas
+      WHERE record_id = ? AND effect = 'created-destination' AND document_id = ?
+    `).get(recordId, source.id) as { association_id: number }
+    const afterMerge = getDocumentMetadata(db, source.path)!
+    expect((await patch(source.path, { tags: [], expectedUpdatedAt: afterMerge.updatedAt })).status).toBe(200)
+    const afterRemoval = getDocumentMetadata(db, source.path)!
+    expect((await patch(source.path, {
+      tags: ['Backend'], expectedUpdatedAt: afterRemoval.updatedAt,
+    })).status).toBe(200)
+    const readdedBackend = db.prepare(`
+      SELECT dt.association_id
+      FROM document_tags dt JOIN tags t ON t.id = dt.tag_id
+      WHERE dt.document_id = ? AND t.normalized_name = 'backend'
+    `).get(source.id) as { association_id: number }
+    expect(readdedBackend.association_id).not.toBe(ownedBackend.association_id)
+
+    expect(previewTagUndo(db, { recordId })).toMatchObject({
+      state: 'available', validation: 'conflict', reasonCode: 'UNDO_ASSOCIATION_CONFLICT', allowedToApply: false,
+    })
   })
 
   it.each(['rename', 'display-rename', 'merge', 'remove'] as const)(

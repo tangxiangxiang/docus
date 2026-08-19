@@ -282,6 +282,53 @@ describe('T2.1-0 migration and foundation health', () => {
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'document_tags_phase21'").get()).toBeUndefined()
     db.close()
   })
+
+  it('retries 0007 successfully after a rolled-back v6 source defect is repaired', () => {
+    const db = brokenLegacyV6Db()
+    expect(() => applyMigrations(db)).toThrow()
+    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(6)
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'document_tags_phase21'").get()).toBeUndefined()
+
+    db.exec(`
+      DROP TABLE document_tags;
+      DROP TABLE tags;
+      DROP TABLE documents;
+      CREATE TABLE documents (
+        id TEXT PRIMARY KEY,
+        path TEXT NOT NULL UNIQUE,
+        title TEXT NOT NULL,
+        summary TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE tags (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        normalized_name TEXT NOT NULL UNIQUE
+      );
+      CREATE TABLE document_tags (
+        document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+        tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+        PRIMARY KEY (document_id, tag_id)
+      );
+      CREATE INDEX idx_document_tags_tag ON document_tags(tag_id, document_id);
+      INSERT INTO documents (id, path, title, summary, created_at, updated_at)
+      VALUES ('retry-doc', 'notes/retry', 'Retry', '', 1, 1);
+      INSERT INTO tags (id, name, normalized_name) VALUES (7, 'Java', 'java');
+      INSERT INTO document_tags (document_id, tag_id) VALUES ('retry-doc', 7);
+    `)
+
+    applyMigrations(db)
+
+    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(8)
+    expect(db.prepare('SELECT document_id, tag_id FROM document_tags').all()).toEqual([
+      { document_id: 'retry-doc', tag_id: 7 },
+    ])
+    expect(db.prepare('SELECT association_id FROM document_tags').get()).toEqual({ association_id: 1 })
+    expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+    expect((db.prepare('PRAGMA integrity_check').get() as { integrity_check: string }).integrity_check).toBe('ok')
+    db.close()
+  })
 })
 
 describe('T2.1-0 forward repair migration and lifecycle contract', () => {
