@@ -280,6 +280,33 @@ function makeUndoPreview(overrides: Partial<UndoPreview> = {}): UndoPreview {
   }
 }
 
+function makeSupersededUndoPreview(overrides: Partial<UndoPreview> = {}): UndoPreview {
+  return makeUndoPreview({
+    state: 'superseded',
+    validation: 'terminal-unavailable',
+    recordId: null,
+    originalOperationId: null,
+    originalResultId: null,
+    kind: null,
+    committedAt: null,
+    sourceBefore: null,
+    sourceAfter: null,
+    destinationBefore: null,
+    destinationAfter: null,
+    affectedCount: 0,
+    associationAdds: 0,
+    associationRemoves: 0,
+    versionUpdateCount: 0,
+    reasonCode: 'UNDO_SUPERSEDED',
+    warnings: [],
+    sample: [],
+    nextCursor: null,
+    undoFingerprint: null,
+    allowedToApply: false,
+    ...overrides,
+  })
+}
+
 function makeUndoResult(overrides: Partial<UndoApplyResult> = {}): UndoApplyResult {
   return {
     undoRecordId,
@@ -713,6 +740,219 @@ describe('TagManagementDialog', () => {
     expect(syncAfterUndo).toHaveBeenCalledTimes(2)
     expect(mocks.applyUndo).toHaveBeenCalledTimes(1)
     expect(wrapper.get('[data-undo-state]').attributes('data-undo-state')).toBe('undo-success')
+  })
+
+  it('refreshes the latest Undo record when an old Preview is superseded', async () => {
+    const record2 = 'undo-record-2'
+    const latestAvailability = makeUndoAvailability({ recordId: record2 })
+    mocks.getUndoAvailability
+      .mockReset()
+      .mockResolvedValueOnce(makeUndoAvailability())
+      .mockResolvedValueOnce(latestAvailability)
+    mocks.previewUndo
+      .mockReset()
+      .mockResolvedValueOnce(makeSupersededUndoPreview())
+      .mockResolvedValueOnce(makeUndoPreview({ recordId: record2 }))
+
+    const wrapper = mountTracked()
+    await settle()
+    await wrapper.get('[data-action="undo-preview"]').trigger('click')
+    await settle()
+
+    expect(mocks.previewUndo).toHaveBeenCalledTimes(1)
+    expect(mocks.previewUndo).toHaveBeenCalledWith(undoRecordId, 20)
+    expect(mocks.getUndoAvailability).toHaveBeenCalledTimes(2)
+    expect(mocks.applyUndo).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-undo-state]').attributes('data-undo-state')).toBe('undo-available')
+    expect(wrapper.find('[data-undo-last-change]').exists()).toBe(true)
+    expect(wrapper.get('[data-action="undo-preview"]').attributes('disabled')).toBeUndefined()
+
+    await wrapper.get('[data-action="undo-preview"]').trigger('click')
+    await settle()
+    expect(mocks.previewUndo).toHaveBeenCalledTimes(2)
+    expect(mocks.previewUndo).toHaveBeenLastCalledWith(record2, 20)
+    expect(wrapper.get('[data-undo-state]').attributes('data-undo-state')).toBe('undo-preview-ready')
+  })
+
+  it('refreshes the latest Undo record after an UNDO_SUPERSEDED Preview error', async () => {
+    const record2 = 'undo-record-2'
+    mocks.getUndoAvailability
+      .mockReset()
+      .mockResolvedValueOnce(makeUndoAvailability())
+      .mockResolvedValueOnce(makeUndoAvailability({ recordId: record2 }))
+    mocks.previewUndo
+      .mockReset()
+      .mockRejectedValueOnce(new mocks.TagUndoApiError('superseded', 409, 'UNDO_SUPERSEDED'))
+      .mockResolvedValueOnce(makeUndoPreview({ recordId: record2 }))
+
+    const wrapper = mountTracked()
+    await settle()
+    await wrapper.get('[data-action="undo-preview"]').trigger('click')
+    await settle()
+
+    expect(mocks.previewUndo).toHaveBeenCalledTimes(1)
+    expect(mocks.applyUndo).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-undo-preview]').exists()).toBe(false)
+    expect(wrapper.get('[data-undo-state]').attributes('data-undo-state')).toBe('undo-available')
+    expect(wrapper.find('[data-action="undo-preview"]').exists()).toBe(true)
+
+    await wrapper.get('[data-action="undo-preview"]').trigger('click')
+    await settle()
+    expect(mocks.previewUndo).toHaveBeenLastCalledWith(record2, 20)
+    expect(wrapper.get('[data-undo-state]').attributes('data-undo-state')).toBe('undo-preview-ready')
+  })
+
+  it('adopts the latest Undo availability after superseded committed recovery', async () => {
+    const record2 = 'undo-record-2'
+    const latestAvailability = makeUndoAvailability({ recordId: record2 })
+    enableUndoAvailability()
+    mocks.previewUndo
+      .mockReset()
+      .mockResolvedValueOnce(makeUndoPreview())
+      .mockResolvedValueOnce(makeUndoPreview({ recordId: record2 }))
+    mocks.applyUndo.mockRejectedValueOnce(new mocks.TagUndoApiError(
+      'invalid committed response',
+      200,
+      'CLIENT_PROTOCOL_ERROR',
+      undoRecordId,
+    ))
+    const recoverCommittedUndo = vi.fn(async () => ({
+      managedTags: RENAMED_TAGS,
+      selectedTag: 'Backend',
+      undoAvailability: latestAvailability,
+      outcome: 'superseded' as const,
+    }))
+
+    const wrapper = mountTracked({ recoverCommittedUndo })
+    await settle()
+    await wrapper.get('[data-action="undo-preview"]').trigger('click')
+    await settle()
+    resolveUndoConfirmation(true)
+    await wrapper.get('[data-action="undo-apply"]').trigger('click')
+    await settle()
+
+    expect(mocks.applyUndo).toHaveBeenCalledTimes(1)
+    expect(recoverCommittedUndo).toHaveBeenCalledTimes(1)
+    expect(wrapper.get('[data-undo-state]').attributes('data-undo-state')).toBe('undo-available')
+    expect(wrapper.find('[data-undo-preview]').exists()).toBe(false)
+    expect(wrapper.find('[data-action="undo-preview"]').exists()).toBe(true)
+
+    await wrapper.get('[data-action="undo-preview"]').trigger('click')
+    await settle()
+    expect(mocks.previewUndo).toHaveBeenLastCalledWith(record2, 20)
+  })
+
+  it('keeps a fresh consumed Undo availability terminal', async () => {
+    enableUndoAvailability({
+      state: 'consumed',
+      validation: 'terminal-unavailable',
+      reasonCode: 'UNDO_ALREADY_APPLIED',
+    })
+    const wrapper = mountTracked()
+    await settle()
+    expect(wrapper.get('[data-undo-state]').attributes('data-undo-state')).toBe('undo-terminal-unavailable')
+    expect(wrapper.find('[data-action="undo-preview"]').exists()).toBe(false)
+    expect(wrapper.find('[data-action="undo-apply"]').exists()).toBe(false)
+  })
+
+  it('invalidates ordinary Preview before Undo and leaves no stale ordinary Apply after Undo', async () => {
+    enableUndoAvailability()
+    const syncAfterUndo = vi.fn(async () => ({
+      managedTags: RENAMED_TAGS,
+      selectedTag: 'Backend',
+      undoAvailability: makeUndoAvailability({
+        state: 'consumed',
+        validation: 'terminal-unavailable',
+        reasonCode: 'UNDO_ALREADY_APPLIED',
+      }),
+    }))
+    const wrapper = mountTracked({ syncAfterUndo })
+    await settle()
+    await wrapper.get('#tag-management-source').setValue('7')
+    await wrapper.get('#tag-management-destination').setValue('Backend')
+    await wrapper.get('form').trigger('submit')
+    await settle()
+    expect(wrapper.get('.tag-management-preview [data-action="apply"]').attributes('disabled')).toBeUndefined()
+
+    await wrapper.get('[data-action="undo-preview"]').trigger('click')
+    await settle()
+    expect(wrapper.find('.tag-management-preview').exists()).toBe(false)
+    expect(wrapper.find('[data-action="apply"]').exists()).toBe(false)
+    expect(wrapper.find('[data-undo-preview]').exists()).toBe(true)
+
+    resolveUndoConfirmation(true)
+    await wrapper.get('[data-action="undo-apply"]').trigger('click')
+    await settle()
+    expect(mocks.applyUndo).toHaveBeenCalledTimes(1)
+    expect(syncAfterUndo).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('.tag-management-preview').exists()).toBe(false)
+    expect(wrapper.find('[data-action="apply"]').exists()).toBe(false)
+    expect(wrapper.get('[data-undo-state]').attributes('data-undo-state')).toBe('undo-success')
+  })
+
+  it('disables Undo while ordinary Apply is in flight', async () => {
+    enableUndoAvailability()
+    let resolveApply!: (result: TagOperationApplyResult) => void
+    mocks.applyTagOperation.mockImplementationOnce(() => new Promise<TagOperationApplyResult>((resolve) => {
+      resolveApply = resolve
+    }))
+    const wrapper = mountTracked()
+    await settle()
+    await wrapper.get('#tag-management-source').setValue('7')
+    await wrapper.get('#tag-management-destination').setValue('Backend')
+    await wrapper.get('form').trigger('submit')
+    await settle()
+    await wrapper.get('.tag-management-preview [data-action="apply"]').trigger('click')
+    await settle()
+
+    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('applying')
+    expect(wrapper.find('[data-action="undo-preview"]').exists()).toBe(false)
+    expect(mocks.previewUndo).not.toHaveBeenCalled()
+    expect(mocks.applyUndo).not.toHaveBeenCalled()
+
+    resolveApply(makeResult())
+    await settle()
+    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('success')
+  })
+
+  it('disables Undo while ordinary synchronization is sync-pending', async () => {
+    enableUndoAvailability()
+    const syncAfterCommit = vi.fn(async () => {
+      throw new Error('sync unavailable')
+    })
+    const wrapper = mountTracked({ syncAfterCommit })
+    await settle()
+    await wrapper.get('#tag-management-source').setValue('7')
+    await wrapper.get('#tag-management-destination').setValue('Backend')
+    await wrapper.get('form').trigger('submit')
+    await settle()
+    await wrapper.get('.tag-management-preview [data-action="apply"]').trigger('click')
+    await settle()
+
+    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('sync-pending')
+    expect(wrapper.get('.tag-management-state-error .primary').text()).toBe('Retry synchronization')
+    expect(wrapper.find('[data-action="undo-preview"]').exists()).toBe(false)
+    expect(mocks.previewUndo).not.toHaveBeenCalled()
+    expect(mocks.applyUndo).not.toHaveBeenCalled()
+  })
+
+  it('clears an Undo Preview when the user starts an ordinary operation', async () => {
+    enableUndoAvailability()
+    const wrapper = mountTracked()
+    await settle()
+    await wrapper.get('[data-action="undo-preview"]').trigger('click')
+    await settle()
+    expect(wrapper.find('[data-undo-preview]').exists()).toBe(true)
+
+    await wrapper.get('#tag-management-source').setValue('7')
+    await wrapper.get('#tag-management-destination').setValue('Backend')
+    await wrapper.get('form').trigger('submit')
+    await settle()
+
+    expect(wrapper.find('[data-undo-preview]').exists()).toBe(false)
+    expect(wrapper.find('[data-action="undo-apply"]').exists()).toBe(false)
+    expect(wrapper.find('.tag-management-preview').exists()).toBe(true)
+    expect(mocks.applyUndo).not.toHaveBeenCalled()
   })
 
   it('renders a safe unavailable state and makes Preview/Apply impossible', async () => {

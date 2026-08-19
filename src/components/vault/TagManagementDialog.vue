@@ -292,8 +292,13 @@ const undoLocksEditing = computed(() => [
   'undo-committed-refreshing', 'undo-sync-pending',
 ].includes(undoState.value))
 
+const ordinaryAllowsUndoInteraction = computed(() => [
+  'ready', 'editing', 'preview-ready', 'success', 'error',
+].includes(state.value))
+
 const undoCanDiscoverPreview = computed(() => (
-  (undoState.value === 'undo-available'
+  ordinaryAllowsUndoInteraction.value
+  && (undoState.value === 'undo-available'
     || undoState.value === 'undo-conflict'
     || undoState.value === 'undo-stale')
   && undoAvailability.value?.state === 'available'
@@ -302,7 +307,8 @@ const undoCanDiscoverPreview = computed(() => (
 ))
 
 const undoCanApply = computed(() => (
-  undoState.value === 'undo-preview-ready'
+  ordinaryAllowsUndoInteraction.value
+  && undoState.value === 'undo-preview-ready'
   && undoPreview.value !== null
   && reviewedUndoPreview.value !== null
   && undoPreview.value === reviewedUndoPreview.value
@@ -379,6 +385,9 @@ const canPreview = computed(() => (
 
 const canApply = computed(() => (
   state.value === 'preview-ready'
+  && !undoLocksEditing.value
+  && !undoPreview.value
+  && !reviewedUndoPreview.value
   && preview.value !== null
   && reviewedOperation.value !== null
   && operationsEqual(preview.value.operation, reviewedOperation.value)
@@ -477,7 +486,7 @@ function setUndoUnavailable(error: unknown): void {
       : 'undo-unavailable'
 }
 
-async function refreshUndoAuthoritativeState(stateOverride: UndoUiState): Promise<void> {
+async function refreshUndoAuthoritativeState(): Promise<void> {
   const run = ++undoRefreshRun
   const [tagsResult, undoResult] = await Promise.allSettled([
     listManagedTags(),
@@ -491,7 +500,7 @@ async function refreshUndoAuthoritativeState(stateOverride: UndoUiState): Promis
     reconcileDestinationWithTags(tagsResult.value)
   }
   if (undoResult.status === 'fulfilled') {
-    setUndoAvailability(undoResult.value, stateOverride)
+    setUndoAvailability(undoResult.value)
   } else {
     setUndoUnavailable(undoResult.reason)
   }
@@ -818,6 +827,7 @@ async function onUndoPreview(): Promise<void> {
   const availability = undoAvailability.value
   if (!undoCanDiscoverPreview.value || !availability?.recordId) return
 
+  if (state.value === 'preview-ready') invalidatePreview('editing')
   clearUndoPreview()
   const run = ++undoPreviewRun
   const availabilityRevision = undoAvailabilityRevision
@@ -839,17 +849,24 @@ async function onUndoPreview(): Promise<void> {
     ) return
 
     if (result.state !== 'available') {
-      setUndoAvailability(result)
       clearUndoPreview()
-      announce(result.state === 'superseded'
-        ? t('tags.manage.undo_superseded')
-        : result.state === 'consumed'
-          ? t('tags.manage.undo_consumed')
-          : result.validation === 'stale'
-            ? t('tags.manage.undo_stale')
-            : result.validation === 'conflict'
-              ? t('tags.manage.undo_conflict')
-              : t('tags.manage.undo_terminal'))
+      if (result.state === 'superseded') {
+        undoState.value = 'undo-superseded'
+        setDiagnostic('undo-superseded', 'UNDO_SUPERSEDED')
+        await refreshUndoAuthoritativeState()
+        if (run !== undoPreviewRun || !props.open) return
+        announce(t('tags.manage.undo_superseded'))
+        return
+      }
+
+      setUndoAvailability(result)
+      announce(result.state === 'consumed'
+        ? t('tags.manage.undo_consumed')
+        : result.validation === 'stale'
+          ? t('tags.manage.undo_stale')
+          : result.validation === 'conflict'
+            ? t('tags.manage.undo_conflict')
+            : t('tags.manage.undo_terminal'))
       return
     }
 
@@ -887,7 +904,7 @@ async function onUndoPreview(): Promise<void> {
     } else if (code === 'UNDO_SUPERSEDED') {
       undoState.value = 'undo-superseded'
       setDiagnostic('undo-superseded', code)
-      await refreshUndoAuthoritativeState('undo-superseded')
+      await refreshUndoAuthoritativeState()
     } else if (code === 'UNDO_RECORD_CORRUPT') {
       undoState.value = 'undo-terminal-unavailable'
       setDiagnostic('undo-terminal', code)
@@ -1023,7 +1040,8 @@ async function loadMore(): Promise<void> {
 }
 
 function isCurrentUndoConfirmation(context: UndoConfirmationContext): boolean {
-  return (undoState.value === 'undo-confirming' || undoState.value === 'undo-preview-ready')
+  return ordinaryAllowsUndoInteraction.value
+    && (undoState.value === 'undo-confirming' || undoState.value === 'undo-preview-ready')
     && undoPreview.value?.validation === 'safe'
     && undoPreview.value?.allowedToApply === true
     && reviewedUndoPreview.value === context.preview
@@ -1096,11 +1114,11 @@ async function applyUndoErrorState(error: unknown): Promise<void> {
   } else if (code === 'UNDO_SUPERSEDED') {
     undoState.value = 'undo-superseded'
     setDiagnostic('undo-superseded', code)
-    await refreshUndoAuthoritativeState('undo-superseded')
+    await refreshUndoAuthoritativeState()
   } else if (code === 'UNDO_ALREADY_APPLIED') {
     undoState.value = 'undo-terminal-unavailable'
     setDiagnostic('undo-terminal', code)
-    await refreshUndoAuthoritativeState('undo-terminal-unavailable')
+    await refreshUndoAuthoritativeState()
   } else if (code === 'UNDO_RECORD_CORRUPT') {
     undoState.value = 'undo-terminal-unavailable'
     setDiagnostic('undo-terminal', code)
@@ -1171,9 +1189,9 @@ async function recoverCommittedUndoReadOnly(): Promise<void> {
       recovered.undoAvailability,
       recovered.outcome === 'consumed'
         ? 'undo-success'
-        : recovered.outcome === 'superseded'
-          ? 'undo-superseded'
-          : 'undo-terminal-unavailable',
+        : recovered.outcome === 'terminal-unavailable'
+          ? 'undo-terminal-unavailable'
+          : undefined,
     )
     undoRecoveryPending.value = false
     undoRecoveryRecordId.value = null
@@ -1206,6 +1224,7 @@ async function applyReviewedUndo(reviewed: UndoPreview): Promise<void> {
   undoRecoveryRecordId.value = null
   undoRecoveryPending.value = false
   const run = ++undoSyncRun
+  invalidatePreview('editing')
   clearUndoPreview()
   undoState.value = 'undo-applying'
   setDiagnostic('undo-applying')
