@@ -44,8 +44,19 @@ async function openProductionTagManagement(page: Page): Promise<Locator> {
   const manageTags = settings.getByRole('button', { name: /manage tags|管理标签/i })
   await expect(manageTags).toHaveCount(1)
   await manageTags.click()
+  await expect(settings).toHaveCount(0)
   const dialog = page.getByRole('dialog')
   await expect(dialog).toHaveAttribute('data-state', 'ready')
+  const closeButton = dialog.locator('[data-action="close"]')
+  const activeInsideDialog = await dialog.evaluate((root) => root.contains(document.activeElement))
+  expect(activeInsideDialog).toBe(true)
+
+  await closeButton.focus()
+  await page.keyboard.press('Shift+Tab')
+  const activeAfterShiftTab = await dialog.evaluate((root) => root.contains(document.activeElement))
+  expect(activeAfterShiftTab).toBe(true)
+  await page.keyboard.press('Tab')
+  await expect(closeButton).toBeFocused()
   return dialog
 }
 
@@ -302,6 +313,9 @@ test('authenticated Rename transport preserves Markdown and Git boundaries', asy
     const finalProductionDialog = await openProductionTagManagement(page)
     await expect(finalProductionDialog.locator('[data-operation="remove"]')).toHaveCount(1)
     await finalProductionDialog.locator('[data-action="close"]').click()
+    await expect(finalProductionDialog).toHaveCount(0)
+    await expect(page.locator('.settings-modal')).toHaveCount(0)
+    await expect(page.locator('button.ab-btn-settings')).toBeFocused()
   } finally {
     await cleanupCreatedPaths(request, createdPaths)
   }

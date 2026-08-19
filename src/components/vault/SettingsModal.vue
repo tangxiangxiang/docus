@@ -36,7 +36,7 @@ import SettingsTagsSection from './SettingsTagsSection.vue'
 import { ICON_AI, ICON_EDIT, ICON_TAG, ICON_TOC } from './icons'
 
 const props = defineProps<{ open: boolean }>()
-const emit = defineEmits<{ close: []; 'manage-tags': [] }>()
+const emit = defineEmits<{ close: []; 'close-complete': []; 'manage-tags': [] }>()
 
 const toast = useToast()
 const aiHistory = useAiHistory()
@@ -331,7 +331,7 @@ async function onClearKey(provider?: AiProvider) {
   }
 }
 
-watch(() => props.open, (open) => {
+watch(() => props.open, async (open) => {
   if (open) {
     active.value = 'ai'
     trap.activate()
@@ -342,7 +342,8 @@ watch(() => props.open, (open) => {
     })
   } else {
     abortConnectionTest()
-    void trap.deactivate()
+    await trap.deactivate()
+    if (!props.open) emit('close-complete')
   }
 })
 

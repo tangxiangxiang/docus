@@ -233,7 +233,7 @@ const STRINGS: Strings = {
   'settings.metadata': { zh: '文档元数据', en: 'Document metadata' },
   'settings.metadata_subtitle': { zh: 'SQLite 迁移与 Frontmatter 安全检查', en: 'SQLite migration and Frontmatter safety check' },
   'settings.tags': { zh: '标签', en: 'Tags' },
-  'settings.tags_subtitle': { zh: '管理标签及其历史变更', en: 'Manage tags and their change history' },
+  'settings.tags_subtitle': { zh: '管理标签并撤销最近一次更改', en: 'Manage tags and undo the latest change' },
   'settings.migration_status': { zh: '迁移状态', en: 'Migration status' },
   'settings.cleanup_preview': { zh: '清理检查', en: 'Cleanup check' },
   'settings.checking': { zh: '检查中…', en: 'Checking…' },

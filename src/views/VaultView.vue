@@ -1565,6 +1565,7 @@ const { activeScope } = useScopeFilter()
 /* ---------- Tag filter ---------- */
 const selectedTag = ref<string | null>(null)
 const tagManagementOpen = ref(false)
+const tagManagementHandoffPending = ref(false)
 // Phase 2 management dialogs use this local monotonic epoch to distinguish
 // an actual user selection change from an asynchronous Apply completion.
 // The manager remains owned by VaultView while Settings provides its entry
@@ -1576,7 +1577,13 @@ function selectTag(tag: string): void {
 }
 
 function openTagManagementFromSettings(): void {
+  tagManagementHandoffPending.value = true
   settingsOpen.value = false
+}
+
+function onSettingsCloseComplete(): void {
+  if (!tagManagementHandoffPending.value || settingsOpen.value) return
+  tagManagementHandoffPending.value = false
   tagManagementOpen.value = true
 }
 
@@ -1782,11 +1789,12 @@ watch(isReadMode, async (reading) => {
     <SettingsModal
       :open="settingsOpen"
       @close="settingsOpen = false"
+      @close-complete="onSettingsCloseComplete"
       @manage-tags="openTagManagementFromSettings"
     />
 
     <!-- VaultView owns dialog lifetime and both post-commit synchronization
-         seams; TagPanel only emits the production entry action. -->
+         seams; Settings provides the management entry action. -->
     <TagManagementDialog
       v-if="tagManagementOpen"
       :open="tagManagementOpen"

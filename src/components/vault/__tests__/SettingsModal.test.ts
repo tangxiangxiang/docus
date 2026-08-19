@@ -337,11 +337,12 @@ describe('SettingsModal', () => {
     findButton('标签').click()
     await flushPromises()
     expect(document.body.querySelector('[aria-current="page"]')?.textContent?.trim()).toBe('标签')
-    expect(document.body.textContent).toContain('管理标签及其历史变更')
+    expect(document.body.textContent).toContain('管理标签并撤销最近一次更改')
     expect(document.body.querySelector('[data-action="manage-tags"]')?.textContent?.trim()).toBe('管理标签')
 
     findButton('管理标签').click()
     expect(wrapper.emitted('manage-tags')).toHaveLength(1)
+    expect(wrapper.emitted('close')).toBeUndefined()
   })
 
   it('closes on Escape and continues routing Tab through the focus trap', async () => {
@@ -359,5 +360,6 @@ describe('SettingsModal', () => {
     await wrapper.setProps({ open: false })
     await flushPromises()
     expect(deactivateFocusTrap).toHaveBeenCalled()
+    expect(wrapper.emitted('close-complete')).toHaveLength(1)
   })
 })
