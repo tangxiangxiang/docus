@@ -1795,10 +1795,16 @@ function waitForPdfArticle(request: PdfExportRequest): Promise<HTMLElement> {
 function pdfWidgetsReady(article: HTMLElement): boolean {
   if (article.querySelector('.mermaid-mount, .markmap-mount')) return false
   for (const host of article.querySelectorAll<HTMLElement>('.mermaid-widget-host')) {
-    if (!host.querySelector('.mermaid-svg > svg') && !host.querySelector('.mermaid-error')) return false
+    const widget = host.querySelector<HTMLElement>('.mermaid-widget')
+    const state = widget?.dataset.mermaidState
+    if (state !== 'ready' && state !== 'error') return false
   }
   for (const host of article.querySelectorAll<HTMLElement>('.markmap-widget-host')) {
-    if (!host.querySelector('.markmap-svg') && !host.querySelector('.markmap-error')) return false
+    const widget = host.querySelector<HTMLElement>('.markmap-widget')
+    const state = widget?.dataset.markmapState
+    /* Explicit state is the contract. In particular, a mounted <svg> is not
+       enough: MarkMap inserts it before setData/layout/fit have settled. */
+    if (state !== 'ready' && state !== 'error') return false
   }
   return true
 }
@@ -1817,7 +1823,19 @@ async function waitForPdfWidgets(article: HTMLElement): Promise<void> {
       observer.disconnect()
       resolve()
     }
-    observer.observe(article, { childList: true, subtree: true })
+    observer.observe(article, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: [
+        'data-mermaid-state',
+        'data-markmap-state',
+        'data-mermaid-ready',
+        'data-markmap-ready',
+        'data-mermaid-error',
+        'data-markmap-error',
+      ],
+    })
     check()
   })
 }

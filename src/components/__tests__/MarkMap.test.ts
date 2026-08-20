@@ -123,6 +123,9 @@ vi.mock('markmap-view', () => ({
         t.createOptions.push({ ...(opts ?? {}) })
         t.createRoots.push(root)
       }
+      const rootGroup = svg.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'g')
+      rootGroup.setAttribute('transform', 'translate(0,0) scale(1)')
+      svg.appendChild(rootGroup)
       return {
         destroy() {
           const t2 = (globalThis as typeof globalThis & { __markmapTest?: MarkmapTestCounters }).__markmapTest
@@ -282,13 +285,43 @@ describe('MarkMap text color follows the active theme', () => {
     expect(textColorLine!).not.toMatch(/#[0-9a-fA-F]{3,8}/)
   })
 })
+
+describe('MarkMap export readiness', () => {
+  it('does not report ready before the async data and fit lifecycle settles', async () => {
+    const { unmount, host } = mountStandalone()
+    const widget = host.querySelector<HTMLElement>('.markmap-widget')!
+    expect(widget.dataset.markmapState).toBe('pending')
+    expect(widget.dataset.markmapReady).toBe('false')
+
+    await settle()
+
+    expect(widget.dataset.markmapState).toBe('ready')
+    expect(widget.dataset.markmapReady).toBe('true')
+    unmount()
+  })
+
+  it('reports an explicit settled error when setData fails', async () => {
+    g.__markmapTest!.rejectSetData = true
+    const { unmount, host } = mountStandalone()
+    await settle()
+
+    const widget = host.querySelector<HTMLElement>('.markmap-widget')!
+    expect(widget.dataset.markmapState).toBe('error')
+    expect(widget.dataset.markmapReady).toBe('false')
+    expect(widget.dataset.markmapError).toContain('setData failed')
+    unmount()
+  })
+})
+
 describe('MarkMap theme switch', () => {
   it('rebuilds the markmap instance on theme change, on the same svg', async () => {
-    const { unmount } = mountStandalone()
+    const { unmount, host } = mountStandalone()
     /* onMounted + the dynamic import are async — give them a few
        ticks to settle. */
     await settle()
     expect(g.__markmapTest!.createCalls.length).toBe(1)
+    expect(host.querySelector('.markmap-widget')?.getAttribute('data-markmap-state')).toBe('ready')
+    expect(host.querySelector('.markmap-widget')?.getAttribute('data-markmap-ready')).toBe('true')
 
     const svgBefore = g.__markmapTest!.createCalls[0]
 

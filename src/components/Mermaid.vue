@@ -40,6 +40,10 @@ const { theme } = useTheme()
 const wrapperRef = ref<HTMLDivElement | null>(null)
 const containerRef = ref<HTMLDivElement | null>(null)
 const renderError = ref<string | null>(null)
+type MermaidState = 'pending' | 'ready' | 'error'
+/* Consumers must wait for an explicit settled state. The wrapper and even an
+   empty SVG can exist while mermaid is still running its async layout. */
+const widgetState = ref<MermaidState>('pending')
 /* Fullscreen toggle state. The browser owns the actual fullscreen
    bit on `document.fullscreenElement`; we just mirror it into a
    ref so the toolbar icon can flip between enter / exit and so
@@ -177,13 +181,14 @@ function scheduleRender() {
 
 async function render() {
   if (disposed || !containerRef.value) return
+  widgetState.value = 'pending'
+  renderError.value = null
   if (!hasNonZeroSize()) return
   /* Bump the generation at the top of every render so any
      pending getSvgPanZoom() callback from a previous render can
      detect it has been superseded and bail out. See the
      `renderGeneration` declaration above for the full rationale. */
   const myGen = ++renderGeneration
-  renderError.value = null
   /* `document.fonts.ready` resolves once all currently-loading
      fonts have loaded. Mermaid measures text via the canvas
      during layout; if a font with non-Latin glyphs (e.g. the
@@ -236,6 +241,7 @@ async function render() {
     const bindFns = rendered?.bindFns
     if (!svg || /translate\(NaN/.test(svg)) {
       renderError.value = '图表布局异常：容器未正确布局或图表含无效字符，请稍后重试'
+      widgetState.value = 'error'
       /* Leave the container empty so the broken svg never
          reaches the parser. */
       containerRef.value.innerHTML = ''
@@ -369,8 +375,10 @@ async function render() {
         }
       }).catch(() => { /* diagram still renders, just no drag/zoom */ })
     }
+    widgetState.value = 'ready'
   } catch (e) {
     renderError.value = e instanceof Error ? e.message : String(e)
+    widgetState.value = 'error'
     containerRef.value?.replaceChildren()
   }
 }
@@ -579,7 +587,14 @@ watch(isLocked, () => {
 </script>
 
 <template>
-  <div ref="wrapperRef" class="mermaid-widget">
+  <div
+    ref="wrapperRef"
+    class="mermaid-widget"
+    :data-mermaid-state="widgetState"
+    :data-mermaid-ready="widgetState === 'ready' ? 'true' : 'false'"
+    :data-mermaid-error="widgetState === 'error' ? (renderError ?? 'unknown') : undefined"
+    :aria-busy="widgetState === 'pending' ? 'true' : 'false'"
+  >
     <div ref="containerRef" class="mermaid-svg" />
     <div v-if="renderError" class="mermaid-error">
       图表渲染失败:{{ renderError }}

@@ -31,6 +31,11 @@ const wrapperRef = ref<HTMLDivElement | null>(null)
 const svgRef = ref<SVGSVGElement | null>(null)
 const isFullscreen = ref(false)
 const mountError = ref<string | null>(null)
+type MarkmapState = 'pending' | 'ready' | 'error'
+/* Explicit lifecycle state for consumers such as PDF export. An SVG is
+   created before Markmap has finished setData + fit, so DOM existence is not
+   a readiness signal. */
+const widgetState = ref<MarkmapState>('pending')
 /* Pan/zoom gate. Default is locked — the markmap is read-only out of
    the box; the user has to click the toolbar lock to drag/zoom it.
    The lock is *pan/zoom*, not node-level drag, because markmap
@@ -141,6 +146,63 @@ function hasNonZeroSize(): boolean {
   return el.isConnected && el.clientWidth > 0
 }
 
+function captureFitTransform(svg: SVGSVGElement): void {
+  /* Markmap does not expose a viewBox; its auto-fit viewport is represented by
+     the transform on the root <g>. Keep the settled transform separately so
+     a static export can restore the export surface's fit instead of any later
+     interactive pan/zoom state. */
+  const rootGroup = Array.from(svg.children).find((child) => child.tagName.toLowerCase() === 'g')
+  const transform = rootGroup?.getAttribute('transform') ?? ''
+  if (transform && !/NaN|Infinity/.test(transform)) {
+    svg.dataset.markmapFitTransform = transform
+  } else {
+    delete svg.dataset.markmapFitTransform
+  }
+
+  /* Markmap writes a CSS-sized SVG without a viewBox. Capture the actual
+     export-surface viewport so the PDF clone can establish the same user
+     coordinate system instead of falling back to SVG's 300x150 default. */
+  const width = svg.clientWidth || wrapperRef.value?.clientWidth || 720
+  const height = svg.clientHeight || wrapperRef.value?.clientHeight || 480
+  svg.dataset.markmapViewport = `${Math.max(1, width)} ${Math.max(1, height)}`
+}
+
+function markmapLayoutSignature(svg: SVGSVGElement): string | null {
+  const rootGroup = Array.from(svg.children).find((child) => child.tagName.toLowerCase() === 'g')
+  if (!rootGroup) return null
+  const transform = rootGroup.getAttribute('transform') ?? ''
+  const opacity = Array.from(svg.querySelectorAll<HTMLElement>('.markmap-foreign'))
+    .map((node) => node.style.opacity)
+    .join(',')
+  return `${transform}|${opacity}`
+}
+
+async function waitForStableMarkmapLayout(svg: SVGSVGElement): Promise<void> {
+  const deadline = Date.now() + 5000
+  let previous: string | null = null
+  let stableFrames = 0
+
+  while (Date.now() < deadline) {
+    await new Promise<void>((resolve) => {
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => resolve())
+      else window.setTimeout(resolve, 16)
+    })
+    const signature = markmapLayoutSignature(svg)
+    if (!signature || /NaN|Infinity/.test(signature)) {
+      throw new Error('MarkMap layout did not produce a valid SVG')
+    }
+    if (signature === previous) stableFrames += 1
+    else stableFrames = 0
+    previous = signature
+    /* fit() may resolve before markmap's d3 transition has finished. Two
+       identical animation-frame snapshots make readiness depend on the
+       observed settled layout, not on a guessed sleep duration. */
+    if (stableFrames >= 2) return
+  }
+
+  throw new Error('MarkMap layout did not settle')
+}
+
 function scheduleMount() {
   /* Coalesce: a theme toggle + a code edit + a ResizeObserver
      tick all landing in the same frame produce one mount, not
@@ -167,8 +229,13 @@ function teardownInstance() {
   revokeRetransform = null
   mm?.destroy?.()
   mm = null
+  widgetState.value = 'pending'
   const svg = svgRef.value
-  if (svg) while (svg.firstChild) svg.removeChild(svg.firstChild)
+  if (svg) {
+    delete svg.dataset.markmapFitTransform
+    delete svg.dataset.markmapViewport
+    while (svg.firstChild) svg.removeChild(svg.firstChild)
+  }
 }
 
 async function mountMarkmap() {
@@ -198,6 +265,7 @@ async function mountMarkmap() {
        the host gets a real size. */
     if (!svg.isConnected || svg.clientWidth === 0) return
     mountError.value = null
+    widgetState.value = 'pending'
     /* Drop the previous instance and any svg children it appended.
        Destroying is the only way to detach d3's mouse listeners;
        just calling mm.fit() with new opts wouldn't re-tint existing
@@ -250,12 +318,20 @@ async function mountMarkmap() {
           await instance.setData(root)
           if (!isCurrentInstance()) return
           await instance.fit?.()
-          if (isCurrentInstance()) mountError.value = null
+          const currentSvg = svgRef.value
+          if (!currentSvg) return
+          await waitForStableMarkmapLayout(currentSvg)
+          if (isCurrentInstance()) {
+            mountError.value = null
+            captureFitTransform(currentSvg)
+            widgetState.value = 'ready'
+          }
         } catch (error) {
           /* A late retransform failure must not destroy a working
              Markmap instance or become an unhandled Promise rejection. */
           if (isCurrentInstance()) {
             mountError.value = (error as Error).message
+            widgetState.value = 'error'
           }
         }
       }
@@ -270,6 +346,7 @@ async function mountMarkmap() {
           return
         }
         refreshRequested = true
+        widgetState.value = 'pending'
         if (refreshPromise) return
         const run = (async () => {
           while (refreshRequested && isCurrentInstance()) {
@@ -333,14 +410,20 @@ async function mountMarkmap() {
       await instance.setData(root)
       if (!isCurrentInstance()) return
       await instance.fit?.()
+      await waitForStableMarkmapLayout(svg)
+      if (!isCurrentInstance()) return
       initialDataPending = false
       if (retransformPending) {
         retransformPending = false
         requestRetransform()
+      } else {
+        captureFitTransform(svg)
+        widgetState.value = 'ready'
       }
     } catch (e) {
       if (!disposed && mountGeneration === generation) {
         mountError.value = (e as Error).message
+        widgetState.value = 'error'
       }
     }
   })()
@@ -480,7 +563,14 @@ function resetView() {
 </script>
 
 <template>
-  <div ref="wrapperRef" class="markmap-widget">
+  <div
+    ref="wrapperRef"
+    class="markmap-widget"
+    :data-markmap-state="widgetState"
+    :data-markmap-ready="widgetState === 'ready' ? 'true' : 'false'"
+    :data-markmap-error="widgetState === 'error' ? (mountError ?? 'unknown') : undefined"
+    :aria-busy="widgetState === 'pending' ? 'true' : 'false'"
+  >
     <div v-if="mountError" class="markmap-error">
       思维导图加载失败:{{ mountError }}
     </div>

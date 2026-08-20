@@ -79,6 +79,8 @@ const PDF_DOWNLOAD_STYLES = `
 
 .pdf-document .article :where(h1, h2, h3, h4, h5, h6) {
   color: #111827 !important;
+  break-inside: avoid;
+  page-break-inside: avoid;
   break-after: avoid;
   page-break-after: avoid;
 }
@@ -130,6 +132,21 @@ const PDF_DOWNLOAD_STYLES = `
   background: #f5f6f8 !important;
   border-left-color: #005fb8 !important;
   color: #4b5563 !important;
+}
+
+/* The reader callout theme uses color-mix(), which html2canvas's CSS parser
+   cannot consume in every Chromium build. Resolve the printable palette here
+   so a callout cannot abort the entire PDF transaction. */
+.pdf-document .article .callout {
+  background: #f5f6f8 !important;
+  border-color: #d7dce2 !important;
+  border-left-color: #005fb8 !important;
+  color: #4b5563 !important;
+}
+
+.pdf-document .article .callout-title,
+.pdf-document .article .callout-icon {
+  color: #005fb8 !important;
 }
 
 .pdf-document .article .table-scroll {
@@ -200,6 +217,48 @@ const PDF_DOWNLOAD_STYLES = `
   margin: 0 auto !important;
   overflow: visible !important;
   background: transparent !important;
+}
+
+/* MarkMap's reader SVG has no stable viewBox: Markmap uses a root-group
+   transform for auto-fit and keeps the widget at a fixed screen height. The
+   export surface captures that settled fit transform, and the static clone
+   below reuses it in a document-width box without the reader toolbar. */
+.pdf-document .article .pdf-markmap {
+  display: block !important;
+  width: 100% !important;
+  height: 480px !important;
+  margin: 1.15em 0 !important;
+  overflow: visible !important;
+  break-inside: avoid !important;
+  page-break-inside: avoid !important;
+}
+
+/* html2pdf.js understands break-inside: avoid on a block, but it does not
+   interpret break-after: avoid on a heading. Keep a diagram heading in the
+   same pagination unit as its widget so a widget that moves to the next page
+   cannot leave its heading behind. */
+.pdf-document .article .pdf-heading-group {
+  display: block !important;
+  break-inside: avoid !important;
+  page-break-inside: avoid !important;
+}
+
+.pdf-document .article .pdf-markmap > svg {
+  display: block !important;
+  width: 100% !important;
+  height: 480px !important;
+  max-width: 100% !important;
+  overflow: visible !important;
+  background: transparent !important;
+}
+
+.pdf-document .article .pdf-markmap-error {
+  box-sizing: border-box;
+  min-height: 3em;
+  padding: 0.8em 1em;
+  color: #4b5563 !important;
+  background: #f5f6f8 !important;
+  border: 1px solid #d7dce2 !important;
 }
 
 .pdf-document .article .markmap-toolbar-area,
@@ -280,6 +339,72 @@ function prepareMermaidSvg(source: SVGSVGElement): SVGSVGElement {
   return svg
 }
 
+function prepareMarkmapSvg(source: SVGSVGElement): SVGSVGElement {
+  const svg = source.cloneNode(true) as SVGSVGElement
+  /* MarkMap has no diagram viewBox. Its settled auto-fit lives on the direct
+     root <g>; restore the fit captured by the isolated export surface so a
+     reader-side pan/zoom can never leak into the PDF clone. */
+  const fitTransform = source.getAttribute('data-markmap-fit-transform')
+  const rootGroup = Array.from(svg.children).find((child) => child.tagName.toLowerCase() === 'g')
+  if (rootGroup?.tagName.toLowerCase() === 'g' && fitTransform) {
+    rootGroup.setAttribute('transform', fitTransform)
+  }
+
+  /* The live MarkMap SVG is CSS-sized and intentionally has no viewBox. Give
+     the clone the export surface's user coordinate system; otherwise canvas
+     renderers use SVG's 300x150 fallback and the graph collapses into a tiny
+     clipped corner. */
+  const viewport = source.getAttribute('data-markmap-viewport')?.trim() ?? ''
+  const [width, height] = viewport.split(/\s+/).map(Number)
+  if (!svg.getAttribute('viewBox') && Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0) {
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`)
+    svg.setAttribute('width', String(width))
+    svg.setAttribute('height', String(height))
+  }
+
+  svg.removeAttribute('style')
+  svg.removeAttribute('data-markmap-fit-transform')
+  svg.removeAttribute('data-markmap-viewport')
+  const classNames = (svg.getAttribute('class') ?? '')
+    .split(/\s+/)
+    .filter((name) => name && name !== 'markmap-svg' && !name.startsWith('mm-'))
+  if (!classNames.includes('markmap')) classNames.push('markmap')
+  svg.setAttribute('class', classNames.join(' '))
+  svg.setAttribute('preserveAspectRatio', 'xMidYMid meet')
+  svg.setAttribute('data-markmap-static', 'true')
+  return svg
+}
+
+function unwrapStandaloneFenceWidget(host: HTMLElement): void {
+  /* markdown-it emits custom fences as <pre><code>...</code></pre>. The
+     post-mount Vue widget replaces the fence contents but intentionally keeps
+     that source wrapper in the reader DOM. A PDF snapshot must remove the
+     wrapper: its code-block pagination rule would otherwise separate the
+     heading from the static diagram and add an unrelated code background. */
+  const code = host.parentElement
+  const fence = code?.parentElement
+  if (!code || !fence || code.tagName !== 'CODE' || fence.tagName !== 'PRE') return
+
+  const containsOnly = (parent: HTMLElement, child: HTMLElement) =>
+    Array.from(parent.childNodes).every((node) => (
+      node === child || (node.nodeType === Node.TEXT_NODE && !node.textContent?.trim())
+    ))
+  if (!containsOnly(code, host) || !containsOnly(fence, code)) return
+  fence.replaceWith(host)
+}
+
+function groupHeadingWithBlock(block: HTMLElement): void {
+  const heading = block.previousElementSibling
+  if (!(heading instanceof HTMLElement) || !/^H[1-6]$/.test(heading.tagName)) return
+  const parent = heading.parentElement
+  if (!parent || parent !== block.parentElement) return
+
+  const group = block.ownerDocument.createElement('div')
+  group.className = 'pdf-heading-group'
+  parent.insertBefore(group, heading)
+  group.append(heading, block)
+}
+
 /**
  * Clone the live article and remove reader-only Mermaid runtime state.
  *
@@ -295,12 +420,54 @@ export function preparePdfArticleHtml(article: HTMLElement): string {
 
   for (const host of clone.querySelectorAll<HTMLElement>('.mermaid-widget-host')) {
     const sourceSvg = host.querySelector<SVGSVGElement>('.mermaid-svg > svg')
-    if (!sourceSvg) continue
+    if (!sourceSvg) {
+      unwrapStandaloneFenceWidget(host)
+      continue
+    }
 
     const staticDiagram = clone.ownerDocument.createElement('div')
     staticDiagram.className = 'pdf-mermaid'
     staticDiagram.appendChild(prepareMermaidSvg(sourceSvg))
     host.replaceChildren(staticDiagram)
+    unwrapStandaloneFenceWidget(host)
+  }
+
+  for (const host of clone.querySelectorAll<HTMLElement>('.markmap-widget-host')) {
+    const widget = host.querySelector<HTMLElement>('.markmap-widget')
+    const sourceSvg = widget?.querySelector<SVGSVGElement>('.markmap-svg')
+    const error = widget?.querySelector<HTMLElement>('.markmap-error')
+    if (!sourceSvg || !sourceSvg.querySelector('g')) {
+      if (error) {
+        const errorBox = clone.ownerDocument.createElement('div')
+        errorBox.className = 'pdf-markmap-error'
+        errorBox.textContent = error.textContent?.trim() || '思维导图加载失败'
+        host.replaceChildren(errorBox)
+      }
+      unwrapStandaloneFenceWidget(host)
+      continue
+    }
+
+    const staticDiagram = clone.ownerDocument.createElement('div')
+    staticDiagram.className = 'pdf-markmap'
+    staticDiagram.appendChild(prepareMarkmapSvg(sourceSvg))
+    host.replaceChildren(staticDiagram)
+    unwrapStandaloneFenceWidget(host)
+  }
+
+  /* A CSS `break-after: avoid` on a heading is not acted on by html2pdf.js's
+     page-break plugin. Wrap diagram headings with their now-static widget so
+     the plugin can move the complete pair when the widget would cross a page. */
+  const widgetHosts = Array.from(clone.querySelectorAll<HTMLElement>(
+    '.mermaid-widget-host, .markmap-widget-host',
+  ))
+  for (const host of widgetHosts) groupHeadingWithBlock(host)
+
+  /* Images inside a paragraph have the same pagination hazard: html2pdf.js
+     moves the image paragraph to the next page while the preceding heading
+     remains in place. Keep an image-only paragraph with its heading as well. */
+  for (const paragraph of clone.querySelectorAll<HTMLElement>('p')) {
+    if (paragraph.children.length !== 1 || paragraph.firstElementChild?.tagName !== 'IMG') continue
+    groupHeadingWithBlock(paragraph)
   }
 
   return clone.outerHTML
@@ -411,4 +578,5 @@ export async function downloadPdfDocument(options: PdfDownloadOptions): Promise<
 
 export const __testing__ = {
   PDF_DOWNLOAD_STYLES,
+  prepareMarkmapSvg,
 }

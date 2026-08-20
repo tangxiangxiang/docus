@@ -132,4 +132,74 @@ describe('PDF export helpers', () => {
     expect(viewport?.getAttribute('style')).toBeNull()
     expect(__testing__.PDF_DOWNLOAD_STYLES).toContain('.pdf-document .article .pdf-mermaid > svg')
   })
+
+  it('converts a settled MarkMap widget into a static, fit-sized SVG', () => {
+    const article = document.createElement('article')
+    article.className = 'article reading'
+    article.innerHTML = `
+      <h2>MarkMap</h2>
+      <pre><code class="language-markmap">
+        <div class="markmap-widget-host">
+          <div class="markmap-widget" data-markmap-state="ready" data-markmap-ready="true">
+            <svg class="markmap-svg markmap mm-test" data-markmap-fit-transform="translate(17,240) scale(1.84)" data-markmap-viewport="720 480">
+              <style>.markmap{font:16px sans-serif}</style>
+              <g transform="translate(900,900) scale(4)">
+                <g class="markmap-node"><text>Root</text></g>
+              </g>
+            </svg>
+            <div class="markmap-toolbar-area"><button>Reset</button></div>
+          </div>
+        </div>
+      </code></pre>`
+
+    const html = preparePdfArticleHtml(article)
+    const exported = document.createElement('div')
+    exported.innerHTML = html
+    const host = exported.querySelector('.markmap-widget-host')
+    const headingGroup = exported.querySelector('.pdf-heading-group')
+    const svg = exported.querySelector<SVGSVGElement>('.pdf-markmap > svg')
+    const rootGroup = svg?.querySelector(':scope > g')
+
+    expect(headingGroup?.querySelector('h2')?.textContent).toBe('MarkMap')
+    expect(headingGroup?.querySelector('.markmap-widget-host')).toBe(host)
+    expect(exported.querySelector('pre')).toBeNull()
+    expect(host?.querySelector('.markmap-toolbar-area')).toBeNull()
+    expect(exported.querySelector('.markmap-widget')).toBeNull()
+    expect(svg).not.toBeNull()
+    expect(svg?.classList.contains('markmap-svg')).toBe(false)
+    expect(svg?.classList.contains('markmap')).toBe(true)
+    expect(svg?.getAttribute('viewBox')).toBe('0 0 720 480')
+    expect(svg?.getAttribute('width')).toBe('720')
+    expect(svg?.getAttribute('height')).toBe('480')
+    expect(svg?.getAttribute('data-markmap-fit-transform')).toBeNull()
+    expect(svg?.getAttribute('data-markmap-viewport')).toBeNull()
+    expect(svg?.getAttribute('data-markmap-static')).toBe('true')
+    expect(rootGroup?.getAttribute('transform')).toBe('translate(17,240) scale(1.84)')
+    expect(__testing__.PDF_DOWNLOAD_STYLES).toContain('.pdf-document .article .pdf-markmap > svg')
+  })
+
+  it('keeps an image-only paragraph with its section heading', () => {
+    const article = document.createElement('article')
+    article.className = 'article reading'
+    article.innerHTML = '<h2>Image</h2><p><img src="/logo.svg" alt="Docus logo"></p>'
+
+    const exported = document.createElement('div')
+    exported.innerHTML = preparePdfArticleHtml(article)
+    const group = exported.querySelector('.pdf-heading-group')
+
+    expect(group?.querySelector('h2')?.textContent).toBe('Image')
+    expect(group?.querySelector('p > img')).not.toBeNull()
+  })
+
+  it('removes the temporary render surface when PDF generation fails', async () => {
+    pdfMocks.save.mockRejectedValueOnce(new Error('generation failed'))
+
+    await expect(downloadPdfDocument({
+      title: 'Failed export',
+      articleHtml: '<article class="article reading"><p>content</p></article>',
+    })).rejects.toThrow('generation failed')
+
+    expect(document.querySelector('.pdf-download-root')).toBeNull()
+    expect(document.querySelector('.pdf-download-host')).toBeNull()
+  })
 })
