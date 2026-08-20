@@ -5,7 +5,7 @@
 | 项目                           | 内容                                                     |
 | ---------------------------- | ------------------------------------------------------ |
 | 文档状态                         | Ready for Continued Implementation                     |
-| 产品 PRD                       | [`[docs/design/pdf-export-prd.md](https://chatgpt.com/c/pdf-export-prd.md)`](./pdf-export-prd.md) |
+| 产品 PRD                       | [`docs/design/pdf-export-prd.md`](./pdf-export-prd.md) |
 | Implementation Plan baseline | `4e62bba441eb2ac7c426485154fd1226caa0edbf`             |
 | 计划日期                         | 2026-08-20                                             |
 | 当前阶段                         | PDF-2 — PDF Export Hardening                           |
@@ -1920,7 +1920,174 @@ browser crash
 
 ---
 
-# 17. File-Level Change Map
+# 17. PDF-H10 — Final Documentation & Release Gate
+
+Priority：
+
+```text
+Release
+```
+
+PDF-H10 不是新的 PDF 产品能力，也不是新的 renderer 或 export pipeline 阶段。
+
+它只在 PDF-H1 至 PDF-H9 的实现、验证和 review 都完成后执行，负责把真实实现、PRD acceptance criteria、最终验证证据和用户文档收敛为一个可审计的 release gate。
+
+---
+
+## 17.1 Entry condition
+
+进入 H10 前必须确认：
+
+```text
+H1 complete
+H2 complete
+H3 complete
+H4 complete
+H5 complete
+H6 complete
+H7 complete
+H8 complete
+H9 complete
+```
+
+H10 不得被用来掩盖任何尚未完成的 H1–H9 correctness work。
+
+如果任一 required gate 仍然失败：
+
+```text
+STOP
+→ 不标记 PDF Export V1 Done
+→ 返回对应的 H1–H9 work package
+→ 修复并重新验证
+```
+
+---
+
+## 17.2 Final documentation update
+
+在最终真实实现已经稳定后，更新：
+
+### `docs/user-guide/editor.md`
+
+补齐 PDF Export 的最终用户行为，包括：
+
+* 用户从哪里触发 Export PDF；
+* 导出使用当前 live buffer 还是 authoritative server document；
+* 导出不会强制保存；
+* 导出的文件格式、默认文件名和下载行为；
+* Mermaid、MarkMap、KaTeX、图片和分页的用户可见结果；
+* 导出失败时用户看到的行为。
+
+用户指南只能描述已经在生产实现中验证过的行为，不得提前承诺 H1–H9 尚未完成的能力。
+
+### `docs/design/pdf-export-implementation-plan.md`
+
+根据最终真实实现更新：
+
+* 当前 implementation baseline；
+* PDF-1 / PDF-2 的 status；
+* 各 H1–H9 work package 的完成状态；
+* Test Matrix 和 Phase Gate 的结果；
+* 最终 release evidence；
+* `PDF Export V1 = Done` 是否成立。
+
+如果实现仍有未关闭的 requirement，必须保留真实的 `TODO`、`Partial` 或未完成状态，不得为了关闭文档而改成完成。
+
+---
+
+## 17.3 PRD acceptance audit
+
+逐项对照：
+
+```text
+docs/design/pdf-export-prd.md
+```
+
+至少核验以下 acceptance categories：
+
+| Acceptance area | Required evidence |
+| --- | --- |
+| Direct PDF download | browser download succeeds with the expected `.pdf` filename |
+| Live buffer authority | dirty open document exports current `tab.raw` without forced save |
+| Closed document authority | closed document exports authoritative server content |
+| Markdown fidelity | headings, text, lists, code, tables, task lists, callouts and footnotes are present |
+| Unicode | Chinese, English, Japanese and Emoji remain readable |
+| KaTeX | inline and display math are settled and present |
+| Mermaid | widget reaches an explicit settled state and static representation is present |
+| MarkMap | widget reaches an explicit settled state and static representation is present |
+| Theme isolation | Dark Mode in Docus produces a printable Light PDF without changing global theme state |
+| Images | local image settlement and the documented failure policy are verified |
+| Pagination | A4 portrait output preserves headings, code, tables and wide content across pages |
+| Failure handling | timeout or widget failure does not produce a misleading successful export |
+| Cleanup | export surface, observers and busy state are cleaned up after success and failure |
+| Concurrency | at most one export transaction is active and duplicate activation is rejected or disabled |
+
+任何 acceptance criterion 如果缺少真实证据，都不能在 H10 中被推断为通过。
+
+---
+
+## 17.4 Final verification evidence
+
+Release evidence 至少汇总：
+
+```text
+typecheck
+unit tests
+integration tests
+browser E2E
+Kitchen Sink
+Dark Mode → Light PDF
+KaTeX
+Mermaid
+MarkMap
+local image
+pagination
+long document
+failure cleanup
+```
+
+证据必须记录实际执行的 command、结果和必要的 fixture / browser context。不能只用：
+
+```text
+download event happened
+PDF file size > 10KB
+```
+
+代替内容正确性证明。
+
+---
+
+## 17.5 Cleanup and release decision
+
+在宣布 V1 完成前，确认生产代码和导出 transaction 没有残留：
+
+* temporary export DOM；
+* stale observer；
+* unresolved widget waiter；
+* busy state；
+* debug hooks；
+* test-only production code；
+* hidden test harness 被误当成正式入口。
+
+如果 release gate 发现 PRD acceptance criteria 尚未满足：
+
+```text
+PDF Export V1 != Done
+```
+
+必须返回对应的 H1–H9 work package，完成修复、测试和 review 后重新进入 H10。
+
+只有全部 required gate 通过，并且文档与证据已经和真实实现一致，才能写入：
+
+```text
+PDF Export V1 = Done
+```
+
+H10 本身不得增加新的 PDF 产品能力、custom options、multi-document export、PDF editor 或其它 V1 scope 之外的工作。
+
+---
+
+# 18. File-Level Change Map
 
 预计主要涉及以下文件。
 
@@ -2097,7 +2264,7 @@ Kitchen Sink browser correctness test
 
 ---
 
-# 18. Recommended Commit Sequence
+# 19. Recommended Commit Sequence
 
 建议不要再把所有 hardening 塞进一个大 commit。
 
@@ -2214,7 +2381,7 @@ UI
 
 ---
 
-# 19. Test Matrix
+# 20. Test Matrix
 
 ## Unit
 
@@ -2281,7 +2448,7 @@ first/middle/last long-doc marker
 
 ---
 
-# 20. Dirty Buffer Regression
+# 21. Dirty Buffer Regression
 
 这是必须单独保留的测试。
 
@@ -2326,7 +2493,7 @@ Version A export
 
 ---
 
-# 21. Snapshot Consistency Regression
+# 22. Snapshot Consistency Regression
 
 建立测试：
 
@@ -2353,7 +2520,7 @@ diagram=T3
 
 ---
 
-# 22. Error Matrix
+# 23. Error Matrix
 
 | Stage          | Failure        | Expected                         |
 | -------------- | -------------- | -------------------------------- |
@@ -2370,7 +2537,7 @@ diagram=T3
 
 ---
 
-# 23. Cleanup Requirements
+# 24. Cleanup Requirements
 
 所有路径：
 
@@ -2401,7 +2568,7 @@ stale PdfExportSurface
 
 ---
 
-# 24. Security Review
+# 25. Security Review
 
 Hardening 不得修改：
 
@@ -2424,7 +2591,7 @@ Docus controlled Mermaid / MarkMap output
 
 ---
 
-# 25. Performance Review
+# 26. Performance Review
 
 PDF stack 不属于 startup critical path。
 
@@ -2458,7 +2625,7 @@ bundle refactor
 
 ---
 
-# 26. 不允许的实现方式
+# 27. 不允许的实现方式
 
 以下方案 Code Review 应直接拒绝。
 
@@ -2544,7 +2711,7 @@ PDF > 10KB
 
 ---
 
-# 27. Phase Gate
+# 28. Phase Gate
 
 ## Gate A — P0 Correctness
 
@@ -2593,7 +2760,7 @@ Read Mode Export PDF
 
 ---
 
-# 28. CI / Verification Commands
+# 29. CI / Verification Commands
 
 每个 implementation commit 至少执行仓库对应的：
 
@@ -2624,7 +2791,7 @@ arbitrary timeout increase
 
 ---
 
-# 29. Manual Acceptance Checklist
+# 30. Manual Acceptance Checklist
 
 正式关闭 PDF V1 前人工检查一次真实 PDF：
 
@@ -2651,7 +2818,7 @@ arbitrary timeout increase
 
 ---
 
-# 30. PDF Export V1 Definition of Done
+# 31. PDF Export V1 Definition of Done
 
 只有以下全部满足：
 
@@ -2682,7 +2849,7 @@ PDF Export V1 = Done
 
 ---
 
-# 31. Baseline Status Table
+# 32. Baseline Status Table
 
 以：
 
@@ -2719,7 +2886,7 @@ PDF Export V1 = Done
 
 ---
 
-# 32. 下一笔实现的明确起点
+# 33. 下一笔实现的明确起点
 
 Implementation Plan 合入后，不继续扩散范围。
 
@@ -2764,7 +2931,7 @@ large document
 
 ---
 
-# 33. Final Execution Order
+# 34. Final Execution Order
 
 最终执行顺序固定为：
 
@@ -2789,7 +2956,9 @@ H8 Read Mode Entry
         ↓
 H9 Stress / Compatibility
         ↓
-Final Acceptance
+H10 Final Documentation & Release Gate
+        ↓
+PDF Export V1 Done
 ```
 
 当前最重要的原则：
