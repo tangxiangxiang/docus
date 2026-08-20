@@ -1,0 +1,2812 @@
+# Docus PDF Export Implementation Plan
+
+## 1. 文档信息
+
+| 项目                           | 内容                                                     |
+| ---------------------------- | ------------------------------------------------------ |
+| 文档状态                         | Ready for Continued Implementation                     |
+| 产品 PRD                       | [`[docs/design/pdf-export-prd.md](https://chatgpt.com/c/pdf-export-prd.md)`](./pdf-export-prd.md) |
+| Implementation Plan baseline | `4e62bba441eb2ac7c426485154fd1226caa0edbf`             |
+| 计划日期                         | 2026-08-20                                             |
+| 当前阶段                         | PDF-2 — PDF Export Hardening                           |
+| 当前实现状态                       | PDF-1 baseline 已完成；PDF-2 部分 P0 已提前实现                   |
+| 本任务范围                        | 只补齐实施计划，不继续修改 PDF 业务实现                                 |
+| 目标                           | 将 PDF Export PRD 拆成可执行、可测试、可 review、可逐 commit 验收的工作包   |
+
+本文回答：
+
+> PDF Export 接下来具体改什么、按什么顺序改、每一步修改哪些文件、如何验证、什么时候才允许宣布 PDF Export V1 Done。
+
+产品行为以：
+
+```text
+docs/design/pdf-export-prd.md
+```
+
+为最高约束。
+
+如果 Implementation Plan 与 PRD 冲突：
+
+```text
+STOP
+→ 修订 PRD
+→ review
+→ 再继续 implementation
+```
+
+不得为了实现方便自行改变产品语义。
+
+---
+
+# 2. 本计划不重新讨论的冻结决策
+
+以下决策已经由 PDF Export PRD 确定。
+
+实现阶段不得重新打开为临时技术选择。
+
+| 主题                        | 冻结决策                                                 |
+| ------------------------- | ---------------------------------------------------- |
+| 导出目标                      | 当前 Markdown document                                 |
+| 输出格式                      | `.pdf`                                               |
+| PDF engine                | Browser-side `html2pdf.js` / `html2canvas` / `jsPDF` |
+| Paper                     | A4                                                   |
+| Orientation               | Portrait                                             |
+| Print dialog              | 不使用 `window.print()`                                 |
+| Open document authority   | 当前 live tab buffer                                   |
+| Closed document authority | authoritative server document                        |
+| Save behavior             | 导出不得强制保存                                             |
+| Theme                     | PDF 固定 printable light theme                         |
+| Markdown                  | 复用 Docus 当前 renderer                                 |
+| Mermaid                   | 必须导出 static representation                           |
+| MarkMap                   | 必须导出 static representation                           |
+| Math                      | KaTeX 最终渲染结果进入 PDF                                   |
+| Async widgets             | 必须 explicit settled，不能依赖 sleep                       |
+| Export concurrency        | 同时最多 1 个                                             |
+| Render surface            | offscreen real-layout surface                        |
+| Security                  | 不放宽 DOMPurify / URI policy                           |
+| Remote PDF API            | 不允许                                                  |
+| Server Chromium           | V1 不采用                                               |
+| PDF custom options UI     | V1 不做                                                |
+| Multi-document PDF        | V1 不做                                                |
+| PDF Import / Editor       | V1 不做                                                |
+
+实施阶段如发现 browser-side architecture 无法满足 V1 correctness，应记录 architecture ceiling，并另立 RFC。
+
+不得直接在本阶段切换到 server Chromium。
+
+---
+
+# 3. 当前基线状态
+
+Implementation baseline：
+
+```text
+4e62bba441eb2ac7c426485154fd1226caa0edbf
+```
+
+当前仓库已经拥有：
+
+```text
+html2pdf.js
+PdfExportSurface
+RenderedMarkdown
+pdfExport.ts
+VaultView PDF orchestration
+File Tree → Export PDF
+Mermaid explicit state
+MarkMap explicit state
+Mermaid static SVG normalization
+MarkMap static SVG normalization
+PDF filename resolution
+PDF light document stylesheet
+Kitchen Sink fixture
+PDF helper tests
+PDF browser E2E
+```
+
+因此后续不是重新做：
+
+```text
+PDF Export
+```
+
+而是：
+
+```text
+PDF Export Hardening
+```
+
+---
+
+# 4. 已完成能力盘点
+
+## 4.1 PDF transaction
+
+当前基本链路：
+
+```text
+File Tree
+    ↓
+exportPdfFromTree(path)
+    ↓
+resolve source raw
+    ↓
+PdfExportRequest
+    ↓
+PdfExportSurface
+    ↓
+RenderedMarkdown
+    ↓
+waitForPdfWidgets
+    ↓
+preparePdfArticleHtml
+    ↓
+downloadPdfDocument
+    ↓
+html2pdf.js
+    ↓
+browser download
+```
+
+该架构继续保留。
+
+---
+
+## 4.2 Source authority
+
+当前已实现：
+
+```text
+open + loaded tab
+→ tab.raw
+```
+
+否则：
+
+```text
+getPost(path)
+→ post.raw
+```
+
+这一设计符合 PRD。
+
+后续不得改回：
+
+```text
+always getPost()
+```
+
+否则会丢失用户未保存编辑。
+
+---
+
+## 4.3 MarkMap P0
+
+原有风险：
+
+```text
+<svg> exists
+→ incorrectly treated as ready
+```
+
+当前已经修正为：
+
+```text
+pending
+→ setData
+→ fit
+→ stable layout
+→ ready
+```
+
+并通过：
+
+```text
+data-markmap-state
+data-markmap-ready
+data-markmap-error
+```
+
+暴露生命周期。
+
+因此：
+
+```text
+PDF-P0 MarkMap explicit ready
+```
+
+在当前 baseline 下可以标记：
+
+```text
+DONE
+```
+
+后续只做 regression，不重新设计。
+
+---
+
+## 4.4 Mermaid readiness
+
+Mermaid 当前同样有：
+
+```text
+pending
+ready
+error
+```
+
+PDF waiter 已使用 explicit state。
+
+继续保留。
+
+---
+
+## 4.5 Kitchen Sink fixture
+
+当前已有：
+
+```text
+e2e/fixtures/pdf-export-kitchen-sink.md
+```
+
+覆盖：
+
+* Frontmatter title；
+* H1；
+* 中文；
+* English；
+* 日本語；
+* Emoji；
+* paragraph；
+* bold；
+* italic；
+* inline code；
+* link；
+* task list；
+* blockquote；
+* callout；
+* code block；
+* table；
+* inline math；
+* display math；
+* Mermaid；
+* MarkMap；
+* local image；
+* footnote。
+
+该 fixture 作为后续 PDF regression fixture。
+
+不得删除或退化成简单 demo。
+
+---
+
+# 5. 当前尚未闭环的问题
+
+截至 baseline，本阶段至少还有以下 gap。
+
+---
+
+## GAP-1 — PDF render surface 没有真正固定 Light Theme
+
+PDF stylesheet 已经把最终 document shell 设置为：
+
+```text
+white background
+dark text
+printable palette
+```
+
+但 Mermaid / MarkMap 是在：
+
+```text
+PdfExportSurface
+```
+
+中提前完成渲染。
+
+当前：
+
+```text
+PdfExportSurface
+→ RenderedMarkdown
+→ useMermaidMount
+→ Mermaid
+→ useTheme()
+
+PdfExportSurface
+→ RenderedMarkdown
+→ useMarkmapMount
+→ MarkMap
+→ useTheme()
+```
+
+因此：
+
+```text
+App Dark Mode
+→ PDF hidden surface
+→ Mermaid dark render
+→ MarkMap dark palette
+→ static SVG
+→ white PDF
+```
+
+最终可能形成：
+
+```text
+light document
++
+dark widget assets
+```
+
+这与 PRD 不完全一致。
+
+---
+
+## GAP-2 — KaTeX 没有 explicit settled contract
+
+当前 KaTeX 本身同步：
+
+```text
+katex.render()
+```
+
+但 lifecycle 仍然由：
+
+```text
+useMathMount()
+```
+
+在 HTML 注入之后执行。
+
+当前 marker：
+
+```text
+data-math-mounted
+```
+
+主要用于防止重复 mount。
+
+它不是正式 export readiness state。
+
+PDF 当前没有显式等待：
+
+```text
+math ready
+math error
+```
+
+---
+
+## GAP-3 — Kitchen Sink E2E 尚未真正证明内容完整
+
+当前 browser E2E 已验证：
+
+```text
+Mermaid ready
+MarkMap ready
+download happened
+filename correct
+PDF file > 10 KB
+window.print not called
+```
+
+但尚未证明：
+
+```text
+中文存在
+KaTeX 存在
+code 存在
+table 存在
+image loaded
+Mermaid static export valid
+MarkMap static export valid
+```
+
+因此：
+
+```text
+download success
+!=
+content correctness
+```
+
+---
+
+## GAP-4 — Image settlement 未定义
+
+当前 html2canvas 配置可以加载图片，但 export orchestration 没有自己的：
+
+```text
+image load / error settled
+```
+
+阶段。
+
+因此在：
+
+```text
+image still loading
+→ prepare snapshot
+```
+
+的情况下可能出现不稳定输出。
+
+---
+
+## GAP-5 — Long document 尚未形成正式验证
+
+当前尚未正式验证：
+
+```text
+20 pages
+50 pages
+```
+
+以及：
+
+```text
+last section preserved
+no obvious duplicated region
+browser remains recoverable
+```
+
+---
+
+## GAP-6 — Read Mode 入口尚未补齐
+
+目前正式 discoverable entry 仍主要是：
+
+```text
+File Tree
+→ Right Click
+→ Export PDF
+```
+
+Read Mode 显式下载入口属于 P1。
+
+但不能在 correctness 未稳定前优先做 UI。
+
+---
+
+# 6. Hardening 后目标架构
+
+最终目标：
+
+```text
+User action
+     ↓
+Capture immutable PdfExportRequest
+     ↓
+Resolve authoritative source
+     ↓
+PdfExportSurface
+renderTheme = light
+     ↓
+RenderedMarkdown
+     ↓
+┌─────────────────────────────┐
+│ standard Markdown rendered  │
+│ KaTeX settled               │
+│ Mermaid settled             │
+│ MarkMap settled             │
+│ images settled              │
+└─────────────────────────────┘
+     ↓
+preparePdfArticleHtml()
+     ↓
+static PDF snapshot
+     ↓
+html2pdf.js
+     ↓
+download
+     ↓
+finally cleanup
+```
+
+核心原则：
+
+```text
+visible reader state
+≠
+PDF export rendering context
+```
+
+但：
+
+```text
+Markdown semantics
+==
+PDF export semantics
+```
+
+---
+
+# 7. Work Package 总览
+
+实施建议拆成：
+
+| Work Package | Priority | 内容                                    |
+| ------------ | -------- | ------------------------------------- |
+| PDF-H1       | P0       | Export Light Theme isolation          |
+| PDF-H2       | P0       | Math explicit readiness               |
+| PDF-H3       | P0       | Unified settled validation regression |
+| PDF-H4       | P0/P1    | Kitchen Sink browser correctness      |
+| PDF-H5       | P1       | Image settlement                      |
+| PDF-H6       | P1       | Pagination + wide content             |
+| PDF-H7       | P1       | Long-document validation              |
+| PDF-H8       | P1       | Read Mode export entry                |
+| PDF-H9       | P2       | Extreme/stress/browser compatibility  |
+| PDF-H10      | Release  | Final docs + DoD                      |
+
+执行顺序不得随意颠倒。
+
+特别是：
+
+```text
+H1
+→ H2
+→ H3
+→ H4
+```
+
+必须优先于新增 UI。
+
+---
+
+# 8. PDF-H1 — Export Light Theme Isolation
+
+Priority：
+
+```text
+P0
+```
+
+## 8.1 目标
+
+PDF hidden render surface 中：
+
+```text
+Markdown
+KaTeX
+Mermaid
+MarkMap
+```
+
+全部在：
+
+```text
+light
+```
+
+export context 下完成。
+
+无论用户当前：
+
+```text
+light
+dark
+```
+
+PDF 结果一致。
+
+---
+
+## 8.2 禁止方案
+
+禁止：
+
+```ts
+setTheme('light')
+await exportPdf()
+setTheme(previous)
+```
+
+因为它会：
+
+* 修改全局用户状态；
+* 触发 visible Mermaid/MarkMap rebuild；
+* 产生 UI 闪烁；
+* 引入 export/theme toggle race；
+* 可能污染 local storage；
+* 违反“导出不得改变当前 UI 状态”。
+
+---
+
+## 8.3 推荐方案
+
+为 Markdown enhancement 增加**局部 render theme override**。
+
+建议：
+
+```text
+PdfExportSurface
+      ↓
+renderTheme="light"
+      ↓
+RenderedMarkdown
+      ↓
+useMermaidMount
+useMarkmapMount
+      ↓
+Mermaid / MarkMap
+      ↓
+effectiveTheme
+```
+
+正常 Reader：
+
+```text
+renderTheme = undefined
+→ follow global useTheme()
+```
+
+PDF：
+
+```text
+renderTheme = light
+→ ignore global dark theme
+```
+
+---
+
+## 8.4 `RenderedMarkdown.vue`
+
+增加：
+
+```ts
+renderTheme?: 'light' | 'dark'
+```
+
+但默认：
+
+```ts
+undefined
+```
+
+保证正常 Reader 不改变行为。
+
+调用：
+
+```text
+useMermaidMount(...)
+useMarkmapMount(...)
+```
+
+时将 optional override 传下去。
+
+不要创建：
+
+```text
+generic rendering context framework
+```
+
+当前只需要一个最小 theme override。
+
+---
+
+## 8.5 `useMermaidMount.ts`
+
+当前：
+
+```ts
+createApp(Mermaid, { code })
+```
+
+改为概念上：
+
+```ts
+createApp(Mermaid, {
+  code,
+  renderTheme,
+})
+```
+
+正常 caller 不传值。
+
+---
+
+## 8.6 `useMarkmapMount.ts`
+
+同样：
+
+```ts
+createApp(MarkMap, {
+  content,
+  renderTheme,
+})
+```
+
+---
+
+## 8.7 `Mermaid.vue`
+
+Props：
+
+```ts
+code: string
+renderTheme?: 'light' | 'dark'
+```
+
+定义：
+
+```text
+effectiveTheme =
+  renderTheme
+  ?? global theme
+```
+
+后续所有：
+
+```text
+targetTheme
+theme watch
+rerender
+```
+
+必须基于：
+
+```text
+effectiveTheme
+```
+
+而不是直接基于 global `theme.value`。
+
+---
+
+## 8.8 `MarkMap.vue`
+
+同样增加：
+
+```text
+effectiveTheme
+```
+
+包括：
+
+```text
+palette selection
+theme-change rebuild
+```
+
+都基于 effective theme。
+
+PDF：
+
+```text
+light forever
+```
+
+因此全局 Dark/Light toggle 不应导致 offscreen PDF widget 在 export transaction 中被重建。
+
+---
+
+## 8.9 `PdfExportSurface.vue`
+
+明确：
+
+```vue
+<RenderedMarkdown
+  ...
+  render-theme="light"
+/>
+```
+
+这应该成为 PDF light policy 的唯一入口。
+
+---
+
+## 8.10 H1 Tests
+
+### Mermaid component
+
+增加：
+
+```text
+global dark + renderTheme light
+→ Mermaid uses default/light theme
+```
+
+以及：
+
+```text
+renderTheme undefined
+→ still follows global theme
+```
+
+---
+
+### MarkMap component
+
+增加：
+
+```text
+global dark + renderTheme light
+→ light palette
+```
+
+并验证：
+
+```text
+normal reader theme toggle
+→ existing behavior preserved
+```
+
+---
+
+### PdfExportSurface
+
+验证它明确传入：
+
+```text
+light
+```
+
+而不是依赖当前 App theme。
+
+---
+
+## 8.11 H1 Definition of Done
+
+```text
+Dark App
+→ export
+→ light Mermaid
+→ light MarkMap
+→ light PDF
+```
+
+且：
+
+```text
+global theme unchanged
+```
+
+---
+
+# 9. PDF-H2 — KaTeX Explicit Readiness
+
+Priority：
+
+```text
+P0
+```
+
+---
+
+## 9.1 目标
+
+Math 和 Mermaid / MarkMap 一样，拥有正式 settled contract：
+
+```text
+pending
+ready
+error
+```
+
+---
+
+## 9.2 `useMathMount.ts`
+
+当前 marker：
+
+```text
+data-math-mounted
+```
+
+继续保留用于：
+
+```text
+duplicate-scan guard
+```
+
+新增：
+
+```text
+data-math-state
+```
+
+生命周期：
+
+```text
+before katex.render
+→ pending
+
+katex.render success
+→ ready
+
+katex error / katex-error
+→ error
+```
+
+---
+
+## 9.3 KaTeX malformed source
+
+PRD 不要求 malformed math 阻止整个 PDF。
+
+所以：
+
+```text
+math error
+```
+
+属于：
+
+```text
+settled
+```
+
+而不是：
+
+```text
+PDF transaction failure
+```
+
+也就是说：
+
+```text
+ready OR error
+→ exporter can continue
+```
+
+---
+
+## 9.4 `VaultView.pdfWidgetsReady()`
+
+增加：
+
+```text
+Math
+```
+
+正式检测。
+
+建议：
+
+```text
+for every .math-mount
+    state ∈ { ready, error }
+```
+
+否则：
+
+```text
+return false
+```
+
+---
+
+## 9.5 `waitForPdfWidgets()`
+
+MutationObserver：
+
+增加：
+
+```text
+data-math-state
+```
+
+attribute filter。
+
+禁止：
+
+```text
+setTimeout(50)
+```
+
+等固定 sleep。
+
+---
+
+## 9.6 Math tests
+
+扩展：
+
+```text
+src/composables/__tests__/useMathMount.test.ts
+```
+
+至少：
+
+### success
+
+```text
+pending
+→ ready
+```
+
+### invalid TeX
+
+```text
+pending
+→ error
+```
+
+### duplicate scan
+
+第二次 scan：
+
+```text
+不重新 render
+state 保持
+```
+
+---
+
+## 9.7 H2 Definition of Done
+
+```text
+PDF settled =
+Markdown ready
+AND Math settled
+AND Mermaid settled
+AND MarkMap settled
+```
+
+---
+
+# 10. PDF-H3 — Settled Contract Regression
+
+Priority：
+
+```text
+P0
+```
+
+H1 / H2 完成后，需要正式固定一份 PDF enhancement readiness contract。
+
+---
+
+## 10.1 Settled 状态
+
+统一产品语义：
+
+```text
+ready
+error
+```
+
+都是：
+
+```text
+settled
+```
+
+而：
+
+```text
+pending
+missing state
+placeholder still present
+```
+
+都是：
+
+```text
+not settled
+```
+
+---
+
+## 10.2 Mermaid
+
+必须满足：
+
+```text
+data-mermaid-state=ready|error
+```
+
+---
+
+## 10.3 MarkMap
+
+必须满足：
+
+```text
+data-markmap-state=ready|error
+```
+
+禁止回归：
+
+```text
+querySelector('svg')
+→ ready
+```
+
+---
+
+## 10.4 Math
+
+必须满足：
+
+```text
+data-math-state=ready|error
+```
+
+---
+
+## 10.5 Placeholder guard
+
+如果仍存在：
+
+```text
+.mermaid-mount
+.markmap-mount
+```
+
+说明 enhancer 尚未 mount。
+
+必须：
+
+```text
+not ready
+```
+
+Math 如果仍存在没有 mounted/state 的 placeholder：
+
+同样：
+
+```text
+not ready
+```
+
+---
+
+## 10.6 Timeout
+
+维持 bounded timeout。
+
+Baseline：
+
+```text
+5 seconds
+```
+
+暂时继续采用。
+
+只有 browser evidence 证明正常内容稳定超过 5 秒，才允许调整。
+
+不得因为偶发测试失败直接增加：
+
+```text
+5s → 15s → 30s
+```
+
+掩盖 readiness bug。
+
+---
+
+# 11. PDF-H4 — Kitchen Sink Browser Correctness
+
+Priority：
+
+```text
+P0/P1
+```
+
+它是 PDF V1 宣布 Done 前的 release blocker。
+
+---
+
+## 11.1 当前不足
+
+仅验证：
+
+```text
+PDF > 10KB
+```
+
+不等于内容正确。
+
+---
+
+## 11.2 第一层：Export Surface Assertions
+
+在浏览器中对：
+
+```text
+.pdf-export-surface
+```
+
+进行真实观察。
+
+在 surface 被清理之前至少证明：
+
+### Text
+
+包含：
+
+```text
+PDF Export Kitchen Sink
+中文
+English
+日本語
+Emoji
+```
+
+### Code
+
+存在：
+
+```text
+Hello PDF
+```
+
+### Table
+
+存在：
+
+```text
+A / B / C
+1 / 2 / 3
+```
+
+### KaTeX
+
+存在：
+
+```text
+.katex
+```
+
+并且：
+
+```text
+data-math-state
+```
+
+已经 settled。
+
+### Mermaid
+
+必须：
+
+```text
+data-mermaid-state=ready
+```
+
+且有：
+
+```text
+svg
+valid viewBox
+```
+
+### MarkMap
+
+必须：
+
+```text
+data-markmap-state=ready
+```
+
+且有：
+
+```text
+svg
+root <g>
+no NaN
+```
+
+### Image
+
+local `/logo.svg`：
+
+```text
+complete = true
+naturalWidth > 0
+```
+
+---
+
+## 11.3 第二层：Static normalization unit tests
+
+继续使用：
+
+```text
+src/lib/__tests__/pdfExport.test.ts
+```
+
+证明：
+
+```text
+interactive DOM
+→ prepared static HTML
+```
+
+正确。
+
+必须覆盖：
+
+### Mermaid
+
+```text
+toolbar removed
+pan transform removed
+original viewBox restored
+```
+
+### MarkMap
+
+```text
+toolbar removed
+fit transform restored
+viewport converted to viewBox
+```
+
+### Heading grouping
+
+```text
+heading + diagram
+```
+
+进入：
+
+```text
+.pdf-heading-group
+```
+
+### Image grouping
+
+image-only section：
+
+```text
+heading + image paragraph
+```
+
+同组。
+
+---
+
+## 11.4 第三层：Final download
+
+继续验证：
+
+```text
+download occurred
+filename correct
+file non-empty
+window.print never called
+```
+
+---
+
+## 11.5 是否立即引入 PDF parser
+
+P0 不建议为了测试加入新的大型：
+
+```text
+pdfjs
+PDF parser
+raster comparison stack
+```
+
+除非现有测试无法建立足够 correctness evidence。
+
+V1 可以采用组合证据：
+
+```text
+real browser rendered surface
++
+static normalization unit tests
++
+real PDF download
+```
+
+以后如引入 stable PDF parser：
+
+再添加：
+
+```text
+PDF text extraction
+page count
+visual snapshot
+```
+
+作为 P2。
+
+---
+
+# 12. PDF-H5 — Image Settlement
+
+Priority：
+
+```text
+P1
+```
+
+---
+
+## 12.1 目标
+
+在 snapshot 前确保：
+
+```text
+所有 image
+```
+
+已经达到：
+
+```text
+loaded
+or
+failed
+```
+
+而不是：
+
+```text
+loading
+```
+
+---
+
+## 12.2 新增 helper
+
+建议在：
+
+```text
+src/lib/pdfExport.ts
+```
+
+或 PDF-specific composable/helper 中实现：
+
+```text
+waitForPdfImages(article)
+```
+
+不要放入普通 Markdown renderer。
+
+---
+
+## 12.3 Image algorithm
+
+对于每个：
+
+```html
+<img>
+```
+
+### Already loaded
+
+```text
+complete=true
+naturalWidth>0
+→ ready
+```
+
+### Already failed
+
+```text
+complete=true
+naturalWidth=0
+→ settled error
+```
+
+### Loading
+
+等待：
+
+```text
+load
+error
+timeout
+```
+
+---
+
+## 12.4 Broken image policy
+
+单张 broken image：
+
+```text
+不得导致整个 PDF failure
+```
+
+它属于：
+
+```text
+settled error
+```
+
+正文继续。
+
+---
+
+## 12.5 Same-origin image
+
+是 V1 mandatory。
+
+Kitchen Sink：
+
+```text
+/logo.svg
+```
+
+必须进入测试。
+
+---
+
+## 12.6 Remote CORS image
+
+如果资源：
+
+```text
+CORS-compatible
+```
+
+best effort included。
+
+如果：
+
+```text
+no CORS
+```
+
+不能：
+
+```text
+allowTaint=true
+```
+
+绕过 browser security。
+
+---
+
+# 13. PDF-H6 — Pagination 和 Wide Content
+
+Priority：
+
+```text
+P1
+```
+
+---
+
+## 13.1 Heading orphan
+
+继续验证：
+
+```text
+Heading
+Diagram
+```
+
+以及：
+
+```text
+Heading
+Image
+```
+
+不会轻易被拆开。
+
+---
+
+## 13.2 Code block
+
+添加：
+
+```text
+very long line
+multiline block
+```
+
+验证：
+
+```text
+wrap
+not horizontally clipped
+```
+
+---
+
+## 13.3 Wide table
+
+增加 fixture：
+
+```text
+8–12 columns
+long cell
+mixed CJK
+```
+
+目标：
+
+```text
+fit printable width
+```
+
+不能：
+
+```text
+silent right-side clipping
+```
+
+---
+
+## 13.4 Oversized block
+
+测试：
+
+```text
+block height > one A4 page
+```
+
+必须确认：
+
+```text
+break-inside: avoid
+```
+
+不会导致：
+
+```text
+element disappear
+huge blank page
+```
+
+---
+
+## 13.5 Mermaid oversized
+
+至少增加：
+
+```text
+tall graph
+wide graph
+```
+
+验证：
+
+```text
+viewBox remains valid
+```
+
+---
+
+## 13.6 MarkMap oversized
+
+增加：
+
+```text
+deep tree
+wide sibling tree
+```
+
+验证：
+
+```text
+no NaN
+not clipped
+```
+
+---
+
+# 14. PDF-H7 — Long Document Validation
+
+Priority：
+
+```text
+P1
+```
+
+---
+
+## 14.1 Test levels
+
+正式验证：
+
+```text
+1 page
+5 pages
+20 pages
+50 pages
+```
+
+100 页放 P2。
+
+---
+
+## 14.2 Fixture strategy
+
+不要提交一个巨大的：
+
+```text
+50-page markdown fixture
+```
+
+推荐：
+
+```text
+small deterministic section
+× N
+```
+
+在 test 内生成。
+
+例如：
+
+```text
+SECTION-001-BEGIN
+...
+SECTION-001-END
+
+...
+
+SECTION-050-BEGIN
+...
+SECTION-050-END
+```
+
+---
+
+## 14.3 Browser validation
+
+至少确认：
+
+```text
+export completes
+first marker rendered
+middle marker rendered
+last marker rendered
+download generated
+page remains responsive
+```
+
+---
+
+## 14.4 不设置脆弱时间阈值
+
+不要立即写：
+
+```text
+must finish < 5s
+```
+
+CI hardware 不稳定。
+
+先记录：
+
+```text
+duration diagnostics
+```
+
+观察真实数据后再决定是否设 performance budget。
+
+---
+
+## 14.5 Architecture ceiling
+
+如果发现：
+
+```text
+20 pages stable
+50 pages unstable
+```
+
+需要记录：
+
+```text
+browser-side ceiling
+```
+
+然后决定：
+
+```text
+optimize current pipeline
+```
+
+还是未来：
+
+```text
+server PDF RFC
+```
+
+不能直接在 Hardening commit 内换架构。
+
+---
+
+# 15. PDF-H8 — Read Mode Export Entry
+
+Priority：
+
+```text
+P1
+```
+
+只有 H1–H7 核心 correctness 稳定后再做。
+
+---
+
+## 15.1 当前函数命名
+
+当前：
+
+```text
+exportPdfFromTree()
+```
+
+已经不适合多入口。
+
+在添加 Read Mode UI 前先重构为类似：
+
+```text
+exportPdfDocument(path)
+```
+
+或：
+
+```text
+requestPdfExport(path)
+```
+
+---
+
+## 15.2 Entry architecture
+
+必须：
+
+```text
+File Tree ─────┐
+               │
+Read Mode ─────┼→ same PDF pipeline
+               │
+Future Tab ────┘
+```
+
+禁止：
+
+```text
+exportPdfFromTree()
+exportPdfFromReader()
+```
+
+各自复制业务实现。
+
+---
+
+## 15.3 Read Mode UX
+
+建议：
+
+```text
+Read Mode top action
+→ Download PDF
+```
+
+要求：
+
+* 有 text / accessible label；
+* 使用现有 icon system；
+* 支持 i18n；
+* exporting 中 disable 或拒绝重复 transaction。
+
+---
+
+# 16. PDF-H9 — Stress / Compatibility
+
+Priority：
+
+```text
+P2
+```
+
+内容包括：
+
+* 100-page stress；
+* extreme Mermaid；
+* extreme MarkMap；
+* extremely wide table；
+* huge code block；
+* many images；
+* many KaTeX formulas；
+* Safari behavior；
+* image CORS matrix；
+* high-DPI memory behavior。
+
+这些不是 P0 blocker。
+
+但如果其中发现：
+
+```text
+data loss
+blank PDF
+browser crash
+```
+
+则需要重新提升 priority。
+
+---
+
+# 17. File-Level Change Map
+
+预计主要涉及以下文件。
+
+---
+
+## `docs/design/pdf-export-implementation-plan.md`
+
+新增本文。
+
+---
+
+## `docs/README.md`
+
+增加：
+
+```text
+PDF Export V1 Implementation Plan
+```
+
+入口。
+
+---
+
+## `src/components/vault/PdfExportSurface.vue`
+
+计划：
+
+* 固定 PDF render theme 为 light；
+* 不修改全局 theme；
+* 保持 offscreen real layout。
+
+---
+
+## `src/components/vault/RenderedMarkdown.vue`
+
+计划：
+
+* optional `renderTheme`；
+* 传递给 Mermaid / MarkMap enhancer；
+* 不影响普通 caller。
+
+---
+
+## `src/composables/useMermaidMount.ts`
+
+计划：
+
+* 接收 optional render theme；
+* createApp 时传给 Mermaid。
+
+---
+
+## `src/composables/useMarkmapMount.ts`
+
+计划：
+
+* 接收 optional render theme；
+* createApp 时传给 MarkMap。
+
+---
+
+## `src/components/Mermaid.vue`
+
+计划：
+
+* 增加 optional renderTheme；
+* 引入 effective theme；
+* export surface 可固定 light；
+* normal reader 保持当前 global theme behavior。
+
+---
+
+## `src/components/MarkMap.vue`
+
+计划：
+
+* 增加 optional renderTheme；
+* palette 使用 effective theme；
+* theme remount watch 使用 effective theme。
+
+---
+
+## `src/composables/useMathMount.ts`
+
+计划：
+
+* 增加 `data-math-state`；
+* ready/error contract；
+* 保留原有 mounted marker。
+
+---
+
+## `src/views/VaultView.vue`
+
+计划：
+
+* readiness 增加 Math；
+* image settlement；
+* 后期重命名 export entry function；
+* 保持 immutable request。
+
+---
+
+## `src/lib/pdfExport.ts`
+
+计划：
+
+* image settlement helper（如果最终落在这里）；
+* static normalization；
+* pagination；
+* image / diagram export hardening。
+
+---
+
+## `src/components/__tests__/MarkMap.test.ts`
+
+继续覆盖：
+
+* explicit ready；
+* error；
+* renderTheme override；
+* normal theme switch regression。
+
+---
+
+## Mermaid tests
+
+增加：
+
+* forced light override；
+* normal global theme behavior。
+
+---
+
+## `src/composables/__tests__/useMathMount.test.ts`
+
+增加：
+
+* math pending / ready；
+* math error；
+* duplicate scan state。
+
+---
+
+## `src/lib/__tests__/pdfExport.test.ts`
+
+继续覆盖：
+
+* static Mermaid；
+* static MarkMap；
+* image heading grouping；
+* wide content normalization；
+* cleanup。
+
+---
+
+## `e2e/pdf-export.spec.ts`
+
+升级为：
+
+```text
+Kitchen Sink browser correctness test
+```
+
+而不仅是 download smoke test。
+
+---
+
+## `e2e/fixtures/pdf-export-kitchen-sink.md`
+
+保留为稳定 regression fixture。
+
+除非 PRD 改变，不应随意删减 feature coverage。
+
+---
+
+# 18. Recommended Commit Sequence
+
+建议不要再把所有 hardening 塞进一个大 commit。
+
+推荐：
+
+### Commit 1
+
+```text
+docs(pdf-export): add implementation plan
+```
+
+仅：
+
+```text
+docs/design/pdf-export-implementation-plan.md
+docs/README.md
+```
+
+---
+
+### Commit 2
+
+```text
+fix(pdf-export): isolate light export rendering theme
+```
+
+处理：
+
+```text
+H1
+```
+
+---
+
+### Commit 3
+
+```text
+fix(pdf-export): add explicit math readiness
+```
+
+处理：
+
+```text
+H2 + H3 math portion
+```
+
+---
+
+### Commit 4
+
+```text
+test(pdf-export): harden kitchen sink browser coverage
+```
+
+处理：
+
+```text
+H4
+```
+
+---
+
+### Commit 5
+
+```text
+fix(pdf-export): settle images before capture
+```
+
+处理：
+
+```text
+H5
+```
+
+---
+
+### Commit 6
+
+```text
+test(pdf-export): cover pagination and long documents
+```
+
+处理：
+
+```text
+H6 + H7
+```
+
+---
+
+### Commit 7
+
+```text
+feat(pdf-export): add read-mode download entry
+```
+
+处理：
+
+```text
+H8
+```
+
+这样 Code Review 可以逐笔判断：
+
+```text
+spec
+correctness
+test
+performance
+UI
+```
+
+而不是一次 review 一个超大 diff。
+
+---
+
+# 19. Test Matrix
+
+## Unit
+
+必须覆盖：
+
+```text
+filename
+title resolution
+PDF wrapper
+light theme
+Mermaid normalization
+MarkMap normalization
+Math states
+heading grouping
+image grouping
+cleanup
+```
+
+---
+
+## Component
+
+必须覆盖：
+
+```text
+Mermaid forced theme
+MarkMap forced theme
+MarkMap explicit ready
+MarkMap error
+Math ready/error
+```
+
+---
+
+## Integration
+
+必须覆盖：
+
+```text
+open clean tab
+open dirty tab
+closed document
+busy duplicate
+render timeout
+widget timeout
+generation failure
+cleanup
+```
+
+---
+
+## E2E
+
+必须覆盖：
+
+```text
+Kitchen Sink
+dark mode export
+local image
+download
+no print dialog
+first/middle/last long-doc marker
+```
+
+---
+
+# 20. Dirty Buffer Regression
+
+这是必须单独保留的测试。
+
+Given：
+
+```text
+server raw = Version A
+```
+
+用户当前 editor：
+
+```text
+tab.raw = Version B
+dirty = true
+```
+
+When：
+
+```text
+Export PDF
+```
+
+Then export surface：
+
+```text
+Version B
+```
+
+After export：
+
+```text
+dirty = true
+```
+
+不得：
+
+```text
+save
+autosave side effect
+Version A export
+```
+
+---
+
+# 21. Snapshot Consistency Regression
+
+建立测试：
+
+```text
+T0 click export
+T1 PdfExportRequest captures raw
+T2 editor changes
+T3 PDF rendering continues
+```
+
+最终：
+
+```text
+PDF = T1
+```
+
+不得出现：
+
+```text
+title=T1
+paragraph=T2
+diagram=T3
+```
+
+---
+
+# 22. Error Matrix
+
+| Stage          | Failure        | Expected                         |
+| -------------- | -------------- | -------------------------------- |
+| source         | getPost failed | export_failed                    |
+| Markdown       | render failed  | export_failed                    |
+| render surface | timeout        | export_not_ready                 |
+| Mermaid        | explicit error | settled, preserve error          |
+| MarkMap        | explicit error | settled, preserve error          |
+| Math           | explicit error | settled, preserve fallback/error |
+| Image          | load failed    | settled, continue                |
+| Widget         | never settled  | timeout, abort                   |
+| html2pdf       | save failed    | export_failed                    |
+| cleanup        | always         | finally                          |
+
+---
+
+# 23. Cleanup Requirements
+
+所有路径：
+
+```text
+success
+failure
+timeout
+exception
+```
+
+必须确保：
+
+```text
+pdfRenderWaiter = null
+pdfExportRequest = null
+pdfExportBusy = false
+observer disconnected
+temporary PDF host removed
+```
+
+不得留下：
+
+```text
+.pdf-download-host
+.pdf-download-root
+stale PdfExportSurface
+```
+
+---
+
+# 24. Security Review
+
+Hardening 不得修改：
+
+```text
+DOMPurify allowlist
+DOMPurify URI policy
+raw HTML policy
+iframe policy
+script policy
+SVG user HTML policy
+```
+
+PDF static SVG 来源必须仍然是：
+
+```text
+Docus controlled Mermaid / MarkMap output
+```
+
+而不是重新允许用户任意 raw SVG。
+
+---
+
+# 25. Performance Review
+
+PDF stack 不属于 startup critical path。
+
+实施期间检查：
+
+```text
+html2pdf
+html2canvas
+jsPDF
+```
+
+是否显著进入首屏 bundle。
+
+如果当前已经 eager bundled 且影响明显：
+
+后续可将 PDF generation dependency：
+
+```text
+dynamic import
+```
+
+列为 P1。
+
+但：
+
+```text
+bundle refactor
+```
+
+不要与 H1/H2 correctness commit 混在一起。
+
+---
+
+# 26. 不允许的实现方式
+
+以下方案 Code Review 应直接拒绝。
+
+### 不允许固定 sleep
+
+```ts
+await sleep(500)
+```
+
+代替：
+
+```text
+widget readiness
+```
+
+---
+
+### 不允许 SVG existence
+
+```ts
+querySelector('svg') !== null
+```
+
+代表 MarkMap ready。
+
+---
+
+### 不允许全局 theme toggle
+
+```text
+dark
+→ set light
+→ export
+→ restore dark
+```
+
+---
+
+### 不允许强制保存
+
+```text
+save()
+→ export()
+```
+
+---
+
+### 不允许复制 renderer
+
+```text
+pdfMarkdownRenderer
+```
+
+重新维护 Markdown semantics。
+
+---
+
+### 不允许远程 PDF API
+
+```text
+POST document content
+→ third-party converter
+```
+
+---
+
+### 不允许安全降级
+
+```text
+allowTaint=true
+disable sanitizer
+```
+
+---
+
+### 不允许只检查文件大小
+
+```text
+PDF > 10KB
+```
+
+不能成为唯一 correctness test。
+
+---
+
+# 27. Phase Gate
+
+## Gate A — P0 Correctness
+
+必须全部：
+
+```text
+MarkMap explicit ready      DONE
+Mermaid explicit state      DONE
+Forced light export theme   TODO
+Math explicit state         TODO
+Kitchen Sink assertions     TODO
+Failure cleanup             DONE / regression
+```
+
+Gate A 未通过：
+
+```text
+不得宣布 PDF V1 Done
+```
+
+---
+
+## Gate B — P1 Reliability
+
+必须：
+
+```text
+local image
+image settlement
+pagination
+wide code
+wide table
+20-page document
+50-page reasonable validation
+```
+
+---
+
+## Gate C — UX
+
+Gate A + Gate B 基本稳定后：
+
+```text
+Read Mode Export PDF
+```
+
+---
+
+# 28. CI / Verification Commands
+
+每个 implementation commit 至少执行仓库对应的：
+
+```bash
+npm run typecheck
+npm test
+```
+
+PDF browser phase再执行项目现有 Playwright 命令。
+
+如果 package script 为独立：
+
+```text
+test:e2e
+```
+
+或其它名称，以 `package.json` 当前定义为准。
+
+不得为了让 PDF test 通过：
+
+```text
+skip
+retries
+arbitrary timeout increase
+```
+
+掩盖错误。
+
+---
+
+# 29. Manual Acceptance Checklist
+
+正式关闭 PDF V1 前人工检查一次真实 PDF：
+
+* [ ] 中文正常；
+* [ ] 英文正常；
+* [ ] Emoji 正常；
+* [ ] heading 正常；
+* [ ] code 正常；
+* [ ] table 正常；
+* [ ] task list 正常；
+* [ ] callout 正常；
+* [ ] footnote 正常；
+* [ ] KaTeX 正常；
+* [ ] Mermaid 正常；
+* [ ] MarkMap 正常；
+* [ ] local image 正常；
+* [ ] dark Docus → light PDF；
+* [ ] 没有 toolbar；
+* [ ] 没有 NaN SVG；
+* [ ] 没有明显裁图；
+* [ ] 第一页正常；
+* [ ] 最后一页正常；
+* [ ] export 后 Docus UI 状态未变化。
+
+---
+
+# 30. PDF Export V1 Definition of Done
+
+只有以下全部满足：
+
+```text
+PRD approved
+Implementation Plan approved
+P0 correctness complete
+P1 reliability complete
+typecheck pass
+unit pass
+integration pass
+browser E2E pass
+Kitchen Sink pass
+Dark Mode export pass
+Math pass
+Mermaid pass
+MarkMap pass
+local image pass
+long-document validation pass
+failure cleanup pass
+```
+
+才能：
+
+```text
+PDF Export V1 = Done
+```
+
+---
+
+# 31. Baseline Status Table
+
+以：
+
+```text
+4e62bba441eb2ac7c426485154fd1226caa0edbf
+```
+
+为当前 baseline：
+
+| Requirement                     | Status     |
+| ------------------------------- | ---------- |
+| PRD                             | ✅          |
+| Direct PDF download             | ✅          |
+| File Tree entry                 | ✅          |
+| Live buffer authority           | ✅          |
+| Filename resolution             | ✅          |
+| A4 light document shell         | ✅          |
+| Mermaid static export           | ✅          |
+| Mermaid explicit state          | ✅          |
+| MarkMap static export           | ✅          |
+| MarkMap explicit ready          | ✅          |
+| MarkMap readiness tests         | ✅          |
+| Kitchen Sink fixture            | ✅          |
+| Generation cleanup test         | ✅          |
+| Forced light widget rendering   | ❌          |
+| KaTeX explicit readiness        | ❌          |
+| Kitchen Sink content assertions | ⚠️ Partial |
+| Local image settlement          | ❌          |
+| Remote image matrix             | ❌          |
+| Wide table/code validation      | ❌          |
+| 20-page validation              | ❌          |
+| 50-page validation              | ❌          |
+| Read Mode export entry          | ❌          |
+
+---
+
+# 32. 下一笔实现的明确起点
+
+Implementation Plan 合入后，不继续扩散范围。
+
+下一笔代码提交只做：
+
+```text
+PDF-H1 — Export Light Theme Isolation
+```
+
+范围限定：
+
+```text
+PdfExportSurface.vue
+RenderedMarkdown.vue
+useMermaidMount.ts
+useMarkmapMount.ts
+Mermaid.vue
+MarkMap.vue
+相关 tests
+```
+
+目标只有一个：
+
+> PDF export rendering context 固定使用 light theme，而普通 Reader 继续遵循用户当前主题，并且整个过程绝不修改全局 theme。
+
+H1 完成并 review 后，再进入：
+
+```text
+PDF-H2 — KaTeX Explicit Readiness
+```
+
+不得把：
+
+```text
+image
+pagination
+read-mode UI
+large document
+```
+
+顺便塞进 H1。
+
+---
+
+# 33. Final Execution Order
+
+最终执行顺序固定为：
+
+```text
+Implementation Plan
+        ↓
+H1 Export Light Theme
+        ↓
+H2 Math Readiness
+        ↓
+H3 Settled Contract Regression
+        ↓
+H4 Kitchen Sink Correctness
+        ↓
+H5 Images
+        ↓
+H6 Pagination / Wide Content
+        ↓
+H7 Long Documents
+        ↓
+H8 Read Mode Entry
+        ↓
+H9 Stress / Compatibility
+        ↓
+Final Acceptance
+```
+
+当前最重要的原则：
+
+> **先保证 PDF 内容永远正确，再增加 PDF 功能入口和高级能力。**
+
+PDF Export V1 的 Hardening 不应继续以“能下载”为目标，而应以：
+
+```text
+deterministic
+complete
+isolated
+testable
+```
+
+作为完成标准。
+
+这份计划和 Docus 现有 Implementation Plan 的职责划分是一致的：**PRD 管产品行为，Implementation Plan 管文件、顺序、验证和 review gate**。现有 Emoji 实施计划也是采用这种方式，并明确“若计划与 PRD 冲突，应先修 PRD，而不是代码自行改变产品语义”。
+
+我建议这次 commit **只 push 这份实施计划 + `docs/README.md` 链接**，不要再夹带 H1 代码。下一笔再单独进入 **PDF-H1 — Export Light Theme Isolation**。
