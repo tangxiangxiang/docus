@@ -335,6 +335,9 @@ title: Delayed PDF Image
     const image = page.locator('.pdf-export-surface img[src$="/logo.svg"]')
     await expect(image).toHaveCount(1)
     await expect.poll(() => image.evaluate((element) => (element as HTMLImageElement).complete)).toBe(false)
+    // html2canvas also waits for images. Assert the PDF download phase has
+    // not started, so this test cannot pass without the pre-capture waiter.
+    await expect(page.locator('.pdf-download-host')).toHaveCount(0)
     expect(downloadStarted).toBe(false)
     await expect(page.locator('.pdf-export-surface')).toHaveCount(1)
 
@@ -342,6 +345,7 @@ title: Delayed PDF Image
     const download = await downloadPromise
     expect(download.suggestedFilename()).toBe('Delayed PDF Image.pdf')
     await expect(page.locator('.pdf-export-surface')).toHaveCount(0)
+    await expect(page.locator('.pdf-download-host')).toHaveCount(0)
   } finally {
     releaseImage()
     await page.unroute('**/logo.svg').catch(() => {})
