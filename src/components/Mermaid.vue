@@ -4,9 +4,10 @@
 // ```mermaid``` fence rule in src/lib/markdown.ts.
 //
 // Mirrors the reference VitePress component but takes its theme
-// from the docus `useTheme` composable instead of polling the
-// `dark` class on <html> — docus themes via `data-theme` and we
-// already have a reactive `theme` ref for it. mermaid itself is
+// from the docus `useTheme` composable (or a local render override)
+// instead of polling the `dark` class on <html> — docus themes via
+// `data-theme` and we already have a reactive `theme` ref for it.
+// mermaid itself is
 // async (it lazy-loads per-diagram-type layout engines); the shared
 // runtime serializes its process-global configuration while each
 // widget keeps only its own DOM/lifecycle state.
@@ -27,16 +28,19 @@
 // style.css (e.g. targeting the generated svg's `fill` /
 // `stroke` rules).
 
-import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
-import { useTheme } from '../composables/useTheme'
+import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue'
+import { useTheme, type Theme } from '../composables/useTheme'
 import { runMermaidExclusive } from '../lib/mermaidRuntime'
 
 const props = defineProps<{
   /** Source mermaid syntax the renderer should parse. */
   code: string
+  /** Optional local override used by isolated render surfaces such as PDF. */
+  renderTheme?: Theme
 }>()
 
 const { theme } = useTheme()
+const effectiveTheme = computed(() => props.renderTheme ?? theme.value)
 const wrapperRef = ref<HTMLDivElement | null>(null)
 const containerRef = ref<HTMLDivElement | null>(null)
 const renderError = ref<string | null>(null)
@@ -208,7 +212,7 @@ async function render() {
   try {
     const rendered = await runMermaidExclusive(async (mermaid, runtime) => {
       if (disposed || myGen !== renderGeneration || !containerRef.value) return null
-      const targetTheme = theme.value === 'dark' ? 'dark' : 'default'
+      const targetTheme = effectiveTheme.value === 'dark' ? 'dark' : 'default'
       runtime.initialize(targetTheme)
       const allProbeThemes = ['base', 'dark', 'neutral'] as const
       const probeThemes = allProbeThemes.filter((candidate) => candidate !== targetTheme)
@@ -475,7 +479,7 @@ onBeforeUnmount(() => {
    a theme toggle while the widget is hidden (in a background
    tab) won't paint a broken svg. The ResizeObserver will
    re-trigger once the tab becomes visible. */
-watch(theme, () => scheduleRender())
+watch(effectiveTheme, () => scheduleRender())
 
 /* props.code change (e.g. the markdown source was edited) → re-
    render. */

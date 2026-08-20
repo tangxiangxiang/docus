@@ -20,6 +20,7 @@ const emit = defineEmits<{
       :raw="raw"
       :resolver="resolver"
       tag="article"
+      render-theme="light"
       @rendered="(el) => emit('rendered', el)"
     />
   </div>

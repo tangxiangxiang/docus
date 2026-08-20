@@ -18,8 +18,9 @@
 // behind a generic `useDynamicMount(articleEl, { selector, ... })`
 // helper, but the indirection has not yet paid for itself.
 
-import { createApp, onBeforeUnmount, watch, type App, type Ref } from 'vue'
+import { createApp, onBeforeUnmount, unref, watch, type App, type MaybeRef, type Ref } from 'vue'
 import Mermaid from '../components/Mermaid.vue'
+import type { Theme } from './useTheme'
 
 interface MountedDiagram {
   /** The fresh wrapper div that replaced the placeholder. The Vue
@@ -42,7 +43,10 @@ function decodeMountContent(value: string): string {
   }
 }
 
-export function useMermaidMount(articleEl: Ref<HTMLElement | null>) {
+export function useMermaidMount(
+  articleEl: Ref<HTMLElement | null>,
+  renderTheme?: MaybeRef<Theme | undefined>,
+) {
   const widgets = new Map<HTMLDivElement, MountedDiagram>()
 
   function mountAll() {
@@ -56,7 +60,7 @@ export function useMermaidMount(articleEl: Ref<HTMLElement | null>) {
       const host = document.createElement('div')
       host.className = 'mermaid-widget-host'
       ph.replaceWith(host)
-      const app = createApp(Mermaid, { code })
+      const app = createApp(Mermaid, { code, renderTheme: unref(renderTheme) })
       app.mount(host)
       widgets.set(host, { host, app })
     }

@@ -6,11 +6,13 @@ import { useMermaidMount } from '../../composables/useMermaidMount'
 import { useMathMount } from '../../composables/useMathMount'
 import { useVaultContext } from '../../composables/vault/context/useVaultContext'
 import type { Resolver as WikiResolver } from '../../lib/wikiLinks'
+import type { Theme } from '../../composables/useTheme'
 
 const props = withDefaults(defineProps<{
   raw: string
   resolver?: WikiResolver
   tag?: 'div' | 'article'
+  renderTheme?: Theme
 }>(), { tag: 'div' })
 const emit = defineEmits<{
   'update:headings': [headings: Heading[]]
@@ -20,8 +22,8 @@ const emit = defineEmits<{
 const { html, error, headings, ready } = useMarkdownRender(toRef(props, 'raw'), props.resolver)
 const articleEl = ref<HTMLElement | null>(null)
 const vaultContext = useVaultContext()
-useMarkmapMount(articleEl)
-useMermaidMount(articleEl)
+useMarkmapMount(articleEl, toRef(props, 'renderTheme'))
+useMermaidMount(articleEl, toRef(props, 'renderTheme'))
 useMathMount(articleEl)
 
 watch(headings, (value) => emit('update:headings', value), { immediate: true })

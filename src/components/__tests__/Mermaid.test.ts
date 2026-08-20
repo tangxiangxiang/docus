@@ -180,11 +180,11 @@ function stubLayout(el: HTMLElement, width: number): void {
   })
 }
 
-function mountStandalone(): { host: HTMLDivElement; unmount: () => void } {
+function mountStandalone(renderTheme?: 'light' | 'dark'): { host: HTMLDivElement; unmount: () => void } {
   const host = document.createElement('div')
   document.body.appendChild(host)
   const app = createApp(defineComponent({
-    setup() { return () => h(Mermaid, { code: 'graph TD\n  A --> B' }) },
+    setup() { return () => h(Mermaid, { code: 'graph TD\n  A --> B', renderTheme }) },
   }))
   app.mount(host)
   const container = host.querySelector<HTMLElement>('.mermaid-svg')
@@ -292,6 +292,29 @@ describe('Mermaid mount + render', () => {
     expect(g.__mermaidTest!.renderCalls.length).toBe(2)
     const lastInit = g.__mermaidTest!.initializeCalls.at(-1)
     expect(lastInit?.theme).toBe('dark')
+
+    set('light')
+    unmount()
+  })
+
+  it('keeps a forced light export theme isolated from global theme toggles', async () => {
+    const { set } = useTheme()
+    set('dark')
+    const { unmount } = mountStandalone('light')
+    await settle()
+
+    expect(g.__mermaidTest!.initializeCalls[0]).toMatchObject({ theme: 'default' })
+    expect(g.__mermaidTest!.renderCalls).toHaveLength(1)
+
+    set('light')
+    await settle()
+    set('dark')
+    await settle()
+
+    /* The local override keeps effectiveTheme at light, so global
+       App theme changes do not trigger a PDF widget re-render. */
+    expect(g.__mermaidTest!.renderCalls).toHaveLength(1)
+    expect(g.__mermaidTest!.initializeCalls.every((call) => call.theme === 'default')).toBe(true)
 
     set('light')
     unmount()

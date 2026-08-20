@@ -22,8 +22,9 @@
 // call so multiple article roots on the same page (e.g. split view)
 // can each have their own enhancer.
 
-import { createApp, onBeforeUnmount, watch, type App, type Ref } from 'vue'
+import { createApp, onBeforeUnmount, unref, watch, type App, type MaybeRef, type Ref } from 'vue'
 import MarkMap from '../components/MarkMap.vue'
+import type { Theme } from './useTheme'
 
 interface MountedWidget {
   /** The fresh wrapper div that replaced the placeholder. The Vue
@@ -52,7 +53,10 @@ function decodeMountContent(value: string): string {
   }
 }
 
-export function useMarkmapMount(articleEl: Ref<HTMLElement | null>) {
+export function useMarkmapMount(
+  articleEl: Ref<HTMLElement | null>,
+  renderTheme?: MaybeRef<Theme | undefined>,
+) {
   /* Tracked widgets keyed by their host div. The key lets us
      `app.unmount()` a widget when its host div leaves the DOM
      (e.g. on a re-render), and also lets us skip re-mounting
@@ -70,7 +74,7 @@ export function useMarkmapMount(articleEl: Ref<HTMLElement | null>) {
       const host = document.createElement('div')
       host.className = 'markmap-widget-host'
       ph.replaceWith(host)
-      const app = createApp(MarkMap, { content })
+      const app = createApp(MarkMap, { content, renderTheme: unref(renderTheme) })
       app.mount(host)
       widgets.set(host, { host, app })
     }

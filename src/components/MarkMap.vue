@@ -5,9 +5,10 @@
 //
 // Mirrors the reference VitePress component (controls: reset, fullscreen)
 // but takes its colors from the docus light/dark theme via a small
-// palette.
+// palette. An isolated render surface can provide a local theme
+// override without changing the global App theme.
 //
-// Theme switch: when `theme` flips, we tear down the current markmap
+// Theme switch: when `effectiveTheme` flips, we tear down the current markmap
 // instance and create a new one on the SAME svg. We deliberately do
 // NOT key the svg — that would only swap the DOM element while the
 // markmap instance (and its d3 listeners) stayed alive pointing at a
@@ -15,8 +16,8 @@
 // Keeping the svg stable also means fullscreen state on the wrapper
 // survives a theme flip.
 
-import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
-import { useTheme } from '../composables/useTheme'
+import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue'
+import { useTheme, type Theme } from '../composables/useTheme'
 import { docusMarkmapSecurityPlugin } from '../lib/markmapSecurity'
 import type { IMarkmapOptions } from 'markmap-view'
 import type { Transformer as MarkmapTransformer } from 'markmap-lib'
@@ -24,9 +25,12 @@ import type { Transformer as MarkmapTransformer } from 'markmap-lib'
 const props = defineProps<{
   /** Source markdown the Transformer should parse. */
   content: string
+  /** Optional local override used by isolated render surfaces such as PDF. */
+  renderTheme?: Theme
 }>()
 
 const { theme } = useTheme()
+const effectiveTheme = computed(() => props.renderTheme ?? theme.value)
 const wrapperRef = ref<HTMLDivElement | null>(null)
 const svgRef = ref<SVGSVGElement | null>(null)
 const isFullscreen = ref(false)
@@ -55,7 +59,7 @@ const PALETTES: Record<'light' | 'dark', string[]> = {
 }
 
 function currentPalette(): string[] {
-  return PALETTES[theme.value] ?? PALETTES.light
+  return PALETTES[effectiveTheme.value] ?? PALETTES.light
 }
 
 /* markmap's `color` callback receives a node and returns the single
@@ -249,7 +253,7 @@ async function mountMarkmap() {
   /* If the RO + the onMounted rAF both fire on the first
      paint, we'd otherwise queue two mounts back to back. The
      second sees an already-built markmap and short-circuits.
-     Theme changes go through `watch(theme, ...)` which calls
+     Theme changes go through `watch(effectiveTheme, ...)` which calls
      `teardownInstance()` first, so they always re-mount. */
   if (mm) return
   mountPromise = (async () => {
@@ -463,7 +467,7 @@ onMounted(() => {
            theme change plus a hide/show cycle in quick
            succession won't trigger a redundant rebuild while a
            mount is already alive. Theme-change rebuilds go
-           through the explicit `watch(theme, ...)` path. */
+           through the explicit `watch(effectiveTheme, ...)` path. */
         if (!mm) scheduleMount()
       } else if (mm) {
         /* The wrapper (or any ancestor) is 0×0 — typically the
@@ -495,7 +499,7 @@ onMounted(() => {
    `if (mm) return` short-circuit in mountMarkmap doesn't skip
    the rebuild, then routed through scheduleMount so the rAF +
    size-gate + isConnected check applies. */
-watch(theme, () => {
+watch(effectiveTheme, () => {
   teardownInstance()
   scheduleMount()
 })

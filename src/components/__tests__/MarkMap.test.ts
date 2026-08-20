@@ -195,11 +195,11 @@ function fireResizeObservers() {
 // mocked module factories take effect by the time the import
 // statements resolve.)
 
-function mountStandalone(): { host: HTMLDivElement; unmount: () => void } {
+function mountStandalone(renderTheme?: 'light' | 'dark'): { host: HTMLDivElement; unmount: () => void } {
   const host = document.createElement('div')
   document.body.appendChild(host)
   const app = createApp(defineComponent({
-    setup() { return () => h(MarkMap, { content: '# Root\n## Branch' }) },
+    setup() { return () => h(MarkMap, { content: '# Root\n## Branch', renderTheme }) },
   }))
   app.mount(host)
   /* jsdom doesn't implement layout; clientWidth is 0 on every
@@ -222,6 +222,12 @@ function mountStandalone(): { host: HTMLDivElement; unmount: () => void } {
 async function settle(rounds = 20) {
   for (let i = 0; i < rounds; i++) {
     await new Promise<void>((r) => setTimeout(r, 0))
+  }
+  /* MarkMap readiness is based on two identical layout snapshots,
+     so drain the animation frames that establish that settled state
+     instead of relying on an arbitrary sleep duration. */
+  for (let i = 0; i < 8; i++) {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
   }
 }
 
@@ -314,6 +320,32 @@ describe('MarkMap export readiness', () => {
 })
 
 describe('MarkMap theme switch', () => {
+  it('uses the forced light palette without rebuilding on global theme changes', async () => {
+    useTheme().set('dark')
+    const { unmount } = mountStandalone('light')
+    await settle()
+
+    expect(g.__markmapTest!.createCalls).toHaveLength(1)
+    const color = g.__markmapTest!.createOptions[0].color
+    expect(typeof color).toBe('function')
+    const resolvedColor = (color as (node: unknown) => string)({ content: 'Root' })
+    expect([
+      '#005fb8', '#1f8ad2', '#0a7e3a', '#b45309', '#a21caf', '#dc2626',
+    ]).toContain(resolvedColor)
+
+    useTheme().set('light')
+    await settle()
+    useTheme().set('dark')
+    await settle()
+
+    /* effectiveTheme remains light, so the hidden PDF-style widget
+       does not rebuild when the global App theme changes. */
+    expect(g.__markmapTest!.createCalls).toHaveLength(1)
+
+    useTheme().set('light')
+    unmount()
+  })
+
   it('rebuilds the markmap instance on theme change, on the same svg', async () => {
     const { unmount, host } = mountStandalone()
     /* onMounted + the dynamic import are async — give them a few
