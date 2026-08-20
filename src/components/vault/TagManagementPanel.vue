@@ -1602,21 +1602,14 @@ onBeforeUnmount(() => {
     ref="panelRef"
     class="tag-management-panel"
     data-tag-management-panel
-    aria-labelledby="tag-management-title"
-    aria-describedby="tag-management-description"
+    aria-labelledby="settings-tags-title"
+    :aria-label="t('settings.tags')"
     :data-state="state"
     :data-can-leave="canLeave"
     :data-undo-state="undoState"
     :data-diagnostic-stage="diagnosticStage"
     :data-diagnostic-code="diagnosticCode ?? undefined"
   >
-    <header class="tag-management-header">
-      <div>
-        <h4 id="tag-management-title">{{ t('tags.manage.title') }}</h4>
-        <p id="tag-management-description">{{ t('tags.manage.description') }}</p>
-      </div>
-    </header>
-
     <div class="tag-management-body">
           <p class="tag-management-live" role="status" aria-live="polite">{{ liveMessage }}</p>
 
@@ -2062,17 +2055,7 @@ onBeforeUnmount(() => {
   min-width: 0;
   color: var(--text-h);
 }
-.tag-management-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 18px;
-  padding: 2px 0 14px;
-  border-bottom: 1px solid var(--border);
-}
-.tag-management-header h4 { margin: 0; font-size: 1.12rem; }
-.tag-management-header p { margin: 5px 0 0; color: var(--text-muted); font-size: 0.78rem; }
-.tag-management-body { padding: 18px 0 0; }
+.tag-management-body { padding: 0; }
 .tag-management-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .tag-management-form { display: grid; gap: 14px; }
 .tag-management-mode { display: grid; gap: 7px; margin: 0; padding: 0; border: 0; }
