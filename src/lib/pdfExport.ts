@@ -8,6 +8,15 @@ export interface PdfDownloadOptions {
   articleHtml: string
 }
 
+const A4_PAGE_HEIGHT_MM = 297
+const PDF_PAGE_MARGIN_TOP_MM = 16
+const PDF_PAGE_MARGIN_BOTTOM_MM = 18
+const PDF_PRINTABLE_PAGE_HEIGHT_MM = A4_PAGE_HEIGHT_MM
+  - PDF_PAGE_MARGIN_TOP_MM
+  - PDF_PAGE_MARGIN_BOTTOM_MM
+const CSS_PX_PER_MM = 96 / 25.4
+const PDF_PRINTABLE_PAGE_HEIGHT_PX = PDF_PRINTABLE_PAGE_HEIGHT_MM * CSS_PX_PER_MM
+
 const PDF_DOWNLOAD_STYLES = `
 @page {
   size: A4;
@@ -128,6 +137,12 @@ const PDF_DOWNLOAD_STYLES = `
   color: #202124 !important;
 }
 
+.pdf-document .article pre code {
+  white-space: inherit !important;
+  overflow-wrap: anywhere !important;
+  word-break: break-word !important;
+}
+
 .pdf-document .article blockquote {
   background: #f5f6f8 !important;
   border-left-color: #005fb8 !important;
@@ -150,6 +165,10 @@ const PDF_DOWNLOAD_STYLES = `
 }
 
 .pdf-document .article .table-scroll {
+  box-sizing: border-box;
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
   overflow: visible !important;
   border-color: #d7dce2 !important;
   background: #ffffff !important;
@@ -158,6 +177,8 @@ const PDF_DOWNLOAD_STYLES = `
 .pdf-document .article .table-scroll > table {
   width: 100% !important;
   min-width: 0 !important;
+  max-width: 100% !important;
+  table-layout: fixed !important;
   font-size: 10.5pt !important;
 }
 
@@ -168,6 +189,18 @@ const PDF_DOWNLOAD_STYLES = `
 .pdf-document .article th,
 .pdf-document .article td {
   border-color: #d7dce2 !important;
+  white-space: normal !important;
+  overflow-wrap: anywhere !important;
+  word-break: break-word !important;
+}
+
+/* Resolve the reader's alternating-row color-mix() before html2canvas
+   parses the PDF clone. The PDF keeps a quiet printable row background and
+   never relies on the interactive hover state. */
+.pdf-document .article tbody tr,
+.pdf-document .article tbody tr:nth-child(even),
+.pdf-document .article tbody tr:hover {
+  background: #ffffff !important;
 }
 
 .pdf-document .article thead {
@@ -241,6 +274,14 @@ const PDF_DOWNLOAD_STYLES = `
   display: block !important;
   break-inside: avoid !important;
   page-break-inside: avoid !important;
+}
+
+/* Keep short blocks together, but let a block that is taller than the
+   printable A4 page continue onto the next page. The class is added only to
+   the PDF clone after its real browser geometry is available. */
+.pdf-document .article .pdf-allow-split {
+  break-inside: auto !important;
+  page-break-inside: auto !important;
 }
 
 .pdf-document .article .pdf-markmap > svg {
@@ -405,6 +446,51 @@ function groupHeadingWithBlock(block: HTMLElement): void {
   group.append(heading, block)
 }
 
+const PDF_LAYOUT_BLOCK_SELECTOR = [
+  '.article pre',
+  '.article .table-scroll',
+  '.article blockquote',
+  '.article .mermaid-widget-host',
+  '.article .pdf-mermaid',
+  '.article .markmap-widget-host',
+  '.article .pdf-markmap',
+  '.article .pdf-heading-group',
+].join(', ')
+
+function measurePdfPrintablePageHeight(root: HTMLElement): number {
+  const probe = root.ownerDocument.createElement('div')
+  probe.style.cssText = [
+    'position: absolute',
+    'visibility: hidden',
+    'pointer-events: none',
+    `height: ${PDF_PRINTABLE_PAGE_HEIGHT_MM}mm`,
+    'width: 1px',
+  ].join(';')
+  root.appendChild(probe)
+  const measured = probe.getBoundingClientRect().height
+  probe.remove()
+  return measured > 0 ? measured : PDF_PRINTABLE_PAGE_HEIGHT_PX
+}
+
+/**
+ * Allow only genuinely oversized PDF blocks to split across pages.
+ *
+ * The measurement is made after the download root is attached, so it uses
+ * the same CSS width and font metrics that html2canvas will capture. The
+ * threshold is expressed as the A4 printable height from the PDF margins,
+ * not a developer viewport height. Short blocks retain their keep-together
+ * rule.
+ */
+export function markOversizedPdfBlocks(root: HTMLElement): void {
+  const printablePageHeight = measurePdfPrintablePageHeight(root)
+
+  for (const block of root.querySelectorAll<HTMLElement>(PDF_LAYOUT_BLOCK_SELECTOR)) {
+    if (block.getBoundingClientRect().height <= printablePageHeight) continue
+    block.classList.add('pdf-allow-split')
+    block.closest<HTMLElement>('.pdf-heading-group')?.classList.add('pdf-allow-split')
+  }
+}
+
 /**
  * Clone the live article and remove reader-only Mermaid runtime state.
  *
@@ -468,6 +554,14 @@ export function preparePdfArticleHtml(article: HTMLElement): string {
   for (const paragraph of clone.querySelectorAll<HTMLElement>('p')) {
     if (paragraph.children.length !== 1 || paragraph.firstElementChild?.tagName !== 'IMG') continue
     groupHeadingWithBlock(paragraph)
+  }
+
+  /* A wide table can be short enough to keep together but still be moved by
+     the page-break plugin when the remaining page space is small. Group its
+     heading with the table so the heading does not become an orphan at the
+     bottom of the previous page. */
+  for (const table of clone.querySelectorAll<HTMLElement>('.table-scroll')) {
+    groupHeadingWithBlock(table)
   }
 
   return clone.outerHTML
@@ -535,6 +629,7 @@ export async function downloadPdfDocument(options: PdfDownloadOptions): Promise<
   document.body.appendChild(surface.host)
 
   try {
+    markOversizedPdfBlocks(surface.root)
     const pdfOptions = {
       margin: [16, 18, 18, 18] as [number, number, number, number],
       filename: pdfFileName(options.title),
@@ -578,5 +673,7 @@ export async function downloadPdfDocument(options: PdfDownloadOptions): Promise<
 
 export const __testing__ = {
   PDF_DOWNLOAD_STYLES,
+  PDF_PRINTABLE_PAGE_HEIGHT_MM,
+  markOversizedPdfBlocks,
   prepareMarkmapSvg,
 }

@@ -70,6 +70,35 @@ describe('PDF export helpers', () => {
     expect(__testing__.PDF_DOWNLOAD_STYLES).toContain('size: A4')
   })
 
+  it('wraps PDF code and table content and only splits oversized blocks', () => {
+    const root = document.createElement('div')
+    root.innerHTML = `
+      <article class="article reading">
+        <pre id="short"><code>short</code></pre>
+        <pre id="long"><code>long</code></pre>
+        <div class="table-scroll"><table><tr><td>cell</td></tr></table></div>
+      </article>`
+
+    const short = root.querySelector<HTMLElement>('#short')!
+    const long = root.querySelector<HTMLElement>('#long')!
+    const tableScroll = root.querySelector<HTMLElement>('.table-scroll')!
+    vi.spyOn(short, 'getBoundingClientRect').mockReturnValue({ height: 100 } as DOMRect)
+    vi.spyOn(long, 'getBoundingClientRect').mockReturnValue({ height: 1200 } as DOMRect)
+    vi.spyOn(tableScroll, 'getBoundingClientRect').mockReturnValue({ height: 160 } as DOMRect)
+
+    __testing__.markOversizedPdfBlocks(root)
+
+    expect(short.classList.contains('pdf-allow-split')).toBe(false)
+    expect(long.classList.contains('pdf-allow-split')).toBe(true)
+    expect(tableScroll.classList.contains('pdf-allow-split')).toBe(false)
+    expect(__testing__.PDF_PRINTABLE_PAGE_HEIGHT_MM).toBe(263)
+    expect(__testing__.PDF_DOWNLOAD_STYLES).toContain('.pdf-document .article pre code')
+    expect(__testing__.PDF_DOWNLOAD_STYLES).toContain('overflow-wrap: anywhere !important')
+    expect(__testing__.PDF_DOWNLOAD_STYLES).toContain('table-layout: fixed !important')
+    expect(__testing__.PDF_DOWNLOAD_STYLES).toContain('.pdf-document .article tbody tr:nth-child(even)')
+    expect(__testing__.PDF_DOWNLOAD_STYLES).toContain('.pdf-document .article .pdf-allow-split')
+  })
+
   it('generates a direct download and removes the temporary render surface', async () => {
     await downloadPdfDocument({
       title: 'Q1 / notes',
@@ -189,6 +218,19 @@ describe('PDF export helpers', () => {
 
     expect(group?.querySelector('h2')?.textContent).toBe('Image')
     expect(group?.querySelector('p > img')).not.toBeNull()
+  })
+
+  it('keeps a table with its section heading', () => {
+    const article = document.createElement('article')
+    article.className = 'article reading'
+    article.innerHTML = '<h2>Wide Table</h2><div class="table-scroll"><table><tr><td>content</td></tr></table></div>'
+
+    const exported = document.createElement('div')
+    exported.innerHTML = preparePdfArticleHtml(article)
+    const group = exported.querySelector('.pdf-heading-group')
+
+    expect(group?.querySelector('h2')?.textContent).toBe('Wide Table')
+    expect(group?.querySelector('.table-scroll table td')?.textContent).toBe('content')
   })
 
   it('removes the temporary render surface when PDF generation fails', async () => {
