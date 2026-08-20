@@ -110,10 +110,13 @@ describe('PDF export helpers', () => {
       filename: string
       margin: [number, number, number, number]
       pagebreak: { mode: string[] }
+      html2canvas: { useCORS: boolean; allowTaint: boolean }
     }
     expect(options.filename).toBe('Q1 - notes.pdf')
     expect(options.margin).toEqual([16, 18, 18, 18])
     expect(options.pagebreak.mode).toEqual(['css', 'legacy'])
+    expect(options.html2canvas.useCORS).toBe(true)
+    expect(options.html2canvas.allowTaint).toBe(false)
     const source = pdfMocks.from.mock.calls[0]?.[0] as HTMLElement
     expect(source.querySelector('.pdf-document.vault')).not.toBeNull()
     expect(source.style.display).toBe('block')

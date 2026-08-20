@@ -33,7 +33,20 @@ export const test = base.extend<{}, { authStorageState: StorageState }>({
           password: 'e2e-owner-password-strong-123',
         },
       })
-      expect(setup.status(), await setup.text()).toBe(201)
+      if (setup.status() === 409) {
+        // Dedicated multi-project PDF configs reuse one isolated server. A
+        // later project must establish its own session without treating the
+        // already-created singleton owner as a test failure.
+        const login = await api.post('/api/auth/login', {
+          data: {
+            username: 'e2e-owner',
+            password: 'e2e-owner-password-strong-123',
+          },
+        })
+        expect(login.status(), await login.text()).toBe(200)
+      } else {
+        expect(setup.status(), await setup.text()).toBe(201)
+      }
       const status = await api.get('/api/auth/status')
       expect(status.status(), await status.text()).toBe(200)
       expect(await status.json()).toMatchObject({ authenticated: true })
