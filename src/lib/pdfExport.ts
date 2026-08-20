@@ -8,9 +8,15 @@ export interface PdfDownloadOptions {
   articleHtml: string
 }
 
+const A4_PAGE_WIDTH_MM = 210
 const A4_PAGE_HEIGHT_MM = 297
 const PDF_PAGE_MARGIN_TOP_MM = 16
+const PDF_PAGE_MARGIN_RIGHT_MM = 18
 const PDF_PAGE_MARGIN_BOTTOM_MM = 18
+const PDF_PAGE_MARGIN_LEFT_MM = 18
+const PDF_PRINTABLE_PAGE_WIDTH_MM = A4_PAGE_WIDTH_MM
+  - PDF_PAGE_MARGIN_LEFT_MM
+  - PDF_PAGE_MARGIN_RIGHT_MM
 const PDF_PRINTABLE_PAGE_HEIGHT_MM = A4_PAGE_HEIGHT_MM
   - PDF_PAGE_MARGIN_TOP_MM
   - PDF_PAGE_MARGIN_BOTTOM_MM
@@ -588,7 +594,7 @@ function createPdfDownloadElement(articleHtml: string): PdfDownloadSurface {
     'position: fixed',
     'top: 0',
     'left: -100000px',
-    'width: 720px',
+    `width: ${PDF_PRINTABLE_PAGE_WIDTH_MM}mm`,
     'height: 1px',
     'overflow: visible',
     'visibility: visible',
@@ -631,7 +637,12 @@ export async function downloadPdfDocument(options: PdfDownloadOptions): Promise<
   try {
     markOversizedPdfBlocks(surface.root)
     const pdfOptions = {
-      margin: [16, 18, 18, 18] as [number, number, number, number],
+      margin: [
+        PDF_PAGE_MARGIN_TOP_MM,
+        PDF_PAGE_MARGIN_RIGHT_MM,
+        PDF_PAGE_MARGIN_BOTTOM_MM,
+        PDF_PAGE_MARGIN_LEFT_MM,
+      ] as [number, number, number, number],
       filename: pdfFileName(options.title),
       image: { type: 'jpeg' as const, quality: 0.98 },
       enableLinks: true,
@@ -673,6 +684,7 @@ export async function downloadPdfDocument(options: PdfDownloadOptions): Promise<
 
 export const __testing__ = {
   PDF_DOWNLOAD_STYLES,
+  PDF_PRINTABLE_PAGE_WIDTH_MM,
   PDF_PRINTABLE_PAGE_HEIGHT_MM,
   markOversizedPdfBlocks,
   prepareMarkmapSvg,

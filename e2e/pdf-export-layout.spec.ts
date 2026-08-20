@@ -14,6 +14,7 @@ type LayoutBlockSnapshot = {
 
 type PdfLayoutSnapshot = {
   textContent: string
+  printablePageWidth: number
   printablePageHeight: number
   root: LayoutBlockSnapshot
   article: LayoutBlockSnapshot
@@ -86,9 +87,10 @@ test('exports wide and oversized content without horizontal overflow', async ({ 
     }
 
     function readSnapshot(): PdfLayoutSnapshot | null {
+      const host = document.querySelector<HTMLElement>('.pdf-download-host')
       const root = document.querySelector<HTMLElement>('.pdf-download-root')
       const article = root?.querySelector<HTMLElement>('.article')
-      if (!root || !article) return null
+      if (!host || !root || !article) return null
 
       const preBlocks = Array.from(article.querySelectorAll<HTMLElement>('pre'))
       const longLine = preBlocks.find((element) => element.textContent?.includes('H6_LONG_UNBROKEN_TOKEN'))
@@ -110,6 +112,15 @@ test('exports wide and oversized content without horizontal overflow', async ({ 
       const printablePageHeight = pageProbe.getBoundingClientRect().height
       pageProbe.remove()
 
+      // Measure the same physical CSS unit used by the production download
+      // host. This keeps the regression independent of Chromium's px/mm
+      // conversion and proves the source layout is A4-printable-width based.
+      const widthProbe = document.createElement('div')
+      widthProbe.style.cssText = 'position:absolute;visibility:hidden;width:174mm;height:1px;'
+      document.body.appendChild(widthProbe)
+      const printablePageWidth = widthProbe.getBoundingClientRect().width
+      widthProbe.remove()
+
       // The snapshot is captured only after the production marker has run.
       // Without it, a future removal of markOversizedPdfBlocks would hang
       // this evidence rather than silently accepting break-inside: avoid.
@@ -119,6 +130,7 @@ test('exports wide and oversized content without horizontal overflow', async ({ 
       const markmapBox = markmapSvg.getBoundingClientRect()
       return {
         textContent: article.textContent ?? '',
+        printablePageWidth,
         printablePageHeight,
         root: readBlock(root),
         article: readBlock(article),
@@ -187,6 +199,9 @@ test('exports wide and oversized content without horizontal overflow', async ({ 
     expect(snapshot.textContent).toContain('PDF_LAYOUT_END_MARKER')
 
     const widthTolerance = 2
+    expect(Math.abs(snapshot.root.width - snapshot.printablePageWidth)).toBeLessThanOrEqual(widthTolerance)
+    expect(Math.abs(snapshot.article.width - snapshot.printablePageWidth)).toBeLessThanOrEqual(widthTolerance)
+    expect(Math.abs(snapshot.root.width - snapshot.article.width)).toBeLessThanOrEqual(widthTolerance)
     expect(snapshot.root.scrollWidth).toBeLessThanOrEqual(snapshot.root.clientWidth + widthTolerance)
     expect(snapshot.article.scrollWidth).toBeLessThanOrEqual(snapshot.article.clientWidth + widthTolerance)
     expect(snapshot.longLine.scrollWidth).toBeLessThanOrEqual(snapshot.longLine.clientWidth + widthTolerance)

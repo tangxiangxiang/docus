@@ -108,14 +108,20 @@ describe('PDF export helpers', () => {
     expect(pdfMocks.html2pdf).toHaveBeenCalledTimes(1)
     const options = pdfMocks.set.mock.calls[0]?.[0] as {
       filename: string
+      margin: [number, number, number, number]
       pagebreak: { mode: string[] }
     }
     expect(options.filename).toBe('Q1 - notes.pdf')
+    expect(options.margin).toEqual([16, 18, 18, 18])
     expect(options.pagebreak.mode).toEqual(['css', 'legacy'])
     const source = pdfMocks.from.mock.calls[0]?.[0] as HTMLElement
     expect(source.querySelector('.pdf-document.vault')).not.toBeNull()
     expect(source.style.display).toBe('block')
     expect(source.style.width).toBe('100%')
+    expect(source.parentElement?.className).toBe('pdf-download-host')
+    expect(source.parentElement?.style.width).toBe('174mm')
+    expect(source.parentElement?.style.width).not.toBe('720px')
+    expect(__testing__.PDF_PRINTABLE_PAGE_WIDTH_MM).toBe(174)
     expect(pdfMocks.save).toHaveBeenCalledTimes(1)
     expect(document.querySelector('.pdf-download-root')).toBeNull()
     expect(document.querySelector('.pdf-download-host')).toBeNull()
