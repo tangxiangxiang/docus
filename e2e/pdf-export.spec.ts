@@ -3,7 +3,68 @@ import { expect, test } from './fixtures/auth'
 
 const slug = 'inbox/pdf-export-e2e'
 
-test('downloads a rendered PDF from the file-tree menu without printing', async ({ page, request }, testInfo) => {
+type PdfSurfaceSnapshot = {
+  surfaceCount: number
+  textContent: string
+  codeText: string
+  preCount: number
+  tableText: string
+  hasStrong: boolean
+  hasEm: boolean
+  inlineCodeText: string
+  hasCallout: boolean
+  taskCheckboxCount: number
+  checkedTaskCount: number
+  footnoteMarkerCount: number
+  footnoteText: string
+  mathStates: Array<string | null>
+  mathKinds: string[]
+  katexCount: number
+  mermaid: Array<{
+    state: string | null
+    viewBox: string | null
+    dataViewBox: string | null
+    svgMarkup: string
+  }>
+  markmap: Array<{
+    state: string | null
+    viewport: string | null
+    fitTransform: string | null
+    rootTransform: string | null
+    hasRootGroup: boolean
+    svgMarkup: string
+  }>
+  image: {
+    src: string | null
+    complete: boolean
+    naturalWidth: number
+  } | null
+  globalTheme: string | null
+}
+
+function hasInvalidSvgNumber(value: string | null | undefined): boolean {
+  return /(?:NaN|Infinity)/.test(value ?? '')
+}
+
+function hasFiniteViewBox(value: string | null): boolean {
+  if (!value) return false
+  const numbers = value.trim().split(/[\s,]+/).map(Number)
+  return numbers.length === 4
+    && numbers.every(Number.isFinite)
+    && numbers[2] > 0
+    && numbers[3] > 0
+}
+
+function hasFiniteViewport(value: string | null): boolean {
+  if (!value) return false
+  const numbers = value.trim().split(/[\s,]+/).map(Number)
+  return numbers.length === 2
+    && numbers.every(Number.isFinite)
+    && numbers[0] > 0
+    && numbers[1] > 0
+}
+
+test('exports the Kitchen Sink with settled content from the file-tree menu', async ({ page, request }, testInfo) => {
   const kitchenSinkRaw = await fs.readFile(new URL('./fixtures/pdf-export-kitchen-sink.md', import.meta.url), 'utf8')
   await request.delete(`/api/posts/${slug}`).catch(() => {})
   const created = await request.post('/api/posts', {
@@ -20,31 +81,118 @@ test('downloads a rendered PDF from the file-tree menu without printing', async 
   expect(updated.ok()).toBe(true)
 
   await page.addInitScript(() => {
-    Object.defineProperty(window, '__pdfPrintCalled', { value: false, writable: true })
+    localStorage.setItem('docus.theme', 'dark')
+
+    type PdfSurfaceSnapshotWindow = Window & {
+      __pdfPrintCalled: boolean
+      __pdfSurfaceSnapshot: PdfSurfaceSnapshot | null
+    }
+
+    const win = window as unknown as PdfSurfaceSnapshotWindow
+    win.__pdfPrintCalled = false
+    win.__pdfSurfaceSnapshot = null
     window.print = () => {
-      ;(window as typeof window & { __pdfPrintCalled: boolean }).__pdfPrintCalled = true
+      win.__pdfPrintCalled = true
     }
-  })
-  await page.addInitScript(() => {
-    const readiness = { mermaid: false, markmap: false }
-    Object.defineProperty(window, '__pdfWidgetReadiness', { value: readiness, writable: false })
+
+    function readSnapshot(): PdfSurfaceSnapshot | null {
+      const surface = document.querySelector<HTMLElement>('.pdf-export-surface')
+      const article = surface?.querySelector<HTMLElement>('.article')
+      if (!surface || !article) return null
+
+      const math = Array.from(article.querySelectorAll<HTMLElement>('.math-mount'))
+      const mermaidWidgets = Array.from(article.querySelectorAll<HTMLElement>('.mermaid-widget'))
+      const markmapWidgets = Array.from(article.querySelectorAll<HTMLElement>('.markmap-widget'))
+      const image = Array.from(article.querySelectorAll<HTMLImageElement>('img'))
+        .find((candidate) => candidate.getAttribute('src')?.endsWith('/logo.svg'))
+
+      const snapshot: PdfSurfaceSnapshot = {
+        surfaceCount: document.querySelectorAll('.pdf-export-surface').length,
+        textContent: article.textContent ?? '',
+        codeText: article.querySelector('pre code')?.textContent ?? '',
+        preCount: article.querySelectorAll('pre').length,
+        tableText: article.querySelector('table')?.textContent ?? '',
+        hasStrong: article.querySelector('strong') !== null,
+        hasEm: article.querySelector('em') !== null,
+        inlineCodeText: article.querySelector('p code')?.textContent ?? '',
+        hasCallout: article.querySelector('.callout') !== null,
+        taskCheckboxCount: article.querySelectorAll('input.task-list-item-checkbox').length,
+        checkedTaskCount: article.querySelectorAll('input.task-list-item-checkbox:checked').length,
+        footnoteMarkerCount: article.querySelectorAll('.footnote-ref').length,
+        footnoteText: article.querySelector('.footnotes')?.textContent ?? '',
+        mathStates: math.map((element) => element.dataset.mathState ?? null),
+        mathKinds: math.map((element) => element.classList.contains('math-block') ? 'block' : 'inline'),
+        katexCount: article.querySelectorAll('.katex').length,
+        mermaid: mermaidWidgets.map((widget) => {
+          const svg = widget.querySelector<SVGSVGElement>('.mermaid-svg svg')
+          return {
+            state: widget.dataset.mermaidState ?? null,
+            viewBox: svg?.getAttribute('viewBox') ?? null,
+            dataViewBox: svg?.getAttribute('data-mermaid-viewbox') ?? null,
+            svgMarkup: svg?.outerHTML ?? '',
+          }
+        }),
+        markmap: markmapWidgets.map((widget) => {
+          const svg = widget.querySelector<SVGSVGElement>('.markmap-svg')
+          const rootGroup = svg
+            ? Array.from(svg.children).find((child) => child.tagName.toLowerCase() === 'g') as SVGGElement | undefined
+            : undefined
+          return {
+            state: widget.dataset.markmapState ?? null,
+            viewport: svg?.dataset.markmapViewport ?? null,
+            fitTransform: svg?.dataset.markmapFitTransform ?? null,
+            rootTransform: rootGroup?.getAttribute('transform') ?? null,
+            hasRootGroup: rootGroup !== undefined,
+            svgMarkup: svg?.outerHTML ?? '',
+          }
+        }),
+        image: image
+          ? {
+              src: image.getAttribute('src'),
+              complete: image.complete,
+              naturalWidth: image.naturalWidth,
+            }
+          : null,
+        globalTheme: document.documentElement.getAttribute('data-theme'),
+      }
+
+      const allMathReady = math.length > 0 && math.every((element) => element.dataset.mathState === 'ready')
+      const allMermaidReady = mermaidWidgets.length > 0
+        && mermaidWidgets.every((element) => element.dataset.mermaidState === 'ready')
+      const allMarkmapReady = markmapWidgets.length > 0
+        && markmapWidgets.every((element) => element.dataset.markmapState === 'ready')
+      const noEnhancementPlaceholders = article.querySelector('.math-mount:not([data-math-mounted]), .mermaid-mount, .markmap-mount') === null
+
+      if (!allMathReady || !allMermaidReady || !allMarkmapReady || !noEnhancementPlaceholders) return null
+      return snapshot
+    }
+
     const check = () => {
-      const surface = document.querySelector('.pdf-export-surface')
-      const mermaid = surface?.querySelector<HTMLElement>('.mermaid-widget')
-      const markmap = surface?.querySelector<HTMLElement>('.markmap-widget')
-      if (mermaid?.dataset.mermaidReady === 'true') readiness.mermaid = true
-      if (markmap?.dataset.markmapReady === 'true') readiness.markmap = true
+      if (win.__pdfSurfaceSnapshot) return
+      const snapshot = readSnapshot()
+      if (snapshot) win.__pdfSurfaceSnapshot = snapshot
     }
+
     const observer = new MutationObserver(check)
     observer.observe(document, {
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ['data-mermaid-ready', 'data-markmap-ready'],
+      attributeFilter: [
+        'data-math-state',
+        'data-mermaid-state',
+        'data-markmap-state',
+        'data-markmap-fit-transform',
+        'data-markmap-viewport',
+        'data-mermaid-viewbox',
+      ],
     })
     check()
   })
+
   await page.goto('/vault')
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+  const themeBeforeExport = await page.locator('html').getAttribute('data-theme')
 
   const inbox = page.locator('.tree-row[data-tree-kind="folder"][data-tree-path="inbox"]')
   await inbox.locator('.chevron').click()
@@ -53,18 +201,76 @@ test('downloads a rendered PDF from the file-tree menu without printing', async 
   await row.click({ button: 'right' })
 
   const downloadPromise = page.waitForEvent('download')
-  const readyPromise = page.waitForFunction(() => {
-    const readiness = (window as typeof window & {
-      __pdfWidgetReadiness?: { mermaid: boolean; markmap: boolean }
-    }).__pdfWidgetReadiness
-    return readiness?.mermaid === true && readiness.markmap === true
-  })
+  const snapshotPromise = page
+    .waitForFunction(() => (
+      (window as typeof window & { __pdfSurfaceSnapshot?: PdfSurfaceSnapshot | null }).__pdfSurfaceSnapshot !== null
+    ))
+    .then(() => page.evaluate(() => (
+      (window as typeof window & { __pdfSurfaceSnapshot: PdfSurfaceSnapshot }).__pdfSurfaceSnapshot
+    )))
   const clickPromise = page.locator('.tree-context-menu button').filter({ hasText: /Export PDF|导出 PDF/ }).click()
-  const [, , download] = await Promise.all([
-    readyPromise.then(() => undefined),
-    clickPromise.then(() => undefined),
+  const [download, snapshot] = await Promise.all([
     downloadPromise,
-  ])
+    snapshotPromise,
+    clickPromise.then(() => undefined),
+  ]) as [Awaited<typeof downloadPromise>, PdfSurfaceSnapshot, void]
+
+  expect(snapshot).not.toBeNull()
+  expect(snapshot.surfaceCount).toBe(1)
+  expect(snapshot.globalTheme).toBe('dark')
+  expect(snapshot.textContent).toContain('PDF Export Kitchen Sink')
+  expect(snapshot.textContent).toContain('中文')
+  expect(snapshot.textContent).toContain('English')
+  expect(snapshot.textContent).toContain('日本語')
+  expect(snapshot.textContent).toContain('Emoji 🚀')
+  expect(snapshot.hasStrong).toBe(true)
+  expect(snapshot.hasEm).toBe(true)
+  expect(snapshot.inlineCodeText).toBe('inline code')
+  expect(snapshot.hasCallout).toBe(true)
+  expect(snapshot.taskCheckboxCount).toBe(2)
+  expect(snapshot.checkedTaskCount).toBe(1)
+  expect(snapshot.footnoteMarkerCount).toBeGreaterThan(0)
+  expect(snapshot.footnoteText).toContain('PDF export kitchen-sink regression fixture.')
+
+  expect(snapshot.preCount).toBeGreaterThan(0)
+  expect(snapshot.codeText).toContain('Hello PDF')
+  expect(snapshot.tableText).toContain('A')
+  expect(snapshot.tableText).toContain('B')
+  expect(snapshot.tableText).toContain('C')
+  expect(snapshot.tableText).toContain('1')
+  expect(snapshot.tableText).toContain('2')
+  expect(snapshot.tableText).toContain('3')
+
+  expect(snapshot.mathStates.length).toBeGreaterThanOrEqual(2)
+  expect(snapshot.mathStates.every((state) => state === 'ready')).toBe(true)
+  expect(snapshot.mathKinds).toEqual(expect.arrayContaining(['inline', 'block']))
+  expect(snapshot.katexCount).toBeGreaterThanOrEqual(2)
+
+  expect(snapshot.mermaid).toHaveLength(1)
+  const mermaid = snapshot.mermaid[0]
+  expect(mermaid.state).toBe('ready')
+  expect(mermaid.svgMarkup).not.toBe('')
+  expect(hasFiniteViewBox(mermaid.viewBox)).toBe(true)
+  expect(hasFiniteViewBox(mermaid.dataViewBox)).toBe(true)
+  expect(hasInvalidSvgNumber(mermaid.svgMarkup)).toBe(false)
+
+  expect(snapshot.markmap).toHaveLength(1)
+  const markmap = snapshot.markmap[0]
+  expect(markmap.state).toBe('ready')
+  expect(markmap.svgMarkup).not.toBe('')
+  expect(markmap.hasRootGroup).toBe(true)
+  expect(markmap.fitTransform).not.toBeNull()
+  expect(markmap.rootTransform).not.toBeNull()
+  expect(hasFiniteViewport(markmap.viewport)).toBe(true)
+  expect(hasInvalidSvgNumber(markmap.svgMarkup)).toBe(false)
+  expect(hasInvalidSvgNumber(markmap.fitTransform)).toBe(false)
+  expect(hasInvalidSvgNumber(markmap.rootTransform)).toBe(false)
+
+  expect(snapshot.image).not.toBeNull()
+  expect(snapshot.image?.src).toMatch(/\/logo\.svg$/)
+  expect(snapshot.image?.complete).toBe(true)
+  expect(snapshot.image?.naturalWidth).toBeGreaterThan(0)
+
   const outputPath = testInfo.outputPath('file-tree-export.pdf')
   await download.saveAs(outputPath)
 
@@ -73,4 +279,6 @@ test('downloads a rendered PDF from the file-tree menu without printing', async 
   expect(await page.evaluate(() => (
     window as typeof window & { __pdfPrintCalled?: boolean }
   ).__pdfPrintCalled)).toBe(false)
+  expect(await page.locator('html').getAttribute('data-theme')).toBe(themeBeforeExport)
+  await expect(page.locator('.pdf-export-surface')).toHaveCount(0)
 })

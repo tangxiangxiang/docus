@@ -8,7 +8,7 @@ title: PDF Export Kitchen Sink
 
 ## Paragraph
 
-Regular **bold**, *italic*, `inline code`, and a [safe external link](https://example.com).
+Regular **bold**, *italic*, `inline code`, and a [safe external link](https://example.com). See the footnote[^note].
 
 ## Task List
 
