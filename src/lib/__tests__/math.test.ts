@@ -151,6 +151,7 @@ describe('Markdown math placeholders', () => {
 
     expect(() => mountMath(root)).not.toThrow()
     expect(root.querySelector('.math-error')).not.toBeNull()
+    expect(root.querySelector('.math-mount')?.getAttribute('data-math-state')).toBe('error')
     expect(root.textContent).toContain('\\frac{1}{')
   })
 })

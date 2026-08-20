@@ -102,6 +102,7 @@ import {
   preparePdfArticleHtml,
   resolvePdfDocumentLabel,
 } from '../lib/pdfExport'
+import { mathWidgetsReady } from '../lib/pdf-readiness'
 import {
   listManagedTags,
   type ManagedTag,
@@ -1794,6 +1795,7 @@ function waitForPdfArticle(request: PdfExportRequest): Promise<HTMLElement> {
 
 function pdfWidgetsReady(article: HTMLElement): boolean {
   if (article.querySelector('.mermaid-mount, .markmap-mount')) return false
+  if (!mathWidgetsReady(article)) return false
   for (const host of article.querySelectorAll<HTMLElement>('.mermaid-widget-host')) {
     const widget = host.querySelector<HTMLElement>('.mermaid-widget')
     const state = widget?.dataset.mermaidState
@@ -1828,6 +1830,7 @@ async function waitForPdfWidgets(article: HTMLElement): Promise<void> {
       subtree: true,
       attributes: true,
       attributeFilter: [
+        'data-math-state',
         'data-mermaid-state',
         'data-markmap-state',
         'data-mermaid-ready',

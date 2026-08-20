@@ -34,9 +34,15 @@ describe('mountMath', () => {
   it('renders inline and block placeholders with decoded TeX and safe options', () => {
     const root = document.createElement('article')
     root.innerHTML = placeholder('inline', 'x^2') + placeholder('block', '\\frac{a}{b}')
+    const statesObservedDuringRender: string[] = []
+    renderMock.mockImplementation((tex: string, host: HTMLElement, _options: Record<string, unknown>) => {
+      statesObservedDuringRender.push(host.dataset.mathState ?? '')
+      host.innerHTML = `<span class="katex">${tex}</span>`
+    })
 
     expect(mountMath(root)).toBe(2)
     expect(renderMock).toHaveBeenCalledTimes(2)
+    expect(statesObservedDuringRender).toEqual(['pending', 'pending'])
     expect(renderMock.mock.calls[0]?.[0]).toBe('x^2')
     expect(renderMock.mock.calls[0]?.[2]).toEqual({
       throwOnError: false,
@@ -50,6 +56,8 @@ describe('mountMath', () => {
     })
     expect(root.querySelectorAll('.katex')).toHaveLength(2)
     expect(root.querySelectorAll('[data-math-mounted="true"]')).toHaveLength(2)
+    expect(root.querySelector<HTMLElement>('.math-inline')?.dataset.mathState).toBe('ready')
+    expect(root.querySelector<HTMLElement>('.math-block')?.dataset.mathState).toBe('ready')
 
     // KaTeX's children can trigger another observer pass, but the marker
     // makes a second explicit scan a no-op.
@@ -67,7 +75,28 @@ describe('mountMath', () => {
     const error = root.querySelector('.math-error')
     expect(error).not.toBeNull()
     expect(error?.textContent).toBe('\\frac{1}{')
+    expect(error?.getAttribute('data-math-mounted')).toBe('true')
+    expect(error?.getAttribute('data-math-state')).toBe('error')
     expect(error?.querySelector('script, style, svg')).toBeNull()
+
+    expect(mountMath(root)).toBe(0)
+    expect(renderMock).toHaveBeenCalledTimes(1)
+    expect(error?.getAttribute('data-math-state')).toBe('error')
+  })
+
+  it('marks a non-throwing KaTeX error representation as settled error', () => {
+    renderMock.mockImplementationOnce((_tex: string, host: HTMLElement) => {
+      host.innerHTML = '<span class="katex-error">invalid TeX</span>'
+    })
+    const root = document.createElement('article')
+    root.innerHTML = placeholder('inline', '\\frac{1}{')
+
+    mountMath(root)
+
+    const error = root.querySelector<HTMLElement>('.math-mount')
+    expect(error?.getAttribute('data-math-mounted')).toBe('true')
+    expect(error?.getAttribute('data-math-state')).toBe('error')
+    expect(error?.classList.contains('math-error')).toBe(true)
   })
 })
 
@@ -92,6 +121,7 @@ describe('useMathMount', () => {
     await settleMutationObserver()
     expect(renderMock).toHaveBeenCalledTimes(1)
     expect(root.querySelector('.katex')).not.toBeNull()
+    expect(root.querySelector<HTMLElement>('.math-mount')?.getAttribute('data-math-state')).toBe('ready')
 
     app.unmount()
     root.innerHTML = placeholder('inline', 'z')
