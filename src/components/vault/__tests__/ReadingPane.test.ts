@@ -61,6 +61,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers()
+  vi.restoreAllMocks()
   tocHeadings.value = []
   tocActiveId.value = ''
   tocScrollTo.value = null
@@ -265,5 +266,10 @@ describe('ReadingPane scroll-spy', () => {
 
     await nextTick()
     expect(tocActiveId.value).toBe('')
+  })
+
+  it('keeps PDF export controls out of the reading surface', async () => {
+    const { wrapper } = setupFixture([])
+    expect(wrapper.find('[data-testid="reading-export-pdf"]').exists()).toBe(false)
   })
 })

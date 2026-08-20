@@ -83,9 +83,20 @@ describe('FileTree context menu', () => {
     expect(menu).not.toBeNull()
     expect(menu!.textContent).toContain('重命名')
     expect(menu!.textContent).toContain('查看文件历史')
+    expect(menu!.textContent).toContain('导出 PDF')
     expect(menu!.textContent).not.toContain('文档属性')
     expect(menu!.textContent).toContain('删除')
-    const history = Array.from(menu!.querySelectorAll('button'))
+    const exportPdf = Array.from(menu!.querySelectorAll('button'))
+      .find((button) => button.textContent?.includes('导出 PDF')) as HTMLButtonElement
+    exportPdf.click()
+    await flushPromises()
+    expect(w.emitted('export-pdf')).toEqual([['inbox/hello']])
+
+    await helloRow.trigger('contextmenu', { clientX: 100, clientY: 100 })
+    await w.vm.$nextTick()
+    await flushPromises()
+    const reopenedMenu = document.querySelector('.tree-context-menu')!
+    const history = Array.from(reopenedMenu.querySelectorAll('button'))
       .find((button) => button.textContent?.includes('查看文件历史')) as HTMLButtonElement
     history.click()
     await flushPromises()

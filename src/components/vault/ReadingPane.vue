@@ -198,14 +198,16 @@ watch(() => props.raw, () => {
     <div v-if="isEmpty" class="reading-empty">
       未打开文件。在侧栏选一个或按 <kbd>⌘P</kbd> 新建。
     </div>
-    <div v-else class="reading-layout">
-      <RenderedMarkdown
-        :raw="raw"
-        :resolver="resolver"
-        tag="article"
-        @update:headings="headings = $event"
-        @rendered="articleEl = $event"
-      />
-    </div>
+    <template v-else>
+      <div class="reading-layout">
+        <RenderedMarkdown
+          :raw="raw"
+          :resolver="resolver"
+          tag="article"
+          @update:headings="headings = $event"
+          @rendered="articleEl = $event"
+        />
+      </div>
+    </template>
   </div>
 </template>

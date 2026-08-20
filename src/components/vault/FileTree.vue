@@ -35,6 +35,7 @@ const emit = defineEmits<{
   // remains blocked by onMove — archive is a deliberate menu action that
   // bypasses that block.
   'archive-note': [path: string]
+  'export-pdf': [path: string]
   'open-history': [path: string]
 }>()
 
@@ -759,6 +760,7 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
         @move="onMove"
         @create-in="onCreateIn"
         @archive-note="onArchiveNote"
+        @export-pdf="(path) => emit('export-pdf', path)"
         @open-history="(path) => emit('open-history', path)"
         @focus="setFocused"
       />

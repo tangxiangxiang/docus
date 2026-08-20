@@ -4,6 +4,10 @@
 
 Docus uses Monaco for Markdown source editing and a separate Read mode for rendered output. There is no split Preview mode. Use the navigation-bar toggle to switch modes.
 
+## PDF Export
+
+In the file tree, right-click a Markdown document and choose **导出 PDF**. Docus renders the document and downloads an A4 PDF directly; no browser print dialog is opened. The export keeps the document's rendered formatting, including headings, code, tables, images, formulas, and diagrams.
+
 Each open document has its own workspace tab and unsaved buffer. Useful shortcuts include:
 
 | Action | Shortcut |

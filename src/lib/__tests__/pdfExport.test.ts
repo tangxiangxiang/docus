@@ -1,0 +1,135 @@
+// @vitest-environment jsdom
+
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const pdfMocks = vi.hoisted(() => ({
+  html2pdf: vi.fn(),
+  set: vi.fn(),
+  from: vi.fn(),
+  save: vi.fn(),
+}))
+
+vi.mock('html2pdf.js', () => ({ default: pdfMocks.html2pdf }))
+
+import {
+  __testing__,
+  buildPdfDownloadDocument,
+  downloadPdfDocument,
+  preparePdfArticleHtml,
+  resolvePdfDocumentLabel,
+  sanitizePdfFileName,
+} from '../pdfExport'
+
+describe('PDF export helpers', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    pdfMocks.save.mockResolvedValue(undefined)
+    pdfMocks.from.mockReturnValue({ save: pdfMocks.save })
+    pdfMocks.set.mockReturnValue({ from: pdfMocks.from })
+    pdfMocks.html2pdf.mockReturnValue({ set: pdfMocks.set })
+  })
+
+  it('sanitizes a title into a filesystem-safe PDF filename', () => {
+    expect(sanitizePdfFileName('  sprint / q1?.md  ')).toBe('sprint - q1-.md')
+    expect(sanitizePdfFileName('   ')).toBe('docus-document')
+    expect(sanitizePdfFileName('报告')).toBe('报告')
+  })
+
+  it('prefers the rendered document title when choosing the filename', () => {
+    expect(resolvePdfDocumentLabel({
+      raw: '---\ntitle: 项目计划\n---\n正文',
+      documentTitle: '旧标题',
+      documentPath: 'inbox/plan.md',
+    })).toBe('项目计划')
+
+    expect(resolvePdfDocumentLabel({
+      raw: '# Sprint Plan\n\n正文',
+      documentPath: 'inbox/plan.md',
+    })).toBe('Sprint Plan')
+
+    expect(resolvePdfDocumentLabel({
+      raw: '正文',
+      documentTitle: '项目计划',
+      documentPath: 'inbox/plan.md',
+    })).toBe('项目计划')
+
+    expect(resolvePdfDocumentLabel({
+      raw: '正文',
+      documentPath: 'inbox/plan.md',
+    })).toBe('plan')
+  })
+
+  it('builds the download document with the PDF layout wrapper', () => {
+    const html = buildPdfDownloadDocument('<article class="article reading"><h1>Q1</h1></article>')
+
+    expect(html).toContain('<main class="pdf-document vault">')
+    expect(html).toContain('<article class="article reading"><h1>Q1</h1></article>')
+    expect(html).toContain('<div class="reading-pane">')
+    expect(__testing__.PDF_DOWNLOAD_STYLES).toContain('.pdf-download-root')
+    expect(__testing__.PDF_DOWNLOAD_STYLES).not.toContain('\nbody {')
+    expect(__testing__.PDF_DOWNLOAD_STYLES).toContain('size: A4')
+  })
+
+  it('generates a direct download and removes the temporary render surface', async () => {
+    await downloadPdfDocument({
+      title: 'Q1 / notes',
+      articleHtml: '<article class="article reading"><h1>Q1</h1></article>',
+    })
+
+    expect(pdfMocks.html2pdf).toHaveBeenCalledTimes(1)
+    const options = pdfMocks.set.mock.calls[0]?.[0] as {
+      filename: string
+      pagebreak: { mode: string[] }
+    }
+    expect(options.filename).toBe('Q1 - notes.pdf')
+    expect(options.pagebreak.mode).toEqual(['css', 'legacy'])
+    const source = pdfMocks.from.mock.calls[0]?.[0] as HTMLElement
+    expect(source.querySelector('.pdf-document.vault')).not.toBeNull()
+    expect(source.style.display).toBe('block')
+    expect(source.style.width).toBe('100%')
+    expect(pdfMocks.save).toHaveBeenCalledTimes(1)
+    expect(document.querySelector('.pdf-download-root')).toBeNull()
+    expect(document.querySelector('.pdf-download-host')).toBeNull()
+  })
+
+  it('converts an interactive Mermaid widget into a static, print-sized SVG', () => {
+    const article = document.createElement('article')
+    article.className = 'article reading'
+    article.innerHTML = `
+      <div class="mermaid-widget-host">
+        <div class="mermaid-widget">
+          <div class="mermaid-svg">
+            <svg id="diagram-1" width="100%" height="100%" style="overflow: hidden; width: 100%; height: 100%; max-width: none" data-pan-zoom-bound="1" data-mermaid-viewbox="0 0 320 180">
+              <style>#diagram-1 .node rect { fill: #1f2020; }</style>
+              <g class="svg-pan-zoom_viewport" transform="matrix(1.7,0,0,1.7,-42,-16)" style="transform: matrix(1.7, 0, 0, 1.7, -42, -16)">
+                <g class="node"><rect width="80" height="30" /></g>
+              </g>
+            </svg>
+          </div>
+          <div class="mermaid-toolbar-area"><button>Zoom</button></div>
+        </div>
+      </div>`
+
+    const html = preparePdfArticleHtml(article)
+    const exported = document.createElement('div')
+    exported.innerHTML = html
+    const host = exported.querySelector('.mermaid-widget-host')
+    const svg = exported.querySelector<SVGSVGElement>('.pdf-mermaid > svg')
+
+    expect(host?.querySelector('.mermaid-toolbar-area')).toBeNull()
+    expect(exported.querySelector('.mermaid-widget')).toBeNull()
+    expect(svg).not.toBeNull()
+    expect(svg?.getAttribute('width')).toBeNull()
+    expect(svg?.getAttribute('height')).toBeNull()
+    expect(svg?.getAttribute('style')).toBeNull()
+    expect(svg?.getAttribute('data-pan-zoom-bound')).toBeNull()
+    expect(svg?.getAttribute('data-mermaid-viewbox')).toBeNull()
+    expect(svg?.getAttribute('viewBox')).toBe('0 0 320 180')
+    expect(svg?.getAttribute('preserveAspectRatio')).toBe('xMidYMid meet')
+    const viewport = svg?.querySelector('g')
+    expect(svg?.querySelector('.svg-pan-zoom_viewport')).toBeNull()
+    expect(viewport?.getAttribute('transform')).toBeNull()
+    expect(viewport?.getAttribute('style')).toBeNull()
+    expect(__testing__.PDF_DOWNLOAD_STYLES).toContain('.pdf-document .article .pdf-mermaid > svg')
+  })
+})

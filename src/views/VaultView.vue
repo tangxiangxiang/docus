@@ -61,6 +61,7 @@ import FileTree from '../components/vault/FileTree.vue'
 import TagPanel from '../components/vault/TagPanel.vue'
 import TagManagementPanel from '../components/vault/TagManagementPanel.vue'
 import ReadingPane from '../components/vault/ReadingPane.vue'
+import PdfExportSurface from '../components/vault/PdfExportSurface.vue'
 import RightRail from '../components/vault/RightRail.vue'
 import EmptyState from '../components/vault/EmptyState.vue'
 import ActivityBar from '../components/vault/ActivityBar.vue'
@@ -96,6 +97,11 @@ import {
 import StatusBar from '../components/vault/StatusBar.vue'
 import CommandPalette from '../components/vault/CommandPalette.vue'
 import { requireVaultId } from '../lib/vault-identity'
+import {
+  downloadPdfDocument,
+  preparePdfArticleHtml,
+  resolvePdfDocumentLabel,
+} from '../lib/pdfExport'
 import {
   listManagedTags,
   type ManagedTag,
@@ -1733,6 +1739,138 @@ const wikiResolver = (ref: string, _anchor?: string) => {
     alias: ref,
   }
 }
+
+interface PdfExportRequest {
+  id: number
+  path: string
+  raw: string
+  title: string
+}
+
+interface PdfRenderWaiter {
+  id: number
+  resolve: (article: HTMLElement) => void
+  reject: (error: Error) => void
+}
+
+const pdfExportRequest = shallowRef<PdfExportRequest | null>(null)
+const pdfExportBusy = ref(false)
+let pdfExportSequence = 0
+let pdfRenderWaiter: PdfRenderWaiter | null = null
+
+// A file-tree export may target a document other than the active tab. Resolve
+// wiki-links relative to that target instead of borrowing activePath.
+const pdfWikiResolver = (ref: string, _anchor?: string) => {
+  const allPaths = Array.from(linkIndex.value.paths)
+  return {
+    target: resolveWikiTarget(ref, pdfExportRequest.value?.path ?? activePath.value ?? '', allPaths),
+    alias: ref,
+  }
+}
+
+function waitForPdfArticle(request: PdfExportRequest): Promise<HTMLElement> {
+  return new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      if (pdfRenderWaiter?.id !== request.id) return
+      pdfRenderWaiter = null
+      reject(new Error('PDF_RENDER_TIMEOUT'))
+    }, 5000)
+    pdfRenderWaiter = {
+      id: request.id,
+      resolve: (article) => {
+        window.clearTimeout(timeout)
+        if (pdfRenderWaiter?.id === request.id) pdfRenderWaiter = null
+        resolve(article)
+      },
+      reject: (error) => {
+        window.clearTimeout(timeout)
+        if (pdfRenderWaiter?.id === request.id) pdfRenderWaiter = null
+        reject(error)
+      },
+    }
+    pdfExportRequest.value = request
+  })
+}
+
+function pdfWidgetsReady(article: HTMLElement): boolean {
+  if (article.querySelector('.mermaid-mount, .markmap-mount')) return false
+  for (const host of article.querySelectorAll<HTMLElement>('.mermaid-widget-host')) {
+    if (!host.querySelector('.mermaid-svg > svg') && !host.querySelector('.mermaid-error')) return false
+  }
+  for (const host of article.querySelectorAll<HTMLElement>('.markmap-widget-host')) {
+    if (!host.querySelector('.markmap-svg') && !host.querySelector('.markmap-error')) return false
+  }
+  return true
+}
+
+async function waitForPdfWidgets(article: HTMLElement): Promise<void> {
+  if (pdfWidgetsReady(article)) return
+  await new Promise<void>((resolve, reject) => {
+    const observer = new MutationObserver(check)
+    const timeout = window.setTimeout(() => {
+      observer.disconnect()
+      reject(new Error('PDF_WIDGET_TIMEOUT'))
+    }, 5000)
+    function check() {
+      if (!pdfWidgetsReady(article)) return
+      window.clearTimeout(timeout)
+      observer.disconnect()
+      resolve()
+    }
+    observer.observe(article, { childList: true, subtree: true })
+    check()
+  })
+}
+
+function onPdfExportRendered(article: HTMLElement | null): void {
+  if (!article || !pdfRenderWaiter) return
+  pdfRenderWaiter.resolve(article)
+}
+
+async function exportPdfFromTree(path: string): Promise<void> {
+  if (pdfExportBusy.value) {
+    toast.info(t('file_tree.exporting_pdf'))
+    return
+  }
+
+  pdfExportBusy.value = true
+  const id = ++pdfExportSequence
+  try {
+    const liveTab = tabs.value.find((tab) => tab.path === path)
+    const summary = posts.value.find((post) => post.path === path)
+    let raw = ''
+    let title = liveTab?.title || summary?.title || ''
+
+    // Prefer the live workspace buffer so a right-click export does not
+    // silently discard unsaved edits in an already-open document.
+    if (liveTab && !liveTab.loading && !liveTab.loadError) {
+      raw = liveTab.raw
+    } else {
+      const post = await getPost(path)
+      raw = post.raw
+      title = post.metadata?.title?.trim() || title
+    }
+
+    const request: PdfExportRequest = { id, path, raw, title }
+    const article = await waitForPdfArticle(request)
+    await waitForPdfWidgets(article)
+    const label = resolvePdfDocumentLabel({ raw, documentTitle: title, documentPath: path })
+    await downloadPdfDocument({
+      title: label,
+      articleHtml: preparePdfArticleHtml(article),
+    })
+  } catch (error) {
+    toast.error(t(
+      error instanceof Error && (error.message === 'PDF_RENDER_TIMEOUT' || error.message === 'PDF_WIDGET_TIMEOUT')
+        ? 'file_tree.export_not_ready'
+        : 'file_tree.export_failed',
+    ))
+  } finally {
+    if (pdfRenderWaiter?.id === id) pdfRenderWaiter = null
+    pdfExportRequest.value = null
+    pdfExportBusy.value = false
+  }
+}
 watch(() => navSearch?.tick.value, () => openSearch())
 
 /* After the Monaco addAction emits toggle-view-mode and isReadMode
@@ -1814,6 +1952,7 @@ watch(isReadMode, async (reading) => {
       :current-path="activePath"
       @select="openPost"
       @refresh="refresh"
+      @export-pdf="exportPdfFromTree"
       @open-history="openFileHistory"
     />
     <TagPanel
@@ -1936,7 +2075,10 @@ watch(isReadMode, async (reading) => {
           :key="activeTab.path"
           class="reading-slot"
         >
-          <ReadingPane :raw="activeTab.raw" :resolver="wikiResolver" />
+          <ReadingPane
+            :raw="activeTab.raw"
+            :resolver="wikiResolver"
+          />
         </div>
         <div v-if="!tabs.length" class="content-empty">
           <EmptyState :title="t('vault.no_file_open')">
@@ -2029,6 +2171,14 @@ watch(isReadMode, async (reading) => {
       :active-path="activePath"
       @select="openPost"
       @new="onCommandPaletteNew"
+    />
+
+    <PdfExportSurface
+      v-if="pdfExportRequest"
+      :key="pdfExportRequest.id"
+      :raw="pdfExportRequest.raw"
+      :resolver="pdfWikiResolver"
+      @rendered="onPdfExportRendered"
     />
   </div>
 </template>

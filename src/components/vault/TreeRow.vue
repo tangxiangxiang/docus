@@ -3,7 +3,7 @@ import { ref, computed, nextTick, onBeforeUnmount } from 'vue'
 import type { TreeNode, PostSummary } from '../../lib/api'
 import {
   ICON_ARCHIVE, ICON_CHEVRON, ICON_DELETE, ICON_FILE_MD, ICON_FILE_PLUS,
-  ICON_FOLDER, ICON_FOLDER_OPEN, ICON_FOLDER_PLUS, ICON_HISTORY, ICON_RENAME,
+  ICON_FILE_PDF, ICON_FOLDER, ICON_FOLDER_OPEN, ICON_FOLDER_PLUS, ICON_HISTORY, ICON_RENAME,
 } from './icons'
 import { useI18n } from '../../composables/useI18n'
 import { useDocumentHoverCard } from '../../composables/useDocumentHoverCard'
@@ -56,6 +56,7 @@ const emit = defineEmits<{
   // `move` into archive/ is still blocked — archiving is a deliberate
   // product action that only the menu can trigger.
   'archive-note': [path: string]
+  'export-pdf': [path: string]
   'open-history': [path: string]
   focus: [path: string, kind: 'file' | 'folder']
 }>()
@@ -387,6 +388,7 @@ function menuAction(fn: () => void) {
         <button v-if="canModifyRow" @click="menuAction(() => emit('request-rename', node.path, node.kind))"><span class="menu-icon" v-html="ICON_RENAME" />{{ t('file_tree.rename') }}<kbd>F2</kbd></button>
         <button v-if="canArchive" @click="menuAction(() => emit('archive-note', node.path))"><span class="menu-icon" v-html="ICON_ARCHIVE" />{{ t('file_tree.archive') }}</button>
         <div v-if="!isFolder" class="tree-menu-label">{{ t('file_tree.document') }}</div>
+        <button v-if="!isFolder" @click="menuAction(() => emit('export-pdf', node.path))"><span class="menu-icon" v-html="ICON_FILE_PDF" />{{ t('file_tree.export_pdf') }}</button>
         <button v-if="!isFolder" @click="menuAction(() => emit('open-history', node.path))"><span class="menu-icon" v-html="ICON_HISTORY" />{{ t('file_tree.view_history') }}</button>
         <div v-if="canModifyRow" class="tree-menu-label">{{ t('file_tree.danger') }}</div>
         <button v-if="canModifyRow" class="danger" @click="menuAction(() => emit('delete', node.path, node.kind))"><span class="menu-icon" v-html="ICON_DELETE" />{{ t('file_tree.delete') }}<kbd>Delete</kbd></button>
@@ -415,6 +417,7 @@ function menuAction(fn: () => void) {
         @move="(src, folder, srcKind) => emit('move', src, folder, srcKind)"
         @create-in="(folder, kind) => emit('create-in', folder, kind)"
         @archive-note="(p) => emit('archive-note', p)"
+        @export-pdf="(p) => emit('export-pdf', p)"
         @open-history="(p) => emit('open-history', p)"
         @focus="(p, kind) => emit('focus', p, kind)"
       />

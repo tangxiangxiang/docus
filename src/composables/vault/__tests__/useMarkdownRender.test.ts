@@ -72,7 +72,7 @@ describe('heading extraction', () => {
 })
 
 describe('useMarkdownRender (public API smoke)', () => {
-  it('exposes html, error, and headings as refs', async () => {
+  it('marks the current source ready only after its HTML is populated', async () => {
     let captured: ReturnType<typeof useMarkdownRender> | null = null
     const Comp = defineComponent({
       setup() {
@@ -82,6 +82,7 @@ describe('useMarkdownRender (public API smoke)', () => {
     })
     mount(Comp)
     expect(captured).not.toBeNull()
+    expect(captured!.ready.value).toBe(false)
     /* The watchEffect awaits `render()`, which dynamically imports
        highlight.js. On a cold cache (fresh CI runner) that import can
        span many macrotask cycles, so a fixed tick count is flaky —
@@ -93,5 +94,6 @@ describe('useMarkdownRender (public API smoke)', () => {
     }
     expect(captured!.headings.value.length).toBeGreaterThan(0)
     expect(captured!.html.value).toContain('Section')
+    expect(captured!.ready.value).toBe(true)
   })
 })

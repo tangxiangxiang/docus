@@ -17,7 +17,7 @@ const emit = defineEmits<{
   rendered: [el: HTMLElement | null]
 }>()
 
-const { html, error, headings } = useMarkdownRender(toRef(props, 'raw'), props.resolver)
+const { html, error, headings, ready } = useMarkdownRender(toRef(props, 'raw'), props.resolver)
 const articleEl = ref<HTMLElement | null>(null)
 const vaultContext = useVaultContext()
 useMarkmapMount(articleEl)
@@ -25,7 +25,11 @@ useMermaidMount(articleEl)
 useMathMount(articleEl)
 
 watch(headings, (value) => emit('update:headings', value), { immediate: true })
-watch([html, articleEl], async () => {
+watch([ready, html, articleEl], async ([isReady]) => {
+  // useMarkdownRender is asynchronous. articleEl is mounted once with an
+  // empty html ref before the current Markdown source finishes rendering;
+  // emitting that transient node made PDF export snapshot a blank article.
+  if (!isReady) return
   await nextTick()
   emit('rendered', articleEl.value)
 }, { flush: 'post', immediate: true })

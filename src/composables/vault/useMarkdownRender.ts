@@ -34,6 +34,8 @@ export interface MarkdownRender {
   html: Ref<string>
   error: Ref<string | null>
   headings: Ref<Heading[]>
+  /** True only after the current source has finished rendering. */
+  ready: Ref<boolean>
 }
 
 /* Match opening + closing h1..h4 with an `id` attribute. Slugs come
@@ -97,9 +99,11 @@ export function useMarkdownRender(
   const html = ref<string>('')
   const error = ref<string | null>(null)
   const headings = ref<Heading[]>([])
+  const ready = ref(false)
 
   watchEffect(async (onCleanup) => {
     const raw = typeof source === 'function' ? source() : source.value
+    ready.value = false
     /* Cancel any in-flight render when source changes again. Without
        this, a slow render from the previous document can resolve
        AFTER the new one and clobber the html/headings, leaving the
@@ -118,11 +122,13 @@ export function useMarkdownRender(
       html.value = rendered
       headings.value = extractHeadings(rendered)
       error.value = null
+      ready.value = true
     } catch (e) {
       if (cancelled) return
       error.value = (e as Error).message
+      ready.value = true
     }
   })
 
-  return { html, error, headings }
+  return { html, error, headings, ready }
 }

@@ -270,12 +270,18 @@ async function render() {
        Fix: strip the attributes, clear the inline width/height/
        max-width that pin the SVG, then write our own inline
        width/height (inline beats anything else) and force
-       `preserveAspectRatio="xMidYMid meet"`. MarkMap's svg doesn't
+       `preserveAspectRatio="xMidYMid meet"`. Keep a copy of the
+       original viewBox too: svg-pan-zoom consumes the live `viewBox`
+       attribute when it builds its viewport transform, while the PDF
+       exporter needs that coordinate system after it removes the live
+       transform. MarkMap's svg doesn't
        need this because markmap's own `autoFit` runs on the same
        pass that creates the SVG; mermaid hands us a finished string
        that we have to retrofit. */
     const insertedSvg = containerRef.value.querySelector('svg')
     if (insertedSvg) {
+      const originalViewBox = insertedSvg.getAttribute('viewBox')
+      if (originalViewBox) insertedSvg.setAttribute('data-mermaid-viewbox', originalViewBox)
       insertedSvg.removeAttribute('width')
       insertedSvg.removeAttribute('height')
       insertedSvg.style.width = '100%'

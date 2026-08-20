@@ -502,6 +502,18 @@ describe('Mermaid svg-pan-zoom integration', () => {
     unmount()
   })
 
+  it('keeps the original Mermaid viewBox available for static export', async () => {
+    g.__mermaidTest!.overrideSvg = '<svg viewBox="0 0 320 180"><rect width="320" height="180" /></svg>'
+    const { unmount, host } = mountStandalone()
+    await settle()
+
+    const svg = host.querySelector<SVGSVGElement>('.mermaid-svg > svg')
+    expect(svg?.getAttribute('viewBox')).toBe('0 0 320 180')
+    expect(svg?.getAttribute('data-mermaid-viewbox')).toBe('0 0 320 180')
+
+    unmount()
+  })
+
   it('routes toolbar button clicks to the panZoom instance methods', async () => {
     const { unmount, host } = mountStandalone()
     await settle()
