@@ -102,7 +102,7 @@ import {
   preparePdfArticleHtml,
   resolvePdfDocumentLabel,
 } from '../lib/pdfExport'
-import { mathWidgetsReady } from '../lib/pdf-readiness'
+import { pdfEnhancementsReady } from '../lib/pdf-readiness'
 import {
   listManagedTags,
   type ManagedTag,
@@ -1794,21 +1794,7 @@ function waitForPdfArticle(request: PdfExportRequest): Promise<HTMLElement> {
 }
 
 function pdfWidgetsReady(article: HTMLElement): boolean {
-  if (article.querySelector('.mermaid-mount, .markmap-mount')) return false
-  if (!mathWidgetsReady(article)) return false
-  for (const host of article.querySelectorAll<HTMLElement>('.mermaid-widget-host')) {
-    const widget = host.querySelector<HTMLElement>('.mermaid-widget')
-    const state = widget?.dataset.mermaidState
-    if (state !== 'ready' && state !== 'error') return false
-  }
-  for (const host of article.querySelectorAll<HTMLElement>('.markmap-widget-host')) {
-    const widget = host.querySelector<HTMLElement>('.markmap-widget')
-    const state = widget?.dataset.markmapState
-    /* Explicit state is the contract. In particular, a mounted <svg> is not
-       enough: MarkMap inserts it before setData/layout/fit have settled. */
-    if (state !== 'ready' && state !== 'error') return false
-  }
-  return true
+  return pdfEnhancementsReady(article)
 }
 
 async function waitForPdfWidgets(article: HTMLElement): Promise<void> {
