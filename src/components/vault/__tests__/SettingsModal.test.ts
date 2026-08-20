@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { h } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useI18n } from '../../../composables/useI18n'
 import SettingsModal from '../SettingsModal.vue'
+import TagManagementPanel from '../TagManagementPanel.vue'
 
 const getAiSettings = vi.fn()
 const getAiCredentialStatus = vi.fn()
@@ -20,6 +22,8 @@ const deactivateFocusTrap = vi.fn()
 const onFocusTrapTab = vi.fn()
 const toastSuccess = vi.fn()
 const toastError = vi.fn()
+const listManagedTags = vi.fn()
+const getUndoAvailability = vi.fn()
 
 vi.mock('../../../lib/ai-api', () => ({
   getAiSettings: (...args: unknown[]) => getAiSettings(...args),
@@ -34,6 +38,27 @@ vi.mock('../../../lib/api', () => ({
   getFrontmatterCleanupPreview: (...args: unknown[]) => getFrontmatterCleanupPreview(...args),
   cleanDocumentFrontmatter: (...args: unknown[]) => cleanDocumentFrontmatter(...args),
   restoreDocumentFrontmatter: (...args: unknown[]) => restoreDocumentFrontmatter(...args),
+}))
+
+vi.mock('../../../lib/tag-management-api', () => ({
+  listManagedTags: (...args: unknown[]) => listManagedTags(...args),
+  applyTagOperation: vi.fn(),
+  assertApplyResultMatchesReviewedPreview: vi.fn(),
+  getTagOperationPreviewPage: vi.fn(),
+  previewTagOperation: vi.fn(),
+  TagManagementApiError: class extends Error {
+    readonly code = 'CLIENT_PROTOCOL_ERROR'
+  },
+}))
+
+vi.mock('../../../lib/tag-undo-api', () => ({
+  getUndoAvailability: (...args: unknown[]) => getUndoAvailability(...args),
+  applyUndo: vi.fn(),
+  getUndoPreviewPage: vi.fn(),
+  previewUndo: vi.fn(),
+  TagUndoApiError: class extends Error {
+    readonly code = 'CLIENT_PROTOCOL_ERROR'
+  },
 }))
 
 vi.mock('../../../composables/useToast', () => ({
@@ -93,9 +118,17 @@ const migration = {
 
 const wrappers: VueWrapper[] = []
 
-function mountSettings() {
+function mountSettings(options: { withTags?: boolean } = {}) {
   const wrapper = mount(SettingsModal, {
     props: { open: true },
+    slots: options.withTags ? {
+      tags: () => h(TagManagementPanel, {
+        selectedTag: null,
+        selectionEpoch: 0,
+        syncAfterCommit: async () => ({ managedTags: [], selectedTag: null }),
+        recoverCommittedOperation: async () => ({ managedTags: [], selectedTag: null }),
+      }),
+    } : undefined,
     attachTo: document.body,
   })
   wrappers.push(wrapper)
@@ -145,6 +178,8 @@ beforeEach(() => {
   })
   getMetadataMigrationStatus.mockResolvedValue(migration)
   getFrontmatterCleanupPreview.mockResolvedValue({ candidates: [], blocked: [] })
+  listManagedTags.mockResolvedValue([])
+  getUndoAvailability.mockRejectedValue(Object.assign(new Error('undo unavailable'), { code: 'UNDO_UNAVAILABLE' }))
   cleanDocumentFrontmatter.mockResolvedValue({ changed: [], failed: [] })
   restoreDocumentFrontmatter.mockResolvedValue({ changed: [], failed: [] })
   confirm.mockResolvedValue(true)
@@ -317,7 +352,7 @@ describe('SettingsModal', () => {
   })
 
   it('switches to the Editor and Metadata sections without changing their behavior surfaces', async () => {
-    const wrapper = mountSettings()
+    mountSettings({ withTags: true })
     await flushPromises()
 
     findButton('编辑器').click()
@@ -338,11 +373,10 @@ describe('SettingsModal', () => {
     await flushPromises()
     expect(document.body.querySelector('[aria-current="page"]')?.textContent?.trim()).toBe('标签')
     expect(document.body.textContent).toContain('管理标签并撤销最近一次更改')
-    expect(document.body.querySelector('[data-action="manage-tags"]')?.textContent?.trim()).toBe('管理标签')
-
-    findButton('管理标签').click()
-    expect(wrapper.emitted('manage-tags')).toHaveLength(1)
-    expect(wrapper.emitted('close')).toBeUndefined()
+    const settings = document.body.querySelector<HTMLElement>('.settings-modal')!
+    expect(settings.querySelector('[data-tag-management-panel]')).toBeTruthy()
+    expect(settings.querySelector('[data-action="manage-tags"]')).toBeNull()
+    expect(document.body.querySelectorAll('[role="dialog"]')).toHaveLength(1)
   })
 
   it('closes on Escape and continues routing Tab through the focus trap', async () => {
@@ -360,6 +394,27 @@ describe('SettingsModal', () => {
     await wrapper.setProps({ open: false })
     await flushPromises()
     expect(deactivateFocusTrap).toHaveBeenCalled()
-    expect(wrapper.emitted('close-complete')).toHaveLength(1)
+  })
+
+  it('does not unmount the active Tags page while its host reports an unsafe leave', async () => {
+    const wrapper = mount(SettingsModal, {
+      props: { open: true, activeSectionCanLeave: false },
+      slots: { tags: () => h('section', { 'data-tag-management-panel': true }) },
+      attachTo: document.body,
+    })
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    findButton('标签').click()
+    await flushPromises()
+    findButton('编辑器').click()
+    expect(document.body.querySelector('[aria-current="page"]')?.textContent?.trim()).toBe('标签')
+
+    document.body.querySelector<HTMLElement>('.settings-icon-btn')!.click()
+    expect(wrapper.emitted('close')).toBeUndefined()
+
+    await wrapper.setProps({ activeSectionCanLeave: true })
+    document.body.querySelector<HTMLElement>('.settings-icon-btn')!.click()
+    expect(wrapper.emitted('close')).toHaveLength(1)
   })
 })

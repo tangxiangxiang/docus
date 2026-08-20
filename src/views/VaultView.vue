@@ -59,7 +59,7 @@ import type { DocumentLifecycle } from '../composables/vault/useDocumentLifecycl
 import { applyMetadataToPostSummary } from './metadataPostSummary'
 import FileTree from '../components/vault/FileTree.vue'
 import TagPanel from '../components/vault/TagPanel.vue'
-import TagManagementDialog from '../components/vault/TagManagementDialog.vue'
+import TagManagementPanel from '../components/vault/TagManagementPanel.vue'
 import ReadingPane from '../components/vault/ReadingPane.vue'
 import RightRail from '../components/vault/RightRail.vue'
 import EmptyState from '../components/vault/EmptyState.vue'
@@ -1564,31 +1564,19 @@ const { activeScope } = useScopeFilter()
 
 /* ---------- Tag filter ---------- */
 const selectedTag = ref<string | null>(null)
-const tagManagementOpen = ref(false)
-const tagManagementHandoffPending = ref(false)
+const tagManagementPanelRef = ref<{ canLeave: boolean } | null>(null)
+const tagManagementCanLeave = computed(() => tagManagementPanelRef.value?.canLeave ?? true)
 // Phase 2 management dialogs use this local monotonic epoch to distinguish
 // an actual user selection change from an asynchronous Apply completion.
-// The manager remains owned by VaultView while Settings provides its entry
-// action.
+// The manager remains owned by VaultView while Settings provides its page host.
 const tagSelectionEpoch = ref(0)
 function selectTag(tag: string): void {
   selectedTag.value = selectedTag.value === tag ? null : tag
   tagSelectionEpoch.value += 1
 }
 
-function openTagManagementFromSettings(): void {
-  tagManagementHandoffPending.value = true
-  settingsOpen.value = false
-}
-
-function onSettingsCloseComplete(): void {
-  if (!tagManagementHandoffPending.value || settingsOpen.value) return
-  tagManagementHandoffPending.value = false
-  tagManagementOpen.value = true
-}
-
 /**
- * VaultView owns the one post-commit synchronization cycle. The dialog only
+ * VaultView owns the one post-commit synchronization cycle. The panel only
  * captures the Apply-start snapshot and hands the committed result here; the
  * shell refreshes both authoritative projections together, then performs the
  * stable-ID selection reconciliation against the fresh management list.
@@ -1788,24 +1776,21 @@ watch(isReadMode, async (reading) => {
 
     <SettingsModal
       :open="settingsOpen"
+      :active-section-can-leave="tagManagementCanLeave"
       @close="settingsOpen = false"
-      @close-complete="onSettingsCloseComplete"
-      @manage-tags="openTagManagementFromSettings"
-    />
-
-    <!-- VaultView owns dialog lifetime and both post-commit synchronization
-         seams; Settings provides the management entry action. -->
-    <TagManagementDialog
-      v-if="tagManagementOpen"
-      :open="tagManagementOpen"
-      :selected-tag="selectedTag"
-      :selection-epoch="tagSelectionEpoch"
-      :sync-after-commit="synchronizeCommittedTagOperation"
-      :recover-committed-operation="recoverCommittedTagOperation"
-      :sync-after-undo="synchronizeCommittedUndo"
-      :recover-committed-undo="recoverCommittedUndo"
-      @close="tagManagementOpen = false"
-    />
+    >
+      <template #tags>
+        <TagManagementPanel
+          ref="tagManagementPanelRef"
+          :selected-tag="selectedTag"
+          :selection-epoch="tagSelectionEpoch"
+          :sync-after-commit="synchronizeCommittedTagOperation"
+          :recover-committed-operation="recoverCommittedTagOperation"
+          :sync-after-undo="synchronizeCommittedUndo"
+          :recover-committed-undo="recoverCommittedUndo"
+        />
+      </template>
+    </SettingsModal>
 
     <DraftRecoveryPrompt
       :item="draftRecovery.pendingItem.value"

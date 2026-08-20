@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useConfirm } from '../../composables/useConfirm'
-import { useFocusTrap } from '../../composables/useFocusTrap'
 import { useI18n } from '../../composables/useI18n'
 import { formatHistoryDate } from '../../lib/history-date'
 import {
@@ -88,8 +87,7 @@ interface CommittedUndoRecoveryResult extends UndoSyncResult {
   outcome: 'consumed' | 'superseded' | 'terminal-unavailable'
 }
 
-interface TagManagementDialogProps {
-  open: boolean
+interface TagManagementPanelProps {
   selectedTag?: string | null
   selectionEpoch?: number
   /** The VaultView-owned canonical refresh and stable-ID reconciliation seam. */
@@ -122,20 +120,19 @@ interface TagManagementDialogProps {
   ) => Promise<CommittedUndoRecoveryResult>
 }
 
-const props = withDefaults(defineProps<TagManagementDialogProps>(), {
+const props = withDefaults(defineProps<TagManagementPanelProps>(), {
   selectedTag: null,
   selectionEpoch: 0,
 })
 
 const emit = defineEmits<{
-  close: []
   success: [result: TagOperationApplyResult]
 }>()
 
 const { locale, t } = useI18n()
 const { confirmCancellable } = useConfirm()
-const trap = useFocusTrap()
-const modalRef = ref<HTMLElement | null>(null)
+const panelRef = ref<HTMLElement | null>(null)
+const isMounted = ref(false)
 const sourceSelectRef = ref<HTMLSelectElement | null>(null)
 const destinationInputRef = ref<HTMLInputElement | null>(null)
 const destinationSelectRef = ref<HTMLSelectElement | null>(null)
@@ -404,6 +401,12 @@ const canDismiss = computed(() => ![
   'loading', 'previewing', 'applying', 'syncing', 'sync-pending',
 ].includes(state.value) && !undoLocksEditing.value)
 
+// SettingsModal uses this host-level signal to keep the Panel mounted while a
+// committed mutation, synchronization, or Undo recovery is still unsafe to
+// abandon. The Panel remains the only owner of the domain state machine.
+const canLeave = computed(() => canDismiss.value)
+defineExpose({ canLeave })
+
 function setDiagnostic(stage: string, code: string | null = null): void {
   diagnosticStage.value = stage
   diagnosticCode.value = code
@@ -511,7 +514,7 @@ async function refreshUndoAuthoritativeState(): Promise<void> {
     listManagedTags(),
     getUndoAvailability(),
   ])
-  if (run !== undoRefreshRun || !props.open) return
+  if (run !== undoRefreshRun || !isMounted.value) return
   if (tagsResult.status === 'fulfilled') {
     managedTags.value = tagsResult.value
     finalTags.value = tagsResult.value
@@ -683,7 +686,7 @@ async function fetchManagedTagsForOpening(): Promise<void> {
     listManagedTags(),
     getUndoAvailability(),
   ])
-  if (run !== loadRun || !props.open) return
+  if (run !== loadRun || !isMounted.value) return
 
   if (tagsResult.status === 'rejected') {
     const error = tagsResult.reason
@@ -693,7 +696,7 @@ async function fetchManagedTagsForOpening(): Promise<void> {
     errorMessage.value = mapError(error, 'load')
     announce(errorMessage.value)
     await nextTick()
-    modalRef.value?.querySelector<HTMLButtonElement>('[data-action="reload"]')?.focus()
+    panelRef.value?.querySelector<HTMLButtonElement>('[data-action="reload"]')?.focus()
     return
   }
 
@@ -726,7 +729,7 @@ async function refreshManagedTagsAfterTagNotFound(): Promise<void> {
   announce(errorMessage.value)
   try {
     const tags = await listManagedTags()
-    if (run !== loadRun || !props.open) return
+    if (run !== loadRun || !isMounted.value) return
     managedTags.value = tags
     finalTags.value = tags
     if (sourceTagId.value !== null && !tags.some((tag) => tag.id === sourceTagId.value)) {
@@ -741,14 +744,14 @@ async function refreshManagedTagsAfterTagNotFound(): Promise<void> {
     await nextTick()
     if (sourceTagId.value === null) sourceSelectRef.value?.focus()
   } catch (error) {
-    if (run !== loadRun || !props.open) return
+    if (run !== loadRun || !isMounted.value) return
     const code = error instanceof TagManagementApiError ? error.code : 'CLIENT_PROTOCOL_ERROR'
     state.value = isHealthBlocked(code) ? 'unavailable' : 'error'
     setDiagnostic(isHealthBlocked(code) ? 'unavailable' : 'load-failure', code)
     errorMessage.value = mapError(error, 'load')
     announce(errorMessage.value)
     await nextTick()
-    modalRef.value?.querySelector<HTMLButtonElement>('[data-action="reload"]')?.focus()
+    panelRef.value?.querySelector<HTMLButtonElement>('[data-action="reload"]')?.focus()
   }
 }
 
@@ -808,7 +811,7 @@ async function onPreview(): Promise<void> {
   announce(t('tags.manage.previewing'))
   try {
     const result = await previewTagOperation(operation)
-    if (run !== previewRun || revision !== operationRevision || !props.open) return
+    if (run !== previewRun || revision !== operationRevision || !isMounted.value) return
     preview.value = result
     reviewedOperation.value = result.operation
     continuationPages.value = [result.sample]
@@ -819,7 +822,7 @@ async function onPreview(): Promise<void> {
     await nextTick()
     previewHeadingRef.value?.focus()
   } catch (error) {
-    if (run !== previewRun || revision !== operationRevision || !props.open) return
+    if (run !== previewRun || revision !== operationRevision || !isMounted.value) return
     const code = error instanceof TagManagementApiError ? error.code : 'CLIENT_PROTOCOL_ERROR'
     if (code === 'TAG_NOT_FOUND') {
       await refreshManagedTagsAfterTagNotFound()
@@ -863,7 +866,7 @@ async function onUndoPreview(): Promise<void> {
     if (
       run !== undoPreviewRun
       || availabilityRevision !== undoAvailabilityRevision
-      || !props.open
+      || !isMounted.value
       || undoAvailability.value?.recordId !== recordId
     ) return
 
@@ -873,7 +876,7 @@ async function onUndoPreview(): Promise<void> {
         undoState.value = 'undo-superseded'
         setDiagnostic('undo-superseded', 'UNDO_SUPERSEDED')
         await refreshUndoAuthoritativeState()
-        if (run !== undoPreviewRun || !props.open) return
+        if (run !== undoPreviewRun || !isMounted.value) return
         announce(t('tags.manage.undo_superseded'))
         return
       }
@@ -907,7 +910,7 @@ async function onUndoPreview(): Promise<void> {
     await nextTick()
     undoPreviewHeadingRef.value?.focus()
   } catch (error) {
-    if (run !== undoPreviewRun || availabilityRevision !== undoAvailabilityRevision || !props.open) return
+    if (run !== undoPreviewRun || availabilityRevision !== undoAvailabilityRevision || !isMounted.value) return
     const code = error instanceof TagUndoApiError ? error.code : 'CLIENT_PROTOCOL_ERROR'
     clearUndoPreview()
     if (code === 'UNDO_CONFLICT'
@@ -954,7 +957,7 @@ async function loadMoreUndo(): Promise<void> {
     if (
       run !== undoPageRun
       || previewGeneration !== undoPreviewRun
-      || !props.open
+      || !isMounted.value
       || reviewedUndoPreview.value !== reviewed
       || undoPreview.value !== currentPreview
       || undoNextCursor.value !== cursor
@@ -974,7 +977,7 @@ async function loadMoreUndo(): Promise<void> {
     undoState.value = 'undo-preview-ready'
     setDiagnostic('undo-preview-ready')
   } catch (error) {
-    if (run !== undoPageRun || previewGeneration !== undoPreviewRun || !props.open) return
+    if (run !== undoPageRun || previewGeneration !== undoPreviewRun || !isMounted.value) return
     const code = error instanceof TagUndoApiError ? error.code : 'CLIENT_PROTOCOL_ERROR'
     clearUndoPreview()
     if (code === 'UNDO_STALE' || code === 'UNDO_PREVIEW_REQUIRED') {
@@ -1011,7 +1014,7 @@ async function loadMore(): Promise<void> {
     if (
       run !== pageRun
       || previewGeneration !== previewRun
-      || !props.open
+      || !isMounted.value
       || !preview.value
       || preview.value.planFingerprint !== fingerprint
       || reviewedOperation.value !== operation
@@ -1032,7 +1035,7 @@ async function loadMore(): Promise<void> {
     nextAfterDocumentId.value = page.nextAfterDocumentId
     setDiagnostic('preview-ready')
   } catch (error) {
-    if (run !== pageRun || previewGeneration !== previewRun || !props.open) return
+    if (run !== pageRun || previewGeneration !== previewRun || !isMounted.value) return
     const code = error instanceof TagManagementApiError ? error.code : 'CLIENT_PROTOCOL_ERROR'
     if (code === 'PREVIEW_STALE') {
       staleMessage.value = t('tags.manage.preview_stale')
@@ -1098,7 +1101,7 @@ async function requestUndoConfirmation(currentPreview: UndoPreview): Promise<voi
     undoConfirmation.value = null
   }
   if (!confirmed) {
-    if (reviewedUndoPreview.value === context.preview && props.open) {
+    if (reviewedUndoPreview.value === context.preview && isMounted.value) {
       undoState.value = 'undo-preview-ready'
       setDiagnostic('undo-preview-ready')
       announce(t('tags.manage.undo_preview_ready'))
@@ -1168,7 +1171,7 @@ async function runUndoSynchronization(
   try {
     if (typeof props.syncAfterUndo !== 'function') throw new Error('Undo synchronization seam is unavailable')
     const synchronized = await props.syncAfterUndo(result, snapshot)
-    if (run !== undoSyncRun || !props.open) return
+    if (run !== undoSyncRun || !isMounted.value) return
     applyUndoSynchronizationResult(synchronized)
     settleUndoStateAfterCommittedSync(synchronized.undoAvailability, result.undoRecordId, 'success')
     undoSelectionSnapshot.value = null
@@ -1177,7 +1180,7 @@ async function runUndoSynchronization(
     setDiagnostic('undo-success')
     announce(t('tags.manage.undo_success'))
   } catch {
-    if (run !== undoSyncRun || !props.open) return
+    if (run !== undoSyncRun || !isMounted.value) return
     undoState.value = 'undo-sync-pending'
     setDiagnostic('undo-pending')
     announce(t('tags.manage.undo_sync_pending'))
@@ -1199,7 +1202,7 @@ async function recoverCommittedUndoReadOnly(): Promise<void> {
   announce(t('tags.manage.undo_committed_refreshing'))
   try {
     const recovered = await props.recoverCommittedUndo(recordId, snapshot)
-    if (run !== undoSyncRun || !props.open) return
+    if (run !== undoSyncRun || !isMounted.value) return
     finalTags.value = recovered.managedTags
     managedTags.value = recovered.managedTags
     reconciledSelectedTag.value = recovered.selectedTag
@@ -1222,7 +1225,7 @@ async function recoverCommittedUndoReadOnly(): Promise<void> {
       announce(t('tags.manage.undo_terminal'))
     }
   } catch {
-    if (run !== undoSyncRun || !props.open) return
+    if (run !== undoSyncRun || !isMounted.value) return
     undoState.value = 'undo-sync-pending'
     setDiagnostic('undo-pending', 'CLIENT_PROTOCOL_ERROR')
     announce(t('tags.manage.undo_sync_pending'))
@@ -1251,7 +1254,7 @@ async function applyReviewedUndo(reviewed: UndoPreview): Promise<void> {
     // scope, document list, or replacement request is constructed here.
     result = await applyUndo(reviewed)
   } catch (error) {
-    if (run !== undoSyncRun || !props.open) return
+    if (run !== undoSyncRun || !isMounted.value) return
     const typed = error instanceof TagUndoApiError ? error : null
     if (typed?.code === 'CLIENT_PROTOCOL_ERROR' && typed.recoveryRecordId) {
       undoRecoveryRecordId.value = typed.recoveryRecordId
@@ -1266,7 +1269,7 @@ async function applyReviewedUndo(reviewed: UndoPreview): Promise<void> {
     return
   }
 
-  if (run !== undoSyncRun || !props.open) return
+  if (run !== undoSyncRun || !isMounted.value) return
   undoResult.value = result
   undoRecoveryPending.value = false
   undoState.value = 'undo-committed-refreshing'
@@ -1309,7 +1312,7 @@ async function runSynchronization(result: TagOperationApplyResult): Promise<void
       return
     }
     const synchronized = await props.syncAfterCommit(result, snapshot)
-    if (run !== syncRun || !props.open) return
+    if (run !== syncRun || !isMounted.value) return
     finalTags.value = synchronized.managedTags
     managedTags.value = synchronized.managedTags
     reconciledSelectedTag.value = synchronized.selectedTag
@@ -1323,7 +1326,7 @@ async function runSynchronization(result: TagOperationApplyResult): Promise<void
       : t('tags.manage.success_generic'))
     emit('success', result)
   } catch (error) {
-    if (run !== syncRun || !props.open) return
+    if (run !== syncRun || !isMounted.value) return
     const code = error instanceof TagManagementApiError ? error.code : 'CLIENT_PROTOCOL_ERROR'
     state.value = 'sync-pending'
     setDiagnostic('sync-pending', code)
@@ -1390,7 +1393,7 @@ async function recoverCommittedProtocolMismatch(): Promise<void> {
       throw new Error('committed tag recovery seam is unavailable')
     }
     const synchronized = await props.recoverCommittedOperation(operation, snapshot)
-    if (run !== syncRun || !props.open) return
+    if (run !== syncRun || !isMounted.value) return
     managedTags.value = synchronized.managedTags
     finalTags.value = synchronized.managedTags
     reconciledSelectedTag.value = synchronized.selectedTag
@@ -1406,7 +1409,7 @@ async function recoverCommittedProtocolMismatch(): Promise<void> {
     errorMessage.value = t('tags.manage.committed_protocol_mismatch')
     announce(errorMessage.value)
   } catch {
-    if (run !== syncRun || !props.open) return
+    if (run !== syncRun || !isMounted.value) return
     state.value = 'sync-pending'
     setDiagnostic('sync-pending', 'CLIENT_PROTOCOL_ERROR')
     errorMessage.value = t('tags.manage.committed_protocol_mismatch')
@@ -1451,7 +1454,7 @@ async function applyReviewedPreview(
   try {
     result = await applyTagOperation(operation, currentPreview.planFingerprint)
   } catch (error) {
-    if (run !== syncRun || !props.open) return
+    if (run !== syncRun || !isMounted.value) return
     const code = error instanceof TagManagementApiError ? error.code : 'CLIENT_PROTOCOL_ERROR'
     if (code === 'PREVIEW_STALE' || code === 'PREVIEW_REQUIRED') {
       staleMessage.value = t('tags.manage.preview_stale')
@@ -1474,7 +1477,7 @@ async function applyReviewedPreview(
     return
   }
 
-  if (run !== syncRun || !props.open) return
+  if (run !== syncRun || !isMounted.value) return
   applyResult.value = result
 
   try {
@@ -1521,30 +1524,6 @@ async function reloadManagedTags(): Promise<void> {
   destinationTagId.value = null
   destinationError.value = ''
   await fetchManagedTagsForOpening()
-}
-
-function close(): void {
-  if (!canDismiss.value) return
-  cancelPendingRemovalConfirmation()
-  cancelPendingUndoConfirmation()
-  ++undoPreviewRun
-  ++undoSyncRun
-  ++undoRefreshRun
-  clearUndoPreview()
-  emit('close')
-}
-
-function onKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape') {
-    event.preventDefault()
-    close()
-    return
-  }
-  if (event.key === 'Tab') trap.onTab(() => modalRef.value, event)
-}
-
-function onBackdropClick(): void {
-  close()
 }
 
 function onSourceChange(event: Event): void {
@@ -1595,29 +1574,14 @@ watch([operationKind, sourceTagId, destinationTagId, destinationName], (next, pr
   if (state.value === 'success') state.value = 'editing'
 })
 
-watch(() => props.open, (open) => {
-  if (open) {
-    resetForOpen()
-    trap.activate()
-    void fetchManagedTagsForOpening()
-    void nextTick(() => {
-      const closeButton = modalRef.value?.querySelector<HTMLButtonElement>('[data-action="close"]')
-      closeButton?.focus()
-    })
-  } else {
-    ++loadRun
-    ++previewRun
-    ++syncRun
-    ++undoPreviewRun
-    ++undoSyncRun
-    ++undoRefreshRun
-    clearPreview()
-    clearUndoPreview()
-    void trap.deactivate()
-  }
-}, { immediate: true })
+onMounted(() => {
+  isMounted.value = true
+  resetForOpen()
+  void fetchManagedTagsForOpening()
+})
 
 onBeforeUnmount(() => {
+  isMounted.value = false
   ++loadRun
   ++previewRun
   ++syncRun
@@ -1626,51 +1590,34 @@ onBeforeUnmount(() => {
   ++undoSyncRun
   ++undoPageRun
   ++undoRefreshRun
+  cancelPendingRemovalConfirmation()
+  cancelPendingUndoConfirmation()
+  clearPreview()
   clearUndoPreview()
-  void trap.deactivate()
 })
 </script>
 
 <template>
-  <Teleport to="body">
-    <div
-      v-if="open"
-      class="tag-management-backdrop"
-      role="presentation"
-      tabindex="-1"
-      @click.self="onBackdropClick"
-      @keydown="onKeydown"
-    >
-      <section
-        ref="modalRef"
-        class="tag-management-dialog"
-        role="dialog"
-        aria-modal="true"
-        :aria-label="t('tags.manage.title')"
-        aria-labelledby="tag-management-title"
-        aria-describedby="tag-management-description"
-        :data-state="state"
-        :data-undo-state="undoState"
-        :data-diagnostic-stage="diagnosticStage"
-        :data-diagnostic-code="diagnosticCode ?? undefined"
-      >
-        <header class="tag-management-header">
-          <div>
-            <h2 id="tag-management-title">{{ t('tags.manage.title') }}</h2>
-            <p id="tag-management-description">{{ t('tags.manage.description') }}</p>
-          </div>
-          <button
-            type="button"
-            class="tag-management-close"
-            data-action="close"
-            :aria-label="t('tags.manage.close')"
-            :title="t('tags.manage.close')"
-            :disabled="!canDismiss"
-            @click="close"
-          >×</button>
-        </header>
+  <section
+    ref="panelRef"
+    class="tag-management-panel"
+    data-tag-management-panel
+    aria-labelledby="tag-management-title"
+    aria-describedby="tag-management-description"
+    :data-state="state"
+    :data-can-leave="canLeave"
+    :data-undo-state="undoState"
+    :data-diagnostic-stage="diagnosticStage"
+    :data-diagnostic-code="diagnosticCode ?? undefined"
+  >
+    <header class="tag-management-header">
+      <div>
+        <h4 id="tag-management-title">{{ t('tags.manage.title') }}</h4>
+        <p id="tag-management-description">{{ t('tags.manage.description') }}</p>
+      </div>
+    </header>
 
-        <div class="tag-management-body">
+    <div class="tag-management-body">
           <p class="tag-management-live" role="status" aria-live="polite">{{ liveMessage }}</p>
 
           <div v-if="state === 'loading'" class="tag-management-state" aria-busy="true">
@@ -2105,56 +2052,27 @@ onBeforeUnmount(() => {
           <p class="tag-management-diagnostic" :data-code="diagnosticCode ?? undefined">
             {{ t('tags.manage.diagnostic', { stage: diagnosticLabel }) }}
           </p>
-        </div>
-      </section>
     </div>
-  </Teleport>
+  </section>
 </template>
 
 <style scoped>
-.tag-management-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 9998;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background: rgb(0 0 0 / 42%);
-}
-.tag-management-dialog {
-  width: min(720px, 100%);
-  max-height: min(820px, calc(100vh - 48px));
-  overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--border) 90%, var(--text-muted));
-  border-radius: 10px;
-  background: var(--bg);
+.tag-management-panel {
+  width: 100%;
+  min-width: 0;
   color: var(--text-h);
-  box-shadow: 0 18px 54px rgb(0 0 0 / 34%);
 }
 .tag-management-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 18px;
-  padding: 18px 20px 14px;
+  padding: 2px 0 14px;
   border-bottom: 1px solid var(--border);
 }
-.tag-management-header h2 { margin: 0; font-size: 1.12rem; }
+.tag-management-header h4 { margin: 0; font-size: 1.12rem; }
 .tag-management-header p { margin: 5px 0 0; color: var(--text-muted); font-size: 0.78rem; }
-.tag-management-close {
-  width: 30px;
-  height: 30px;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--text-muted);
-  font: inherit;
-  font-size: 1.25rem;
-  cursor: pointer;
-}
-.tag-management-close:hover:not(:disabled) { background: var(--bg-soft); color: var(--text); }
-.tag-management-close:disabled { cursor: not-allowed; opacity: 0.45; }
-.tag-management-body { max-height: calc(100vh - 140px); overflow-y: auto; padding: 18px 20px 20px; }
+.tag-management-body { padding: 18px 0 0; }
 .tag-management-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .tag-management-form { display: grid; gap: 14px; }
 .tag-management-mode { display: grid; gap: 7px; margin: 0; padding: 0; border: 0; }
@@ -2234,8 +2152,6 @@ onBeforeUnmount(() => {
 .tag-management-empty { margin: 18px 0 0; color: var(--text-muted); font-size: 0.78rem; }
 .tag-management-diagnostic { margin: 18px 0 0; color: var(--text-muted); font-size: 0.68rem; }
 @media (max-width: 600px) {
-  .tag-management-backdrop { align-items: end; padding: 0; }
-  .tag-management-dialog { width: 100%; max-height: 90vh; border-radius: 9px 9px 0 0; }
   .tag-management-summary, .tag-management-undo-summary { grid-template-columns: minmax(0, 1fr); }
   .tag-management-undo-section-heading { align-items: flex-start; flex-direction: column; gap: 2px; }
 }

@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { useI18n } from '../../../composables/useI18n'
-import TagManagementDialog from '../TagManagementDialog.vue'
+import TagManagementPanel from '../TagManagementPanel.vue'
 import type {
   ManagedTag,
   TagOperationApplyResult,
@@ -343,7 +343,7 @@ function makeUndoResult(overrides: Partial<UndoApplyResult> = {}): UndoApplyResu
   }
 }
 
-function mountDialog(options: {
+function mountPanel(options: {
   selectedTag?: string | null
   selectionEpoch?: number
   refreshPosts?: () => void | Promise<void>
@@ -410,11 +410,9 @@ function mountDialog(options: {
       }),
     }
   })
-  return mount(TagManagementDialog, {
+  return mount(TagManagementPanel, {
     attachTo: document.body,
-    global: { stubs: { Teleport: true } },
     props: {
-      open: true,
       selectedTag: options.selectedTag ?? null,
       selectionEpoch: options.selectionEpoch ?? 0,
       syncAfterCommit,
@@ -464,7 +462,7 @@ function enableUndoAvailability(overrides: Partial<UndoAvailability> = {}): void
   mocks.getUndoAvailability.mockReset().mockResolvedValue(makeUndoAvailability(overrides))
 }
 
-describe('TagManagementDialog', () => {
+describe('TagManagementPanel', () => {
   let wrappers: VueWrapper[] = []
 
   beforeEach(() => {
@@ -495,8 +493,8 @@ describe('TagManagementDialog', () => {
     useI18n().setLocale('zh')
   })
 
-  function mountTracked(options: Parameters<typeof mountDialog>[0] = {}): VueWrapper {
-    const wrapper = mountDialog(options)
+  function mountTracked(options: Parameters<typeof mountPanel>[0] = {}): VueWrapper {
+    const wrapper = mountPanel(options)
     wrappers.push(wrapper)
     return wrapper
   }
@@ -505,7 +503,7 @@ describe('TagManagementDialog', () => {
     const wrapper = mountTracked()
     await settle()
     expect(mocks.listManagedTags).toHaveBeenCalledTimes(1)
-    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('ready')
+    expect(wrapper.get('[data-tag-management-panel]').attributes('data-state')).toBe('ready')
     expect(wrapper.get('#tag-management-source').findAll('option')).toHaveLength(3)
     expect(wrapper.text()).toContain('Manage tags')
     expect(wrapper.find('[data-operation="remove"]').exists()).toBe(true)
@@ -609,10 +607,10 @@ describe('TagManagementDialog', () => {
       destinationAfter: null,
       associationRemoves: 3,
     })
-    await wrapper.setProps({ open: false })
-    await wrapper.setProps({ open: true })
+    wrapper.unmount()
+    const remounted = mountTracked()
     await settle()
-    expect(wrapper.get('[data-undo-last-change]').text()).toContain('Undo Remove')
+    expect(remounted.get('[data-undo-last-change]').text()).toContain('Undo Remove')
   })
 
   it('uses ConfirmHost semantics, keeps Preview after Cancel, and Applies Undo once on confirmation', async () => {
@@ -695,7 +693,7 @@ describe('TagManagementDialog', () => {
     expect(wrapper.get('[data-undo-last-change]').text()).toContain('Rust')
     expect(wrapper.find('[data-action="undo-preview"]').exists()).toBe(true)
     expect(wrapper.find('[data-undo-preview]').exists()).toBe(false)
-    expect(wrapper.find('[role="dialog"]').exists()).toBe(true)
+    expect(wrapper.find('[data-tag-management-panel]').exists()).toBe(true)
 
     await wrapper.get('[data-action="undo-preview"]').trigger('click')
     await settle()
@@ -720,12 +718,12 @@ describe('TagManagementDialog', () => {
 
     enableUndoAvailability()
     mocks.previewUndo.mockRejectedValueOnce(new mocks.TagUndoApiError('stale', 409, 'UNDO_STALE'))
-    await wrapper.setProps({ open: false })
-    await wrapper.setProps({ open: true })
+    wrapper.unmount()
+    const remounted = mountTracked()
     await settle()
-    await wrapper.get('[data-action="undo-preview"]').trigger('click')
+    await remounted.get('[data-action="undo-preview"]').trigger('click')
     await settle()
-    expect(wrapper.get('[data-undo-state]').attributes('data-undo-state')).toBe('undo-stale')
+    expect(remounted.get('[data-undo-state]').attributes('data-undo-state')).toBe('undo-stale')
     expect(mocks.applyUndo).toHaveBeenCalledTimes(1)
   })
 
@@ -1074,14 +1072,14 @@ describe('TagManagementDialog', () => {
     await wrapper.get('.tag-management-preview [data-action="apply"]').trigger('click')
     await settle()
 
-    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('applying')
+    expect(wrapper.get('[data-tag-management-panel]').attributes('data-state')).toBe('applying')
     expect(wrapper.find('[data-action="undo-preview"]').exists()).toBe(false)
     expect(mocks.previewUndo).not.toHaveBeenCalled()
     expect(mocks.applyUndo).not.toHaveBeenCalled()
 
     resolveApply(makeResult())
     await settle()
-    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('success')
+    expect(wrapper.get('[data-tag-management-panel]').attributes('data-state')).toBe('success')
   })
 
   it('disables Undo while ordinary synchronization is sync-pending', async () => {
@@ -1098,7 +1096,7 @@ describe('TagManagementDialog', () => {
     await wrapper.get('.tag-management-preview [data-action="apply"]').trigger('click')
     await settle()
 
-    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('sync-pending')
+    expect(wrapper.get('[data-tag-management-panel]').attributes('data-state')).toBe('sync-pending')
     expect(wrapper.get('.tag-management-state-error .primary').text()).toBe('Retry synchronization')
     expect(wrapper.find('[data-action="undo-preview"]').exists()).toBe(false)
     expect(mocks.previewUndo).not.toHaveBeenCalled()
@@ -1128,7 +1126,7 @@ describe('TagManagementDialog', () => {
     mocks.listManagedTags.mockRejectedValueOnce(new mocks.TagManagementApiError('unavailable', 503, 'TAG_MANAGEMENT_UNAVAILABLE'))
     const wrapper = mountTracked()
     await settle()
-    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('unavailable')
+    expect(wrapper.get('[data-tag-management-panel]').attributes('data-state')).toBe('unavailable')
     expect(wrapper.text()).toContain('temporarily unavailable')
     expect(wrapper.find('[data-action="reload"]').exists()).toBe(true)
     expect(wrapper.find('form').exists()).toBe(false)
@@ -1149,7 +1147,7 @@ describe('TagManagementDialog', () => {
     await settle()
     expect(mocks.listManagedTags).toHaveBeenCalledTimes(2)
     expect(mocks.previewTagOperation).toHaveBeenCalledTimes(1)
-    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('editing')
+    expect(wrapper.get('[data-tag-management-panel]').attributes('data-state')).toBe('editing')
     expect(wrapper.find('.tag-management-preview').exists()).toBe(false)
     expect((wrapper.get('#tag-management-destination').element as HTMLInputElement).value).toBe('Backend')
     expect((wrapper.get('#tag-management-source').element as HTMLSelectElement).value).toBe('')
@@ -1172,7 +1170,7 @@ describe('TagManagementDialog', () => {
     await settle()
     expect(mocks.applyTagOperation).toHaveBeenCalledTimes(1)
     expect(mocks.listManagedTags).toHaveBeenCalledTimes(2)
-    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('editing')
+    expect(wrapper.get('[data-tag-management-panel]').attributes('data-state')).toBe('editing')
     expect(wrapper.find('.tag-management-preview').exists()).toBe(false)
     expect((wrapper.get('#tag-management-destination').element as HTMLInputElement).value).toBe('Backend')
     expect((wrapper.get('#tag-management-source').element as HTMLSelectElement).value).toBe('')
@@ -1200,7 +1198,7 @@ describe('TagManagementDialog', () => {
     expect(mocks.applyTagOperation).toHaveBeenCalledTimes(1)
     expect(mocks.listManagedTags).toHaveBeenCalledTimes(2)
     expect(mocks.previewTagOperation).toHaveBeenCalledTimes(1)
-    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('editing')
+    expect(wrapper.get('[data-tag-management-panel]').attributes('data-state')).toBe('editing')
     expect(wrapper.find('.tag-management-preview').exists()).toBe(false)
     expect((wrapper.get('#tag-management-source').element as HTMLSelectElement).value).toBe('7')
     expect((wrapper.get('#tag-management-destination').element as HTMLSelectElement).value).toBe('')
@@ -1221,7 +1219,7 @@ describe('TagManagementDialog', () => {
     await wrapper.get('#tag-management-destination').setValue('Backend')
     await wrapper.get('form').trigger('submit')
     await settle()
-    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('unavailable')
+    expect(wrapper.get('[data-tag-management-panel]').attributes('data-state')).toBe('unavailable')
     expect(wrapper.text()).toContain('Tag identity health failed')
     expect(wrapper.find('.tag-management-preview').exists()).toBe(false)
     expect(mocks.applyTagOperation).not.toHaveBeenCalled()
@@ -1322,7 +1320,7 @@ describe('TagManagementDialog', () => {
     confirmation.resolve(false)
     await settle()
     expect(mocks.applyTagOperation).not.toHaveBeenCalled()
-    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('preview-ready')
+    expect(wrapper.get('[data-tag-management-panel]').attributes('data-state')).toBe('preview-ready')
     expect(wrapper.get('.tag-management-live').text()).toContain('Removal cancelled')
   })
 
@@ -1399,7 +1397,7 @@ describe('TagManagementDialog', () => {
     await settle()
     expect(confirmation.cancel).toHaveBeenCalledTimes(1)
     expect(mocks.applyTagOperation).not.toHaveBeenCalled()
-    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('editing')
+    expect(wrapper.get('[data-tag-management-panel]').attributes('data-state')).toBe('editing')
   })
 
   it('handles Remove stale Apply without retrying automatically', async () => {
@@ -1437,7 +1435,7 @@ describe('TagManagementDialog', () => {
     await settle()
     expect(mocks.applyTagOperation).toHaveBeenCalledTimes(1)
     expect(mocks.listManagedTags).toHaveBeenCalledTimes(2)
-    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('editing')
+    expect(wrapper.get('[data-tag-management-panel]').attributes('data-state')).toBe('editing')
     expect(wrapper.find('.tag-management-preview').exists()).toBe(false)
     expect((wrapper.get('#tag-management-source').element as HTMLSelectElement).value).toBe('')
     expect(wrapper.text()).toContain('source or destination tag no longer exists')
@@ -1461,13 +1459,13 @@ describe('TagManagementDialog', () => {
     resolveRemovalConfirmation(true)
     await wrapper.get('[data-action="remove-apply"]').trigger('click')
     await settle()
-    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('sync-pending')
+    expect(wrapper.get('[data-tag-management-panel]').attributes('data-state')).toBe('sync-pending')
     expect(mocks.applyTagOperation).toHaveBeenCalledTimes(1)
     await wrapper.get('.tag-management-state-error .primary').trigger('click')
     await settle()
     expect(syncAfterCommit).toHaveBeenCalledTimes(2)
     expect(mocks.applyTagOperation).toHaveBeenCalledTimes(1)
-    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('success')
+    expect(wrapper.get('[data-tag-management-panel]').attributes('data-state')).toBe('success')
   })
 
   it('preserves a newer user selection when Remove synchronization resolves', async () => {
@@ -1486,7 +1484,7 @@ describe('TagManagementDialog', () => {
     resolveRemovalConfirmation(true)
     await wrapper.get('[data-action="remove-apply"]').trigger('click')
     await settle()
-    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('syncing')
+    expect(wrapper.get('[data-tag-management-panel]').attributes('data-state')).toBe('syncing')
     await wrapper.setProps({ selectedTag: 'Python', selectionEpoch: 13 })
     resolveSync?.({ managedTags: [TAGS[1]!], selectedTag: 'Python' })
     await settle()
@@ -1529,8 +1527,8 @@ describe('TagManagementDialog', () => {
     expect(syncAfterCommit).not.toHaveBeenCalled()
     expect(recoverCommittedOperation).not.toHaveBeenCalled()
     expect(mocks.applyTagOperation).toHaveBeenCalledTimes(1)
-    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('sync-pending')
-    expect(wrapper.get('[role="dialog"]').attributes('data-diagnostic-code')).toBe('CLIENT_PROTOCOL_ERROR')
+    expect(wrapper.get('[data-tag-management-panel]').attributes('data-state')).toBe('sync-pending')
+    expect(wrapper.get('[data-tag-management-panel]').attributes('data-diagnostic-code')).toBe('CLIENT_PROTOCOL_ERROR')
     expect(wrapper.find('.tag-management-state-success').exists()).toBe(false)
     expect(wrapper.text()).toContain('was committed')
     expect(wrapper.text()).toContain('did not match the reviewed Preview')
@@ -1548,7 +1546,7 @@ describe('TagManagementDialog', () => {
     )
     expect(syncAfterCommit).not.toHaveBeenCalled()
     expect(mocks.applyTagOperation).toHaveBeenCalledTimes(1)
-    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('editing')
+    expect(wrapper.get('[data-tag-management-panel]').attributes('data-state')).toBe('editing')
     expect(wrapper.find('.tag-management-preview').exists()).toBe(false)
     expect(wrapper.text()).toContain('Do not apply the operation again')
   })
@@ -1577,12 +1575,12 @@ describe('TagManagementDialog', () => {
 
     expect(mocks.applyTagOperation).toHaveBeenCalledTimes(1)
     expect(syncAfterCommit).not.toHaveBeenCalled()
-    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('sync-pending')
+    expect(wrapper.get('[data-tag-management-panel]').attributes('data-state')).toBe('sync-pending')
     await wrapper.get('.tag-management-state-error .primary').trigger('click')
     await settle()
     expect(recoverCommittedOperation).toHaveBeenCalledTimes(1)
     expect(mocks.applyTagOperation).toHaveBeenCalledTimes(1)
-    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('editing')
+    expect(wrapper.get('[data-tag-management-panel]').attributes('data-state')).toBe('editing')
     expect(wrapper.find('.tag-management-preview').exists()).toBe(false)
   })
 
@@ -1605,21 +1603,21 @@ describe('TagManagementDialog', () => {
     await wrapper.get('.tag-management-preview .primary').trigger('click')
     await settle()
 
-    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('sync-pending')
+    expect(wrapper.get('[data-tag-management-panel]').attributes('data-state')).toBe('sync-pending')
     expect(mocks.applyTagOperation).toHaveBeenCalledTimes(1)
 
     await wrapper.get('.tag-management-state-error .primary').trigger('click')
     await settle()
     expect(recoverCommittedOperation).toHaveBeenCalledTimes(1)
     expect(mocks.applyTagOperation).toHaveBeenCalledTimes(1)
-    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('sync-pending')
+    expect(wrapper.get('[data-tag-management-panel]').attributes('data-state')).toBe('sync-pending')
     expect(wrapper.get('.tag-management-state-error .primary').text()).toBe('Retry synchronization')
 
     await wrapper.get('.tag-management-state-error .primary').trigger('click')
     await settle()
     expect(recoverCommittedOperation).toHaveBeenCalledTimes(2)
     expect(mocks.applyTagOperation).toHaveBeenCalledTimes(1)
-    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('sync-pending')
+    expect(wrapper.get('[data-tag-management-panel]').attributes('data-state')).toBe('sync-pending')
   })
 
   it('clears a destination when the source changes to that stable ID and invalidates Preview', async () => {
@@ -1689,13 +1687,13 @@ describe('TagManagementDialog', () => {
     await settle()
     await wrapper.get('.tag-management-preview .primary').trigger('click')
     await settle()
-    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('sync-pending')
+    expect(wrapper.get('[data-tag-management-panel]').attributes('data-state')).toBe('sync-pending')
     expect(mocks.applyTagOperation).toHaveBeenCalledTimes(1)
     await wrapper.get('.tag-management-state-error .primary').trigger('click')
     await settle()
     expect(syncAfterCommit).toHaveBeenCalledTimes(2)
     expect(mocks.applyTagOperation).toHaveBeenCalledTimes(1)
-    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('success')
+    expect(wrapper.get('[data-tag-management-panel]').attributes('data-state')).toBe('success')
   })
 
   it('previews and applies a normal Rename with exact server counts and one sync cycle', async () => {
@@ -1871,7 +1869,7 @@ describe('TagManagementDialog', () => {
     await settle()
     expect(wrapper.text()).toContain('New B page')
     expect(wrapper.find('.tag-management-sample .secondary').exists()).toBe(false)
-    expect(wrapper.get('[role="dialog"]').attributes('data-state')).toBe('preview-ready')
+    expect(wrapper.get('[data-tag-management-panel]').attributes('data-state')).toBe('preview-ready')
   })
 
   it('invalidates the reviewed Preview as soon as an operation field changes', async () => {
@@ -1945,8 +1943,7 @@ describe('TagManagementDialog', () => {
     expect(wrapper.findAll('[data-state="sync-pending"]').length).toBe(1)
     expect(wrapper.text()).toContain('operation succeeded')
     expect(wrapper.get('.tag-management-live').text()).toContain('operation succeeded')
-    await wrapper.get('.tag-management-backdrop').trigger('keydown', { key: 'Escape' })
-    expect(wrapper.emitted('close')).toBeUndefined()
+    expect(wrapper.get('[data-tag-management-panel]').attributes('data-can-leave')).toBe('false')
     expect(mocks.applyTagOperation).toHaveBeenCalledTimes(1)
     await wrapper.get('.tag-management-state-error .primary').trigger('click')
     await settle()
@@ -2000,44 +1997,34 @@ describe('TagManagementDialog', () => {
     await settle()
     await wrapper.get('.tag-management-preview .primary').trigger('click')
     await settle()
-    await wrapper.get('.tag-management-backdrop').trigger('keydown', { key: 'Escape' })
-    expect(wrapper.emitted('close')).toBeUndefined()
+    expect(wrapper.get('[data-tag-management-panel]').attributes('data-can-leave')).toBe('false')
     resolveApply?.(makeResult())
   })
 
-  it('focuses the source on open, wraps Tab in both directions, closes on Escape, and returns focus', async () => {
-    const trigger = document.createElement('button')
-    trigger.type = 'button'
-    trigger.textContent = 'Open manager'
-    document.body.append(trigger)
-    trigger.focus()
+  it('focuses the source on mount and exposes the Settings leave guard', async () => {
     const offsetParent = vi.spyOn(HTMLElement.prototype, 'offsetParent', 'get').mockReturnValue(document.body)
     try {
       const wrapper = mountTracked()
       await settle()
       expect(document.activeElement).toBe(wrapper.get('#tag-management-source').element)
+      expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+      expect(wrapper.find('[data-action="close"]').exists()).toBe(false)
+      expect(wrapper.get('[data-tag-management-panel]').attributes('data-can-leave')).toBe('true')
+
+      let resolveApply: ((value: TagOperationApplyResult) => void) | undefined
+      mocks.applyTagOperation.mockReturnValueOnce(new Promise<TagOperationApplyResult>((resolve) => { resolveApply = resolve }))
       await wrapper.get('#tag-management-source').setValue('7')
       await wrapper.get('#tag-management-destination').setValue('Backend')
+      await wrapper.get('form').trigger('submit')
       await settle()
-
-      const focusables = wrapper.findAll('button, input, select')
-      const first = focusables[0]!.element as HTMLElement
-      const last = focusables.at(-1)!.element as HTMLElement
-      last.focus()
-      await wrapper.get('.tag-management-backdrop').trigger('keydown', { key: 'Tab' })
-      expect(document.activeElement).toBe(first)
-      first.focus()
-      await wrapper.get('.tag-management-backdrop').trigger('keydown', { key: 'Tab', shiftKey: true })
-      expect(document.activeElement).toBe(last)
-
-      await wrapper.get('.tag-management-backdrop').trigger('keydown', { key: 'Escape' })
-      expect(wrapper.emitted('close')).toEqual([[]])
-      await wrapper.setProps({ open: false })
+      await wrapper.get('.tag-management-preview .primary').trigger('click')
       await settle()
-      expect(document.activeElement).toBe(trigger)
+      expect(wrapper.get('[data-tag-management-panel]').attributes('data-can-leave')).toBe('false')
+      resolveApply?.(makeResult())
+      await settle()
+      expect(wrapper.get('[data-tag-management-panel]').attributes('data-can-leave')).toBe('true')
     } finally {
       offsetParent.mockRestore()
-      trigger.remove()
     }
   })
 

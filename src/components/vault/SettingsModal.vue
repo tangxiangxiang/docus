@@ -35,8 +35,14 @@ import SettingsMetadataSection from './SettingsMetadataSection.vue'
 import SettingsTagsSection from './SettingsTagsSection.vue'
 import { ICON_AI, ICON_EDIT, ICON_TAG, ICON_TOC } from './icons'
 
-const props = defineProps<{ open: boolean }>()
-const emit = defineEmits<{ close: []; 'close-complete': []; 'manage-tags': [] }>()
+const props = withDefaults(defineProps<{
+  open: boolean
+  /** Host-level guard supplied by the active embedded Settings page. */
+  activeSectionCanLeave?: boolean
+}>(), {
+  activeSectionCanLeave: true,
+})
+const emit = defineEmits<{ close: [] }>()
 
 const toast = useToast()
 const aiHistory = useAiHistory()
@@ -343,7 +349,6 @@ watch(() => props.open, async (open) => {
   } else {
     abortConnectionTest()
     await trap.deactivate()
-    if (!props.open) emit('close-complete')
   }
 })
 
@@ -365,13 +370,16 @@ function onKeydown(e: KeyboardEvent) {
   }
 }
 
-function closeSettings() {
-  abortConnectionTest()
-  emit('close')
+function selectSection(section: SectionId): void {
+  if (section === active.value) return
+  if (active.value === 'tags' && !props.activeSectionCanLeave) return
+  active.value = section
 }
 
-function openTagManagement() {
-  emit('manage-tags')
+function closeSettings() {
+  abortConnectionTest()
+  if (active.value === 'tags' && !props.activeSectionCanLeave) return
+  emit('close')
 }
 
 onBeforeUnmount(() => {
@@ -417,7 +425,7 @@ onBeforeUnmount(() => {
               class="settings-nav-item"
               :class="{ active: active === section.id }"
               :aria-current="active === section.id ? 'page' : undefined"
-              @click="active = section.id"
+              @click="selectSection(section.id)"
             >
               <span class="settings-nav-icon" v-html="section.icon" aria-hidden="true" />
               <span>{{ t(section.labelKey) }}</span>
@@ -459,10 +467,9 @@ onBeforeUnmount(() => {
               @restore="restoreOriginalFrontmatter"
               @remove="removeFrontmatter"
             />
-            <SettingsTagsSection
-              v-else
-              @manage-tags="openTagManagement"
-            />
+            <SettingsTagsSection v-else>
+              <slot name="tags" />
+            </SettingsTagsSection>
           </div>
         </div>
       </section>

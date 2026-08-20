@@ -19,7 +19,7 @@ function gitSnapshot(): { head: string; status: string } {
   }
 }
 
-/** Mount the dialog from a test-only Vite module for focused flow tests. */
+/** Mount the panel from a test-only Vite module for focused flow tests. */
 async function mountTagManagementHarness(page: Page): Promise<void> {
   await page.evaluate(async () => {
     const harness = await import('/e2e/tag-management-harness.ts')
@@ -36,28 +36,25 @@ async function unmountTagManagementHarness(page: Page): Promise<void> {
   })
 }
 
-async function openProductionTagManagement(page: Page): Promise<Locator> {
+async function openProductionTagManagementPanel(page: Page): Promise<Locator> {
   await page.locator('button.ab-btn-settings').click()
   const settings = page.locator('.settings-modal')
   await expect(settings).toBeVisible()
   await settings.getByRole('button', { name: /^(tags|标签)$/i }).click()
-  const manageTags = settings.getByRole('button', { name: /manage tags|管理标签/i })
-  await expect(manageTags).toHaveCount(1)
-  await manageTags.click()
-  await expect(settings).toHaveCount(0)
-  const dialog = page.getByRole('dialog')
-  await expect(dialog).toHaveAttribute('data-state', 'ready')
-  const closeButton = dialog.locator('[data-action="close"]')
-  const activeInsideDialog = await dialog.evaluate((root) => root.contains(document.activeElement))
-  expect(activeInsideDialog).toBe(true)
+  const panel = settings.locator('[data-tag-management-panel]')
+  await expect(panel).toHaveCount(1)
+  await expect(panel).toHaveAttribute('data-state', 'ready')
+  await expect(page.getByRole('dialog')).toHaveCount(1)
+  const activeInsideSettings = await settings.evaluate((root) => root.contains(document.activeElement))
+  expect(activeInsideSettings).toBe(true)
+  return panel
+}
 
-  await closeButton.focus()
-  await page.keyboard.press('Shift+Tab')
-  const activeAfterShiftTab = await dialog.evaluate((root) => root.contains(document.activeElement))
-  expect(activeAfterShiftTab).toBe(true)
-  await page.keyboard.press('Tab')
-  await expect(closeButton).toBeFocused()
-  return dialog
+async function closeProductionTagManagementPanel(page: Page, panel: Locator): Promise<void> {
+  const settings = page.locator('.settings-modal')
+  await settings.getByRole('button', { name: /close|关闭/i }).click()
+  await expect(panel).toHaveCount(0)
+  await expect(settings).toHaveCount(0)
 }
 
 type PostDetailForTags = {
@@ -174,7 +171,7 @@ test('authenticated Rename transport preserves Markdown and Git boundaries', asy
     await waitForVaultReady(page)
 
     await mountTagManagementHarness(page)
-    const dialog = page.getByRole('dialog')
+    const dialog = page.locator('[data-tag-management-panel]')
     await expect(dialog).toHaveAttribute('data-state', 'ready')
     await dialog.locator('#tag-management-source').selectOption(String(java!.id))
     await dialog.locator('#tag-management-destination').fill('Backend')
@@ -239,7 +236,7 @@ test('authenticated Rename transport preserves Markdown and Git boundaries', asy
     await page.locator('.activity-bar .ab-btn').nth(1).click()
     await expect(page.locator('.tag-entry')).toContainText('Backend')
     await expect(page.locator('.tag-entry')).not.toContainText('Java')
-    const productionDialog = await openProductionTagManagement(page)
+    const productionDialog = await openProductionTagManagementPanel(page)
 
     // T2-6 production-entry hardening: exercise a real Rename, then a
     // Display Rename through the dialog owned by VaultView. The earlier
@@ -269,9 +266,8 @@ test('authenticated Rename transport preserves Markdown and Git boundaries', asy
     expect(productionRenameResult.status()).toBe(200)
     await expect(productionDialog).toHaveAttribute('data-state', 'success')
 
-    await productionDialog.locator('[data-action="close"]').click()
-    await expect(productionDialog).toHaveCount(0)
-    const displayRenameDialog = await openProductionTagManagement(page)
+    await closeProductionTagManagementPanel(page, productionDialog)
+    const displayRenameDialog = await openProductionTagManagementPanel(page)
     const managedAfterProductionRename = await (await request.get('/api/tags')).json() as Array<{
       id: number
       displayName: string
@@ -308,13 +304,10 @@ test('authenticated Rename transport preserves Markdown and Git boundaries', asy
       sourceDeleted: false,
     })
 
-    await displayRenameDialog.locator('[data-action="close"]').click()
-    await expect(displayRenameDialog).toHaveCount(0)
-    const finalProductionDialog = await openProductionTagManagement(page)
+    await closeProductionTagManagementPanel(page, displayRenameDialog)
+    const finalProductionDialog = await openProductionTagManagementPanel(page)
     await expect(finalProductionDialog.locator('[data-operation="remove"]')).toHaveCount(1)
-    await finalProductionDialog.locator('[data-action="close"]').click()
-    await expect(finalProductionDialog).toHaveCount(0)
-    await expect(page.locator('.settings-modal')).toHaveCount(0)
+    await closeProductionTagManagementPanel(page, finalProductionDialog)
     await expect(page.locator('button.ab-btn-settings')).toBeFocused()
   } finally {
     await cleanupCreatedPaths(request, createdPaths)
@@ -381,9 +374,9 @@ test('authenticated Merge preserves the destination identity, deduplicates overl
     await waitForVaultReady(page)
 
     // T2-6 production-entry hardening: the Merge flow must work through the
-    // Settings -> VaultView -> TagManagementDialog path as well as the
+    // Settings -> VaultView -> embedded TagManagementPanel path as well as the
     // focused harness below.
-    const productionDialog = await openProductionTagManagement(page)
+    const productionDialog = await openProductionTagManagementPanel(page)
     await productionDialog.locator('[data-operation="merge"]').click()
     await productionDialog.locator('#tag-management-source').selectOption(String(productionSource!.id))
     await productionDialog.locator('#tag-management-destination-search').fill(productionDestinationName)
@@ -421,8 +414,7 @@ test('authenticated Merge preserves the destination identity, deduplicates overl
       sourceDeleted: true,
     })
     await expect(productionDialog).toHaveAttribute('data-state', 'success')
-    await productionDialog.locator('[data-action="close"]').click()
-    await expect(productionDialog).toHaveCount(0)
+    await closeProductionTagManagementPanel(page, productionDialog)
 
     const productionManagedAfter = await (await request.get('/api/tags')).json() as Array<{
       id: number
@@ -449,7 +441,7 @@ test('authenticated Merge preserves the destination identity, deduplicates overl
     expect(gitSnapshot()).toEqual(originalGit)
 
     await mountTagManagementHarness(page)
-    const dialog = page.getByRole('dialog')
+    const dialog = page.locator('[data-tag-management-panel]')
     await expect(dialog).toHaveAttribute('data-state', 'ready')
     await page.evaluate((tag) => window.__t2TagManagementHarness?.setSelectedTag(tag), sourceName)
     await dialog.locator('[data-operation="merge"]').click()
@@ -565,7 +557,7 @@ test('authenticated Merge preserves the destination identity, deduplicates overl
     // selection wins over the Merge survivor.
     await unmountTagManagementHarness(page)
     await mountTagManagementHarness(page)
-    const raceDialog = page.getByRole('dialog')
+    const raceDialog = page.locator('[data-tag-management-panel]')
     await expect(raceDialog).toHaveAttribute('data-state', 'ready')
     await page.evaluate((tag) => window.__t2TagManagementHarness?.setSelectedTag(tag), raceSourceName)
     await raceDialog.locator('[data-operation="merge"]').click()
@@ -643,7 +635,7 @@ test('production Remove previews, confirms once, clears selection, and preserves
     await sourceRow.click()
     await expect(page.locator('.results')).toContainText('3')
 
-    const dialog = await openProductionTagManagement(page)
+    const dialog = await openProductionTagManagementPanel(page)
     await dialog.locator('[data-operation="remove"]').click()
     await dialog.locator('#tag-management-source').selectOption(String(source!.id))
     await expect(dialog.locator('#tag-management-destination')).toHaveCount(0)
@@ -759,7 +751,7 @@ test('production Remove previews, confirms once, clears selection, and preserves
     }
     expect(gitSnapshot()).toEqual(originalGit)
 
-    await dialog.locator('[data-action="close"]').click()
+    await closeProductionTagManagementPanel(page, dialog)
     await expect(page.locator('.results')).toHaveCount(0)
     await expect(page.locator('.tag-entry').filter({ hasText: `#${sourceName}` })).toHaveCount(0)
   } finally {
@@ -796,12 +788,11 @@ test('production Undo previews, confirms, and restores Rename, Display Rename, M
   }
 
   const openDialog = async (): Promise<Locator> => {
-    return openProductionTagManagement(page)
+    return openProductionTagManagementPanel(page)
   }
 
   const closeDialog = async (dialog: Locator): Promise<void> => {
-    await dialog.locator('[data-action="close"]').click()
-    await expect(dialog).toHaveCount(0)
+    await closeProductionTagManagementPanel(page, dialog)
   }
 
   const ordinaryRename = async (

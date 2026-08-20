@@ -1,5 +1,5 @@
 import { createApp, h, ref } from 'vue'
-import TagManagementDialog from '../src/components/vault/TagManagementDialog.vue'
+import TagManagementPanel from '../src/components/vault/TagManagementPanel.vue'
 import {
   listManagedTags,
   type TagOperationApplyResult,
@@ -29,7 +29,6 @@ declare global {
 export function mountTagManagementHarness(): void {
   const selectedTag = ref<string | null>('Java')
   const selectionEpoch = ref(0)
-  const open = ref(true)
   let syncHeld = false
   let releaseHeldSync: (() => void) | null = null
   const syncAfterCommit = async (
@@ -77,16 +76,14 @@ export function mountTagManagementHarness(): void {
   document.body.append(host)
   const app = createApp({
     setup() {
-      return { open, selectedTag, selectionEpoch, syncAfterCommit, recoverCommittedOperation }
+      return { selectedTag, selectionEpoch, syncAfterCommit, recoverCommittedOperation }
     },
     render() {
-      return h(TagManagementDialog, {
-        open: this.open,
+      return h(TagManagementPanel, {
         selectedTag: this.selectedTag,
         selectionEpoch: this.selectionEpoch,
         syncAfterCommit: this.syncAfterCommit,
         recoverCommittedOperation: this.recoverCommittedOperation,
-        onClose: () => { open.value = false },
       })
     },
   })

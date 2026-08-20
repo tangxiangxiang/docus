@@ -4,35 +4,27 @@ import { describe, expect, it } from 'vitest'
 import { applyMetadataToPostSummary } from '../metadataPostSummary'
 
 describe('VaultView editor tab wiring', () => {
-  it('owns the production dialog seam and one canonical post-commit sync cycle', () => {
+  it('owns the embedded panel seam and one canonical post-commit sync cycle', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
     const sync = source.match(/async function synchronizeCommittedTagOperation[\s\S]*?\n}/)?.[0]
     const recovery = source.match(/async function recoverCommittedTagOperation[\s\S]*?\n}/)?.[0]
 
-    expect(source).toContain("import TagManagementDialog from '../components/vault/TagManagementDialog.vue'")
-    expect(source).toContain('const tagManagementOpen = ref(false)')
+    expect(source).toContain("import TagManagementPanel from '../components/vault/TagManagementPanel.vue'")
+    expect(source).toContain('const tagManagementPanelRef = ref<{ canLeave: boolean } | null>(null)')
+    expect(source).toContain('const tagManagementCanLeave = computed(() => tagManagementPanelRef.value?.canLeave ?? true)')
     expect(source).toContain('const tagSelectionEpoch = ref(0)')
-    expect(source).toContain('<TagManagementDialog')
-    expect(source).toContain('v-if="tagManagementOpen"')
+    expect(source).toContain('<TagManagementPanel')
+    expect(source).toContain('<template #tags>')
+    expect(source).toContain(':active-section-can-leave="tagManagementCanLeave"')
     expect(source).toContain(':sync-after-commit="synchronizeCommittedTagOperation"')
     expect(source).toContain(':recover-committed-operation="recoverCommittedTagOperation"')
     expect(source).toContain(':sync-after-undo="synchronizeCommittedUndo"')
     expect(source).toContain(':recover-committed-undo="recoverCommittedUndo"')
-    expect(source).toContain('@manage-tags="openTagManagementFromSettings"')
-    expect(source).toContain('@close-complete="onSettingsCloseComplete"')
-    expect(source).not.toContain('@manage="tagManagementOpen = true"')
-    expect(source).toContain('const tagManagementHandoffPending = ref(false)')
-    expect(source).toContain('function openTagManagementFromSettings(): void')
-    expect(source).toContain('function onSettingsCloseComplete(): void')
-    const handoffRequest = source.match(/function openTagManagementFromSettings\(\): void \{[\s\S]*?\n\}/)?.[0]
-    const handoffCompletion = source.match(/function onSettingsCloseComplete\(\): void \{[\s\S]*?\n\}/)?.[0]
-    expect(handoffRequest).toBeDefined()
-    expect(handoffRequest).toContain('tagManagementHandoffPending.value = true')
-    expect(handoffRequest).toContain('settingsOpen.value = false')
-    expect(handoffRequest).not.toContain('tagManagementOpen.value = true')
-    expect(handoffCompletion).toBeDefined()
-    expect(handoffCompletion).toContain('tagManagementHandoffPending.value')
-    expect(handoffCompletion).toContain('tagManagementOpen.value = true')
+    expect(source).not.toContain('TagManagementDialog')
+    expect(source).not.toContain('tagManagementOpen')
+    expect(source).not.toContain('tagManagementHandoffPending')
+    expect(source).not.toContain('@manage-tags=')
+    expect(source).not.toContain('@close-complete=')
     expect(sync).toBeDefined()
     expect(sync).toContain('const [, freshTags, undoAvailability] = await Promise.all([')
     expect(sync).toContain('refresh(),')
