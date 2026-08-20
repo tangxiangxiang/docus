@@ -162,8 +162,9 @@ test('exports the Kitchen Sink with settled content from the file-tree menu', as
       const allMarkmapReady = markmapWidgets.length > 0
         && markmapWidgets.every((element) => element.dataset.markmapState === 'ready')
       const noEnhancementPlaceholders = article.querySelector('.math-mount:not([data-math-mounted]), .mermaid-mount, .markmap-mount') === null
+      const imageReady = image !== undefined && image.complete && image.naturalWidth > 0
 
-      if (!allMathReady || !allMermaidReady || !allMarkmapReady || !noEnhancementPlaceholders) return null
+      if (!allMathReady || !allMermaidReady || !allMarkmapReady || !noEnhancementPlaceholders || !imageReady) return null
       return snapshot
     }
 
@@ -281,4 +282,69 @@ test('exports the Kitchen Sink with settled content from the file-tree menu', as
   ).__pdfPrintCalled)).toBe(false)
   expect(await page.locator('html').getAttribute('data-theme')).toBe(themeBeforeExport)
   await expect(page.locator('.pdf-export-surface')).toHaveCount(0)
+})
+
+test('does not download until a delayed same-origin image settles', async ({ page, request }) => {
+  const delayedSlug = 'inbox/pdf-export-image-delay-e2e'
+  const raw = `---
+title: Delayed PDF Image
+---
+
+# Delayed PDF Image
+
+![Docus logo](/logo.svg)
+`
+
+  await request.delete(`/api/posts/${delayedSlug}`).catch(() => {})
+  const created = await request.post('/api/posts', {
+    data: { path: delayedSlug, title: 'Delayed PDF Image' },
+  })
+  expect(created.status()).toBe(201)
+  const initial = await (await request.get(`/api/posts/${delayedSlug}`)).json() as { raw: string }
+  const updated = await request.put(`/api/posts/${delayedSlug}`, {
+    data: { baseRaw: initial.raw, raw },
+  })
+  expect(updated.ok()).toBe(true)
+
+  let releaseImage!: () => void
+  const imageReleased = new Promise<void>((resolve) => { releaseImage = resolve })
+  let resolveImageRequest!: () => void
+  const imageRequestSeen = new Promise<void>((resolve) => { resolveImageRequest = resolve })
+  let downloadStarted = false
+  page.on('download', () => { downloadStarted = true })
+
+  await page.route('**/logo.svg', async (route) => {
+    resolveImageRequest()
+    await imageReleased
+    await route.continue()
+  })
+
+  try {
+    await page.goto('/vault')
+    const inbox = page.locator('.tree-row[data-tree-kind="folder"][data-tree-path="inbox"]')
+    await inbox.locator('.chevron').click()
+    const row = page.locator(`.tree-row[data-tree-kind="file"][data-tree-path="${delayedSlug}"]`)
+    await expect(row).toBeVisible()
+    await row.click({ button: 'right' })
+
+    const downloadPromise = page.waitForEvent('download')
+    await page.locator('.tree-context-menu button').filter({ hasText: /Export PDF|导出 PDF/ }).click()
+
+    await imageRequestSeen
+    await expect(page.locator('.pdf-export-surface')).toHaveCount(1)
+    const image = page.locator('.pdf-export-surface img[src$="/logo.svg"]')
+    await expect(image).toHaveCount(1)
+    await expect.poll(() => image.evaluate((element) => (element as HTMLImageElement).complete)).toBe(false)
+    expect(downloadStarted).toBe(false)
+    await expect(page.locator('.pdf-export-surface')).toHaveCount(1)
+
+    releaseImage()
+    const download = await downloadPromise
+    expect(download.suggestedFilename()).toBe('Delayed PDF Image.pdf')
+    await expect(page.locator('.pdf-export-surface')).toHaveCount(0)
+  } finally {
+    releaseImage()
+    await page.unroute('**/logo.svg').catch(() => {})
+    await request.delete(`/api/posts/${delayedSlug}`).catch(() => {})
+  }
 })

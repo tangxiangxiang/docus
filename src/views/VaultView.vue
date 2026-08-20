@@ -102,6 +102,7 @@ import {
   preparePdfArticleHtml,
   resolvePdfDocumentLabel,
 } from '../lib/pdfExport'
+import { waitForPdfImages } from '../lib/pdf-images'
 import { pdfEnhancementsReady } from '../lib/pdf-readiness'
 import {
   listManagedTags,
@@ -1861,6 +1862,7 @@ async function exportPdfFromTree(path: string): Promise<void> {
     const request: PdfExportRequest = { id, path, raw, title }
     const article = await waitForPdfArticle(request)
     await waitForPdfWidgets(article)
+    await waitForPdfImages(article)
     const label = resolvePdfDocumentLabel({ raw, documentTitle: title, documentPath: path })
     await downloadPdfDocument({
       title: label,

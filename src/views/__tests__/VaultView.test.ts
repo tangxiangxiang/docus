@@ -4,6 +4,23 @@ import { describe, expect, it } from 'vitest'
 import { applyMetadataToPostSummary } from '../metadataPostSummary'
 
 describe('VaultView editor tab wiring', () => {
+  it('settles PDF images before preparing the export snapshot', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+    const exportHandler = source.match(/async function exportPdfFromTree[\s\S]*?\n}/)?.[0]
+
+    expect(source).toContain("import { waitForPdfImages } from '../lib/pdf-images'")
+    expect(exportHandler).toBeDefined()
+    expect(exportHandler).toContain('await waitForPdfWidgets(article)')
+    expect(exportHandler).toContain('await waitForPdfImages(article)')
+    expect(exportHandler).toContain('articleHtml: preparePdfArticleHtml(article)')
+    expect(exportHandler!.indexOf('await waitForPdfWidgets(article)')).toBeLessThan(
+      exportHandler!.indexOf('await waitForPdfImages(article)'),
+    )
+    expect(exportHandler!.indexOf('await waitForPdfImages(article)')).toBeLessThan(
+      exportHandler!.indexOf('preparePdfArticleHtml(article)'),
+    )
+  })
+
   it('owns the embedded panel seam and one canonical post-commit sync cycle', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
     const sync = source.match(/async function synchronizeCommittedTagOperation[\s\S]*?\n}/)?.[0]
