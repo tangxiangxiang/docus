@@ -4166,6 +4166,43 @@ main.container.auth-page-shell {
   padding: 40px 24px 80px;
   box-sizing: border-box;
 }
+.vault .reading-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  width: min(100%, 720px);
+  margin: 0 auto 14px;
+}
+.vault .reading-export-pdf {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 1px solid var(--vs-border);
+  border-radius: 5px;
+  background: var(--vs-bg-2);
+  color: var(--vs-text-1);
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.vault .reading-export-pdf:hover:not(:disabled) {
+  border-color: var(--vs-accent);
+  background: var(--vs-hover-bg);
+  color: var(--vs-text-1);
+}
+.vault .reading-export-pdf:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+.vault .reading-export-pdf-icon {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  color: var(--vs-text-2);
+  line-height: 0;
+}
 /* Single-column centered article. The page-nav (TOC) is now a
    separate right-side vault grid column (RightRail.vue), not an
    inline child of the reading layout. */

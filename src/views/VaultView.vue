@@ -1760,7 +1760,7 @@ const pdfExportBusy = ref(false)
 let pdfExportSequence = 0
 let pdfRenderWaiter: PdfRenderWaiter | null = null
 
-// A file-tree export may target a document other than the active tab. Resolve
+// A PDF export may target a document other than the active tab. Resolve
 // wiki-links relative to that target instead of borrowing activePath.
 const pdfWikiResolver = (ref: string, _anchor?: string) => {
   const allPaths = Array.from(linkIndex.value.paths)
@@ -1835,7 +1835,7 @@ function onPdfExportRendered(article: HTMLElement | null): void {
   pdfRenderWaiter.resolve(article)
 }
 
-async function exportPdfFromTree(path: string): Promise<void> {
+async function exportPdfDocument(path: string): Promise<void> {
   if (pdfExportBusy.value) {
     toast.info(t('file_tree.exporting_pdf'))
     return
@@ -1879,6 +1879,11 @@ async function exportPdfFromTree(path: string): Promise<void> {
     pdfExportRequest.value = null
     pdfExportBusy.value = false
   }
+}
+
+function exportActivePdf(): void {
+  if (!activeTab.value) return
+  void exportPdfDocument(activeTab.value.path)
 }
 watch(() => navSearch?.tick.value, () => openSearch())
 
@@ -1961,7 +1966,7 @@ watch(isReadMode, async (reading) => {
       :current-path="activePath"
       @select="openPost"
       @refresh="refresh"
-      @export-pdf="exportPdfFromTree"
+      @export-pdf="exportPdfDocument"
       @open-history="openFileHistory"
     />
     <TagPanel
@@ -2087,6 +2092,9 @@ watch(isReadMode, async (reading) => {
           <ReadingPane
             :raw="activeTab.raw"
             :resolver="wikiResolver"
+            :show-pdf-export="true"
+            :exporting-pdf="pdfExportBusy"
+            @export-pdf="exportActivePdf"
           />
         </div>
         <div v-if="!tabs.length" class="content-empty">
