@@ -48,6 +48,7 @@ Docus is a self-hosted Markdown knowledge base with a Vue interface, a Hono serv
 
 ## Design
 
+- [Shiki Syntax Highlighting Migration PRD](design/syntax-highlighting-shiki-migration-prd.md)
 - [PDF Export V1 PRD](design/pdf-export-prd.md)
 - [PDF Export V1 Implementation Plan](design/pdf-export-implementation-plan.md)
 - [Logo](design/logo.md)
