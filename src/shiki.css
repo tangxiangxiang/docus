@@ -1,0 +1,44 @@
+/* Shiki's class transformer emits trusted theme variables on the root
+   `.shiki` element and on token spans. This file is the small static bridge
+   that turns those variables into the active reader palette. Generic code
+   layout remains owned by style.css. */
+
+.shiki,
+.shiki span,
+.article pre.shiki {
+  color: var(--shiki-light);
+  background-color: var(--shiki-light-bg);
+}
+
+/* With no explicit Docus theme, follow the OS only for the initial/CSS
+   fallback path. An explicit light attribute is excluded so it wins over
+   OS dark. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .shiki,
+  :root:not([data-theme='light']) .shiki span {
+    color: var(--shiki-dark);
+    background-color: var(--shiki-dark-bg);
+  }
+}
+
+/* Explicit Docus choices are ordered after the media fallback so they win
+   at equal specificity when the operating system prefers the other palette. */
+:root[data-theme='light'] .shiki,
+:root[data-theme='light'] .shiki span {
+  color: var(--shiki-light);
+  background-color: var(--shiki-light-bg);
+}
+
+:root[data-theme='dark'] .shiki,
+:root[data-theme='dark'] .shiki span {
+  color: var(--shiki-dark);
+  background-color: var(--shiki-dark-bg);
+}
+
+/* Unknown/empty/unavailable fences have no Shiki theme variables. Keep the
+   existing Docus text and code-surface tokens instead of resolving undefined
+   Shiki variables. */
+.article pre.shiki.docus-shiki-plain {
+  color: var(--text);
+  background-color: var(--code-bg);
+}

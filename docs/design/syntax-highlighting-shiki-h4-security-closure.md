@@ -12,7 +12,7 @@ style-to-class 和安全边界，不包含 H5 主题 selector、H6 PDF token pal
 | H4 base / H3 completion | `070f6dec544dab957e277b816d7b4cc5a53da820` |
 | Implementation baseline | `2be6b2c57b5d7cb76b359220f361bacb55661099` |
 | H3 completion commit | `070f6dec544dab957e277b816d7b4cc5a53da820` |
-| H4 completion commit | The phase commit containing this evidence document; exact SHA is recorded in the final handoff |
+| H4 completion commit | `e302c55791f779aead8bfa45ce9a9733245796d8` |
 | Runtime | Node `v24.15.0`, npm `11.12.1`; Docker baseline remains `node:22-bookworm-slim` |
 | Status | H4 COMPLETE; H5/H6/H7 NOT STARTED |
 

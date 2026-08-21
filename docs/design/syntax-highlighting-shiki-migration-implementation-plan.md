@@ -4,18 +4,19 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 文档状态 | H4 COMPLETE / H5-H8 NOT IMPLEMENTED |
+| 文档状态 | H5 COMPLETE / H6-H8 NOT IMPLEMENTED |
 | 产品 PRD | [Shiki Syntax Highlighting Migration PRD](syntax-highlighting-shiki-migration-prd.md) |
 | Implementation baseline | 2be6b2c57b5d7cb76b359220f361bacb55661099 |
 | 计划日期 | 2026-08-21 |
-| 当前阶段 | SHIKI-H4 — COMPLETE；Next: SHIKI-H5 — Theme Integration |
-| 当前实现状态 | H0 审计、H1 runtime foundation、H2 language preparation、H3 Markdown renderer cutover 与 H4 style-to-class/security closure 已完成；正常已知 fence 输出带 `docus-shiki-*` class 的 Shiki HTML，完整 transformer CSS snapshot 由 `document.head` 下唯一的 `style#docus-shiki-generated-styles` owner 管理；DOMPurify 的 `FORBID_ATTR: ['style']` 未改变，用户 style/event/危险 URI 仍被清理；主题变量选择、PDF integration 与 highlight.js cleanup 尚未开始 |
+| 当前阶段 | SHIKI-H5 — COMPLETE；Next: SHIKI-H6 — PDF Compatibility |
+| 当前实现状态 | H0 审计、H1 runtime foundation、H2 language preparation、H3 Markdown renderer cutover、H4 style-to-class/security closure 与 H5 reader theme integration 已完成；正常已知 fence 输出带 `docus-shiki-*` class 的 Shiki HTML，完整 dual-theme transformer CSS snapshot 由 `document.head` 下唯一的 `style#docus-shiki-generated-styles` owner 管理，`src/shiki.css` 通过 Docus `data-theme`/OS selectors 消费 light/dark variables；主题切换只改变 computed style，不重新 render/tokenize，DOMPurify 的 `FORBID_ATTR: ['style']` 未改变；PDF integration 与 highlight.js cleanup 尚未开始 |
 | H0 审计证据 | [Shiki H0 Baseline & Contract Audit](syntax-highlighting-shiki-h0-audit.md) |
 | H1 实施证据 | [Shiki H1 Dependency & Runtime Foundation](syntax-highlighting-shiki-h1-runtime-foundation.md) |
 | H2 实施证据 | [Shiki H2 Fence Discovery & Dynamic Language Loading](syntax-highlighting-shiki-h2-language-loading.md) |
 | H3 实施证据 | [Shiki H3 Markdown Renderer Cutover](syntax-highlighting-shiki-h3-renderer-cutover.md) |
 | H4 实施证据 | [Shiki H4 Style-to-Class & Security Closure](syntax-highlighting-shiki-h4-security-closure.md) |
-| 本任务范围 | H0 baseline/contract audit、H1 runtime foundation、H2 fence discovery/language loading、H3 normal Markdown renderer cutover 与 H4 style-to-class/security closure 已完成；H5-H8 尚未实施；主题、Mermaid、MarkMap 和 PDF 行为保持原状 |
+| H5 实施证据 | [Shiki H5 Theme Integration](syntax-highlighting-shiki-h5-theme-integration.md) |
+| 本任务范围 | H0 baseline/contract audit、H1 runtime foundation、H2 fence discovery/language loading、H3 normal Markdown renderer cutover、H4 style-to-class/security closure 与 H5 reader theme integration 已完成；H6-H8 尚未实施；PDF 和 highlight.js cleanup 保持原状 |
 | 目标 | 用可回滚、可验证的阶段性步骤完成 Shiki 4.x 迁移，同时保持 Markdown、DOMPurify、主题、Mermaid、MarkMap 和 PDF 合同 |
 
 本计划描述接下来如何实施产品 PRD，不代表任何 Shiki 能力已经存在。未来实现必须以产品 PRD 为最高约束；如果本计划与 PRD 发生冲突：
@@ -32,7 +33,7 @@ H0 审计证据已记录在 [Shiki H0 Baseline & Contract Audit](syntax-highligh
 
 H1 已完成并记录在 [Shiki H1 Dependency & Runtime Foundation](syntax-highlighting-shiki-h1-runtime-foundation.md)：Shiki 4.4.3 和 matching transformer 4.4.3 已加入，runtime singleton 已独立初始化双主题，`transformerStyleToClass` CSS snapshot API 已验证。H2 已在 [Shiki H2 Fence Discovery & Dynamic Language Loading](syntax-highlighting-shiki-h2-language-loading.md) 中记录：MarkdownIt 只发现 `fence` tokens，使用官方 registry/aliases 进行 canonical language preparation，并保持正常 renderer 为 highlight.js；没有新增 Shiki token HTML、DOM stylesheet、主题、PDF 或 Markdown renderer cutover。
 
-H2 follow-up 已修正 failure boundary：`getShikiRuntime()` / `createHighlighter()` 的初始化失败沿 async render surface reject；只有单个 `runtime.loadLanguage()` grammar failure 转换为 `unavailable`。H3 已在 [Shiki H3 Markdown Renderer Cutover](syntax-highlighting-shiki-h3-renderer-cutover.md) 中完成：正常 fence callback 只读取已准备的 Shiki runtime 并同步调用 `codeToHtml()`；normal known output 不再是 `hljs`，unknown/empty/unavailable/codeToHtml failure 统一使用 escaped `docus-shiki-plain` fallback。H4 已在 [Shiki H4 Style-to-Class & Security Closure](syntax-highlighting-shiki-h4-security-closure.md) 中完成：production `codeToHtml()` 使用唯一 `transformerStyleToClass`，完整 CSS snapshot 同步到唯一 head owner，sanitized article 保留 class-based token markup 且不放开 `style`。
+H2 follow-up 已修正 failure boundary：`getShikiRuntime()` / `createHighlighter()` 的初始化失败沿 async render surface reject；只有单个 `runtime.loadLanguage()` grammar failure 转换为 `unavailable`。H3 已在 [Shiki H3 Markdown Renderer Cutover](syntax-highlighting-shiki-h3-renderer-cutover.md) 中完成：正常 fence callback 只读取已准备的 Shiki runtime 并同步调用 `codeToHtml()`；normal known output 不再是 `hljs`，unknown/empty/unavailable/codeToHtml failure 统一使用 escaped `docus-shiki-plain` fallback。H4 已在 [Shiki H4 Style-to-Class & Security Closure](syntax-highlighting-shiki-h4-security-closure.md) 中完成：production `codeToHtml()` 使用唯一 `transformerStyleToClass`，完整 CSS snapshot 同步到唯一 head owner，sanitized article 保留 class-based token markup 且不放开 `style`。H5 已在 [Shiki H5 Theme Integration](syntax-highlighting-shiki-h5-theme-integration.md) 中完成：新增静态 `src/shiki.css` 消费 dual-theme variables，显式 `data-theme` 覆盖 OS fallback，reader theme switch 不重新 render/tokenize；PDF light token proof 仍属于 H6。
 
 ## 2. 计划目标与约束
 
@@ -104,7 +105,7 @@ FORBID_ATTR: ['style']
 
 ### 4.1 当前真实调用流
 
-当前 repository 在 H4 完成后的主要路径如下：
+当前 repository 在 H5 完成后的主要路径如下：
 
 ~~~
 raw Markdown
@@ -142,6 +143,9 @@ syncGeneratedShikiStylesheet()
     → document.head
       style#docus-shiki-generated-styles
       complete trusted CSS snapshot
+    + src/shiki.css (static bundle after style.css)
+      .shiki / token span variable consumption
+      data-theme / prefers-color-scheme precedence
     ↓
 sanitizeMarkdownHtml()
     ↓
@@ -154,7 +158,7 @@ RenderedMarkdown v-html
 ReadingPane / preview / PdfExportSurface
 ~~~
 
-当前 render API 仍然是异步的，但 MarkdownIt 的 highlight callback 必须同步返回 HTML。H3 已在 render() 外层完成语言预加载，并在 callback 内同步调用 ready Shiki runtime；callback 不会 await、load grammar 或初始化 runtime。
+当前 render API 仍然是异步的，但 MarkdownIt 的 highlight callback 必须同步返回 HTML。H3 已在 render() 外层完成语言预加载，并在 callback 内同步调用 ready Shiki runtime；callback 不会 await、load grammar 或初始化 runtime。H5 的 `src/shiki.css` 是全局静态 CSS 层，主题切换只改变 selector/variable consumption，不回到这个 render flow。
 
 ### 4.2 文件与职责盘点
 
@@ -167,7 +171,7 @@ ReadingPane / preview / PdfExportSurface
 | src/lib/__tests__/markmapSecurity.test.ts | MarkMap transformer 自身的 HTML/security/feature 断言 | 其中 features.hljs 是 MarkMap 内部契约，不能盲目当成 Docus renderer 引用删除 |
 | src/hljs-dark.css | dark OS / forced dark 下的 GitHub highlight.js token CSS | H5 接好 Shiki CSS 后，H7 才删除 |
 | src/style.css | 全局、vault article、pre/code layout；OS media query；data-theme selector | 继续拥有通用布局；不要在这里复制每个 Shiki token |
-| src/main.ts | 入口，当前导入 style.css 和 KaTeX CSS | 若新增 src/shiki.css，H5 通过这里全局导入 |
+| src/main.ts | 入口，导入 style.css、src/shiki.css 和 KaTeX CSS | 静态 Shiki theme bridge 在 generic Docus CSS 后加载 |
 | src/composables/vault/useMarkdownRender.ts | parseDoc、frontmatter title 注入、调用 render、heading extraction、取消过时 render | 保持 async contract；不要为 Shiki 改造成第二套 Markdown pipeline |
 | src/components/vault/RenderedMarkdown.vue | 通过 v-html 插入 html，并挂载 MarkMap/Mermaid/Math | 正常代码仍必须适配这个 sanitized HTML surface |
 | src/components/vault/ReadingPane.vue | read mode scroll/TOC，使用 RenderedMarkdown tag=article | 不应因为高亮切换改变 TOC 或阅读生命周期 |
@@ -175,6 +179,7 @@ ReadingPane / preview / PdfExportSurface
 | src/lib/pdfExport.ts | PDF_DOWNLOAD_STYLES、article clone、Mermaid/MarkMap staticization、A4 layout、分页、html2pdf | 只能增加必要的 Shiki printable overrides，不重做 PDF architecture |
 | src/lib/__tests__/pdfExport.test.ts | PDF HTML/CSS、filename、Mermaid/MarkMap clone 及布局 helper 的单元回归 | 增加 Shiki light selector/markup contract |
 | e2e/markdown-visual.spec.ts | light/dark reader visual regression | H5 扩展 system/forced theme coverage |
+| e2e/markdown-shiki-theme.spec.ts | computed Shiki token/pre colors、六种 selector cases、CSS-only switch DOM identity | H5 evidence |
 | e2e/pdf-export.spec.ts | dark reader 下 export、theme 不被改变、download snapshot | H6 验证 PDF light palette 和 global theme isolation |
 | e2e/pdf-export-layout.spec.ts | code、table、Mermaid、MarkMap 的宽度/分页布局 | 保持 long-line wrapping、no clipping |
 | e2e/pdf-export-pagination.spec.ts | 普通段落和 list item 的 A4 page boundary | 证明 Shiki 不破坏 block pagination |
@@ -222,7 +227,7 @@ cleanup/ownership review；它们不是 H3 normal fence output contract。
 - src/style.css 既有 prefers-color-scheme media query，也有 :root[data-theme='light'] 和 :root[data-theme='dark'] 覆盖；
 - 当前 hljs-dark.css 使用 OS dark 下的 :root:not([data-theme='light']) 和 forced dark selector，保证强制 light 能压过 OS dark。
 
-H5 必须先把这个事实和 PRD 的 system light/system dark/forced light/forced dark acceptance 对齐。不得在 Shiki 迁移里无审查地新增主题 UI 或改变 useTheme 的产品语义。如果要把“system”实现为真正不设置 data-theme 并实时响应 OS 改变，发现这是当前产品没有的行为时，必须先 review PRD，再决定是否另立主题行为变更。
+H5 已在不改变上述产品模型的前提下，把事实和 PRD 的 system light/system dark/forced light/forced dark acceptance 对齐：`src/shiki.css` 覆盖 explicit data-theme 与 no-attribute media-query fallback，浏览器证据证明四种 explicit/OS precedence 和两种 no-attribute fallback。没有新增主题 UI 或改变 `useTheme` 的产品语义；no-attribute 路径仍只是初始 CSS fallback，不是持久 system state。
 
 ### 4.6 当前 PDF code-block contract
 
@@ -299,7 +304,9 @@ Shiki dual-theme token data
     ↓
 transformerStyleToClass generated trusted classes
     ↓
-static Shiki integration CSS + generated class CSS
+generated class CSS in document.head
+    ↓
+static src/shiki.css (bundled after generic style.css)
     ↓
 :root / prefers-color-scheme / data-theme selectors
     ↓
@@ -1099,12 +1106,12 @@ PDF printable-light palette。
 | Item | Content |
 | --- | --- |
 | Goal | 用 CSS dual-theme 接入 Docus light/dark precedence |
-| Files likely changed | src/shiki.css、新增 main.ts import；必要时 src/style.css/useTheme.ts；theme unit/E2E tests |
+| Files likely changed | src/shiki.css、src/main.ts、e2e/markdown-shiki-theme.spec.ts；必要时 visual snapshots |
 | Behavior changed | theme switch 改变 Shiki palette，但不重新 render |
 | Main risk | selector specificity、OS/forced precedence、当前 useTheme snapshot semantics |
 | Tests required | system light/dark、forced light/dark、data-theme precedence、innerHTML unchanged、tokenization count unchanged |
 | Manual validation | reader 在四类主题下切换，确认 code/background/layout 与 Docus 一致 |
-| Exit criteria | all four theme states and no-rerender contract proven |
+| Exit criteria | explicit light/dark precedence、no-attribute OS fallback、computed token/pre colors、readable plain fallback and CSS-only no-rerender contract all proven |
 | Can rollback independently? | Yes；恢复 CSS/import 即可，Shiki renderer 仍可保留 |
 
 ### SHIKI-H6 table
