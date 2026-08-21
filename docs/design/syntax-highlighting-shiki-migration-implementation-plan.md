@@ -6,7 +6,7 @@
 | --- | --- |
 | 文档状态 | PLANNED / NOT IMPLEMENTED |
 | 产品 PRD | [Shiki Syntax Highlighting Migration PRD](syntax-highlighting-shiki-migration-prd.md) |
-| Implementation baseline | 7f79d00447ce0c867c580a5bf9404cb16c2d5bb2 |
+| Implementation baseline | 2be6b2c57b5d7cb76b359220f361bacb55661099 |
 | 计划日期 | 2026-08-21 |
 | 当前阶段 | SHIKI-H0 — Baseline & Contract Audit |
 | 当前实现状态 | highlight.js 仍是当前 renderer；Shiki 尚未安装、接入或验证 |
