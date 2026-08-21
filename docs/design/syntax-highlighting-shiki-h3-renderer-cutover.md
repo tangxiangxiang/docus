@@ -18,7 +18,7 @@
 | Implementation baseline | `2be6b2c57b5d7cb76b359220f361bacb55661099` |
 | Local evidence runtime | Node `v24.15.0`, npm `11.12.1` |
 | Docker runtime baseline | `node:22-bookworm-slim` in `Dockerfile` |
-| H3 completion commit | The phase commit containing this evidence document; exact SHA is recorded in the final handoff |
+| H3 completion commit | 070f6dec544dab957e277b816d7b4cc5a53da820 |
 | Scope | Normal Markdown fence renderer only; no dependency cleanup, transformer activation, theme integration, PDF change or special-fence lifecycle change |
 
 The H3 base is the H2 follow-up commit on current `main`. The later PDF/read-

@@ -9,6 +9,7 @@ import { transformerStyleToClass } from '@shikijs/transformers'
 
 const SHIKI_THEMES = ['github-light', 'github-dark'] as const
 const SHIKI_CLASS_PREFIX = 'docus-shiki-'
+const SHIKI_GENERATED_STYLES_ID = 'docus-shiki-generated-styles'
 
 type ShikiHighlighter = Highlighter
 type ShikiHighlighterFactory = typeof createHighlighter
@@ -249,9 +250,10 @@ export async function ensureShikiLanguage(identifier: string): Promise<PreparedS
  * Render one already-prepared normal Markdown fence synchronously.
  *
  * MarkdownIt's highlight callback cannot await a Promise. H2 therefore owns
- * all runtime and grammar preparation before md.render(), while H3 uses only
- * this ready-runtime path inside the callback. A missing runtime or grammar
- * is a per-fence fallback condition; it must never initialize Shiki here.
+ * all runtime and grammar preparation before md.render(), while H3/H4 use
+ * only this ready-runtime path inside the callback. A missing runtime or
+ * grammar is a per-fence fallback condition; it must never initialize Shiki
+ * here.
  */
 export function highlightShikiFence(source: string, identifier: string): string | null {
   const resolution = resolveShikiLanguage(identifier)
@@ -267,6 +269,7 @@ export function highlightShikiFence(source: string, identifier: string): string 
         dark: 'github-dark',
       },
       defaultColor: false,
+      transformers: [styleTransformer],
     })
   } catch {
     // A single fence rendering failure must not poison the shared runtime or
@@ -279,7 +282,7 @@ export function highlightShikiFence(source: string, identifier: string): string 
  * Return the one long-lived Shiki runtime promise.
  *
  * H1 established the themes and H2 now prepares only the canonical languages
- * requested by the current document. H3 consumes the ready runtime
+ * requested by the current document. H3/H4 consume the ready runtime
  * synchronously from MarkdownIt's highlight callback.
  */
 export function getShikiRuntime(): Promise<ShikiHighlighter> {
@@ -321,20 +324,44 @@ export function getShikiRuntime(): Promise<ShikiHighlighter> {
   return pending
 }
 
-/**
- * Return the one class-based transformer used by later Shiki integration.
- * H1/H2 expose the instance but do not attach its CSS to the DOM.
- */
+/** Return the one class-based transformer used by production Shiki output. */
 export function getShikiStyleTransformer() {
   return styleTransformer
 }
 
-/**
- * Return the transformer's current trusted CSS snapshot.
- * DOM stylesheet ownership is intentionally deferred to H4/H5.
- */
+/** Return the transformer's current trusted CSS snapshot. */
 export function getGeneratedShikiCss(): string {
   return styleTransformer.getCSS()
+}
+
+/**
+ * Synchronize the complete trusted transformer snapshot to one stable head
+ * stylesheet. This is deliberately separate from article sanitization: the
+ * CSS is produced only by Shiki's bundled themes and never enters Markdown
+ * HTML. DOM availability/write failures are best-effort and must not turn a
+ * safe rendered article into an application-wide render failure.
+ */
+export function syncGeneratedShikiStylesheet(): void {
+  try {
+    const css = getGeneratedShikiCss()
+    if (!css || typeof document === 'undefined' || !document.head) return
+
+    let owner = document.head.querySelector<HTMLStyleElement>(
+      `style#${SHIKI_GENERATED_STYLES_ID}`,
+    )
+    if (!owner) {
+      owner = document.createElement('style')
+      owner.id = SHIKI_GENERATED_STYLES_ID
+      document.head.appendChild(owner)
+    }
+
+    if (owner.textContent !== css) {
+      owner.textContent = css
+    }
+  } catch {
+    // A missing/hostile DOM must not change Markdown's safe HTML result. The
+    // next complete render can retry synchronization when head is available.
+  }
 }
 
 /**
@@ -352,6 +379,13 @@ function resetForTesting(): void {
   highlighterPromise = null
   highlighterFactory = createHighlighter
   styleTransformer.clearRegistry()
+
+  if (typeof document !== 'undefined' && document.head) {
+    const managedOwner = document.head.querySelector<HTMLStyleElement>(
+      `style#${SHIKI_GENERATED_STYLES_ID}`,
+    )
+    managedOwner?.remove()
+  }
 }
 
 export const __testing__ = {

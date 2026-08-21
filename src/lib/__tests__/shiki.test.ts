@@ -11,6 +11,7 @@ import {
   highlightShikiFence,
   prepareShikiLanguages,
   resolveShikiLanguage,
+  syncGeneratedShikiStylesheet,
 } from '../shiki'
 
 const fakeHighlighter = (): Highlighter => ({
@@ -18,11 +19,12 @@ const fakeHighlighter = (): Highlighter => ({
 } as unknown as Highlighter)
 
 type LanguageInput = Parameters<Highlighter['loadLanguage']>[0]
+type CodeToHtmlOptions = Parameters<Highlighter['codeToHtml']>[1]
 
 function fakeLanguageHighlighter(
   loadLanguage: (language: LanguageInput) => Promise<void>,
   loadedLanguages: string[] = [],
-  codeToHtml: (source: string) => string = (source) =>
+  codeToHtml: (source: string, options?: CodeToHtmlOptions) => string = (source) =>
     `<pre class="shiki"><code><span class="line">${source}</span></code></pre>`,
 ): Highlighter {
   return {
@@ -396,5 +398,123 @@ describe('Shiki H3 synchronous fence rendering', () => {
     expect(highlightShikiFence('const answer = 42', 'js')).toBeNull()
     expect(loadLanguage).not.toHaveBeenCalled()
     expect(codeToHtml).not.toHaveBeenCalled()
+  })
+})
+
+describe('Shiki H4 style-to-class and stylesheet ownership', () => {
+  it('passes the one shared transformer to production codeToHtml', async () => {
+    const optionsSeen: CodeToHtmlOptions[] = []
+    const codeToHtml = vi.fn((source: string, options?: CodeToHtmlOptions) => {
+      if (!options) throw new Error('H4 test expected codeToHtml options')
+      optionsSeen.push(options)
+      return `<pre class="shiki"><code><span class="line">${source}</span></code></pre>`
+    })
+    const runtime = fakeLanguageHighlighter(async () => {}, [], codeToHtml)
+    const factory = useFakeLanguageRuntime(runtime)
+
+    await expect(ensureShikiLanguage('js')).resolves.toMatchObject({ status: 'loaded' })
+    const html = highlightShikiFence('const answer = 42', 'js')
+
+    expect(html).toContain('class="shiki"')
+    expect(optionsSeen).toHaveLength(1)
+    expect(optionsSeen[0]?.transformers).toEqual([getShikiStyleTransformer()])
+    expect(factory).toHaveBeenCalledTimes(1)
+  })
+
+  it('emits class-based production HTML and one reusable complete CSS owner', async () => {
+    await expect(ensureShikiLanguage('javascript')).resolves.toMatchObject({ status: 'loaded' })
+    const javascriptHtml = highlightShikiFence('const answer = 42', 'javascript')
+    expect(javascriptHtml).toContain('docus-shiki-')
+    expect(javascriptHtml).not.toMatch(/\sstyle=/i)
+
+    const initialCss = getGeneratedShikiCss()
+    expect(initialCss).toContain('.docus-shiki-')
+    expect(initialCss).toContain('--shiki-light:')
+    expect(initialCss).toContain('--shiki-dark:')
+
+    syncGeneratedShikiStylesheet()
+    const firstOwner = document.head.querySelector('style#docus-shiki-generated-styles')
+    expect(firstOwner).not.toBeNull()
+    expect(firstOwner?.parentElement).toBe(document.head)
+    expect(firstOwner?.textContent).toBe(initialCss)
+
+    // Re-syncing the same snapshot must preserve both owner identity and the
+    // exact full stylesheet text rather than append duplicate rules.
+    syncGeneratedShikiStylesheet()
+    expect(document.head.querySelectorAll('style#docus-shiki-generated-styles')).toHaveLength(1)
+    expect(document.head.querySelector('style#docus-shiki-generated-styles')).toBe(firstOwner)
+    expect(firstOwner?.textContent).toBe(initialCss)
+
+    // A stale owner is replaced by the complete current snapshot.
+    if (!firstOwner) throw new Error('H4 stylesheet owner was not created')
+    firstOwner.textContent = 'STALE_CSS_SENTINEL'
+    syncGeneratedShikiStylesheet()
+    expect(firstOwner.textContent).toBe(initialCss)
+    expect(firstOwner.textContent).not.toContain('STALE_CSS_SENTINEL')
+
+    await expect(ensureShikiLanguage('python')).resolves.toMatchObject({ status: 'loaded' })
+    await expect(ensureShikiLanguage('java')).resolves.toMatchObject({ status: 'loaded' })
+    expect(highlightShikiFence('print(1)', 'python')).toContain('docus-shiki-')
+    expect(highlightShikiFence('class Demo {}', 'java')).toContain('docus-shiki-')
+    const expandedCss = getGeneratedShikiCss()
+    syncGeneratedShikiStylesheet()
+
+    expect(expandedCss).toContain('.docus-shiki-')
+    expect(firstOwner.textContent).toBe(expandedCss)
+    expect(document.head.querySelectorAll('style#docus-shiki-generated-styles')).toHaveLength(1)
+  })
+
+  it('does not require document to read CSS or synchronize the stylesheet', async () => {
+    await expect(ensureShikiLanguage('javascript')).resolves.toMatchObject({ status: 'loaded' })
+    expect(highlightShikiFence('const answer = 42', 'javascript')).toContain('docus-shiki-')
+    const css = getGeneratedShikiCss()
+    expect(css).not.toBe('')
+
+    vi.stubGlobal('document', undefined)
+    try {
+      expect(() => syncGeneratedShikiStylesheet()).not.toThrow()
+      expect(getGeneratedShikiCss()).toBe(css)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('treats a missing head or DOM write failure as a safe stylesheet no-op', async () => {
+    await expect(ensureShikiLanguage('javascript')).resolves.toMatchObject({ status: 'loaded' })
+    expect(highlightShikiFence('const answer = 42', 'javascript')).toContain('docus-shiki-')
+
+    vi.stubGlobal('document', { head: undefined } as unknown as Document)
+    try {
+      expect(() => syncGeneratedShikiStylesheet()).not.toThrow()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+
+    const appendChild = vi.spyOn(document.head, 'appendChild').mockImplementationOnce(() => {
+      throw new Error('head is temporarily unwritable')
+    })
+    try {
+      expect(() => syncGeneratedShikiStylesheet()).not.toThrow()
+      expect(document.head.querySelector('style#docus-shiki-generated-styles')).toBeNull()
+    } finally {
+      appendChild.mockRestore()
+    }
+  })
+
+  it('test reset removes only the managed head owner', async () => {
+    await expect(ensureShikiLanguage('javascript')).resolves.toMatchObject({ status: 'loaded' })
+    expect(highlightShikiFence('const answer = 42', 'javascript')).toContain('docus-shiki-')
+    syncGeneratedShikiStylesheet()
+
+    const unrelatedOwner = document.createElement('style')
+    unrelatedOwner.id = 'unrelated-style-owner'
+    unrelatedOwner.textContent = 'body { color: red; }'
+    document.head.appendChild(unrelatedOwner)
+
+    __testing__.reset()
+
+    expect(document.head.querySelector('style#docus-shiki-generated-styles')).toBeNull()
+    expect(document.head.querySelector('style#unrelated-style-owner')).toBe(unrelatedOwner)
+    unrelatedOwner.remove()
   })
 })

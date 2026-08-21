@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
 import { createHighlighter, type Highlighter } from 'shiki'
 import { render } from '../markdown'
 import type { Resolver as WikiResolver } from '../wikiLinks'
-import { __testing__ as shikiTesting } from '../shiki'
+import { __testing__ as shikiTesting, getGeneratedShikiCss } from '../shiki'
 
 type LanguageInput = Parameters<Highlighter['loadLanguage']>[0]
 
@@ -913,5 +913,84 @@ describe('markdown H3 renderer cutover', () => {
     expect(doc.querySelector('.mermaid-mount')).not.toBeNull()
     expect(doc.querySelector('pre.docus-shiki-plain')).not.toBeNull()
     expect(factory).not.toHaveBeenCalled()
+  })
+})
+
+describe('markdown H4 style-to-class and security closure', () => {
+  beforeEach(() => {
+    shikiTesting.reset()
+  })
+
+  afterEach(() => {
+    shikiTesting.reset()
+  })
+
+  it('keeps Shiki classes after sanitization while isolating trusted CSS from user content', async () => {
+    const sourceSentinel = 'DOCUS_H4_USER_SOURCE_SENTINEL_7f3a'
+    const html = await render([
+      `<span style="color:red" onclick="alert(1)">unsafe</span>`,
+      '<img src="/x" onerror="alert(1)">',
+      '<a href="javascript:alert(1)">unsafe link</a>',
+      '',
+      '```js',
+      `const value = "${sourceSentinel}"`,
+      '</style> body { display:none } --evil: red .docus-shiki-hijack {}',
+      '<script>alert(1)</script>',
+      '<a onclick="alert(1)">hello</a>',
+      '<style>body{display:none}</style>',
+      '```',
+    ].join('\n'))
+    const article = document.createElement('article')
+    article.innerHTML = html
+
+    const owner = document.head.querySelector('style#docus-shiki-generated-styles')
+    const tokenClass = Array.from(article.querySelectorAll<HTMLElement>('[class]'))
+      .flatMap((element) => Array.from(element.classList))
+      .find((className) => className.startsWith('docus-shiki-'))
+
+    expect(article.querySelector('pre.shiki')).not.toBeNull()
+    expect(article.querySelector('span.line')).not.toBeNull()
+    expect(tokenClass).toMatch(/^docus-shiki-/)
+    expect(article.querySelectorAll('[style]')).toHaveLength(0)
+    expect(article.querySelector('[onclick]')).toBeNull()
+    expect(article.querySelector('[onerror]')).toBeNull()
+    expect(article.querySelector('script')).toBeNull()
+    expect(article.querySelector('style')).toBeNull()
+    expect(article.querySelector('a[href^="javascript:"]')).toBeNull()
+    expect(html).not.toContain('docus-shiki-generated-styles')
+
+    expect(owner).not.toBeNull()
+    expect(owner?.parentElement).toBe(document.head)
+    expect(document.head.querySelectorAll('style#docus-shiki-generated-styles')).toHaveLength(1)
+    expect(owner?.textContent).toContain('.docus-shiki-')
+    expect(owner?.textContent).toContain('--shiki-light:')
+    expect(owner?.textContent).toContain('--shiki-dark:')
+    expect(owner?.textContent).not.toContain(sourceSentinel)
+    expect(owner?.textContent).not.toContain('body { display:none }')
+  })
+
+  it('reuses one owner across concurrent multi-language renders with full snapshots', async () => {
+    const [javascript, python, java] = await Promise.all([
+      render('```js\nconst one = 1\n```'),
+      render('```python\nprint(1)\n```'),
+      render('```java\nclass Demo {}\n```'),
+    ])
+
+    expect(javascript).toContain('class="shiki')
+    expect(python).toContain('class="shiki')
+    expect(java).toContain('class="shiki')
+    expect(document.head.querySelectorAll('style#docus-shiki-generated-styles')).toHaveLength(1)
+    expect(document.head.querySelector('style#docus-shiki-generated-styles')?.textContent)
+      .toBe(getGeneratedShikiCss())
+  })
+
+  it('does not create an empty owner for no-fence or unknown-only documents', async () => {
+    expect(document.head.querySelector('style#docus-shiki-generated-styles')).toBeNull()
+
+    await render('# No code fences\n\nPlain text.')
+    expect(document.head.querySelector('style#docus-shiki-generated-styles')).toBeNull()
+
+    await render('```totally-unknown\nplain code\n```')
+    expect(document.head.querySelector('style#docus-shiki-generated-styles')).toBeNull()
   })
 })

@@ -14,6 +14,7 @@ import {
   extractFenceLanguageIdentifier,
   highlightShikiFence,
   prepareShikiLanguages,
+  syncGeneratedShikiStylesheet,
 } from './shiki'
 
 function escapeHtml(s: string): string {
@@ -266,5 +267,7 @@ export async function render(markdown: string, options: MarkdownRenderOptions = 
   // Keep the final env separate from the discovery env. In particular, the
   // real resolver must only be visible to the actual render pass.
   const env: WikiLinkEnv = options.resolver ? { wikiResolver: options.resolver } : {}
-  return sanitizeMarkdownHtml(md.render(markdown, env))
+  const html = md.render(markdown, env)
+  syncGeneratedShikiStylesheet()
+  return sanitizeMarkdownHtml(html)
 }

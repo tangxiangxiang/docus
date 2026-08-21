@@ -4,17 +4,18 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 文档状态 | H3 COMPLETE / H4-H8 NOT IMPLEMENTED |
+| 文档状态 | H4 COMPLETE / H5-H8 NOT IMPLEMENTED |
 | 产品 PRD | [Shiki Syntax Highlighting Migration PRD](syntax-highlighting-shiki-migration-prd.md) |
 | Implementation baseline | 2be6b2c57b5d7cb76b359220f361bacb55661099 |
 | 计划日期 | 2026-08-21 |
-| 当前阶段 | SHIKI-H3 — COMPLETE；Next: SHIKI-H4 — Style-to-Class & Security Closure |
-| 当前实现状态 | H0 审计、H1 runtime foundation、H2 language preparation 和 H3 Markdown renderer cutover 已完成；Shiki singleton 已连接到 Markdown preflight，官方 bundled registry/alias 已按 fence 动态准备并去重；正常已知 fence 现在输出结构化 Shiki HTML，unknown/empty/unavailable/error 使用 escaped plain fallback；highlight.js 依赖和旧 CSS 仍保留用于 H7 cleanup/rollback；production transformer、generated CSS owner、主题与 PDF integration 尚未开始 |
+| 当前阶段 | SHIKI-H4 — COMPLETE；Next: SHIKI-H5 — Theme Integration |
+| 当前实现状态 | H0 审计、H1 runtime foundation、H2 language preparation、H3 Markdown renderer cutover 与 H4 style-to-class/security closure 已完成；正常已知 fence 输出带 `docus-shiki-*` class 的 Shiki HTML，完整 transformer CSS snapshot 由 `document.head` 下唯一的 `style#docus-shiki-generated-styles` owner 管理；DOMPurify 的 `FORBID_ATTR: ['style']` 未改变，用户 style/event/危险 URI 仍被清理；主题变量选择、PDF integration 与 highlight.js cleanup 尚未开始 |
 | H0 审计证据 | [Shiki H0 Baseline & Contract Audit](syntax-highlighting-shiki-h0-audit.md) |
 | H1 实施证据 | [Shiki H1 Dependency & Runtime Foundation](syntax-highlighting-shiki-h1-runtime-foundation.md) |
 | H2 实施证据 | [Shiki H2 Fence Discovery & Dynamic Language Loading](syntax-highlighting-shiki-h2-language-loading.md) |
 | H3 实施证据 | [Shiki H3 Markdown Renderer Cutover](syntax-highlighting-shiki-h3-renderer-cutover.md) |
-| 本任务范围 | H0 baseline/contract audit、H1 runtime foundation、H2 fence discovery/language loading 与 H3 normal Markdown renderer cutover 已完成；H4-H8 尚未实施；DOMPurify、主题、Mermaid、MarkMap 和 PDF 行为保持原状 |
+| H4 实施证据 | [Shiki H4 Style-to-Class & Security Closure](syntax-highlighting-shiki-h4-security-closure.md) |
+| 本任务范围 | H0 baseline/contract audit、H1 runtime foundation、H2 fence discovery/language loading、H3 normal Markdown renderer cutover 与 H4 style-to-class/security closure 已完成；H5-H8 尚未实施；主题、Mermaid、MarkMap 和 PDF 行为保持原状 |
 | 目标 | 用可回滚、可验证的阶段性步骤完成 Shiki 4.x 迁移，同时保持 Markdown、DOMPurify、主题、Mermaid、MarkMap 和 PDF 合同 |
 
 本计划描述接下来如何实施产品 PRD，不代表任何 Shiki 能力已经存在。未来实现必须以产品 PRD 为最高约束；如果本计划与 PRD 发生冲突：
@@ -31,7 +32,7 @@ H0 审计证据已记录在 [Shiki H0 Baseline & Contract Audit](syntax-highligh
 
 H1 已完成并记录在 [Shiki H1 Dependency & Runtime Foundation](syntax-highlighting-shiki-h1-runtime-foundation.md)：Shiki 4.4.3 和 matching transformer 4.4.3 已加入，runtime singleton 已独立初始化双主题，`transformerStyleToClass` CSS snapshot API 已验证。H2 已在 [Shiki H2 Fence Discovery & Dynamic Language Loading](syntax-highlighting-shiki-h2-language-loading.md) 中记录：MarkdownIt 只发现 `fence` tokens，使用官方 registry/aliases 进行 canonical language preparation，并保持正常 renderer 为 highlight.js；没有新增 Shiki token HTML、DOM stylesheet、主题、PDF 或 Markdown renderer cutover。
 
-H2 follow-up 已修正 failure boundary：`getShikiRuntime()` / `createHighlighter()` 的初始化失败沿 async render surface reject；只有单个 `runtime.loadLanguage()` grammar failure 转换为 `unavailable`。H3 已在 [Shiki H3 Markdown Renderer Cutover](syntax-highlighting-shiki-h3-renderer-cutover.md) 中完成：正常 fence callback 只读取已准备的 Shiki runtime 并同步调用 `codeToHtml()`；normal known output 不再是 `hljs`，unknown/empty/unavailable/codeToHtml failure 统一使用 escaped `docus-shiki-plain` fallback。H4 尚未开始，生产 transformer/CSS owner 尚未启用。
+H2 follow-up 已修正 failure boundary：`getShikiRuntime()` / `createHighlighter()` 的初始化失败沿 async render surface reject；只有单个 `runtime.loadLanguage()` grammar failure 转换为 `unavailable`。H3 已在 [Shiki H3 Markdown Renderer Cutover](syntax-highlighting-shiki-h3-renderer-cutover.md) 中完成：正常 fence callback 只读取已准备的 Shiki runtime 并同步调用 `codeToHtml()`；normal known output 不再是 `hljs`，unknown/empty/unavailable/codeToHtml failure 统一使用 escaped `docus-shiki-plain` fallback。H4 已在 [Shiki H4 Style-to-Class & Security Closure](syntax-highlighting-shiki-h4-security-closure.md) 中完成：production `codeToHtml()` 使用唯一 `transformerStyleToClass`，完整 CSS snapshot 同步到唯一 head owner，sanitized article 保留 class-based token markup 且不放开 `style`。
 
 ## 2. 计划目标与约束
 
@@ -103,7 +104,7 @@ FORBID_ATTR: ['style']
 
 ### 4.1 当前真实调用流
 
-当前 repository 在 H3 完成后的主要路径如下：
+当前 repository 在 H4 完成后的主要路径如下：
 
 ~~~
 raw Markdown
@@ -133,9 +134,14 @@ MarkdownIt synchronous fence callback
     ↓
 MarkMap / Mermaid placeholder
 OR
-Shiki codeToHtml() structural HTML
+Shiki codeToHtml() + transformerStyleToClass class-based HTML
 OR
 escaped <pre class="shiki docus-shiki-plain"><code>
+    ↓
+syncGeneratedShikiStylesheet()
+    → document.head
+      style#docus-shiki-generated-styles
+      complete trusted CSS snapshot
     ↓
 sanitizeMarkdownHtml()
     ↓
@@ -912,7 +918,7 @@ Shiki 迁移不能绕过这条流程，也不能在导出时重新解析 Markdow
 - Markdown existing extensions、resolver isolation、heading extraction 仍通过；
 - transformerStyleToClass production integration、generated CSS owner、theme 和 PDF 仍未开始。
 
-### SHIKI-H4 — Style-to-Class & Security Closure
+### SHIKI-H4 — Style-to-Class & Security Closure — COMPLETE
 
 动作：
 
@@ -924,6 +930,8 @@ Shiki 迁移不能绕过这条流程，也不能在导出时重新解析 Markdow
 - 增加 raw style/event/code injection regressions；
 - 不因为 Shiki incidental attributes 扩大 ALLOWED_ATTR。
 
+已完成并记录在 [Shiki H4 Style-to-Class & Security Closure](syntax-highlighting-shiki-h4-security-closure.md)。
+
 退出条件：
 
 - sanitized Shiki HTML 中没有 Shiki-generated style attribute；
@@ -931,6 +939,10 @@ Shiki 迁移不能绕过这条流程，也不能在导出时重新解析 Markdow
 - raw user style、onclick、javascript URI 仍被删除；
 - CSS class 不包含 raw source；
 - H4 security tests 在 jsdom 和 browser path 都通过。
+
+当前 H4 handoff：production transformer 已启用，generated CSS 使用唯一的
+`document.head` owner；H5 仍负责 theme selector/variable integration，H6 仍负责
+PDF printable-light palette。
 
 ### SHIKI-H5 — Theme Integration
 
@@ -1079,7 +1091,7 @@ Shiki 迁移不能绕过这条流程，也不能在导出时重新解析 Markdow
 | Main risk | style 被 sanitizer 删除、generated CSS 放错位置、class/CSS dedup 失败 |
 | Tests required | no Shiki style、user style stripped、onclick stripped、class survives、single style owner、no article style |
 | Manual validation | DevTools 检查 article HTML、head style ID 和 raw HTML injection |
-| Exit criteria | DOMPurify unchanged 且 token colors 仍可见 |
+| Exit criteria | DOMPurify unchanged；token classes survive；trusted CSS snapshot has one head owner；article has no Shiki/user inline style；最终主题可见色留给 H5 |
 | Can rollback independently? | Yes；但不能以跳过 H4 作为 release shortcut |
 
 ### SHIKI-H5 table
