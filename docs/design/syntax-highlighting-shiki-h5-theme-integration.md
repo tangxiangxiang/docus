@@ -12,7 +12,7 @@ integration、highlight.js cleanup 或主题产品模型重设计。
 | H5 base / H4 completion | `e302c55791f779aead8bfa45ce9a9733245796d8` |
 | Implementation baseline | `2be6b2c57b5d7cb76b359220f361bacb55661099` |
 | H4 completion commit | `e302c55791f779aead8bfa45ce9a9733245796d8` |
-| H5 completion commit | The phase commit containing this evidence document; exact SHA is recorded in the final handoff |
+| H5 completion commit | `9d5d8a9ae0e19ee833f199784c9c5616cb02f237` |
 | Runtime | Node `v24.15.0`, npm `11.12.1`; Docker baseline remains `node:22-bookworm-slim` |
 | Status | H5 COMPLETE; H6/H7 NOT STARTED |
 

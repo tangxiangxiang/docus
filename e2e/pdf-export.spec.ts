@@ -47,6 +47,22 @@ type PdfSurfaceSnapshot = {
   globalTheme: string | null
 }
 
+type PdfShikiTokenEvidence = {
+  light: string
+  dark: string
+  computed: string
+}
+
+type PdfShikiCloneEvidence = {
+  tokens: PdfShikiTokenEvidence[]
+  lightBackground: string
+  darkBackground: string
+  computedBackground: string
+  ownerCount: number
+  copiedHeadOwnerCount: number
+  globalTheme: string | null
+}
+
 function hasInvalidSvgNumber(value: string | null | undefined): boolean {
   return /(?:NaN|Infinity)/.test(value ?? '')
 }
@@ -216,6 +232,50 @@ test('exports the Kitchen Sink with settled content from the file-tree menu', as
   await page.goto('/vault')
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
   const themeBeforeExport = await page.locator('html').getAttribute('data-theme')
+  await page.evaluate(async () => {
+    const { __testing__ } = await import('/src/lib/pdfExport.ts')
+    const win = window as Window & { __pdfShikiCloneEvidence?: PdfShikiCloneEvidence | null }
+    win.__pdfShikiCloneEvidence = null
+    __testing__.setPdfCloneObserver((clonedDocument, clonedRoot) => {
+      const article = clonedRoot.querySelector<HTMLElement>('.article')
+      const pre = article?.querySelector<HTMLElement>('pre.shiki:not(.docus-shiki-plain)')
+      if (!article || !pre) throw new Error('PDF clone did not retain a Shiki code block')
+      const view = clonedDocument.defaultView ?? window
+      const normalize = (value: string): string => {
+        const probe = clonedDocument.createElement('span')
+        probe.style.color = value.trim()
+        article.append(probe)
+        const normalized = view.getComputedStyle(probe).color
+        probe.remove()
+        return normalized
+      }
+      const tokens = Array.from(pre.querySelectorAll<HTMLElement>('span'))
+        .filter((element) => Array.from(element.classList).some((name) => name.startsWith('docus-shiki-')))
+        .map((token) => {
+          const style = view.getComputedStyle(token)
+          return {
+            light: normalize(style.getPropertyValue('--shiki-light')),
+            dark: normalize(style.getPropertyValue('--shiki-dark')),
+            computed: style.color,
+          }
+        })
+        .filter((token) => token.light !== token.dark)
+      const preStyle = view.getComputedStyle(pre)
+      const owner = clonedRoot.querySelector<HTMLStyleElement>('style#docus-pdf-download-styles')
+      win.__pdfShikiCloneEvidence = {
+        tokens,
+        lightBackground: normalize(preStyle.getPropertyValue('--shiki-light-bg')),
+        darkBackground: normalize(preStyle.getPropertyValue('--shiki-dark-bg')),
+        computedBackground: preStyle.backgroundColor,
+        ownerCount: clonedRoot.querySelectorAll('style#docus-pdf-download-styles').length,
+        copiedHeadOwnerCount: clonedRoot.querySelectorAll('style#docus-shiki-generated-styles').length,
+        globalTheme: clonedDocument.documentElement.getAttribute('data-theme'),
+      }
+      if (!owner?.textContent?.includes('var(--shiki-light)')) {
+        throw new Error('PDF clone stylesheet is missing the printable Shiki override')
+      }
+    })
+  })
 
   const inbox = page.locator('.tree-row[data-tree-kind="folder"][data-tree-path="inbox"]')
   await inbox.locator('.chevron').click()
@@ -311,6 +371,21 @@ test('exports the Kitchen Sink with settled content from the file-tree menu', as
   expect(await page.evaluate(() => (
     window as typeof window & { __pdfPrintCalled?: boolean }
   ).__pdfPrintCalled)).toBe(false)
+  const shikiEvidence = await page.evaluate(() => (
+    window as typeof window & { __pdfShikiCloneEvidence?: PdfShikiCloneEvidence | null }
+  ).__pdfShikiCloneEvidence)
+  expect(shikiEvidence).not.toBeNull()
+  expect(shikiEvidence?.ownerCount).toBe(1)
+  expect(shikiEvidence?.copiedHeadOwnerCount).toBe(0)
+  expect(shikiEvidence?.globalTheme).toBe('dark')
+  expect(shikiEvidence?.tokens.length).toBeGreaterThanOrEqual(2)
+  expect(new Set(shikiEvidence?.tokens.map((token) => token.light)).size).toBeGreaterThanOrEqual(2)
+  for (const token of shikiEvidence?.tokens.slice(0, 2) ?? []) {
+    expect(token.computed).toBe(token.light)
+    expect(token.computed).not.toBe(token.dark)
+  }
+  expect(shikiEvidence?.computedBackground).toBe(shikiEvidence?.lightBackground)
+  expect(shikiEvidence?.computedBackground).not.toBe(shikiEvidence?.darkBackground)
   expect(await page.locator('html').getAttribute('data-theme')).toBe(themeBeforeExport)
   await expect(page.locator('.pdf-export-surface')).toHaveCount(0)
 })

@@ -1,5 +1,6 @@
 import html2pdf from 'html2pdf.js'
 import { parseDoc } from './frontmatter'
+import { getGeneratedShikiCss } from './shiki'
 
 export interface PdfDownloadOptions {
   /** The default filename used by the browser download. */
@@ -149,6 +150,28 @@ const PDF_DOWNLOAD_STYLES = `
   white-space: inherit !important;
   overflow-wrap: anywhere !important;
   word-break: break-word !important;
+}
+
+/* Shiki's generated CSS contains trusted light/dark variables, while the
+   reader's static stylesheet selects one palette from the live root theme.
+   PDF is a separate printable boundary: consume the light variables here so
+   a dark reader or a dark html2canvas clone cannot leak dark token colors. */
+.pdf-document .article pre.shiki:not(.docus-shiki-plain) {
+  color: var(--shiki-light) !important;
+  background-color: var(--shiki-light-bg) !important;
+}
+
+.pdf-document .article pre.shiki:not(.docus-shiki-plain) span {
+  color: var(--shiki-light) !important;
+  background-color: var(--shiki-light-bg) !important;
+}
+
+/* Plain/unknown fences do not have Shiki variables. Keep their established
+   printable fallback surface explicit instead of resolving undefined vars. */
+.pdf-document .article pre.shiki.docus-shiki-plain,
+.pdf-document .article pre.shiki.docus-shiki-plain span {
+  color: #202124 !important;
+  background-color: #f5f6f8 !important;
 }
 
 .pdf-document .article blockquote {
@@ -602,7 +625,33 @@ interface PdfDownloadSurface {
   root: HTMLElement
 }
 
-function createPdfDownloadElement(articleHtml: string): PdfDownloadSurface {
+export type PdfCloneObserver = (clonedDocument: Document, clonedRoot: HTMLElement) => void
+
+let pdfCloneObserverForTesting: PdfCloneObserver | null = null
+
+function buildPdfDownloadStyles(generatedShikiCss = getGeneratedShikiCss()): string {
+  return [generatedShikiCss, PDF_DOWNLOAD_STYLES]
+    .filter(Boolean)
+    .join('\n')
+}
+
+function ensurePdfDownloadStylesheet(root: HTMLElement, stylesText: string): HTMLStyleElement {
+  const directOwners = Array.from(root.children)
+    .filter((element): element is HTMLStyleElement => (
+      element.tagName === 'STYLE' && element.id === 'docus-pdf-download-styles'
+    ))
+  const stylesheet = directOwners[0] ?? root.ownerDocument.createElement('style')
+  stylesheet.id = 'docus-pdf-download-styles'
+  for (const duplicate of directOwners.slice(1)) duplicate.remove()
+  if (!stylesheet.parentElement) root.prepend(stylesheet)
+  if (stylesheet.textContent !== stylesText) stylesheet.textContent = stylesText
+  return stylesheet
+}
+
+function createPdfDownloadElement(
+  articleHtml: string,
+  stylesText = buildPdfDownloadStyles(),
+): PdfDownloadSurface {
   const host = document.createElement('div')
   host.className = 'pdf-download-host'
   host.style.cssText = [
@@ -631,10 +680,7 @@ function createPdfDownloadElement(articleHtml: string): PdfDownloadSurface {
   ].join(';')
   root.innerHTML = buildPdfDownloadDocument(articleHtml)
 
-  const stylesheet = document.createElement('style')
-  stylesheet.id = 'docus-pdf-download-styles'
-  stylesheet.textContent = PDF_DOWNLOAD_STYLES
-  root.prepend(stylesheet)
+  ensurePdfDownloadStylesheet(root, stylesText)
   host.appendChild(root)
   return { host, root }
 }
@@ -646,7 +692,11 @@ function pdfFileName(title: string): string {
 
 /** Render the prepared article to a PDF blob and trigger a browser download. */
 export async function downloadPdfDocument(options: PdfDownloadOptions): Promise<void> {
-  const surface = createPdfDownloadElement(options.articleHtml)
+  /* Keep one immutable trusted Shiki snapshot for the complete export. A
+     concurrent Markdown render may grow the live head owner later, but it
+     must not change this PDF transaction halfway through html2canvas. */
+  const pdfStylesText = buildPdfDownloadStyles()
+  const surface = createPdfDownloadElement(options.articleHtml, pdfStylesText)
   document.body.appendChild(surface.host)
 
   try {
@@ -672,6 +722,7 @@ export async function downloadPdfDocument(options: PdfDownloadOptions): Promise<
         onclone: (clonedDocument: Document) => {
           const clonedRoot = clonedDocument.querySelector<HTMLElement>('[data-docus-pdf-download-root="true"]')
           if (!clonedRoot) return
+          ensurePdfDownloadStylesheet(clonedRoot, pdfStylesText)
           // html2pdf clones the source into a hidden overlay. Keep the
           // cloned document in normal flow so html2canvas measures its full
           // content height instead of inheriting any host positioning.
@@ -681,6 +732,7 @@ export async function downloadPdfDocument(options: PdfDownloadOptions): Promise<
           clonedRoot.style.width = '100%'
           clonedRoot.style.visibility = 'visible'
           clonedRoot.style.pointerEvents = 'auto'
+          pdfCloneObserverForTesting?.(clonedDocument, clonedRoot)
         },
       },
       jsPDF: {
@@ -694,13 +746,20 @@ export async function downloadPdfDocument(options: PdfDownloadOptions): Promise<
     await worker.save()
   } finally {
     surface.host.remove()
+    // The observer is a narrow test-only seam. Clear it even when html2pdf
+    // rejects so one export cannot leak callbacks into a later test/export.
+    pdfCloneObserverForTesting = null
   }
 }
 
 export const __testing__ = {
   PDF_DOWNLOAD_STYLES,
+  buildPdfDownloadStyles,
   PDF_PRINTABLE_PAGE_WIDTH_MM,
   PDF_PRINTABLE_PAGE_HEIGHT_MM,
   markOversizedPdfBlocks,
   prepareMarkmapSvg,
+  setPdfCloneObserver(observer: PdfCloneObserver | null): void {
+    pdfCloneObserverForTesting = observer
+  },
 }

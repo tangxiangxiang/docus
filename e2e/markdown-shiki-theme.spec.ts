@@ -109,6 +109,10 @@ test('Shiki reader themes select computed token/background palettes without rere
   expect(forcedLightState.palette).toBe('light')
   expect(forcedLightState.tokenColor).toBe(forcedLightState.lightToken)
   expect(forcedLightState.preBackground).toBe(forcedLightState.lightBackground)
+  expect(forcedLightState.fallbackColor).not.toBe('')
+  expect(forcedLightState.fallbackColor).not.toBe('rgba(0, 0, 0, 0)')
+  expect(forcedLightState.fallbackBackground).not.toBe('')
+  expect(forcedLightState.fallbackBackground).not.toBe('rgba(0, 0, 0, 0)')
 
   const beforeSwitch = await page.evaluate(() => {
     const article = document.querySelector<HTMLElement>('[data-h5-theme-fixture]')
@@ -165,6 +169,10 @@ test('Shiki reader themes select computed token/background palettes without rere
   expect(afterSwitch.tokenColor).not.toBe(beforeSwitch.tokenColor)
   expect(afterSwitch.preBackground).not.toBe(beforeSwitch.preBackground)
   expect(switchIdentity).toEqual({ preSame: true, tokenSame: true, ownerSame: true, ownerCount: 1 })
+  expect(afterSwitch.fallbackColor).not.toBe('')
+  expect(afterSwitch.fallbackColor).not.toBe('rgba(0, 0, 0, 0)')
+  expect(afterSwitch.fallbackBackground).not.toBe('')
+  expect(afterSwitch.fallbackBackground).not.toBe('rgba(0, 0, 0, 0)')
 
   const explicitCases: Array<{ theme: Palette; os: 'light' | 'dark'; expected: Palette }> = [
     { theme: 'light', os: 'light', expected: 'light' },

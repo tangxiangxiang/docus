@@ -9,7 +9,14 @@ const pdfMocks = vi.hoisted(() => ({
   save: vi.fn(),
 }))
 
+const shikiMocks = vi.hoisted(() => ({
+  getGeneratedShikiCss: vi.fn(() => ''),
+}))
+
 vi.mock('html2pdf.js', () => ({ default: pdfMocks.html2pdf }))
+vi.mock('../shiki', () => ({
+  getGeneratedShikiCss: shikiMocks.getGeneratedShikiCss,
+}))
 
 import {
   __testing__,
@@ -23,6 +30,13 @@ import {
 describe('PDF export helpers', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    shikiMocks.getGeneratedShikiCss.mockReturnValue(`
+.docus-shiki-test-keyword {
+  --shiki-light: rgb(10, 20, 30);
+  --shiki-dark: rgb(220, 230, 240);
+  --shiki-light-bg: rgb(255, 255, 255);
+  --shiki-dark-bg: rgb(36, 41, 46);
+}`)
     pdfMocks.save.mockResolvedValue(undefined)
     pdfMocks.from.mockReturnValue({ save: pdfMocks.save })
     pdfMocks.set.mockReturnValue({ from: pdfMocks.from })
@@ -68,6 +82,92 @@ describe('PDF export helpers', () => {
     expect(__testing__.PDF_DOWNLOAD_STYLES).toContain('.pdf-download-root')
     expect(__testing__.PDF_DOWNLOAD_STYLES).not.toContain('\nbody {')
     expect(__testing__.PDF_DOWNLOAD_STYLES).toContain('size: A4')
+  })
+
+  it('composes one trusted PDF stylesheet from the Shiki snapshot', async () => {
+    const liveOwner = document.createElement('style')
+    liveOwner.id = 'docus-shiki-generated-styles'
+    liveOwner.textContent = '.docus-shiki-live { --shiki-light: blue; }'
+    document.head.append(liveOwner)
+
+    try {
+      await downloadPdfDocument({
+        title: 'Shiki PDF',
+        articleHtml: `<article class="article reading">
+          <pre class="shiki docus-shiki-root"><code><span class="docus-shiki-test-keyword">const</span> DOCUS_H6_USER_SOURCE_SENTINEL</code></pre>
+        </article>`,
+      })
+
+      const source = pdfMocks.from.mock.calls[0]?.[0] as HTMLElement
+      const owner = source.querySelector<HTMLStyleElement>('style#docus-pdf-download-styles')
+      expect(owner).not.toBeNull()
+      expect(source.querySelectorAll('style#docus-pdf-download-styles')).toHaveLength(1)
+      expect(source.querySelector('style#docus-shiki-generated-styles')).toBeNull()
+      expect(owner?.textContent).toContain('.docus-shiki-test-keyword')
+      expect(owner?.textContent).toContain('--shiki-light')
+      expect(owner?.textContent).toContain('--shiki-dark')
+      expect(owner?.textContent).toContain('.pdf-document .article pre.shiki')
+      expect(owner?.textContent).toContain('var(--shiki-light)')
+      expect(owner?.textContent).not.toContain('DOCUS_H6_USER_SOURCE_SENTINEL')
+      expect(source.querySelector('article')?.textContent).toContain('DOCUS_H6_USER_SOURCE_SENTINEL')
+      expect(liveOwner.textContent).toBe('.docus-shiki-live { --shiki-light: blue; }')
+      expect(shikiMocks.getGeneratedShikiCss).toHaveBeenCalledTimes(1)
+      expect(__testing__.buildPdfDownloadStyles()).toContain('.docus-shiki-test-keyword')
+    } finally {
+      liveOwner.remove()
+    }
+  })
+
+  it('repairs a missing or stale PDF stylesheet in the html2canvas clone', async () => {
+    await downloadPdfDocument({
+      title: 'Clone repair',
+      articleHtml: '<article class="article reading"><pre class="shiki"><code>code</code></pre></article>',
+    })
+
+    const options = pdfMocks.set.mock.calls[0]?.[0] as {
+      html2canvas: { onclone: (clonedDocument: Document) => void }
+    }
+    const expectedStyles = __testing__.buildPdfDownloadStyles()
+
+    const makeClone = (styleText?: string): { document: Document; root: HTMLElement } => {
+      const clonedDocument = document.implementation.createHTMLDocument('pdf clone')
+      const root = clonedDocument.createElement('div')
+      root.dataset.docusPdfDownloadRoot = 'true'
+      root.innerHTML = '<main class="pdf-document"><article class="article"><pre class="shiki"><code>code</code></pre></article></main>'
+      if (styleText !== undefined) {
+        const style = clonedDocument.createElement('style')
+        style.id = 'docus-pdf-download-styles'
+        style.textContent = styleText
+        root.prepend(style)
+      }
+      clonedDocument.body.append(root)
+      return { document: clonedDocument, root }
+    }
+
+    for (const styleText of [undefined, 'STALE_PDF_STYLES']) {
+      const clone = makeClone(styleText)
+      options.html2canvas.onclone(clone.document)
+      const owner = clone.root.querySelector<HTMLStyleElement>('style#docus-pdf-download-styles')
+      expect(clone.root.querySelectorAll('style#docus-pdf-download-styles')).toHaveLength(1)
+      expect(owner?.textContent).toBe(expectedStyles)
+      expect(clone.root.dataset.docusPdfDownloadRoot).toBe('true')
+    }
+  })
+
+  it('preserves Shiki article classes without moving the PDF stylesheet into article HTML', () => {
+    const article = document.createElement('article')
+    article.className = 'article reading'
+    article.innerHTML = '<pre class="shiki docus-shiki-root"><code><span class="line"><span class="docus-shiki-token">const</span></span></code></pre>'
+
+    const prepared = preparePdfArticleHtml(article)
+    const exported = document.createElement('div')
+    exported.innerHTML = prepared
+
+    expect(exported.querySelector('pre.shiki')).not.toBeNull()
+    expect(exported.querySelector('span.line')).not.toBeNull()
+    expect(exported.querySelector('[class~="docus-shiki-token"]')).not.toBeNull()
+    expect(exported.querySelector('style#docus-pdf-download-styles')).toBeNull()
+    expect(prepared).not.toContain('docus-pdf-download-styles')
   })
 
   it('keeps short text blocks together and only splits oversized blocks', () => {
