@@ -1881,10 +1881,6 @@ async function exportPdfDocument(path: string): Promise<void> {
   }
 }
 
-function exportActivePdf(): void {
-  if (!activeTab.value) return
-  void exportPdfDocument(activeTab.value.path)
-}
 watch(() => navSearch?.tick.value, () => openSearch())
 
 /* After the Monaco addAction emits toggle-view-mode and isReadMode
@@ -2092,9 +2088,6 @@ watch(isReadMode, async (reading) => {
           <ReadingPane
             :raw="activeTab.raw"
             :resolver="wikiResolver"
-            :show-pdf-export="true"
-            :exporting-pdf="pdfExportBusy"
-            @export-pdf="exportActivePdf"
           />
         </div>
         <div v-if="!tabs.length" class="content-empty">

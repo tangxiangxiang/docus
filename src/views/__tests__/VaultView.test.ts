@@ -21,19 +21,16 @@ describe('VaultView editor tab wiring', () => {
     )
   })
 
-  it('routes File Tree and Read Mode through one PDF export pipeline', () => {
+  it('routes File Tree through the canonical PDF export pipeline only', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
     const exportHandler = source.match(/async function exportPdfDocument[\s\S]*?\n}/)?.[0]
-    const activeExport = source.match(/function exportActivePdf[\s\S]*?\n}/)?.[0]
+    const readingPane = source.match(/<ReadingPane[\s\S]*?\/>/)?.[0]
 
     expect(source.match(/async function exportPdfDocument/g)).toHaveLength(1)
     expect(exportHandler).toBeDefined()
-    expect(activeExport).toBeDefined()
+    expect(readingPane).toBeDefined()
     expect(source).toContain('@export-pdf="exportPdfDocument"')
-    expect(source).toContain(':show-pdf-export="true"')
-    expect(source).toContain(':exporting-pdf="pdfExportBusy"')
-    expect(source).toContain('@export-pdf="exportActivePdf"')
-    expect(activeExport).toContain('exportPdfDocument(activeTab.value.path)')
+    expect(readingPane).not.toMatch(/pdf|export/i)
     expect(source).not.toContain('exportPdfFromTree')
     expect(source).not.toContain('exportPdfFromReader')
     expect(source).not.toContain('downloadPdfFromReader')

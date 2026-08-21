@@ -14,8 +14,6 @@ import RenderedMarkdown from './RenderedMarkdown.vue'
 import type { Heading } from '../../composables/vault/useMarkdownRender'
 import { useVaultTocState } from '../../composables/vault/useTocState'
 import type { Resolver as WikiResolver } from '../../lib/wikiLinks'
-import { useI18n } from '../../composables/useI18n'
-import { ICON_FILE_PDF } from './icons'
 
 const { tocHeadings, tocActiveId, tocScrollTo } = useVaultTocState()
 
@@ -23,15 +21,7 @@ const props = defineProps<{
   raw: string
   /** Resolver for [[wiki]] / [t](path.md) links. See ReadingPane. */
   resolver?: WikiResolver
-  /** Show the PDF intent only for the canonical Vault Read Mode host. */
-  showPdfExport?: boolean
-  /** Shared Vault PDF transaction state, used to disable the action. */
-  exportingPdf?: boolean
 }>()
-const emit = defineEmits<{
-  'export-pdf': []
-}>()
-const { t } = useI18n()
 const headings = ref<Heading[]>([])
 
 /* True when the active document is empty (no tabs opened, or the
@@ -205,20 +195,6 @@ watch(() => props.raw, () => {
 
 <template>
   <div ref="readingPaneEl" class="reading-pane" @scroll.passive="onReadingPaneScroll">
-    <div v-if="props.showPdfExport" class="reading-toolbar" role="toolbar" :aria-label="t('file_tree.export_pdf')">
-      <button
-        data-testid="reading-export-pdf"
-        class="reading-export-pdf"
-        type="button"
-        :disabled="props.exportingPdf"
-        :aria-busy="props.exportingPdf || undefined"
-        :aria-label="props.exportingPdf ? t('file_tree.exporting_pdf') : t('file_tree.export_pdf')"
-        @click="emit('export-pdf')"
-      >
-        <span class="reading-export-pdf-icon" aria-hidden="true" v-html="ICON_FILE_PDF" />
-        {{ props.exportingPdf ? t('file_tree.exporting_pdf') : t('file_tree.export_pdf') }}
-      </button>
-    </div>
     <div v-if="isEmpty" class="reading-empty">
       未打开文件。在侧栏选一个或按 <kbd>⌘P</kbd> 新建。
     </div>

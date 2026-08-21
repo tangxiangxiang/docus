@@ -42,6 +42,10 @@ test.describe('View mode toggle', () => {
   test('clicking the NavBar toggle button switches to read mode', async ({ page }) => {
     await page.locator('[data-testid="view-toggle"]').click()
     await expect(page.locator('[data-testid="view-toggle"]')).toHaveAttribute('aria-label', 'Switch to edit')
+    await expect(page.getByTestId('reading-export-pdf')).toHaveCount(0)
+    await expect(
+      page.locator('.reading-pane').getByRole('button', { name: /Export PDF|Download PDF|导出 PDF/ }),
+    ).toHaveCount(0)
   })
 
   test('clicking again returns to edit mode', async ({ page }) => {

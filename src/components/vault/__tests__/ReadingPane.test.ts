@@ -103,7 +103,7 @@ function setupFixture(headingData: Heading[]): Fixture {
   })
 
   const wrapper = mount(ReadingPane, {
-    props: { raw: 'some markdown content', showPdfExport: true },
+    props: { raw: 'some markdown content' },
     attachTo: document.body,
     global: { stubs: { RenderedMarkdown: stub } },
   })
@@ -268,31 +268,9 @@ describe('ReadingPane scroll-spy', () => {
     expect(tocActiveId.value).toBe('')
   })
 
-  it('shows a localized PDF export button and emits the intent', async () => {
+  it('does not expose PDF export UI', () => {
     const { wrapper } = setupFixture([])
-    const button = wrapper.get('[data-testid="reading-export-pdf"]')
-
-    expect(button.element.tagName).toBe('BUTTON')
-    expect(button.text()).toMatch(/Export PDF|导出 PDF/)
-    expect(button.attributes('aria-label')).toMatch(/Export PDF|导出 PDF/)
-    await button.trigger('click')
-    expect(wrapper.emitted('export-pdf')).toEqual([[]])
-  })
-
-  it('disables the PDF action and exposes busy state while exporting', () => {
-    const wrapper = mount(ReadingPane, {
-      props: {
-        raw: 'some markdown content',
-        showPdfExport: true,
-        exportingPdf: true,
-      },
-      global: { stubs: { RenderedMarkdown: true } },
-    })
-    const button = wrapper.get('[data-testid="reading-export-pdf"]')
-
-    expect(button.attributes('disabled')).toBeDefined()
-    expect(button.attributes('aria-busy')).toBe('true')
-    expect(button.attributes('aria-label')).toMatch(/Preparing PDF…|正在准备 PDF…/)
-    expect(button.text()).toMatch(/Preparing PDF…|正在准备 PDF…/)
+    expect(wrapper.find('[data-testid="reading-export-pdf"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toMatch(/Export PDF|Download PDF|导出 PDF/)
   })
 })
