@@ -4,13 +4,13 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| Status | H1–H9 implementation complete；H10 final acceptance audit blocked by an H4 browser-evidence mismatch |
+| Status | PDF Export V1 — Implemented and Verified |
 | Date | 2026-08-21 |
 | Owner | Docus Markdown / Reader platform |
 | Phase | PDF Export V1 |
 | Target | Docus personal knowledge base |
 | Scope | Markdown 文档 PDF 导出、渲染一致性、异步组件收敛、下载交互、错误处理与验证 |
-| Current implementation | `main` at `2ed0fe9ce8aacd3bc2153f9864f942e775c0cb7c`；本文继续作为产品行为和 acceptance criteria 的约束 |
+| Current implementation | `main` at `77445cfb6e3ee3fa2222e9a7ba59c0ec63cdd469`；本文继续作为产品行为和 acceptance criteria 的约束 |
 | Implementation constraint | 不因现有代码已经存在而降低验收标准；实现与本文冲突时，以本文定义的用户行为和 acceptance criteria 为准 |
 
 本文定义 Docus PDF Export V1 的产品行为。
@@ -212,9 +212,9 @@ File Tree
 
 ---
 
-## 4.4 当前风险
+## 4.4 Historical hardening risks
 
-现有基础实现仍存在需要 Hardening 的风险。
+以下风险来自早期 PDF Export baseline，已由 H1–H9 hardening work packages 处理；本节作为历史设计背景保留。
 
 至少包括：
 
@@ -2357,15 +2357,13 @@ PDF Export V1 的正式定义是：
 
 > Docus 用户可以把任意 Markdown 文档当前的渲染状态直接下载为一份打印友好的 A4 PDF。导出复用 Docus 自己的 Markdown 语义，支持代码、表格、图片、公式、Mermaid 和 MarkMap；已打开文件以当前 live buffer 为准，导出过程与编辑器隔离，不改变文档状态。所有异步内容必须显式达到 ready 或 error 状态之后才能生成 PDF，不能以 DOM 元素存在或任意 sleep 作为完成依据。
 
-当前实现已完成 H1–H9 hardening work；H10 只负责文档、acceptance audit 和 release gate。
+H1–H9 hardening work 和 H10 final documentation audit 已完成。
 
 当前 release decision：
 
 ```text
-PDF Export V1 = NOT DONE
+PDF Export V1 = DONE
 ```
-
-原因不是新的产品需求，而是 H4 release evidence 中仍有一个未关闭的浏览器断言矛盾：当前 Kitchen Sink 测试要求 live Mermaid SVG 的 `viewBox` 存在，但生产组件为了隔离交互 pan/zoom 已将原始值保存到 `data-mermaid-viewbox` 并移除 live `viewBox`。在该证据修复并重新验证前，不能把 PDF Export V1 标记为 Done。
 
 ---
 
@@ -2374,15 +2372,15 @@ PDF Export V1 = NOT DONE
 审计 baseline：
 
 ```text
-2ed0fe9ce8aacd3bc2153f9864f942e775c0cb7c
+77445cfe415a0e40937c6a00edfd914aae4ca576
 ```
 
-H10 本次不重新运行 H1–H9，也不修改 production code 或 tests。既有验证记录显示 H1、H2、H3、H5、H6、H7、H8、H9 的实现和对应验证已完成；H4 的 Kitchen Sink browser evidence 仍有上述 `viewBox` 断言失败，因此最终 acceptance audit 结果为：
+H10 本次不重新运行 H1–H9 全矩阵；仅执行 H4 focused browser repair 和必要的 typecheck，不修改 production code。H4 现在同时验证 source canonical geometry 与 prepared static geometry，因此最终 acceptance audit 结果为：
 
 ```text
-PASS: 已实现并有既有验证证据的 H1–H3、H5–H9 contract
-BLOCKED: H4 Mermaid browser evidence mismatch
-DECISION: PDF Export V1 = NOT DONE
+PASS: H1–H10 required release evidence
+BLOCKED: 0
+DECISION: PDF Export V1 = DONE
 ```
 
-该 blocker 应返回 PDF-H4 修正测试证据并重新执行 Kitchen Sink browser validation。H10 不在本次文档提交中修复它。
+H4 evidence now records `data-mermaid-viewbox` on the source widget and a finite `viewBox` on the prepared static Mermaid SVG. Live interactive `viewBox` remains optional.

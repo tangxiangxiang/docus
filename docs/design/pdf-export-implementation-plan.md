@@ -4,13 +4,13 @@
 
 | 项目                           | 内容                                                     |
 | ---------------------------- | ------------------------------------------------------ |
-| 文档状态                         | PDF-H10 audit BLOCKED；等待 H4 browser evidence 修复       |
+| 文档状态                         | PDF-H10 audit DONE；PDF Export V1 implemented and verified |
 | 产品 PRD                       | [`docs/design/pdf-export-prd.md`](./pdf-export-prd.md) |
 | Original hardening baseline | `4e62bba441eb2ac7c426485154fd1226caa0edbf`             |
-| Final H10 audit baseline | `2ed0fe9ce8aacd3bc2153f9864f942e775c0cb7c`             |
+| Final H10 audit baseline | `77445cfe415a0e40937c6a00edfd914aae4ca576`             |
 | 计划日期                         | 2026-08-21                                             |
 | 当前阶段                         | PDF-H10 — Final Documentation & Release Gate           |
-| 当前实现状态                       | H1–H9 implementation complete；H4 browser evidence mismatch blocks final acceptance |
+| 当前实现状态                       | H1–H9 implementation complete；H4 evidence repaired；H10 release gate passed |
 | 本任务范围                        | 只收口 PRD、实施计划、用户指南和 release evidence，不修改 PDF 业务实现或测试 |
 | 目标                           | 让文档、真实实现、既有验证证据和 PRD acceptance criteria 保持一致 |
 
@@ -88,7 +88,7 @@ Original implementation baseline：
 Final H10 audit baseline：
 
 ```text
-2ed0fe9ce8aacd3bc2153f9864f942e775c0cb7c
+77445cfe415a0e40937c6a00edfd914aae4ca576
 ```
 
 当前仓库已经拥有：
@@ -111,7 +111,7 @@ PDF helper tests
 PDF browser E2E
 ```
 
-H1–H9 hardening commits 已完成；当前不再进入新的 implementation phase，唯一剩余工作是 PDF-H10 文档和 release gate。由于 H4 evidence mismatch，H10 当前保持 BLOCKED。
+H1–H9 hardening commits 和 H4 focused evidence repair 已完成；当前 release gate 已由 PDF-H10 文档审计关闭。
 
 ---
 
@@ -269,13 +269,13 @@ e2e/fixtures/pdf-export-kitchen-sink.md
 
 # 5. Historical gap register and resolution status
 
-以下 gap register 保留早期 `4e62bba…` hardening baseline 的设计背景。它不再表示当前 open work；当前唯一未关闭的 release blocker 是 H4 Kitchen Sink 的 Mermaid browser evidence mismatch，详见 PDF-H10。
+以下 gap register 保留早期 `4e62bba…` hardening baseline 的设计背景。它不再表示当前 open work；GAP-3 已由 H4 focused browser repair 解决，详见 PDF-H10。
 
 | Historical gap | Resolution | Current status |
 | --- | --- | --- |
 | GAP-1 — PDF render surface 未固定 Light Theme | PDF-H1：`PdfExportSurface` 使用 light render theme，global app theme 不变 | Resolved by H1 |
 | GAP-2 — KaTeX 没有 explicit settled contract | PDF-H2/H3：Math 使用 `pending → ready\|error`，统一 waiter 只在 settled 后继续 | Resolved by H2/H3 |
-| GAP-3 — Kitchen Sink 未证明内容完整 | PDF-H4：加入真实 export surface snapshot、内容/Unicode/widget/image/download assertions；当前一条 live Mermaid `viewBox` 证据仍需修复 | Blocked by H4 evidence mismatch |
+| GAP-3 — Kitchen Sink 未证明内容完整 | PDF-H4：验证 source `data-mermaid-viewbox` 与 prepared static Mermaid finite `viewBox`，并保留 live `viewBox` optional | Resolved by H4 |
 | GAP-4 — Image settlement 未定义 | PDF-H5：`waitForPdfImages()` 等待 `loaded\|error\|timeout` 后再准备 snapshot | Resolved by H5 |
 | GAP-5 — Long document 未形成正式验证 | PDF-H6/H7：A4 layout、1/5/20/50 页级验证和尾部/恢复性检查 | Resolved by H6/H7 |
 | GAP-6 — Read Mode 入口未补齐 | PDF-H8：Read Mode toolbar 调用同一个 `exportPdfDocument(path)` | Resolved by H8 |
@@ -344,13 +344,13 @@ PDF export semantics
 | PDF-H1       | P0       | Export Light Theme isolation | DONE |
 | PDF-H2       | P0       | Math explicit readiness | DONE |
 | PDF-H3       | P0       | Unified settled validation regression | DONE |
-| PDF-H4       | P0/P1    | Kitchen Sink browser correctness | BLOCKED — live Mermaid `viewBox` evidence mismatch |
+| PDF-H4       | P0/P1    | Kitchen Sink browser correctness | DONE |
 | PDF-H5       | P1       | Image settlement | DONE |
 | PDF-H6       | P1       | Pagination + wide content | DONE |
 | PDF-H7       | P1       | Long-document validation | DONE |
 | PDF-H8       | P1       | Read Mode export entry | DONE |
 | PDF-H9       | P2       | Extreme/stress/browser compatibility | DONE |
-| PDF-H10      | Release  | Final docs + DoD | BLOCKED by H4 |
+| PDF-H10      | Release  | Final docs + DoD | DONE |
 
 执行顺序不得随意颠倒。
 
@@ -1727,16 +1727,16 @@ PDF-H10 不是新的 PDF 产品能力，也不是新的 renderer 或 export pipe
 当前 H10 状态：
 
 ```text
-BLOCKED
+DONE
 ```
 
 审计 baseline：
 
 ```text
-2ed0fe9ce8aacd3bc2153f9864f942e775c0cb7c
+77445cfe415a0e40937c6a00edfd914aae4ca576
 ```
 
-H10 本次只更新文档，不重新运行 H1–H9，也不修改 production code 或 tests。既有 H4 browser evidence 中，`e2e/pdf-export.spec.ts:254` 要求 live Mermaid SVG 的 `viewBox` 有限；当前 `src/components/Mermaid.vue` 已将原始值保存为 `data-mermaid-viewbox` 并移除 live `viewBox`，因此该 release assertion 仍未闭环。这个矛盾必须返回 H4 修复并重新验证，不能由 H10 文档推断为 PASS。
+H10 本次不重新运行 H1–H9 全矩阵；H4 focused browser repair 已验证 source canonical geometry 与 prepared static geometry，且未修改 production code。`e2e/pdf-export.spec.ts:254` 的 live `viewBox` 要求已改为 optional；source `data-mermaid-viewbox` 和 prepared static `viewBox` 现在是正式 evidence。
 
 ---
 
@@ -1941,19 +1941,19 @@ Read Mode ────────┤
 | H1 | `PdfExportSurface` 使用 light render theme；global app theme 不被修改 |
 | H2 | Math 使用 `pending → ready\|error`，error 属于 settled |
 | H3 | Math、Mermaid、MarkMap 统一使用 explicit settled contract；SVG 存在性不是 readiness |
-| H4 | Kitchen Sink 内容、Unicode、代码、表格、KaTeX、MarkMap、图片和下载证据已加入；但 live Mermaid `viewBox` 断言与当前实现不一致，release evidence BLOCKED |
+| H4 | Kitchen Sink 内容、Unicode、代码、表格、KaTeX、MarkMap、图片和下载证据已加入；source canonical `data-mermaid-viewbox` 与 prepared static finite `viewBox` 均通过 |
 | H5 | `waitForPdfImages()` 在 `preparePdfArticleHtml()` 前等待图片 terminal outcome；CORS policy 不放宽 |
 | H6 | A4 printable geometry、宽表、长代码和 oversized block layout 已验证 |
 | H7 | 1/5/20/50 页级长文档验证已通过 |
 | H8 | File Tree 与 Read Mode 共用 PDF transaction |
 | H9 | 100-page stress、极端 widget、CORS、Playwright WebKit、Chromium DPI2 和 post-export UI recovery 已验证 |
-| H10 | 文档已收口；由于 H4 evidence mismatch，不能标记 DONE |
+| H10 | 文档、acceptance audit、evidence matrix 和 DoD 已收口，release gate DONE |
 
 ---
 
 ## 17.8 Final PRD Acceptance Audit
 
-以下状态基于 H1–H9 已有执行记录和当前代码审计；H10 不重复运行整套验证。
+以下状态基于 H1–H9 已有执行记录、H4 focused repair 和当前代码审计；H10 不重复运行整套验证。
 
 | Requirement | Evidence | Status |
 | --- | --- | --- |
@@ -1968,7 +1968,7 @@ Read Mode ────────┤
 | Chinese, English, Japanese, Emoji | Kitchen Sink browser snapshot | PASS |
 | KaTeX | `data-math-state`, `.katex`, H9 many-math lane | PASS |
 | Mermaid explicit state and static normalization | H3 readiness tests and `preparePdfArticleHtml()` tests | PASS |
-| Mermaid Kitchen Sink browser viewport evidence | `e2e/pdf-export.spec.ts:254` live `viewBox` assertion | BLOCKED |
+| Mermaid Kitchen Sink browser geometry evidence | source `data-mermaid-viewbox` + prepared static `.pdf-mermaid > svg[viewBox]` | PASS |
 | MarkMap explicit state and static normalization | H3 readiness tests and `preparePdfArticleHtml()` tests | PASS |
 | Local images | H5 delayed-image E2E and H9 many-images lane | PASS |
 | Remote image CORS policy | `e2e/pdf-export-cors.spec.ts` same-origin / ACAO / no-ACAO matrix | PASS |
@@ -1985,12 +1985,12 @@ Read Mode ────────┤
 Audit total：
 
 ```text
-PASS: 23
-BLOCKED: 1
+PASS: 24
+BLOCKED: 0
 FAIL: 0
 ```
 
-`BLOCKED` 项是 H4 的 release evidence mismatch，不是 H10 新增的 production defect 修复范围。
+H4 evidence now distinguishes live interactive geometry from the canonical static PDF geometry.
 
 ---
 
@@ -2003,7 +2003,7 @@ FAIL: 0
 | Typecheck | `npm run typecheck` | PASS |
 | PDF unit regressions | `pdfExport.test.ts`, `pdf-readiness.test.ts`, `pdf-images.test.ts`, `pdf-export-h9.test.ts`；47 tests | PASS |
 | Integration / orchestration | `src/views/__tests__/VaultView.test.ts` and existing export seams | PASS — prior phase evidence |
-| Kitchen Sink | `npx playwright test e2e/pdf-export.spec.ts` | BLOCKED at live Mermaid `viewBox` assertion |
+| Kitchen Sink | `npm run test:e2e -- e2e/pdf-export.spec.ts --reporter=line`；2/2 tests | PASS |
 | Layout | `e2e/pdf-export-layout.spec.ts` | PASS |
 | Long documents | `e2e/pdf-export-long-document.spec.ts` | PASS |
 | Read Mode | `e2e/pdf-export-read-mode.spec.ts` | PASS |
@@ -2049,18 +2049,18 @@ Playwright WebKit compatibility verified
 [x] H1、H2、H3、H5、H6、H7、H8、H9 release evidence 已汇总
 [x] H10 未修改 production code 或 tests
 [x] residual limitations / non-goals 已记录
-[ ] H4 Kitchen Sink browser evidence 完整通过
-[ ] PDF Export V1 = Done
+[x] H4 Kitchen Sink browser evidence 完整通过
+[x] PDF Export V1 = Done
 ```
 
 最终决定：
 
 ```text
-PDF-H10 = BLOCKED
-PDF Export V1 = NOT DONE
+PDF-H10 = DONE
+PDF Export V1 = DONE
 ```
 
-下一步只能回到 PDF-H4，修复或重新对齐 live Mermaid `viewBox` browser assertion 与静态 export contract，再重新执行 H4 evidence 和 H10 gate。H10 不进入 PDF-H11 或 PDF Export V2。
+H4 evidence and H10 documentation are complete. Do not enter PDF-H11 or PDF Export V2 as part of this task.
 
 ---
 
@@ -2699,9 +2699,9 @@ PDF > 10KB
 ```text
 MarkMap explicit ready      DONE
 Mermaid explicit state      DONE
-Forced light export theme   TODO
-Math explicit state         TODO
-Kitchen Sink assertions     TODO
+Forced light export theme   DONE
+Math explicit state         DONE
+Kitchen Sink assertions     DONE
 Failure cleanup             DONE / regression
 ```
 
@@ -2799,7 +2799,7 @@ arbitrary timeout increase
 
 # 31. PDF Export V1 Definition of Done
 
-以下是 release gate 的必要条件；当前 H4 browser evidence 尚未满足，因此本 baseline 不能标记 Done：
+以下是 release gate 的必要条件；当前 H4 browser evidence 已满足：
 
 ```text
 PRD approved
@@ -2940,7 +2940,7 @@ H10 Final Documentation & Release Gate
 PDF Export V1 Done（仅在 H10 gate 全部通过后）
 ```
 
-当前执行已到 H10；由于 H4 evidence mismatch，流程停在 H10，不进入 V2。
+当前执行已完成 H10；H4 evidence mismatch 已关闭，不进入 PDF-H11 或 PDF Export V2。
 
 当前最重要的原则：
 

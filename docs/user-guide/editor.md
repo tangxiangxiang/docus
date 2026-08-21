@@ -52,7 +52,7 @@ The PDF uses A4 portrait pagination. Code and tables adapt to the printable widt
 
 ### Export status and failure recovery
 
-Only one PDF export can run at a time. While it is preparing, the export action is busy/disabled and another request is not started.
+Only one PDF export can run at a time. In Read Mode, the export action is disabled while an export is in progress. Additional export requests are rejected until the current export finishes.
 
 If an export fails, Docus ends the transaction and removes its temporary export surface. The document and workspace remain available, and you can try the export again.
 
