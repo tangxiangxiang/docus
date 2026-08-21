@@ -3,14 +3,37 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createHighlighter, type Highlighter } from 'shiki'
 import {
   __testing__,
+  ensureShikiLanguage,
+  extractFenceLanguageIdentifier,
   getGeneratedShikiCss,
   getShikiRuntime,
   getShikiStyleTransformer,
+  prepareShikiLanguages,
+  resolveShikiLanguage,
 } from '../shiki'
 
 const fakeHighlighter = (): Highlighter => ({
   dispose: vi.fn(),
 } as unknown as Highlighter)
+
+type LanguageInput = Parameters<Highlighter['loadLanguage']>[0]
+
+function fakeLanguageHighlighter(
+  loadLanguage: (language: LanguageInput) => Promise<void>,
+  loadedLanguages: string[] = [],
+): Highlighter {
+  return {
+    dispose: vi.fn(),
+    getLoadedLanguages: vi.fn(() => [...loadedLanguages]),
+    loadLanguage: vi.fn(loadLanguage),
+  } as unknown as Highlighter
+}
+
+function useFakeLanguageRuntime(runtime: Highlighter) {
+  const factory = vi.fn<typeof createHighlighter>(() => Promise.resolve(runtime))
+  __testing__.setHighlighterFactory(factory)
+  return factory
+}
 
 beforeEach(() => {
   __testing__.reset()
@@ -118,5 +141,208 @@ describe('Shiki H1 runtime foundation', () => {
     } finally {
       vi.unstubAllGlobals()
     }
+  })
+})
+
+describe('Shiki H2 language preparation', () => {
+  it('extracts only the first info token and resolves official aliases', () => {
+    expect(extractFenceLanguageIdentifier('  js title=demo  ')).toBe('js')
+    expect(extractFenceLanguageIdentifier('python linenums')).toBe('python')
+    expect(extractFenceLanguageIdentifier('   ')).toBe('')
+
+    const javascript = resolveShikiLanguage('js')
+    const javascriptLong = resolveShikiLanguage('JavaScript')
+    const python = resolveShikiLanguage('py')
+    const yaml = resolveShikiLanguage('YML')
+
+    expect(javascript).toMatchObject({ kind: 'language', normalizedId: 'js', canonicalId: 'javascript' })
+    expect(javascriptLong).toMatchObject({ kind: 'language', normalizedId: 'javascript', canonicalId: 'javascript' })
+    expect(python).toMatchObject({ kind: 'language', normalizedId: 'py', canonicalId: 'python' })
+    expect(yaml).toMatchObject({ kind: 'language', normalizedId: 'yml', canonicalId: 'yaml' })
+  })
+
+  it('keeps the full official registry available beyond the short acceptance list', () => {
+    const identifiers = [
+      'tsx',
+      'jsx',
+      'vue',
+      'html',
+      'css',
+      'scss',
+      'json',
+      'java',
+      'sql',
+      'powershell',
+      'c',
+      'cpp',
+      'csharp',
+      'go',
+      'rust',
+      'php',
+      'kotlin',
+      'docker',
+      'dockerfile',
+      'xml',
+      'diff',
+    ]
+
+    expect(identifiers.every((identifier) => resolveShikiLanguage(identifier).kind === 'language')).toBe(true)
+  })
+
+  it('checks exact Docus special fences before case-normalized registry lookup', () => {
+    expect(resolveShikiLanguage('markmap')).toMatchObject({ kind: 'special', specialFence: 'markmap' })
+    expect(resolveShikiLanguage('mermaid')).toMatchObject({ kind: 'special', specialFence: 'mermaid' })
+    expect(resolveShikiLanguage('MARKMAP')).toMatchObject({ kind: 'unsupported', normalizedId: 'markmap' })
+    expect(resolveShikiLanguage('Mermaid')).toMatchObject({ kind: 'language', canonicalId: 'mermaid' })
+    expect(resolveShikiLanguage('mmap').kind).toBe('unsupported')
+    expect(resolveShikiLanguage('merm').kind).toBe('unsupported')
+    expect(resolveShikiLanguage('mark-map').kind).toBe('unsupported')
+    expect(resolveShikiLanguage('mer-maid').kind).toBe('unsupported')
+  })
+
+  it('skips empty, special, and unknown identifiers without creating Shiki', async () => {
+    const runtime = fakeLanguageHighlighter(async () => {})
+    const factory = useFakeLanguageRuntime(runtime)
+
+    const results = await prepareShikiLanguages([
+      '',
+      '   ',
+      'markmap',
+      'mermaid',
+      'definitely-not-a-language',
+    ])
+
+    expect(results.map((result) => [result.resolution.kind, result.status])).toEqual([
+      ['empty', 'skipped'],
+      ['special', 'skipped'],
+      ['special', 'skipped'],
+      ['unsupported', 'skipped'],
+    ])
+    expect(factory).not.toHaveBeenCalled()
+    expect((runtime.loadLanguage as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled()
+  })
+
+  it('deduplicates repeated identifiers and official aliases by canonical language', async () => {
+    const loadLanguage = vi.fn(async (_language: LanguageInput) => {})
+    const runtime = fakeLanguageHighlighter(loadLanguage)
+    const factory = useFakeLanguageRuntime(runtime)
+
+    const results = await prepareShikiLanguages([
+      'js',
+      'javascript',
+      'js title=demo',
+      'py',
+      'python',
+      'yml',
+      'yaml',
+    ])
+
+    expect(results).toHaveLength(3)
+    expect(results.map((result) => result.resolution.kind === 'language'
+      ? result.resolution.canonicalId
+      : undefined)).toEqual([
+      'javascript',
+      'python',
+      'yaml',
+    ])
+    expect(loadLanguage).toHaveBeenCalledTimes(3)
+    expect(factory).toHaveBeenCalledTimes(1)
+  })
+
+  it('shares one in-flight load across same-language and alias concurrency', async () => {
+    let resolveLoad: (() => void) | undefined
+    const loadLanguage = vi.fn((_language: LanguageInput) => new Promise<void>((resolve) => {
+      resolveLoad = resolve
+    }))
+    const runtime = fakeLanguageHighlighter(loadLanguage)
+    const factory = useFakeLanguageRuntime(runtime)
+
+    const preparation = Promise.all([
+      ensureShikiLanguage('js'),
+      ensureShikiLanguage('javascript'),
+      ensureShikiLanguage('js'),
+    ])
+    for (let attempt = 0; attempt < 5 && loadLanguage.mock.calls.length === 0; attempt += 1) {
+      await Promise.resolve()
+    }
+
+    expect(loadLanguage).toHaveBeenCalledTimes(1)
+    expect(factory).toHaveBeenCalledTimes(1)
+    resolveLoad?.()
+    expect((await preparation).map((result) => result.status)).toEqual(['loaded', 'loaded', 'loaded'])
+  })
+
+  it('loads different canonical languages concurrently', async () => {
+    let activeLoads = 0
+    let maxActiveLoads = 0
+    const loadLanguage = vi.fn(async (_language: LanguageInput) => {
+      activeLoads += 1
+      maxActiveLoads = Math.max(maxActiveLoads, activeLoads)
+      await Promise.resolve()
+      activeLoads -= 1
+    })
+    const runtime = fakeLanguageHighlighter(loadLanguage)
+    useFakeLanguageRuntime(runtime)
+
+    await prepareShikiLanguages(['js', 'java', 'python'])
+
+    expect(loadLanguage).toHaveBeenCalledTimes(3)
+    expect(maxActiveLoads).toBe(3)
+  })
+
+  it('seeds canonical loaded state from the runtime and retries transient failures', async () => {
+    const alreadyLoaded = vi.fn(async (_language: LanguageInput) => {})
+    useFakeLanguageRuntime(fakeLanguageHighlighter(alreadyLoaded, ['javascript', 'js']))
+
+    await expect(ensureShikiLanguage('js')).resolves.toMatchObject({ status: 'already-loaded' })
+    expect(alreadyLoaded).not.toHaveBeenCalled()
+
+    __testing__.reset()
+    const loadLanguage = vi.fn()
+      .mockRejectedValueOnce(new Error('temporary grammar failure'))
+      .mockResolvedValueOnce(undefined)
+    const runtime = fakeLanguageHighlighter(loadLanguage)
+    const factory = useFakeLanguageRuntime(runtime)
+
+    await expect(ensureShikiLanguage('typescript')).resolves.toMatchObject({ status: 'unavailable' })
+    await expect(ensureShikiLanguage('ts')).resolves.toMatchObject({ status: 'loaded' })
+    expect(loadLanguage).toHaveBeenCalledTimes(2)
+    expect(factory).toHaveBeenCalledTimes(1)
+    await expect(getShikiRuntime()).resolves.toBe(runtime)
+  })
+
+  it('keeps the real runtime lazy and prepares only the requested grammar', async () => {
+    const runtime = await getShikiRuntime()
+    expect(runtime.getLoadedLanguages()).toEqual([])
+
+    await expect(ensureShikiLanguage('javascript')).resolves.toMatchObject({ status: 'loaded' })
+
+    const loaded = runtime.getLoadedLanguages()
+    expect(loaded).toContain('javascript')
+    expect(loaded).not.toContain('java')
+    expect(loaded.length).toBeLessThan(20)
+  })
+
+  it('does not let a reset during a pending load leak into the next runtime', async () => {
+    let resolveLoad: (() => void) | undefined
+    const firstLoad = vi.fn((_language: LanguageInput) => new Promise<void>((resolve) => {
+      resolveLoad = resolve
+    }))
+    const firstRuntime = fakeLanguageHighlighter(firstLoad)
+    useFakeLanguageRuntime(firstRuntime)
+
+    const firstPreparation = ensureShikiLanguage('js')
+    for (let attempt = 0; attempt < 5 && firstLoad.mock.calls.length === 0; attempt += 1) {
+      await Promise.resolve()
+    }
+    __testing__.reset()
+    resolveLoad?.()
+    await expect(firstPreparation).resolves.toMatchObject({ status: 'unavailable' })
+
+    const secondLoad = vi.fn(async (_language: LanguageInput) => {})
+    const secondRuntime = fakeLanguageHighlighter(secondLoad)
+    useFakeLanguageRuntime(secondRuntime)
+    await expect(ensureShikiLanguage('js')).resolves.toMatchObject({ status: 'loaded' })
+    expect(secondLoad).toHaveBeenCalledTimes(1)
   })
 })

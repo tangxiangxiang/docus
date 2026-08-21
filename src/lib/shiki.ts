@@ -1,4 +1,10 @@
-import { createHighlighter, type Highlighter } from 'shiki'
+import {
+  bundledLanguages,
+  bundledLanguagesBase,
+  bundledLanguagesInfo,
+  createHighlighter,
+  type Highlighter,
+} from 'shiki'
 import { transformerStyleToClass } from '@shikijs/transformers'
 
 const SHIKI_THEMES = ['github-light', 'github-dark'] as const
@@ -7,6 +13,7 @@ const SHIKI_CLASS_PREFIX = 'docus-shiki-'
 type ShikiHighlighter = Highlighter
 type ShikiHighlighterFactory = typeof createHighlighter
 type ShikiHighlighterOptions = Parameters<ShikiHighlighterFactory>[0]
+type ShikiLanguageLoader = (typeof bundledLanguagesInfo)[number]['import']
 
 const SHIKI_RUNTIME_OPTIONS: ShikiHighlighterOptions = {
   themes: [...SHIKI_THEMES],
@@ -21,11 +28,223 @@ let highlighterFactory: ShikiHighlighterFactory = createHighlighter
 let highlighterPromise: Promise<ShikiHighlighter> | null = null
 let activeHighlighter: ShikiHighlighter | null = null
 
+const canonicalLanguageByLookupId = new Map<string, string>()
+for (const language of bundledLanguagesInfo) {
+  const canonicalId = language.id.toLowerCase()
+  canonicalLanguageByLookupId.set(canonicalId, canonicalId)
+  for (const alias of language.aliases ?? []) {
+    canonicalLanguageByLookupId.set(alias.toLowerCase(), canonicalId)
+  }
+}
+
+const loadedLanguageSet = new Set<string>()
+const inFlightLanguageLoads = new Map<string, Promise<PreparedShikiLanguage>>()
+const unsupportedLanguageSet = new Set<string>()
+let languageStateGeneration = 0
+
+export type ShikiLanguageResolution =
+  | {
+      kind: 'empty'
+      identifier: string
+    }
+  | {
+      kind: 'special'
+      identifier: string
+      specialFence: 'markmap' | 'mermaid'
+    }
+  | {
+      kind: 'unsupported'
+      identifier: string
+      normalizedId: string
+    }
+  | {
+      kind: 'language'
+      identifier: string
+      normalizedId: string
+      canonicalId: string
+      loader: ShikiLanguageLoader
+    }
+
+export interface PreparedShikiLanguage {
+  resolution: ShikiLanguageResolution
+  status: 'skipped' | 'loaded' | 'already-loaded' | 'unavailable'
+  error?: unknown
+}
+
+/**
+ * Extract only the first whitespace-delimited fence info token.
+ * MarkdownIt owns fence recognition; this helper only interprets token.info.
+ */
+export function extractFenceLanguageIdentifier(info: string): string {
+  const trimmed = info.trim()
+  return trimmed ? (trimmed.split(/\s+/u, 1)[0] ?? '') : ''
+}
+
+/**
+ * Resolve a user-facing fence identifier through Shiki's official bundled
+ * language metadata. Docus special-fence semantics are checked before the
+ * registry lookup and intentionally remain case-sensitive.
+ */
+export function resolveShikiLanguage(identifier: string): ShikiLanguageResolution {
+  const rawIdentifier = extractFenceLanguageIdentifier(identifier)
+  if (!rawIdentifier) {
+    return { kind: 'empty', identifier: '' }
+  }
+
+  if (rawIdentifier === 'markmap' || rawIdentifier === 'mermaid') {
+    return {
+      kind: 'special',
+      identifier: rawIdentifier,
+      specialFence: rawIdentifier,
+    }
+  }
+
+  const normalizedId = rawIdentifier.toLowerCase()
+  if (unsupportedLanguageSet.has(normalizedId)) {
+    return {
+      kind: 'unsupported',
+      identifier: rawIdentifier,
+      normalizedId,
+    }
+  }
+
+  const canonicalId = canonicalLanguageByLookupId.get(normalizedId)
+  const registryLoader = bundledLanguages[normalizedId as keyof typeof bundledLanguages]
+  const canonicalLoader = canonicalId
+    ? bundledLanguagesBase[canonicalId as keyof typeof bundledLanguagesBase]
+    : undefined
+
+  if (!canonicalId || typeof registryLoader !== 'function' || typeof canonicalLoader !== 'function') {
+    unsupportedLanguageSet.add(normalizedId)
+    return {
+      kind: 'unsupported',
+      identifier: rawIdentifier,
+      normalizedId,
+    }
+  }
+
+  return {
+    kind: 'language',
+    identifier: rawIdentifier,
+    normalizedId,
+    canonicalId,
+    loader: canonicalLoader,
+  }
+}
+
+function syncLoadedLanguageState(runtime: ShikiHighlighter): void {
+  for (const loadedLanguage of runtime.getLoadedLanguages()) {
+    const canonicalId = canonicalLanguageByLookupId.get(loadedLanguage.toLowerCase())
+    if (canonicalId) loadedLanguageSet.add(canonicalId)
+  }
+}
+
+function skippedPreparation(resolution: ShikiLanguageResolution): PreparedShikiLanguage {
+  return { resolution, status: 'skipped' }
+}
+
+async function ensureResolvedShikiLanguage(
+  resolution: Extract<ShikiLanguageResolution, { kind: 'language' }>,
+): Promise<PreparedShikiLanguage> {
+  const { canonicalId, loader } = resolution
+
+  if (loadedLanguageSet.has(canonicalId)) {
+    return { resolution, status: 'already-loaded' }
+  }
+
+  const existingLoad = inFlightLanguageLoads.get(canonicalId)
+  if (existingLoad) return existingLoad
+
+  const generation = languageStateGeneration
+  const loadPromise = (async (): Promise<PreparedShikiLanguage> => {
+    try {
+      const runtime = await getShikiRuntime()
+      if (generation !== languageStateGeneration) {
+        return { resolution, status: 'unavailable' }
+      }
+
+      // Shiki is the source of truth for languages loaded outside this
+      // helper. The set is only a canonicalized fast path for later calls.
+      syncLoadedLanguageState(runtime)
+      if (loadedLanguageSet.has(canonicalId)) {
+        return { resolution, status: 'already-loaded' }
+      }
+
+      await runtime.loadLanguage(loader)
+      if (generation !== languageStateGeneration) {
+        return { resolution, status: 'unavailable' }
+      }
+
+      syncLoadedLanguageState(runtime)
+      loadedLanguageSet.add(canonicalId)
+      return { resolution, status: 'loaded' }
+    } catch (error) {
+      // A known grammar can fail transiently. Do not poison the singleton or
+      // put the identifier in the deterministic unsupported set; the next
+      // render may retry this loader.
+      return { resolution, status: 'unavailable', error }
+    }
+  })()
+
+  inFlightLanguageLoads.set(canonicalId, loadPromise)
+  void loadPromise.then(
+    () => {
+      if (inFlightLanguageLoads.get(canonicalId) === loadPromise) {
+        inFlightLanguageLoads.delete(canonicalId)
+      }
+    },
+    () => {
+      if (inFlightLanguageLoads.get(canonicalId) === loadPromise) {
+        inFlightLanguageLoads.delete(canonicalId)
+      }
+    },
+  )
+  return loadPromise
+}
+
+/**
+ * Prepare the unique supported languages requested by one or more Markdown
+ * fences. Unknown and Docus-special identifiers are intentionally skipped;
+ * known loader failures are reported as unavailable but do not reject the
+ * caller or poison the shared highlighter.
+ */
+export async function prepareShikiLanguages(
+  identifiers: readonly string[],
+): Promise<PreparedShikiLanguage[]> {
+  const uniqueResolutions: ShikiLanguageResolution[] = []
+  const seen = new Set<string>()
+
+  for (const identifier of identifiers) {
+    const resolution = resolveShikiLanguage(identifier)
+    const key = resolution.kind === 'language'
+      ? `language:${resolution.canonicalId}`
+      : `${resolution.kind}:${'normalizedId' in resolution ? resolution.normalizedId : resolution.identifier}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    uniqueResolutions.push(resolution)
+  }
+
+  return Promise.all(uniqueResolutions.map((resolution) => {
+    if (resolution.kind !== 'language') {
+      return Promise.resolve(skippedPreparation(resolution))
+    }
+    return ensureResolvedShikiLanguage(resolution)
+  }))
+}
+
+export async function ensureShikiLanguage(identifier: string): Promise<PreparedShikiLanguage> {
+  const [result] = await prepareShikiLanguages([identifier])
+  return result ?? {
+    resolution: { kind: 'empty', identifier: '' },
+    status: 'skipped',
+  }
+}
+
 /**
  * Return the one long-lived Shiki runtime promise.
  *
- * H1 deliberately initializes themes only. Language loading and Markdown
- * integration belong to H2/H3 and must not be added here.
+ * H1 established the themes and H2 now prepares only the canonical languages
+ * requested by the current document. Markdown rendering still belongs to H3.
  */
 export function getShikiRuntime(): Promise<ShikiHighlighter> {
   if (highlighterPromise) {
@@ -68,7 +287,7 @@ export function getShikiRuntime(): Promise<ShikiHighlighter> {
 
 /**
  * Return the one class-based transformer used by later Shiki integration.
- * H1 exposes the instance but does not attach its CSS to the DOM.
+ * H1/H2 expose the instance but do not attach its CSS to the DOM.
  */
 export function getShikiStyleTransformer() {
   return styleTransformer
@@ -83,10 +302,15 @@ export function getGeneratedShikiCss(): string {
 }
 
 /**
- * H1-only test seam for exercising single-flight and retry semantics without
- * changing normal application behavior or exposing mutable runtime state.
+ * Narrow H1/H2 test seam for exercising single-flight, retry and reset
+ * semantics without changing normal application behavior or exposing
+ * mutable runtime state.
  */
 function resetForTesting(): void {
+  languageStateGeneration += 1
+  loadedLanguageSet.clear()
+  inFlightLanguageLoads.clear()
+  unsupportedLanguageSet.clear()
   activeHighlighter?.dispose()
   activeHighlighter = null
   highlighterPromise = null

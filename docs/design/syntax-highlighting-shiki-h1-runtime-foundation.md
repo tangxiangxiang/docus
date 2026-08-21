@@ -15,7 +15,7 @@
 | Local evidence runtime | Node `v24.15.0`, npm `11.12.1` |
 | Docker runtime baseline | `node:22-bookworm-slim` in `Dockerfile` |
 | H1 scope | Dependency and runtime foundation only; no Markdown renderer, CSS, PDF, sanitizer, theme, Mermaid or MarkMap behavior change |
-| H1 completion commit | The commit containing this evidence document; the final handoff records its SHA |
+| H1 completion commit | `7c020709eaeafb8dacd7db69adaa9dadfa4a4ae9` |
 
 The H0 implementation baseline remains `2be6b2c...`. H1 starts from the later documentation-only state at `50fba624...`; this does not change the migration baseline recorded by the plan.
 

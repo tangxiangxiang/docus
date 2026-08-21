@@ -8,11 +8,11 @@
 | 产品 PRD | [Shiki Syntax Highlighting Migration PRD](syntax-highlighting-shiki-migration-prd.md) |
 | Implementation baseline | 2be6b2c57b5d7cb76b359220f361bacb55661099 |
 | 计划日期 | 2026-08-21 |
-| 当前阶段 | SHIKI-H1 — COMPLETE；Next: SHIKI-H2 — Fence Discovery & Dynamic Language Loading |
-| 当前实现状态 | H0 审计和 H1 runtime foundation 已完成；Shiki singleton 已加载 github-light/github-dark，class transformer foundation 已建立；highlight.js 仍是当前 renderer；无 H2 language discovery/loading、无 Shiki DOM/CSS integration；renderer 未改变 |
+| 当前阶段 | SHIKI-H2 — COMPLETE；Next: SHIKI-H3 — Markdown Renderer Cutover |
+| 当前实现状态 | H0 审计、H1 runtime foundation 和 H2 language preparation 已完成；Shiki singleton 已连接到 Markdown preflight，官方 bundled registry/alias 已按 fence 动态准备并去重；highlight.js 仍是当前 renderer；无 Shiki token HTML、DOM/CSS integration；renderer 未改变 |
 | H0 审计证据 | [Shiki H0 Baseline & Contract Audit](syntax-highlighting-shiki-h0-audit.md) |
 | H1 实施证据 | [Shiki H1 Dependency & Runtime Foundation](syntax-highlighting-shiki-h1-runtime-foundation.md) |
-| 本任务范围 | H0 baseline/contract audit 与 H1 runtime foundation 已完成；H2-H8 尚未实施；正常 Markdown renderer、DOMPurify、主题、Mermaid、MarkMap 和 PDF 行为保持原状 |
+| 本任务范围 | H0 baseline/contract audit、H1 runtime foundation 与 H2 fence discovery/language loading 已完成；H3-H8 尚未实施；正常 Markdown renderer、DOMPurify、主题、Mermaid、MarkMap 和 PDF 行为保持原状 |
 | 目标 | 用可回滚、可验证的阶段性步骤完成 Shiki 4.x 迁移，同时保持 Markdown、DOMPurify、主题、Mermaid、MarkMap 和 PDF 合同 |
 
 本计划描述接下来如何实施产品 PRD，不代表任何 Shiki 能力已经存在。未来实现必须以产品 PRD 为最高约束；如果本计划与 PRD 发生冲突：
@@ -25,9 +25,9 @@ STOP
 
 不得为了减少实现工作而静默改变 PRD 的安全、主题、PDF、未知语言或特殊 fence 语义。
 
-H0 审计证据已记录在 [Shiki H0 Baseline & Contract Audit](syntax-highlighting-shiki-h0-audit.md)。审计发现：如果按本计划的语言发现建议，在同一个带 `wikiResolver` 的 env 上先调用 `md.parse()`、再调用 `md.render()`，当前 wiki-link 路径会触发 resolver 双调用；该问题已作为 H2 design blocker 记录，未在本次更新中改变架构决策或实现行为。
+H0 审计证据已记录在 [Shiki H0 Baseline & Contract Audit](syntax-highlighting-shiki-h0-audit.md)。审计发现：如果在同一个带 `wikiResolver` 的 env 上先调用 `md.parse()`、再调用 `md.render()`，当前 wiki-link 路径会触发 resolver 双调用。H2 已通过“isolated discovery env + fresh real render env”关闭该 blocker；后续阶段不得退回 same-env parse/render。
 
-H1 已完成并记录在 [Shiki H1 Dependency & Runtime Foundation](syntax-highlighting-shiki-h1-runtime-foundation.md)：Shiki 4.4.3 和 matching transformer 4.4.3 已加入，runtime singleton 已独立初始化双主题，`transformerStyleToClass` CSS snapshot API 已验证；正常 renderer 仍使用 highlight.js，未新增语言发现、DOM stylesheet、主题、PDF 或 Markdown 集成。H2 的 same-env `md.parse()` + `md.render()` resolver 双调用 blocker 仍然开放。
+H1 已完成并记录在 [Shiki H1 Dependency & Runtime Foundation](syntax-highlighting-shiki-h1-runtime-foundation.md)：Shiki 4.4.3 和 matching transformer 4.4.3 已加入，runtime singleton 已独立初始化双主题，`transformerStyleToClass` CSS snapshot API 已验证。H2 已在 [Shiki H2 Fence Discovery & Dynamic Language Loading](syntax-highlighting-shiki-h2-language-loading.md) 中记录：MarkdownIt 只发现 `fence` tokens，使用官方 registry/aliases 进行 canonical language preparation，并保持正常 renderer 为 highlight.js；没有新增 Shiki token HTML、DOM stylesheet、主题、PDF 或 Markdown renderer cutover。
 
 ## 2. 计划目标与约束
 
@@ -41,7 +41,9 @@ H1 已完成并记录在 [Shiki H1 Dependency & Runtime Foundation](syntax-highl
 - 什么时候可以删除 highlight.js、旧 CSS 和旧测试契约。
 - 什么时候才允许根据 PRD Definition of Done 宣布 migration Done。
 
-本任务本身是 documentation/planning only。当前提交不得修改：
+以下约束记录的是本 implementation plan 首次落盘时的 documentation-only task，
+不是 H1/H2 实施阶段的当前 scope。当前 phase/status 以本节顶部和对应 phase
+evidence 为准。首次落盘 task 当时不得修改：
 
 - package.json 或 package-lock.json；
 - src/、server/、shared/、e2e/ 下的 production source、tests、CSS 或 fixture；
@@ -315,8 +317,10 @@ PDF 的 light override 必须在 .pdf-document scope 内生效，并且不能修
 
 ~~~
 getShikiRuntime()
-discoverFenceLanguages(md, markdown, env)
-ensureShikiLanguages(runtime, languageIds)
+discoverFenceLanguageIdentifiers(md, markdown)  // isolated env in markdown.ts
+resolveShikiLanguage(identifier)
+prepareShikiLanguages(languageIds)
+ensureShikiLanguage(identifier)
 highlightFence(runtime, source, normalizedLanguage)
 syncGeneratedShikiStylesheet(runtime)
 getGeneratedShikiCss(runtime)       // PDF trusted snapshot / tests
@@ -361,14 +365,14 @@ markdown.ts 不再负责：
 
 不要对整个 Markdown source 做 unrestricted regex，因为代码内容、nested fence、indentation 和 raw text 会制造误识别。首选使用同一个 MarkdownIt 实例的 tokenization：
 
-1. 创建当前 render 使用的 env。
-2. 调用 md.parse(markdown, env) 得到 token list；parse 阶段只做 tokenization，不调用 renderer highlight callback。
+1. 创建本次 discovery 专用的空 env；不得放入 caller 的 `wikiResolver`。
+2. 调用 md.parse(markdown, discoveryEnv) 得到 token list；parse 阶段只做 tokenization，不调用 renderer highlight callback。
 3. 只选择 token.type === 'fence' 的 token。
 4. 读取 token.info 的第一段作为 language identifier；后续内容保留为 fence meta，不参与语言解析。
 5. 归一化后交给 Shiki bundled language registry。
-6. 语言准备完成后，再调用 md.render(markdown, env)。
+6. 语言准备完成后，创建新的 real render env，再调用 md.render(markdown, renderEnv)。
 
-这会让文档被 parse 两次，但不会引入 markdown-it-async，也不会让 highlighter callback 异步化。H0/H2 应确认当前 plugins 对 parse/render 双阶段没有不允许的副作用；如果必须改用窄范围 scanner，也只能沿 MarkdownIt fence 规则实现，不能回到 unrestricted regex。
+这会让文档被 parse 两次，但不会引入 markdown-it-async，也不会让 highlighter callback 异步化。H2 已验证 discovery parse 不调用 caller resolver；每次 parse/render 都使用 render-scoped env。后续如果发现 plugin 有新的 parse/render 副作用，也只能沿 MarkdownIt fence 规则 review，不能回到 unrestricted regex。
 
 ### 7.2 归一化规则
 
@@ -426,7 +430,7 @@ src/lib/shiki.ts 建议在 module scope 维护以下状态，具体变量名可�
 highlighterPromise: Promise<Highlighter> | null
 loadedLanguageSet: Set<CanonicalLanguage>
 inFlightLanguageLoads: Map<CanonicalLanguage, Promise<void>>
-unavailableLanguageSet: Set<NormalizedLanguage>
+unsupportedLanguageSet: Set<NormalizedLanguage>
 styleTransformer: one transformerStyleToClass instance
 generatedCssText: last transformer.getCSS() snapshot
 ~~~
@@ -440,7 +444,7 @@ highlighterPromise.catch(() => { highlighterPromise = null })
 return highlighterPromise
 ~~~
 
-初始化失败只允许当前调用失败；必须清空 rejected promise，使下一次 render 可以重试。一个未知语言或单个 grammar load 失败不得把 highlighterPromise 置为 rejected。
+初始化失败只允许当前准备调用失败；必须清空 rejected promise，使下一次准备可以重试。H2 的 Markdown render 对已知 grammar preparation failure 保持旧 highlight.js 路径可用；一个未知语言或单个 grammar load 失败不得把 highlighterPromise 置为 rejected。
 
 ### 8.2 Language load dedup
 
@@ -451,7 +455,7 @@ ensureLanguage(language) 的行为：
 3. 否则创建一次 loadLanguage promise，放入 map。
 4. 成功后加入 loadedLanguageSet。
 5. 无论成功失败都在 finally 删除 inFlightLanguageLoads entry。
-6. 失败只标记该 language unavailable，并让当前文档的该 fence 使用 plain fallback。
+6. H2 只报告该 language unavailable；当前 Markdown renderer 仍由 highlight.js 决定该 fence 的输出。H3 cutover 后才能把这个状态映射为 Shiki/plain fallback。
 
 因此以下并发 sequence：
 
@@ -842,6 +846,8 @@ Shiki 迁移不能绕过这条流程，也不能在导出时重新解析 Markdow
 
 ### SHIKI-H2 — Fence Discovery & Dynamic Language Loading
 
+状态：`COMPLETE`；证据：[Shiki H2 Fence Discovery & Dynamic Language Loading](syntax-highlighting-shiki-h2-language-loading.md)。
+
 动作：
 
 - 基于 MarkdownIt fence tokens 实现 language discovery；
@@ -850,6 +856,9 @@ Shiki 迁移不能绕过这条流程，也不能在导出时重新解析 Markdow
 - 实现 unknown/unavailable language semantics；
 - 只在需要时调用 Shiki loadLanguage；
 - 在正常 renderer 仍使用 highlight.js 的前提下先完成 runtime/discovery contract 测试，避免半切换状态。
+- preflight 使用 fresh isolated env，final render 使用 fresh real env，关闭 wikiResolver double-call blocker；
+- 使用 Shiki 4.4.3 官方 bundled registry，不构造 user-controlled module path；
+- H2 build 已记录 full registry 的 async grammar/theme chunk 形状，未证明 startup eager 加载全语言。
 
 退出条件：
 
@@ -857,7 +866,9 @@ Shiki 迁移不能绕过这条流程，也不能在导出时重新解析 Markdow
 - repeated language 只加载一次；
 - concurrent render 不创建第二 highlighter；
 - unknown、empty、meta、whitespace 和 special fence 都有确定结果；
-- grammar chunks 没有在启动时全部 eager。
+- grammar chunks 没有在启动时全部 eager；
+- 带 resolver 的 wiki link preflight 调用数保持为 0，最终 render 只调用真实 resolver 一次/语义位置；
+- Markdown normal fence 仍通过 highlight.js，H3 renderer cutover 尚未开始。
 
 ### SHIKI-H3 — Markdown Renderer Cutover
 
@@ -1016,11 +1027,11 @@ Shiki 迁移不能绕过这条流程，也不能在导出时重新解析 Markdow
 | --- | --- |
 | Goal | 在 MarkdownIt 同步 render 前可靠准备需要的 language |
 | Files likely changed | src/lib/shiki.ts、必要的 src/lib/markdown.ts preflight seam、新增 Shiki/discovery tests |
-| Behavior changed | 正常 renderer 仍可保持 highlight.js；Shiki load contract 先独立验证 |
+| Behavior changed | render 增加 isolated token discovery 和按需 Shiki preparation；正常 renderer 仍输出 highlight.js |
 | Main risk | double parse、info/meta 解析、alias registry、concurrent load race |
-| Tests required | js/javascript、ts/typescript、py、sh、yml；whitespace/meta；empty；unknown；special fences；concurrent renders |
-| Manual validation | 连续打开多个不同语言文档，观察只加载所需 grammar |
-| Exit criteria | unique canonical language load 和 failure isolation 通过 |
+| Tests required | js/javascript、ts/typescript、py、sh、yml；whitespace/meta；empty；unknown；special fences；concurrent renders；resolver call count |
+| Manual validation | 连续打开多个不同语言文档，观察只加载所需 grammar；确认正常 HTML 仍为 `hljs` |
+| Exit criteria | unique canonical language load、failure isolation 和 isolated resolver env 通过 |
 | Can rollback independently? | Yes；旧 renderer 未切换 |
 
 ### SHIKI-H3 table
@@ -1285,7 +1296,10 @@ migration 不能因为 JavaScript fence 看起来高亮就关闭。以下全部�
 
 这些能力可以作为独立后续需求，但不应混入本次 Shiki foundation migration。
 
-## 22. 本次文档落盘范围
+## 22. 首次文档落盘范围（历史记录）
+
+本节保留 implementation plan 首次创建时的 allowed-change 记录；它不覆盖
+已经完成的 H1/H2 source/runtime changes。
 
 本次 task 的 allowed changes 只有：
 
@@ -1301,12 +1315,12 @@ migration 不能因为 JavaScript fence 看起来高亮就关闭。以下全部�
 4. PDF Export V1 Implementation Plan；
 5. 其他 design documents。
 
-本任务不修改 package.json、package-lock.json、src/**、server/**、shared/** 或 e2e/**。提交完成后的期望状态：
+首次 plan task 不修改 package.json、package-lock.json、src/**、server/**、shared/** 或 e2e/**。当时提交完成后的期望状态：
 
 ~~~
 PRD: CLEAN
 Implementation Plan: READY
-Shiki implementation: NOT STARTED
+Shiki implementation: NOT STARTED（initial plan task 的历史状态）
 ~~~
 
 ## 23. Documentation-only validation and commit boundary

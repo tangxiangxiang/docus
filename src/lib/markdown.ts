@@ -10,6 +10,7 @@ import { wikiLinkPlugin, type Resolver as WikiResolver, type WikiLinkEnv } from 
 import { calloutPlugin } from './callouts'
 import { mathPlugin } from './math'
 import { emojiDefinitions } from './emoji'
+import { extractFenceLanguageIdentifier, prepareShikiLanguages } from './shiki'
 
 function escapeHtml(s: string): string {
   return s
@@ -267,8 +268,27 @@ export interface MarkdownRenderOptions {
   resolver?: WikiResolver
 }
 
+/**
+ * Discover only MarkdownIt's actual fenced-code tokens. The discovery parse
+ * receives a fresh empty env on every call, so wiki-link parsing can use its
+ * internal fallback without invoking the caller's render-scoped resolver.
+ */
+export function discoverFenceLanguageIdentifiers(md: MarkdownIt, markdown: string): string[] {
+  const discoveryEnv: WikiLinkEnv = {}
+  return md
+    .parse(markdown, discoveryEnv)
+    .filter((token) => token.type === 'fence')
+    .map((token) => extractFenceLanguageIdentifier(token.info ?? ''))
+    .filter(Boolean)
+}
+
 export async function render(markdown: string, options: MarkdownRenderOptions = {}): Promise<string> {
   const md = await getMd()
+  const fenceLanguageIdentifiers = discoverFenceLanguageIdentifiers(md, markdown)
+  await prepareShikiLanguages(fenceLanguageIdentifiers)
+
+  // Keep the final env separate from the discovery env. In particular, the
+  // real resolver must only be visible to the actual render pass.
   const env: WikiLinkEnv = options.resolver ? { wikiResolver: options.resolver } : {}
   return sanitizeMarkdownHtml(md.render(markdown, env))
 }

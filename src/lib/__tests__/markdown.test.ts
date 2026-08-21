@@ -6,9 +6,25 @@
 // widget. We exercise the real `render()` exported by the module
 // so the test goes through the same path the app uses (including
 // the async hljs init).
-import { describe, it, expect } from 'vitest'
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
+import { createHighlighter, type Highlighter } from 'shiki'
 import { render } from '../markdown'
 import type { Resolver as WikiResolver } from '../wikiLinks'
+import { __testing__ as shikiTesting } from '../shiki'
+
+type LanguageInput = Parameters<Highlighter['loadLanguage']>[0]
+
+function installFakeShikiRuntime() {
+  const loadLanguage = vi.fn(async (_language: LanguageInput) => {})
+  const runtime = {
+    dispose: vi.fn(),
+    getLoadedLanguages: vi.fn(() => []),
+    loadLanguage,
+  } as unknown as Highlighter
+  const factory = vi.fn<typeof createHighlighter>(() => Promise.resolve(runtime))
+  shikiTesting.setHighlighterFactory(factory)
+  return { factory, loadLanguage }
+}
 
 describe('markdown render()', () => {
   it('emits a markmap-mount placeholder for ```markmap fences', async () => {
@@ -519,5 +535,147 @@ describe('markdown render()', () => {
     const html = await render('<span onclick="alert(1)">:smile:</span><script>alert(1)</script>')
     expect(html).toContain('<span>😄</span>')
     expect(html).not.toMatch(/<script|onclick=/i)
+  })
+})
+
+describe('markdown H2 fence preparation', () => {
+  beforeEach(() => {
+    shikiTesting.reset()
+  })
+
+  afterEach(() => {
+    shikiTesting.reset()
+  })
+
+  it('prepares a known fence while keeping the current hljs renderer contract', async () => {
+    const { loadLanguage } = installFakeShikiRuntime()
+
+    const html = await render([
+      '```js title=demo',
+      'const value = 1',
+      '```',
+    ].join('\n'))
+
+    expect(loadLanguage).toHaveBeenCalledTimes(1)
+    expect(html).toContain('class="hljs"')
+    expect(html).not.toContain('class="shiki"')
+  })
+
+  it('does not discover false positives or load an unknown fence', async () => {
+    const { factory, loadLanguage } = installFakeShikiRuntime()
+
+    const html = await render([
+      'The text says ```js but this is not a valid fence.',
+      '',
+      '` ```python `',
+      '',
+      '    indented code',
+      '',
+      '<div>```java</div>',
+      '',
+      '```some-random-language',
+      '<a onclick="alert(1)">hello</a>',
+      '```',
+    ].join('\n'))
+
+    expect(factory).not.toHaveBeenCalled()
+    expect(loadLanguage).not.toHaveBeenCalled()
+    expect(html).toContain('class="hljs"')
+    expect(html).toContain('&lt;a onclick=')
+  })
+
+  it('keeps markmap and mermaid outside Shiki preparation', async () => {
+    const { factory, loadLanguage } = installFakeShikiRuntime()
+
+    const html = await render([
+      '```markmap',
+      '# Root',
+      '```',
+      '',
+      '```mermaid',
+      'graph TD',
+      'A --> B',
+      '```',
+      '',
+      '```mmap',
+      'not a markmap',
+      '```',
+      '',
+      '```merm',
+      'not mermaid',
+      '```',
+    ].join('\n'))
+
+    expect(factory).not.toHaveBeenCalled()
+    expect(loadLanguage).not.toHaveBeenCalled()
+    expect(html).toContain('class="markmap-mount"')
+    expect(html).toContain('class="mermaid-mount"')
+    expect(html).not.toContain('class="mark-map-mount"')
+  })
+
+  it('does not double-call the real resolver during discovery preflight', async () => {
+    installFakeShikiRuntime()
+    const resolver: WikiResolver = vi.fn((ref) => ({ target: `notes/${ref}` }))
+
+    const html = await render([
+      '[[Some Note]]',
+      '',
+      '[Standard Link](some-note.md)',
+      '',
+      '```js',
+      'const value = 1',
+      '```',
+    ].join('\n'), { resolver })
+
+    expect(resolver).toHaveBeenCalledTimes(2)
+    expect(resolver).toHaveBeenNthCalledWith(1, 'Some Note', undefined)
+    expect(resolver).toHaveBeenNthCalledWith(2, 'some-note', undefined)
+    expect(html).toContain('href="/vault/notes/Some%20Note"')
+    expect(html).toContain('href="/vault/notes/some-note"')
+  })
+
+  it('keeps concurrent resolver state isolated when preflight runs', async () => {
+    installFakeShikiRuntime()
+    const resolverA: WikiResolver = vi.fn((ref) => ({ target: `vault-a/${ref}` }))
+    const resolverB: WikiResolver = vi.fn((ref) => ({ target: `vault-b/${ref}` }))
+    const markdown = '[[note]]\n\n```javascript\nconst value = 1\n```'
+
+    const [htmlA, htmlB] = await Promise.all([
+      render(markdown, { resolver: resolverA }),
+      render(markdown, { resolver: resolverB }),
+    ])
+
+    expect(resolverA).toHaveBeenCalledTimes(1)
+    expect(resolverB).toHaveBeenCalledTimes(1)
+    expect(htmlA).toContain('href="/vault/vault-a/note"')
+    expect(htmlA).not.toContain('vault-b/note')
+    expect(htmlB).toContain('href="/vault/vault-b/note"')
+    expect(htmlB).not.toContain('vault-a/note')
+  })
+
+  it('does not initialize Shiki for a document without an eligible fence', async () => {
+    const { factory, loadLanguage } = installFakeShikiRuntime()
+
+    await render([
+      '# Heading',
+      '',
+      'A paragraph with [[a wiki link]].',
+      '',
+      '| A | B |',
+      '| --- | --- |',
+      '| one | two |',
+    ].join('\n'))
+
+    expect(factory).not.toHaveBeenCalled()
+    expect(loadLanguage).not.toHaveBeenCalled()
+  })
+
+  it('does not reload the same grammar across repeated and alias renders', async () => {
+    const { loadLanguage } = installFakeShikiRuntime()
+
+    await render('```js\nconst one = 1\n```')
+    await render('```javascript\nconst two = 2\n```')
+
+    expect(loadLanguage).toHaveBeenCalledTimes(1)
   })
 })
