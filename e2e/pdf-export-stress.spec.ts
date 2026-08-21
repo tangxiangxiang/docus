@@ -1,6 +1,7 @@
 import { expect, test } from './fixtures/auth'
 import {
   assertPdfCleanup,
+  assertPdfUiResponsive,
   attachPdfDiagnostics,
   captureFileTreePdfExport,
   pdfPrintWasCalled,
@@ -280,15 +281,6 @@ function expectNoHorizontalOverflow(snapshot: PdfExportSnapshot): void {
   }
 }
 
-async function assertTreeResponsive(page: Parameters<typeof captureFileTreePdfExport>[0], slug: string): Promise<void> {
-  const inbox = page.locator('.tree-row[data-tree-kind="folder"][data-tree-path="inbox"]')
-  const row = page.locator(`.tree-row[data-tree-kind="file"][data-tree-path="${slug}"]`)
-  await inbox.locator('.chevron').click()
-  await expect(row).toHaveCount(0)
-  await inbox.locator('.chevron').click()
-  await expect(row).toBeVisible()
-}
-
 test('H9 100-page lane preserves every section through the tail', async ({ page, request }, testInfo) => {
   try {
     await seedPdfDocument(request, {
@@ -344,7 +336,7 @@ test('H9 100-page lane preserves every section through the tail', async ({ page,
       durationMs: result.durationMs,
     })
     await assertPdfCleanup(page)
-    await assertTreeResponsive(page, LONG_SLUG)
+    await assertPdfUiResponsive(page, LONG_SLUG)
   } finally {
     await request.delete(`/api/posts/${LONG_SLUG}`).catch(() => {})
   }
@@ -387,7 +379,7 @@ test('H9 extreme Mermaid stays ready and printable', async ({ page, request }, t
       durationMs: result.durationMs,
     })
     await assertPdfCleanup(page)
-    await assertTreeResponsive(page, MERMAID_SLUG)
+    await assertPdfUiResponsive(page, MERMAID_SLUG)
   } finally {
     await request.delete(`/api/posts/${MERMAID_SLUG}`).catch(() => {})
   }
@@ -437,7 +429,7 @@ test('H9 extreme MarkMap stays fitted and printable', async ({ page, request }, 
       durationMs: result.durationMs,
     })
     await assertPdfCleanup(page)
-    await assertTreeResponsive(page, MARKMAP_SLUG)
+    await assertPdfUiResponsive(page, MARKMAP_SLUG)
   } finally {
     await request.delete(`/api/posts/${MARKMAP_SLUG}`).catch(() => {})
   }
@@ -477,7 +469,7 @@ test('H9 24-column table remains within printable width', async ({ page, request
       durationMs: result.durationMs,
     })
     await assertPdfCleanup(page)
-    await assertTreeResponsive(page, TABLE_SLUG)
+    await assertPdfUiResponsive(page, TABLE_SLUG)
   } finally {
     await request.delete(`/api/posts/${TABLE_SLUG}`).catch(() => {})
   }
@@ -519,7 +511,7 @@ test('H9 huge code block preserves long lines, split state, and tail', async ({ 
       durationMs: result.durationMs,
     })
     await assertPdfCleanup(page)
-    await assertTreeResponsive(page, CODE_SLUG)
+    await assertPdfUiResponsive(page, CODE_SLUG)
   } finally {
     await request.delete(`/api/posts/${CODE_SLUG}`).catch(() => {})
   }
@@ -565,7 +557,7 @@ test('H9 many KaTeX formulas all settle ready', async ({ page, request }, testIn
       durationMs: result.durationMs,
     })
     await assertPdfCleanup(page)
-    await assertTreeResponsive(page, MATH_SLUG)
+    await assertPdfUiResponsive(page, MATH_SLUG)
   } finally {
     await request.delete(`/api/posts/${MATH_SLUG}`).catch(() => {})
   }
@@ -607,7 +599,7 @@ test('H9 many same-origin images settle and remain in prepared DOM', async ({ pa
       durationMs: result.durationMs,
     })
     await assertPdfCleanup(page)
-    await assertTreeResponsive(page, IMAGES_SLUG)
+    await assertPdfUiResponsive(page, IMAGES_SLUG)
   } finally {
     await request.delete(`/api/posts/${IMAGES_SLUG}`).catch(() => {})
   }

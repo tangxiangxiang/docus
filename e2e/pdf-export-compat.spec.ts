@@ -1,6 +1,7 @@
 import { expect, test } from './fixtures/auth'
 import {
   assertPdfCleanup,
+  assertPdfUiResponsive,
   attachPdfDiagnostics,
   captureFileTreePdfExport,
   pdfPrintWasCalled,
@@ -120,7 +121,7 @@ test('representative PDF export remains usable across the dedicated compatibilit
       expect(result.snapshot.devicePixelRatio).toBeGreaterThanOrEqual(2)
     }
     await assertPdfCleanup(page)
-    await expect(page.locator('.tree-row[data-tree-kind="folder"][data-tree-path="inbox"]')).toBeVisible()
+    await assertPdfUiResponsive(page, slug)
   } finally {
     await request.delete(`/api/posts/${slug}`).catch(() => {})
   }

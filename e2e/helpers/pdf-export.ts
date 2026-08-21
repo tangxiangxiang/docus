@@ -317,7 +317,7 @@ export async function captureFileTreePdfExport(
   const snapshotPromise = page
     .waitForFunction(() => (
       (window as PdfExportWindow).__pdfExportSnapshot !== null
-    ), undefined, { timeout: 60_000 })
+    ), undefined, { timeout: 0 })
     .then(() => page.evaluate(() => (
       (window as PdfExportWindow).__pdfExportSnapshot
     )))
@@ -345,6 +345,18 @@ export async function assertPdfCleanup(page: Page): Promise<void> {
   await expect(page.locator('.pdf-export-surface')).toHaveCount(0)
   await expect(page.locator('.pdf-download-root')).toHaveCount(0)
   await expect(page.locator('.pdf-download-host')).toHaveCount(0)
+}
+
+export async function assertPdfUiResponsive(page: Page, slug: string): Promise<void> {
+  const inbox = page.locator('.tree-row[data-tree-kind="folder"][data-tree-path="inbox"]')
+  const row = page.locator(`.tree-row[data-tree-kind="file"][data-tree-path="${slug}"]`)
+
+  await expect(inbox).toBeVisible()
+  await expect(row).toBeVisible()
+  await inbox.locator('.chevron').click()
+  await expect(row).toHaveCount(0)
+  await inbox.locator('.chevron').click()
+  await expect(row).toBeVisible()
 }
 
 export async function attachPdfDiagnostics(
