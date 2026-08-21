@@ -13,7 +13,7 @@ tokenize、不创建第二个 Shiki runtime，也不开始 H7 的 highlight.js �
 | H6 base / H5 completion | `9d5d8a9ae0e19ee833f199784c9c5616cb02f237` |
 | Implementation baseline | `2be6b2c57b5d7cb76b359220f361bacb55661099` |
 | H5 completion commit | `9d5d8a9ae0e19ee833f199784c9c5616cb02f237` |
-| H6 implementation commit | Recorded in the final handoff after this evidence document is created |
+| H6 implementation commit | `6caa4f013e1887e2d3a6cb63450c1a9e33a0c9b2` |
 | Runtime | Node `v24.15.0`, npm `11.12.1`; Docker baseline remains `node:22-bookworm-slim` |
 | Status | `SHIKI-H6 — COMPLETE`; H7/H8 not started |
 | Scope | PDF trusted stylesheet, clone visibility, printable-light token colors, plain fallback, layout/pagination/widget regressions |
@@ -270,8 +270,8 @@ pre code            → white-space: inherit
 pre code            → word-break: break-word
 ```
 
-`e2e/pdf-export-layout.spec.ts` passed with no horizontal overflow. The H9 huge
-code lane also passed with `clientWidth === scrollWidth` and `breakInside: auto`
+`e2e/pdf-export-layout.spec.ts` passed with no horizontal overflow. The existing
+huge-code stress lane also passed with `clientWidth === scrollWidth` and `breakInside: auto`
 after the existing oversized-block logic marked the block splittable.
 
 ## 12. Pagination evidence
@@ -298,7 +298,7 @@ prepareMermaidSvg()   → static PDF SVG
 prepareMarkmapSvg()   → static fitted PDF SVG
 ```
 
-The existing Kitchen Sink export and H9 extreme Mermaid/MarkMap lanes passed.
+The existing Kitchen Sink export and extreme Mermaid/MarkMap stress lanes passed.
 The Shiki selectors are restricted to `.shiki`, so SVG text and MarkMap nodes
 are outside the new PDF color rules.
 

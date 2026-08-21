@@ -61,7 +61,7 @@ GFM tables don't allow newlines inside cells. Trailing two-spaces and backslash 
 - ` ```markmap ` — interactive mindmap. The block body is a Markdown outline (headings + bullets); it becomes a zoomable / pannable tree, not a code listing.
 - ` ```mermaid ` — flowcharts, sequence diagrams, Gantt, class diagrams, etc. Renders to SVG.
 
-Any other language identifier (`js`, `py`, `ts`, …) renders as a normal highlighted code block via highlight.js.
+Any other language identifier (`js`, `py`, `ts`, …) renders as a normal highlighted code block via Shiki.
 
 ### Other in-tree extensions
 
