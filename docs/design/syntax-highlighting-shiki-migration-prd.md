@@ -938,28 +938,37 @@ This PR should establish a clean Shiki foundation first.
 
 The task is complete only when ALL of the following are true:
 
-* [ ] `highlight.js` dependency removed
-* [ ] Shiki 4.x installed
-* [ ] Shiki highlighter is singleton/cached
-* [ ] languages load without eagerly loading the entire catalog
-* [ ] GitHub Light + GitHub Dark themes work
-* [ ] Docus system/forced theme behavior works
-* [ ] no Shiki inline styles survive into Markdown HTML
-* [ ] DOMPurify security policy is not weakened
-* [ ] `transformerStyleToClass` or equivalent safe class-based approach is used
-* [ ] generated Shiki CSS is deduplicated
-* [ ] unknown languages safely fall back to plain escaped code
-* [ ] MarkMap works exactly as before
-* [ ] Mermaid works exactly as before
-* [ ] PDF code blocks remain readable and printable
-* [ ] PDF always uses the light syntax palette
-* [ ] no `.hljs` application CSS remains
-* [ ] no `highlight.js` runtime imports remain
-* [ ] existing Markdown tests pass
-* [ ] new Shiki regression tests pass
-* [ ] `npm run typecheck` passes
-* [ ] `npm run test:unit` passes
-* [ ] `npm run build` passes
+* [x] `highlight.js` dependency removed
+* [x] Shiki 4.x installed
+* [x] Shiki highlighter is singleton/cached
+* [x] languages load without eagerly loading the entire catalog
+* [x] GitHub Light + GitHub Dark themes work
+* [x] Docus system/forced theme behavior works
+* [x] no Shiki inline styles survive into Markdown HTML
+* [x] DOMPurify security policy is not weakened
+* [x] `transformerStyleToClass` or equivalent safe class-based approach is used
+* [x] generated Shiki CSS is deduplicated
+* [x] unknown languages safely fall back to plain escaped code
+* [x] MarkMap works exactly as before
+* [x] Mermaid works exactly as before
+* [x] PDF code blocks remain readable and printable
+* [x] PDF always uses the light syntax palette
+* [x] no `.hljs` application CSS remains
+* [x] no `highlight.js` runtime imports remain
+* [x] existing Markdown tests pass
+* [x] new Shiki regression tests pass
+* [x] `npm run typecheck` passes
+* [x] `npm run test:unit` passes
+* [x] `npm run build` passes
+
+Implementation status:
+COMPLETE
+
+Release gate:
+SHIKI-H8 — PASS
+
+Evidence:
+docs/design/syntax-highlighting-shiki-h8-release-gate.md
 
 ---
 

@@ -13,7 +13,7 @@ release gate 尚未开始。
 | H7 base / H6 completion | `6caa4f013e1887e2d3a6cb63450c1a9e33a0c9b2` |
 | Implementation baseline | `2be6b2c57b5d7cb76b359220f361bacb55661099` |
 | H6 completion commit | `6caa4f013e1887e2d3a6cb63450c1a9e33a0c9b2` |
-| H7 implementation commit | Recorded in the final handoff after this evidence document is created |
+| H7 implementation commit | `d584abf2c64b8b46767cba72fbfc22f5b6606798` |
 | Runtime | Node `v24.15.0`, npm `11.12.1`; Docker baseline remains `node:22-bookworm-slim` |
 | Package-manager authority | npm; `pnpm-lock.yaml` is tracked but was not regenerated in H7 |
 | Status | `SHIKI-H7 — COMPLETE`; H8 not started |

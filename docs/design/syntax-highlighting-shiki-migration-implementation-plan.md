@@ -4,12 +4,12 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 文档状态 | H7 COMPLETE / H8 NOT IMPLEMENTED |
+| 文档状态 | MIGRATION COMPLETE |
 | 产品 PRD | [Shiki Syntax Highlighting Migration PRD](syntax-highlighting-shiki-migration-prd.md) |
 | Implementation baseline | 2be6b2c57b5d7cb76b359220f361bacb55661099 |
 | 计划日期 | 2026-08-21 |
-| 当前阶段 | SHIKI-H7 — COMPLETE；Next: SHIKI-H8 — Full Regression, Bundle Audit & Release Gate |
-| 当前实现状态 | H0 审计、H1 runtime foundation、H2 language preparation、H3 Markdown renderer cutover、H4 style-to-class/security closure、H5 reader theme integration、H6 PDF compatibility 与 H7 Docus-owned highlight.js cleanup 已完成；正常已知 fence 输出带 `docus-shiki-*` class 的 Shiki HTML，完整 dual-theme transformer CSS snapshot 由 `document.head` 下唯一的 `style#docus-shiki-generated-styles` owner 管理，`src/shiki.css` 通过 Docus `data-theme`/OS selectors 消费 light/dark variables；PDF 每次导出从 `getGeneratedShikiCss()` 捕获一次可信 snapshot，合并到唯一的 `style#docus-pdf-download-styles`，clone 内的 `.pdf-document` selector 强制 `--shiki-light` token/background；主题切换只改变 computed style，不重新 render/tokenize，DOMPurify 的 `FORBID_ATTR: ['style']` 未改变；Docus direct highlight.js dependency 与 `src/hljs-dark.css` 已删除，MarkMap 所需的 transitive highlight.js 仍保留；H8 release gate 尚未开始 |
+| 当前阶段 | SHIKI-H8 — COMPLETE；migration complete |
+| 当前实现状态 | H0 审计、H1 runtime foundation、H2 language preparation、H3 Markdown renderer cutover、H4 style-to-class/security closure、H5 reader theme integration、H6 PDF compatibility、H7 Docus-owned highlight.js cleanup 与 H8 full regression/release gate 已完成；正常已知 fence 输出带 `docus-shiki-*` class 的 Shiki HTML，完整 dual-theme transformer CSS snapshot 由 `document.head` 下唯一的 `style#docus-shiki-generated-styles` owner 管理，`src/shiki.css` 通过 Docus `data-theme`/OS selectors 消费 light/dark variables；PDF 每次导出从 `getGeneratedShikiCss()` 捕获一次可信 snapshot，合并到唯一的 `style#docus-pdf-download-styles`，clone 内的 `.pdf-document` selector 强制 `--shiki-light` token/background；主题切换只改变 computed style，不重新 render/tokenize，DOMPurify 的 `FORBID_ATTR: ['style']` 未改变；Docus direct highlight.js dependency 与 `src/hljs-dark.css` 已删除，MarkMap 所需的 transitive highlight.js 仍保留；H8 release gate 全部通过；不存在 H9 |
 | H0 审计证据 | [Shiki H0 Baseline & Contract Audit](syntax-highlighting-shiki-h0-audit.md) |
 | H1 实施证据 | [Shiki H1 Dependency & Runtime Foundation](syntax-highlighting-shiki-h1-runtime-foundation.md) |
 | H2 实施证据 | [Shiki H2 Fence Discovery & Dynamic Language Loading](syntax-highlighting-shiki-h2-language-loading.md) |
@@ -18,7 +18,8 @@
 | H5 实施证据 | [Shiki H5 Theme Integration](syntax-highlighting-shiki-h5-theme-integration.md) |
 | H6 实施证据 | [Shiki H6 PDF Compatibility](syntax-highlighting-shiki-h6-pdf-compatibility.md) |
 | H7 实施证据 | [Shiki H7 highlight.js Cleanup](syntax-highlighting-shiki-h7-highlightjs-cleanup.md) |
-| 本任务范围 | H0 baseline/contract audit、H1 runtime foundation、H2 fence discovery/language loading、H3 normal Markdown renderer cutover、H4 style-to-class/security closure、H5 reader theme integration、H6 PDF compatibility 与 H7 Docus-owned highlight.js cleanup 已完成；H8 尚未实施；MarkMap transitive highlight.js ownership 保持不变 |
+| H8 实施证据 | [Shiki H8 Full Regression, Bundle Audit & Release Gate](syntax-highlighting-shiki-h8-release-gate.md) |
+| 本任务范围 | H0 baseline/contract audit、H1 runtime foundation、H2 fence discovery/language loading、H3 normal Markdown renderer cutover、H4 style-to-class/security closure、H5 reader theme integration、H6 PDF compatibility、H7 Docus-owned highlight.js cleanup 与 H8 full regression/release gate 已完成；MarkMap transitive highlight.js ownership 保持不变 |
 | 目标 | 用可回滚、可验证的阶段性步骤完成 Shiki 4.x 迁移，同时保持 Markdown、DOMPurify、主题、Mermaid、MarkMap 和 PDF 合同 |
 
 本计划描述接下来如何实施产品 PRD，不代表任何 Shiki 能力已经存在。未来实现必须以产品 PRD 为最高约束；如果本计划与 PRD 发生冲突：
@@ -107,7 +108,7 @@ FORBID_ATTR: ['style']
 
 ### 4.1 当前真实调用流
 
-当前 repository 在 H5 完成后的主要路径如下：
+当前 repository 在 H7/H8 release state 的主要路径如下：
 
 ~~~
 raw Markdown
@@ -1027,16 +1028,16 @@ Docus-owned cleanup。H7 证据见 [Shiki H7 highlight.js Cleanup](syntax-highli
 - 保留并单独分类 MarkMap 的 `features.hljs`、`markmap-lib → highlight.js` 和非规范 `pnpm-lock.yaml` 历史 importer；
 - 更新仍面向当前行为的 AI prompt，不改写 H0-H6 historical evidence。
 
-实际结果：
+H7 completion snapshot（`d584abf2c64b8b46767cba72fbfc22f5b6606798`）记录的当时状态如下；H8 随后在独立 release-gate 阶段完成：
 
 - Docus direct highlight.js dependency：REMOVED；
 - npm package-lock root edge：REMOVED；
 - MarkMap transitive `highlight.js@11.11.1`：PRESERVED；
 - Docus-owned `.hljs` application CSS 与 `src/hljs-dark.css`：REMOVED；
 - normal Markdown renderer：仍为 Shiki；
-- H8 full regression/bundle/release gate：NOT STARTED。
+- H8 full regression/bundle/release gate：at the H7 completion snapshot，NOT STARTED；现已由 H8 evidence 完成并通过。
 
-### SHIKI-H8 — Full Regression, Bundle Audit & Release Gate — NOT STARTED
+### SHIKI-H8 — Full Regression, Bundle Audit & Release Gate — COMPLETE
 
 动作：
 
@@ -1049,6 +1050,13 @@ Docus-owned cleanup。H7 证据见 [Shiki H7 highlight.js Cleanup](syntax-highli
 - 人工验证五种代表语言、unknown、四种 theme 和 code-heavy PDF；
 - 记录所有 warning、chunk size 和 test evidence。
 
+已完成并记录在 [Shiki H8 Full Regression, Bundle Audit & Release Gate](syntax-highlighting-shiki-h8-release-gate.md)：
+
+- npm dependency/package-lock graph、MarkMap transitive ownership 和 npm-only package-manager policy 已审计；非规范且无 live consumer 的 `pnpm-lock.yaml` 已删除并记录原因；
+- focused、extended client、Markdown/PDF/MarkMap/Mermaid、Chromium、history/recovery integration、`npm test`、typecheck、clean build 和 `npm ci` 均通过；
+- H0 → H8 bundle comparison 已记录，main entry 未吸收完整语言目录，grammar/theme capability 仍按需拆分；
+- PRD Definition of Done 已逐项绑定到 source audit、unit/browser evidence 或 build evidence。
+
 退出条件：
 
 - PRD Definition of Done 每一项都有证据；
@@ -1057,6 +1065,8 @@ Docus-owned cleanup。H7 证据见 [Shiki H7 highlight.js Cleanup](syntax-highli
 - 没有 theme-triggered retokenization；
 - highlight.js cleanup search 已完成；
 - Release Gate checklist 全部关闭。
+
+H8 结果：`PASS`。迁移已完成；H8 后不存在 H9 或其他 syntax-highlighting migration phase。
 
 ## 16. Per-phase implementation tables
 
@@ -1164,18 +1174,18 @@ Docus-owned cleanup。H7 证据见 [Shiki H7 highlight.js Cleanup](syntax-highli
 | Exit criteria | Docus-owned runtime/CSS references clean；MarkMap/transitive/noncanonical/historical hits 全部分类；H8 仍未开始 |
 | Can rollback independently? | Yes；作为单独 reviewable cleanup commit |
 
-### SHIKI-H8 table — NOT STARTED
+### SHIKI-H8 table — COMPLETE
 
 | Item | Content |
 | --- | --- |
 | Goal | 完成全回归、bundle audit 和 release evidence |
-| Files likely changed | implementation 不应再增加功能文件；只产生 build/test evidence |
+| Files changed | H8 evidence、PRD/Implementation Plan/README 状态收口、H7 completion metadata、已证明非规范且未使用的 pnpm-lock.yaml 删除 |
 | Behavior changed | none beyond already verified migration |
 | Main risk | eager language chunks、跨平台差异、PDF browser-only regression |
-| Tests required | typecheck、unit、build、relevant E2E、manual acceptance、bundle inspection |
-| Manual validation | JS/TS/Java/SQL/Python/unknown，四 theme，MarkMap/Mermaid，code-heavy PDF |
-| Exit criteria | Release Gate 全部关闭，PRD DoD 有逐项证据 |
-| Can rollback independently? | Yes；发布前按阶段 commit rollback |
+| Tests required | typecheck、focused/extended client、unit、history/recovery integration、build、relevant E2E、npm ci、bundle inspection |
+| Manual validation | `pdf-export-shiki-code.md` 覆盖 JS/TS/Java/SQL/Python/unknown；四 theme、MarkMap/Mermaid、code-heavy PDF 和 lazy asset audit 均有证据 |
+| Exit criteria | Release Gate 全部关闭，PRD DoD 每项均为 PASS |
+| Can rollback independently? | Yes；H8 只收口证据/文档与已证明的 lock hygiene，生产行为未改 |
 
 ## 17. Test matrix
 
@@ -1302,43 +1312,42 @@ H8 必须保存：
 
 migration 不能因为 JavaScript fence 看起来高亮就关闭。以下全部必须有 evidence：
 
-- [ ] package.json 已使用 Shiki 4.x 和 matching transformer；
-- [ ] package-lock.json 由 npm 正常更新；
-- [ ] highlighter 是 singleton/cached；
-- [ ] highlighter init failure 不会永久 poison global renderer；
-- [ ] language discovery 只读取 fence tokens；
-- [ ] common aliases 和 fence meta/whitespace 已验证；
-- [ ] languages 按需加载，没有 eager all-language grammar；
-- [ ] unknown language 是 escaped plain-code fallback；
-- [ ] normal output 是 Shiki semantic pre/code contract；
-- [ ] transformerStyleToClass 或等价 class-based transformer 已使用；
-- [ ] sanitized Markdown HTML 没有 Shiki inline style；
-- [ ] FORBID_ATTR: ['style'] 未移除；
-- [ ] raw user style/on* 仍被 DOMPurify 删除；
-- [ ] generated CSS 只有一个 runtime owner 和稳定 ID；
-- [ ] generated CSS 不进入 sanitized article；
-- [ ] system light/system dark/forced light/forced dark 都有证据；
-- [ ] data-theme='light' 覆盖 OS dark；
-- [ ] data-theme='dark' 强制 dark；
-- [ ] theme switch 不重新 render/tokenize；
-- [ ] MarkMap 仍 bypass Shiki；
-- [ ] Mermaid 仍 bypass Shiki；
-- [ ] PDF 永远使用 light token palette；
-- [ ] PDF background、syntax colors、wrapping、pagination、cleanup 均通过；
-- [ ] Markdown extensions、resolver isolation、security regressions 均通过；
-- [ ] existing Markdown/PDF/MarkMap/Mermaid tests 通过；
-- [ ] new Shiki regression tests 通过；
-- [ ] npm run typecheck 通过；
-- [ ] npm run test:unit 通过；
-- [ ] npm run build 通过；
-- [ ] Vite bundle audit 证明语言仍 lazy；
-- [ ] Docus-owned highlight.js/hljs/.hljs runtime/CSS references 已清理；
-- [ ] no unrelated parser/UI/PDF redesign slipped in。
+- [x] package.json 已使用 Shiki 4.x 和 matching transformer；
+- [x] package-lock.json 由 npm 正常更新；
+- [x] highlighter 是 singleton/cached；
+- [x] highlighter init failure 不会永久 poison global renderer；
+- [x] language discovery 只读取 fence tokens；
+- [x] common aliases 和 fence meta/whitespace 已验证；
+- [x] languages 按需加载，没有 eager all-language grammar；
+- [x] unknown language 是 escaped plain-code fallback；
+- [x] normal output 是 Shiki semantic pre/code contract；
+- [x] transformerStyleToClass 或等价 class-based transformer 已使用；
+- [x] sanitized Markdown HTML 没有 Shiki inline style；
+- [x] FORBID_ATTR: ['style'] 未移除；
+- [x] raw user style/on* 仍被 DOMPurify 删除；
+- [x] generated CSS 只有一个 runtime owner 和稳定 ID；
+- [x] generated CSS 不进入 sanitized article；
+- [x] system light/system dark/forced light/forced dark 都有证据；
+- [x] data-theme='light' 覆盖 OS dark；
+- [x] data-theme='dark' 强制 dark；
+- [x] theme switch 不重新 render/tokenize；
+- [x] MarkMap 仍 bypass Shiki；
+- [x] Mermaid 仍 bypass Shiki；
+- [x] PDF 永远使用 light token palette；
+- [x] PDF background、syntax colors、wrapping、pagination、cleanup 均通过；
+- [x] Markdown extensions、resolver isolation、security regressions 均通过；
+- [x] existing Markdown/PDF/MarkMap/Mermaid tests 通过；
+- [x] new Shiki regression tests 通过；
+- [x] npm run typecheck 通过；
+- [x] npm run test:unit 通过；
+- [x] npm run build 通过；
+- [x] Vite bundle audit 证明语言仍 lazy；
+- [x] Docus-owned highlight.js/hljs/.hljs runtime/CSS references 已清理；
+- [x] no unrelated parser/UI/PDF redesign slipped in。
 
-在本计划提交后，上述 checkbox 仍然是未关闭状态。计划 READY 不等于 migration Done。
-
-H7 的 cleanup checkbox 仍由 H7 evidence 单独证明；Release Gate 整体继续保持
-未关闭，直到 H8 完成全量回归、bundle audit 和 PRD Definition of Done 审核。
+H8 evidence 已逐项关闭上述 Release Gate；计划状态现为 MIGRATION COMPLETE。
+H7 的 cleanup checkbox 仍由 H7 evidence 单独证明，但 H8 已复核其直接依赖、
+source ownership 和 MarkMap transitive boundary。
 
 ## 21. Explicit non-goals
 
