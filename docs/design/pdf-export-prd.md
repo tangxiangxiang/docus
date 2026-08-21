@@ -4,13 +4,13 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| Status | Approved for Hardening；基础实现已存在，需按本 PRD 完成补充验收 |
-| Date | 2026-08-20 |
+| Status | H1–H9 implementation complete；H10 final acceptance audit blocked by an H4 browser-evidence mismatch |
+| Date | 2026-08-21 |
 | Owner | Docus Markdown / Reader platform |
 | Phase | PDF Export V1 |
 | Target | Docus personal knowledge base |
 | Scope | Markdown 文档 PDF 导出、渲染一致性、异步组件收敛、下载交互、错误处理与验证 |
-| Current implementation | `main` 已存在基础 PDF Export 实现；本文作为后续修正、Hardening、Test Plan 和 Code Review 的产品约束 |
+| Current implementation | `main` at `2ed0fe9ce8aacd3bc2153f9864f942e775c0cb7c`；本文继续作为产品行为和 acceptance criteria 的约束 |
 | Implementation constraint | 不因现有代码已经存在而降低验收标准；实现与本文冲突时，以本文定义的用户行为和 acceptance criteria 为准 |
 
 本文定义 Docus PDF Export V1 的产品行为。
@@ -146,14 +146,18 @@ PDF Export 的本质问题因此是：
 当前默认导出链路已经是：
 
 ```text
-FileTree
-→ export-pdf
-→ VaultView
+File Tree / Read Mode
+→ exportPdfDocument(path)
+→ resolve source authority
+→ capture immutable PdfExportRequest
 → PdfExportSurface
 → RenderedMarkdown
+→ waitForPdfWidgets
+→ waitForPdfImages
 → preparePdfArticleHtml
 → html2pdf.js
-→ Download
+→ browser download
+→ finally cleanup
 ```
 
 这套结构应作为 V1 baseline 延续。
@@ -590,7 +594,7 @@ Folder 不显示。
 
 ## 9.2 Read Mode Entry
 
-建议作为 V1.1 / P1：
+已由 PDF-H8 实现为 V1 的第二个正式入口：
 
 ```text
 Read Mode
@@ -2185,7 +2189,7 @@ This document
 
 ---
 
-## Phase PDF-1 — Baseline Implementation
+## Phase PDF-1 — Baseline Implementation（Historical baseline）
 
 内容：
 
@@ -2198,17 +2202,15 @@ This document
 * Mermaid export normalization；
 * basic tests。
 
-当前 repository：
+该阶段描述的是早期 repository baseline，不是当前 release status：
 
 ```text
-mostly implemented
+historical baseline; superseded by H1–H9
 ```
-
-但必须经 PDF-2 重新验收。
 
 ---
 
-## Phase PDF-2 — Hardening
+## Phase PDF-2 — Hardening（Completed implementation work）
 
 ### P0
 
@@ -2355,16 +2357,32 @@ PDF Export V1 的正式定义是：
 
 > Docus 用户可以把任意 Markdown 文档当前的渲染状态直接下载为一份打印友好的 A4 PDF。导出复用 Docus 自己的 Markdown 语义，支持代码、表格、图片、公式、Mermaid 和 MarkMap；已打开文件以当前 live buffer 为准，导出过程与编辑器隔离，不改变文档状态。所有异步内容必须显式达到 ready 或 error 状态之后才能生成 PDF，不能以 DOM 元素存在或任意 sleep 作为完成依据。
 
-当前基础实现继续保留。
+当前实现已完成 H1–H9 hardening work；H10 只负责文档、acceptance audit 和 release gate。
 
-下一阶段正式进入：
-
-```text
-PDF-2 — PDF Export Hardening
-```
-
-其中第一项 release blocker：
+当前 release decision：
 
 ```text
-P0 — MarkMap explicit export-ready contract
+PDF Export V1 = NOT DONE
 ```
+
+原因不是新的产品需求，而是 H4 release evidence 中仍有一个未关闭的浏览器断言矛盾：当前 Kitchen Sink 测试要求 live Mermaid SVG 的 `viewBox` 存在，但生产组件为了隔离交互 pan/zoom 已将原始值保存到 `data-mermaid-viewbox` 并移除 live `viewBox`。在该证据修复并重新验证前，不能把 PDF Export V1 标记为 Done。
+
+---
+
+# 46. Final Documentation Audit（PDF-H10）
+
+审计 baseline：
+
+```text
+2ed0fe9ce8aacd3bc2153f9864f942e775c0cb7c
+```
+
+H10 本次不重新运行 H1–H9，也不修改 production code 或 tests。既有验证记录显示 H1、H2、H3、H5、H6、H7、H8、H9 的实现和对应验证已完成；H4 的 Kitchen Sink browser evidence 仍有上述 `viewBox` 断言失败，因此最终 acceptance audit 结果为：
+
+```text
+PASS: 已实现并有既有验证证据的 H1–H3、H5–H9 contract
+BLOCKED: H4 Mermaid browser evidence mismatch
+DECISION: PDF Export V1 = NOT DONE
+```
+
+该 blocker 应返回 PDF-H4 修正测试证据并重新执行 Kitchen Sink browser validation。H10 不在本次文档提交中修复它。

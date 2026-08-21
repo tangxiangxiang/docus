@@ -6,7 +6,55 @@ Docus uses Monaco for Markdown source editing and a separate Read mode for rende
 
 ## PDF Export
 
-In the file tree, right-click a Markdown document and choose **导出 PDF**. Docus renders the document and downloads an A4 PDF directly; no browser print dialog is opened. The export keeps the document's rendered formatting, including headings, code, tables, images, formulas, and diagrams.
+### Export from File Tree
+
+Right-click a Markdown document in the File Tree and choose **导出 PDF** / **Export PDF**. Folders do not have this action.
+
+### Export from Read Mode
+
+Use the **导出 PDF** / **Export PDF** action at the top of Read Mode. File Tree and Read Mode use the same export pipeline, so they produce the same kind of document.
+
+### What gets exported
+
+Docus renders the current Markdown document and downloads an A4 portrait PDF directly. The result is a semantic, print-optimized equivalent of Read Mode rather than a pixel-identical copy of the app. It includes, when present:
+
+- headings, paragraphs, lists and task lists;
+- quotes, callouts, links and footnotes;
+- code blocks and tables;
+- Chinese, Japanese, English and Emoji;
+- rendered KaTeX formulas;
+- rendered/static Mermaid and MarkMap diagrams;
+- local and normally loadable images.
+
+KaTeX, Mermaid and MarkMap are exported as their rendered/static result. Reader-only diagram controls such as pan and zoom are not included.
+
+### Unsaved and closed documents
+
+If the document is open and has unsaved edits, PDF Export uses the current live editing buffer. You do not need to save first. Export does not force a save, change the dirty state, or create a Git commit.
+
+If the document is not open, File Tree export reads the authoritative document in the background. It does not open a visible tab or change the current workspace.
+
+### PDF format and filename
+
+The download is a `.pdf` file with an A4 portrait, light, print-friendly layout. The filename is selected from these sources, in order:
+
+1. frontmatter `title`;
+2. the first Markdown H1;
+3. the document title;
+4. the filename without `.md`;
+5. `docus-document`.
+
+The selected title is sanitized for a filesystem filename while preserving Unicode.
+
+Even when Docus is in Dark Mode, the exported document uses a printable Light Theme. Images are allowed to settle before capture; remote images remain subject to browser CORS rules, so CORS-compatible images are best effort and incompatible remote images are not used to weaken browser security.
+
+The PDF uses A4 portrait pagination. Code and tables adapt to the printable width, and content that is taller than one page may continue onto later pages.
+
+### Export status and failure recovery
+
+Only one PDF export can run at a time. While it is preparing, the export action is busy/disabled and another request is not started.
+
+If an export fails, Docus ends the transaction and removes its temporary export surface. The document and workspace remain available, and you can try the export again.
 
 Each open document has its own workspace tab and unsaved buffer. Useful shortcuts include:
 

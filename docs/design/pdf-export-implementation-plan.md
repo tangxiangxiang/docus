@@ -4,14 +4,15 @@
 
 | 项目                           | 内容                                                     |
 | ---------------------------- | ------------------------------------------------------ |
-| 文档状态                         | Ready for Continued Implementation                     |
+| 文档状态                         | PDF-H10 audit BLOCKED；等待 H4 browser evidence 修复       |
 | 产品 PRD                       | [`docs/design/pdf-export-prd.md`](./pdf-export-prd.md) |
-| Implementation Plan baseline | `4e62bba441eb2ac7c426485154fd1226caa0edbf`             |
-| 计划日期                         | 2026-08-20                                             |
-| 当前阶段                         | PDF-2 — PDF Export Hardening                           |
-| 当前实现状态                       | PDF-1 baseline 已完成；PDF-2 部分 P0 已提前实现                   |
-| 本任务范围                        | 只补齐实施计划，不继续修改 PDF 业务实现                                 |
-| 目标                           | 将 PDF Export PRD 拆成可执行、可测试、可 review、可逐 commit 验收的工作包   |
+| Original hardening baseline | `4e62bba441eb2ac7c426485154fd1226caa0edbf`             |
+| Final H10 audit baseline | `2ed0fe9ce8aacd3bc2153f9864f942e775c0cb7c`             |
+| 计划日期                         | 2026-08-21                                             |
+| 当前阶段                         | PDF-H10 — Final Documentation & Release Gate           |
+| 当前实现状态                       | H1–H9 implementation complete；H4 browser evidence mismatch blocks final acceptance |
+| 本任务范围                        | 只收口 PRD、实施计划、用户指南和 release evidence，不修改 PDF 业务实现或测试 |
+| 目标                           | 让文档、真实实现、既有验证证据和 PRD acceptance criteria 保持一致 |
 
 本文回答：
 
@@ -78,10 +79,16 @@ STOP
 
 # 3. 当前基线状态
 
-Implementation baseline：
+Original implementation baseline：
 
 ```text
 4e62bba441eb2ac7c426485154fd1226caa0edbf
+```
+
+Final H10 audit baseline：
+
+```text
+2ed0fe9ce8aacd3bc2153f9864f942e775c0cb7c
 ```
 
 当前仓库已经拥有：
@@ -104,30 +111,20 @@ PDF helper tests
 PDF browser E2E
 ```
 
-因此后续不是重新做：
-
-```text
-PDF Export
-```
-
-而是：
-
-```text
-PDF Export Hardening
-```
+H1–H9 hardening commits 已完成；当前不再进入新的 implementation phase，唯一剩余工作是 PDF-H10 文档和 release gate。由于 H4 evidence mismatch，H10 当前保持 BLOCKED。
 
 ---
 
 # 4. 已完成能力盘点
 
-## 4.1 PDF transaction
+## 4.1 PDF transaction（Final implementation snapshot）
 
 当前基本链路：
 
 ```text
-File Tree
+File Tree / Read Mode
     ↓
-exportPdfFromTree(path)
+exportPdfDocument(path)
     ↓
 resolve source raw
     ↓
@@ -139,6 +136,8 @@ RenderedMarkdown
     ↓
 waitForPdfWidgets
     ↓
+waitForPdfImages
+    ↓
 preparePdfArticleHtml
     ↓
 downloadPdfDocument
@@ -148,7 +147,7 @@ html2pdf.js
 browser download
 ```
 
-该架构继续保留。
+该共享 pipeline 当前由 File Tree context menu 和 Read Mode toolbar 共用。
 
 ---
 
@@ -180,7 +179,7 @@ always getPost()
 
 ---
 
-## 4.3 MarkMap P0
+## 4.3 MarkMap P0（DONE）
 
 原有风险：
 
@@ -209,23 +208,11 @@ data-markmap-error
 
 暴露生命周期。
 
-因此：
-
-```text
-PDF-P0 MarkMap explicit ready
-```
-
-在当前 baseline 下可以标记：
-
-```text
-DONE
-```
-
-后续只做 regression，不重新设计。
+因此 PDF-H3 的统一 readiness contract 已把 MarkMap 的 `ready|error` 作为 settled，SVG 存在性不再单独决定 readiness。后续只保留 regression，不重新设计。
 
 ---
 
-## 4.4 Mermaid readiness
+## 4.4 Mermaid readiness（DONE）
 
 Mermaid 当前同样有：
 
@@ -280,201 +267,27 @@ e2e/fixtures/pdf-export-kitchen-sink.md
 
 ---
 
-# 5. 当前尚未闭环的问题
+# 5. Historical gap register and resolution status
 
-截至 baseline，本阶段至少还有以下 gap。
+以下 gap register 保留早期 `4e62bba…` hardening baseline 的设计背景。它不再表示当前 open work；当前唯一未关闭的 release blocker 是 H4 Kitchen Sink 的 Mermaid browser evidence mismatch，详见 PDF-H10。
 
----
-
-## GAP-1 — PDF render surface 没有真正固定 Light Theme
-
-PDF stylesheet 已经把最终 document shell 设置为：
-
-```text
-white background
-dark text
-printable palette
-```
-
-但 Mermaid / MarkMap 是在：
-
-```text
-PdfExportSurface
-```
-
-中提前完成渲染。
-
-当前：
-
-```text
-PdfExportSurface
-→ RenderedMarkdown
-→ useMermaidMount
-→ Mermaid
-→ useTheme()
-
-PdfExportSurface
-→ RenderedMarkdown
-→ useMarkmapMount
-→ MarkMap
-→ useTheme()
-```
-
-因此：
-
-```text
-App Dark Mode
-→ PDF hidden surface
-→ Mermaid dark render
-→ MarkMap dark palette
-→ static SVG
-→ white PDF
-```
-
-最终可能形成：
-
-```text
-light document
-+
-dark widget assets
-```
-
-这与 PRD 不完全一致。
+| Historical gap | Resolution | Current status |
+| --- | --- | --- |
+| GAP-1 — PDF render surface 未固定 Light Theme | PDF-H1：`PdfExportSurface` 使用 light render theme，global app theme 不变 | Resolved by H1 |
+| GAP-2 — KaTeX 没有 explicit settled contract | PDF-H2/H3：Math 使用 `pending → ready\|error`，统一 waiter 只在 settled 后继续 | Resolved by H2/H3 |
+| GAP-3 — Kitchen Sink 未证明内容完整 | PDF-H4：加入真实 export surface snapshot、内容/Unicode/widget/image/download assertions；当前一条 live Mermaid `viewBox` 证据仍需修复 | Blocked by H4 evidence mismatch |
+| GAP-4 — Image settlement 未定义 | PDF-H5：`waitForPdfImages()` 等待 `loaded\|error\|timeout` 后再准备 snapshot | Resolved by H5 |
+| GAP-5 — Long document 未形成正式验证 | PDF-H6/H7：A4 layout、1/5/20/50 页级验证和尾部/恢复性检查 | Resolved by H6/H7 |
+| GAP-6 — Read Mode 入口未补齐 | PDF-H8：Read Mode toolbar 调用同一个 `exportPdfDocument(path)` | Resolved by H8 |
 
 ---
 
-## GAP-2 — KaTeX 没有 explicit settled contract
-
-当前 KaTeX 本身同步：
-
-```text
-katex.render()
-```
-
-但 lifecycle 仍然由：
-
-```text
-useMathMount()
-```
-
-在 HTML 注入之后执行。
-
-当前 marker：
-
-```text
-data-math-mounted
-```
-
-主要用于防止重复 mount。
-
-它不是正式 export readiness state。
-
-PDF 当前没有显式等待：
-
-```text
-math ready
-math error
-```
-
----
-
-## GAP-3 — Kitchen Sink E2E 尚未真正证明内容完整
-
-当前 browser E2E 已验证：
-
-```text
-Mermaid ready
-MarkMap ready
-download happened
-filename correct
-PDF file > 10 KB
-window.print not called
-```
-
-但尚未证明：
-
-```text
-中文存在
-KaTeX 存在
-code 存在
-table 存在
-image loaded
-Mermaid static export valid
-MarkMap static export valid
-```
-
-因此：
-
-```text
-download success
-!=
-content correctness
-```
-
----
-
-## GAP-4 — Image settlement 未定义
-
-当前 html2canvas 配置可以加载图片，但 export orchestration 没有自己的：
-
-```text
-image load / error settled
-```
-
-阶段。
-
-因此在：
-
-```text
-image still loading
-→ prepare snapshot
-```
-
-的情况下可能出现不稳定输出。
-
----
-
-## GAP-5 — Long document 尚未形成正式验证
-
-当前尚未正式验证：
-
-```text
-20 pages
-50 pages
-```
-
-以及：
-
-```text
-last section preserved
-no obvious duplicated region
-browser remains recoverable
-```
-
----
-
-## GAP-6 — Read Mode 入口尚未补齐
-
-目前正式 discoverable entry 仍主要是：
-
-```text
-File Tree
-→ Right Click
-→ Export PDF
-```
-
-Read Mode 显式下载入口属于 P1。
-
-但不能在 correctness 未稳定前优先做 UI。
-
----
-
-# 6. Hardening 后目标架构
+# 6. Final architecture snapshot
 
 最终目标：
 
 ```text
-User action
+File Tree / Read Mode action
      ↓
 Capture immutable PdfExportRequest
      ↓
@@ -524,20 +337,20 @@ PDF export semantics
 
 # 7. Work Package 总览
 
-实施建议拆成：
+最终 work package 状态如下：
 
-| Work Package | Priority | 内容                                    |
-| ------------ | -------- | ------------------------------------- |
-| PDF-H1       | P0       | Export Light Theme isolation          |
-| PDF-H2       | P0       | Math explicit readiness               |
-| PDF-H3       | P0       | Unified settled validation regression |
-| PDF-H4       | P0/P1    | Kitchen Sink browser correctness      |
-| PDF-H5       | P1       | Image settlement                      |
-| PDF-H6       | P1       | Pagination + wide content             |
-| PDF-H7       | P1       | Long-document validation              |
-| PDF-H8       | P1       | Read Mode export entry                |
-| PDF-H9       | P2       | Extreme/stress/browser compatibility  |
-| PDF-H10      | Release  | Final docs + DoD                      |
+| Work Package | Priority | 内容 | Status |
+| ------------ | -------- | ----- | ------ |
+| PDF-H1       | P0       | Export Light Theme isolation | DONE |
+| PDF-H2       | P0       | Math explicit readiness | DONE |
+| PDF-H3       | P0       | Unified settled validation regression | DONE |
+| PDF-H4       | P0/P1    | Kitchen Sink browser correctness | BLOCKED — live Mermaid `viewBox` evidence mismatch |
+| PDF-H5       | P1       | Image settlement | DONE |
+| PDF-H6       | P1       | Pagination + wide content | DONE |
+| PDF-H7       | P1       | Long-document validation | DONE |
+| PDF-H8       | P1       | Read Mode export entry | DONE |
+| PDF-H9       | P2       | Extreme/stress/browser compatibility | DONE |
+| PDF-H10      | Release  | Final docs + DoD | BLOCKED by H4 |
 
 执行顺序不得随意颠倒。
 
@@ -1816,30 +1629,16 @@ Priority：
 P1
 ```
 
-只有 H1–H7 核心 correctness 稳定后再做。
+状态：`DONE`。该 work package 在 H1–H7 核心 correctness 稳定后完成。
 
 ---
 
 ## 15.1 当前函数命名
 
-当前：
-
-```text
-exportPdfFromTree()
-```
-
-已经不适合多入口。
-
-在添加 Read Mode UI 前先重构为类似：
+早期 baseline 曾有 tree-specific naming；当前真实实现为：
 
 ```text
 exportPdfDocument(path)
-```
-
-或：
-
-```text
-requestPdfExport(path)
 ```
 
 ---
@@ -1856,20 +1655,13 @@ Read Mode ─────┼→ same PDF pipeline
 Future Tab ────┘
 ```
 
-禁止：
-
-```text
-exportPdfFromTree()
-exportPdfFromReader()
-```
-
-各自复制业务实现。
+禁止为不同入口复制两套 exporter implementation；两个入口必须继续调用同一 pipeline。
 
 ---
 
 ## 15.3 Read Mode UX
 
-建议：
+当前入口：
 
 ```text
 Read Mode top action
@@ -1902,7 +1694,7 @@ P2
 * huge code block；
 * many images；
 * many KaTeX formulas；
-* Safari behavior；
+* Playwright WebKit compatibility；
 * image CORS matrix；
 * high-DPI memory behavior。
 
@@ -1932,6 +1724,20 @@ PDF-H10 不是新的 PDF 产品能力，也不是新的 renderer 或 export pipe
 
 它只在 PDF-H1 至 PDF-H9 的实现、验证和 review 都完成后执行，负责把真实实现、PRD acceptance criteria、最终验证证据和用户文档收敛为一个可审计的 release gate。
 
+当前 H10 状态：
+
+```text
+BLOCKED
+```
+
+审计 baseline：
+
+```text
+2ed0fe9ce8aacd3bc2153f9864f942e775c0cb7c
+```
+
+H10 本次只更新文档，不重新运行 H1–H9，也不修改 production code 或 tests。既有 H4 browser evidence 中，`e2e/pdf-export.spec.ts:254` 要求 live Mermaid SVG 的 `viewBox` 有限；当前 `src/components/Mermaid.vue` 已将原始值保存为 `data-mermaid-viewbox` 并移除 live `viewBox`，因此该 release assertion 仍未闭环。这个矛盾必须返回 H4 修复并重新验证，不能由 H10 文档推断为 PASS。
+
 ---
 
 ## 17.1 Entry condition
@@ -1942,7 +1748,7 @@ PDF-H10 不是新的 PDF 产品能力，也不是新的 renderer 或 export pipe
 H1 complete
 H2 complete
 H3 complete
-H4 complete
+H4 browser evidence complete
 H5 complete
 H6 complete
 H7 complete
@@ -1985,7 +1791,7 @@ STOP
 根据最终真实实现更新：
 
 * 当前 implementation baseline；
-* PDF-1 / PDF-2 的 status；
+* PDF-1 / PDF-2 historical status and H1–H10 final status；
 * 各 H1–H9 work package 的完成状态；
 * Test Matrix 和 Phase Gate 的结果；
 * 最终 release evidence；
@@ -2087,7 +1893,180 @@ H10 本身不得增加新的 PDF 产品能力、custom options、multi-document 
 
 ---
 
-# 18. File-Level Change Map
+## 17.6 Final architecture snapshot
+
+```text
+File Tree ────────┐
+                  │
+Read Mode ────────┤
+                  ↓
+          exportPdfDocument(path)
+                  ↓
+       immutable PdfExportRequest
+                  ↓
+             source authority
+          ┌───────┴────────┐
+          │ open tab.raw   │
+          │ getPost(path)  │  closed document
+          └───────┬────────┘
+                  ↓
+            PdfExportSurface
+            renderTheme=light
+                  ↓
+          RenderedMarkdown
+                  ↓
+     Math / Mermaid / MarkMap settled
+                  ↓
+             Images settled
+                  ↓
+       preparePdfArticleHtml()
+                  ↓
+        A4 printable static layout
+                  ↓
+               html2pdf.js
+                  ↓
+                Download
+                  ↓
+                Cleanup
+```
+
+当前实现的关键事实：打开且已加载的文档使用 `tab.raw`，不强制保存；未打开文档通过 `getPost(path)` 读取 authoritative server raw；两个入口共用同一个 `exportPdfDocument(path)` transaction。
+
+---
+
+## 17.7 Final work package result summary
+
+| Work package | Final result |
+| --- | --- |
+| H1 | `PdfExportSurface` 使用 light render theme；global app theme 不被修改 |
+| H2 | Math 使用 `pending → ready\|error`，error 属于 settled |
+| H3 | Math、Mermaid、MarkMap 统一使用 explicit settled contract；SVG 存在性不是 readiness |
+| H4 | Kitchen Sink 内容、Unicode、代码、表格、KaTeX、MarkMap、图片和下载证据已加入；但 live Mermaid `viewBox` 断言与当前实现不一致，release evidence BLOCKED |
+| H5 | `waitForPdfImages()` 在 `preparePdfArticleHtml()` 前等待图片 terminal outcome；CORS policy 不放宽 |
+| H6 | A4 printable geometry、宽表、长代码和 oversized block layout 已验证 |
+| H7 | 1/5/20/50 页级长文档验证已通过 |
+| H8 | File Tree 与 Read Mode 共用 PDF transaction |
+| H9 | 100-page stress、极端 widget、CORS、Playwright WebKit、Chromium DPI2 和 post-export UI recovery 已验证 |
+| H10 | 文档已收口；由于 H4 evidence mismatch，不能标记 DONE |
+
+---
+
+## 17.8 Final PRD Acceptance Audit
+
+以下状态基于 H1–H9 已有执行记录和当前代码审计；H10 不重复运行整套验证。
+
+| Requirement | Evidence | Status |
+| --- | --- | --- |
+| Direct PDF download / `.pdf` / no print dialog | `e2e/pdf-export.spec.ts`, `e2e/pdf-export-read-mode.spec.ts` | PASS |
+| File Tree entry | `TreeRow.vue` context action；`src/components/vault/__tests__/context-menu.test.ts` | PASS |
+| Read Mode entry | `e2e/pdf-export-read-mode.spec.ts`；`ReadingPane.vue` toolbar | PASS |
+| Live dirty buffer, no forced save | `VaultView.vue` source authority branch and existing workspace behavior | PASS |
+| Closed document authority | `VaultView.vue` `getPost(path)` fallback | PASS |
+| Immutable snapshot / duplicate guard | `PdfExportRequest` and `pdfExportBusy` in `VaultView.vue` | PASS |
+| Filename priority and sanitization | `resolvePdfDocumentLabel()` / `sanitizePdfFileName()` in `src/lib/pdfExport.ts` | PASS |
+| Markdown basics, code, tables, tasks, callouts, footnotes | Kitchen Sink browser snapshot in `e2e/pdf-export.spec.ts` | PASS |
+| Chinese, English, Japanese, Emoji | Kitchen Sink browser snapshot | PASS |
+| KaTeX | `data-math-state`, `.katex`, H9 many-math lane | PASS |
+| Mermaid explicit state and static normalization | H3 readiness tests and `preparePdfArticleHtml()` tests | PASS |
+| Mermaid Kitchen Sink browser viewport evidence | `e2e/pdf-export.spec.ts:254` live `viewBox` assertion | BLOCKED |
+| MarkMap explicit state and static normalization | H3 readiness tests and `preparePdfArticleHtml()` tests | PASS |
+| Local images | H5 delayed-image E2E and H9 many-images lane | PASS |
+| Remote image CORS policy | `e2e/pdf-export-cors.spec.ts` same-origin / ACAO / no-ACAO matrix | PASS |
+| Printable light theme | H1 tests and dark-app browser evidence | PASS |
+| A4 portrait and wide-content behavior | `e2e/pdf-export-layout.spec.ts` | PASS |
+| Pagination and long documents | `e2e/pdf-export-long-document.spec.ts` 1/5/20/50-page lanes | PASS |
+| Failure cleanup and retry state | VaultView `finally` cleanup and existing export tests | PASS |
+| Single active export transaction | `pdfExportBusy` guard and Read Mode disabled state | PASS |
+| 100-page stress | `e2e/pdf-export-stress.spec.ts` | PASS |
+| WebKit compatibility | `e2e/pdf-export-compat.spec.ts` with `playwright.pdf-compat.config.ts` | PASS — Playwright WebKit only |
+| High-DPI stability | dedicated Chromium `deviceScaleFactor=2` project | PASS |
+| Security | DOMPurify path retained; `useCORS=true`, `allowTaint=false`; no server PDF | PASS |
+
+Audit total：
+
+```text
+PASS: 23
+BLOCKED: 1
+FAIL: 0
+```
+
+`BLOCKED` 项是 H4 的 release evidence mismatch，不是 H10 新增的 production defect 修复范围。
+
+---
+
+## 17.9 Final release evidence matrix
+
+这些是 H1–H9 阶段已经执行的 release evidence；本次不重新运行：
+
+| Area | Evidence / command record | Result |
+| --- | --- | --- |
+| Typecheck | `npm run typecheck` | PASS |
+| PDF unit regressions | `pdfExport.test.ts`, `pdf-readiness.test.ts`, `pdf-images.test.ts`, `pdf-export-h9.test.ts`；47 tests | PASS |
+| Integration / orchestration | `src/views/__tests__/VaultView.test.ts` and existing export seams | PASS — prior phase evidence |
+| Kitchen Sink | `npx playwright test e2e/pdf-export.spec.ts` | BLOCKED at live Mermaid `viewBox` assertion |
+| Layout | `e2e/pdf-export-layout.spec.ts` | PASS |
+| Long documents | `e2e/pdf-export-long-document.spec.ts` | PASS |
+| Read Mode | `e2e/pdf-export-read-mode.spec.ts` | PASS |
+| H9 stress | `e2e/pdf-export-stress.spec.ts`；7/7 lanes | PASS |
+| CORS | `e2e/pdf-export-cors.spec.ts`；3/3 lanes | PASS |
+| Compatibility | `e2e/pdf-export-compat.spec.ts`；WebKit 1/1 | PASS |
+| High DPI | `e2e/pdf-export-compat.spec.ts`；Chromium DPI2 1/1 | PASS |
+| Static normalization | `src/lib/__tests__/pdfExport.test.ts` | PASS |
+
+WebKit wording仅为：
+
+```text
+Playwright WebKit compatibility verified
+```
+
+不等同于真实 Apple Safari matrix verified。
+
+---
+
+## 17.10 Residual V1 limitations and non-goals
+
+以下是 V1 scope boundary，不是当前 bug：
+
+* 不提供 custom paper size、landscape UI 或 custom margin UI；
+* 不提供 header/footer、watermark、PDF merge、batch export、PDF editor/import；
+* 不提供 server-side PDF 或 PDF/A；
+* remote images 继续受浏览器 CORS policy 约束；
+* Playwright WebKit evidence 不代表完整真实 Safari matrix；
+* V1 不要求 PDF binary text extraction 或 pixel-perfect visual diff；
+* 100-page-scale stress validation 不代表任意文档大小都得到保证。
+
+在已验证的 H9 矩阵中没有发现 data loss、blank PDF、browser crash、OOM 或永久 busy state，因此没有识别出 correctness-level browser architecture ceiling；这不构成 unlimited-size guarantee。
+
+---
+
+## 17.11 H10 Definition of Done
+
+```text
+[x] PRD acceptance criteria 已完成逐项审计
+[x] File Tree 与 Read Mode 共用单一 pipeline
+[x] live buffer / closed document authority 已记录
+[x] user guide 已更新为最终用户行为
+[x] H1、H2、H3、H5、H6、H7、H8、H9 release evidence 已汇总
+[x] H10 未修改 production code 或 tests
+[x] residual limitations / non-goals 已记录
+[ ] H4 Kitchen Sink browser evidence 完整通过
+[ ] PDF Export V1 = Done
+```
+
+最终决定：
+
+```text
+PDF-H10 = BLOCKED
+PDF Export V1 = NOT DONE
+```
+
+下一步只能回到 PDF-H4，修复或重新对齐 live Mermaid `viewBox` browser assertion 与静态 export contract，再重新执行 H4 evidence 和 H10 gate。H10 不进入 PDF-H11 或 PDF Export V2。
+
+---
+
+# 18. Historical File-Level Change Map（pre-H1 planning）
+
+本节保留早期 implementation plan 的预计文件范围。这里的“计划”不是当前 TODO；H1–H9 已按后续提交完成。H10 实际提交只更新文档：`docs/design/pdf-export-prd.md`、`docs/design/pdf-export-implementation-plan.md`、`docs/user-guide/editor.md`；没有 source 或 test change。
 
 预计主要涉及以下文件。
 
@@ -2264,7 +2243,7 @@ Kitchen Sink browser correctness test
 
 ---
 
-# 19. Recommended Commit Sequence
+# 19. Historical Recommended Commit Sequence
 
 建议不要再把所有 hardening 塞进一个大 commit。
 
@@ -2820,7 +2799,7 @@ arbitrary timeout increase
 
 # 31. PDF Export V1 Definition of Done
 
-只有以下全部满足：
+以下是 release gate 的必要条件；当前 H4 browser evidence 尚未满足，因此本 baseline 不能标记 Done：
 
 ```text
 PRD approved
@@ -2841,7 +2820,7 @@ long-document validation pass
 failure cleanup pass
 ```
 
-才能：
+只有全部通过后才能：
 
 ```text
 PDF Export V1 = Done
@@ -2849,7 +2828,7 @@ PDF Export V1 = Done
 
 ---
 
-# 32. Baseline Status Table
+# 32. Historical Baseline Status Table
 
 以：
 
@@ -2857,7 +2836,7 @@ PDF Export V1 = Done
 4e62bba441eb2ac7c426485154fd1226caa0edbf
 ```
 
-为当前 baseline：
+为原始 hardening baseline；下表保留历史状态，不代表当前实现：
 
 | Requirement                     | Status     |
 | ------------------------------- | ---------- |
@@ -2886,11 +2865,11 @@ PDF Export V1 = Done
 
 ---
 
-# 33. 下一笔实现的明确起点
+# 33. Historical Next Implementation Start
 
-Implementation Plan 合入后，不继续扩散范围。
+本节记录 H1 开始前的历史下一步，不是当前工作指令。H1–H9 已完成，当前停止在 H10 release gate。
 
-下一笔代码提交只做：
+当时的下一笔代码提交只做：
 
 ```text
 PDF-H1 — Export Light Theme Isolation
@@ -2958,8 +2937,10 @@ H9 Stress / Compatibility
         ↓
 H10 Final Documentation & Release Gate
         ↓
-PDF Export V1 Done
+PDF Export V1 Done（仅在 H10 gate 全部通过后）
 ```
+
+当前执行已到 H10；由于 H4 evidence mismatch，流程停在 H10，不进入 V2。
 
 当前最重要的原则：
 
@@ -2978,4 +2959,4 @@ testable
 
 这份计划和 Docus 现有 Implementation Plan 的职责划分是一致的：**PRD 管产品行为，Implementation Plan 管文件、顺序、验证和 review gate**。现有 Emoji 实施计划也是采用这种方式，并明确“若计划与 PRD 冲突，应先修 PRD，而不是代码自行改变产品语义”。
 
-我建议这次 commit **只 push 这份实施计划 + `docs/README.md` 链接**，不要再夹带 H1 代码。下一笔再单独进入 **PDF-H1 — Export Light Theme Isolation**。
+H10 文档提交只包含 PRD、Implementation Plan 和 User Guide；不夹带 source、test 或 H4 修复。H4 blocker 关闭后再重新进入 H10 release gate。
