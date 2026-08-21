@@ -1,18 +1,3 @@
-检查完当前 `main` 后，这一步很适合做，但我建议把它定义成一次**完整的 syntax-highlighting migration**，而不是简单替换 npm 包。
-
-当前 Docus 的情况是：
-
-* `highlight.js ^11.10.0` 是正式运行时依赖。
-* `src/lib/markdown.ts` 负责异步加载 highlight.js，同时加载 `github.css + hljs-dark.css`，并且 `markmap` / `mermaid` 也共用这个 fence 入口。
-* Markdown 最终经过 DOMPurify，且明确禁止 `style` 属性；这和 Shiki 默认输出 inline style 直接冲突。
-* 当前测试还明确断言 `class="hljs"`，所以测试也必须一起迁移。
-* PDF 导出对 `pre/code` 有独立的分页、换行和浅色打印规则，因此代码高亮迁移必须覆盖 PDF 回归。
-* Shiki 当前最新版是 **4.4.3**；Shiki 4 要求 Node ≥20，而 Docus Docker 当前已经是 Node 22，所以兼容没有问题。([npm][1])
-
-我最推荐的方案是：**Shiki + `transformerStyleToClass` + GitHub Light/Dark 双主题 + singleton highlighter + 按文档 fence 动态加载语言**。不要为了 Shiki 去放宽 DOMPurify 的 `style` 安全限制。Shiki 官方正好提供了 `transformerStyleToClass`，用于把 inline style 转换成唯一 CSS class。([shiki.style][2])
-
-下面这份可以直接扔给 Codex：
-
 # Docus — Replace highlight.js with Shiki
 
 Repository:
