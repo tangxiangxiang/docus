@@ -26,6 +26,11 @@ type PdfSurfaceSnapshot = {
     dataViewBox: string | null
     svgMarkup: string
   }>
+  preparedMermaid: Array<{
+    viewBox: string | null
+    svgMarkup: string
+    preserveAspectRatio: string | null
+  }>
   markmap: Array<{
     state: string | null
     viewport: string | null
@@ -98,11 +103,20 @@ test('exports the Kitchen Sink with settled content from the file-tree menu', as
     function readSnapshot(): PdfSurfaceSnapshot | null {
       const surface = document.querySelector<HTMLElement>('.pdf-export-surface')
       const article = surface?.querySelector<HTMLElement>('.article')
-      if (!surface || !article) return null
+      const downloadRoot = document.querySelector<HTMLElement>('.pdf-download-root')
+      const preparedArticle = downloadRoot?.querySelector<HTMLElement>('.article')
+      if (!surface || !article || !downloadRoot || !preparedArticle) return null
 
       const math = Array.from(article.querySelectorAll<HTMLElement>('.math-mount'))
       const mermaidWidgets = Array.from(article.querySelectorAll<HTMLElement>('.mermaid-widget'))
       const markmapWidgets = Array.from(article.querySelectorAll<HTMLElement>('.markmap-widget'))
+      const preparedMermaid = Array.from(
+        preparedArticle.querySelectorAll<SVGSVGElement>('.pdf-mermaid > svg'),
+      ).map((svg) => ({
+        viewBox: svg.getAttribute('viewBox'),
+        svgMarkup: svg.outerHTML,
+        preserveAspectRatio: svg.getAttribute('preserveAspectRatio'),
+      }))
       const image = Array.from(article.querySelectorAll<HTMLImageElement>('img'))
         .find((candidate) => candidate.getAttribute('src')?.endsWith('/logo.svg'))
 
@@ -132,6 +146,7 @@ test('exports the Kitchen Sink with settled content from the file-tree menu', as
             svgMarkup: svg?.outerHTML ?? '',
           }
         }),
+        preparedMermaid,
         markmap: markmapWidgets.map((widget) => {
           const svg = widget.querySelector<SVGSVGElement>('.markmap-svg')
           const rootGroup = svg
@@ -164,7 +179,14 @@ test('exports the Kitchen Sink with settled content from the file-tree menu', as
       const noEnhancementPlaceholders = article.querySelector('.math-mount:not([data-math-mounted]), .mermaid-mount, .markmap-mount') === null
       const imageReady = image !== undefined && image.complete && image.naturalWidth > 0
 
-      if (!allMathReady || !allMermaidReady || !allMarkmapReady || !noEnhancementPlaceholders || !imageReady) return null
+      if (
+        !allMathReady
+        || !allMermaidReady
+        || !allMarkmapReady
+        || !noEnhancementPlaceholders
+        || !imageReady
+        || preparedMermaid.length !== mermaidWidgets.length
+      ) return null
       return snapshot
     }
 
@@ -251,9 +273,18 @@ test('exports the Kitchen Sink with settled content from the file-tree menu', as
   const mermaid = snapshot.mermaid[0]
   expect(mermaid.state).toBe('ready')
   expect(mermaid.svgMarkup).not.toBe('')
-  expect(hasFiniteViewBox(mermaid.viewBox)).toBe(true)
+  if (mermaid.viewBox !== null) {
+    expect(hasFiniteViewBox(mermaid.viewBox)).toBe(true)
+  }
   expect(hasFiniteViewBox(mermaid.dataViewBox)).toBe(true)
   expect(hasInvalidSvgNumber(mermaid.svgMarkup)).toBe(false)
+
+  expect(snapshot.preparedMermaid).toHaveLength(1)
+  const preparedMermaid = snapshot.preparedMermaid[0]
+  expect(preparedMermaid.svgMarkup).not.toBe('')
+  expect(hasFiniteViewBox(preparedMermaid.viewBox)).toBe(true)
+  expect(preparedMermaid.preserveAspectRatio).toBe('xMidYMid meet')
+  expect(hasInvalidSvgNumber(preparedMermaid.svgMarkup)).toBe(false)
 
   expect(snapshot.markmap).toHaveLength(1)
   const markmap = snapshot.markmap[0]
