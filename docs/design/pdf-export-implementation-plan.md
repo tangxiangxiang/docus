@@ -4,13 +4,14 @@
 
 | 项目                           | 内容                                                     |
 | ---------------------------- | ------------------------------------------------------ |
-| 文档状态                         | PDF-H10 audit DONE；PDF Export V1 implemented and verified |
+| 文档状态                         | PDF-H10 audit DONE；post-H10 H6 pagination follow-up verified；PDF Export V1 implemented and verified |
 | 产品 PRD                       | [`docs/design/pdf-export-prd.md`](./pdf-export-prd.md) |
 | Original hardening baseline | `4e62bba441eb2ac7c426485154fd1226caa0edbf`             |
-| Final H10 audit baseline | `77445cfe415a0e40937c6a00edfd914aae4ca576`             |
+| Original H10 audit baseline | `77445cfe415a0e40937c6a00edfd914aae4ca576`             |
+| Final verified V1 baseline | `352a47b34b5ffc8da0489210b2c81037cbb3b37a`             |
 | 计划日期                         | 2026-08-21                                             |
 | 当前阶段                         | PDF-H10 — Final Documentation & Release Gate           |
-| 当前实现状态                       | H1–H9 implementation complete；H4 evidence repaired；H10 release gate passed |
+| 当前实现状态                       | H1–H9 implementation complete；H4 evidence repaired；post-H10 H6 pagination regression verified；H10 release gate re-confirmed |
 | 本任务范围                        | 只收口 PRD、实施计划、用户指南和 release evidence，不修改 PDF 业务实现或测试 |
 | 目标                           | 让文档、真实实现、既有验证证据和 PRD acceptance criteria 保持一致 |
 
@@ -85,10 +86,16 @@ Original implementation baseline：
 4e62bba441eb2ac7c426485154fd1226caa0edbf
 ```
 
-Final H10 audit baseline：
+Original H10 audit baseline：
 
 ```text
 77445cfe415a0e40937c6a00edfd914aae4ca576
+```
+
+Final verified PDF Export V1 baseline：
+
+```text
+352a47b34b5ffc8da0489210b2c81037cbb3b37a
 ```
 
 当前仓库已经拥有：
@@ -111,7 +118,7 @@ PDF helper tests
 PDF browser E2E
 ```
 
-H1–H9 hardening commits 和 H4 focused evidence repair 已完成；当前 release gate 已由 PDF-H10 文档审计关闭。
+H1–H9 hardening commits 和 H4 focused evidence repair 已完成。原始 H10 release gate 在 `77445cfe…` 关闭后，真实导出的 PDF 又暴露了普通段落分页的 correctness regression；该问题由后续 H6 focused follow-up 在 `352a47b…` 修复并通过 focused browser regression 与真实 PDF 人工复验。当前最终 release gate 已重新确认关闭。
 
 ---
 
@@ -277,7 +284,7 @@ e2e/fixtures/pdf-export-kitchen-sink.md
 | GAP-2 — KaTeX 没有 explicit settled contract | PDF-H2/H3：Math 使用 `pending → ready\|error`，统一 waiter 只在 settled 后继续 | Resolved by H2/H3 |
 | GAP-3 — Kitchen Sink 未证明内容完整 | PDF-H4：验证 source `data-mermaid-viewbox` 与 prepared static Mermaid finite `viewBox`，并保留 live `viewBox` optional | Resolved by H4 |
 | GAP-4 — Image settlement 未定义 | PDF-H5：`waitForPdfImages()` 等待 `loaded\|error\|timeout` 后再准备 snapshot | Resolved by H5 |
-| GAP-5 — Long document 未形成正式验证 | PDF-H6/H7：A4 layout、1/5/20/50 页级验证和尾部/恢复性检查 | Resolved by H6/H7 |
+| GAP-5 — Long document 未形成正式验证 | PDF-H6/H7：A4 layout、短段落/列表项分页保护、oversized textual fallback、1/5/20/50 页级验证和尾部/恢复性检查 | Resolved by H6/H7 + post-H10 H6 follow-up |
 | GAP-6 — Read Mode 入口未补齐 | PDF-H8：Read Mode toolbar 调用同一个 `exportPdfDocument(path)` | Resolved by H8 |
 
 ---
@@ -309,6 +316,8 @@ RenderedMarkdown
 preparePdfArticleHtml()
      ↓
 static PDF snapshot
+short textual blocks keep together;
+genuinely oversized blocks may split
      ↓
 html2pdf.js
      ↓
@@ -1730,13 +1739,21 @@ PDF-H10 不是新的 PDF 产品能力，也不是新的 renderer 或 export pipe
 DONE
 ```
 
-审计 baseline：
+Original H10 audit baseline：
 
 ```text
 77445cfe415a0e40937c6a00edfd914aae4ca576
 ```
 
-H10 本次不重新运行 H1–H9 全矩阵；H4 focused browser repair 已验证 source canonical geometry 与 prepared static geometry，且未修改 production code。`e2e/pdf-export.spec.ts:254` 的 live `viewBox` 要求已改为 optional；source `data-mermaid-viewbox` 和 prepared static `viewBox` 现在是正式 evidence。
+Final verified PDF Export V1 baseline：
+
+```text
+352a47b34b5ffc8da0489210b2c81037cbb3b37a
+```
+
+原始 H10 audit 不重新运行 H1–H9 全矩阵；H4 focused browser repair 已验证 source canonical geometry 与 prepared static geometry，且未修改 production code。`e2e/pdf-export.spec.ts:254` 的 live `viewBox` 要求已改为 optional；source `data-mermaid-viewbox` 和 prepared static `viewBox` 现在是正式 evidence。
+
+随后真实导出的 PDF 暴露了普通 paragraph 在 A4 page boundary 被 glyph 中间切开的 H6 correctness regression。该 post-H10 follow-up 只修改 PDF pagination implementation 和对应 focused regressions；`352a47b…` 之后通过 dedicated pagination browser E2E、真实 browser download 和实际 PDF 人工检查，最终重新确认 H10 release gate。此次文档更新不声称 H1–H9 全矩阵在 `352a47b…` 之后重新执行。
 
 ---
 
@@ -1943,7 +1960,7 @@ Read Mode ────────┤
 | H3 | Math、Mermaid、MarkMap 统一使用 explicit settled contract；SVG 存在性不是 readiness |
 | H4 | Kitchen Sink 内容、Unicode、代码、表格、KaTeX、MarkMap、图片和下载证据已加入；source canonical `data-mermaid-viewbox` 与 prepared static finite `viewBox` 均通过 |
 | H5 | `waitForPdfImages()` 在 `preparePdfArticleHtml()` 前等待图片 terminal outcome；CORS policy 不放宽 |
-| H6 | A4 printable geometry、宽表、长代码和 oversized block layout 已验证 |
+| H6 | A4 printable geometry、宽表、长代码和 oversized block layout 已验证；短 paragraph/list item keep-together、oversized textual fallback、heading + first content block orphan protection 及真实分页回归已通过（post-H10 follow-up: `352a47b…`） |
 | H7 | 1/5/20/50 页级长文档验证已通过 |
 | H8 | File Tree 与 Read Mode 共用 PDF transaction |
 | H9 | 100-page stress、极端 widget、CORS、Playwright WebKit、Chromium DPI2 和 post-export UI recovery 已验证 |
@@ -1953,7 +1970,7 @@ Read Mode ────────┤
 
 ## 17.8 Final PRD Acceptance Audit
 
-以下状态基于 H1–H9 已有执行记录、H4 focused repair 和当前代码审计；H10 不重复运行整套验证。
+以下状态基于 H1–H9 已有执行记录、H4 focused repair、post-H10 H6 pagination follow-up 和当前代码审计；本次文档收尾不重复运行整套验证。
 
 | Requirement | Evidence | Status |
 | --- | --- | --- |
@@ -1975,6 +1992,7 @@ Read Mode ────────┤
 | Printable light theme | H1 tests and dark-app browser evidence | PASS |
 | A4 portrait and wide-content behavior | `e2e/pdf-export-layout.spec.ts` | PASS |
 | Pagination and long documents | `e2e/pdf-export-long-document.spec.ts` 1/5/20/50-page lanes | PASS |
+| Paragraph pagination regression | `src/lib/__tests__/pdfExport.test.ts` + `e2e/pdf-export-pagination.spec.ts` + manual real-PDF verification | PASS — focused post-H10 H6 follow-up |
 | Failure cleanup and retry state | VaultView `finally` cleanup and existing export tests | PASS |
 | Single active export transaction | `pdfExportBusy` guard and Read Mode disabled state | PASS |
 | 100-page stress | `e2e/pdf-export-stress.spec.ts` | PASS |
@@ -2035,6 +2053,8 @@ Playwright WebKit compatibility verified
 * V1 不要求 PDF binary text extraction 或 pixel-perfect visual diff；
 * 100-page-scale stress validation 不代表任意文档大小都得到保证。
 
+报告的 paragraph clipping regression 已通过实际导出的 reproduction PDF 人工打开检查；该人工验证不等同于 automated pixel-level raster diff。
+
 在已验证的 H9 矩阵中没有发现 data loss、blank PDF、browser crash、OOM 或永久 busy state，因此没有识别出 correctness-level browser architecture ceiling；这不构成 unlimited-size guarantee。
 
 ---
@@ -2050,6 +2070,10 @@ Playwright WebKit compatibility verified
 [x] H10 未修改 production code 或 tests
 [x] residual limitations / non-goals 已记录
 [x] H4 Kitchen Sink browser evidence 完整通过
+[x] ordinary paragraph page-clipping regression 已修复并通过 focused regression
+[x] list-item pagination contract 和 oversized textual fallback 已验证
+[x] heading + first content block orphan protection 已验证
+[x] 实际 reproduction PDF 已人工检查，没有 half-glyph clipping
 [x] PDF Export V1 = Done
 ```
 
@@ -2060,13 +2084,41 @@ PDF-H10 = DONE
 PDF Export V1 = DONE
 ```
 
-H4 evidence and H10 documentation are complete. Do not enter PDF-H11 or PDF Export V2 as part of this task.
+H4 evidence、post-H10 H6 pagination follow-up 和 H10 documentation are complete. The release gate was re-confirmed after the `352a47b…` pagination fix. Do not enter PDF-H11 or PDF Export V2 as part of this task.
 
 ---
 
+## 17.12 Post-H10 Pagination Correctness Follow-up
+
+原始 H10 audit 在 `77445cfe…` 关闭后，用户在真实导出的 PDF 中发现普通正文可能被 A4 page boundary 从 rendered glyph 中间切开。该问题属于 H6 pagination correctness regression，不是新的产品阶段。
+
+Root cause：普通 `<p>` / `<li>` 尚未纳入 PDF keep-together 与 oversized-fallback contract。
+
+Focused fix：
+
+* short paragraph / list item 使用 `break-inside: avoid`；
+* paragraph / list item 纳入 oversized block classification；
+* 真正高于 printable A4 page 的 block 使用 `.pdf-allow-split` 继续跨页；
+* PDF clone 中 heading 与 first ordinary content block 组合，减少 heading orphan；
+* A4 geometry、font size、line-height、PDF engine、widget/image readiness contract 均未改变。
+
+Evidence：
+
+* `src/lib/__tests__/pdfExport.test.ts` 覆盖 styles、short/oversized paragraph 和 list item，以及 heading grouping；
+* `e2e/fixtures/pdf-export-pagination.md` 与 `e2e/pdf-export-pagination.spec.ts` 通过真实 File Tree → Export PDF 流程验证 boundary geometry、prepared DOM 和真实 download；
+* 实际 reproduction PDF 已人工打开检查，未再观察到 half Chinese glyph、half English glyph 或 line-box bisect。
+
+最终 verified baseline：
+
+```text
+352a47b34b5ffc8da0489210b2c81037cbb3b37a
+```
+
+该 follow-up 没有重新执行完整 H1–H9 matrix；它只重新确认 H6 pagination regression 和最终 release gate 所需的直接证据。
+
 # 18. Historical File-Level Change Map（pre-H1 planning）
 
-本节保留早期 implementation plan 的预计文件范围。这里的“计划”不是当前 TODO；H1–H9 已按后续提交完成。H10 实际提交只更新文档：`docs/design/pdf-export-prd.md`、`docs/design/pdf-export-implementation-plan.md`、`docs/user-guide/editor.md`；没有 source 或 test change。
+本节保留早期 implementation plan 的预计文件范围。这里的“计划”不是当前 TODO；H1–H9 已按后续提交完成。原始 H10 提交只更新文档：`docs/design/pdf-export-prd.md`、`docs/design/pdf-export-implementation-plan.md`、`docs/user-guide/editor.md`；没有 source 或 test change。随后用户发现真实分页 correctness regression，`352a47b…` 的 post-H10 H6 follow-up 才修改了 `src/lib/pdfExport.ts`、对应 unit test 和 dedicated pagination E2E；本次 final docs follow-up 只记录该历史并刷新 release baseline。
 
 预计主要涉及以下文件。
 
@@ -2940,7 +2992,7 @@ H10 Final Documentation & Release Gate
 PDF Export V1 Done（仅在 H10 gate 全部通过后）
 ```
 
-当前执行已完成 H10；H4 evidence mismatch 已关闭，不进入 PDF-H11 或 PDF Export V2。
+原始执行在 H10 audit 关闭后，因真实 PDF 暴露的 paragraph clipping regression 短暂返回 H6；`352a47b…` 修复并完成 focused verification 后，H10 release gate 已重新确认。当前不进入 PDF-H11 或 PDF Export V2。
 
 当前最重要的原则：
 
@@ -2959,4 +3011,4 @@ testable
 
 这份计划和 Docus 现有 Implementation Plan 的职责划分是一致的：**PRD 管产品行为，Implementation Plan 管文件、顺序、验证和 review gate**。现有 Emoji 实施计划也是采用这种方式，并明确“若计划与 PRD 冲突，应先修 PRD，而不是代码自行改变产品语义”。
 
-H10 文档提交只包含 PRD、Implementation Plan 和 User Guide；不夹带 source、test 或 H4 修复。H4 blocker 关闭后再重新进入 H10 release gate。
+最终 H10 文档收尾只包含 PRD 和 Implementation Plan；不夹带新的 source 或 test change。历史上的 H4 blocker 和 post-H10 H6 pagination regression 均已分别由对应提交关闭。

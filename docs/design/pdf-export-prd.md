@@ -10,7 +10,7 @@
 | Phase | PDF Export V1 |
 | Target | Docus personal knowledge base |
 | Scope | Markdown 文档 PDF 导出、渲染一致性、异步组件收敛、下载交互、错误处理与验证 |
-| Current implementation | `main` at `77445cfb6e3ee3fa2222e9a7ba59c0ec63cdd469`；本文继续作为产品行为和 acceptance criteria 的约束 |
+| Current implementation | `main` at `352a47b34b5ffc8da0489210b2c81037cbb3b37a`；本文继续作为产品行为和 acceptance criteria 的约束 |
 | Implementation constraint | 不因现有代码已经存在而降低验收标准；实现与本文冲突时，以本文定义的用户行为和 acceptance criteria 为准 |
 
 本文定义 Docus PDF Export V1 的产品行为。
@@ -1408,6 +1408,15 @@ Implementation Plan 可以微调，但不得导致正文贴边。
 * MarkMap；
 * 小型 table。
 
+对于普通且能放入 printable page 的文字块：
+
+* paragraph；
+* list item；
+
+应保持 block-level keep-together，避免页面边界从 rendered glyph 或 line box 中间切过。
+
+heading 与其后的 first meaningful content block 也应尽量保持在一起，减少 heading orphan。
+
 ---
 
 ## 22.2 Exception
@@ -1429,6 +1438,8 @@ break-inside: avoid
 造成整个元素消失或 overflow。
 
 Implementation Plan 应专门验证 oversized content。
+
+该 oversized 例外同样适用于 paragraph 和 list item：如果 block 高于 printable A4 page，则允许它继续跨页，而不能用永久的 `break-inside: avoid` 阻止布局。
 
 ---
 
@@ -1923,6 +1934,8 @@ Then PDF 仍使用 printable light document theme。
 * 不明显重复；
 * 不整体截断。
 
+普通 short paragraph 和 list item 在能放入 printable page 时不得被 glyph-level 切开；真正 oversized 的文字块可以继续跨页。
+
 ---
 
 ## AC-16 Failure cleanup
@@ -2167,8 +2180,11 @@ no render-error
 | MarkMap | Required | Required | Best effort |
 | 20-page doc | Required | Required | Best effort |
 | Dark mode export | Required | Required | Best effort |
+| Reported paragraph clipping reproduction | Required | Best effort | Best effort |
 
 Docus 当前主要 desktop browser baseline 以 Chromium 系浏览器为 release blocker。
+
+Reported paragraph clipping reproduction 的最终人工检查已在实际生成的 Chromium PDF 上完成；没有观察到 half-glyph clipping。该记录不代表 Edge/Safari 的完整矩阵已重新执行。
 
 ---
 
@@ -2274,6 +2290,12 @@ Mermaid validated
 MarkMap validated
         +
 failure cleanup validated
+        +
+short paragraph/list pagination validated
+        +
+oversized textual blocks remain splittable
+        +
+reported glyph-clipping reproduction manually re-verified
 ```
 
 然后才可以：
@@ -2369,13 +2391,19 @@ PDF Export V1 = DONE
 
 # 46. Final Documentation Audit（PDF-H10）
 
-审计 baseline：
+Original H10 audit baseline：
 
 ```text
 77445cfe415a0e40937c6a00edfd914aae4ca576
 ```
 
-H10 本次不重新运行 H1–H9 全矩阵；仅执行 H4 focused browser repair 和必要的 typecheck，不修改 production code。H4 现在同时验证 source canonical geometry 与 prepared static geometry，因此最终 acceptance audit 结果为：
+Final verified PDF Export V1 baseline：
+
+```text
+352a47b34b5ffc8da0489210b2c81037cbb3b37a
+```
+
+原始 H10 audit 不重新运行 H1–H9 全矩阵；它完成了 H4 focused browser repair 和必要的 typecheck。随后真实 PDF 暴露的 paragraph clipping regression 由 H6 focused follow-up 修复；该 follow-up 通过 focused pagination browser regression、真实 browser download 和实际 reproduction PDF 人工检查，但没有重新执行完整 H1–H9 matrix。H4 现在同时验证 source canonical geometry 与 prepared static geometry，因此最终 acceptance audit 结果为：
 
 ```text
 PASS: H1–H10 required release evidence
@@ -2384,3 +2412,5 @@ DECISION: PDF Export V1 = DONE
 ```
 
 H4 evidence now records `data-mermaid-viewbox` on the source widget and a finite `viewBox` on the prepared static Mermaid SVG. Live interactive `viewBox` remains optional.
+
+H6 final pagination evidence additionally records short paragraph/list-item keep-together, oversized textual fallback, heading + first content block grouping, dedicated browser regression, real PDF download, and manual real-output verification. No half-glyph clipping was observed in the verified reproduction.
