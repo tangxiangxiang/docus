@@ -10,7 +10,7 @@
 | Phase | PDF Export V1 |
 | Target | Docus personal knowledge base |
 | Scope | Markdown 文档 PDF 导出、渲染一致性、异步组件收敛、下载交互、错误处理与验证 |
-| Current implementation | `main` at `352a47b34b5ffc8da0489210b2c81037cbb3b37a`；本文继续作为产品行为和 acceptance criteria 的约束 |
+| Current implementation | `main` at `390791da4acefcdc58f110e66f469224c18feeeb`；本文继续作为产品行为和 acceptance criteria 的约束 |
 | Implementation constraint | 不因现有代码已经存在而降低验收标准；实现与本文冲突时，以本文定义的用户行为和 acceptance criteria 为准 |
 
 本文定义 Docus PDF Export V1 的产品行为。
@@ -146,7 +146,7 @@ PDF Export 的本质问题因此是：
 当前默认导出链路已经是：
 
 ```text
-File Tree / Read Mode
+File Tree context menu
 → exportPdfDocument(path)
 → resolve source authority
 → capture immutable PdfExportRequest
@@ -578,7 +578,7 @@ PDF：
 
 ## 9.1 V1 Required Entry
 
-PDF Export V1 的最低正式入口：
+PDF Export V1 的唯一正式入口：
 
 ```text
 File Tree
@@ -592,32 +592,23 @@ Folder 不显示。
 
 ---
 
-## 9.2 Read Mode Entry
+Reading Pane、Editor toolbar、NavBar、Tab bar 和其它阅读/编辑 surface 不显示 PDF Export 控件。
 
-已由 PDF-H8 实现为 V1 的第二个正式入口：
+## 9.2 Read Mode Entry（Removed from V1 scope）
+
+Read Mode PDF action 曾在 hardening 期间作为候选入口实现，但与最终的“阅读窗口零污染”产品要求冲突，已从 V1 移除：
 
 ```text
 Read Mode
-→ Export / Download PDF
+→ no PDF Export control
 ```
 
-此入口调用与 File Tree **完全相同的 export authority**。
+Read Mode 不接收 PDF 专用 props，不 emit PDF event，也不显示 PDF busy/loading 状态。共享 `exportPdfDocument(path)` pipeline 仍由 File Tree context menu 使用。
 
-不得存在：
-
-```text
-File Tree exporter
-Read Mode exporter
-```
-
-两套实现。
-
-应保持：
+V1 不包含：
 
 ```text
-multiple UI entry
-       ↓
-single PDF export pipeline
+Read Mode toolbar PDF action
 ```
 
 ---
@@ -2245,7 +2236,7 @@ historical baseline; superseded by H1–H9
 10. pagination test；
 11. Unicode / Chinese test；
 12. export snapshot consistency test；
-13. read mode Export PDF entry；
+13. read mode Export PDF entry（历史候选，已从最终 V1 scope 移除）；
 14. bundle lazy-load review。
 
 ### P2
@@ -2379,13 +2370,21 @@ PDF Export V1 的正式定义是：
 
 > Docus 用户可以把任意 Markdown 文档当前的渲染状态直接下载为一份打印友好的 A4 PDF。导出复用 Docus 自己的 Markdown 语义，支持代码、表格、图片、公式、Mermaid 和 MarkMap；已打开文件以当前 live buffer 为准，导出过程与编辑器隔离，不改变文档状态。所有异步内容必须显式达到 ready 或 error 状态之后才能生成 PDF，不能以 DOM 元素存在或任意 sleep 作为完成依据。
 
-H1–H9 hardening work 和 H10 final documentation audit 已完成。
+H1–H7、H9 hardening work 和 H10 final documentation audit 已完成；Read Mode PDF action 的历史实现已按最终 V1 scope 移除。
 
 当前 release decision：
 
 ```text
 PDF Export V1 = DONE
 ```
+
+最终用户入口约束：
+
+```text
+File Tree context menu only
+```
+
+Read Mode 保持为纯阅读 surface，不包含 PDF Export UI。
 
 ---
 
@@ -2397,10 +2396,10 @@ Original H10 audit baseline：
 77445cfe415a0e40937c6a00edfd914aae4ca576
 ```
 
-Final verified PDF Export V1 baseline：
+Final verified PDF Export V1 application baseline：
 
 ```text
-352a47b34b5ffc8da0489210b2c81037cbb3b37a
+390791da4acefcdc58f110e66f469224c18feeeb
 ```
 
 原始 H10 audit 不重新运行 H1–H9 全矩阵；它完成了 H4 focused browser repair 和必要的 typecheck。随后真实 PDF 暴露的 paragraph clipping regression 由 H6 focused follow-up 修复；该 follow-up 通过 focused pagination browser regression、真实 browser download 和实际 reproduction PDF 人工检查，但没有重新执行完整 H1–H9 matrix。H4 现在同时验证 source canonical geometry 与 prepared static geometry，因此最终 acceptance audit 结果为：

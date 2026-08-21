@@ -10,9 +10,7 @@ Docus uses Monaco for Markdown source editing and a separate Read mode for rende
 
 Right-click a Markdown document in the File Tree and choose **导出 PDF** / **Export PDF**. Folders do not have this action.
 
-### Export from Read Mode
-
-Use the **导出 PDF** / **Export PDF** action at the top of Read Mode. File Tree and Read Mode use the same export pipeline, so they produce the same kind of document.
+PDF export is available only from the File Tree context menu. It does not add controls to the reading or editing surface.
 
 ### What gets exported
 
@@ -52,7 +50,7 @@ The PDF uses A4 portrait pagination. Code and tables adapt to the printable widt
 
 ### Export status and failure recovery
 
-Only one PDF export can run at a time. In Read Mode, the export action is disabled while an export is in progress. Additional export requests are rejected until the current export finishes.
+Only one PDF export can run at a time. Additional export requests are rejected until the current export finishes.
 
 If an export fails, Docus ends the transaction and removes its temporary export surface. The document and workspace remain available, and you can try the export again.
 

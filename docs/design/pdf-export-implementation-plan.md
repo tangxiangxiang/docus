@@ -8,11 +8,12 @@
 | 产品 PRD                       | [`docs/design/pdf-export-prd.md`](./pdf-export-prd.md) |
 | Original hardening baseline | `4e62bba441eb2ac7c426485154fd1226caa0edbf`             |
 | Original H10 audit baseline | `77445cfe415a0e40937c6a00edfd914aae4ca576`             |
-| Final verified V1 baseline | `352a47b34b5ffc8da0489210b2c81037cbb3b37a`             |
+| Core PDF pagination/export baseline | `352a47b34b5ffc8da0489210b2c81037cbb3b37a`             |
+| Final verified V1 application baseline | `390791da4acefcdc58f110e66f469224c18feeeb`             |
 | 计划日期                         | 2026-08-21                                             |
 | 当前阶段                         | PDF-H10 — Final Documentation & Release Gate           |
 | 当前实现状态                       | H1–H9 implementation complete；H4 evidence repaired；post-H10 H6 pagination regression verified；H10 release gate re-confirmed |
-| 本任务范围                        | 只收口 PRD、实施计划、用户指南和 release evidence，不修改 PDF 业务实现或测试 |
+| 最终 UI scope                     | File Tree context menu only；Reading Pane 不包含 PDF Export UI |
 | 目标                           | 让文档、真实实现、既有验证证据和 PRD acceptance criteria 保持一致 |
 
 本文回答：
@@ -95,7 +96,7 @@ Original H10 audit baseline：
 Final verified PDF Export V1 baseline：
 
 ```text
-352a47b34b5ffc8da0489210b2c81037cbb3b37a
+390791da4acefcdc58f110e66f469224c18feeeb
 ```
 
 当前仓库已经拥有：
@@ -118,7 +119,7 @@ PDF helper tests
 PDF browser E2E
 ```
 
-H1–H9 hardening commits 和 H4 focused evidence repair 已完成。原始 H10 release gate 在 `77445cfe…` 关闭后，真实导出的 PDF 又暴露了普通段落分页的 correctness regression；该问题由后续 H6 focused follow-up 在 `352a47b…` 修复并通过 focused browser regression 与真实 PDF 人工复验。当前最终 release gate 已重新确认关闭。
+H1–H7、H9 hardening commits 和 H4 focused evidence repair 已完成；H8 的 Read Mode 入口决定已按最终 V1 scope 移除。原始 H10 release gate 在 `77445cfe…` 关闭后，真实导出的 PDF 又暴露了普通段落分页的 correctness regression；该问题由后续 H6 focused follow-up 在 `352a47b…` 修复并通过 focused browser regression 与真实 PDF 人工复验。当前最终 release gate 已重新确认关闭。
 
 ---
 
@@ -129,7 +130,7 @@ H1–H9 hardening commits 和 H4 focused evidence repair 已完成。原始 H10 
 当前基本链路：
 
 ```text
-File Tree / Read Mode
+File Tree context menu only
     ↓
 exportPdfDocument(path)
     ↓
@@ -154,7 +155,7 @@ html2pdf.js
 browser download
 ```
 
-该共享 pipeline 当前由 File Tree context menu 和 Read Mode toolbar 共用。
+该共享 pipeline 当前由 File Tree context menu 唯一调用。
 
 ---
 
@@ -285,7 +286,7 @@ e2e/fixtures/pdf-export-kitchen-sink.md
 | GAP-3 — Kitchen Sink 未证明内容完整 | PDF-H4：验证 source `data-mermaid-viewbox` 与 prepared static Mermaid finite `viewBox`，并保留 live `viewBox` optional | Resolved by H4 |
 | GAP-4 — Image settlement 未定义 | PDF-H5：`waitForPdfImages()` 等待 `loaded\|error\|timeout` 后再准备 snapshot | Resolved by H5 |
 | GAP-5 — Long document 未形成正式验证 | PDF-H6/H7：A4 layout、短段落/列表项分页保护、oversized textual fallback、1/5/20/50 页级验证和尾部/恢复性检查 | Resolved by H6/H7 + post-H10 H6 follow-up |
-| GAP-6 — Read Mode 入口未补齐 | PDF-H8：Read Mode toolbar 调用同一个 `exportPdfDocument(path)` | Resolved by H8 |
+| GAP-6 — Read Mode 入口未补齐 | 最终产品决定不在 Read Mode 增加 PDF UI；File Tree context menu 保持唯一入口 | Removed from V1 scope |
 
 ---
 
@@ -294,7 +295,7 @@ e2e/fixtures/pdf-export-kitchen-sink.md
 最终目标：
 
 ```text
-File Tree / Read Mode action
+File Tree context menu
      ↓
 Capture immutable PdfExportRequest
      ↓
@@ -357,7 +358,7 @@ PDF export semantics
 | PDF-H5       | P1       | Image settlement | DONE |
 | PDF-H6       | P1       | Pagination + wide content | DONE |
 | PDF-H7       | P1       | Long-document validation | DONE |
-| PDF-H8       | P1       | Read Mode export entry | DONE |
+| PDF-H8       | P1       | Read Mode export entry（历史候选） | REMOVED FROM V1 SCOPE |
 | PDF-H9       | P2       | Extreme/stress/browser compatibility | DONE |
 | PDF-H10      | Release  | Final docs + DoD | DONE |
 
@@ -1630,7 +1631,7 @@ server PDF RFC
 
 ---
 
-# 15. PDF-H8 — Read Mode Export Entry
+# 15. PDF-H8 — Read Mode Export Entry（Historical / Removed from V1 scope）
 
 Priority：
 
@@ -1638,7 +1639,7 @@ Priority：
 P1
 ```
 
-状态：`DONE`。该 work package 在 H1–H7 核心 correctness 稳定后完成。
+状态：`REMOVED FROM V1 SCOPE`。Read Mode PDF action 曾在 hardening 期间实现，但最终产品要求是阅读窗口零污染，因此该入口已移除。共享 exporter 保持不变，File Tree context menu 是 V1 唯一用户入口。
 
 ---
 
@@ -1654,35 +1655,28 @@ exportPdfDocument(path)
 
 ## 15.2 Entry architecture
 
-必须：
+最终入口必须是：
 
 ```text
-File Tree ─────┐
-               │
-Read Mode ─────┼→ same PDF pipeline
-               │
-Future Tab ────┘
+File Tree context menu
+        ↓
+exportPdfDocument(path)
 ```
 
-禁止为不同入口复制两套 exporter implementation；两个入口必须继续调用同一 pipeline。
+禁止在 Read Mode 增加 PDF button、busy state、PDF props 或 PDF event。禁止为不同 UI 入口复制 exporter implementation。
 
 ---
 
-## 15.3 Read Mode UX
+## 15.3 Final Read Mode boundary
 
-当前入口：
+Read Mode 最终行为：
 
 ```text
-Read Mode top action
-→ Download PDF
+Reading Pane
+→ no PDF Export UI
 ```
 
-要求：
-
-* 有 text / accessible label；
-* 使用现有 icon system；
-* 支持 i18n；
-* exporting 中 disable 或拒绝重复 transaction。
+ReadingPane 不接收 `showPdfExport` / `exportingPdf`，不 emit `export-pdf`，不包含 PDF 专用 CSS 或 icon。File Tree 仍调用同一个 `exportPdfDocument(path)`。
 
 ---
 
@@ -1748,7 +1742,7 @@ Original H10 audit baseline：
 Final verified PDF Export V1 baseline：
 
 ```text
-352a47b34b5ffc8da0489210b2c81037cbb3b37a
+390791da4acefcdc58f110e66f469224c18feeeb
 ```
 
 原始 H10 audit 不重新运行 H1–H9 全矩阵；H4 focused browser repair 已验证 source canonical geometry 与 prepared static geometry，且未修改 production code。`e2e/pdf-export.spec.ts:254` 的 live `viewBox` 要求已改为 optional；source `data-mermaid-viewbox` 和 prepared static `viewBox` 现在是正式 evidence。
@@ -1769,7 +1763,7 @@ H4 browser evidence complete
 H5 complete
 H6 complete
 H7 complete
-H8 complete
+H8 scope decision complete
 H9 complete
 ```
 
@@ -1913,9 +1907,7 @@ H10 本身不得增加新的 PDF 产品能力、custom options、multi-document 
 ## 17.6 Final architecture snapshot
 
 ```text
-File Tree ────────┐
-                  │
-Read Mode ────────┤
+File Tree context menu
                   ↓
           exportPdfDocument(path)
                   ↓
@@ -1947,7 +1939,7 @@ Read Mode ────────┤
                 Cleanup
 ```
 
-当前实现的关键事实：打开且已加载的文档使用 `tab.raw`，不强制保存；未打开文档通过 `getPost(path)` 读取 authoritative server raw；两个入口共用同一个 `exportPdfDocument(path)` transaction。
+当前实现的关键事实：打开且已加载的文档使用 `tab.raw`，不强制保存；未打开文档通过 `getPost(path)` 读取 authoritative server raw；File Tree context menu 调用 `exportPdfDocument(path)` transaction。Reading Pane 不参与 PDF UI 或事件 wiring。
 
 ---
 
@@ -1962,7 +1954,7 @@ Read Mode ────────┤
 | H5 | `waitForPdfImages()` 在 `preparePdfArticleHtml()` 前等待图片 terminal outcome；CORS policy 不放宽 |
 | H6 | A4 printable geometry、宽表、长代码和 oversized block layout 已验证；短 paragraph/list item keep-together、oversized textual fallback、heading + first content block orphan protection 及真实分页回归已通过（post-H10 follow-up: `352a47b…`） |
 | H7 | 1/5/20/50 页级长文档验证已通过 |
-| H8 | File Tree 与 Read Mode 共用 PDF transaction |
+| H8 | Read Mode PDF action 已移出 V1；File Tree 保持唯一 PDF UI 入口 |
 | H9 | 100-page stress、极端 widget、CORS、Playwright WebKit、Chromium DPI2 和 post-export UI recovery 已验证 |
 | H10 | 文档、acceptance audit、evidence matrix 和 DoD 已收口，release gate DONE |
 
@@ -1970,13 +1962,13 @@ Read Mode ────────┤
 
 ## 17.8 Final PRD Acceptance Audit
 
-以下状态基于 H1–H9 已有执行记录、H4 focused repair、post-H10 H6 pagination follow-up 和当前代码审计；本次文档收尾不重复运行整套验证。
+以下状态基于 H1–H7、H9 已有执行记录、H4 focused repair、post-H10 H6 pagination follow-up、H8 scope correction 和当前代码审计；本次文档收尾不重复运行整套验证。
 
 | Requirement | Evidence | Status |
 | --- | --- | --- |
-| Direct PDF download / `.pdf` / no print dialog | `e2e/pdf-export.spec.ts`, `e2e/pdf-export-read-mode.spec.ts` | PASS |
+| Direct PDF download / `.pdf` / no print dialog | `e2e/pdf-export.spec.ts` | PASS |
 | File Tree entry | `TreeRow.vue` context action；`src/components/vault/__tests__/context-menu.test.ts` | PASS |
-| Read Mode entry | `e2e/pdf-export-read-mode.spec.ts`；`ReadingPane.vue` toolbar | PASS |
+| Reading surface has no PDF export control | `src/components/vault/__tests__/ReadingPane.test.ts`；`src/views/__tests__/VaultView.test.ts` | PASS |
 | Live dirty buffer, no forced save | `VaultView.vue` source authority branch and existing workspace behavior | PASS |
 | Closed document authority | `VaultView.vue` `getPost(path)` fallback | PASS |
 | Immutable snapshot / duplicate guard | `PdfExportRequest` and `pdfExportBusy` in `VaultView.vue` | PASS |
@@ -1994,7 +1986,7 @@ Read Mode ────────┤
 | Pagination and long documents | `e2e/pdf-export-long-document.spec.ts` 1/5/20/50-page lanes | PASS |
 | Paragraph pagination regression | `src/lib/__tests__/pdfExport.test.ts` + `e2e/pdf-export-pagination.spec.ts` + manual real-PDF verification | PASS — focused post-H10 H6 follow-up |
 | Failure cleanup and retry state | VaultView `finally` cleanup and existing export tests | PASS |
-| Single active export transaction | `pdfExportBusy` guard and Read Mode disabled state | PASS |
+| Single active export transaction | `pdfExportBusy` guard and File Tree context action | PASS |
 | 100-page stress | `e2e/pdf-export-stress.spec.ts` | PASS |
 | WebKit compatibility | `e2e/pdf-export-compat.spec.ts` with `playwright.pdf-compat.config.ts` | PASS — Playwright WebKit only |
 | High-DPI stability | dedicated Chromium `deviceScaleFactor=2` project | PASS |
@@ -2025,7 +2017,7 @@ H4 evidence now distinguishes live interactive geometry from the canonical stati
 | Layout | `e2e/pdf-export-layout.spec.ts` | PASS |
 | Paragraph pagination | `src/lib/__tests__/pdfExport.test.ts` + `e2e/pdf-export-pagination.spec.ts` + manual real-PDF verification | PASS |
 | Long documents | `e2e/pdf-export-long-document.spec.ts` | PASS |
-| Read Mode | `e2e/pdf-export-read-mode.spec.ts` | PASS |
+| PDF entry scope | File Tree context-menu coverage + ReadingPane no-PDF regression | PASS |
 | H9 stress | `e2e/pdf-export-stress.spec.ts`；7/7 lanes | PASS |
 | CORS | `e2e/pdf-export-cors.spec.ts`；3/3 lanes | PASS |
 | Compatibility | `e2e/pdf-export-compat.spec.ts`；WebKit 1/1 | PASS |
@@ -2064,11 +2056,11 @@ Playwright WebKit compatibility verified
 
 ```text
 [x] PRD acceptance criteria 已完成逐项审计
-[x] File Tree 与 Read Mode 共用单一 pipeline
+[x] File Tree context menu 是唯一 PDF Export UI 入口
 [x] live buffer / closed document authority 已记录
 [x] user guide 已更新为最终用户行为
-[x] H1、H2、H3、H5、H6、H7、H8、H9 release evidence 已汇总
-[x] H10 未修改 production code 或 tests
+[x] H1、H2、H3、H5、H6、H7、H9 release evidence 已汇总；H8 scope decision 已记录
+[x] Reading Pane 零 PDF UI；对应 production wiring、CSS 和 regression tests 已收口
 [x] residual limitations / non-goals 已记录
 [x] H4 Kitchen Sink browser evidence 完整通过
 [x] ordinary paragraph page-clipping regression 已修复并通过 focused regression
@@ -2112,10 +2104,22 @@ Evidence：
 最终 verified baseline：
 
 ```text
-352a47b34b5ffc8da0489210b2c81037cbb3b37a
+390791da4acefcdc58f110e66f469224c18feeeb
 ```
 
 该 follow-up 没有重新执行完整 H1–H9 matrix；它只重新确认 H6 pagination regression 和最终 release gate 所需的直接证据。
+
+## 17.13 Final PDF UI entry-scope correction
+
+H8 期间曾加入 Read Mode PDF action，但最终产品要求是“阅读窗口零污染”。`390791da4acefcdc58f110e66f469224c18feeeb` 移除了该入口及其专用 wiring、CSS、组件回归和 Read Mode E2E。
+
+最终用户入口只有：
+
+```text
+File Tree → right-click Markdown document → Export PDF
+```
+
+`ReadingPane.vue` 不接收 PDF props、不 emit PDF event、不显示 PDF busy/loading 状态，也不包含 PDF 专用 UI。`exportPdfDocument(path)`、live-buffer authority、busy guard 和整个 PDF exporter pipeline 保持不变。
 
 # 18. Historical File-Level Change Map（pre-H1 planning）
 
@@ -2787,7 +2791,7 @@ wide table
 Gate A + Gate B 基本稳定后：
 
 ```text
-Read Mode Export PDF
+Reading Pane remains free of PDF Export controls
 ```
 
 ---
@@ -2914,7 +2918,7 @@ PDF Export V1 = Done
 | Wide table/code validation      | ❌          |
 | 20-page validation              | ❌          |
 | 50-page validation              | ❌          |
-| Read Mode export entry          | ❌          |
+| Read Mode export entry          | REMOVED FROM V1 SCOPE |
 
 ---
 
@@ -2984,7 +2988,7 @@ H6 Pagination / Wide Content
         ↓
 H7 Long Documents
         ↓
-H8 Read Mode Entry
+H8 Read Mode Entry decision (removed from V1 scope)
         ↓
 H9 Stress / Compatibility
         ↓
