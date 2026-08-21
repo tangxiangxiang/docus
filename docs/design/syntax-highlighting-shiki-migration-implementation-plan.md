@@ -8,9 +8,10 @@
 | 产品 PRD | [Shiki Syntax Highlighting Migration PRD](syntax-highlighting-shiki-migration-prd.md) |
 | Implementation baseline | 2be6b2c57b5d7cb76b359220f361bacb55661099 |
 | 计划日期 | 2026-08-21 |
-| 当前阶段 | SHIKI-H0 — Baseline & Contract Audit |
-| 当前实现状态 | highlight.js 仍是当前 renderer；Shiki 尚未安装、接入或验证 |
-| 本任务范围 | 只清理 PRD 头部、落盘本计划并更新设计索引；不修改 production source、依赖、测试、CSS、lockfile 或 PDF 实现 |
+| 当前阶段 | SHIKI-H0 — COMPLETE；Next: SHIKI-H1 — Dependency & Runtime Foundation |
+| 当前实现状态 | H0 审计已完成；highlight.js 仍是当前 renderer；Shiki 尚未安装、接入或验证；renderer 未改变 |
+| H0 审计证据 | [Shiki H0 Baseline & Contract Audit](syntax-highlighting-shiki-h0-audit.md) |
+| 本任务范围 | 已完成 H0 baseline/contract audit；不修改 production source、依赖、测试、CSS、lockfile 或 PDF 实现 |
 | 目标 | 用可回滚、可验证的阶段性步骤完成 Shiki 4.x 迁移，同时保持 Markdown、DOMPurify、主题、Mermaid、MarkMap 和 PDF 合同 |
 
 本计划描述接下来如何实施产品 PRD，不代表任何 Shiki 能力已经存在。未来实现必须以产品 PRD 为最高约束；如果本计划与 PRD 发生冲突：
@@ -22,6 +23,8 @@ STOP
 ~~~
 
 不得为了减少实现工作而静默改变 PRD 的安全、主题、PDF、未知语言或特殊 fence 语义。
+
+H0 审计证据已记录在 [Shiki H0 Baseline & Contract Audit](syntax-highlighting-shiki-h0-audit.md)。审计发现：如果按本计划的语言发现建议，在同一个带 `wikiResolver` 的 env 上先调用 `md.parse()`、再调用 `md.render()`，当前 wiki-link 路径会触发 resolver 双调用；该问题已作为 H2 design blocker 记录，未在本次更新中改变架构决策或实现行为。
 
 ## 2. 计划目标与约束
 
