@@ -70,29 +70,51 @@ describe('PDF export helpers', () => {
     expect(__testing__.PDF_DOWNLOAD_STYLES).toContain('size: A4')
   })
 
-  it('wraps PDF code and table content and only splits oversized blocks', () => {
+  it('keeps short text blocks together and only splits oversized blocks', () => {
     const root = document.createElement('div')
     root.innerHTML = `
       <article class="article reading">
+        <p id="short-paragraph">short paragraph</p>
+        <p id="long-paragraph">long paragraph</p>
+        <ul>
+          <li id="short-list-item">short list item</li>
+          <li id="long-list-item">long list item</li>
+        </ul>
         <pre id="short"><code>short</code></pre>
         <pre id="long"><code>long</code></pre>
         <div class="table-scroll"><table><tr><td>cell</td></tr></table></div>
       </article>`
 
+    const shortParagraph = root.querySelector<HTMLElement>('#short-paragraph')!
+    const longParagraph = root.querySelector<HTMLElement>('#long-paragraph')!
+    const shortListItem = root.querySelector<HTMLElement>('#short-list-item')!
+    const longListItem = root.querySelector<HTMLElement>('#long-list-item')!
     const short = root.querySelector<HTMLElement>('#short')!
     const long = root.querySelector<HTMLElement>('#long')!
     const tableScroll = root.querySelector<HTMLElement>('.table-scroll')!
+    vi.spyOn(shortParagraph, 'getBoundingClientRect').mockReturnValue({ height: 100 } as DOMRect)
+    vi.spyOn(longParagraph, 'getBoundingClientRect').mockReturnValue({ height: 1200 } as DOMRect)
+    vi.spyOn(shortListItem, 'getBoundingClientRect').mockReturnValue({ height: 100 } as DOMRect)
+    vi.spyOn(longListItem, 'getBoundingClientRect').mockReturnValue({ height: 1200 } as DOMRect)
     vi.spyOn(short, 'getBoundingClientRect').mockReturnValue({ height: 100 } as DOMRect)
     vi.spyOn(long, 'getBoundingClientRect').mockReturnValue({ height: 1200 } as DOMRect)
     vi.spyOn(tableScroll, 'getBoundingClientRect').mockReturnValue({ height: 160 } as DOMRect)
 
     __testing__.markOversizedPdfBlocks(root)
 
+    expect(shortParagraph.classList.contains('pdf-allow-split')).toBe(false)
+    expect(longParagraph.classList.contains('pdf-allow-split')).toBe(true)
+    expect(shortListItem.classList.contains('pdf-allow-split')).toBe(false)
+    expect(longListItem.classList.contains('pdf-allow-split')).toBe(true)
     expect(short.classList.contains('pdf-allow-split')).toBe(false)
     expect(long.classList.contains('pdf-allow-split')).toBe(true)
     expect(tableScroll.classList.contains('pdf-allow-split')).toBe(false)
     expect(__testing__.PDF_PRINTABLE_PAGE_HEIGHT_MM).toBe(263)
     expect(__testing__.PDF_DOWNLOAD_STYLES).toContain('.pdf-document .article pre code')
+    expect(__testing__.PDF_DOWNLOAD_STYLES).toContain('.pdf-document .article p')
+    expect(__testing__.PDF_DOWNLOAD_STYLES).toContain('.pdf-document .article li')
+    expect(__testing__.PDF_DOWNLOAD_STYLES).toContain('break-inside: avoid')
+    expect(__testing__.PDF_DOWNLOAD_STYLES).toContain('page-break-inside: avoid')
     expect(__testing__.PDF_DOWNLOAD_STYLES).toContain('overflow-wrap: anywhere !important')
     expect(__testing__.PDF_DOWNLOAD_STYLES).toContain('table-layout: fixed !important')
     expect(__testing__.PDF_DOWNLOAD_STYLES).toContain('.pdf-document .article tbody tr:nth-child(even)')
@@ -227,6 +249,34 @@ describe('PDF export helpers', () => {
 
     expect(group?.querySelector('h2')?.textContent).toBe('Image')
     expect(group?.querySelector('p > img')).not.toBeNull()
+  })
+
+  it('keeps only the first ordinary content block with its section heading', () => {
+    const article = document.createElement('article')
+    article.className = 'article reading'
+    article.innerHTML = `
+      <h2>Paragraph section</h2>
+      <p>H6_FIRST_PARAGRAPH</p>
+      <p>H6_SECOND_PARAGRAPH</p>
+      <h2>List section</h2>
+      <ul><li>H6_FIRST_LIST_ITEM</li><li>H6_SECOND_LIST_ITEM</li></ul>`
+
+    const exported = document.createElement('div')
+    exported.innerHTML = preparePdfArticleHtml(article)
+    const groups = Array.from(exported.querySelectorAll<HTMLElement>('.pdf-heading-group'))
+
+    expect(groups).toHaveLength(2)
+    expect(groups[0]?.querySelector('h2')?.textContent).toBe('Paragraph section')
+    expect(groups[0]?.querySelector('p')?.textContent).toBe('H6_FIRST_PARAGRAPH')
+    expect(groups[0]?.nextElementSibling?.textContent).toBe('H6_SECOND_PARAGRAPH')
+    expect(Array.from(exported.querySelectorAll('p')).map((paragraph) => paragraph.textContent)).toEqual([
+      'H6_FIRST_PARAGRAPH',
+      'H6_SECOND_PARAGRAPH',
+    ])
+    expect(groups[1]?.querySelector('h2')?.textContent).toBe('List section')
+    expect(groups[1]?.querySelector('ul')?.textContent).toContain('H6_FIRST_LIST_ITEM')
+    expect(groups[0]?.querySelector('.pdf-heading-group')).toBeNull()
+    expect(groups[1]?.querySelector('.pdf-heading-group')).toBeNull()
   })
 
   it('keeps a table with its section heading', () => {

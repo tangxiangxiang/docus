@@ -126,6 +126,8 @@ const PDF_DOWNLOAD_STYLES = `
 
 .pdf-document .article pre,
 .pdf-document .article blockquote,
+.pdf-document .article p,
+.pdf-document .article li,
 .pdf-document .article .table-scroll,
 .pdf-document .article img,
 .pdf-document .article .markmap-widget,
@@ -441,6 +443,8 @@ function unwrapStandaloneFenceWidget(host: HTMLElement): void {
 }
 
 function groupHeadingWithBlock(block: HTMLElement): void {
+  if (block.parentElement?.classList.contains('pdf-heading-group')) return
+
   const heading = block.previousElementSibling
   if (!(heading instanceof HTMLElement) || !/^H[1-6]$/.test(heading.tagName)) return
   const parent = heading.parentElement
@@ -454,6 +458,8 @@ function groupHeadingWithBlock(block: HTMLElement): void {
 
 const PDF_LAYOUT_BLOCK_SELECTOR = [
   '.article pre',
+  '.article p',
+  '.article li',
   '.article .table-scroll',
   '.article blockquote',
   '.article .mermaid-widget-host',
@@ -568,6 +574,15 @@ export function preparePdfArticleHtml(article: HTMLElement): string {
      bottom of the previous page. */
   for (const table of clone.querySelectorAll<HTMLElement>('.table-scroll')) {
     groupHeadingWithBlock(table)
+  }
+
+  /* Keep the first ordinary content block with a section heading. Do not
+     wrap an entire section: later paragraphs remain independently pageable,
+     while a short opening paragraph/list/blockquote cannot leave its heading
+     orphaned at the bottom of a page. groupHeadingWithBlock() is a no-op for
+     blocks already wrapped by the image/widget/table passes above. */
+  for (const block of clone.querySelectorAll<HTMLElement>('p, ul, ol, blockquote')) {
+    groupHeadingWithBlock(block)
   }
 
   return clone.outerHTML
