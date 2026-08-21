@@ -8,10 +8,11 @@
 | 产品 PRD | [Shiki Syntax Highlighting Migration PRD](syntax-highlighting-shiki-migration-prd.md) |
 | Implementation baseline | 2be6b2c57b5d7cb76b359220f361bacb55661099 |
 | 计划日期 | 2026-08-21 |
-| 当前阶段 | SHIKI-H0 — COMPLETE；Next: SHIKI-H1 — Dependency & Runtime Foundation |
-| 当前实现状态 | H0 审计已完成；highlight.js 仍是当前 renderer；Shiki 尚未安装、接入或验证；renderer 未改变 |
+| 当前阶段 | SHIKI-H1 — COMPLETE；Next: SHIKI-H2 — Fence Discovery & Dynamic Language Loading |
+| 当前实现状态 | H0 审计和 H1 runtime foundation 已完成；Shiki singleton 已加载 github-light/github-dark，class transformer foundation 已建立；highlight.js 仍是当前 renderer；无 H2 language discovery/loading、无 Shiki DOM/CSS integration；renderer 未改变 |
 | H0 审计证据 | [Shiki H0 Baseline & Contract Audit](syntax-highlighting-shiki-h0-audit.md) |
-| 本任务范围 | 已完成 H0 baseline/contract audit；不修改 production source、依赖、测试、CSS、lockfile 或 PDF 实现 |
+| H1 实施证据 | [Shiki H1 Dependency & Runtime Foundation](syntax-highlighting-shiki-h1-runtime-foundation.md) |
+| 本任务范围 | H0 baseline/contract audit 与 H1 runtime foundation 已完成；H2-H8 尚未实施；正常 Markdown renderer、DOMPurify、主题、Mermaid、MarkMap 和 PDF 行为保持原状 |
 | 目标 | 用可回滚、可验证的阶段性步骤完成 Shiki 4.x 迁移，同时保持 Markdown、DOMPurify、主题、Mermaid、MarkMap 和 PDF 合同 |
 
 本计划描述接下来如何实施产品 PRD，不代表任何 Shiki 能力已经存在。未来实现必须以产品 PRD 为最高约束；如果本计划与 PRD 发生冲突：
@@ -25,6 +26,8 @@ STOP
 不得为了减少实现工作而静默改变 PRD 的安全、主题、PDF、未知语言或特殊 fence 语义。
 
 H0 审计证据已记录在 [Shiki H0 Baseline & Contract Audit](syntax-highlighting-shiki-h0-audit.md)。审计发现：如果按本计划的语言发现建议，在同一个带 `wikiResolver` 的 env 上先调用 `md.parse()`、再调用 `md.render()`，当前 wiki-link 路径会触发 resolver 双调用；该问题已作为 H2 design blocker 记录，未在本次更新中改变架构决策或实现行为。
+
+H1 已完成并记录在 [Shiki H1 Dependency & Runtime Foundation](syntax-highlighting-shiki-h1-runtime-foundation.md)：Shiki 4.4.3 和 matching transformer 4.4.3 已加入，runtime singleton 已独立初始化双主题，`transformerStyleToClass` CSS snapshot API 已验证；正常 renderer 仍使用 highlight.js，未新增语言发现、DOM stylesheet、主题、PDF 或 Markdown 集成。H2 的 same-env `md.parse()` + `md.render()` resolver 双调用 blocker 仍然开放。
 
 ## 2. 计划目标与约束
 
@@ -817,6 +820,8 @@ Shiki 迁移不能绕过这条流程，也不能在导出时重新解析 Markdow
 - baseline evidence 可被后续 H8 对比。
 
 ### SHIKI-H1 — Dependency & Runtime Foundation
+
+状态：`COMPLETE`；证据：[Shiki H1 Dependency & Runtime Foundation](syntax-highlighting-shiki-h1-runtime-foundation.md)。
 
 动作：
 
