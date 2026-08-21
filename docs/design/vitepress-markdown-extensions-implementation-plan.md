@@ -10,8 +10,8 @@
 | Branch | main |
 | Plan date | 2026-08-21 |
 | Product production baseline | c32f5bc9c1597c6c2f6b3e9581f327636fe8d8c2 |
-| Approved PRD baseline | 7e05e3bb43f4283a90ead1abd0c81325bc93281 |
-| Implementation Plan task base | 7e05e3bb43f4283a90ead1abd0c81325bc93281 |
+| Approved PRD baseline | 7e05e3bb43f4283a90ead1abd0c81325bc93281c |
+| Implementation Plan task base | 7e05e3bb43f4283a90ead1abd0c81325bc93281c |
 | Implementation baseline | The commit containing this approved plan; exact SHA is recorded in MD-EXT-0 evidence and the final handoff |
 | Current phase | MD-EXT-0 — NOT STARTED |
 | Current implementation state | PRD approved; plan created; no Markdown-extension implementation exists |
@@ -69,8 +69,8 @@ This plan does not authorize implementation. In particular, this commit:
 | Baseline | SHA | Meaning |
 | --- | --- | --- |
 | Product production baseline | c32f5bc9c1597c6c2f6b3e9581f327636fe8d8c2 | Last production-code state before the Markdown Extensions PRD |
-| Approved PRD baseline | 7e05e3bb43f4283a90ead1abd0c81325bc93281 | Frozen product contract consumed by this plan |
-| Plan task base | 7e05e3bb43f4283a90ead1abd0c81325bc93281 | HEAD at plan creation |
+| Approved PRD baseline | 7e05e3bb43f4283a90ead1abd0c81325bc93281c | Frozen product contract consumed by this plan |
+| Plan task base | 7e05e3bb43f4283a90ead1abd0c81325bc93281c | HEAD at plan creation |
 
 MD-EXT-0 will record a fourth operational reference:
 
@@ -127,7 +127,7 @@ VitePress but remain deferred Docus candidates.
 | Heading IDs | One per-render final allocator | Auto, custom, included headings, TOC, page-nav, permalinks, and PDF share it |
 | TOC | Token/core based | It does not regex raw Markdown, render a second document, or invent IDs |
 | Containers | Narrow Docus-owned parser recommended | Built-in types only; no generic registration or arbitrary class names |
-| Fence metadata | One parser consumed by discovery and rendering | No separate language parser for H2, H3, H4, or H5 |
+| Fence metadata | One fence-info parser (`parseFenceMeta(info)`) consumed by discovery/rendering, plus one approved Shiki source-notation transformer pipeline | Never merge fence info with code-body `[!code ...]` notation |
 | Annotation range | focus:N is in scope; highlight:N is deferred | Technical Shiki capability does not expand approved product scope |
 | Line numbers | Structural trusted markup | No inline custom property, dynamic user CSS, or gutter text in accessible code |
 | Code groups | Static all-panel HTML plus post-v-html enhancement | Reader interaction never relies on Vue directives inside v-html |
@@ -283,7 +283,7 @@ MarkdownIt render
     ├─ Docus-generated HTTP(S) link policy
     ├─ generated Markdown image loading="lazy"
     ├─ built-in containers
-    ├─ one unified fence metadata parser
+    ├─ one fence-info parser plus approved Shiki source-notation transformers
     ├─ Shiki annotations and optional line-number structure
     ├─ code-group static HTML
     ├─ existing WikiLinks, callouts, math, emoji, tables, and footnotes
@@ -322,7 +322,7 @@ waits for the same image/widget readiness contract, and exports the settled HTML
 | src/lib/emoji.ts | Emoji definition registry | MD-EXT-0 audit only | Preserve current plugin behavior |
 | src/lib/frontmatter.ts | Frontmatter/body split and title handling | MD-EXT-6 only if source context must be carried | Do not change title semantics casually |
 | src/lib/markdownHeadings.ts | New narrow heading metadata/TOC module, if MD-EXT-0 confirms this boundary | MD-EXT-1 | Owns final ID integration but not generic attrs |
-| src/lib/fenceMeta.ts | New unified fence metadata parser, if MD-EXT-0 confirms | MD-EXT-3 | Discovery and renderer consume the same representation |
+| src/lib/fenceMeta.ts | New fence-info parser, if MD-EXT-0 confirms | MD-EXT-3 | Discovery and renderer consume FenceMeta; source notation stays in Shiki |
 | src/lib/markdownResources.ts | New client logical expansion/resource interface, if selected | MD-EXT-6 | Per-render state only |
 | src/shiki.css | Reader palette and future annotation/line-number CSS | MD-EXT-3 | CSS-only theme switching; no user-derived selectors |
 | src/style.css | Article layout, callouts, reader/PDF shared styling | MD-EXT-1 / MD-EXT-2 as needed | Keep generic layout and theme boundaries |
@@ -487,7 +487,8 @@ or use sanitizer configuration as a substitute for safe parser design.
 | Render env | One render | WikiResolver, source context, heading records, fence metadata |
 | Heading collision registry | One render | Never module-global; includes every final heading in source order |
 | TOC records | One render | Derived from final heading tokens, not HTML parsing |
-| Fence metadata | One render/code block | Parsed once and reused by discovery/render/annotation/line-number paths |
+| FenceMeta | One render/code block | Derived only from the fence info string; reused by discovery, rendering, meta ranges, line numbers, labels, and special-fence classification |
+| Shiki source notation | One codeToHtml invocation/code source | `[!code ...]` is consumed by approved notation transformers; no module-global notation state |
 | Resource cache | One resource expansion request | Keyed by canonical path + kind/selection; no cross-user global cache |
 | Include stack | One expansion request | Canonical logical paths; detects A → B → A cycles |
 | Code-group id sequence | One render scope | Deterministic counter with internal surface prefix; never derived from label |
@@ -525,8 +526,21 @@ The installed markdown-it-anchor 9.2.0 exposes:
 - a permalink callback receiving the final slug;
 - a uniqueness allocator that suffixes later generated IDs.
 
-MD-EXT-0 must capture the installed rule order as evidence. The selected design does
-not rely on undocumented array positions.
+The selected markdown-it-anchor configuration conceptually includes:
+
+~~~ts
+.use(anchor, {
+  slugifyWithState: ...,
+  uniqueSlugStartIndex: 2,
+  permalink: ...
+})
+~~~
+
+`uniqueSlugStartIndex: 2` is a frozen Docus product/implementation parameter. It
+produces `id`, `id-2`, `id-3` for later collisions; changing it requires PRD review.
+MD-EXT-0 must capture the installed rule order and verify that the installed
+markdown-it-anchor@9.2.0 behavior can honor this explicit option. The selected design
+does not rely on undocumented array positions.
 
 ### 12.2 Custom anchor flow
 
@@ -540,21 +554,69 @@ only a final plain-text suffix matching the PRD’s narrow {#id} grammar. When v
 
 slugifyWithState consumes that queue in the same heading order. It returns the
 explicit safe id for a custom heading and the existing Docus slug for an automatic
-heading. markdown-it-anchor then applies one uniqueness allocator to both forms:
+heading. markdown-it-anchor, configured with uniqueSlugStartIndex: 2, then applies
+one uniqueness allocator to both forms.
+
+The required collision contract is:
+
+~~~markdown
+## Hello
+## Hello
+## Hello
+~~~
 
 ~~~text
-Hello
-Hello
-Other {#hello}
-A {#x}
-B {#x}
-
 hello
 hello-2
 hello-3
+~~~
+
+~~~markdown
+## Hello
+## Other {#hello}
+~~~
+
+~~~text
+hello
+hello-2
+~~~
+
+~~~markdown
+## First {#hello}
+## Hello
+~~~
+
+~~~text
+hello
+hello-2
+~~~
+
+~~~markdown
+## First {#x}
+## Second {#x}
+~~~
+
+~~~text
 x
 x-2
 ~~~
+
+~~~markdown
+## Hello
+## Other {#hello}
+## Hello
+~~~
+
+~~~text
+hello
+hello-2
+hello-3
+~~~
+
+Future included headings participate in the same source-order sequence. The
+collision registry remains per render, so concurrent renders cannot share allocation
+state. Only the narrow final `{#safe-id}` suffix is supported; generic attributes such
+as `{.class}`, `{style="..."}`, or `{onclick="..."}` remain out of scope.
 
 The allocator lives in the render’s MarkdownIt state/env. It is reset on every
 render, so concurrent renders cannot share collision state.
@@ -599,27 +661,61 @@ pipeline. [[toc]] itself never parses rendered HTML to invent IDs.
 
 ### 12.4 Heading tests and stop conditions
 
-Required tests include automatic/custom/duplicate IDs, custom-vs-auto collisions,
-malformed suffixes, inline formatting, CJK automatic slugs, TOC standalone recognition,
-TOC hierarchy, safe heading text, no resolver calls from TOC collection, PDF internal
-links, and included-heading participation after MD-EXT-6.
+Required tests include automatic/custom/duplicate IDs, all five collision examples
+above, the exact id/id-2/id-3 suffix contract, malformed suffixes, inline formatting,
+CJK automatic slugs, TOC standalone recognition, TOC hierarchy, safe heading text, no
+resolver calls from TOC collection, PDF internal links, and included-heading
+participation after MD-EXT-6. MD-EXT-0 records core rule name, slugifyWithState,
+uniqueSlugStartIndex, permalink callback behavior, duplicate allocation, and actual
+rule ordering; it verifies the installed behavior without casually reopening the
+approved suffix convention.
+
+STOP if the installed markdown-it-anchor integration cannot provide one shared
+per-render allocator with the approved id/id-2/id-3 contract without a second slugger
+or a generic-attributes mechanism.
 
 STOP if custom anchors require generic attributes, TOC requires a second slugger, or
 permalink hrefs cannot be derived from the one final allocator.
 
-## 13. Unified Fence Metadata Architecture
+## 13. Fence-Info Metadata and Shiki Source-Notation Architecture
 
-### 13.1 One parsed representation
+### 13.1 Two independent metadata channels
+
+Fence metadata and Shiki source-code notation are different input streams and must
+remain different implementation boundaries.
+
+Fence info is the string after the opening fence marker:
+
+~~~~markdown
+~~~ts {1,3-5}:line-numbers [config.ts]
+~~~
+~~~~
+
+Code-body notation is part of the source between the fence markers:
+
+~~~ts
+const a = 1 // [!code focus]
+const b = 2 // [!code error]
+~~~
+
+`parseFenceMeta(info)` receives only the first stream. It never receives or parses
+`[!code ...]` directives from the second stream. The architecture is one fence-info
+parser plus one approved Shiki source-notation transformer pipeline, not one parser
+for every code annotation syntax.
+
+### 13.2 Fence-info parser
 
 Create a narrow module, recommended name src/lib/fenceMeta.ts, after MD-EXT-0
-confirms the boundary. It exports one parseFenceMeta(info) contract used by:
+confirms the boundary. Its `parseFenceMeta(info)` contract parses only the fence info
+string and returns block-level metadata used by:
 
 - final fence-language discovery;
 - normal fence rendering;
-- Shiki metadata/annotation transformers;
+- the Shiki meta range mechanism;
 - line-number metadata;
-- code-group labels;
-- later snippet explicit-language selection.
+- code-group display labels;
+- later snippet explicit-language selection;
+- exact Mermaid/MarkMap special-fence classification.
 
 The conceptual representation is:
 
@@ -630,12 +726,6 @@ interface FenceMeta {
   normalizedLanguage: string
   specialFence: 'mermaid' | 'markmap' | null
   highlightRanges: number[]
-  notation: {
-    highlight: boolean
-    focus: boolean | number
-    diff: 'add' | 'remove' | null
-    level: 'warning' | 'error' | 'info' | null
-  }
   lineNumbers: 'off' | 'on' | 'start'
   lineNumberStart?: number
   label?: string
@@ -643,49 +733,87 @@ interface FenceMeta {
 }
 ~~~
 
-Exact property names may change, but the behavior must not be split across separate
-language extraction, renderer, and code-group parsers.
+There is deliberately no `notation` field. Exact property names may change, but
+`FenceMeta` must not contain parsed `highlight`, `focus`, `diff`, `warning`, `error`,
+or `info` source-notation state.
 
-The parser rules are:
+The fence-info parser rules are:
 
-- first language identifier is independent from later metadata;
-- ts {1,3-5}, ts:line-numbers, ts:line-numbers=10, and ts [config.ts] all prepare
-  typescript/ts rather than ts:line-numbers or ts [config.ts];
-- known special fences are recognized only when the language identifier is exactly
-  markmap or mermaid; mermaid{1} and markmap{1} are not special fences;
+- the first language identifier is independent from later metadata;
+- `ts {1,3-5}`, `ts:line-numbers`, `ts:line-numbers=10`, and `ts [config.ts]` all
+  prepare TypeScript rather than treating metadata as part of the language;
+- `{1,3-5}` belongs to `highlightRanges` and is consumed by the approved Shiki meta
+  range mechanism;
+- `:line-numbers=N` is validated and bounded here, because it belongs to fence info;
 - labels are safe display metadata and never become CSS selectors or arbitrary ids;
-- unknown/malformed metadata never throws and does not alter special-fence behavior;
-- zero, negative, non-numeric, and over-bound numbers are ignored/reported malformed;
-- focus:N is accepted with the final bound chosen in MD-EXT-0;
-- highlight:N is parsed as deferred/unsupported metadata and is not activated.
+- unknown/malformed fence metadata never throws and does not alter special-fence
+  behavior;
+- known special fences are recognized only when the language identifier is exactly
+  `markmap` or `mermaid`; `mermaid{1}` and `markmap{1}` are not special fences;
+- `[!code highlight]`, `[!code focus]`, `[!code focus:N]`, `[!code ++]`,
+  `[!code --]`, `[!code warning]`, `[!code error]`, and `[!code info]` are not
+  parsed here, because they are code-source notation;
+- `highlight:N` is not parsed or activated here. Its deferred boundary belongs to
+  source-notation handling.
 
-### 13.2 Shiki 4.4.3 transformer composition
+### 13.3 Source-code notation transformer pipeline
 
-MD-EXT-0 records the actual installed @shikijs/transformers 4.4.3 API. The source
-currently shows that transformerNotationMap accepts a numeric suffix for its
-notations and that transformerStyleToClass owns a class registry/getCSS snapshot.
+The code source is passed to Shiki independently of `parseFenceMeta(info)`:
 
-The planned approved transformer order is:
+~~~text
+code source
+    ↓
+codeToHtml(source, ...)
+    ↓
+approved source-notation transformers
+    ↓
+fixed structural annotation classes
+~~~
 
-1. meta range transformer for {1,3-5};
-2. a Docus single-line highlight adapter based on the official transformer helper,
-   restricted to [!code highlight] / [!code hl] without :N;
-3. official transformerNotationFocus for focus and focus:N;
-4. official transformerNotationDiff for ++/--;
-5. official transformerNotationErrorLevel for warning/error/info;
-6. the existing styleTransformer last, as the sole token-style-to-class owner.
+The approved source-notation pipeline conceptually handles:
 
-The order is deliberate: annotation transforms add fixed classes and consume
-notation comments; the trusted style transformer removes/registries token styles
-without creating a second CSS owner. MD-EXT-0 must verify hook behavior at 4.4.3 and
-record whether annotation instances are safe to reuse. The current source indicates
-the notation factories are stateless per invocation; if evidence shows per-render
-mutable state, only annotation instances may be constructed per code block. The
-styleTransformer remains the one long-lived instance.
+- `transformerNotationHighlight` or a deliberately restricted single-line adapter
+  for `[!code highlight]`;
+- `transformerNotationFocus` for `[!code focus]` and approved `[!code focus:N]`;
+- `transformerNotationDiff` for `[!code ++]` and `[!code --]`;
+- `transformerNotationErrorLevel` for `[!code warning]`, `[!code error]`, and
+  `[!code info]`;
+- the existing `transformerStyleToClass` instance last, as the sole token-style-to-
+  class registry and generated-CSS owner.
 
-Tests must assert that [!code highlight:N] does not receive approved range behavior.
-Technical support in Shiki is not product approval. Enabling that syntax requires a
-PRD review first.
+The `{1,3-5}` fence-info range and `[!code highlight]` source notation are separate
+mechanisms even when they produce related visual classes. `transformerMetaHighlight`
+or the verified equivalent consumes the former; `transformerNotationHighlight` or a
+restricted adapter consumes the latter.
+
+`focus:N` is validated and bounded at the source-notation/approved-transformer
+boundary, not in `parseFenceMeta(info)`. If the installed Shiki transformer accepts
+`[!code highlight:N]` while the PRD keeps it deferred, MD-EXT-3 must block it at this
+same source-notation boundary. It must not pretend the syntax arrived in fence info.
+The current plan therefore does not activate range highlight notation merely because
+Shiki 4.4.3 can technically recognize it.
+
+MD-EXT-0 records the actual installed @shikijs/transformers 4.4.3 API and hook
+lifecycle. The notation factories may be reused only if evidence proves they are
+safe; the highlighter and `transformerStyleToClass` remain the one long-lived
+singleton/style owner. Only a narrowly reviewed source-notation gating helper may be
+added later if the installed API requires one; it must not become a second Shiki
+runtime, CSS registry, or FenceMeta notation object.
+
+### 13.4 Consumers and tests
+
+`FenceMeta` is consumed by fence-language discovery, normal fence rendering, meta
+range highlighting, line-number behavior, code-group display labels, exact
+special-fence classification, and future snippet explicit-language handling. It is
+derived only from the info string and is per fenced block/render.
+
+The source-notation pipeline is consumed by each `codeToHtml` invocation and reads
+the code source. It owns highlight/focus/diff/severity notation and has no
+module-global mutable notation state.
+
+MD-EXT-0 must verify that language discovery still treats `ts {1,3}`,
+`ts:line-numbers`, and `ts [config.ts]` as TypeScript, while only bare `mermaid` and
+`markmap` bypass normal Shiki handling.
 
 ## 14. Resource Resolution Architecture
 
@@ -865,7 +993,7 @@ Adopt the PRD recommendations unless MD-EXT-0 records a reviewed alternative:
 | Included file | 512 KiB | Server read before decode |
 | Final expanded Markdown | 2 MiB | During expansion before final parse |
 | Include depth | 8 | Before recursive read |
-| Focus:N | 1000 recommended bound | Fence metadata parser before transformer |
+| Focus:N | 1000 recommended bound | Source-notation validation/approved transformer boundary |
 | line-numbers=N | 100000 recommended bound | Fence metadata parser |
 
 Basic named regions use a documented marker grammar, matching start/end names,
@@ -1066,8 +1194,10 @@ Semantic dependencies:
   TOC entries consume.
 - MD-EXT-2 establishes deterministic colon-container parsing; MD-EXT-5 may reuse its
   container token model for code-group syntax.
-- MD-EXT-3 owns the unified fence metadata model and Shiki annotation ordering.
-- MD-EXT-4 extends that model for line-number behavior but must not duplicate it.
+- MD-EXT-3 owns the unified fence-info model and the separate Shiki source-notation
+  transformer ordering.
+- MD-EXT-4 extends the fence-info model for line-number behavior but must not
+  duplicate it or absorb source notation.
 - MD-EXT-5 consumes fence labels and the final static code-rendering contract.
 - MD-EXT-6 happens after heading/fence contracts because expansion affects headings,
   links, source context, and final Shiki discovery.
@@ -1082,7 +1212,7 @@ implementation parameters that later phases must not rediscover.
 
 ### Prerequisites
 
-- Approved PRD at 7e05e3bb... is present.
+- Approved PRD at 7e05e3bb43f4283a90ead1abd0c81325bc93281c is present.
 - This Implementation Plan is the approved planning input.
 - Shiki H0-H8 is closed.
 - Working tree is clean and the exact MD-EXT implementation baseline is recorded.
@@ -1091,7 +1221,8 @@ implementation parameters that later phases must not rediscover.
 
 - Record git, Node/npm, package, lockfile, build, test, and bundle baseline.
 - Inventory current Markdown plugin/rule order and output contracts.
-- Inspect markdown-it-anchor@9.2.0 internals/API and prove the heading integration.
+- Inspect markdown-it-anchor@9.2.0 internals/API and prove the heading integration,
+  including `uniqueSlugStartIndex: 2` and the id/id-2/id-3 allocation contract.
 - Inspect @shikijs/transformers@4.4.3 actual source/types/hook lifecycle.
 - Confirm sanitizer tags/attrs/data policy and PDF style/readiness behavior.
 - Inspect reader post-render mount lifecycle and current page-nav extraction.
@@ -1499,8 +1630,10 @@ MD-EXT-3 — Shiki Code Annotations & Unified Fence Metadata.
 
 ### Goal
 
-Introduce one fence metadata parser and approved Shiki annotation behavior without
-creating a second runtime or changing the H8 token-color ownership.
+Introduce one fence-info metadata parser plus an approved Shiki source-notation
+transformer pipeline without creating a second runtime or changing the H8 token-color
+ownership. The two channels remain separate: `parseFenceMeta(info)` parses fence info
+only, while `[!code ...]` is consumed from code source by Shiki notation transformers.
 
 ### Prerequisites
 
@@ -1510,7 +1643,7 @@ creating a second runtime or changing the H8 token-color ownership.
 
 ### In scope
 
-- Unified fence metadata representation.
+- Unified fence-info metadata representation.
 - {1,3-5} line metadata highlighting.
 - [!code highlight], [!code focus], focus:N, ++/--, warning/error/info.
 - Shiki transformer ordering and class-only annotation CSS.
@@ -1527,11 +1660,14 @@ creating a second runtime or changing the H8 token-color ownership.
 
 ### Architecture changes
 
-Extend src/lib/shiki.ts to accept the parsed fence metadata and pass the actual
-Shiki 4.4.3 meta contract to codeToHtml. Add src/lib/fenceMeta.ts if confirmed.
-Annotations are fixed classes; the existing styleTransformer remains last/sole owner.
-The Docus single-line highlight adapter prevents the installed range-capable
-transformer from silently shipping deferred highlight:N.
+Extend src/lib/shiki.ts to accept the parsed FenceMeta and pass its fence-info range
+metadata to the actual Shiki 4.4.3 meta contract in codeToHtml. Add
+src/lib/fenceMeta.ts if confirmed. The same module must not parse source comments.
+Shiki source notation is handled independently by the approved notation transformer
+pipeline. Annotations are fixed classes; the existing styleTransformer remains
+last/sole owner. The Docus single-line highlight adapter or equivalent source-level
+gate prevents the installed range-capable transformer from silently shipping
+deferred highlight:N.
 
 ### Likely production files
 
@@ -1545,9 +1681,12 @@ transformer from silently shipping deferred highlight:N.
 
 ### Likely tests/E2E
 
-Unit: language extraction with metadata, all approved annotations, focus:N bounds,
-malformed N, deferred highlight:N, class-only output, transformer reuse, unknown/
-special fences, concurrent languages, and style registry single owner.
+Fence-info unit tests: language extraction with metadata, {1,3-5}, line-number
+modifiers, labels, malformed info, and exact special fences. Source-notation tests:
+all approved annotations, focus:N bounds, malformed N, deferred highlight:N,
+class-only output, transformer reuse, unknown/special fences, concurrent languages,
+and style registry single owner. No test should imply that parseFenceMeta() returns
+focus/diff/error notation.
 
 Browser: reader theme matrix, annotation visibility, no token rerender on theme switch,
 long wrapped annotated code.
@@ -1576,20 +1715,24 @@ Add printable-light annotation selectors and computed-style proof. Preserve Shik
 
 ### Security risks
 
-Annotation metadata must not produce arbitrary classes, styles, or CSS. Malformed
-notation remains safe source/fallback and never throws.
+Fence metadata and source notation must not produce arbitrary classes, styles, or CSS.
+Malformed fence info/notation remains safe source/fallback and never throws.
 
 ### Concurrency/state risks
 
-The highlighter and style transformer stay singleton. Parsed metadata and any
-annotation state are per code block/render. No codeToHtml call may create a second
-style registry.
+The highlighter and style transformer stay singleton. FenceMeta is per block/render
+and derived only from info; source-notation transformation is per codeToHtml
+invocation. No codeToHtml call may create a second style registry or module-global
+notation state.
 
 ### Manual acceptance
 
-Render representative JS/TS/Java/Python fences with all approved forms, malformed
-ranges, focus:0, focus:-1, focus:abc, huge focus, highlight:N, mermaid{1}, and
-markmap{1}. Confirm only exact bare mermaid/markmap bypasses Shiki.
+Render representative JS/TS/Java/Python fences with fence info such as
+`ts {1,3-5}:line-numbers [config.ts]`, then separately use code-body notation such as
+`foo() // [!code focus:3]` and `bar() // [!code error]`. Include malformed ranges,
+focus:0, focus:-1, focus:abc, huge focus, deferred highlight:N, mermaid{1}, and
+markmap{1}. Confirm only exact bare mermaid/markmap bypasses Shiki and that no
+source-notation case is routed through parseFenceMeta().
 
 ### Validation commands
 
@@ -1610,7 +1753,8 @@ normal Shiki renderer, singleton, CSS owner, and MD-EXT-1/2 behavior.
 
 ### Exit criteria
 
-- One parser feeds discovery and rendering.
+- One fence-info parser feeds discovery and rendering.
+- The approved Shiki source-notation pipeline consumes code-body directives separately.
 - All approved annotations work with class-based output.
 - focus:N is bounded and uses official semantics.
 - highlight:N remains deferred.
@@ -1636,7 +1780,7 @@ default or weakening the sanitizer.
 
 ### Prerequisites
 
-- MD-EXT-3 unified metadata and annotation output are stable.
+- MD-EXT-3 fence-info metadata and source-notation output are stable.
 - MD-EXT-0/3 has approved the numeric bounds and HAST hook.
 
 ### In scope
@@ -1901,7 +2045,7 @@ text/resource boundary while preserving source context and final Shiki discovery
 ### Prerequisites
 
 - MD-EXT-1 final heading/TOC IDs are stable.
-- MD-EXT-3 unified fence parser is stable.
+- MD-EXT-3 fence-info parser and source-notation pipeline are stable.
 - MD-EXT-5 static code-group/final HTML contract is stable.
 - MD-EXT-0 has approved server route, extension allowlist, asset policy, bounds,
   resolver context, and cancellation design.
@@ -2200,7 +2344,7 @@ owning phase; do not advance by relabeling a failure.
 | MD-EXT-0 | Audit only | Evidence doc; read-only architecture files | Planning from false assumptions | None | Baseline only | All parameters/evidence recorded |
 | MD-EXT-1 | Anchors, TOC, links, lazy images | markdown, wikiLinks, heading module, styles | ID/link drift and renderer overwrite | nav/aria-label if approved | Same final ids/TOC | One final ID model and generated-link policy proven |
 | MD-EXT-2 | Built-in containers | markdown/container module/styles | Fence/nesting ambiguity | open only if approved | Printable containers/details | Safe nested parser and callout coexistence |
-| MD-EXT-3 | Shiki annotations/fence metadata | fenceMeta, shiki, markdown, CSS | Transformer order/style ownership | None | Computed annotation/token proof | Approved annotations class-based |
+| MD-EXT-3 | Shiki annotations/fence-info metadata | fenceMeta, shiki, markdown, CSS | Transformer order/style ownership | None | Computed annotation/token proof | Approved annotations class-based |
 | MD-EXT-4 | Line numbers | shiki/fallback/CSS | Copy/accessibility/inline CSS | None | Wrapped printable gutter | Bounded structural gutter |
 | MD-EXT-5 | Code groups | markdown, RenderedMarkdown, mount, CSS/PDF | v-html interaction and active-tab export | button/ARIA exact additions | All panels | Accessible static DOM and all-panel PDF |
 | MD-EXT-6 | Snippets/includes/resources | client/server resolver, paths boundary, render options | traversal/auth/source context/amplification | None preferred | No reread; settled HTML | Root-safe bounded expansion |
