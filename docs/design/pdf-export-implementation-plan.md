@@ -2003,7 +2003,7 @@ Read Mode ────────┤
 Audit total：
 
 ```text
-PASS: 24
+PASS: 25
 BLOCKED: 0
 FAIL: 0
 ```
@@ -2023,6 +2023,7 @@ H4 evidence now distinguishes live interactive geometry from the canonical stati
 | Integration / orchestration | `src/views/__tests__/VaultView.test.ts` and existing export seams | PASS — prior phase evidence |
 | Kitchen Sink | `npm run test:e2e -- e2e/pdf-export.spec.ts --reporter=line`；2/2 tests | PASS |
 | Layout | `e2e/pdf-export-layout.spec.ts` | PASS |
+| Paragraph pagination | `src/lib/__tests__/pdfExport.test.ts` + `e2e/pdf-export-pagination.spec.ts` + manual real-PDF verification | PASS |
 | Long documents | `e2e/pdf-export-long-document.spec.ts` | PASS |
 | Read Mode | `e2e/pdf-export-read-mode.spec.ts` | PASS |
 | H9 stress | `e2e/pdf-export-stress.spec.ts`；7/7 lanes | PASS |
