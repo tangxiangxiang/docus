@@ -11,6 +11,7 @@
 | Execution map | [Shiki Syntax Highlighting Migration Implementation Plan](syntax-highlighting-shiki-migration-implementation-plan.md) |
 | Implementation baseline | `2be6b2c57b5d7cb76b359220f361bacb55661099` |
 | Audit HEAD | `dd6281a085341e09d599f4ddae45cf0661206e81` |
+| H0 completion commit | `f9e02270d235fb1eb01ab5ee796322249a1506fe` |
 | Audit date | 2026-08-21 |
 | Local evidence runtime | Node `v24.15.0`、npm `11.12.1` |
 | Repository runtime baseline | `Dockerfile` uses `node:22-bookworm-slim` for dependency, build and runtime stages |
@@ -301,9 +302,45 @@ This is a baseline discrepancy to carry into H5 review: the PRD requires system/
 | Clone/isolation | `preparePdfArticleHtml` clones the article, removes interactive toolbars, staticizes widgets, and does not mutate global `data-theme` |
 | CSS ownership | Trusted `PDF_DOWNLOAD_STYLES` is injected into the temporary `.pdf-download-root` style element before `html2pdf`; it is outside sanitized user HTML |
 | Cleanup | Temporary host is removed in `finally` after export |
-| Existing Shiki/hljs dependency | No PDF-specific `.hljs` rule; PDF currently relies on generic `pre`/`code` rules |
+| Existing Shiki/hljs dependency | No PDF-specific `.hljs` or nested token-color rule; PDF currently relies on generic `pre`/`code` rules |
 
-The PDF path must later add an explicit Shiki light-token override inside the printable selectors without changing Mermaid/MarkMap staticization or the generic wrapping/pagination contract.
+### Surface colors versus syntax-token colors
+
+The current PDF baseline must distinguish the code-block surface from the colors of nested syntax-token spans. `PDF_DOWNLOAD_STYLES` explicitly sets the printable code-block surface and inherited text color through generic selectors equivalent to:
+
+```css
+.pdf-document .article pre {
+  background: #f5f6f8 !important;
+  color: #202124 !important;
+}
+```
+
+Normal highlight.js output contains nested token elements such as `<span class="hljs-keyword">const</span>`. The dark stylesheet has direct `.hljs-keyword`, `.hljs-string`, `.hljs-comment`, `.hljs-number` and related selectors. Therefore the PDF `pre { color: ... !important }` rule controls the inherited base color but does not by itself override direct colors on nested token spans.
+
+`PdfExportSurface.vue` passes `render-theme="light"` to `RenderedMarkdown`. `RenderedMarkdown` consumes that value through the Mermaid and MarkMap mount composables; it does not mutate `document.documentElement[data-theme]` and does not independently force highlight.js token spans onto the GitHub-light syntax palette. This is a current implementation fact, not a behavior change in H0.
+
+Current PDF code-block baseline:
+
+- code-block surface/background is explicitly printable light;
+- generic `pre`/`code` text and wrapping are explicitly controlled;
+- PDF CSS does not currently contain dedicated `.hljs` token-color overrides;
+- under a dark reader/root theme, nested highlight.js token spans may continue matching the dark highlight.js palette;
+- the current PDF E2E baseline proves successful export, layout, theme isolation, widget settlement and pagination, but does not prove that computed syntax-token colors are a GitHub-light palette.
+
+Conclusion: the current highlight.js token palette is **NOT EXPLICITLY FORCED TO LIGHT** and is **NOT CURRENTLY PROVEN BY H0 EVIDENCE**. This does not establish that current PDFs are definitely visually broken; it identifies an unasserted baseline property that H6 must close.
+
+### H6 handoff: computed token-color proof
+
+SHIKI-H6 must prove all of the following in the actual printable surface, not only in the reader:
+
+```text
+reader light  → PDF light syntax palette
+reader dark   → PDF light syntax palette
+forced dark   → PDF light syntax palette
+OS dark       → PDF light syntax palette
+```
+
+That evidence must inspect actual token computed colors for representative highlighted spans (for example keyword/string/comment tokens), using browser computed-style assertions or equivalent trustworthy evidence. It is insufficient to prove only that the PDF exists, that `pre`/`code` text exists, or that the background is light. H0 does not implement those assertions.
 
 ## 11. Test inventory
 
@@ -333,6 +370,8 @@ The PDF path must later add an explicit Shiki light-token override inside the pr
 | Separate AI Markdown | `src/lib/aiMarkdown.ts`, `src/lib/__tests__/aiMarkdown.test.ts` | Separate renderer uses `language-ts` contract | Not automatically part of Docus vault migration; review if scope changes |
 
 The only current direct assertion of Docus normal `class="hljs"` is the Markdown test listed above. The MarkMap security assertion is a separate ownership category.
+
+The current PDF E2E suites do not assert that a representative nested highlighted token such as `.hljs-keyword` or `.hljs-string` has the expected printable-light computed color inside the export/download surface. This is an H0 coverage gap carried to H6; the existing export, layout, pagination and stress passes must remain historical evidence for those other contracts.
 
 ## 12. Test/build evidence
 
@@ -503,7 +542,7 @@ src/lib/__tests__/pdfExport.test.ts
 PDF surface and PDF E2E suites
 ```
 
-The existing generic `pre`/`code` wrapping, static widget, clone isolation and pagination contracts must remain.
+The existing generic `pre`/`code` wrapping, static widget, clone isolation and pagination contracts must remain. H6 must additionally prove the actual computed colors of representative Shiki token spans for reader light, reader dark, forced dark and OS dark, with the PDF palette light in every case.
 
 ### H7 — Cleanup & highlight.js Removal
 
@@ -547,7 +586,7 @@ No Shiki-specific failure exists because Shiki is not installed and the renderer
 - [x] Normal, unknown, empty, Mermaid and MarkMap fence contracts documented.
 - [x] DOMPurify security boundary documented; `FORBID_ATTR: ['style']` confirmed and frozen.
 - [x] Current theme semantics and highlight.js CSS precedence documented.
-- [x] PDF code-block, clone, light-theme, wrapping and pagination behavior documented.
+- [x] PDF code-block surface, clone, light-theme, wrapping and pagination behavior documented, including the current syntax-token color proof gap.
 - [x] Migration-relevant unit, component, visual and PDF tests mapped.
 - [x] `npm run typecheck` result recorded as PASS.
 - [x] `npm run test:unit` result recorded honestly as FAIL with exact failure signature.
@@ -567,9 +606,10 @@ H0 is complete as an evidence phase. The two design findings in Section 16 are e
 ```text
 PRD: CLEAN
 Implementation Plan: H0 COMPLETE
-H0 Audit: RECORDED
+H0 Audit: CLARIFIED
 Implementation baseline: 2be6b2c57b5d7cb76b359220f361bacb55661099
-Current HEAD: dd6281a085341e09d599f4ddae45cf0661206e81
+Audit HEAD: dd6281a085341e09d599f4ddae45cf0661206e81
+H0 completion commit: f9e02270d235fb1eb01ab5ee796322249a1506fe
 Shiki implementation: NOT STARTED
 highlight.js renderer: STILL ACTIVE
 Next planned phase: SHIKI-H1 — Dependency & Runtime Foundation

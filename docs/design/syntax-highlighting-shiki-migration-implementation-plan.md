@@ -208,7 +208,7 @@ src/lib/pdfExport.ts 当前已拥有：
 - createPdfDownloadElement() 在 .pdf-download-root 内放置受信任的 docus-pdf-download-styles style element；
 - download 后 finally 移除 export host，不改变全局 data-theme。
 
-当前 PDF CSS 没有 Shiki-specific token selector。H6 必须补足这条合同，但不能改变 Mermaid/MarkMap staticization、A4 margins、long-code split 或 concurrency 规则。
+当前 PDF CSS 没有 Shiki-specific token selector。H0 handoff 进一步确认：通用 `pre`/`code` 浅色 surface 只证明代码块背景和继承文本色，不证明深色 root theme 下嵌套 highlight.js token span 已切换到浅色 syntax palette；`PdfExportSurface` 的 `render-theme='light'` 由 RenderedMarkdown 的 Mermaid/MarkMap mount 路径消费，也不会独立修改 `document.documentElement[data-theme]` 或强制 hljs token 色。H6 必须在 reader light、reader dark、forced dark 和 OS dark 四种状态下检查实际 printable surface 的 token computed colors，不能只验证 PDF 存在、背景为浅色或 `pre/code` 有文本。该补充不改变 Mermaid/MarkMap staticization、A4 margins、long-code split 或 concurrency 规则。
 
 ### 4.7 基线验证记录
 
