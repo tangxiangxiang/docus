@@ -311,6 +311,23 @@ describe('Shiki H2 language preparation', () => {
     await expect(getShikiRuntime()).resolves.toBe(runtime)
   })
 
+  it('propagates runtime initialization failure and retries language preparation', async () => {
+    const healthyLoadLanguage = vi.fn(async (_language: LanguageInput) => {})
+    const healthyRuntime = fakeLanguageHighlighter(healthyLoadLanguage)
+    const factory = vi.fn<typeof createHighlighter>()
+      .mockRejectedValueOnce(new Error('runtime initialization failed'))
+      .mockResolvedValueOnce(healthyRuntime)
+    __testing__.setHighlighterFactory(factory)
+
+    await expect(ensureShikiLanguage('js')).rejects.toThrow('runtime initialization failed')
+    expect(factory).toHaveBeenCalledTimes(1)
+    expect(healthyLoadLanguage).not.toHaveBeenCalled()
+
+    await expect(ensureShikiLanguage('js')).resolves.toMatchObject({ status: 'loaded' })
+    expect(factory).toHaveBeenCalledTimes(2)
+    expect(healthyLoadLanguage).toHaveBeenCalledTimes(1)
+  })
+
   it('keeps the real runtime lazy and prepares only the requested grammar', async () => {
     const runtime = await getShikiRuntime()
     expect(runtime.getLoadedLanguages()).toEqual([])

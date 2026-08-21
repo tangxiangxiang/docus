@@ -561,6 +561,28 @@ describe('markdown H2 fence preparation', () => {
     expect(html).not.toContain('class="shiki"')
   })
 
+  it('rejects Markdown render on runtime initialization failure and retries next render', async () => {
+    const healthyLoadLanguage = vi.fn(async (_language: LanguageInput) => {})
+    const healthyRuntime = {
+      dispose: vi.fn(),
+      getLoadedLanguages: vi.fn(() => []),
+      loadLanguage: healthyLoadLanguage,
+    } as unknown as Highlighter
+    const factory = vi.fn<typeof createHighlighter>()
+      .mockRejectedValueOnce(new Error('runtime initialization failed'))
+      .mockResolvedValueOnce(healthyRuntime)
+    shikiTesting.setHighlighterFactory(factory)
+
+    const markdown = '```js\nconst x = 1\n```'
+    await expect(render(markdown)).rejects.toThrow('runtime initialization failed')
+    expect(factory).toHaveBeenCalledTimes(1)
+    expect(healthyLoadLanguage).not.toHaveBeenCalled()
+
+    await expect(render(markdown)).resolves.toContain('class="hljs"')
+    expect(factory).toHaveBeenCalledTimes(2)
+    expect(healthyLoadLanguage).toHaveBeenCalledTimes(1)
+  })
+
   it('does not discover false positives or load an unknown fence', async () => {
     const { factory, loadLanguage } = installFakeShikiRuntime()
 

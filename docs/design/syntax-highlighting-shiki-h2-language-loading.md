@@ -18,7 +18,7 @@
 | Local evidence runtime | Node `v24.15.0`, npm `11.12.1` |
 | Docker runtime baseline | `node:22-bookworm-slim` in `Dockerfile` |
 | H2 scope | Fence token discovery, isolated MarkdownIt preflight, official registry resolution, lazy grammar preparation, canonical deduplication and retryable failure handling |
-| H2 completion commit | The commit containing this evidence document; the final handoff records its SHA |
+| H2 completion commit | `ced290e0f640507bae947aad5218fa7b4c4abe54` |
 
 H2 does not install or change dependencies. Shiki remains `4.4.3`,
 `@shikijs/transformers` remains `4.4.3`, and highlight.js remains the active
@@ -244,15 +244,23 @@ highlighter invariant.
 | exact `mermaid` | skipped as special | no Shiki grammar request |
 | `mmap`, `merm`, `mark-map`, `mer-maid` | unsupported | no special mount and no grammar request |
 | unknown identifier | unsupported | no runtime/load rejection |
-| known loader failure | `unavailable` | singleton remains usable; later call retries |
+| runtime/highlighter initialization failure (`getShikiRuntime()` / `createHighlighter()`) | current preparation/render rejects | rejected singleton promise and the language in-flight entry are cleared; later preparation may retry |
+| known grammar loader failure (`runtime.loadLanguage()`) | `unavailable` | singleton remains healthy; current highlight.js path remains usable; later call retries |
 | no eligible supported fence | no preparation | Shiki runtime is not initialized |
 
-Known language load errors are caught per language and returned as
-`unavailable`. H2 leaves the current highlight.js render path intact, so a
-grammar preparation failure cannot break the existing document renderer.
-Transient known failures are not inserted into the unsupported cache. A later
-call can retry the same canonical loader. Unknown identifiers are deterministic
-registry misses and never call `loadLanguage()`.
+Runtime/highlighter initialization errors are intentionally not caught by the
+per-language grammar recovery path. They remain visible through the current
+async preparation/render rejection surface, while the H1 singleton retry logic
+clears its rejected promise. The surrounding in-flight language entry is also
+removed on rejection, so the next request can initialize a fresh runtime.
+
+Known language load errors are caught only around `runtime.loadLanguage()` and
+returned as `unavailable`. H2 leaves the current highlight.js render path
+intact, so a grammar preparation failure cannot break the existing document
+renderer. Transient known failures are not inserted into the unsupported cache.
+A later call can retry the same canonical loader without recreating the
+highlighter. Unknown identifiers are deterministic registry misses and never
+initialize Shiki or call `loadLanguage()`.
 
 The test-only reset increments a generation token. A completion from a load
 started before reset cannot mark the next runtime's loaded set or in-flight
@@ -299,6 +307,12 @@ prepares only `javascript`, then observes Java remains unloaded. It does not
 assert an exact post-load array because Shiki legitimately reports aliases
 alongside the canonical grammar.
 
+The H2 follow-up regression additionally proves that a first
+`createHighlighter()` rejection rejects `ensureShikiLanguage()` rather than
+returning `unavailable`; the next request creates a second healthy runtime,
+loads the grammar once and succeeds. The existing grammar-failure regression
+continues to prove the separate per-language `unavailable` and retry contract.
+
 ## 13. Markdown regression evidence
 
 The H2 integration preserves the existing renderer boundary:
@@ -318,6 +332,13 @@ The focused command was:
 ```
 
 Result: `3 files passed; 63 tests passed`.
+
+The H2 failure-semantics follow-up reran the same focused command after adding
+the runtime-initialization rejection regressions:
+
+```text
+3 files passed; 65 tests passed
+```
 
 The suite covers known fences, metadata, unknown and false-positive input,
 empty fences, MarkMap, Mermaid, similar-but-not-special names, escaped
@@ -429,6 +450,7 @@ appeared. The result is recorded as `FAIL`, not converted to a pass.
 - [x] Different languages can load concurrently.
 - [x] Unknown IDs do not call `loadLanguage()` and do not initialize the runtime.
 - [x] Known load failures are retryable and do not poison the singleton.
+- [x] Runtime initialization failures reject preparation, clear retry state and can succeed on the next request.
 - [x] No user-controlled module import path exists.
 - [x] Documents without eligible supported fences do not initialize Shiki.
 - [x] Normal Markdown HTML remains the existing highlight.js contract.

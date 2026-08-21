@@ -8,8 +8,8 @@
 | 产品 PRD | [Shiki Syntax Highlighting Migration PRD](syntax-highlighting-shiki-migration-prd.md) |
 | Implementation baseline | 2be6b2c57b5d7cb76b359220f361bacb55661099 |
 | 计划日期 | 2026-08-21 |
-| 当前阶段 | SHIKI-H2 — COMPLETE；Next: SHIKI-H3 — Markdown Renderer Cutover |
-| 当前实现状态 | H0 审计、H1 runtime foundation 和 H2 language preparation 已完成；Shiki singleton 已连接到 Markdown preflight，官方 bundled registry/alias 已按 fence 动态准备并去重；highlight.js 仍是当前 renderer；无 Shiki token HTML、DOM/CSS integration；renderer 未改变 |
+| 当前阶段 | SHIKI-H2 — COMPLETE；H2 follow-up — runtime failure semantics corrected；Next: SHIKI-H3 — Markdown Renderer Cutover |
+| 当前实现状态 | H0 审计、H1 runtime foundation 和 H2 language preparation 已完成；Shiki singleton 已连接到 Markdown preflight，官方 bundled registry/alias 已按 fence 动态准备并去重；runtime 初始化失败会 reject 且可重试，单个 grammar load 失败仍返回 unavailable；highlight.js 仍是当前 renderer；无 Shiki token HTML、DOM/CSS integration；renderer 未改变 |
 | H0 审计证据 | [Shiki H0 Baseline & Contract Audit](syntax-highlighting-shiki-h0-audit.md) |
 | H1 实施证据 | [Shiki H1 Dependency & Runtime Foundation](syntax-highlighting-shiki-h1-runtime-foundation.md) |
 | 本任务范围 | H0 baseline/contract audit、H1 runtime foundation 与 H2 fence discovery/language loading 已完成；H3-H8 尚未实施；正常 Markdown renderer、DOMPurify、主题、Mermaid、MarkMap 和 PDF 行为保持原状 |
@@ -28,6 +28,8 @@ STOP
 H0 审计证据已记录在 [Shiki H0 Baseline & Contract Audit](syntax-highlighting-shiki-h0-audit.md)。审计发现：如果在同一个带 `wikiResolver` 的 env 上先调用 `md.parse()`、再调用 `md.render()`，当前 wiki-link 路径会触发 resolver 双调用。H2 已通过“isolated discovery env + fresh real render env”关闭该 blocker；后续阶段不得退回 same-env parse/render。
 
 H1 已完成并记录在 [Shiki H1 Dependency & Runtime Foundation](syntax-highlighting-shiki-h1-runtime-foundation.md)：Shiki 4.4.3 和 matching transformer 4.4.3 已加入，runtime singleton 已独立初始化双主题，`transformerStyleToClass` CSS snapshot API 已验证。H2 已在 [Shiki H2 Fence Discovery & Dynamic Language Loading](syntax-highlighting-shiki-h2-language-loading.md) 中记录：MarkdownIt 只发现 `fence` tokens，使用官方 registry/aliases 进行 canonical language preparation，并保持正常 renderer 为 highlight.js；没有新增 Shiki token HTML、DOM stylesheet、主题、PDF 或 Markdown renderer cutover。
+
+H2 follow-up 已修正 failure boundary：`getShikiRuntime()` / `createHighlighter()` 的初始化失败沿 async render surface reject；只有单个 `runtime.loadLanguage()` grammar failure 转换为 `unavailable`。H2 仍为 COMPLETE，H3 尚未开始。
 
 ## 2. 计划目标与约束
 
@@ -99,7 +101,7 @@ FORBID_ATTR: ['style']
 
 ### 4.1 当前真实调用流
 
-当前 repository 的主要路径如下：
+当前 repository 在 H2 完成后的主要路径如下：
 
 ~~~
 raw Markdown
@@ -112,17 +114,24 @@ render(body, options): Promise<string>
     ↓
 getMd()
     ↓
-buildHighlight()
+md.parse(markdown, isolated discovery env)
     ↓
-dynamic import highlight.js
-dynamic import highlight.js/styles/github.css
-dynamic import src/hljs-dark.css
+collect actual fence tokens / first info token
     ↓
-MarkdownIt.render()
+prepareShikiLanguages()
     ↓
-MarkdownIt fence highlight callback
+Shiki official bundled registry / alias resolution
+lazy singleton runtime + grammar preparation when needed
     ↓
-highlight.js HTML 或 escaped <pre class="hljs"><code>
+fresh real WikiLinkEnv
+    ↓
+md.render(markdown, render env)
+    ↓
+buildHighlight() / MarkdownIt fence highlight callback
+    ↓
+MarkMap / Mermaid placeholder
+OR
+highlight.js HTML / escaped <pre class="hljs"><code>
     ↓
 sanitizeMarkdownHtml()
     ↓

@@ -157,33 +157,37 @@ async function ensureResolvedShikiLanguage(
 
   const generation = languageStateGeneration
   const loadPromise = (async (): Promise<PreparedShikiLanguage> => {
+    // Runtime initialization is a system-level failure. Let getShikiRuntime()
+    // reject so its existing singleton retry handler can clear the rejected
+    // promise and the caller can observe the async render failure.
+    const runtime = await getShikiRuntime()
+    if (generation !== languageStateGeneration) {
+      return { resolution, status: 'unavailable' }
+    }
+
+    // Shiki is the source of truth for languages loaded outside this
+    // helper. The set is only a canonicalized fast path for later calls.
+    syncLoadedLanguageState(runtime)
+    if (loadedLanguageSet.has(canonicalId)) {
+      return { resolution, status: 'already-loaded' }
+    }
+
     try {
-      const runtime = await getShikiRuntime()
-      if (generation !== languageStateGeneration) {
-        return { resolution, status: 'unavailable' }
-      }
-
-      // Shiki is the source of truth for languages loaded outside this
-      // helper. The set is only a canonicalized fast path for later calls.
-      syncLoadedLanguageState(runtime)
-      if (loadedLanguageSet.has(canonicalId)) {
-        return { resolution, status: 'already-loaded' }
-      }
-
       await runtime.loadLanguage(loader)
-      if (generation !== languageStateGeneration) {
-        return { resolution, status: 'unavailable' }
-      }
-
-      syncLoadedLanguageState(runtime)
-      loadedLanguageSet.add(canonicalId)
-      return { resolution, status: 'loaded' }
     } catch (error) {
       // A known grammar can fail transiently. Do not poison the singleton or
       // put the identifier in the deterministic unsupported set; the next
       // render may retry this loader.
       return { resolution, status: 'unavailable', error }
     }
+
+    if (generation !== languageStateGeneration) {
+      return { resolution, status: 'unavailable' }
+    }
+
+    syncLoadedLanguageState(runtime)
+    loadedLanguageSet.add(canonicalId)
+    return { resolution, status: 'loaded' }
   })()
 
   inFlightLanguageLoads.set(canonicalId, loadPromise)
@@ -206,7 +210,8 @@ async function ensureResolvedShikiLanguage(
  * Prepare the unique supported languages requested by one or more Markdown
  * fences. Unknown and Docus-special identifiers are intentionally skipped;
  * known loader failures are reported as unavailable but do not reject the
- * caller or poison the shared highlighter.
+ * caller or poison the shared highlighter. Runtime initialization failures
+ * intentionally reject the caller and remain retryable through the singleton.
  */
 export async function prepareShikiLanguages(
   identifiers: readonly string[],
