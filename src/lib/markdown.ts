@@ -10,7 +10,11 @@ import { wikiLinkPlugin, type Resolver as WikiResolver, type WikiLinkEnv } from 
 import { calloutPlugin } from './callouts'
 import { mathPlugin } from './math'
 import { emojiDefinitions } from './emoji'
-import { extractFenceLanguageIdentifier, prepareShikiLanguages } from './shiki'
+import {
+  extractFenceLanguageIdentifier,
+  highlightShikiFence,
+  prepareShikiLanguages,
+} from './shiki'
 
 function escapeHtml(s: string): string {
   return s
@@ -19,10 +23,6 @@ function escapeHtml(s: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;')
-}
-
-interface HighlightFn {
-  (str: string, lang: string): string
 }
 
 /* Markdown documents intentionally support semantic HTML, but the rendered
@@ -157,50 +157,27 @@ function encodeMountAttr(s: string): string {
   return encodeURIComponent(s)
 }
 
-async function buildHighlight(): Promise<HighlightFn> {
-  const [{ default: hljs }] = await Promise.all([
-    import('highlight.js'),
-    // github.css is the unconditional base — its plain `.hljs-*`
-    // selectors are overridden by the scoped rules in
-    // ./hljs-dark.css whenever the page is in dark mode. See that
-    // file for the prefers-color-scheme + [data-theme='dark']
-    // dual-scoping that makes a user-forced light win over a dark
-    // OS preference.
-    import('highlight.js/styles/github.css'),
-    import('../hljs-dark.css'),
-  ])
-  return (str: string, lang: string) => {
-    /* ```markmap → placeholder div. The real widget is mounted by
-       useMarkmapMount (in components that v-html the rendered
-       output: ReadingPane). We emit a div
-       with the source in data-content rather than rendering the
-       tree server-side because markmap's layout depends on the
-       viewport, and we want the same interactive controls
-       (fullscreen, reset) the reference VitePress build had. */
-    if (lang === 'markmap') {
-      return `<div class="markmap-mount" data-content="${encodeMountAttr(str)}"></div>`
-    }
-    /* ```mermaid → placeholder div. Same post-mount pattern as
-       markmap: a div with the source on data-content, and
-       useMermaidMount replaces it with a `<Mermaid :code="...">`
-       app instance. We don't render the diagram inline because
-       mermaid's API is async (it lazy-loads its layout engines
-       per diagram type) and the post-mount flow already handles
-       lifecycle / theme switches cleanly. */
-    if (lang === 'mermaid') {
-      return `<div class="mermaid-mount" data-content="${encodeMountAttr(str)}"></div>`
-    }
-    if (lang && hljs.getLanguage(lang)) {
-      try {
-        return `<pre class="hljs"><code>${
-          hljs.highlight(str, { language: lang, ignoreIllegals: true }).value
-        }</code></pre>`
-      } catch {
-        /* fall through */
-      }
-    }
-    return `<pre class="hljs"><code>${escapeHtml(str)}</code></pre>`
+function renderPlainCodeFallback(source: string): string {
+  return `<pre class="shiki docus-shiki-plain"><code>${escapeHtml(source)}</code></pre>`
+}
+
+function renderFence(str: string, info: string): string {
+  const language = extractFenceLanguageIdentifier(info)
+
+  /* ```markmap → placeholder div. The real widget is mounted by
+     useMarkmapMount (in components that v-html the rendered output). Keep
+     this exact, case-sensitive branch before any Shiki lookup. */
+  if (language === 'markmap') {
+    return `<div class="markmap-mount" data-content="${encodeMountAttr(str)}"></div>`
   }
+
+  /* ```mermaid → placeholder div. Mermaid's async mount lifecycle remains
+     outside normal syntax highlighting and receives the encoded source. */
+  if (language === 'mermaid') {
+    return `<div class="mermaid-mount" data-content="${encodeMountAttr(str)}"></div>`
+  }
+
+  return highlightShikiFence(str, info) ?? renderPlainCodeFallback(str)
 }
 
 let mdPromise: Promise<MarkdownIt> | null = null
@@ -208,7 +185,6 @@ let mdPromise: Promise<MarkdownIt> | null = null
 async function getMd(): Promise<MarkdownIt> {
   if (mdPromise) return mdPromise
   mdPromise = (async () => {
-    const highlight = await buildHighlight()
     const md = new MarkdownIt({
       // HTML is enabled for Markdown compatibility, then sanitized by
       // DOMPurify in render() before the result reaches v-html.
@@ -216,7 +192,7 @@ async function getMd(): Promise<MarkdownIt> {
       linkify: true,
       typographer: true,
       highlight(str, lang) {
-        return highlight(str, lang)
+        return renderFence(str, lang)
       },
     })
       // 任务列表: - [ ] / - [x], 启用 disabled 属性让 checkbox 在 preview 中可点(只是视觉,不会真保存)

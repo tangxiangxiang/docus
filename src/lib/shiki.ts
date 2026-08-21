@@ -246,10 +246,41 @@ export async function ensureShikiLanguage(identifier: string): Promise<PreparedS
 }
 
 /**
+ * Render one already-prepared normal Markdown fence synchronously.
+ *
+ * MarkdownIt's highlight callback cannot await a Promise. H2 therefore owns
+ * all runtime and grammar preparation before md.render(), while H3 uses only
+ * this ready-runtime path inside the callback. A missing runtime or grammar
+ * is a per-fence fallback condition; it must never initialize Shiki here.
+ */
+export function highlightShikiFence(source: string, identifier: string): string | null {
+  const resolution = resolveShikiLanguage(identifier)
+  if (resolution.kind !== 'language' || !activeHighlighter || !loadedLanguageSet.has(resolution.canonicalId)) {
+    return null
+  }
+
+  try {
+    return activeHighlighter.codeToHtml(source, {
+      lang: resolution.canonicalId,
+      themes: {
+        light: 'github-light',
+        dark: 'github-dark',
+      },
+      defaultColor: false,
+    })
+  } catch {
+    // A single fence rendering failure must not poison the shared runtime or
+    // reject the whole Markdown document.
+    return null
+  }
+}
+
+/**
  * Return the one long-lived Shiki runtime promise.
  *
  * H1 established the themes and H2 now prepares only the canonical languages
- * requested by the current document. Markdown rendering still belongs to H3.
+ * requested by the current document. H3 consumes the ready runtime
+ * synchronously from MarkdownIt's highlight callback.
  */
 export function getShikiRuntime(): Promise<ShikiHighlighter> {
   if (highlighterPromise) {

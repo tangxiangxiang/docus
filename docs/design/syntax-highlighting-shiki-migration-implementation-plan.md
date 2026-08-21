@@ -4,15 +4,17 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 文档状态 | PLANNED / NOT IMPLEMENTED |
+| 文档状态 | H3 COMPLETE / H4-H8 NOT IMPLEMENTED |
 | 产品 PRD | [Shiki Syntax Highlighting Migration PRD](syntax-highlighting-shiki-migration-prd.md) |
 | Implementation baseline | 2be6b2c57b5d7cb76b359220f361bacb55661099 |
 | 计划日期 | 2026-08-21 |
-| 当前阶段 | SHIKI-H2 — COMPLETE；H2 follow-up — runtime failure semantics corrected；Next: SHIKI-H3 — Markdown Renderer Cutover |
-| 当前实现状态 | H0 审计、H1 runtime foundation 和 H2 language preparation 已完成；Shiki singleton 已连接到 Markdown preflight，官方 bundled registry/alias 已按 fence 动态准备并去重；runtime 初始化失败会 reject 且可重试，单个 grammar load 失败仍返回 unavailable；highlight.js 仍是当前 renderer；无 Shiki token HTML、DOM/CSS integration；renderer 未改变 |
+| 当前阶段 | SHIKI-H3 — COMPLETE；Next: SHIKI-H4 — Style-to-Class & Security Closure |
+| 当前实现状态 | H0 审计、H1 runtime foundation、H2 language preparation 和 H3 Markdown renderer cutover 已完成；Shiki singleton 已连接到 Markdown preflight，官方 bundled registry/alias 已按 fence 动态准备并去重；正常已知 fence 现在输出结构化 Shiki HTML，unknown/empty/unavailable/error 使用 escaped plain fallback；highlight.js 依赖和旧 CSS 仍保留用于 H7 cleanup/rollback；production transformer、generated CSS owner、主题与 PDF integration 尚未开始 |
 | H0 审计证据 | [Shiki H0 Baseline & Contract Audit](syntax-highlighting-shiki-h0-audit.md) |
 | H1 实施证据 | [Shiki H1 Dependency & Runtime Foundation](syntax-highlighting-shiki-h1-runtime-foundation.md) |
-| 本任务范围 | H0 baseline/contract audit、H1 runtime foundation 与 H2 fence discovery/language loading 已完成；H3-H8 尚未实施；正常 Markdown renderer、DOMPurify、主题、Mermaid、MarkMap 和 PDF 行为保持原状 |
+| H2 实施证据 | [Shiki H2 Fence Discovery & Dynamic Language Loading](syntax-highlighting-shiki-h2-language-loading.md) |
+| H3 实施证据 | [Shiki H3 Markdown Renderer Cutover](syntax-highlighting-shiki-h3-renderer-cutover.md) |
+| 本任务范围 | H0 baseline/contract audit、H1 runtime foundation、H2 fence discovery/language loading 与 H3 normal Markdown renderer cutover 已完成；H4-H8 尚未实施；DOMPurify、主题、Mermaid、MarkMap 和 PDF 行为保持原状 |
 | 目标 | 用可回滚、可验证的阶段性步骤完成 Shiki 4.x 迁移，同时保持 Markdown、DOMPurify、主题、Mermaid、MarkMap 和 PDF 合同 |
 
 本计划描述接下来如何实施产品 PRD，不代表任何 Shiki 能力已经存在。未来实现必须以产品 PRD 为最高约束；如果本计划与 PRD 发生冲突：
@@ -29,7 +31,7 @@ H0 审计证据已记录在 [Shiki H0 Baseline & Contract Audit](syntax-highligh
 
 H1 已完成并记录在 [Shiki H1 Dependency & Runtime Foundation](syntax-highlighting-shiki-h1-runtime-foundation.md)：Shiki 4.4.3 和 matching transformer 4.4.3 已加入，runtime singleton 已独立初始化双主题，`transformerStyleToClass` CSS snapshot API 已验证。H2 已在 [Shiki H2 Fence Discovery & Dynamic Language Loading](syntax-highlighting-shiki-h2-language-loading.md) 中记录：MarkdownIt 只发现 `fence` tokens，使用官方 registry/aliases 进行 canonical language preparation，并保持正常 renderer 为 highlight.js；没有新增 Shiki token HTML、DOM stylesheet、主题、PDF 或 Markdown renderer cutover。
 
-H2 follow-up 已修正 failure boundary：`getShikiRuntime()` / `createHighlighter()` 的初始化失败沿 async render surface reject；只有单个 `runtime.loadLanguage()` grammar failure 转换为 `unavailable`。H2 仍为 COMPLETE，H3 尚未开始。
+H2 follow-up 已修正 failure boundary：`getShikiRuntime()` / `createHighlighter()` 的初始化失败沿 async render surface reject；只有单个 `runtime.loadLanguage()` grammar failure 转换为 `unavailable`。H3 已在 [Shiki H3 Markdown Renderer Cutover](syntax-highlighting-shiki-h3-renderer-cutover.md) 中完成：正常 fence callback 只读取已准备的 Shiki runtime 并同步调用 `codeToHtml()`；normal known output 不再是 `hljs`，unknown/empty/unavailable/codeToHtml failure 统一使用 escaped `docus-shiki-plain` fallback。H4 尚未开始，生产 transformer/CSS owner 尚未启用。
 
 ## 2. 计划目标与约束
 
@@ -101,7 +103,7 @@ FORBID_ATTR: ['style']
 
 ### 4.1 当前真实调用流
 
-当前 repository 在 H2 完成后的主要路径如下：
+当前 repository 在 H3 完成后的主要路径如下：
 
 ~~~
 raw Markdown
@@ -127,11 +129,13 @@ fresh real WikiLinkEnv
     ↓
 md.render(markdown, render env)
     ↓
-buildHighlight() / MarkdownIt fence highlight callback
+MarkdownIt synchronous fence callback
     ↓
 MarkMap / Mermaid placeholder
 OR
-highlight.js HTML / escaped <pre class="hljs"><code>
+Shiki codeToHtml() structural HTML
+OR
+escaped <pre class="shiki docus-shiki-plain"><code>
     ↓
 sanitizeMarkdownHtml()
     ↓
@@ -144,7 +148,7 @@ RenderedMarkdown v-html
 ReadingPane / preview / PdfExportSurface
 ~~~
 
-当前 render API 已经是异步的，但 MarkdownIt 的 highlight callback 必须同步返回 HTML。这正是后续实现应在 render() 外层预加载语言、在 callback 内同步调用 Shiki 的边界。
+当前 render API 仍然是异步的，但 MarkdownIt 的 highlight callback 必须同步返回 HTML。H3 已在 render() 外层完成语言预加载，并在 callback 内同步调用 ready Shiki runtime；callback 不会 await、load grammar 或初始化 runtime。
 
 ### 4.2 文件与职责盘点
 
@@ -153,7 +157,7 @@ ReadingPane / preview / PdfExportSurface
 | package.json | 声明 highlight.js ^11.10.0、markdown-it ^14.1.0 及其他 runtime dependencies | H1 添加 Shiki；H7 才删除 highlight.js |
 | package-lock.json | 当前解析到 highlight.js 11.11.1、markdown-it 14.2.0 | 只能由 npm 正常更新，不能手改依赖图 |
 | src/lib/markdown.ts | DOMPurify 配置、sanitizer hook、MarkdownIt singleton、所有 Markdown plugins、fence callback、render API | 建议保留 parser/sanitizer；将 Shiki lifecycle 抽到专用 module |
-| src/lib/__tests__/markdown.test.ts | MarkMap/Mermaid fence、当前 hljs contract、Markdown extensions、HTML sanitizer、resolver concurrency | 正常 code fence 断言要迁移到 Shiki contract；其余回归不得丢 |
+| src/lib/__tests__/markdown.test.ts | MarkMap/Mermaid fence、当前 Shiki contract、Markdown extensions、HTML sanitizer、resolver concurrency | H3 已迁移 normal code fence 断言；其余回归不得丢 |
 | src/lib/__tests__/markmapSecurity.test.ts | MarkMap transformer 自身的 HTML/security/feature 断言 | 其中 features.hljs 是 MarkMap 内部契约，不能盲目当成 Docus renderer 引用删除 |
 | src/hljs-dark.css | dark OS / forced dark 下的 GitHub highlight.js token CSS | H5 接好 Shiki CSS 后，H7 才删除 |
 | src/style.css | 全局、vault article、pre/code layout；OS media query；data-theme selector | 继续拥有通用布局；不要在这里复制每个 Shiki token |
@@ -186,14 +190,20 @@ src/lib/markdown.ts 当前的 DOMPurify 配置已经明确：
 
 ### 4.4 当前 code fence HTML contract
 
-buildHighlight() 目前按传入 lang 做以下分支：
+H3 的 `renderFence()` 按以下顺序处理传入的 fence info：
 
-1. lang === markmap：输出 div.markmap-mount，并把 source 放入 encodeURIComponent 后的 data-content。
-2. lang === mermaid：输出 div.mermaid-mount，并把 source 放入 encodeURIComponent 后的 data-content。
-3. highlight.js 能识别的语言：输出 pre.hljs > code，并插入 highlight.js token HTML。
-4. 其他情况：仍输出 pre.hljs > code，但只放 escaped source。
+1. exact `markmap`：输出 `div.markmap-mount`，并把 source 放入
+   `encodeURIComponent()` 后的 `data-content`。
+2. exact `mermaid`：输出 `div.mermaid-mount`，并把 source 放入
+   `encodeURIComponent()` 后的 `data-content`。
+3. 已由 H2 准备的 canonical Shiki language：同步输出 Shiki 的
+   `pre.shiki > code > span.line` structural HTML。
+4. empty、unknown、unavailable 或单 fence `codeToHtml()` failure：输出
+   `pre.shiki.docus-shiki-plain > code` 的 escaped source。
 
-当前普通 fence 的 outer class 是 hljs。src/hljs-dark.css 只负责 dark token/background；highlight.js/styles/github.css 是 light base。src/style.css 本身没有另一个独立的 .hljs application contract。
+当前 normal fence 不再由 highlight.js renderer 产生。`highlight.js` 依赖、
+`src/hljs-dark.css` 和 MarkMap-owned `features.hljs` 仍分别保留到 H7 的
+cleanup/ownership review；它们不是 H3 normal fence output contract。
 
 ### 4.5 当前主题行为
 
@@ -330,7 +340,7 @@ discoverFenceLanguageIdentifiers(md, markdown)  // isolated env in markdown.ts
 resolveShikiLanguage(identifier)
 prepareShikiLanguages(languageIds)
 ensureShikiLanguage(identifier)
-highlightFence(runtime, source, normalizedLanguage)
+highlightShikiFence(source, info)                 // H3 synchronous callback API
 syncGeneratedShikiStylesheet(runtime)
 getGeneratedShikiCss(runtime)       // PDF trusted snapshot / tests
 ~~~
@@ -453,7 +463,7 @@ highlighterPromise.catch(() => { highlighterPromise = null })
 return highlighterPromise
 ~~~
 
-初始化失败只允许当前准备调用失败；必须清空 rejected promise，使下一次准备可以重试。H2 的 Markdown render 对已知 grammar preparation failure 保持旧 highlight.js 路径可用；一个未知语言或单个 grammar load 失败不得把 highlighterPromise 置为 rejected。
+初始化失败只允许当前准备调用失败；必须清空 rejected promise，使下一次准备可以重试。H2 的历史 Markdown render 对已知 grammar preparation failure 保持旧 highlight.js 路径可用；H3 之后同一状态映射为当前 fence 的 escaped plain fallback。一个未知语言或单个 grammar load 失败不得把 highlighterPromise 置为 rejected。
 
 ### 8.2 Language load dedup
 
@@ -464,7 +474,7 @@ ensureLanguage(language) 的行为：
 3. 否则创建一次 loadLanguage promise，放入 map。
 4. 成功后加入 loadedLanguageSet。
 5. 无论成功失败都在 finally 删除 inFlightLanguageLoads entry。
-6. H2 只报告该 language unavailable；当前 Markdown renderer 仍由 highlight.js 决定该 fence 的输出。H3 cutover 后才能把这个状态映射为 Shiki/plain fallback。
+6. H2 只报告该 language unavailable；H3 当前 renderer 将该状态映射为该 fence 的 Shiki-compatible escaped plain fallback，不再回到 highlight.js。
 
 因此以下并发 sequence：
 
@@ -881,14 +891,16 @@ Shiki 迁移不能绕过这条流程，也不能在导出时重新解析 Markdow
 
 ### SHIKI-H3 — Markdown Renderer Cutover
 
+状态：`COMPLETE`；证据：[Shiki H3 Markdown Renderer Cutover](syntax-highlighting-shiki-h3-renderer-cutover.md)。
+
 动作：
 
 - render() 先 discovery/preload，再同步 md.render；
-- normal fence 从 highlight.js callback 切换到 Shiki；
+- normal fence 已从 highlight.js callback 切换到 Shiki；
 - markmap/mermaid 检查保持在 Shiki 前；
 - 保留 render(): Promise<string>；
 - normal HTML 使用 pre.shiki > code；
-- unknown/error 使用 escaped plain-code fallback；
+- unknown/empty/unavailable/codeToHtml error 使用 escaped plain-code fallback；
 - 暂不删除 highlight.js package、src/hljs-dark.css 或旧文档引用，以保留独立 rollback。
 
 退出条件：
@@ -896,8 +908,9 @@ Shiki 迁移不能绕过这条流程，也不能在导出时重新解析 Markdow
 - JS/TS/Java/SQL/Python normal fence 实际走 Shiki；
 - hljs class 不再是 Docus normal fence contract；
 - MarkMap/Mermaid placeholder 完全不经过 Shiki；
-- 一个 unknown fence 不会破坏整篇文章；
-- Markdown existing extensions、resolver isolation、heading extraction 仍通过。
+- unknown/empty/unavailable/codeToHtml failure 不会破坏整篇文章；
+- Markdown existing extensions、resolver isolation、heading extraction 仍通过；
+- transformerStyleToClass production integration、generated CSS owner、theme 和 PDF 仍未开始。
 
 ### SHIKI-H4 — Style-to-Class & Security Closure
 
@@ -1049,11 +1062,11 @@ Shiki 迁移不能绕过这条流程，也不能在导出时重新解析 Markdow
 | --- | --- |
 | Goal | 将 normal code fence renderer 切换为 Shiki |
 | Files likely changed | src/lib/markdown.ts、src/lib/shiki.ts、src/lib/__tests__/markdown.test.ts、new Shiki regression tests |
-| Behavior changed | normal pre.hljs 变为 pre.shiki；special fences 和 render API 不变 |
+| Behavior changed | normal `pre.hljs` 变为 `pre.shiki`；unknown/empty/unavailable/error 变为 escaped `docus-shiki-plain`；special fences 和 render API 不变 |
 | Main risk | Shiki callback 必须同步、fallback escaping、MarkdownIt env 复用、DOMPurify 暂时吞掉 styles |
-| Tests required | JS/TS/Java/SQL/Python、unknown、HTML escaping、MarkMap、Mermaid、existing Markdown suite |
-| Manual validation | 代表语言和 malformed/unknown fence 的阅读面板行为 |
-| Exit criteria | normal fence 真实使用 Shiki，且没有破坏非高亮 Markdown |
+| Tests required | JS/TS/Java/SQL/Python、aliases/meta、unknown/empty、grammar/codeToHtml failure、runtime retry、MarkMap、Mermaid、sanitizer、existing Markdown suite |
+| Manual validation | 代表语言、malformed/unknown fence、light/dark Markdown visual、PDF export/layout/pagination regression |
+| Exit criteria | normal fence 真实使用 Shiki；per-fence failures安全 fallback；旧 hljs normal output 消失；非高亮 Markdown、special fences、resolver 和 PDF regressions 通过 |
 | Can rollback independently? | Yes；恢复 markdown.ts renderer path，旧依赖仍在 |
 
 ### SHIKI-H4 table

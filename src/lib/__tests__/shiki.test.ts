@@ -8,6 +8,7 @@ import {
   getGeneratedShikiCss,
   getShikiRuntime,
   getShikiStyleTransformer,
+  highlightShikiFence,
   prepareShikiLanguages,
   resolveShikiLanguage,
 } from '../shiki'
@@ -21,11 +22,14 @@ type LanguageInput = Parameters<Highlighter['loadLanguage']>[0]
 function fakeLanguageHighlighter(
   loadLanguage: (language: LanguageInput) => Promise<void>,
   loadedLanguages: string[] = [],
+  codeToHtml: (source: string) => string = (source) =>
+    `<pre class="shiki"><code><span class="line">${source}</span></code></pre>`,
 ): Highlighter {
   return {
     dispose: vi.fn(),
     getLoadedLanguages: vi.fn(() => [...loadedLanguages]),
     loadLanguage: vi.fn(loadLanguage),
+    codeToHtml: vi.fn(codeToHtml),
   } as unknown as Highlighter
 }
 
@@ -361,5 +365,36 @@ describe('Shiki H2 language preparation', () => {
     useFakeLanguageRuntime(secondRuntime)
     await expect(ensureShikiLanguage('js')).resolves.toMatchObject({ status: 'loaded' })
     expect(secondLoad).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('Shiki H3 synchronous fence rendering', () => {
+  it('returns synchronous HTML from the ready runtime without initializing in the callback', async () => {
+    const codeToHtml = vi.fn((source: string) =>
+      `<pre class="shiki"><code><span class="line">${source}</span></code></pre>`,
+    )
+    const runtime = fakeLanguageHighlighter(async () => {}, [], codeToHtml)
+    const factory = useFakeLanguageRuntime(runtime)
+
+    await expect(ensureShikiLanguage('js')).resolves.toMatchObject({ status: 'loaded' })
+
+    const result = highlightShikiFence('const answer = 42', 'js')
+    expect(result).not.toBeInstanceOf(Promise)
+    expect(result).toContain('class="shiki"')
+    expect(codeToHtml).toHaveBeenCalledTimes(1)
+    expect(factory).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns fallback-required for an unprepared language without loading it', async () => {
+    const codeToHtml = vi.fn((source: string) => source)
+    const loadLanguage = vi.fn(async (_language: LanguageInput) => {})
+    const runtime = fakeLanguageHighlighter(loadLanguage, [], codeToHtml)
+    useFakeLanguageRuntime(runtime)
+
+    await getShikiRuntime()
+
+    expect(highlightShikiFence('const answer = 42', 'js')).toBeNull()
+    expect(loadLanguage).not.toHaveBeenCalled()
+    expect(codeToHtml).not.toHaveBeenCalled()
   })
 })

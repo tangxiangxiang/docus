@@ -13,7 +13,7 @@
 //
 // The public-API smoke test at the bottom mounts the composable and
 // just checks that `html` and `headings` end up populated — full
-// markdown pipeline behavior (highlight.js, task lists, etc.) is
+// markdown pipeline behavior (Shiki language preparation, task lists, etc.) is
 // covered by the lib/markdown tests.
 
 import { describe, it, expect } from 'vitest'
@@ -83,8 +83,8 @@ describe('useMarkdownRender (public API smoke)', () => {
     mount(Comp)
     expect(captured).not.toBeNull()
     expect(captured!.ready.value).toBe(false)
-    /* The watchEffect awaits `render()`, which dynamically imports
-       highlight.js. On a cold cache (fresh CI runner) that import can
+    /* The watchEffect awaits `render()`, which may prepare a Shiki
+       grammar on a cold cache (fresh CI runner). That preparation can
        span many macrotask cycles, so a fixed tick count is flaky —
        wait for the actual condition (headings populated) instead,
        failing only if the render genuinely never completes. */

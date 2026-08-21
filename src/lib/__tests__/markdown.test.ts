@@ -5,7 +5,7 @@
 // for useMarkmapMount to upgrade into a live
 // widget. We exercise the real `render()` exported by the module
 // so the test goes through the same path the app uses (including
-// the async hljs init).
+// async Shiki language preparation).
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
 import { createHighlighter, type Highlighter } from 'shiki'
 import { render } from '../markdown'
@@ -16,14 +16,18 @@ type LanguageInput = Parameters<Highlighter['loadLanguage']>[0]
 
 function installFakeShikiRuntime() {
   const loadLanguage = vi.fn(async (_language: LanguageInput) => {})
+  const codeToHtml = vi.fn((source: string) =>
+    `<pre class="shiki"><code><span class="line">${source}</span></code></pre>`,
+  )
   const runtime = {
     dispose: vi.fn(),
     getLoadedLanguages: vi.fn(() => []),
     loadLanguage,
+    codeToHtml,
   } as unknown as Highlighter
   const factory = vi.fn<typeof createHighlighter>(() => Promise.resolve(runtime))
   shikiTesting.setHighlighterFactory(factory)
-  return { factory, loadLanguage }
+  return { factory, loadLanguage, codeToHtml }
 }
 
 describe('markdown render()', () => {
@@ -60,13 +64,14 @@ describe('markdown render()', () => {
     expect(html).not.toContain('class="markmap-mount"')
   })
 
-  it('keeps non-markmap fences untouched (hljs still highlights)', async () => {
+  it('renders non-markmap fences through Shiki', async () => {
     const html = await render([
       '```js',
       'const x = 1',
       '```',
     ].join('\n'))
-    expect(html).toContain('class="hljs"')
+    expect(html).toContain('class="shiki')
+    expect(html).not.toContain('class="hljs"')
     expect(html).not.toContain('class="markmap-mount"')
   })
 
@@ -547,8 +552,8 @@ describe('markdown H2 fence preparation', () => {
     shikiTesting.reset()
   })
 
-  it('prepares a known fence while keeping the current hljs renderer contract', async () => {
-    const { loadLanguage } = installFakeShikiRuntime()
+  it('prepares a known fence and renders the new Shiki contract', async () => {
+    const { loadLanguage, codeToHtml } = installFakeShikiRuntime()
 
     const html = await render([
       '```js title=demo',
@@ -557,8 +562,9 @@ describe('markdown H2 fence preparation', () => {
     ].join('\n'))
 
     expect(loadLanguage).toHaveBeenCalledTimes(1)
-    expect(html).toContain('class="hljs"')
-    expect(html).not.toContain('class="shiki"')
+    expect(codeToHtml).toHaveBeenCalledTimes(1)
+    expect(html).toContain('class="shiki')
+    expect(html).not.toContain('class="hljs"')
   })
 
   it('rejects Markdown render on runtime initialization failure and retries next render', async () => {
@@ -578,7 +584,7 @@ describe('markdown H2 fence preparation', () => {
     expect(factory).toHaveBeenCalledTimes(1)
     expect(healthyLoadLanguage).not.toHaveBeenCalled()
 
-    await expect(render(markdown)).resolves.toContain('class="hljs"')
+    await expect(render(markdown)).resolves.toContain('class="shiki')
     expect(factory).toHaveBeenCalledTimes(2)
     expect(healthyLoadLanguage).toHaveBeenCalledTimes(1)
   })
@@ -602,7 +608,8 @@ describe('markdown H2 fence preparation', () => {
 
     expect(factory).not.toHaveBeenCalled()
     expect(loadLanguage).not.toHaveBeenCalled()
-    expect(html).toContain('class="hljs"')
+    expect(html).toContain('class="shiki docus-shiki-plain"')
+    expect(html).not.toContain('class="hljs"')
     expect(html).toContain('&lt;a onclick=')
   })
 
@@ -632,6 +639,10 @@ describe('markdown H2 fence preparation', () => {
     expect(loadLanguage).not.toHaveBeenCalled()
     expect(html).toContain('class="markmap-mount"')
     expect(html).toContain('class="mermaid-mount"')
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    expect(doc.querySelector('.markmap-mount')?.closest('.shiki')).toBeNull()
+    expect(doc.querySelector('.mermaid-mount')?.closest('.shiki')).toBeNull()
+    expect(doc.querySelectorAll('pre.docus-shiki-plain')).toHaveLength(2)
     expect(html).not.toContain('class="mark-map-mount"')
   })
 
@@ -699,5 +710,208 @@ describe('markdown H2 fence preparation', () => {
     await render('```javascript\nconst two = 2\n```')
 
     expect(loadLanguage).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('markdown H3 renderer cutover', () => {
+  beforeEach(() => {
+    shikiTesting.reset()
+  })
+
+  afterEach(() => {
+    shikiTesting.reset()
+  })
+
+  it('renders representative JavaScript, TypeScript, Java, SQL, and Python fences through Shiki', async () => {
+    const html = await render([
+      '```js',
+      'const answer = 42',
+      '```',
+      '',
+      '```typescript',
+      'interface User { id: number }',
+      '```',
+      '',
+      '```java',
+      'class Demo {}',
+      '```',
+      '',
+      '```sql',
+      'SELECT * FROM users;',
+      '```',
+      '',
+      '```py',
+      'def hello(name):',
+      '    return name',
+      '```',
+    ].join('\n'))
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const blocks = Array.from(doc.querySelectorAll('pre.shiki'))
+
+    expect(blocks).toHaveLength(5)
+    expect(doc.querySelectorAll('pre.hljs')).toHaveLength(0)
+    expect(doc.querySelectorAll('span.line').length).toBeGreaterThanOrEqual(5)
+    expect(blocks.map((block) => block.textContent)).toEqual([
+      'const answer = 42\n',
+      'interface User { id: number }\n',
+      'class Demo {}\n',
+      'SELECT * FROM users;\n',
+      'def hello(name):\n    return name\n',
+    ])
+    expect(html).not.toMatch(/\sstyle=/i)
+  })
+
+  it('renders representative aliases through the same canonical Shiki grammars', async () => {
+    const { loadLanguage, codeToHtml } = installFakeShikiRuntime()
+    const html = await render([
+      '```js',
+      'const one = 1',
+      '```',
+      '',
+      '```javascript',
+      'const two = 2',
+      '```',
+      '',
+      '```ts',
+      'type One = string',
+      '```',
+      '',
+      '```typescript',
+      'type Two = string',
+      '```',
+      '',
+      '```py',
+      'print(1)',
+      '```',
+      '',
+      '```python',
+      'print(2)',
+      '```',
+      '',
+      '```yml',
+      'answer: one',
+      '```',
+      '',
+      '```yaml',
+      'answer: two',
+      '```',
+    ].join('\n'))
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+
+    expect(doc.querySelectorAll('pre.shiki')).toHaveLength(8)
+    expect(codeToHtml).toHaveBeenCalledTimes(8)
+    expect(loadLanguage).toHaveBeenCalledTimes(4)
+  })
+
+  it('keeps HTML-looking source inside a known Shiki fence as code text', async () => {
+    const html = await render([
+      '```js',
+      '<script>alert(1)</script>',
+      '```',
+    ].join('\n'))
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+
+    expect(doc.querySelector('pre.shiki code')?.textContent).toBe('<script>alert(1)</script>\n')
+    expect(doc.querySelector('script')).toBeNull()
+    expect(html).not.toMatch(/<script\b/i)
+  })
+
+  it('renders unknown and empty fences as escaped plain Shiki fallbacks without initializing', async () => {
+    const { factory, loadLanguage } = installFakeShikiRuntime()
+    const html = await render([
+      '```some-random-language',
+      'hello <world>',
+      '```',
+      '',
+      '```',
+      'plain <b>code</b>',
+      '```',
+    ].join('\n'))
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const fallbacks = Array.from(doc.querySelectorAll('pre.docus-shiki-plain'))
+
+    expect(fallbacks).toHaveLength(2)
+    expect(fallbacks[0]?.querySelector('code')?.textContent).toBe('hello <world>\n')
+    expect(fallbacks[1]?.querySelector('code')?.textContent).toBe('plain <b>code</b>\n')
+    expect(doc.querySelector('world')).toBeNull()
+    expect(doc.querySelector('b')).toBeNull()
+    expect(doc.querySelectorAll('pre.hljs')).toHaveLength(0)
+    expect(factory).not.toHaveBeenCalled()
+    expect(loadLanguage).not.toHaveBeenCalled()
+  })
+
+  it('maps a grammar preparation failure to one fence fallback while preserving other Shiki fences', async () => {
+    const { factory, loadLanguage, codeToHtml } = installFakeShikiRuntime()
+    loadLanguage
+      .mockImplementationOnce(async () => {})
+      .mockRejectedValueOnce(new Error('python grammar unavailable'))
+
+    const html = await render([
+      '```js',
+      'const answer = 42',
+      '```',
+      '',
+      '```python',
+      'print("hello")',
+      '```',
+    ].join('\n'))
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const blocks = Array.from(doc.querySelectorAll('pre'))
+
+    expect(blocks).toHaveLength(2)
+    expect(blocks[0]?.classList.contains('shiki')).toBe(true)
+    expect(blocks[1]?.classList.contains('docus-shiki-plain')).toBe(true)
+    expect(codeToHtml).toHaveBeenCalledTimes(1)
+    expect(loadLanguage).toHaveBeenCalledTimes(2)
+    expect(factory).toHaveBeenCalledTimes(1)
+  })
+
+  it('contains a synchronous codeToHtml failure at the fence boundary', async () => {
+    const { factory, loadLanguage, codeToHtml } = installFakeShikiRuntime()
+    codeToHtml.mockImplementationOnce(() => {
+      throw new Error('single fence rendering failed')
+    })
+
+    const html = await render([
+      '```js',
+      'first fence',
+      '```',
+      '',
+      '```js',
+      'second fence',
+      '```',
+    ].join('\n'))
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const blocks = Array.from(doc.querySelectorAll('pre'))
+
+    expect(blocks[0]?.classList.contains('docus-shiki-plain')).toBe(true)
+    expect(blocks[1]?.classList.contains('shiki')).toBe(true)
+    expect(codeToHtml).toHaveBeenCalledTimes(2)
+    expect(loadLanguage).toHaveBeenCalledTimes(1)
+    expect(factory).toHaveBeenCalledTimes(1)
+
+    await expect(render('```js\nthird fence\n```')).resolves.toContain('class="shiki')
+    expect(codeToHtml).toHaveBeenCalledTimes(3)
+    expect(factory).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps case-sensitive special-fence semantics after the cutover', async () => {
+    const { factory } = installFakeShikiRuntime()
+    const html = await render([
+      '```MARKMAP',
+      '# Not a mounted markmap',
+      '```',
+      '',
+      '```mermaid',
+      'graph TD',
+      'A --> B',
+      '```',
+    ].join('\n'))
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+
+    expect(doc.querySelector('.markmap-mount')).toBeNull()
+    expect(doc.querySelector('.mermaid-mount')).not.toBeNull()
+    expect(doc.querySelector('pre.docus-shiki-plain')).not.toBeNull()
+    expect(factory).not.toHaveBeenCalled()
   })
 })

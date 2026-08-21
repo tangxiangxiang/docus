@@ -53,6 +53,7 @@ Docus is a self-hosted Markdown knowledge base with a Vue interface, a Hono serv
 - [Shiki H0 Baseline & Contract Audit](design/syntax-highlighting-shiki-h0-audit.md)
 - [Shiki H1 Dependency & Runtime Foundation](design/syntax-highlighting-shiki-h1-runtime-foundation.md)
 - [Shiki H2 Fence Discovery & Dynamic Language Loading](design/syntax-highlighting-shiki-h2-language-loading.md)
+- [Shiki H3 Markdown Renderer Cutover](design/syntax-highlighting-shiki-h3-renderer-cutover.md)
 - [PDF Export V1 PRD](design/pdf-export-prd.md)
 - [PDF Export V1 Implementation Plan](design/pdf-export-implementation-plan.md)
 - [Logo](design/logo.md)
