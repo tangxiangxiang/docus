@@ -6,27 +6,74 @@ title: PDF Pagination Regression
 
 H6_PAGINATION_BEGIN
 
-This deterministic paragraph is part of the pagination calibration content. It keeps the document close to a real note while giving the target block a stable position before the printable page boundary.
+This deterministic paragraph is part of the pagination calibration content. It keeps the document close to a real note while leaving the boundary probes to determine their own position in the current browser.
 
 H6_FILLER_01 — 中文 English 日本語 and a fixed line of text keep the page-boundary regression independent of random content.
 
-H6_FILLER_02 — The same stable content is repeated so the target paragraph approaches the bottom of an A4 printable page.
+H6_FILLER_02 — The calibration uses real Markdown paragraphs and no generated height or timestamp.
 
-H6_FILLER_03 — Ordinary paragraphs must remain intact when html2pdf prepares the page slices.
+H6_BOUNDARY_PROBE_001_BEGIN \
+probe 001 line 01 \
+probe 001 line 02 \
+probe 001 line 03 \
+probe 001 line 04 \
+probe 001 line 05 \
+probe 001 line 06 \
+probe 001 line 07 \
+probe 001 line 08 \
+probe 001 line 09 \
+probe 001 line 10 \
+probe 001 line 11 \
+probe 001 line 12 \
+probe 001 line 13 \
+probe 001 line 14 \
+probe 001 line 15 \
+probe 001 line 16 \
+H6_BOUNDARY_PROBE_001_END
 
-H6_FILLER_04 — This paragraph is intentionally deterministic and contains no generated height or timestamp.
+H6_BOUNDARY_PROBE_002_BEGIN \
+probe 002 line 01 \
+probe 002 line 02 \
+probe 002 line 03 \
+probe 002 line 04 \
+probe 002 line 05 \
+probe 002 line 06 \
+probe 002 line 07 \
+probe 002 line 08 \
+probe 002 line 09 \
+probe 002 line 10 \
+probe 002 line 11 \
+probe 002 line 12 \
+probe 002 line 13 \
+probe 002 line 14 \
+probe 002 line 15 \
+probe 002 line 16 \
+probe 002 line 17 \
+probe 002 line 18 \
+H6_BOUNDARY_PROBE_002_END
 
-H6_FILLER_05 — The target below must move as one short textual block when the remaining page space is insufficient.
-
-H6_FILLER_06 — This final calibration paragraph brings the target heading close to the next A4 page boundary.
-
-H6_FILLER_07 — The calibration remains ordinary Markdown so it exercises the same renderer as user notes.
-
-H6_FILLER_08 — No fixed height, hidden overflow, or test-only production class is used.
-
-H6_FILLER_09 — The target must begin inside the final line-height window of the printable page.
-
-H6_FILLER_10 — A correct exporter moves that complete paragraph instead of slicing its glyphs.
+H6_BOUNDARY_PROBE_003_BEGIN \
+probe 003 line 01 \
+probe 003 line 02 \
+probe 003 line 03 \
+probe 003 line 04 \
+probe 003 line 05 \
+probe 003 line 06 \
+probe 003 line 07 \
+probe 003 line 08 \
+probe 003 line 09 \
+probe 003 line 10 \
+probe 003 line 11 \
+probe 003 line 12 \
+probe 003 line 13 \
+probe 003 line 14 \
+probe 003 line 15 \
+probe 003 line 16 \
+probe 003 line 17 \
+probe 003 line 18 \
+probe 003 line 19 \
+probe 003 line 20 \
+H6_BOUNDARY_PROBE_003_END
 
 ## H6_TARGET_HEADING
 

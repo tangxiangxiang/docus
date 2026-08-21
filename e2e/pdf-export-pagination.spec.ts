@@ -13,12 +13,19 @@ type PaginationBlockSnapshot = {
   allowSplit: boolean
 }
 
+type BoundaryProbeSnapshot = PaginationBlockSnapshot & {
+  marker: string
+  distanceToNextPage: number
+  wouldCrossPageBoundary: boolean
+}
+
 type PaginationSnapshot = {
   textContent: string
   printablePageHeight: number
   articleHeight: number
   targetParagraph: PaginationBlockSnapshot
   targetListItems: PaginationBlockSnapshot[]
+  boundaryProbes: BoundaryProbeSnapshot[]
   headingGroup: {
     exists: boolean
     text: string
@@ -26,8 +33,6 @@ type PaginationSnapshot = {
     containsTarget: boolean
   }
   secondParagraphInHeadingGroup: boolean
-  targetDistanceToNextPage: number
-  targetNearPageBoundary: boolean
   horizontalOverflow: boolean
 }
 
@@ -68,7 +73,9 @@ test('keeps ordinary paragraphs and list items intact at an A4 page boundary', a
           .find((heading) => heading.textContent?.includes('H6_TARGET_HEADING'))
         const targetListItems = Array.from(article.querySelectorAll<HTMLElement>('li'))
           .filter((item) => item.textContent?.includes('H6_LIST_ITEM_'))
-        if (!targetParagraph || !targetHeading || targetListItems.length !== 3) return
+        const boundaryProbeElements = Array.from(article.querySelectorAll<HTMLElement>('p'))
+          .filter((paragraph) => paragraph.textContent?.includes('H6_BOUNDARY_PROBE_'))
+        if (!targetParagraph || !targetHeading || targetListItems.length !== 3 || boundaryProbeElements.length < 3) return
 
         const pageProbe = document.createElement('div')
         pageProbe.style.cssText = 'position:absolute;visibility:hidden;pointer-events:none;width:1px;height:263mm;'
@@ -91,9 +98,26 @@ test('keeps ordinary paragraphs and list items intact at an A4 page boundary', a
           }
         }
 
+        const withPageGeometry = (
+          block: PaginationBlockSnapshot,
+        ): Omit<BoundaryProbeSnapshot, 'marker'> => {
+          const pageOffset = ((block.top % printablePageHeight) + printablePageHeight) % printablePageHeight
+          const distanceToNextPage = printablePageHeight - pageOffset
+          return {
+            ...block,
+            distanceToNextPage,
+            wouldCrossPageBoundary: distanceToNextPage < block.height,
+          }
+        }
+
         const target = readBlock(targetParagraph)
-        const targetPageOffset = ((target.top % printablePageHeight) + printablePageHeight) % printablePageHeight
-        const targetDistanceToNextPage = printablePageHeight - targetPageOffset
+        const boundaryProbes = boundaryProbeElements.map((element) => {
+          const marker = element.textContent?.match(/H6_BOUNDARY_PROBE_\d+/)?.[0] ?? 'unknown'
+          return {
+            ...withPageGeometry(readBlock(element)),
+            marker,
+          }
+        })
         const headingGroup = targetHeading.parentElement?.classList.contains('pdf-heading-group')
           ? targetHeading.parentElement
           : null
@@ -106,6 +130,7 @@ test('keeps ordinary paragraphs and list items intact at an A4 page boundary', a
           articleHeight: article.getBoundingClientRect().height,
           targetParagraph: target,
           targetListItems: targetListItems.map(readBlock),
+          boundaryProbes,
           headingGroup: {
             exists: headingGroup !== null,
             text: headingGroup?.textContent ?? '',
@@ -114,8 +139,6 @@ test('keeps ordinary paragraphs and list items intact at an A4 page boundary', a
           },
           secondParagraphInHeadingGroup: secondParagraph !== undefined
             && (headingGroup?.contains(secondParagraph) ?? false),
-          targetDistanceToNextPage,
-          targetNearPageBoundary: targetDistanceToNextPage < target.height,
           horizontalOverflow: article.scrollWidth > article.clientWidth + 2,
         }
       }
@@ -163,7 +186,38 @@ test('keeps ordinary paragraphs and list items intact at an A4 page boundary', a
     expect(snapshot.textContent).toContain('H6_TARGET_PARAGRAPH_BEGIN')
     expect(snapshot.textContent).toContain('H6_TARGET_PARAGRAPH_END')
     expect(snapshot.textContent).toContain('H6_LIST_ITEM_003')
-    expect(snapshot.targetNearPageBoundary).toBe(true)
+    console.log('[pdf-pagination]', JSON.stringify({
+      printablePageHeight: snapshot.printablePageHeight,
+      boundaryProbes: snapshot.boundaryProbes.map((probe) => ({
+        marker: probe.marker,
+        top: probe.top,
+        height: probe.height,
+        distanceToNextPage: probe.distanceToNextPage,
+        wouldCrossPageBoundary: probe.wouldCrossPageBoundary,
+        breakInside: probe.breakInside,
+        pageBreakInside: probe.pageBreakInside,
+        allowSplit: probe.allowSplit,
+      })),
+    }))
+    for (const probe of snapshot.boundaryProbes) {
+      expect(probe.height).toBeLessThan(snapshot.printablePageHeight)
+    }
+    const crossingProbe = snapshot.boundaryProbes.find((probe) => probe.wouldCrossPageBoundary)
+    expect(
+      crossingProbe,
+      JSON.stringify(snapshot.boundaryProbes.map((probe) => ({
+        marker: probe.marker,
+        top: probe.top,
+        height: probe.height,
+        distanceToNextPage: probe.distanceToNextPage,
+        wouldCrossPageBoundary: probe.wouldCrossPageBoundary,
+      }))),
+    ).toBeDefined()
+    if (!crossingProbe) throw new Error('No short boundary probe crosses an A4 page boundary')
+    expect(crossingProbe.wouldCrossPageBoundary).toBe(true)
+    expect(crossingProbe.breakInside).toBe('avoid')
+    expect(crossingProbe.pageBreakInside).toBe('avoid')
+    expect(crossingProbe.allowSplit).toBe(false)
     expect(snapshot.targetParagraph.height).toBeLessThan(snapshot.printablePageHeight)
     expect(snapshot.targetParagraph.breakInside).toBe('avoid')
     expect(snapshot.targetParagraph.pageBreakInside).toBe('avoid')
