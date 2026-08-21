@@ -11,6 +11,8 @@
 | Baseline HEAD | `c32f5bc9c1597c6c2f6b3e9581f327636fe8d8c2` |
 | Shiki migration state | SHIKI-H0 through SHIKI-H8 COMPLETE; migration closed; no H9 |
 | Primary reference | [VitePress Markdown Extensions](https://vitepress.dev/guide/markdown.html) |
+| VitePress reference version observed | `2.0.0-alpha.19` |
+| VitePress reference checked | `2026-08-21` |
 | Shiki reference | [Shiki `@shikijs/transformers`](https://shiki.style/packages/transformers) |
 | Current parser | `markdown-it` 14.x singleton |
 | Current highlighter | Shiki 4.4.x, class-based, dual-theme, lazy languages |
@@ -279,8 +281,9 @@ printable-light PDF behavior.
 
 ## 7. VitePress Compatibility Philosophy
 
-The reference is the current official [VitePress Markdown Extensions page](https://vitepress.dev/guide/markdown.html),
-not VitePress's internal source code. It documents author-facing forms including
+The compatibility review is pinned to the official [VitePress Markdown Extensions page](https://vitepress.dev/guide/markdown.html)
+as observed in VitePress `2.0.0-alpha.19` on `2026-08-21`, not to VitePress's internal
+source code. It documents author-facing forms including
 custom anchors, containers and nesting, GitHub alerts, Shiki annotations, line numbers,
 snippets, code groups, Markdown inclusion, math, lazy images, and advanced Markdown
 configuration.
@@ -302,58 +305,61 @@ Docus does not target:
 
 ## 8. Full Compatibility Matrix
 
-Every relevant feature on the current VitePress Markdown Extensions page is classified
-exactly once below. `EXISTING` means Docus already provides the behavior and it must be
-preserved. `ADD` means a new Docus feature is recommended. `ADAPT` means the author
-syntax or intent is useful but must use Docus routing, runtime, or security semantics.
-`DEFER` means it is not in the initial program. `REJECT` means the initial product must
-not provide the feature under its VitePress meaning.
+The inventory below keeps the 43-item coverage stable while separating where a feature
+comes from from what Docus will do with it. `Reference source` is one or more of
+`VitePress`, `Shiki`, `Existing Docus`, or `Docus extension candidate`; it is not a
+claim that every row is a mandatory VitePress-parity requirement. `EXISTING` means
+Docus already provides the behavior and it must be preserved. `ADD` means a new Docus
+feature is recommended. `ADAPT` means the author syntax or intent is useful but must
+use Docus routing, runtime, or security semantics. `DEFER` means it is not in the
+initial program. `REJECT` means the initial product must not provide the feature under
+its VitePress meaning.
 
-| # | VitePress-documented feature | Classification | Docus decision |
-| ---: | --- | --- | --- |
-| 1 | Automatic heading anchors | EXISTING | Keep `markdown-it-anchor` and the current slug/permalink behavior. |
-| 2 | Custom heading anchors | ADD | Add narrow `{#id}` syntax with safe IDs and final-ID deduplication. |
-| 3 | Internal links | ADAPT | Keep vault-aware WikiLink and `.md` resolution; do not use VitePress router links. |
-| 4 | Page suffix behavior | REJECT | `.html` page suffixes and `index.md` route rewriting do not fit Docus. |
-| 5 | External links | ADD | Add Docus-owned `target="_blank"` and `rel` treatment for HTTP(S) links. |
-| 6 | Frontmatter | EXISTING | Preserve YAML parsing and Docus metadata/title semantics. |
-| 7 | GitHub-style tables | EXISTING | Preserve MarkdownIt tables and `.table-scroll`. |
-| 8 | Task lists | EXISTING | Preserve `markdown-it-task-lists` behavior. |
-| 9 | Footnotes | EXISTING | Preserve `markdown-it-footnote` behavior and sanitized anchors. |
-| 10 | Emoji | EXISTING | Preserve Docus emoji definitions and shortcodes. |
-| 11 | `[[toc]]` | ADD | Add a standalone directive based on the final heading token/ID model. |
-| 12 | Custom containers | ADD | Add built-in `info`, `tip`, `warning`, `danger`, and `details`. |
-| 13 | Custom container titles | ADD | Support safe plain-text titles, including `::: danger STOP`. |
-| 14 | Custom container registration | DEFER | No public arbitrary Markdown plugin/configuration API in v1. |
-| 15 | Nested containers | ADD | Support longer outer fences using MarkdownIt fence-matching rules. |
-| 16 | Container additional attributes | REJECT | Reject broad attrs; consider only a separately approved `details {open}` shorthand. |
-| 17 | `::: raw` | REJECT | It must not become a DOMPurify or style-policy bypass. |
-| 18 | GitHub-flavored alerts | EXISTING | Preserve Docus callouts, aliases, titles, and blockquote behavior. |
-| 19 | Shiki syntax highlighting | EXISTING | Preserve the H8 Shiki pipeline; do not add another integration. |
-| 20 | Code-line metadata highlighting | ADD | Add VitePress-style fence ranges such as `{1,3-5}`. |
-| 21 | `[!code highlight]` | ADD | Use the official Shiki notation transformer and Docus CSS. |
-| 22 | `[!code focus]` | ADD | Use official focus classes; keep theme switching CSS-only. |
-| 23 | `[!code ++]` / `[!code --]` | ADD | Use official diff classes and printable-light PDF styles. |
-| 24 | `[!code warning]` / `[!code error]` | ADD | Use official error-level classes with non-color cues where practical. |
-| 25 | `[!code info]` | ADD | Expose as a Docus extension aligned with the installed official transformer; not required as a VitePress page-parity promise. |
-| 26 | Line numbers | ADD | Opt-in per fence, default OFF, no inline styles, custom starting value. |
-| 27 | Custom line-number starting value | ADD | Support `:line-numbers=N` in the unified metadata grammar. |
-| 28 | Code snippet imports | ADAPT | Use a future authenticated vault/resource resolver, not browser filesystem access. |
-| 29 | Snippet regions | ADAPT | Support a controlled region grammar only if the safe resource boundary ships. |
-| 30 | Snippet line ranges | ADAPT | Support bounded ranges after safe file resolution. |
-| 31 | Explicit snippet language | ADAPT | Allow a safe explicit language token in snippet metadata. |
-| 32 | Code groups | ADD | Add accessible post-`v-html` enhancement and deterministic PDF expansion. |
-| 33 | Snippets inside code groups | ADAPT | Reuse the safe snippet resolver; do not duplicate file reads. |
-| 34 | Markdown file inclusion | ADAPT | Expand from vault resources before final heading/fence discovery. |
-| 35 | Nested Markdown inclusion | ADAPT | Add cycle/depth/size limits and source-path context. |
-| 36 | Include line ranges | ADAPT | Support bounded line selection after safe include resolution. |
-| 37 | Include heading/section selection | ADAPT | Use final heading IDs/section boundaries; exact semantics need a later plan. |
-| 38 | Relative URL/image rebasing in included Markdown | ADAPT | Resolve relative resources against the included file's directory. |
-| 39 | Code-file inclusion inside fences | ADAPT | Treat included bytes as literal escaped code and feed the resulting language to Shiki. |
-| 40 | Math | EXISTING | Preserve Docus KaTeX/math placeholders and mount behavior. |
-| 41 | Image lazy loading | ADD | Add `loading="lazy"` without broadening URL or attribute policy. |
-| 42 | Advanced Markdown configuration | ADAPT | Offer only Docus-owned, typed, feature-specific configuration; no arbitrary plugins from notes. |
-| 43 | VitePress runtime/build-system compatibility | REJECT | This program is syntax/behavior compatibility, not VitePress embedding. |
+| # | Feature / syntax | Reference source | Classification | Docus decision |
+| ---: | --- | --- | --- | --- |
+| 1 | Automatic heading anchors | VitePress / Existing Docus | EXISTING | Keep `markdown-it-anchor` and the current slug/permalink behavior. |
+| 2 | Custom heading anchors | VitePress | ADD | Add narrow `{#id}` syntax with safe IDs and final-ID deduplication. |
+| 3 | Internal links | VitePress / Existing Docus | ADAPT | Keep vault-aware WikiLink and `.md` resolution; do not use VitePress router links. |
+| 4 | Page suffix behavior | VitePress | REJECT | `.html` page suffixes and `index.md` route rewriting do not fit Docus. |
+| 5 | External links | VitePress | ADD | Add Docus-owned `target="_blank"` and `rel="noopener noreferrer"` treatment for generated HTTP(S) links. |
+| 6 | Frontmatter | VitePress / Existing Docus | EXISTING | Preserve YAML parsing and Docus metadata/title semantics. |
+| 7 | GitHub-style tables | VitePress / Existing Docus | EXISTING | Preserve MarkdownIt tables and `.table-scroll`. |
+| 8 | Task lists | VitePress / Existing Docus | EXISTING | Preserve `markdown-it-task-lists` behavior. |
+| 9 | Footnotes | VitePress / Existing Docus | EXISTING | Preserve `markdown-it-footnote` behavior and sanitized anchors. |
+| 10 | Emoji | VitePress / Existing Docus | EXISTING | Preserve Docus emoji definitions and shortcodes. |
+| 11 | `[[toc]]` | VitePress | ADD | Add a standalone directive based on the final heading token/ID model. |
+| 12 | Custom containers | VitePress | ADD | Add built-in `info`, `tip`, `warning`, `danger`, and `details`. |
+| 13 | Custom container titles | VitePress | ADD | Support safe plain-text titles, including `::: danger STOP`. |
+| 14 | Custom container registration | VitePress | DEFER | No public arbitrary Markdown plugin/configuration API in v1. |
+| 15 | Nested containers | VitePress | ADD | Support longer outer fences using MarkdownIt fence-matching rules. |
+| 16 | Container additional attributes | VitePress-inspired / Docus narrow extension candidate | REJECT | Reject broad attrs; a narrow `details {open}` token may be approved separately and is not generic attribute support. |
+| 17 | `::: raw` | VitePress | REJECT | It must not become a DOMPurify or style-policy bypass. |
+| 18 | GitHub-flavored alerts | VitePress / Existing Docus | EXISTING | Preserve Docus callouts, aliases, titles, and blockquote behavior. |
+| 19 | Shiki syntax highlighting | VitePress / Shiki / Existing Docus | EXISTING | Preserve the H8 Shiki pipeline; do not add another integration. |
+| 20 | Code-line metadata highlighting | VitePress / Shiki | ADD | Add VitePress-style fence ranges such as `{1,3-5}`. |
+| 21 | `[!code highlight]` | VitePress / Shiki | ADD | Use the official Shiki notation transformer and Docus CSS. |
+| 22 | `[!code focus]` | VitePress / Shiki | ADD | Use official focus classes; keep theme switching CSS-only. |
+| 23 | `[!code ++]` / `[!code --]` | VitePress / Shiki | ADD | Use official diff classes and printable-light PDF styles. |
+| 24 | `[!code warning]` / `[!code error]` | VitePress / Shiki | ADD | Use official error-level classes with non-color cues where practical. |
+| 25 | `[!code info]` | Shiki / Docus extension candidate | ADD | Expose as a Docus extension aligned with the installed official transformer; it is not a VitePress page-parity requirement. |
+| 26 | Line numbers | VitePress | ADD | Opt-in per fence, default OFF, no inline styles, custom starting value. |
+| 27 | Custom line-number starting value | VitePress | ADD | Support `:line-numbers=N` in the unified metadata grammar. |
+| 28 | Code snippet imports | VitePress / Docus adaptation | ADAPT | Use a future authenticated vault/resource resolver, not browser filesystem access. |
+| 29 | Snippet regions | VitePress / Docus adaptation | ADAPT | Support a controlled region grammar only if the safe resource boundary ships. |
+| 30 | Snippet line ranges | VitePress / Docus adaptation | ADAPT | Support bounded ranges after safe file resolution. |
+| 31 | Explicit snippet language | VitePress / Docus adaptation | ADAPT | Allow a safe explicit language token in snippet metadata. |
+| 32 | Code groups | VitePress | ADD | Add accessible post-`v-html` enhancement and deterministic PDF expansion. |
+| 33 | Snippets inside code groups | VitePress / Docus adaptation | ADAPT | Reuse the safe snippet resolver; do not duplicate file reads. |
+| 34 | Markdown file inclusion | VitePress / Docus adaptation | ADAPT | Expand from vault resources before final heading/fence discovery. |
+| 35 | Nested Markdown inclusion | VitePress / Docus adaptation | ADAPT | Add cycle/depth/size limits and source-path context. |
+| 36 | Include line ranges | VitePress / Docus adaptation | ADAPT | Support bounded line selection after safe include resolution. |
+| 37 | Include heading/section selection | VitePress syntax / Docus extension candidate | DEFER | Keep it out of the initial MD-EXT-6 core until heading-section semantics and source context are separately approved. |
+| 38 | Relative URL/image rebasing in included Markdown | VitePress / Docus adaptation | ADAPT | Resolve relative resources against the included file's directory. |
+| 39 | Code-file inclusion inside fences | VitePress syntax / Docus extension candidate | DEFER | Keep it as a later candidate; initial MD-EXT-6 does not require it to ship. |
+| 40 | Math | VitePress / Existing Docus | EXISTING | Preserve Docus KaTeX/math placeholders and mount behavior. |
+| 41 | Image lazy loading | VitePress | ADD | Add `loading="lazy"` without broadening URL or attribute policy. |
+| 42 | Advanced Markdown configuration | VitePress / Docus adaptation | ADAPT | Offer only Docus-owned, typed, feature-specific configuration; no arbitrary plugins from notes. |
+| 43 | VitePress runtime/build-system compatibility | VitePress | REJECT | This program is syntax/behavior compatibility, not VitePress embedding. |
 
 The table deliberately separates `container additional attributes` from the narrow
 potential `details {open}` decision. A feature-specific, allowlisted token is not a
@@ -365,7 +371,7 @@ general attributes plugin and requires product approval before implementation.
 | --- | --- | --- |
 | P0 | Custom anchors, `[[toc]]`, external-link treatment, lazy images, built-in containers, Shiki annotations | Core authoring compatibility and high-value visual improvements. |
 | P1 | Line numbers, code groups | Valuable reader/PDF features requiring structural HTML and interaction work. |
-| P2 | Safe snippets, Markdown includes, nested/section/resource variants | Advanced resource features requiring a new server boundary and more threat modeling. |
+| P2 | Safe snippets, Markdown includes, nested/resource variants | Advanced resource features requiring a new server boundary and more threat modeling. Heading/section selection and code-file inclusion inside fences remain deferred candidates unless separately approved. |
 | DEFER | Arbitrary custom container registration, unresolved include-section variants, optional advanced metadata not approved | Do not block P0/P1 release. |
 | REJECT | Generic attrs, `::: raw` bypass, VitePress routing/page suffixes, Vue-in-Markdown, remote resources, arbitrary filesystem | Explicitly outside the product contract. |
 
@@ -481,16 +487,42 @@ must preserve the Docus vault path model.
 
 ### 12.2 External links
 
-The P0 recommendation is to treat explicit HTTP(S) external links as:
+The initial MD-EXT external-link policy applies only to links generated by Docus's
+Markdown renderer. This includes explicit Markdown links and MarkdownIt `linkify` output:
+
+```markdown
+[OpenAI](https://openai.com)
+https://openai.com
+```
+
+For generated external HTTP(S) links, Docus must emit:
 
 ```html
 <a href="https://example.com" target="_blank" rel="noopener noreferrer">
 ```
 
-The final exact `rel` choice is an open decision, but the implementation must never
-allow a user-controlled `target`/`rel` value to weaken the policy. `mailto:`, `tel:`,
-relative links, hash links, and Docus vault links must not be mislabeled as external.
-The existing URI policy remains in force.
+This is an approved product contract, not an open decision. `noopener` isolates the
+new window from `window.opener`; `noreferrer` also limits referrer disclosure. The
+generated values are policy-owned and cannot be weakened by Markdown input or by
+author-supplied link metadata.
+
+The policy does not silently redesign raw semantic HTML links. For example:
+
+```html
+<a href="https://example.com" target="_self">Example</a>
+```
+
+continues through the existing DOMPurify/security contract. MD-EXT-1 must not rewrite
+every raw `<a>` in final sanitized HTML merely because it has an HTTP(S) `href`.
+
+The external classification is:
+
+- external-policy targets: `http:` and `https:` links that are not Docus-owned
+  vault/internal routes;
+- not external-policy targets: `mailto:`, `tel:`, `#fragment`, relative paths,
+  `./`, `../`, `/vault/...`, WikiLinks, and Docus `.md` links.
+
+The existing URI policy remains in force for every link surface.
 
 ## 13. Image Lazy Loading
 
@@ -622,6 +654,9 @@ warn()            // [!code warning]
 fail()            // [!code error]
 info()            // [!code info]
 focus()           // [!code focus]
+const first = 1  // [!code focus:3]
+const second = 2
+const third = 3
 ```
 ````
 
@@ -660,6 +695,44 @@ outer class only when needed for CSS or PDF. The notation marker's visibility/re
 must be frozen during implementation planning; the recommended behavior is to use the
 official transformer default and keep the marker out of displayed code when the
 transformer removes it.
+
+### 16.2.1 Multi-line notation contract
+
+`[!code focus:N]` is part of the initial VitePress-style authoring contract. `N` means
+the annotated line plus the configured following-line span according to the official
+Shiki transformer semantics. Docus must delegate that interpretation to the official
+transformer rather than maintaining a second count/range implementation.
+
+`[!code highlight:N]` is tracked separately from the approved single-line
+`[!code highlight]` form. It is a Shiki-backed Docus extension candidate and is
+`DEFER` until the official transformer semantics provide a clean, supported range
+behavior. It must not be inferred as focus behavior or become an MD-EXT release
+blocker. If separately approved later, it must use official transformer semantics.
+
+For every `:N` form:
+
+- `N` accepts only a positive, bounded integer;
+- zero, negative, non-numeric, empty, or absurd values are rejected or safely ignored;
+- values beyond the code block never throw and follow the official transformer
+  behavior, such as safe clamping/ignoring of out-of-range lines;
+- malformed input never creates arbitrary HTML, class names, attributes, or styles;
+- the exact finite upper bound is an implementation-plan parameter and must be
+  documented before implementation, not an unbounded parser assumption.
+
+### 16.2.2 Annotation matrix
+
+| Syntax | Reference source | Initial scope | Expected transformer/behavior |
+| --- | --- | --- | --- |
+| `{1,3-5}` | VitePress / Shiki | ADD | `transformerMetaHighlight`; bounded line/range highlighting. |
+| `[!code highlight]` | VitePress / Shiki | ADD | `transformerNotationHighlight`; class-based highlighted line. |
+| `[!code highlight:N]` | Shiki / Docus extension candidate | DEFER | Only add if an official transformer supports the range semantics cleanly; never reinterpret as focus. |
+| `[!code focus]` | VitePress / Shiki | ADD | `transformerNotationFocus`; focus state with CSS-only de-emphasis. |
+| `[!code focus:N]` | VitePress / Shiki | ADD | Official focus count semantics for the annotated line and following span. |
+| `[!code ++]` | VitePress / Shiki | ADD | `transformerNotationDiff`; printable add state. |
+| `[!code --]` | VitePress / Shiki | ADD | `transformerNotationDiff`; printable remove state. |
+| `[!code warning]` | VitePress / Shiki | ADD | `transformerNotationErrorLevel`; warning class plus non-color cue where practical. |
+| `[!code error]` | VitePress / Shiki | ADD | `transformerNotationErrorLevel`; error class plus non-color cue where practical. |
+| `[!code info]` | Shiki / Docus extension candidate | ADD | `transformerNotationErrorLevel`; approved Docus extension, not mandatory VitePress parity. |
 
 ### 16.3 Annotation security
 
@@ -834,6 +907,15 @@ If snippets ship, they must support a controlled subset of:
 The source is literal code content, escaped, and sent through the existing Shiki
 runtime. It is never parsed as HTML, executed, or allowed to modify generated CSS.
 
+The initial resource-content recommendation is text-only and UTF-8:
+
+- snippets read text source files only; binary resources are rejected;
+- Markdown includes read `.md` / Markdown text only;
+- invalid UTF-8, unsupported resource types, and binary content produce a safe generic
+  resource error rather than lossy decoding, a process failure, or host-path details;
+- the exact source-extension allowlist, treatment of extensionless text files, and
+  decoded-byte versus character-size limits remain explicit MD-EXT-6 open decisions.
+
 ### 20.3 Region contract
 
 The recommended region grammar permits letters, digits, `_`, `-`, and `.`. Region
@@ -892,10 +974,10 @@ IDs, and TOC entries participate as one final document.
 
 ### 21.3 Include forms and errors
 
-The initial resource model may support line ranges and a controlled heading/region
-selection only after the resolver is proven. Missing files, forbidden paths, cycles,
-depth/size violations, and missing selections must render a safe visible placeholder
-such as:
+The initial MD-EXT-6 core supports line ranges and basic named-region selection only
+after the resolver is proven. Heading/section selection is a deferred candidate, not a
+release blocker for the core. Missing files, forbidden paths, cycles, depth/size
+violations, and missing selections must render a safe visible placeholder such as:
 
 ```html
 <div class="markdown-include-error">Unable to include resource.</div>
@@ -904,10 +986,12 @@ such as:
 The placeholder must be sanitized, contain no raw OS error, host path, stack trace,
 script, or style, and leave the rest of the document usable where practical.
 
-### 21.4 Code-file inclusion inside fences
+### 21.4 Deferred code-file inclusion inside fences
 
-If the later implementation accepts a VitePress-style code-file include inside a fence,
-the directive is literal code content, not nested Markdown. For example:
+Code-file inclusion inside a fence is a VitePress-referenced but Docus-deferred
+extension candidate. It is not required by the initial MD-EXT-6 core. If a later
+product review approves it, the directive is literal code content, not nested Markdown.
+For example:
 
 ````markdown
 ```js
@@ -934,7 +1018,76 @@ Docus currently has a secure server path helper, but its public post API is note
 and `.md`-specific. The implementation plan must not pretend that `<<< @/file.js` can
 reuse `/api/posts/file.js`.
 
-### 22.2 Future boundary requirements
+`resolveSafeRelativePathDetailed()` and `readSafeRelativeFile()` are physical,
+root-relative safety helpers. Their intentional rejection of raw `.` and `..` segments
+is part of the existing security boundary. This PRD does not require weakening or
+changing those helpers to accept author-relative syntax; future implementation should
+normalize author references logically first and then pass only the canonical result to
+the existing or stronger physical resolver.
+
+### 22.2 Two-stage resource-path model
+
+Relative author syntax and physical filesystem safety are separate layers. The frozen
+architecture is:
+
+```text
+author reference
+    ↓
+logical source-relative resolution
+    ↓
+vault-root-relative canonical logical path
+    ↓
+physical safe-path resolver
+```
+
+The conceptual logical helper may be named
+`resolveLogicalResourceReference(sourcePath, resourceReference)`; the exact function
+name is not frozen. It resolves the author reference against the current source file,
+normalizes it to `/` logical separators, and returns a canonical vault-relative path.
+
+For example:
+
+```text
+source document:  guides/java/index.md
+reference:        ../examples/Demo.java
+logical result:   guides/examples/Demo.java
+canonical path:   guides/examples/Demo.java
+physical input:   guides/examples/Demo.java
+```
+
+Authors may use `./foo` and `../foo` while this logical source-relative resolution is
+running. A syntactic `..` is not inherently forbidden. It is valid only if normalization
+produces a path that remains strictly inside the configured vault/resource root:
+
+```text
+source:           guides/java/index.md
+reference:        ../shared/demo.ts
+canonical path:   guides/shared/demo.ts
+result:           ALLOWED
+```
+
+If normalization escapes the root, the reference is rejected before any read:
+
+```text
+source:           guides/index.md
+reference:        ../../../etc/passwd
+result:           REJECT — canonical path escapes the configured root
+```
+
+The canonical logical path must contain no `.` or `..` segments, must use `/` logical
+separators, and must remain root-confined. The physical resolver receives only that
+canonical path; it must never receive raw author syntax, dot segments, backslashes,
+absolute paths, drive letters, UNC paths, or URI schemes.
+
+The logical layer must reject, before or after normalization as appropriate:
+
+- absolute Unix paths, absolute Windows paths, UNC paths, and drive-letter paths;
+- backslashes, NUL bytes, and control characters;
+- `file://`, `http://`, `https://`, and all other URI/protocol schemes;
+- empty references and root-escape results;
+- any normalized result containing `.` or `..` segments.
+
+### 22.3 Future boundary requirements
 
 A future authenticated resource resolver must:
 
@@ -944,7 +1097,10 @@ A future authenticated resource resolver must:
 - validate lexical path syntax before filesystem resolution;
 - reuse `resolveSafeRelativePathDetailed()` / `readSafeRelativeFile()` or a stronger
   equivalent;
-- reject absolute paths, backslashes, `..`, `file://`, URLs, and protocol schemes;
+- receive only the canonical root-relative path produced by the logical layer; raw
+  `.`/`..` segments are never passed through;
+- preserve the existing physical helper's rejection of absolute paths, backslashes,
+  dot segments, `file://`, URLs, and protocol schemes;
 - reject symlink/junction escapes and revalidate path identity during read;
 - impose per-file, per-request, and final-expanded-document limits;
 - avoid exposing host absolute paths in errors;
@@ -953,7 +1109,7 @@ A future authenticated resource resolver must:
 - deduplicate repeated reads within one render when safe and deterministic;
 - isolate request state between concurrent documents.
 
-### 22.3 Included relative links and WikiLinks
+### 22.4 Included relative links and WikiLinks
 
 Relative links and images inside an included file resolve relative to the included
 file's own directory, not the parent document's directory. Nested includes update this
@@ -978,13 +1134,18 @@ https://example.com/a.js
 
 The contract is:
 
+- a syntactic `../` is allowed only during logical source-relative resolution;
+- the forbidden condition is a normalized canonical path that escapes the configured
+  root, not the mere presence of `..` in author syntax;
 - no absolute host paths;
-- no traversal outside the configured root;
+- no canonical path escape outside the configured root;
 - no symlink escape;
 - no `file://` or network protocols;
 - no browser-side filesystem access;
 - no SSRF through include/snippet syntax;
 - no arbitrary extension or resource type without an allowlisted policy;
+- no lossy decoding of binary or invalid-UTF-8 resources; unsupported resources return
+  a safe generic error without a host path;
 - finite per-file and final output sizes;
 - finite include depth and cycle detection by canonical logical path;
 - errors are safe and do not reveal host paths;
@@ -1026,7 +1187,7 @@ The required security treatment by surface is:
 | Include recursion | Canonical-path cycle detection, depth limit, and size limits. |
 | Included HTML | Still untrusted Markdown; it passes through the same DOMPurify boundary. |
 | Generated CSS | Trusted Docus/Shiki output only; never derived from Markdown source. |
-| External links | URI policy plus Docus-generated target/rel; author values cannot weaken it. |
+| External links | Generated Markdown/linkify HTTP(S) links receive policy-owned `target`/`rel`; raw semantic HTML anchors keep the existing sanitizer contract and are not globally rewritten. |
 | PDF export | Uses sanitized/resolved content and trusted export CSS; no trust bypass. |
 
 Feature impact must be reviewed individually:
@@ -1041,7 +1202,7 @@ Feature impact must be reviewed individually:
 | Line numbers | Prefer CSS counters; otherwise exact `aria-hidden`/structural additions only. |
 | Code groups | May need narrow `button`/ARIA attributes; no events/styles/arbitrary data. |
 | Snippets/includes | No allowlist relaxation; expanded content is still untrusted Markdown/code. |
-| External links | `target`/`rel` are policy-controlled, not user-controlled. |
+| External links | Generated Markdown/linkify `target`/`rel` are policy-controlled, not user-controlled; raw semantic HTML anchors are not implicitly rewritten by MD-EXT. |
 | PDF | Sanitized/rendered content only; no PDF-only trust bypass. |
 
 No feature may remove `FORBID_ATTR: ['style']` merely to make a renderer or transformer
@@ -1222,8 +1383,14 @@ Malformed syntax must fail safely, deterministically, and locally where practica
 | Unclosed `:::` | Deterministic ordinary/fallback rendering; do not consume unrelated document tail. |
 | ````ts:line-numbers=abc```` | Ignore invalid modifier and render safe ordinary code. |
 | ````ts {10-3}```` | Ignore invalid range or safe fallback; never throw. |
+| `[!code focus:0]`, `[!code focus:-1]`, or `[!code focus:x]` | Ignore/reject the malformed span safely; never throw or emit source-derived classes. |
+| `[!code focus:999999999]` | Apply only bounded official semantics or safely ignore/clamp; never allocate unbounded state. |
+| `./foo.ts` from a source file | Resolve logically against the source file, then pass only the canonical root-relative path to the physical resolver. |
+| `../foo.ts` that remains inside the root | Allow after logical normalization; the physical resolver receives no `..`. |
 | `<<< ../../../secret` | Visible safe snippet error; no file read. |
 | `<!--@include: ../../../secret-->` | Visible safe include error; no file read. |
+| `C:\\Users\\name\\secret.txt`, `/Users/name/.ssh/id_rsa`, or `file:///etc/passwd` | Reject before read; no Windows/absolute/protocol path reaches the physical resolver. |
+| Binary or invalid-UTF-8 resource | Safe generic resource error; no lossy decode, crash, or host-path disclosure. |
 | Recursive include A → B → A | Stop at cycle boundary; render safe error placeholder. |
 | Missing region | Safe visible placeholder/error; no stack or host path. |
 | Missing included file | Rest of document remains usable where practical. |
@@ -1246,14 +1413,20 @@ The later implementation program must add or extend tests for:
 - lazy image attributes and URI/sanitizer regression;
 - containers, titles, details, nesting, unknown types, and callout coexistence;
 - fence metadata grammar, ranges, labels, line-number modifiers, and malformed input;
-- Shiki highlight/focus/diff/warning/error/info notation and class-only output;
+- Shiki highlight/focus/diff/warning/error/info notation, `focus:N`, approved
+  `highlight:N` scope, and class-only output;
 - annotation marker visibility and generated CSS ownership;
 - line numbers, starting values, wrapping/copy/accessibility structure;
 - code-group parsing, labels, isolation, malformed groups, and lifecycle seam;
-- snippet path validation, regions, ranges, language inference, limits, and safe errors;
+- snippet logical-path normalization (`./`, `../` within root, root escape, source-at-root,
+  nested source context), absolute/Windows/protocol rejection, regions, ranges, language
+  inference, text/UTF-8 policy, limits, and safe errors;
 - include path validation, relative context, nested expansion, cycles, depth, size, and
-  heading/TOC participation;
+  heading/TOC participation for the approved core; deferred heading-section and
+  code-file-in-fence candidates must have separate tests only if approved;
 - included resource URL rebasing and WikiLink resolver source context;
+- external-link scope: generated Markdown links, linkify URLs, internal links, WikiLinks,
+  `mailto`, `tel`, fragments, relative URLs, and raw HTML `<a>` behavior;
 - resolver isolation and concurrent render independence;
 - DOMPurify regression: style/event/script/URI/data-* policies remain strict;
 - exact MarkMap/Mermaid bypass and existing math behavior.
@@ -1268,7 +1441,7 @@ At minimum:
 - container rendering, details interaction, and nested content;
 - multiple independent code groups and keyboard behavior;
 - line annotations and line numbers with long wrapped code;
-- external link behavior and focus visibility;
+- external link behavior and focus visibility, including generated links versus raw HTML;
 - lazy-image reader layout;
 - safe include/snippet rendering and visible error states;
 - MarkMap/Mermaid/math regressions;
@@ -1303,7 +1476,7 @@ Recommended sequence:
 | MD-EXT-3 | Shiki code annotations | Unified metadata, official class transformers, theme/PDF/security proof. |
 | MD-EXT-4 | Line numbers | Opt-in structural gutter, wrapping, accessibility, PDF. |
 | MD-EXT-5 | Code groups | Accessible post-`v-html` enhancement, cleanup, complete static PDF output. |
-| MD-EXT-6 | Safe snippets & Markdown includes | Authenticated resource boundary, limits, resolver/path context, cycles, rebasing. |
+| MD-EXT-6 | Safe snippets & Markdown includes | Initial core: authenticated resource boundary, logical-to-physical path resolution, text/UTF-8 policy, line ranges, basic named regions, nested includes, cycles/depth/size limits, source-path context, rebasing, and Shiki discovery after expansion. Heading/section selection and code-file inclusion inside fences are deferred candidates. |
 | MD-EXT-7 | Full regression & release gate | DoD, bundle/performance audit, reader/PDF/browser regression, docs closure. |
 
 This PRD is not an implementation plan. A later plan must decide exact files, tests,
@@ -1328,12 +1501,14 @@ recommendations are defaults for planning, not permission to silently implement 
 | 10. Maximum final expanded size | Recommend 2 MiB per render | Limits recursive content amplification and DOM/PDF load. | Abort expansion with safe visible placeholder. |
 | 11. Maximum include depth | Recommend 8 | Supports practical composition while bounding recursion. | Detect cycles by canonical logical path, not only depth. |
 | 12. Include errors | Safe visible placeholder with generic text | Interactive reader should preserve the rest of the document. | Never expose OS paths, stack traces, or raw errors. |
-| 13. Section/heading include | Defer from P0/P1; evaluate in MD-EXT-6 | It depends on final heading IDs and source-context semantics. | Must not create a second slugger or include unsafe ranges. |
+| 13. Section/heading include | Defer from the MD-EXT-6 core; review separately | It depends on final heading IDs and source-context semantics. | Must not create a second slugger or include unsafe ranges. |
 | 14. Code-group sanitizer markup | Use narrow buttons/ARIA if needed | Native accessible tabs are better than non-semantic clickable divs. | Add exact tag/ARIA allowlist only; no events/style/data wildcard. |
 | 15. Global line-number default | OFF | Avoid changing existing code block layout for every note. | Per-fence metadata remains explicit and bounded. |
-| 16. External link `rel` | `noopener noreferrer` | Covers opener isolation and referrer privacy. | Policy-generated only; do not trust author-supplied rel. |
-| 17. Include region marker policy | Concatenate matching regions, strip matching delimiters | Closest practical subset to VitePress/VS Code semantics. | Reject malformed nesting and bound output. |
-| 18. Unknown container behavior | Safe ordinary/fallback rendering with no arbitrary class | Keeps malformed content usable without dynamic types. | Prevents CSS/class/component injection. |
+| 16. Include region marker policy | Concatenate matching regions, strip matching delimiters | Closest practical subset to VitePress/VS Code semantics. | Reject malformed nesting and bound output. |
+| 17. Unknown container behavior | Safe ordinary/fallback rendering with no arbitrary class | Keeps malformed content usable without dynamic types. | Prevents CSS/class/component injection. |
+| 18. Resource content model | Recommend text-only resources decoded as UTF-8; snippets are source text and includes are Markdown text | Prevents binary data from being lossy-decoded into code/Markdown. | Binary, invalid UTF-8, and unsupported types return safe generic errors; no path disclosure. |
+| 19. Exact resource extension policy | Open; decide whether to use a source-extension allowlist or permit any validated UTF-8 text | The safe content model is clear, but extensionless/text-extension coverage is a product choice. | Must not broaden physical access; enforce type, byte, and decode limits before render. |
+| 20. Code-file inclusion inside fences | Defer unless separately approved after MD-EXT-6 core | VitePress documents the syntax, but Docus does not need it to ship the initial safe include core. | Keep literal-code escaping and the same resolver if later enabled. |
 
 The implementation plan must record the approved answers and update this section only
 through an explicit PRD review.
@@ -1386,13 +1561,15 @@ The complete MD-EXT program is releasable only when the approved release scope p
   rerender cleanup, and no Vue template execution;
 - [ ] PDF exports every code-group panel, not only the active reader panel;
 - [ ] safe snippets and includes, if included in the approved release, enforce root
-  confinement, auth, traversal/symlink protection, no network access, file/final-size
-  limits, depth, cycles, and safe errors;
+  confinement after logical normalization, auth, symlink protection, no network access,
+  text/UTF-8 policy, file/final-size limits, depth, cycles, and safe errors;
 - [ ] include-relative links/images resolve against the included source path;
 - [ ] included headings/custom anchors participate in final IDs and TOC;
 - [ ] snippet/include languages are present before Shiki preparation;
 - [ ] included code remains escaped literal source and cannot execute or alter generated
   CSS.
+- [ ] deferred heading/section selection and code-file inclusion inside fences do not
+  block the initial release unless separately approved and added to its scope.
 
 ### Architecture and security
 
@@ -1408,7 +1585,8 @@ The complete MD-EXT program is releasable only when the approved release scope p
 - [ ] events, scripts, style tags, dangerous URIs, arbitrary data attributes, and
   user-supplied CSS remain forbidden;
 - [ ] no Vue component/directive execution is introduced in Markdown;
-- [ ] no host filesystem escape, SSRF, `file://`, absolute path, or traversal is possible.
+- [ ] no host filesystem escape, SSRF, `file://`, absolute path, backslash, or canonical
+  root escape is possible; physical resolver input contains no dot segments.
 
 ### Reader, accessibility, and PDF
 
@@ -1494,6 +1672,12 @@ warn()   // [!code warning]
 info()   // [!code info]
 ```
 
+```ts
+const first = 1 // [!code focus:3]
+const second = 2
+const third = 3
+```
+
 ```ts:line-numbers=10
 const a = 1
 const b = 2
@@ -1505,8 +1689,12 @@ Expected behavior:
 - final HTML uses official-compatible line/outer classes and Docus CSS;
 - token colors remain class-based and theme-switchable without rerender;
 - diff/severity/line-number state survives PDF in printable light;
+- `[!code focus:3]` applies the official multi-line focus semantics;
 - malformed metadata falls back safely;
 - code text does not contain visible gutter numbers when copied where practical.
+
+`[!code highlight:3]` is intentionally not a normative initial example because that
+extension remains deferred until official transformer range semantics are confirmed.
 
 ### 37.3 Code groups
 
@@ -1539,17 +1727,37 @@ Expected behavior:
 <!--@include: ./parts/details.md-->
 ```
 
+Logical source-relative normalization:
+
+```text
+source document:  guides/java/index.md
+reference:        ../shared/example.ts
+canonical path:   guides/shared/example.ts
+result:           ALLOWED
+```
+
+Root escape rejection:
+
+```text
+source document:  guides/java/index.md
+reference:        ../../../../etc/passwd
+result:           SAFE ERROR — no resource read
+```
+
 Expected behavior if MD-EXT-6 is in the approved release:
 
 - `@/` is resolved only through the authenticated Docus resource root;
-- the relative include is resolved relative to the current Markdown file;
+- `./` and `../` are resolved relative to the current Markdown file only in the logical
+  layer; the physical resolver receives the canonical root-relative path with no dot
+  segments;
 - resource expansion completes before final fence discovery and Shiki preparation;
 - included headings/links/URLs use source-file context;
 - missing/forbidden resources produce safe visible errors, not process failures.
 
 ## 38. Research References and Traceability
 
-The syntax inventory and examples were checked against:
+The syntax inventory and examples were checked against the official VitePress page as
+observed in VitePress `2.0.0-alpha.19` on `2026-08-21`, and against:
 
 - [VitePress — Markdown Extensions](https://vitepress.dev/guide/markdown.html): official
   author-facing syntax for anchors, links, tables, tasks, footnotes, emoji, TOC,
