@@ -4,7 +4,7 @@
 
 | Field | Value |
 | --- | --- |
-| Document status | PLANNED / IMPLEMENTATION NOT STARTED |
+| Document status | MD-EXT-0 COMPLETE / IMPLEMENTATION NOT STARTED |
 | Product program | Docus VitePress-Style Markdown Extensions |
 | Repository | tangxiangxiang/docus |
 | Branch | main |
@@ -12,24 +12,25 @@
 | Product production baseline | c32f5bc9c1597c6c2f6b3e9581f327636fe8d8c2 |
 | Approved PRD baseline | 7e05e3bb43f4283a90ead1abd0c81325bc93281c |
 | Implementation Plan task base | 7e05e3bb43f4283a90ead1abd0c81325bc93281c |
-| Implementation baseline | The commit containing this approved plan; exact SHA is recorded in MD-EXT-0 evidence and the final handoff |
-| Current phase | MD-EXT-0 — NOT STARTED |
-| Current implementation state | PRD approved; plan created; no Markdown-extension implementation exists |
+| Implementation baseline | 582e312a4c5752a4c9a5c6bba7b0e752b0b78078 |
+| Current phase | MD-EXT-0 — COMPLETE; next MD-EXT-1 — NOT STARTED |
+| Current implementation state | PRD approved; MD-EXT-0 audit complete; no Markdown-extension implementation exists |
 | Shiki prerequisite | SHIKI-H0 through SHIKI-H8 COMPLETE; migration closed; no H9 |
 | Parser baseline | markdown-it 14.1.0 singleton |
 | Shiki baseline | Shiki 4.4.3, @shikijs/transformers 4.4.3 |
 | VitePress reference | Official Markdown Extensions documentation, version observed 2.0.0-alpha.19 on 2026-08-21 |
 | Scope of this document | Implementation planning only |
-| This task changes | This plan and the Design index only |
+| This lifecycle update changes | This plan, the MD-EXT-0 evidence document, and the Design index only |
 
 The production baseline is the last production-code state before this Markdown
 extension program. The approved PRD commits after that point are documentation-only.
 The Plan task base is the repository state from which this plan is created. These
 three references must not be collapsed into one “current baseline”.
 
-The future implementation baseline is intentionally not a self-referential SHA. Once
-this plan is approved, MD-EXT-0 records the exact commit that contains the approved
-plan and uses that commit as the immutable starting point for implementation.
+The implementation baseline is the exact approved-plan commit recorded by MD-EXT-0:
+582e312a4c5752a4c9a5c6bba7b0e752b0b78078. The evidence document records the same
+SHA as its audit HEAD and MD-EXT-0 base. The later evidence commit is documentation
+only and does not replace the implementation baseline.
 
 ## 2. Planning Goals and Constraints
 
@@ -58,8 +59,8 @@ This plan does not authorize implementation. In particular, this commit:
 - does not modify DOMPurify;
 - does not create a server resource endpoint;
 - does not add tests;
-- does not create MD-EXT evidence documents;
-- does not start MD-EXT-0;
+- records MD-EXT-0 evidence in docs/design/vitepress-markdown-extensions-md-ext-0-audit.md only;
+- does not start MD-EXT-1;
 - does not reopen the completed Shiki migration.
 
 ## 3. Authoritative PRD and Baselines
@@ -72,12 +73,13 @@ This plan does not authorize implementation. In particular, this commit:
 | Approved PRD baseline | 7e05e3bb43f4283a90ead1abd0c81325bc93281c | Frozen product contract consumed by this plan |
 | Plan task base | 7e05e3bb43f4283a90ead1abd0c81325bc93281c | HEAD at plan creation |
 
-MD-EXT-0 will record a fourth operational reference:
+MD-EXT-0 records a fourth operational reference:
 
 | Evidence field | Value |
 | --- | --- |
-| Implementation baseline | The final approved-plan commit, recorded by SHA in MD-EXT-0 |
-| MD-EXT-0 base | Must equal the approved implementation baseline |
+| Implementation baseline | 582e312a4c5752a4c9a5c6bba7b0e752b0b78078 |
+| MD-EXT-0 base | 582e312a4c5752a4c9a5c6bba7b0e752b0b78078 |
+| MD-EXT-0 evidence | [Baseline & Compatibility Contract Audit](vitepress-markdown-extensions-md-ext-0-audit.md) |
 | Previous phase completion | Recorded separately for every later phase |
 
 No future commit SHA is written into this document. A phase evidence document must
@@ -1205,6 +1207,10 @@ Semantic dependencies:
 
 ## 19. MD-EXT-0 — Baseline & Compatibility Contract Audit
 
+Status: COMPLETE. Evidence: [MD-EXT-0 Baseline & Compatibility Contract Audit](vitepress-markdown-extensions-md-ext-0-audit.md). The audit recorded the exact
+implementation baseline, current runtime/ruler contracts, installed API behavior,
+sanitizer delta ledger, resource boundary, bundle baseline, and test limitations.
+
 ### Goal
 
 Create durable evidence of the real post-H8 Docus architecture and close all
@@ -1215,7 +1221,8 @@ implementation parameters that later phases must not rediscover.
 - Approved PRD at 7e05e3bb43f4283a90ead1abd0c81325bc93281c is present.
 - This Implementation Plan is the approved planning input.
 - Shiki H0-H8 is closed.
-- Working tree is clean and the exact MD-EXT implementation baseline is recorded.
+- Working tree was clean and the exact MD-EXT implementation baseline is recorded
+  as 582e312a4c5752a4c9a5c6bba7b0e752b0b78078.
 
 ### In scope
 
@@ -1355,7 +1362,7 @@ docs/design/vitepress-markdown-extensions-md-ext-0-audit.md with:
 
 ### Next phase
 
-Only after the audit is reviewed: MD-EXT-1 — Anchors, TOC, Links & Lazy Images.
+Next, only after this audit is reviewed: MD-EXT-1 — Anchors, TOC, Links & Lazy Images.
 
 ## 20. MD-EXT-1 — Anchors, TOC, Links & Lazy Images
 
@@ -2449,7 +2456,8 @@ commit before that commit exists.
 
 ## 32. Evidence and Documentation Strategy
 
-Create one evidence document per phase, but not during this plan-creation task:
+Create one evidence document per phase. MD-EXT-0 is now recorded; later evidence
+documents are created by their owning implementation phase:
 
 ~~~text
 docs/design/vitepress-markdown-extensions-md-ext-0-audit.md
@@ -2577,5 +2585,5 @@ implemented opportunistically in a phase that owns a related feature.
 | Existing Mermaid/MarkMap/math/PDF contract regresses | Stop at owning phase |
 | Release gate finds a real product failure | Block; fix owning phase separately |
 
-The implementation plan is complete and ready for review. It does not claim that
-MD-EXT-0 or any later phase has started.
+The implementation plan remains the execution map. MD-EXT-0 is complete as an
+evidence-only phase; no MD-EXT-1 or later production implementation has started.
