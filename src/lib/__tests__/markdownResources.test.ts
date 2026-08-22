@@ -186,6 +186,34 @@ describe('Markdown resource logical resolution and expansion', () => {
     expect(resolver.read).not.toHaveBeenCalled()
   })
 
+  it('does not let same-content html_inline backticks impersonate a real resource code span', async () => {
+    const resolver = resolverFor({ 'examples/secret.ts': 'const secret = true' })
+    const source = '<span title="`literal <<< @/examples/secret.ts literal`">x</span> `literal\n<<< @/examples/secret.ts\nliteral`'
+    const expanded = await expandMarkdownResources(source, {
+      md: new MarkdownIt({ html: true }),
+      sourcePath: 'docs/index',
+      resourceResolver: resolver,
+    })
+
+    expect(expanded.markdown).toBe(source)
+    expect(expanded.markdown).not.toContain('markdown-resource-error')
+    expect(resolver.read).not.toHaveBeenCalled()
+  })
+
+  it('keeps malformed same-content resource syntax literal inside the real code span', async () => {
+    const resolver = resolverFor({ 'examples/secret.ts': 'const secret = true' })
+    const source = '<span title="`literal <<< @/examples/secret.ts{3-} literal`">x</span> `literal\n<<< @/examples/secret.ts{3-}\nliteral`'
+    const expanded = await expandMarkdownResources(source, {
+      md: new MarkdownIt({ html: true }),
+      sourcePath: 'docs/index',
+      resourceResolver: resolver,
+    })
+
+    expect(expanded.markdown).toBe(source)
+    expect(expanded.markdown).not.toContain('markdown-resource-error')
+    expect(resolver.read).not.toHaveBeenCalled()
+  })
+
   it('does not let backticks across MarkdownIt blocks suppress a real directive', async () => {
     const resolver = resolverFor({
       'examples/demo.ts': 'const loaded = true',

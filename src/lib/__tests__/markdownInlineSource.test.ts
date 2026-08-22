@@ -29,6 +29,18 @@ describe('MarkdownIt-guided code_inline source ranges', () => {
     expect(variableRange?.markerLength).toBe(2)
   })
 
+  it('matches MarkdownIt code-span normalization for surrounding spaces', () => {
+    const source = '` surrounding `'
+    const children = inlineChildren(source)
+    expect(children).toMatchObject([
+      { type: 'code_inline', content: 'surrounding', markup: '`' },
+    ])
+
+    const range = findMarkdownCodeInlineSourceRanges(source, children)[0]
+    expect(range).not.toBeNull()
+    expect(source.slice(range!.start, range!.end)).toBe(source)
+  })
+
   it('maps actual children despite unrelated raw backticks', () => {
     const source = '<span title="`not-code-inline`">x</span> `included\nroot`'
     const children = inlineChildren(source)
@@ -39,6 +51,52 @@ describe('MarkdownIt-guided code_inline source ranges', () => {
     expect(ranges).toHaveLength(1)
     expect(ranges[0]).not.toBeNull()
     expect(source.slice(ranges[0]!.start, ranges[0]!.end)).toBe('`included\nroot`')
+  })
+
+  it('lets html_inline ownership disambiguate identical multiline content', () => {
+    const source = '<span title="`same content`">x</span> `same\ncontent`'
+    const children = inlineChildren(source)
+    expect(children.filter((child) => child.type === 'html_inline')).not.toHaveLength(0)
+    expect(children.filter((child) => child.type === 'code_inline')).toHaveLength(1)
+
+    const ranges = findMarkdownCodeInlineSourceRanges(source, children)
+    expect(ranges).toHaveLength(1)
+    expect(ranges[0]).not.toBeNull()
+    expect(source.slice(ranges[0]!.start, ranges[0]!.end)).toBe('`same\ncontent`')
+  })
+
+  it('does not let an identical html_inline span impersonate a one-line code span', () => {
+    const source = '<span title="`same`">x</span> `same`'
+    const children = inlineChildren(source)
+    const ranges = findMarkdownCodeInlineSourceRanges(source, children)
+
+    expect(ranges).toHaveLength(1)
+    expect(ranges[0]).not.toBeNull()
+    expect(source.slice(ranges[0]!.start, ranges[0]!.end)).toBe('`same`')
+    expect(ranges[0]!.start).toBe(source.lastIndexOf('`same`'))
+  })
+
+  it('maps repeated identical code_inline children in actual order', () => {
+    const source = '<span title="`same`">x</span> `same` and `same`'
+    const children = inlineChildren(source)
+    const ranges = findMarkdownCodeInlineSourceRanges(source, children)
+
+    expect(ranges).toHaveLength(2)
+    expect(ranges.every(Boolean)).toBe(true)
+    expect(ranges.map((range) => source.slice(range!.start, range!.end)))
+      .toEqual(['`same`', '`same`'])
+    expect(ranges[0]!.start).toBe(source.indexOf('`same`', source.indexOf('</span>')))
+    expect(ranges[1]!.start).toBe(source.lastIndexOf('`same`'))
+  })
+
+  it('consumes multiple html_inline anchors before mapping a later code span', () => {
+    const source = '<a title="`same`">a</a> <span title="`same`">b</span> `same`'
+    const children = inlineChildren(source)
+    const ranges = findMarkdownCodeInlineSourceRanges(source, children)
+
+    expect(ranges).toHaveLength(1)
+    expect(ranges[0]).not.toBeNull()
+    expect(ranges[0]!.start).toBe(source.lastIndexOf('`same`'))
   })
 
   it('does not manufacture a range for unmatched or unrelated blocks', () => {

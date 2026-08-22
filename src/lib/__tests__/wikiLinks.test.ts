@@ -233,6 +233,32 @@ describe('wikiLinkPlugin', () => {
         { ref: 'root-wiki', sourcePath: 'docs/root.md' },
       ])
     })
+
+    it('keeps same-content html_inline backticks from consuming real code_inline source context', () => {
+      const calls: Array<{ ref: string; sourcePath?: string }> = []
+      const md = new MarkdownIt({ html: true, linkify: true, typographer: true })
+        .use(wikiLinkPlugin, {
+          resolve: (ref, _anchor, context) => {
+            calls.push({ ref, sourcePath: context?.sourcePath })
+            return { target: ref }
+          },
+        })
+      const source = '<span title="`included root`">x</span> `included\nroot` [Root](./root.md) [[root-wiki]]'
+      const inline = md.parse(source, {}).find((token) => token.type === 'inline')
+      expect(inline?.children?.some((child) => child.type === 'html_inline')).toBe(true)
+      expect(inline?.children?.filter((child) => child.type === 'code_inline')).toHaveLength(1)
+      calls.length = 0
+
+      md.render(source, {
+        deferWikiResolution: true,
+        resourceSourcePathByLine: ['docs/part.md', 'docs/root.md'],
+      })
+
+      expect(calls).toEqual([
+        { ref: './root', sourcePath: 'docs/root.md' },
+        { ref: 'root-wiki', sourcePath: 'docs/root.md' },
+      ])
+    })
   })
 
   describe('edge cases', () => {

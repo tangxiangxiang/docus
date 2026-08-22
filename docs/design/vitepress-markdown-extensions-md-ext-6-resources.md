@@ -6,7 +6,7 @@
 | Field | Value |
 | --- | --- |
 | Phase | MD-EXT-6 — Safe Snippets & Markdown Includes |
-| Status | COMPLETE / REVIEW-CLOSED |
+| Status | COMPLETE / REVIEW-READY |
 | Implementation baseline | `582e312a4c5752a4c9a5c6bba7b0e752b0b78078` |
 | Previous phase final review closure | `dd4768f67e77f190794cd7d046218705e2ce56e3` |
 | MD-EXT-6 base | `dd4768f67e77f190794cd7d046218705e2ce56e3` |
@@ -15,13 +15,15 @@
 | Original MD-EXT-6 implementation commit | `0ce35f1b2b838c590e92a435846de5a1ac770b42` |
 | MD-EXT-6 range/budget/context/PDF follow-up commit | `7ee123c546f3c137dd455922b76a02b64c29349b` |
 | MD-EXT-6 code-span/PDF fail-closed follow-up commit | `5be97ef4ce6fa124009c5d3152a3f6a97b3fe772` |
-| MD-EXT-6 inline-ownership closure commit | Recorded in the final handoff after this document is committed |
+| MD-EXT-6 inline-block ownership closure commit | `30584cf548f152108849034cbeff77ba47eeedc0` |
+| MD-EXT-6 same-content ownership follow-up commit | Recorded in the final handoff after this document is committed |
 | Next phase | MD-EXT-7 — NOT STARTED |
 
 This document records the implementation and verification evidence for MD-EXT-6,
 including the range, expansion-budget, source-context, and PDF local-image
-boundary follow-up plus the final code-span and fail-closed review follow-up.
-No MD-EXT-7 work is included.
+boundary follow-up plus the code-span ownership follow-ups. The current
+same-content ownership follow-up remains review-ready; no MD-EXT-7 work is
+included.
 
 ## 2. Scope and changed files
 
@@ -75,7 +77,7 @@ docs/design/vitepress-markdown-extensions-md-ext-6-resources.md
 docs/design/vitepress-markdown-extensions-implementation-plan.md
 ```
 
-This final inline-ownership closure follow-up changes only the following
+This same-content inline-ownership follow-up changes only the following
 client/helper/test/evidence surfaces:
 
 ```text
@@ -254,15 +256,19 @@ Expansion therefore happens before fence discovery, so snippets introduced by
 an include participate in normal Shiki language preparation. The resource
 scanner uses MarkdownIt's existing block parse to keep fenced code, indented
 code, and multi-line raw HTML opaque. For each actual `inline` token, the same
-narrow source-position helper receives that token's `content` and the
-`code_inline` children MarkdownIt actually produced. It locates only those
-children, mirrors the installed backtick delimiter/content-normalization rule,
-and never pairs backticks across paragraphs or other inline blocks. Therefore
-standalone-looking `<<<` slices inside one-line or multi-line real code spans
-remain literal, including variable-length backtick spans and malformed
-resource syntax; malformed include-comment lookalikes remain literal under the
-existing raw-HTML safety path. A valid standalone include HTML comment retains
-its approved one-line directive behavior, and an unmatched backtick in another
+narrow source-position helper receives that token's `content` and the complete
+MarkdownIt child sequence. It advances a monotonic raw-source cursor through
+exact-source non-code children, especially `html_inline`, before matching a
+later `code_inline`; known non-code ranges also block candidate overlap. Marker
+length and normalized content remain only verification, not identity. Therefore
+same-content backticks in an HTML attribute cannot impersonate a later real code
+span. The helper mirrors the installed backtick delimiter/content-normalization
+rule and never pairs backticks across paragraphs or other inline blocks.
+Standalone-looking `<<<` slices inside one-line or multi-line real code spans
+remain literal, including variable-length backtick spans and malformed resource
+syntax; malformed include-comment lookalikes remain literal under the existing
+raw-HTML safety path. A valid standalone include HTML comment retains its
+approved one-line directive behavior, and an unmatched backtick in another
 paragraph cannot suppress a real directive there.
 
 No second Markdown parser, highlighter, or renderer was introduced.
@@ -310,10 +316,12 @@ renderer walks inline children in source order. Each child receives the path
 for its current flattened line; only after assigning metadata to a
 `softbreak`/`hardbreak` does the cursor advance, so the break belongs to the
 preceding line and the first child after it uses the next source identity. The
-shared helper is called with that inline block's actual children, so unrelated
-raw backticks in an `html_inline` child cannot discard a valid later code span.
-A multi-line `code_inline` child advances by the exact number of raw source
-line endings in its located span, rather than by normalized rendered content.
+shared helper is called with that inline block's complete actual children.
+Exact `html_inline` source ranges are consumed before later `code_inline`
+matching, so raw backticks in an HTML attribute cannot discard or impersonate a
+valid later code span. A multi-line `code_inline` child advances by the exact
+number of raw source line endings in its located span, rather than by normalized
+rendered content.
 There is no module-global source cursor, whole-document backtick scan, or
 second full inline parser.
 
@@ -461,7 +469,7 @@ actually follows the multi-line code span. The focused PDF unit regression
 proves a settled local image with a forced canvas snapshot failure produces no
 endpoint URL in prepared HTML and does not mutate the live image.
 
-The final inline-ownership closure focused run was:
+The previous inline-block ownership closure focused run was:
 
 ```text
 ./node_modules/.bin/vitest run \
@@ -472,6 +480,28 @@ The final inline-ownership closure focused run was:
   src/lib/__tests__/pdfExport.test.ts \
   src/lib/__tests__/pdf-readiness.test.ts
 → PASS: 6 files, 162 tests
+```
+
+The same-content ownership follow-up adds direct helper, resource, and
+source-context regressions for identical raw backticks in `html_inline` and a
+later real `code_inline`. It also verifies that the installed MarkdownIt
+backtick rule's delimiter scan and normalization are mirrored without a
+separate backslash-escape test in the helper; escape handling remains owned by
+MarkdownIt's normal inline rule sequence. The package declares `markdown-it`
+`^14.1.0`; the current lockfile/node_modules resolve `14.2.0`, whose inspected
+`backticks.mjs` rule has the same relevant behavior.
+
+The final same-content ownership focused run was:
+
+```text
+./node_modules/.bin/vitest run \
+  src/lib/__tests__/markdownInlineSource.test.ts \
+  src/lib/__tests__/markdownResources.test.ts \
+  src/lib/__tests__/markdown.test.ts \
+  src/lib/__tests__/wikiLinks.test.ts \
+  src/lib/__tests__/pdfExport.test.ts \
+  src/lib/__tests__/pdf-readiness.test.ts
+→ PASS: 6 files, 170 tests
 ```
 
 The final focused MD-EXT-6 Playwright spec covers reader expansion/source context
@@ -533,6 +563,17 @@ This inline-ownership closure rerun reported:
 The additional passing tests are the direct inline-source, malformed-directive,
 cross-block, and raw-backtick-mismatch regressions; the same 19 OpenAI HTTP
 loopback and Round-15/Round-16 `tsx` IPC `EPERM` limitations remained.
+
+This same-content ownership follow-up full-unit rerun reported:
+
+```text
+→ BASELINE-LIMITED
+→ 215 test files passed, 3 failed
+→ 3212 tests passed, 21 failed, 2 skipped
+```
+
+The 21 failures are the same known loopback/`tsx` IPC `EPERM` limitations; no
+new Markdown, resource, WikiLink, PDF, or client regression appeared.
 
 ### Browser/PDF
 

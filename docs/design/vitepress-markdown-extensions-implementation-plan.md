@@ -4,7 +4,7 @@
 
 | Field | Value |
 | --- | --- |
-| Document status | IMPLEMENTATION COMPLETE / MD-EXT-6 COMPLETE / REVIEW-CLOSED |
+| Document status | IMPLEMENTATION COMPLETE / MD-EXT-6 COMPLETE / REVIEW-READY |
 | Product program | Docus VitePress-Style Markdown Extensions |
 | Repository | tangxiangxiang/docus |
 | Branch | main |
@@ -13,14 +13,14 @@
 | Approved PRD baseline | 7e05e3bb43f4283a90ead1abd0c81325bc93281c |
 | Implementation Plan task base | 7e05e3bb43f4283a90ead1abd0c81325bc93281c |
 | Implementation baseline | 582e312a4c5752a4c9a5c6bba7b0e752b0b78078 |
-| Current phase | MD-EXT-6 — COMPLETE / REVIEW-CLOSED; next MD-EXT-7 — NOT STARTED |
+| Current phase | MD-EXT-6 — COMPLETE / REVIEW-READY; next MD-EXT-7 — NOT STARTED |
 | Current implementation state | PRD approved; MD-EXT-0 audit complete; MD-EXT-1 implementation and provenance/source-awareness follow-up complete; MD-EXT-2 implementation plus opaque-range and paragraph-context follow-ups complete; MD-EXT-3 fence metadata and Shiki source annotations plus sentinel/budget review follow-up complete; MD-EXT-4 bounded structural line numbers, unknown-language fallback, reader/PDF layout, browser evidence, and reader annotation-background follow-up complete; MD-EXT-5 static code groups, root-scoped reader enhancement, sanitizer delta, and all-panel PDF preparation complete; MD-EXT-6 safe snippets/includes, authenticated resource reads, exact range semantics, exact UTF-8 expansion accounting, per-child source context, cancellation, code-span-aware directive opacity, and fail-closed local-image PDF cloning complete; MD-EXT-7 not started |
 | Shiki prerequisite | SHIKI-H0 through SHIKI-H8 COMPLETE; migration closed; no H9 |
 | Parser baseline | markdown-it 14.1.0 singleton |
 | Shiki baseline | Shiki 4.4.3, @shikijs/transformers 4.4.3 |
 | VitePress reference | Official Markdown Extensions documentation, version observed 2.0.0-alpha.19 on 2026-08-21 |
 | Scope of this document | Implementation planning only |
-| This lifecycle update changes | MD-EXT-6 final review-follow-up implementation/evidence lifecycle metadata; MD-EXT-7 remains not started |
+| This lifecycle update changes | MD-EXT-6 same-content inline-ownership follow-up implementation/evidence lifecycle metadata; MD-EXT-7 remains not started |
 
 The production baseline is the last production-code state before this Markdown
 extension program. The approved PRD commits after that point are documentation-only.
@@ -65,6 +65,9 @@ The completed MD-EXT-6 phase, including its review follow-up:
 - maps source context to each merged inline child by its flattened source line;
 - keeps standalone-looking resource directives opaque inside variable-length,
   multi-line inline code spans without introducing a second full Markdown parser;
+- binds raw-source code-span ownership to the complete actual MarkdownIt child
+  sequence, so exact `html_inline` ranges cannot be claimed by later
+  `code_inline` children with identical normalized content;
 - keeps settled local PDF resource images inside the export boundary so the
   browser makes no second resource-endpoint request;
 - omits local resource image source attributes from the PDF clone when snapshot
@@ -2034,7 +2037,7 @@ accessibility, copy, wrapping, PDF, and bound evidence.
 
 [MD-EXT-6 evidence](vitepress-markdown-extensions-md-ext-6-resources.md)
 
-MD-EXT-6 — Safe Snippets & Markdown Includes — COMPLETE / REVIEW-CLOSED.
+MD-EXT-6 — Safe Snippets & Markdown Includes — COMPLETE / REVIEW-READY.
 
 ## 24. MD-EXT-5 — Code Groups
 
@@ -2175,12 +2178,12 @@ token path, a root-scoped `useCodeGroupMount`, exact sanitizer additions, and a
 clone-only PDF all-panel transformation. The review follow-up additionally
 enforces the exact `tabindex` values `0` and `-1` at the final sanitizer boundary
 and proves grouped PDF line numbers, annotations, and printable-light Shiki
-token colors in Chromium. MD-EXT-6 has since been implemented and is review-closed;
+token colors in Chromium. MD-EXT-6 has since been implemented and is review-ready;
 MD-EXT-7 has not started.
 
 ### Next phase
 
-MD-EXT-6 — Safe Snippets & Markdown Includes — COMPLETE / REVIEW-CLOSED.
+MD-EXT-6 — Safe Snippets & Markdown Includes — COMPLETE / REVIEW-READY.
 
 ## 25. MD-EXT-6 — Safe Snippets & Markdown Includes
 
@@ -2240,13 +2243,17 @@ as an inclusive closed range, and `{N,}` as the only open-ended form; `N-` is
 invalid. The same selection contract applies to snippets and includes.
 
 A shared narrow MarkdownIt-compatible backtick source-position helper receives
-one actual `inline` token's source and its real `code_inline` children. Resource
-expansion checks the exact standalone directive slice, not a whole-line blanket;
-ownership is decided before valid or malformed resource parsing. The helper never
-pairs backticks across MarkdownIt inline blocks, so one-line/multi-line and
-variable-length real code spans remain literal while an unmatched opener in one
-paragraph cannot suppress a directive in another. Unrelated raw backticks in an
-`html_inline` child do not invalidate a later real `code_inline` mapping.
+one actual `inline` token's source and its complete real child sequence. It
+advances a monotonic raw-source cursor through exact-source non-code children,
+especially `html_inline`, records those ranges as unavailable to later code-span
+candidates, and uses marker length/normalized content only to verify an actual
+`code_inline` child. Resource expansion checks the exact standalone directive
+slice, not a whole-line blanket; ownership is decided before valid or malformed
+resource parsing. The helper never pairs backticks across MarkdownIt inline
+blocks, so one-line/multi-line and variable-length real code spans remain literal
+while an unmatched opener in one paragraph cannot suppress a directive in
+another. Same-content raw backticks in an HTML attribute cannot impersonate a
+later real `code_inline` mapping.
 
 ### Likely production files
 
@@ -2278,12 +2285,14 @@ budget state before emitting their placeholder.
 
 When one MarkdownIt inline token spans root/include/root lines, source context is
 assigned per child while walking `softbreak`/`hardbreak` boundaries and raw
-`code_inline` source ranges from the same token-guided helper. The break retains
-the preceding line; a multi-line code span advances by the exact source line
-endings it consumes, rather than by normalized rendered content. A failed exact
-mapping is represented as unknown rather than guessed. No global source cursor,
-whole-document backtick scan, second full inline parser, or paragraph-semantic
-rewrite is allowed.
+`code_inline` source ranges from the same child-guided helper. Exact `html_inline`
+source is consumed before later code-span matching, so an identical raw backtick
+span in an HTML attribute cannot move the source cursor or impersonate the real
+code span. The break retains the preceding line; a multi-line code span advances
+by the exact source line endings it consumes, rather than by normalized rendered
+content. A failed exact mapping is represented as unknown rather than guessed.
+No global source cursor, whole-document backtick scan, second full inline parser,
+or paragraph-semantic rewrite is allowed.
 
 Server: auth required, canonical path, safe physical resolver, symlink/junction/race,
 missing/directory/binary/invalid UTF-8/unsupported/oversized, asset MIME policy,
@@ -2351,9 +2360,10 @@ Verify canonical paths, included headings/TOC, relative image/link rebasing, nes
 WikiLinks, Shiki grammar preparation after expansion, cycle/depth/size/encoding errors,
 and no host path disclosure. Verify `{2}` versus `{3,}`, exact UTF-8 expansion
 accounting, valid and malformed directive-looking code spans, variable-length
-backticks, an unmatched opener across separate MarkdownIt blocks, unrelated raw
-backticks before a real code span, and both directions of a merged
-root/include/root paragraph with per-child source context. Test a reader export
+backticks, an unmatched opener across separate MarkdownIt blocks, same-content
+backticks inside `html_inline` before a real code span, unrelated raw backticks
+before a real code span, and both directions of a merged root/include/root
+paragraph with per-child source context. Test a reader export
 after selecting a code-group tab; the PDF must use settled HTML and make no
 additional local-image endpoint request. Force local-image snapshot failure and
 verify the prepared clone contains no endpoint URL and the live reader is unchanged.
@@ -2397,7 +2407,7 @@ resolver/network counts, cancellation, browser, PDF, and negative security cases
 
 ### Status
 
-COMPLETE / REVIEW-CLOSED. The implementation expands approved snippets and Markdown
+COMPLETE / REVIEW-READY. The implementation expands approved snippets and Markdown
 includes before final MarkdownIt discovery/render, keeps logical source-relative
 resolution separate from the strict physical path boundary, forwards included source
 context to links/images/WikiLinks, and preserves the settled-HTML PDF contract. The
@@ -2405,10 +2415,10 @@ review follow-ups close single-line/closed/open-ended range semantics, exact fin
 UTF-8 byte accounting including separators, merged-inline per-child source context,
 MarkdownIt-inline-block-scoped code-span ownership and source-line advancement,
 the authenticated local-image PDF no-reread boundary, and fail-closed local-image
-snapshot failure. The final closure follow-up does not touch PDF production code;
-it removes the whole-document raw backtick ownership path, makes malformed
-code-span directives literal before resource parsing, and preserves real
-`code_inline` mapping in the presence of unrelated raw backticks. The evidence
+snapshot failure. The latest ownership follow-up does not touch PDF production
+code; it makes the complete actual child sequence authoritative, consumes exact
+`html_inline` source before later code-span matching, and rejects marker/content-only
+identity for same-content raw backticks. The evidence
 document records the authenticated route, bounded text/image policy,
 per-render cache/stack/cancellation behavior, focused tests, browser network counts,
 failure-mode PDF proof, and the known aggregate unit-suite environment limitations.
