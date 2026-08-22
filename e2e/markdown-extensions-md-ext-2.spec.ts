@@ -42,6 +42,12 @@ test('MD-EXT-2 renders fixed containers, nested bodies, and existing Markdown fe
       'After raw HTML.',
       ':::',
       '',
+      '::: info Paragraph context',
+      'Before',
+      '<span>inline</span>',
+      ':::',
+      'After paragraph context.',
+      '',
       '::: details Closed',
       'Closed body.',
       ':::',
@@ -55,6 +61,11 @@ test('MD-EXT-2 renders fixed containers, nested bodies, and existing Markdown fe
     const closed = article.querySelector<HTMLDetailsElement>('.markdown-container-details:not([open])')
     const opened = article.querySelector<HTMLDetailsElement>('.markdown-container-details[open]')
     const external = article.querySelector<HTMLAnchorElement>('a[href="https://example.com"]')
+    const paragraphContextContainer = Array.from(article.querySelectorAll('.markdown-container'))
+      .find((container) => container.querySelector('span')?.textContent === 'inline'
+        && container.querySelector('.markdown-container') === null)
+    const paragraphContextAfter = Array.from(article.querySelectorAll('p'))
+      .find((paragraph) => paragraph.textContent?.includes('After paragraph context.'))
     const result = {
       types: ['info', 'tip', 'warning', 'danger', 'details']
         .map((type) => article.querySelector(`.markdown-container-${type}`) !== null),
@@ -65,6 +76,10 @@ test('MD-EXT-2 renders fixed containers, nested bodies, and existing Markdown fe
       closed: closed?.open === false,
       opened: opened?.open === true,
       rawHtmlTail: article.querySelector('.markdown-container-danger')?.textContent?.includes('After raw HTML.') ?? false,
+      paragraphContextSpan: paragraphContextContainer?.querySelector('span')?.textContent ?? null,
+      paragraphContextAfterOutside: paragraphContextAfter
+        ? !paragraphContextContainer?.contains(paragraphContextAfter)
+        : false,
       external: external ? { target: external.target, rel: external.rel } : null,
       imageLoading: article.querySelector('img')?.getAttribute('loading') ?? null,
       genericAttrs: article.querySelectorAll('[style], [onclick], [onerror], [id="foo"]').length,
@@ -81,6 +96,8 @@ test('MD-EXT-2 renders fixed containers, nested bodies, and existing Markdown fe
   expect(result.closed).toBe(true)
   expect(result.opened).toBe(true)
   expect(result.rawHtmlTail).toBe(true)
+  expect(result.paragraphContextSpan).toBe('inline')
+  expect(result.paragraphContextAfterOutside).toBe(true)
   expect(result.external).toEqual({ target: '_blank', rel: 'noopener noreferrer' })
   expect(result.imageLoading).toBe('lazy')
   expect(result.genericAttrs).toBe(0)

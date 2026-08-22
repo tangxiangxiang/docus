@@ -14,7 +14,7 @@
 | Implementation Plan task base | 7e05e3bb43f4283a90ead1abd0c81325bc93281c |
 | Implementation baseline | 582e312a4c5752a4c9a5c6bba7b0e752b0b78078 |
 | Current phase | MD-EXT-2 — COMPLETE / REVIEW-CLOSED; next MD-EXT-3 — NOT STARTED |
-| Current implementation state | PRD approved; MD-EXT-0 audit complete; MD-EXT-1 implementation and provenance/source-awareness follow-up complete; MD-EXT-2 implementation and reader/PDF/security follow-up complete; MD-EXT-3+ not started |
+| Current implementation state | PRD approved; MD-EXT-0 audit complete; MD-EXT-1 implementation and provenance/source-awareness follow-up complete; MD-EXT-2 implementation plus opaque-range and paragraph-context follow-ups complete; MD-EXT-3+ not started |
 | Shiki prerequisite | SHIKI-H0 through SHIKI-H8 COMPLETE; migration closed; no H9 |
 | Parser baseline | markdown-it 14.1.0 singleton |
 | Shiki baseline | Shiki 4.4.3, @shikijs/transformers 4.4.3 |
@@ -1535,8 +1535,9 @@ MD-EXT-2 — Custom Containers.
 
 ## 21. MD-EXT-2 — Custom Containers
 
-Status: COMPLETE / REVIEW-CLOSED. The opaque-block review follow-up is applied and
-recorded in the evidence handoff: [MD-EXT-2 Custom Containers](vitepress-markdown-extensions-md-ext-2-containers.md).
+Status: COMPLETE / REVIEW-CLOSED. The opaque-block and paragraph-context review
+follow-ups are applied and recorded in the evidence handoff: [MD-EXT-2 Custom
+Containers](vitepress-markdown-extensions-md-ext-2-containers.md).
 Phase base: 4c86783fc847fda43a5eaba95e1d32621d79b835. Next phase: MD-EXT-3 — Shiki
 Code Annotations & Unified Fence Metadata — NOT STARTED.
 
@@ -1578,10 +1579,12 @@ callouts, links, math, and fenced code remain visible to their existing plugins.
 The MD-EXT-2 review follow-up additionally requires close discovery to respect the
 source ranges owned by earlier opaque block rules: `code`, `docus_math_block`,
 `fence`, and `html_block`. The implementation uses narrow range detectors aligned
-with the installed MarkdownIt/Docus rules and jumps over those ranges before
-looking for container delimiters. It does not create a second MarkdownIt parser,
-render a substring, or disable `html: true`; raw HTML remains under the existing
-DOMPurify boundary.
+with the installed MarkdownIt/Docus rules, tracks paragraph context using the
+actual silent paragraph-terminator chain, and jumps over an owned range only at a
+real block boundary. HTML type 7, Docus math, and indented code therefore do not
+gain paragraph-interrupting behavior; HTML types 1–6 retain the behavior supplied
+by MarkdownIt. It does not create a second MarkdownIt parser, render a substring,
+or disable `html: true`; raw HTML remains under the existing DOMPurify boundary.
 
 Unknown types and malformed/unclosed fences use safe ordinary/fallback handling and
 must not swallow the document tail. details maps only the literal open modifier to
@@ -1599,7 +1602,8 @@ the boolean open attribute; all other brace text is not parsed as attrs.
 
 Unit: each built-in type/default title/custom title, inline title safety, body Markdown,
 nested longer/shorter fences, unknown/unclosed/malformed input, opaque earlier
-blocks (indented code, math, fenced code, raw HTML), callout-in-container,
+blocks at block boundaries and paragraph-context ownership (indented code, math,
+fenced code, raw HTML), callout-in-container,
 container-in-callout, ordinary blockquotes, and details open.
 
 Browser: light/dark rendering, real native summary click interaction, nested layout,
@@ -1668,7 +1672,9 @@ behavior remains intact.
 - All five fixed types work with deterministic HTML/class contracts.
 - Nested fences do not swallow code or document tail.
 - Close discovery respects earlier opaque `code`, `docus_math_block`, `fence`, and
-  `html_block` source ranges without a second MarkdownIt parse.
+  `html_block` source ranges according to parser context without a second
+  MarkdownIt parse; type-7 HTML/math/indented continuation cases are not falsely
+  treated as owned opaque blocks.
 - Existing callouts remain unchanged and coexist.
 - Generic attrs/raw bypass remain absent.
 - Reader/PDF styles and details semantics are proven.
@@ -1676,7 +1682,7 @@ behavior remains intact.
 ### Evidence required
 
 docs/design/vitepress-markdown-extensions-md-ext-2-containers.md with parser decisions,
-opaque-block follow-up evidence, sanitizer delta, malformed-input evidence,
+opaque-block and paragraph-context follow-up evidence, sanitizer delta, malformed-input evidence,
 native-browser/PDF results, and rollback boundary.
 
 ### Next phase

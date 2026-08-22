@@ -15,10 +15,11 @@
 | Original MD-EXT-2 implementation | 5bc39e84b9e859b23275a8b02302348b10616a55 |
 | MD-EXT-2 completion commit | Recorded in the final handoff after this evidence commit is created |
 | Opaque-block review follow-up | Recorded in the final handoff after this follow-up commit is created |
+| Paragraph-context follow-up | Recorded in the final handoff after this follow-up commit is created |
 | Next phase | MD-EXT-3 — Shiki Code Annotations & Unified Fence Metadata — NOT STARTED |
 | Shiki prerequisite | H0-H8 COMPLETE / CLOSED; no H9 |
 
-The original MD-EXT-2 implementation started from a clean `main` checkout at `4c86783fc847fda43a5eaba95e1d32621d79b835`. The opaque-block review follow-up is applied on top of `5bc39e84b9e859b23275a8b02302348b10616a55`; the original implementation commit is not being rewritten to claim it contained this correction. No dependency, server, resource, Shiki-runtime, or MD-EXT-1 architecture changes were made.
+The original MD-EXT-2 implementation started from a clean `main` checkout at `4c86783fc847fda43a5eaba95e1d32621d79b835`. The opaque-block review follow-up is applied on top of `5bc39e84b9e859b23275a8b02302348b10616a55`, and this paragraph-context follow-up is applied on top of `5ba5798b74e7dfe5ae7316993ee62beecf26d814`; the earlier commits are not being rewritten to claim they contained these corrections. No dependency, server, resource, Shiki-runtime, math, or MD-EXT-1 architecture changes were made.
 
 ## 2. Scope and changed files
 
@@ -76,20 +77,28 @@ docus-container, paragraph, inline
 
 The named insertion point is stable and does not depend on numeric ruler indexes. The implementation does not preprocess the whole document, post-process HTML, invoke a second Markdown parser, or use module-global nesting state.
 
-The follow-up explicitly classifies the earlier source-owning rules relevant to
-close discovery:
+The follow-ups explicitly classify the earlier source-owning rules relevant to
+close discovery and preserve the distinction between source syntax and actual
+ownership at the current parser position:
 
 | Rule | Classification | Scanner behavior |
 | --- | --- | --- |
-| `code` | opaque indented-code range | skip the complete range using MarkdownIt's indentation/blank-line ownership |
-| `docus_math_block` | opaque Docus math range | skip a recognized `$$ ... $$` block, including delimiter-looking source lines |
+| `code` | opaque indented-code range only at a block boundary | skip the complete range using MarkdownIt's indentation/blank-line ownership; a >3-space line after an open paragraph remains lazy continuation |
+| `docus_math_block` | opaque Docus math range only at a block boundary | skip a recognized `$$ ... $$` block, including delimiter-looking source lines; it does not gain paragraph-terminator behavior |
 | `fence` | opaque fenced-code range | retain backtick/tilde fence matching and skip through its close |
-| `html_block` | opaque raw-HTML range | mirror MarkdownIt's installed HTML block sequences and skip through the owned range |
+| `html_block` | opaque raw-HTML range when MarkdownIt owns it | types 1–6 may interrupt a paragraph; type 7 cannot, but may own a range at a block boundary |
 
 The close scanner does not probe by rendering, call `md.parse()` on substrings, or
 create another MarkdownIt instance. It uses narrow source-range detectors aligned
-with the installed MarkdownIt 14.2.0 rules and the existing Docus math rule, then
-jumps directly to the first line after an opaque range.
+with the installed MarkdownIt 14.2.0 rules and the existing Docus math rule. It
+tracks only `BLOCK BOUNDARY` versus `PARAGRAPH CONTINUATION`, probes the actual
+`state.md.block.ruler.getRules('paragraph')` chain in silent mode with the Docus
+container rule excluded to avoid recursion, temporarily mirrors
+`state.parentType = 'paragraph'`, and restores that state with `try/finally`.
+Opaque ranges are skipped only after the probe establishes a real block boundary.
+The mirrored HTML sequence metadata retains MarkdownIt's
+`canTerminateParagraph` field; the installed `html_block` silent result remains
+authoritative and the local metadata guards the final ownership decision.
 
 The flow is:
 
@@ -203,6 +212,37 @@ inside a raw `<section>`, delimiter-looking math source, indented code, and both
 backtick and tilde fenced code. Raw HTML remains enabled and still passes through
 the existing DOMPurify boundary; this is parser ownership protection, not a
 sanitizer relaxation.
+
+### Paragraph-context ownership follow-up
+
+The final scanner does not equate an opaque-looking line with an owned opaque
+block. The structural close for the current container is checked first, and a
+valid shorter nested opener keeps its existing recursive delimiter ownership.
+For other lines, an open paragraph is tracked as follows:
+
+```text
+empty line                         → block boundary
+indentation > 3 / negative indent → paragraph continuation
+silent paragraph terminator       → block boundary, then re-evaluate line
+no terminator                      → paragraph continuation
+```
+
+This produces the required paired HTML behavior:
+
+- `<span>inline</span>` (HTML type 7) after `Before` remains in the paragraph, so
+  the following `::::` closes the outer container;
+- `<span>` at a true block boundary owns its HTML range, so delimiter-looking
+  lines through the blank-line close remain HTML source;
+- `<div>` (HTML type 1–6) can interrupt a paragraph where the installed
+  `html_block` rule says it can, so its inner delimiter remains protected.
+
+Docus `$$` math is not in the paragraph terminator alt chain, and indented code
+does not interrupt an existing paragraph. Both therefore remain ordinary
+paragraph continuation in those contexts while retaining opaque protection at a
+real block boundary. Backtick and tilde fences remain paragraph terminators and
+retain their previous protection. Silent probes are performed on the existing
+state only; no tokens, renderer, resolver, sanitizer, Shiki runtime, or second
+MarkdownIt parser is invoked.
 
 An unclosed opaque block follows the same safe fallback semantics as MarkdownIt:
 the scanner does not invent a close or swallow unrelated content. No module-global
@@ -399,7 +439,39 @@ All 21 failures are the existing environment/shared-fixture class:
 
 No Markdown, container, callout, Shiki, client, or PDF product regression failed in the full run. The command remains honestly recorded as FAIL rather than relabeled PASS.
 
-The follow-up rerun remained limited to the same environment failures:
+### Paragraph-context follow-up rerun
+
+The final parser-context correction added five integration regressions covering
+HTML type 7 in an open paragraph and at a block boundary, HTML types 1–6,
+paragraph-continuation math-looking `$$`, and lazy indented continuation. The
+focused rerun passed:
+
+```text
+markdownContainers.test.ts → PASS — 22 tests
+focused unit command       → PASS — 9 test files, 202 tests
+npm run typecheck           → PASS
+npm run build               → PASS — 3,932 modules transformed
+```
+
+The full unit rerun remained limited to the same environment failures, with no
+new product regression:
+
+```text
+npm run test:unit → FAIL, exit code 1
+Test Files: 3 failed | 209 passed (212)
+Tests: 21 failed | 3134 passed | 2 skipped (3157)
+```
+
+The focused browser rerun passed 8 tests across MD-EXT-1, MD-EXT-2, Shiki
+security, and Markdown visual coverage. The MD-EXT-2 file passed all 3 tests,
+including the new Chromium-visible type-7 paragraph-context assertion. The
+focused PDF rerun passed 3 tests (`pdf-export-shiki.spec.ts` and
+`pdf-export.spec.ts`).
+
+### Earlier opaque-block follow-up historical result
+
+The earlier opaque-block-only rerun, before this parser-context correction, remained
+limited to the same environment failures:
 
 ```text
 Test Files: 3 failed | 209 passed (212)

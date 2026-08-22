@@ -159,6 +159,67 @@ describe('Docus custom Markdown containers', () => {
       .toContain('::::')
   })
 
+  it('does not treat HTML type 7 as opaque while a paragraph is open', async () => {
+    const doc = parse(await render([
+      ':::: info Paragraph context',
+      'Before',
+      '<span>inline</span>',
+      '::::',
+      '',
+      'After container',
+    ].join('\n')))
+
+    const container = doc.querySelector('.markdown-container-info')
+    const after = Array.from(doc.querySelectorAll('p'))
+      .find((paragraph) => paragraph.textContent?.includes('After container'))
+
+    expect(container).not.toBeNull()
+    expect(container?.querySelector('span')?.textContent).toBe('inline')
+    expect(container?.querySelector('p')?.textContent).toContain('Before')
+    expect(after?.closest('.markdown-container')).toBeNull()
+  })
+
+  it('protects HTML type 7 at a real block boundary', async () => {
+    const doc = parse(await render([
+      ':::: info HTML boundary',
+      '',
+      '## Heading',
+      '<span>',
+      '::::',
+      '</span>',
+      '',
+      'After HTML block',
+      '',
+      '::::',
+    ].join('\n')))
+
+    const container = doc.querySelector('.markdown-container-info')
+    expect(doc.querySelectorAll('.markdown-container')).toHaveLength(1)
+    expect(container?.querySelector('h2')?.textContent).toBe('Heading')
+    expect(container?.querySelector('span')).not.toBeNull()
+    expect(container?.textContent).toContain('::::')
+    expect(container?.textContent).toContain('After HTML block')
+  })
+
+  it('keeps paragraph-interrupting HTML block ownership for type 1-6', async () => {
+    const doc = parse(await render([
+      ':::: info HTML paragraph interrupt',
+      'Before',
+      '<div>',
+      '::::',
+      '</div>',
+      '',
+      'After HTML',
+      '::::',
+    ].join('\n')))
+
+    const container = doc.querySelector('.markdown-container-info')
+    expect(doc.querySelectorAll('.markdown-container')).toHaveLength(1)
+    expect(container?.querySelector('div:not(.markdown-container-title)')?.textContent)
+      .toContain('::::')
+    expect(container?.textContent).toContain('After HTML')
+  })
+
   it('keeps nested-container-looking lines inside raw HTML ownership', async () => {
     const doc = parse(await render([
       ':::: warning HTML boundary',
@@ -222,6 +283,28 @@ describe('Docus custom Markdown containers', () => {
     expect(decodeURIComponent(mathContent)).toContain('::::')
   })
 
+  it('does not grant paragraph-continuation $$ a math-block range', async () => {
+    const doc = parse(await render([
+      ':::: info Math paragraph context',
+      'Before',
+      '$$',
+      '::::',
+      '$$',
+      '',
+      'After math continuation',
+      '::::',
+    ].join('\n')))
+
+    const container = doc.querySelector('.markdown-container-info')
+    const after = Array.from(doc.querySelectorAll('p'))
+      .find((paragraph) => paragraph.textContent?.includes('After math continuation'))
+
+    expect(container?.querySelector('.math-mount')).toBeNull()
+    expect(container?.querySelector('p')?.textContent).toContain('Before')
+    expect(container?.querySelector('p')?.textContent).toContain('$$')
+    expect(after?.closest('.markdown-container')).toBeNull()
+  })
+
   it('keeps closer-looking lines inside indented code blocks', async () => {
     const doc = parse(await render([
       ':::: info Indented code',
@@ -238,6 +321,26 @@ describe('Docus custom Markdown containers', () => {
     expect(doc.querySelectorAll('.markdown-container')).toHaveLength(1)
     expect(container?.textContent).toContain('::::\nliteral code')
     expect(container?.textContent).toContain('After code.')
+  })
+
+  it('keeps an indented lazy continuation in the open paragraph', async () => {
+    const doc = parse(await render([
+      ':::: info Indented paragraph context',
+      'Before',
+      '    indented continuation',
+      '::::',
+      '',
+      'After paragraph',
+    ].join('\n')))
+
+    const container = doc.querySelector('.markdown-container-info')
+    const after = Array.from(doc.querySelectorAll('p'))
+      .find((paragraph) => paragraph.textContent?.includes('After paragraph'))
+
+    expect(container?.querySelector('pre')).toBeNull()
+    expect(container?.querySelector('p')?.textContent).toContain('Before')
+    expect(container?.querySelector('p')?.textContent).toContain('indented continuation')
+    expect(after?.closest('.markdown-container')).toBeNull()
   })
 
   it('keeps closer-looking lines inside tilde fenced code', async () => {
