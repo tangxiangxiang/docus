@@ -6,13 +6,14 @@
 | Field | Value |
 | --- | --- |
 | Phase | MD-EXT-4 — Line Numbers |
-| Status | COMPLETE / REVIEW-READY |
+| Status | COMPLETE / REVIEW-CLOSED |
 | Implementation baseline | `582e312a4c5752a4c9a5c6bba7b0e752b0b78078` |
 | Previous phase review closure | `953150f64259b7af389ec0e111d161c9af20b7c7` |
 | MD-EXT-4 base | `953150f64259b7af389ec0e111d161c9af20b7c7` |
 | Approved PRD | `7e05e3bb43f4283a90ead1abd0c81325bc93281c` |
 | Approved Implementation Plan | `582e312a4c5752a4c9a5c6bba7b0e752b0b78078` |
 | MD-EXT-4 completion commit | Recorded in the final handoff after this commit is created |
+| MD-EXT-4 reader annotation-background follow-up | Recorded in the final handoff after this commit is created |
 | Next | MD-EXT-5 — Code Groups — NOT STARTED |
 
 This phase adds only opt-in line-number gutters. MD-EXT-5 code groups and all
@@ -178,6 +179,39 @@ theme switching keeps article HTML and node identity
 long lines wrap within the code block
 default/off fences have no gutter wrappers
 ```
+
+### Reader annotation-background review follow-up
+
+The original MD-EXT-4 implementation is recorded at:
+
+```text
+343c79505f1bb58ab5b619429595ffe7f33bdc04
+```
+
+Review found that the generic reader selectors `.shiki span` and their light/
+dark theme variants also matched the structural `.docus-line-number` and
+`.docus-line-content` spans. Their opaque backgrounds could therefore cover the
+semantic annotation background owned by the parent `.line` element.
+
+The follow-up fixes only that reader cascade boundary:
+
+```text
+.article pre.shiki.docus-line-numbers .docus-line-number,
+.article pre.shiki.docus-line-numbers .docus-line-content
+→ background-color: transparent
+```
+
+The selector is limited to numbered Shiki surfaces and has sufficient
+specificity to win over the generic theme selectors. Annotation classes and
+background ownership remain on `.line`; descendant Shiki token spans retain
+their existing foreground/background theme variables. There is no DOM,
+transformer, PDF, sanitizer, or FenceMeta change.
+
+The MD-EXT-4 browser regression now checks the computed backgrounds of both
+structural children under explicit light and dark themes, while also asserting
+that the `highlighted` and `error` classes remain on their parent lines. The
+review-follow-up completion commit is recorded in the final handoff after this
+commit is created.
 
 ## 8. Theme and sanitizer boundary
 

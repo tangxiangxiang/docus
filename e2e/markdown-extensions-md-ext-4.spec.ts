@@ -67,7 +67,40 @@ test('MD-EXT-4 renders bounded structural gutters with copy and theme safety', a
     const allGutters = Array.from(article.querySelectorAll<HTMLElement>('.docus-line-number'))
     const annotatedLine = Array.from(annotated.querySelectorAll<HTMLElement>('.line'))
       .find((line) => line.textContent?.includes('const second'))
-    if (!annotatedLine) throw new Error('MD-EXT-4 annotation line is missing')
+    const highlightedLine = annotated.querySelector<HTMLElement>('.line.highlighted')
+    if (!annotatedLine || !highlightedLine) throw new Error('MD-EXT-4 annotation lines are missing')
+
+    const isTransparent = (value: string) => {
+      const normalized = value.trim().toLowerCase().replace(/\s+/gu, '')
+      return normalized === 'transparent'
+        || normalized === 'rgba(0,0,0,0)'
+        || normalized === 'rgb(0,0,0,0)'
+        || normalized === 'rgb(0,0,0/0)'
+    }
+
+    const readAnnotationBackgrounds = (line: HTMLElement) => {
+      const number = line.querySelector<HTMLElement>('.docus-line-number')
+      const content = line.querySelector<HTMLElement>('.docus-line-content')
+      if (!number || !content) throw new Error('MD-EXT-4 annotation wrappers are missing')
+
+      const parentBackground = getComputedStyle(line).backgroundColor
+      const numberBackground = getComputedStyle(number).backgroundColor
+      const contentBackground = getComputedStyle(content).backgroundColor
+      return {
+        parentTransparent: isTransparent(parentBackground),
+        numberTransparent: isTransparent(numberBackground),
+        contentTransparent: isTransparent(contentBackground),
+      }
+    }
+
+    const readThemeAnnotationBackgrounds = () => ({
+      highlighted: readAnnotationBackgrounds(highlightedLine),
+      error: readAnnotationBackgrounds(annotatedLine),
+    })
+
+    useTheme().set('light')
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    const lightAnnotationBackgrounds = readThemeAnnotationBackgrounds()
     const selection = window.getSelection()
     selection?.removeAllRanges()
     const code = enabled.querySelector('code')
@@ -80,6 +113,7 @@ test('MD-EXT-4 renders bounded structural gutters with copy and theme safety', a
     const enabledLine = enabled.querySelector('.line')
     useTheme().set('dark')
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    const darkAnnotationBackgrounds = readThemeAnnotationBackgrounds()
     const enabledContent = enabled.querySelector<HTMLElement>('.docus-line-content')
     const wrappedContent = wrapped.querySelector<HTMLElement>('.docus-line-content')
     const lineHeight = Number.parseFloat(getComputedStyle(wrappedContent ?? wrapped).lineHeight)
@@ -92,8 +126,12 @@ test('MD-EXT-4 renders bounded structural gutters with copy and theme safety', a
       customNumbers,
       explicitOffHasGutter: explicitOff.querySelector('.docus-line-number, .docus-line-content') !== null,
       annotatedClasses: {
-        highlighted: annotatedLine.classList.contains('highlighted'),
+        highlighted: highlightedLine.classList.contains('highlighted'),
         error: annotatedLine.classList.contains('error'),
+      },
+      annotationBackgrounds: {
+        light: lightAnnotationBackgrounds,
+        dark: darkAnnotationBackgrounds,
       },
       unknownNumbers: unknownLines.map((line) => line.querySelector('.docus-line-number')?.textContent),
       wrappedNumbers: Array.from(wrapped.querySelectorAll<HTMLElement>('.docus-line-number'))
@@ -125,6 +163,14 @@ test('MD-EXT-4 renders bounded structural gutters with copy and theme safety', a
   expect(result.customNumbers).toEqual(['98', '99', '100'])
   expect(result.explicitOffHasGutter).toBe(false)
   expect(result.annotatedClasses).toEqual({ highlighted: true, error: true })
+  for (const theme of [result.annotationBackgrounds.light, result.annotationBackgrounds.dark]) {
+    expect(theme.highlighted.parentTransparent).toBe(false)
+    expect(theme.highlighted.numberTransparent).toBe(true)
+    expect(theme.highlighted.contentTransparent).toBe(true)
+    expect(theme.error.parentTransparent).toBe(false)
+    expect(theme.error.numberTransparent).toBe(true)
+    expect(theme.error.contentTransparent).toBe(true)
+  }
   expect(result.unknownNumbers).toEqual(['7', '8', '9'])
   expect(result.wrappedNumbers).toEqual(['100000', '100001'])
   expect(result.unknownEscaped).toBe(true)

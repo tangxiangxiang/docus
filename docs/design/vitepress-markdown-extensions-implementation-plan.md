@@ -4,7 +4,7 @@
 
 | Field | Value |
 | --- | --- |
-| Document status | IMPLEMENTATION COMPLETE / MD-EXT-4 COMPLETE |
+| Document status | IMPLEMENTATION COMPLETE / MD-EXT-4 COMPLETE / REVIEW-CLOSED |
 | Product program | Docus VitePress-Style Markdown Extensions |
 | Repository | tangxiangxiang/docus |
 | Branch | main |
@@ -13,8 +13,8 @@
 | Approved PRD baseline | 7e05e3bb43f4283a90ead1abd0c81325bc93281c |
 | Implementation Plan task base | 7e05e3bb43f4283a90ead1abd0c81325bc93281c |
 | Implementation baseline | 582e312a4c5752a4c9a5c6bba7b0e752b0b78078 |
-| Current phase | MD-EXT-4 — COMPLETE; next MD-EXT-5 — NOT STARTED |
-| Current implementation state | PRD approved; MD-EXT-0 audit complete; MD-EXT-1 implementation and provenance/source-awareness follow-up complete; MD-EXT-2 implementation plus opaque-range and paragraph-context follow-ups complete; MD-EXT-3 fence metadata and Shiki source annotations plus sentinel/budget review follow-up complete; MD-EXT-4 bounded structural line numbers, unknown-language fallback, reader/PDF layout, and browser evidence complete; MD-EXT-5+ not started |
+| Current phase | MD-EXT-4 — COMPLETE / REVIEW-CLOSED; next MD-EXT-5 — NOT STARTED |
+| Current implementation state | PRD approved; MD-EXT-0 audit complete; MD-EXT-1 implementation and provenance/source-awareness follow-up complete; MD-EXT-2 implementation plus opaque-range and paragraph-context follow-ups complete; MD-EXT-3 fence metadata and Shiki source annotations plus sentinel/budget review follow-up complete; MD-EXT-4 bounded structural line numbers, unknown-language fallback, reader/PDF layout, browser evidence, and reader annotation-background follow-up complete; MD-EXT-5+ not started |
 | Shiki prerequisite | SHIKI-H0 through SHIKI-H8 COMPLETE; migration closed; no H9 |
 | Parser baseline | markdown-it 14.1.0 singleton |
 | Shiki baseline | Shiki 4.4.3, @shikijs/transformers 4.4.3 |
@@ -1860,7 +1860,17 @@ MD-EXT-5 — Code Groups — NOT STARTED.
 
 ## 23. MD-EXT-4 — Line Numbers
 
-Status: COMPLETE / REVIEW-READY. Evidence: [MD-EXT-4 Line Numbers](vitepress-markdown-extensions-md-ext-4-line-numbers.md).
+Status: COMPLETE / REVIEW-CLOSED. Evidence: [MD-EXT-4 Line Numbers](vitepress-markdown-extensions-md-ext-4-line-numbers.md).
+
+The MD-EXT-4 reader review follow-up is closed. Generic `.shiki span` theme
+backgrounds previously matched the structural `.docus-line-number` and
+`.docus-line-content` children and could cover annotation backgrounds owned by
+`.line`. The focused CSS fix scopes `background-color: transparent` to those two
+wrappers under `pre.shiki.docus-line-numbers` only. Annotation classes,
+token-span styling, the line-number DOM, Shiki transformers, PDF CSS, and the
+sanitizer remain unchanged. The MD-EXT-4 browser evidence now proves the parent
+`highlighted` and `error` backgrounds remain visible while both structural
+children are transparent in light and dark reader themes.
 
 ### Goal
 
