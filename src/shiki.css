@@ -42,3 +42,45 @@
   color: var(--text);
   background-color: var(--code-bg);
 }
+
+/* MD-EXT-3 source-notation classes are structural annotations, not a second
+   token-color system. Keep the trusted Shiki token foreground/background
+   variables intact and use line-level backgrounds/borders as the visual cue. */
+.article pre.shiki .line.highlighted {
+  background-color: rgba(255, 214, 10, 0.16);
+  box-shadow: inset 3px 0 0 #b78103;
+}
+
+.article pre.shiki .line.focused {
+  background-color: rgba(45, 129, 247, 0.14);
+  box-shadow: inset 3px 0 0 #2f81f7;
+}
+
+.article pre.shiki.has-focused .line:not(.focused) {
+  opacity: 0.58;
+}
+
+.article pre.shiki .line.diff.add {
+  background-color: rgba(45, 164, 78, 0.14);
+  box-shadow: inset 3px 0 0 #2da44e;
+}
+
+.article pre.shiki .line.diff.remove {
+  background-color: rgba(207, 34, 46, 0.14);
+  box-shadow: inset 3px 0 0 #cf222e;
+}
+
+.article pre.shiki .line.warning {
+  background-color: rgba(191, 135, 0, 0.16);
+  box-shadow: inset 3px 0 0 #bf8700;
+}
+
+.article pre.shiki .line.error {
+  background-color: rgba(207, 34, 46, 0.16);
+  box-shadow: inset 3px 0 0 #cf222e;
+}
+
+.article pre.shiki .line.info {
+  background-color: rgba(47, 129, 247, 0.14);
+  box-shadow: inset 3px 0 0 #2f81f7;
+}

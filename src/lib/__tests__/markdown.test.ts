@@ -918,6 +918,86 @@ describe('markdown H3 renderer cutover', () => {
     expect(doc.querySelector('pre.docus-shiki-plain')).not.toBeNull()
     expect(factory).not.toHaveBeenCalled()
   })
+
+  it('uses FenceMeta for metadata-bearing language discovery and Shiki annotations', async () => {
+    const html = await render([
+      '```ts {1,3}:line-numbers=10 [config.ts]',
+      'const first = 1 // [!code highlight]',
+      'const second = 2 // [!code focus:2]',
+      'const third = 3 // [!code highlight:2]',
+      'const fourth = 4',
+      '```',
+    ].join('\n'))
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const lines = Array.from(doc.querySelectorAll('pre.shiki .line'))
+
+    expect(lines).toHaveLength(5)
+    expect(lines[0]?.classList.contains('highlighted')).toBe(true)
+    expect(lines[1]?.classList.contains('focused')).toBe(true)
+    expect(lines[2]?.classList.contains('focused')).toBe(true)
+    expect(lines[2]?.classList.contains('highlighted')).toBe(true)
+    expect(lines[3]?.classList.contains('highlighted')).toBe(false)
+    expect(lines[4]?.classList.contains('highlighted')).toBe(false)
+    expect(lines[2]?.textContent).toContain('[!code highlight:2]')
+    expect(doc.querySelector('.docus-line-number, .docus-line-content')).toBeNull()
+    expect(html).not.toMatch(/\sstyle=/i)
+  })
+
+  it('does not activate deferred or out-of-bound source notation', async () => {
+    const html = await render([
+      '```ts',
+      'const deferred = 1 // [!code highlight:2]',
+      'const invalid = 2 // [!code focus:1001]',
+      'const after = 3',
+      '```',
+    ].join('\n'))
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const lines = Array.from(doc.querySelectorAll('pre.shiki .line'))
+
+    expect(lines[0]?.classList.contains('highlighted')).toBe(false)
+    expect(lines[1]?.classList.contains('focused')).toBe(false)
+    expect(lines[0]?.textContent).toContain('[!code highlight:2]')
+    expect(lines[1]?.textContent).toContain('[!code focus:1001]')
+  })
+
+  it('keeps metadata-bearing mermaid and markmap outside special mount mode', async () => {
+    const { factory, loadLanguage } = installFakeShikiRuntime()
+    const html = await render([
+      '```mermaid {1}',
+      'graph TD',
+      'A --> B',
+      '```',
+      '',
+      '```markmap {1}',
+      '# Not a mounted map',
+      '```',
+    ].join('\n'))
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+
+    expect(doc.querySelector('.mermaid-mount')).toBeNull()
+    expect(doc.querySelector('.markmap-mount')).toBeNull()
+    expect(doc.querySelectorAll('pre')).toHaveLength(2)
+    expect(factory).toHaveBeenCalledTimes(1)
+    expect(loadLanguage).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the source-notation channel separate from FenceMeta in containers', async () => {
+    const html = await render([
+      '::: info Annotated',
+      '',
+      '```ts {1}',
+      'const nested = true // [!code error]',
+      '```',
+      '',
+      ':::',
+    ].join('\n'))
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const line = doc.querySelector('.markdown-container-info pre.shiki .line')
+
+    expect(line?.classList.contains('highlighted')).toBe(true)
+    expect(line?.classList.contains('error')).toBe(true)
+    expect(line?.textContent).not.toContain('[!code error]')
+  })
 })
 
 describe('markdown H4 style-to-class and security closure', () => {

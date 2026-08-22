@@ -3,9 +3,22 @@ import {
   bundledLanguagesBase,
   bundledLanguagesInfo,
   createHighlighter,
+  type ShikiTransformer,
   type Highlighter,
 } from 'shiki'
-import { transformerStyleToClass } from '@shikijs/transformers'
+import {
+  transformerMetaHighlight,
+  transformerNotationDiff,
+  transformerNotationErrorLevel,
+  transformerNotationFocus,
+  transformerNotationHighlight,
+  transformerStyleToClass,
+} from '@shikijs/transformers'
+import {
+  getFenceMetaHighlightRaw,
+  parseFenceMeta,
+  type FenceMeta,
+} from './fenceMeta'
 
 const SHIKI_THEMES = ['github-light', 'github-dark'] as const
 const SHIKI_CLASS_PREFIX = 'docus-shiki-'
@@ -24,6 +37,117 @@ const SHIKI_RUNTIME_OPTIONS: ShikiHighlighterOptions = {
 const styleTransformer = transformerStyleToClass({
   classPrefix: SHIKI_CLASS_PREFIX,
 })
+
+export const MAX_FOCUS_RANGE = 1_000
+
+type FenceMetaInput = string | FenceMeta
+
+function toFenceMeta(input: FenceMetaInput): FenceMeta {
+  return typeof input === 'string' ? parseFenceMeta(input) : input
+}
+
+function isBoundedPositiveInteger(value: string, maximum: number): boolean {
+  if (!/^\d+$/u.test(value)) return false
+  const parsed = Number(value)
+  return Number.isSafeInteger(parsed) && parsed >= 1 && parsed <= maximum
+}
+
+/**
+ * Shiki 4.4.3's notation transformers also accept a few range/case variants
+ * that are outside the approved Docus contract. This gate runs on the source
+ * channel before those transformers. Gated markers are restored after the
+ * notation code hooks, so they remain ordinary source rather than becoming a
+ * silently shipped future feature.
+ */
+function shouldGateSourceNotation(body: string): boolean {
+  const trimmed = body.trim()
+  if (trimmed === '++' || trimmed === '--') return false
+
+  const match = /^([A-Za-z]+)(?::(.*))?$/u.exec(trimmed)
+  if (!match) return false
+
+  const [, name, suffix] = match
+  const lowerName = name?.toLowerCase() ?? ''
+  if (lowerName === 'highlight' || lowerName === 'hl') {
+    // Docus approves only the exact single-line `highlight` spelling.
+    return !(name === 'highlight' && suffix === undefined)
+  }
+
+  if (lowerName === 'focus') {
+    if (name !== 'focus') return true
+    return suffix !== undefined && !isBoundedPositiveInteger(suffix, MAX_FOCUS_RANGE)
+  }
+
+  if (lowerName === 'warning' || lowerName === 'error' || lowerName === 'info') {
+    return name !== lowerName || suffix !== undefined
+  }
+
+  return false
+}
+
+const DEFERRED_NOTATION_PREFIX = 'docus-deferred-notation '
+const DEFERRED_NOTATION_PATTERN = /\[!code docus-deferred-notation ([^\]]+)\]/gu
+
+function createSourceNotationGate(): ShikiTransformer {
+  return {
+    name: 'docus:source-notation-scope-gate',
+    preprocess(source) {
+      return source.replace(/\[!code ([^\]]+)\]/gu, (full, body: string) => (
+        shouldGateSourceNotation(body)
+          ? `[!code ${DEFERRED_NOTATION_PREFIX}${body}]`
+          : full
+      ))
+    },
+  }
+}
+
+function restoreGatedSourceNotation(node: {
+  type: string
+  value?: string
+  children?: Array<{
+    type: string
+    value?: string
+    children?: Array<unknown>
+  }>
+}): void {
+  if (node.type === 'text' && typeof node.value === 'string') {
+    node.value = node.value.replace(DEFERRED_NOTATION_PATTERN, '[!code $1]')
+    return
+  }
+  for (const child of node.children ?? []) {
+    if (typeof child === 'object' && child !== null) {
+      restoreGatedSourceNotation(child as Parameters<typeof restoreGatedSourceNotation>[0])
+    }
+  }
+}
+
+function createSourceNotationRestore(): ShikiTransformer {
+  return {
+    name: 'docus:source-notation-scope-restore',
+    // This code hook is deliberately after the official notation transformers
+    // and before the singleton style transformer in the array below.
+    code(node) {
+      restoreGatedSourceNotation(node)
+      return node
+    },
+  }
+}
+
+function createAnnotationTransformers(): ShikiTransformer[] {
+  const transformers: ShikiTransformer[] = [
+    transformerMetaHighlight(),
+    createSourceNotationGate(),
+    transformerNotationHighlight(),
+    transformerNotationFocus(),
+    transformerNotationDiff(),
+    transformerNotationErrorLevel(),
+    createSourceNotationRestore(),
+    // H8's one trusted token-style registry must remain the final transformer.
+    styleTransformer,
+  ]
+
+  return transformers
+}
 
 let highlighterFactory: ShikiHighlighterFactory = createHighlighter
 let highlighterPromise: Promise<ShikiHighlighter> | null = null
@@ -73,12 +197,11 @@ export interface PreparedShikiLanguage {
 }
 
 /**
- * Extract only the first whitespace-delimited fence info token.
- * MarkdownIt owns fence recognition; this helper only interprets token.info.
+ * Extract the canonical language portion from a fence info string.
+ * MarkdownIt owns fence recognition; this helper only delegates to FenceMeta.
  */
 export function extractFenceLanguageIdentifier(info: string): string {
-  const trimmed = info.trim()
-  return trimmed ? (trimmed.split(/\s+/u, 1)[0] ?? '') : ''
+  return parseFenceMeta(info).language
 }
 
 /**
@@ -86,17 +209,18 @@ export function extractFenceLanguageIdentifier(info: string): string {
  * language metadata. Docus special-fence semantics are checked before the
  * registry lookup and intentionally remain case-sensitive.
  */
-export function resolveShikiLanguage(identifier: string): ShikiLanguageResolution {
-  const rawIdentifier = extractFenceLanguageIdentifier(identifier)
+export function resolveShikiLanguage(input: FenceMetaInput): ShikiLanguageResolution {
+  const meta = toFenceMeta(input)
+  const rawIdentifier = meta.language
   if (!rawIdentifier) {
     return { kind: 'empty', identifier: '' }
   }
 
-  if (rawIdentifier === 'markmap' || rawIdentifier === 'mermaid') {
+  if (meta.specialFence) {
     return {
       kind: 'special',
       identifier: rawIdentifier,
-      specialFence: rawIdentifier,
+      specialFence: meta.specialFence,
     }
   }
 
@@ -215,7 +339,7 @@ async function ensureResolvedShikiLanguage(
  * intentionally reject the caller and remain retryable through the singleton.
  */
 export async function prepareShikiLanguages(
-  identifiers: readonly string[],
+  identifiers: readonly FenceMetaInput[],
 ): Promise<PreparedShikiLanguage[]> {
   const uniqueResolutions: ShikiLanguageResolution[] = []
   const seen = new Set<string>()
@@ -238,7 +362,7 @@ export async function prepareShikiLanguages(
   }))
 }
 
-export async function ensureShikiLanguage(identifier: string): Promise<PreparedShikiLanguage> {
+export async function ensureShikiLanguage(identifier: FenceMetaInput): Promise<PreparedShikiLanguage> {
   const [result] = await prepareShikiLanguages([identifier])
   return result ?? {
     resolution: { kind: 'empty', identifier: '' },
@@ -255,13 +379,15 @@ export async function ensureShikiLanguage(identifier: string): Promise<PreparedS
  * grammar is a per-fence fallback condition; it must never initialize Shiki
  * here.
  */
-export function highlightShikiFence(source: string, identifier: string): string | null {
-  const resolution = resolveShikiLanguage(identifier)
+export function highlightShikiFence(source: string, input: FenceMetaInput): string | null {
+  const meta = toFenceMeta(input)
+  const resolution = resolveShikiLanguage(meta)
   if (resolution.kind !== 'language' || !activeHighlighter || !loadedLanguageSet.has(resolution.canonicalId)) {
     return null
   }
 
   try {
+    const highlightRaw = getFenceMetaHighlightRaw(meta)
     return activeHighlighter.codeToHtml(source, {
       lang: resolution.canonicalId,
       themes: {
@@ -269,7 +395,8 @@ export function highlightShikiFence(source: string, identifier: string): string 
         dark: 'github-dark',
       },
       defaultColor: false,
-      transformers: [styleTransformer],
+      ...(highlightRaw ? { meta: { __raw: highlightRaw } } : {}),
+      transformers: createAnnotationTransformers(),
     })
   } catch {
     // A single fence rendering failure must not poison the shared runtime or

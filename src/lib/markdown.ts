@@ -21,11 +21,11 @@ import {
   slugifyHeadingWithState,
 } from './markdownHeadings'
 import {
-  extractFenceLanguageIdentifier,
   highlightShikiFence,
   prepareShikiLanguages,
   syncGeneratedShikiStylesheet,
 } from './shiki'
+import { parseFenceMeta, type FenceMeta } from './fenceMeta'
 
 function escapeHtml(s: string): string {
   return s
@@ -224,22 +224,22 @@ function renderPlainCodeFallback(source: string): string {
 }
 
 function renderFence(str: string, info: string): string {
-  const language = extractFenceLanguageIdentifier(info)
+  const meta = parseFenceMeta(info)
 
   /* ```markmap → placeholder div. The real widget is mounted by
      useMarkmapMount (in components that v-html the rendered output). Keep
      this exact, case-sensitive branch before any Shiki lookup. */
-  if (language === 'markmap') {
+  if (meta.specialFence === 'markmap') {
     return `<div class="markmap-mount" data-content="${encodeMountAttr(str)}"></div>`
   }
 
   /* ```mermaid → placeholder div. Mermaid's async mount lifecycle remains
      outside normal syntax highlighting and receives the encoded source. */
-  if (language === 'mermaid') {
+  if (meta.specialFence === 'mermaid') {
     return `<div class="mermaid-mount" data-content="${encodeMountAttr(str)}"></div>`
   }
 
-  return highlightShikiFence(str, info) ?? renderPlainCodeFallback(str)
+  return highlightShikiFence(str, meta) ?? renderPlainCodeFallback(str)
 }
 
 let mdPromise: Promise<MarkdownIt> | null = null
@@ -253,8 +253,14 @@ async function getMd(): Promise<MarkdownIt> {
       html: true,
       linkify: true,
       typographer: true,
-      highlight(str, lang) {
-        return renderFence(str, lang)
+      highlight(str, lang, attrs) {
+        // MarkdownIt's callback exposes the first info token separately from
+        // the remaining fence metadata. Recombine both channels so the
+        // canonical FenceMeta parser sees the complete original info string;
+        // in particular, `mermaid {1}` must not become the bare special fence
+        // `mermaid`.
+        const info = [lang, attrs].filter(Boolean).join(' ')
+        return renderFence(str, info)
       },
     })
       // 任务列表: - [ ] / - [x], 启用 disabled 属性让 checkbox 在 preview 中可点(只是视觉,不会真保存)
@@ -326,18 +332,28 @@ export interface MarkdownRenderOptions {
  * internal fallback without invoking the caller's render-scoped resolver.
  */
 export function discoverFenceLanguageIdentifiers(md: MarkdownIt, markdown: string): string[] {
+  return discoverFenceMetas(md, markdown)
+    .map((meta) => meta.language)
+    .filter(Boolean)
+}
+
+/**
+ * Discover MarkdownIt's actual fence tokens and parse each info string through
+ * the one canonical FenceMeta parser. The discovery env remains isolated from
+ * the caller's WikiLink resolver.
+ */
+export function discoverFenceMetas(md: MarkdownIt, markdown: string): FenceMeta[] {
   const discoveryEnv: WikiLinkEnv = {}
   return md
     .parse(markdown, discoveryEnv)
     .filter((token) => token.type === 'fence')
-    .map((token) => extractFenceLanguageIdentifier(token.info ?? ''))
-    .filter(Boolean)
+    .map((token) => parseFenceMeta(token.info ?? ''))
 }
 
 export async function render(markdown: string, options: MarkdownRenderOptions = {}): Promise<string> {
   const md = await getMd()
-  const fenceLanguageIdentifiers = discoverFenceLanguageIdentifiers(md, markdown)
-  await prepareShikiLanguages(fenceLanguageIdentifiers)
+  const fenceMetas = discoverFenceMetas(md, markdown)
+  await prepareShikiLanguages(fenceMetas)
 
   // Keep the final env separate from the discovery env. In particular, the
   // real resolver must only be visible to the actual render pass.

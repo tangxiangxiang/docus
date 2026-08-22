@@ -193,6 +193,44 @@ const PDF_DOWNLOAD_STYLES = `
   background-color: #f5f6f8 !important;
 }
 
+/* MD-EXT-3 annotation classes remain structural in print. These selectors
+   add printable-light line cues without overriding Shiki token foregrounds;
+   token colors continue to come from the trusted light variables above. */
+.pdf-document .article pre.shiki .line.highlighted {
+  background-color: #fff3c4 !important;
+  box-shadow: inset 3px 0 0 #8a6400;
+}
+
+.pdf-document .article pre.shiki .line.focused {
+  background-color: #dcecff !important;
+  box-shadow: inset 3px 0 0 #005fb8;
+}
+
+.pdf-document .article pre.shiki .line.diff.add {
+  background-color: #e1f4e5 !important;
+  box-shadow: inset 3px 0 0 #217a37;
+}
+
+.pdf-document .article pre.shiki .line.diff.remove {
+  background-color: #fde7e9 !important;
+  box-shadow: inset 3px 0 0 #b42318;
+}
+
+.pdf-document .article pre.shiki .line.warning {
+  background-color: #fff3c4 !important;
+  box-shadow: inset 3px 0 0 #8a6400;
+}
+
+.pdf-document .article pre.shiki .line.error {
+  background-color: #fde7e9 !important;
+  box-shadow: inset 3px 0 0 #b42318;
+}
+
+.pdf-document .article pre.shiki .line.info {
+  background-color: #dcecff !important;
+  box-shadow: inset 3px 0 0 #005fb8;
+}
+
 /* Custom containers use a fixed printable-light palette. Keep the selector
    on the container/title only: descendant Shiki spans must retain their own
    computed token colors from the trusted generated stylesheet. */

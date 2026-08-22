@@ -13,6 +13,7 @@ import {
   resolveShikiLanguage,
   syncGeneratedShikiStylesheet,
 } from '../shiki'
+import { parseFenceMeta } from '../fenceMeta'
 
 const fakeHighlighter = (): Highlighter => ({
   dispose: vi.fn(),
@@ -399,6 +400,111 @@ describe('Shiki H3 synchronous fence rendering', () => {
     expect(loadLanguage).not.toHaveBeenCalled()
     expect(codeToHtml).not.toHaveBeenCalled()
   })
+
+  it('passes the frozen annotation pipeline and a safe meta range to codeToHtml', async () => {
+    const optionsSeen: CodeToHtmlOptions[] = []
+    const codeToHtml = vi.fn((source: string, options?: CodeToHtmlOptions) => {
+      if (!options) throw new Error('H3 test expected codeToHtml options')
+      optionsSeen.push(options)
+      return `<pre class="shiki"><code><span class="line">${source}</span></code></pre>`
+    })
+    const runtime = fakeLanguageHighlighter(async () => {}, [], codeToHtml)
+    useFakeLanguageRuntime(runtime)
+
+    await expect(ensureShikiLanguage('ts')).resolves.toMatchObject({ status: 'loaded' })
+    const meta = parseFenceMeta('ts {1,3-5}:line-numbers [config.ts]')
+    expect(highlightShikiFence('const value = 1', meta)).toContain('class="shiki"')
+
+    const transformers = optionsSeen[0]?.transformers ?? []
+    expect(transformers.map((transformer) => transformer.name)).toEqual([
+      '@shikijs/transformers:meta-highlight',
+      'docus:source-notation-scope-gate',
+      '@shikijs/transformers:notation-highlight',
+      '@shikijs/transformers:notation-focus',
+      '@shikijs/transformers:notation-diff',
+      '@shikijs/transformers:notation-error-level',
+      'docus:source-notation-scope-restore',
+      '@shikijs/transformers:style-to-class',
+    ])
+    expect(transformers.at(-1)).toBe(getShikiStyleTransformer())
+    expect(optionsSeen[0]?.meta).toEqual({ __raw: '{1,3-5}' })
+  })
+
+  it('uses official classes for approved notation while keeping highlight:N deferred', async () => {
+    await expect(ensureShikiLanguage('typescript')).resolves.toMatchObject({ status: 'loaded' })
+    const html = highlightShikiFence([
+      'const highlighted = 1 // [!code highlight]',
+      'const focused = 2 // [!code focus:2]',
+      'const added = 3 // [!code ++]',
+      'const removed = 4 // [!code --]',
+      'const warning = 5 // [!code warning]',
+      'const error = 6 // [!code error]',
+      'const info = 7 // [!code info]',
+      'const deferred = 8 // [!code highlight:2]',
+      'const invalid = 9 // [!code focus:1001]',
+    ].join('\n'), parseFenceMeta('ts {1}'))
+    if (!html) throw new Error('H3 expected Shiki HTML')
+
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const lines = Array.from(doc.querySelectorAll('pre.shiki .line'))
+    expect(lines[0]?.classList.contains('highlighted')).toBe(true)
+    expect(lines[1]?.classList.contains('focused')).toBe(true)
+    expect(lines[2]?.classList.contains('focused')).toBe(true)
+    expect(lines[2]?.classList.contains('diff')).toBe(true)
+    expect(lines[3]?.classList.contains('diff')).toBe(true)
+    expect(lines[4]?.classList.contains('warning')).toBe(true)
+    expect(lines[5]?.classList.contains('error')).toBe(true)
+    expect(lines[6]?.classList.contains('info')).toBe(true)
+    expect(lines[7]?.classList.contains('highlighted')).toBe(false)
+    expect(lines[8]?.classList.contains('focused')).toBe(false)
+    expect(lines[7]?.textContent).toContain('[!code highlight:2]')
+    expect(lines[8]?.textContent).toContain('[!code focus:1001]')
+    expect(html).not.toMatch(/\sstyle=/i)
+  })
+
+  it('applies fence-info ranges through the official meta transformer', async () => {
+    await expect(ensureShikiLanguage('ts')).resolves.toMatchObject({ status: 'loaded' })
+    const html = highlightShikiFence([
+      'const first = 1',
+      'const second = 2',
+    ].join('\n'), parseFenceMeta('ts {1}'))
+    if (!html) throw new Error('H3 expected Shiki HTML')
+
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const lines = Array.from(doc.querySelectorAll('pre.shiki .line'))
+    expect(lines[0]?.classList.contains('highlighted')).toBe(true)
+    expect(lines[1]?.classList.contains('highlighted')).toBe(false)
+  })
+
+  it('keeps malformed and deferred source notation as ordinary source', async () => {
+    await expect(ensureShikiLanguage('ts')).resolves.toMatchObject({ status: 'loaded' })
+    const markers = [
+      '[!code highlight:0]',
+      '[!code highlight:-1]',
+      '[!code highlight:abc]',
+      '[!code highlight:999999]',
+      '[!code focus:0]',
+      '[!code focus:-1]',
+      '[!code focus:abc]',
+      '[!code focus:1001]',
+      '[!code WARNING]',
+      '[!code info:2]',
+    ]
+    const html = highlightShikiFence(
+      markers.map((marker, index) => `const line${index} = ${index} // ${marker}`).join('\n'),
+      parseFenceMeta('ts'),
+    )
+    if (!html) throw new Error('H3 expected Shiki HTML')
+
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const lines = Array.from(doc.querySelectorAll('pre.shiki .line'))
+    expect(lines).toHaveLength(markers.length)
+    for (const [index, marker] of markers.entries()) {
+      expect(lines[index]?.classList.contains('highlighted'), marker).toBe(false)
+      expect(lines[index]?.classList.contains('focused'), marker).toBe(false)
+      expect(lines[index]?.textContent, marker).toContain(marker)
+    }
+  })
 })
 
 describe('Shiki H4 style-to-class and stylesheet ownership', () => {
@@ -417,7 +523,10 @@ describe('Shiki H4 style-to-class and stylesheet ownership', () => {
 
     expect(html).toContain('class="shiki"')
     expect(optionsSeen).toHaveLength(1)
-    expect(optionsSeen[0]?.transformers).toEqual([getShikiStyleTransformer()])
+    expect(optionsSeen[0]?.transformers?.at(-1)).toBe(getShikiStyleTransformer())
+    expect(optionsSeen[0]?.transformers?.map((transformer) => transformer.name)).toContain(
+      '@shikijs/transformers:notation-focus',
+    )
     expect(factory).toHaveBeenCalledTimes(1)
   })
 
