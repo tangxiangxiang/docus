@@ -47,6 +47,8 @@ export interface WikiLinkEnv {
   wikiResolver?: Resolver
   /** Opaque render-scoped provenance for generated external Markdown links. */
   externalLinkProvenance?: string
+  /** Opaque render-scoped namespace for generated code-group IDs. */
+  codeGroupRenderScope?: string
 }
 
 /** Temporary marker used only between MarkdownIt rendering and sanitization. */

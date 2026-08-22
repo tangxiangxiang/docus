@@ -781,6 +781,63 @@ main.container.auth-page-shell {
   list-style-position: inside;
 }
 
+/* Docus code groups keep every panel in the DOM. The small reader enhancer
+   only changes the selected tab/panel state; all visual state therefore
+   remains CSS-driven and survives theme changes without Markdown rerendering. */
+.article .docus-code-group {
+  box-sizing: border-box;
+  margin: 1.1em 0;
+  border: 1px solid var(--vs-border, var(--border));
+  border-radius: 5px;
+  background: var(--vs-bg-1, var(--bg));
+  overflow: hidden;
+}
+.article .docus-code-group-tabs {
+  display: flex;
+  gap: 0.15rem;
+  overflow-x: auto;
+  padding: 0.35rem 0.45rem 0;
+  border-bottom: 1px solid var(--vs-border, var(--border));
+  background: var(--vs-bg-2, var(--bg-soft));
+}
+.article .docus-code-group-tab {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0.4rem 0.7rem;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 3px 3px 0 0;
+  background: transparent;
+  color: var(--vs-text-2, var(--text-muted));
+  font: 0.82rem/1.35 var(--mono);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.article .docus-code-group-tab:hover {
+  color: var(--vs-text-1, var(--text));
+  background: var(--vs-hover-bg, var(--bg-soft));
+}
+.article .docus-code-group-tab.is-active {
+  border-bottom-color: var(--vs-accent, var(--accent));
+  color: var(--vs-text-1, var(--text-h));
+}
+.article .docus-code-group-tab:focus-visible {
+  position: relative;
+  z-index: 1;
+}
+.article .docus-code-group-panels {
+  min-width: 0;
+}
+.article .docus-code-group-panel {
+  min-width: 0;
+}
+.article .docus-code-group-panel:not(.is-active) {
+  display: none;
+}
+.article .docus-code-group-panel.is-active {
+  display: block;
+}
+
 .empty {
   color: var(--text-muted);
   font-style: italic;

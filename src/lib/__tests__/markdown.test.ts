@@ -375,6 +375,7 @@ describe('markdown render()', () => {
     const html = await render([
       '<strong>safe HTML</strong><br><a href="https://example.com">safe link</a>',
       '<label onclick="alert(1)">unsafe label</label>',
+      '<button onclick="alert(1)" onkeydown="alert(2)" style="color:red" data-evil="x" v-if="evil">unsafe button</button>',
       '<script>alert(1)</script>',
       '<img src="https://example.com/image.png" onerror="alert(1)">',
       '<iframe src="https://evil.example"></iframe>',
@@ -384,10 +385,14 @@ describe('markdown render()', () => {
     expect(html).toContain('<br>')
     expect(html).toContain('<a href="https://example.com">safe link</a>')
     expect(html).toContain('<label>unsafe label</label>')
+    expect(html).toContain('<button>unsafe button</button>')
     expect(html).toContain('<img src="https://example.com/image.png">')
     expect(html).not.toMatch(/<script\b/i)
     expect(html).not.toMatch(/<iframe\b/i)
     expect(html).not.toMatch(/\son\w+\s*=/i)
+    expect(html).not.toMatch(/data-evil=/i)
+    expect(html).not.toMatch(/v-if=/i)
+    expect(html).not.toMatch(/style=/i)
     expect(html).not.toMatch(/javascript:/i)
   })
 

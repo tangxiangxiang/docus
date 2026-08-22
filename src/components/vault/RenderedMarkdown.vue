@@ -4,6 +4,7 @@ import { useMarkdownRender, type Heading } from '../../composables/vault/useMark
 import { useMarkmapMount } from '../../composables/useMarkmapMount'
 import { useMermaidMount } from '../../composables/useMermaidMount'
 import { useMathMount } from '../../composables/useMathMount'
+import { useCodeGroupMount } from '../../composables/useCodeGroupMount'
 import { useVaultContext } from '../../composables/vault/context/useVaultContext'
 import type { Resolver as WikiResolver } from '../../lib/wikiLinks'
 import type { Theme } from '../../composables/useTheme'
@@ -25,6 +26,7 @@ const vaultContext = useVaultContext()
 useMarkmapMount(articleEl, toRef(props, 'renderTheme'))
 useMermaidMount(articleEl, toRef(props, 'renderTheme'))
 useMathMount(articleEl)
+useCodeGroupMount(articleEl)
 
 watch(headings, (value) => emit('update:headings', value), { immediate: true })
 watch([ready, html, articleEl], async ([isReady]) => {

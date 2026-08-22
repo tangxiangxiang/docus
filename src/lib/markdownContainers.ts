@@ -24,7 +24,7 @@ interface ContainerClosing {
   markerLength: number
 }
 
-interface FencedCodeOpening {
+export interface FencedCodeOpening {
   marker: number
   markerLength: number
 }
@@ -109,7 +109,7 @@ function parseClosing(state: StateBlock, line: number): ContainerClosing | null 
   return { markerLength }
 }
 
-function parseFencedCodeOpening(state: StateBlock, line: number): FencedCodeOpening | null {
+export function parseFencedCodeOpening(state: StateBlock, line: number): FencedCodeOpening | null {
   if (state.sCount[line] - state.blkIndent >= 4) return null
 
   const lineStart = getLineStart(state, line)
@@ -125,7 +125,7 @@ function parseFencedCodeOpening(state: StateBlock, line: number): FencedCodeOpen
   return { marker, markerLength }
 }
 
-function findFencedCodeEnd(
+export function findFencedCodeEnd(
   state: StateBlock,
   openingLine: number,
   endLine: number,
@@ -321,7 +321,7 @@ function terminatesParagraph(
  * close is eligible only when its marker is at least as long as the opener's
  * marker, matching MarkdownIt fence ownership semantics.
  */
-function findClosingLine(
+export function findClosingLine(
   state: StateBlock,
   bodyStart: number,
   endLine: number,
@@ -469,5 +469,7 @@ export const __testing__ = {
   CONTAINER_DEFINITIONS,
   parseOpening,
   parseClosing,
+  parseFencedCodeOpening,
+  findFencedCodeEnd,
   findClosingLine,
 }

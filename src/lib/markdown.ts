@@ -14,6 +14,7 @@ import {
 } from './wikiLinks'
 import { calloutPlugin } from './callouts'
 import { markdownContainersPlugin } from './markdownContainers'
+import { markdownCodeGroupsPlugin } from './markdownCodeGroups'
 import { mathPlugin } from './math'
 import { emojiDefinitions } from './emoji'
 import {
@@ -47,6 +48,7 @@ const MARKDOWN_SANITIZE_CONFIG = {
     'b',
     'blockquote',
     'br',
+    'button',
     'caption',
     'code',
     'col',
@@ -100,6 +102,9 @@ const MARKDOWN_SANITIZE_CONFIG = {
     'alt',
     'aria-label',
     'aria-hidden',
+    'aria-controls',
+    'aria-labelledby',
+    'aria-selected',
     'checked',
     'class',
     'colspan',
@@ -119,6 +124,7 @@ const MARKDOWN_SANITIZE_CONFIG = {
     'src',
     'target',
     'title',
+    'tabindex',
     'type',
     'width',
   ],
@@ -140,7 +146,7 @@ const ALLOWED_MARKDOWN_DATA_ATTRS = new Set([
 
 export type MarkdownSanitizer = (html: string) => string
 
-function createExternalLinkProvenance(): string {
+function createSecureOpaqueToken(): string {
   const secureCrypto = globalThis.crypto
   if (typeof secureCrypto?.randomUUID === 'function') return secureCrypto.randomUUID()
   if (typeof secureCrypto?.getRandomValues === 'function') {
@@ -148,6 +154,14 @@ function createExternalLinkProvenance(): string {
     return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
   }
   throw new Error('Secure randomness is required for Markdown link provenance')
+}
+
+function createExternalLinkProvenance(): string {
+  return createSecureOpaqueToken()
+}
+
+function createCodeGroupRenderScope(): string {
+  return createSecureOpaqueToken()
 }
 
 function isGeneratedExternalAnchor(node: Element, provenanceToken: string): boolean {
@@ -195,6 +209,14 @@ export function createMarkdownSanitizer(provenanceToken?: string): MarkdownSanit
       && data.attrValue === '_blank'
       && trustedGeneratedAnchors.has(node)
     ) {
+      data.forceKeepAttr = true
+      return
+    }
+    // DOMPurify classifies tabindex as a URI-like attribute when the
+    // Markdown URI policy is active. Code-group roving tabindex only needs
+    // these two fixed values; preserve them without opening a generic
+    // attribute/value channel.
+    if (data.attrName === 'tabindex' && (data.attrValue === '0' || data.attrValue === '-1')) {
       data.forceKeepAttr = true
       return
     }
@@ -329,6 +351,10 @@ async function getMd(): Promise<MarkdownIt> {
       // by name before MarkdownIt's paragraph rule and keeps the existing
       // callout, math, fence, and widget pipelines inside the same token flow.
       .use(markdownContainersPlugin)
+      // Code groups are a separate narrow block rule. It is registered after
+      // the container rule so its named insertion point is available, while
+      // the rule itself runs before ordinary containers/paragraphs.
+      .use(markdownCodeGroupsPlugin)
       // Math placeholders are emitted before sanitization and upgraded by
       // useMathMount after v-html has inserted the safe HTML.
       .use(mathPlugin)
@@ -391,6 +417,7 @@ export async function render(markdown: string, options: MarkdownRenderOptions = 
   const env: WikiLinkEnv = {
     ...(options.resolver ? { wikiResolver: options.resolver } : {}),
     externalLinkProvenance,
+    codeGroupRenderScope: createCodeGroupRenderScope(),
   }
   const html = md.render(markdown, env)
   syncGeneratedShikiStylesheet()

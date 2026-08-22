@@ -230,6 +230,60 @@ describe('PDF export helpers', () => {
     expect(__testing__.PDF_DOWNLOAD_STYLES).toContain('.markdown-container-details > summary')
   })
 
+  it('exports every code-group panel in source order without mutating the reader', () => {
+    const article = document.createElement('article')
+    article.className = 'article reading'
+    article.innerHTML = `
+      <div class="docus-code-group" role="group">
+        <div class="docus-code-group-tabs" role="tablist">
+          <button role="tab" id="tab-ts" aria-controls="panel-ts" aria-selected="false" tabindex="-1">TypeScript</button>
+          <button role="tab" id="tab-js" aria-controls="panel-js" aria-selected="true" tabindex="0">JavaScript</button>
+        </div>
+        <div class="docus-code-group-panels">
+          <div id="panel-ts" class="docus-code-group-panel" role="tabpanel" aria-labelledby="tab-ts" aria-hidden="true"><pre class="shiki"><code>ts</code></pre></div>
+          <div id="panel-js" class="docus-code-group-panel is-active" role="tabpanel" aria-labelledby="tab-js" aria-hidden="false"><pre class="shiki"><code>js</code></pre></div>
+        </div>
+      </div>`
+    const liveHtml = article.innerHTML
+
+    const exported = document.createElement('div')
+    exported.innerHTML = preparePdfArticleHtml(article)
+    const group = exported.querySelector<HTMLElement>('.docus-code-group')!
+    const items = Array.from(group.querySelectorAll<HTMLElement>('.docus-code-group-pdf-item'))
+
+    expect(article.innerHTML).toBe(liveHtml)
+    expect(group.querySelector('.docus-code-group-tabs')).toBeNull()
+    expect(items).toHaveLength(2)
+    expect(items.map((item) => item.querySelector('.docus-code-group-pdf-label')?.textContent))
+      .toEqual(['TypeScript', 'JavaScript'])
+    expect(items.every((item) => item.querySelector('.docus-code-group-panel')?.getAttribute('aria-hidden') === 'false'))
+      .toBe(true)
+    expect(items[0]?.textContent).toContain('ts')
+    expect(items[1]?.textContent).toContain('js')
+    expect(__testing__.PDF_DOWNLOAD_STYLES).toContain('.docus-code-group-pdf-item')
+    expect(__testing__.PDF_DOWNLOAD_STYLES).toContain('.docus-code-group-tabs')
+  })
+
+  it('leaves malformed code-group-like PDF markup untouched', () => {
+    const article = document.createElement('article')
+    article.className = 'article reading'
+    article.innerHTML = `
+      <div class="docus-code-group">
+        <div class="docus-code-group-tabs" role="tablist">
+          <button role="tab" aria-controls="missing">Untrusted</button>
+        </div>
+        <div class="docus-code-group-panels">
+          <div id="actual" role="tabpanel">Keep me</div>
+        </div>
+      </div>`
+
+    const exported = document.createElement('div')
+    exported.innerHTML = preparePdfArticleHtml(article)
+    expect(exported.querySelector('.docus-code-group-tabs')).not.toBeNull()
+    expect(exported.querySelector('.docus-code-group-pdf-item')).toBeNull()
+    expect(exported.textContent).toContain('Keep me')
+  })
+
   it('keeps short text blocks together and only splits oversized blocks', () => {
     const root = document.createElement('div')
     root.innerHTML = `

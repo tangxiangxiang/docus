@@ -4,7 +4,7 @@
 
 | Field | Value |
 | --- | --- |
-| Document status | IMPLEMENTATION COMPLETE / MD-EXT-4 COMPLETE / REVIEW-CLOSED |
+| Document status | IMPLEMENTATION COMPLETE / MD-EXT-5 COMPLETE / REVIEW-READY |
 | Product program | Docus VitePress-Style Markdown Extensions |
 | Repository | tangxiangxiang/docus |
 | Branch | main |
@@ -13,14 +13,14 @@
 | Approved PRD baseline | 7e05e3bb43f4283a90ead1abd0c81325bc93281c |
 | Implementation Plan task base | 7e05e3bb43f4283a90ead1abd0c81325bc93281c |
 | Implementation baseline | 582e312a4c5752a4c9a5c6bba7b0e752b0b78078 |
-| Current phase | MD-EXT-4 — COMPLETE / REVIEW-CLOSED; next MD-EXT-5 — NOT STARTED |
-| Current implementation state | PRD approved; MD-EXT-0 audit complete; MD-EXT-1 implementation and provenance/source-awareness follow-up complete; MD-EXT-2 implementation plus opaque-range and paragraph-context follow-ups complete; MD-EXT-3 fence metadata and Shiki source annotations plus sentinel/budget review follow-up complete; MD-EXT-4 bounded structural line numbers, unknown-language fallback, reader/PDF layout, browser evidence, and reader annotation-background follow-up complete; MD-EXT-5+ not started |
+| Current phase | MD-EXT-5 — COMPLETE / REVIEW-READY; next MD-EXT-6 — NOT STARTED |
+| Current implementation state | PRD approved; MD-EXT-0 audit complete; MD-EXT-1 implementation and provenance/source-awareness follow-up complete; MD-EXT-2 implementation plus opaque-range and paragraph-context follow-ups complete; MD-EXT-3 fence metadata and Shiki source annotations plus sentinel/budget review follow-up complete; MD-EXT-4 bounded structural line numbers, unknown-language fallback, reader/PDF layout, browser evidence, and reader annotation-background follow-up complete; MD-EXT-5 static code groups, root-scoped reader enhancement, sanitizer delta, and all-panel PDF preparation complete; MD-EXT-6+ not started |
 | Shiki prerequisite | SHIKI-H0 through SHIKI-H8 COMPLETE; migration closed; no H9 |
 | Parser baseline | markdown-it 14.1.0 singleton |
 | Shiki baseline | Shiki 4.4.3, @shikijs/transformers 4.4.3 |
 | VitePress reference | Official Markdown Extensions documentation, version observed 2.0.0-alpha.19 on 2026-08-21 |
 | Scope of this document | Implementation planning only |
-| This lifecycle update changes | MD-EXT-4 implementation/tests/evidence and lifecycle metadata; no dependencies |
+| This lifecycle update changes | MD-EXT-5 implementation/tests/evidence and lifecycle metadata; no dependencies |
 
 The production baseline is the last production-code state before this Markdown
 extension program. The approved PRD commits after that point are documentation-only.
@@ -60,7 +60,7 @@ This phase:
 - does not add or remove dependencies;
 - keeps the DOMPurify boundary and FORBID_ATTR: ['style'] invariant;
 - does not create a server resource endpoint;
-- does not start MD-EXT-5 or any later phase;
+- does not start MD-EXT-6 or any later phase;
 - does not reopen the completed Shiki migration.
 
 ## 3. Authoritative PRD and Baselines
@@ -174,9 +174,9 @@ fresh real WikiLink env
 md.render(markdown, env)
     ↓
 MarkdownIt block/core token pipeline
-    ├─ final heading IDs/TOC and Docus container tokens
+    ├─ final heading IDs/TOC, Docus container tokens, and static code-group tokens
     ├─ existing callout/math/WikiLink body tokens
-    └─ renderFence()
+    └─ renderFence() / code-group fence wrapper
         ├─ exact markmap → encoded .markmap-mount placeholder
         ├─ exact mermaid → encoded .mermaid-mount placeholder
         └─ normal fence → FenceMeta → Shiki codeToHtml()
@@ -191,7 +191,7 @@ sanitizeMarkdownHtml() / DOMPurify
     ↓
 RenderedMarkdown.vue → v-html
     ↓
-useMarkmapMount / useMermaidMount / useMathMount
+useMarkmapMount / useMermaidMount / useMathMount / useCodeGroupMount
     ↓
 ReadingPane / RightRail page-nav or PdfExportSurface
     ↓
@@ -241,9 +241,10 @@ The current setup in src/lib/markdown.ts installs, in source order:
 6. wikiLinkPlugin;
 7. calloutPlugin;
 8. markdownContainersPlugin (named block insertion before `paragraph`);
-9. mathPlugin;
-10. @mdit/plugin-emoji;
-11. table renderer overrides.
+9. markdownCodeGroupsPlugin (named insertion before `docus-container`);
+10. mathPlugin;
+11. @mdit/plugin-emoji;
+12. table renderer overrides.
 
 The current installed 14.2.0 block ruler now contains the Docus container rule at
 the named position `... deflist, docus-container, paragraph, inline`; the rule is
@@ -333,6 +334,7 @@ waits for the same image/widget readiness contract, and exports the settled HTML
 | package-lock.json | npm resolution for the current dependency graph | MD-EXT-0 may audit; only a reviewed dependency phase may change it | Never edit for convenience |
 | src/lib/markdown.ts | MarkdownIt singleton, sanitizer, container registration, fence callback, parse/render boundary | MD-EXT-1 / MD-EXT-2 | Keep async preparation before synchronous render |
 | src/lib/markdownContainers.ts | Docus-owned fixed-type block parser, title tokens, delimiter matching, nested body tokenization | MD-EXT-2 | No generic attrs, arbitrary types, or module-global parser state |
+| src/lib/markdownCodeGroups.ts | Narrow labeled-fence code-group block rule and static tab/panel renderer | MD-EXT-5 | Reuses ordinary fence tokens; no second parser/highlighter |
 | src/lib/shiki.ts | Shiki singleton, language loading, codeToHtml, style transformer, generated CSS, and the MD-EXT-4 structural line transform | MD-EXT-3 / MD-EXT-4 | Keep one highlighter and style registry |
 | src/lib/wikiLinks.ts | [[...]] inline rule and standard .md link_open classifier/renderer | MD-EXT-1 | External policy must compose with this renderer |
 | shared/linkResolve.ts | Isomorphic Docus note target resolution | MD-EXT-6 only if source-context extension is required | Preserve current no-escape semantics |
@@ -353,6 +355,7 @@ waits for the same image/widget readiness contract, and exports the settled HTML
 | src/composables/useMermaidMount.ts | Mermaid widget mount/unmount lifecycle | MD-EXT-0 audit only | Exact placeholder/mount contract remains |
 | src/composables/useMarkmapMount.ts | MarkMap widget mount/unmount lifecycle | MD-EXT-0 audit only | Exact placeholder/mount contract remains |
 | src/composables/useMathMount.ts | KaTeX placeholder lifecycle | MD-EXT-0 audit only | Existing readiness contract remains |
+| src/composables/useCodeGroupMount.ts | Root-scoped code-group tab interaction/cleanup | MD-EXT-5 | No global listener or persisted active state |
 | src/lib/pdfExport.ts | Printable clone, CSS owner, widget staticization, pagination | MD-EXT-1 onward only for approved extension proof | PDF uses settled HTML; no resource reread |
 | src/lib/pdf-readiness.ts | Mermaid/MarkMap/math terminal-state gate | MD-EXT-5 when code groups/images need extension hooks | Error states remain settled, not hangs |
 | server/paths.ts | CONTENT_DIR, strict physical path resolver, symlink/race checks | MD-EXT-0 audit; MD-EXT-6 only for a narrow helper extension | Never weaken raw dot-segment rejection |
@@ -1856,7 +1859,9 @@ follow-up evidence and tests are recorded in the linked MD-EXT-3 document.
 
 [MD-EXT-4 evidence](vitepress-markdown-extensions-md-ext-4-line-numbers.md)
 
-MD-EXT-5 — Code Groups — NOT STARTED.
+[MD-EXT-5 evidence](vitepress-markdown-extensions-md-ext-5-code-groups.md)
+
+MD-EXT-5 — Code Groups — COMPLETE / REVIEW-READY.
 
 ## 23. MD-EXT-4 — Line Numbers
 
@@ -2004,9 +2009,9 @@ accessibility, copy, wrapping, PDF, and bound evidence.
 
 ### Next phase
 
-[MD-EXT-4 evidence](vitepress-markdown-extensions-md-ext-4-line-numbers.md)
+[MD-EXT-5 evidence](vitepress-markdown-extensions-md-ext-5-code-groups.md)
 
-MD-EXT-5 — Code Groups — NOT STARTED.
+MD-EXT-6 — Safe Snippets & Markdown Includes — NOT STARTED.
 
 ## 24. MD-EXT-5 — Code Groups
 
@@ -2041,18 +2046,17 @@ all-panel PDF export.
 ### Architecture changes
 
 Extend the Docus container token path with a special code-group representation that
-captures fence labels and final rendered code HTML. It emits the static structure in
-section 15.3. Add useCodeGroupMount.ts or equivalent to RenderedMarkdown’s post-v-html
-lifecycle. It uses root-scoped event delegation and removes listeners/observers on
-rerender/unmount.
+captures validated fence labels and wraps the existing ordinary fence renderer output.
+It emits the static structure in section 15.3. Add useCodeGroupMount.ts to
+RenderedMarkdown’s post-v-html lifecycle. It uses root-scoped event delegation and
+removes listeners/observers on rerender/unmount.
 
 The tab/panel ids use an internal per-render scope prefix plus deterministic indexes.
 User labels are escaped display text only. No generic data-* attribute is introduced.
 
 ### Likely production files
 
-- src/lib/markdown.ts and container/code-group module;
-- src/lib/fenceMeta.ts;
+- src/lib/markdown.ts and src/lib/markdownCodeGroups.ts;
 - src/components/vault/RenderedMarkdown.vue;
 - new src/composables/useCodeGroupMount.ts;
 - src/style.css and PDF stylesheet/helper;
@@ -2079,8 +2083,8 @@ None. No tab framework.
 ### Sanitizer changes
 
 Add only approved button/ARIA attributes: button, aria-selected, aria-controls,
-aria-labelledby, tabindex, and any exact role already missing. Do not add onclick,
-style, wildcard data, or Vue directive attrs.
+aria-labelledby, and tabindex; role is already allowed. Do not add onclick, style,
+wildcard data, or Vue directive attrs.
 
 ### Theme impact
 
@@ -2112,7 +2116,7 @@ while the PDF includes all panels in source order.
 ### Validation commands
 
 ~~~
-./node_modules/.bin/vitest run src/lib/__tests__/markdown.test.ts src/lib/__tests__/pdfExport.test.ts
+./node_modules/.bin/vitest run src/lib/__tests__/markdownCodeGroups.test.ts src/composables/__tests__/useCodeGroupMount.test.ts src/lib/__tests__/markdown.test.ts src/lib/__tests__/markdownContainers.test.ts src/lib/__tests__/pdfExport.test.ts
 npm run typecheck
 npm run build
 npm run test:unit
@@ -2136,12 +2140,18 @@ through MD-EXT-4 behavior and existing containers.
 
 ### Evidence required
 
-docs/design/vitepress-markdown-extensions-md-ext-5-code-groups.md with sanitized DOM,
-ARIA/lifecycle, interaction, PDF all-panel, and no-reread evidence.
+[MD-EXT-5 Code Groups](vitepress-markdown-extensions-md-ext-5-code-groups.md) with
+sanitized DOM, ARIA/lifecycle, interaction, PDF all-panel, and no-reread evidence.
+
+### Status
+
+COMPLETE / REVIEW-READY. The implementation uses the existing MarkdownIt fence
+token path, a root-scoped `useCodeGroupMount`, exact sanitizer additions, and a
+clone-only PDF all-panel transformation. MD-EXT-6 has not started.
 
 ### Next phase
 
-MD-EXT-6 — Safe Snippets & Markdown Includes.
+MD-EXT-6 — Safe Snippets & Markdown Includes — NOT STARTED.
 
 ## 25. MD-EXT-6 — Safe Snippets & Markdown Includes
 
@@ -2687,5 +2697,5 @@ implemented opportunistically in a phase that owns a related feature.
 | Release gate finds a real product failure | Block; fix owning phase separately |
 
 The implementation plan remains the execution map. MD-EXT-0 is complete as an
-evidence-only phase, MD-EXT-1 is complete with its evidence document, and MD-EXT-2
-and later production implementation have not started.
+evidence-only phase, MD-EXT-1 through MD-EXT-5 are implemented with their evidence
+documents, and MD-EXT-6/7 have not started.
