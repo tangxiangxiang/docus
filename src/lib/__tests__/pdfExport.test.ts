@@ -190,6 +190,37 @@ describe('PDF export helpers', () => {
     expect(__testing__.PDF_DOWNLOAD_STYLES).toContain('.pdf-document .article .docus-toc')
   })
 
+  it('expands generated details only in the PDF clone and preserves reader state', () => {
+    const article = document.createElement('article')
+    article.className = 'article reading'
+    article.innerHTML = `
+      <details class="markdown-container markdown-container-details">
+        <summary class="markdown-container-title">Generated details</summary>
+        <p id="generated-body">Exported body</p>
+      </details>
+      <details class="author-details">
+        <summary>Raw details</summary>
+        <p>Raw body</p>
+      </details>`
+
+    const generated = article.querySelector<HTMLDetailsElement>('.markdown-container-details')!
+    const raw = article.querySelector<HTMLDetailsElement>('.author-details')!
+    generated.open = false
+    raw.open = false
+
+    const exported = document.createElement('div')
+    exported.innerHTML = preparePdfArticleHtml(article)
+
+    expect(generated.open).toBe(false)
+    expect(raw.open).toBe(false)
+    expect(exported.querySelector<HTMLDetailsElement>('.markdown-container-details')?.open).toBe(true)
+    expect(exported.querySelector('.markdown-container-details #generated-body')?.textContent)
+      .toBe('Exported body')
+    expect(exported.querySelector<HTMLDetailsElement>('.author-details')?.open).toBe(false)
+    expect(__testing__.PDF_DOWNLOAD_STYLES).toContain('.pdf-document .article .markdown-container')
+    expect(__testing__.PDF_DOWNLOAD_STYLES).toContain('.markdown-container-details > summary')
+  })
+
   it('keeps short text blocks together and only splits oversized blocks', () => {
     const root = document.createElement('div')
     root.innerHTML = `

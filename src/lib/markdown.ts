@@ -13,6 +13,7 @@ import {
   type WikiLinkEnv,
 } from './wikiLinks'
 import { calloutPlugin } from './callouts'
+import { markdownContainersPlugin } from './markdownContainers'
 import { mathPlugin } from './math'
 import { emojiDefinitions } from './emoji'
 import {
@@ -111,6 +112,7 @@ const MARKDOWN_SANITIZE_CONFIG = {
     'href',
     'id',
     'loading',
+    'open',
     'rel',
     'role',
     'rowspan',
@@ -287,6 +289,10 @@ async function getMd(): Promise<MarkdownIt> {
       // Obsidian-style `> [!note]` callouts. The plugin transforms the
       // parsed blockquote token and leaves ordinary blockquotes untouched.
       .use(calloutPlugin)
+      // Docus-owned VitePress-style built-in containers. The rule is inserted
+      // by name before MarkdownIt's paragraph rule and keeps the existing
+      // callout, math, fence, and widget pipelines inside the same token flow.
+      .use(markdownContainersPlugin)
       // Math placeholders are emitted before sanitization and upgraded by
       // useMathMount after v-html has inserted the safe HTML.
       .use(mathPlugin)

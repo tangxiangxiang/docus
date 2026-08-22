@@ -193,6 +193,45 @@ const PDF_DOWNLOAD_STYLES = `
   background-color: #f5f6f8 !important;
 }
 
+/* Custom containers use a fixed printable-light palette. Keep the selector
+   on the container/title only: descendant Shiki spans must retain their own
+   computed token colors from the trusted generated stylesheet. */
+.pdf-document .article .markdown-container {
+  box-sizing: border-box;
+  margin: 1em 0 !important;
+  padding: 0.8em 0.95em !important;
+  border: 1px solid #d7dce2 !important;
+  border-left: 4px solid #005fb8 !important;
+  background: #f5f6f8 !important;
+  color: #202124 !important;
+}
+
+.pdf-document .article .markdown-container-title {
+  margin: 0 0 0.55em !important;
+  color: #005fb8 !important;
+  font-weight: 650 !important;
+  line-height: 1.35 !important;
+  break-after: avoid;
+  page-break-after: avoid;
+}
+
+.pdf-document .article .markdown-container-tip {
+  border-left-color: #217a37 !important;
+}
+
+.pdf-document .article .markdown-container-warning {
+  border-left-color: #8a6400 !important;
+}
+
+.pdf-document .article .markdown-container-danger {
+  border-left-color: #b42318 !important;
+}
+
+.pdf-document .article .markdown-container-details > summary {
+  color: #005fb8 !important;
+  cursor: default !important;
+}
+
 .pdf-document .article blockquote {
   background: #f5f6f8 !important;
   border-left-color: #005fb8 !important;
@@ -554,6 +593,13 @@ export function markOversizedPdfBlocks(root: HTMLElement): void {
  */
 export function preparePdfArticleHtml(article: HTMLElement): string {
   const clone = article.cloneNode(true) as HTMLElement
+
+  // Details are interactive in the reader, but PDF is a complete document
+  // export. Expand only the generated Docus container surface on the clone so
+  // raw author <details> elements retain their existing behavior and the live
+  // reader disclosure state is never mutated.
+  clone.querySelectorAll<HTMLDetailsElement>('details.markdown-container-details')
+    .forEach((details) => { details.open = true })
 
   clone.querySelectorAll('.mermaid-toolbar-area, .markmap-toolbar-area')
     .forEach((toolbar) => toolbar.remove())

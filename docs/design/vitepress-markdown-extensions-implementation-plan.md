@@ -13,14 +13,14 @@
 | Approved PRD baseline | 7e05e3bb43f4283a90ead1abd0c81325bc93281c |
 | Implementation Plan task base | 7e05e3bb43f4283a90ead1abd0c81325bc93281c |
 | Implementation baseline | 582e312a4c5752a4c9a5c6bba7b0e752b0b78078 |
-| Current phase | MD-EXT-1 — COMPLETE / REVIEW-CLOSED; next MD-EXT-2 — NOT STARTED |
-| Current implementation state | PRD approved; MD-EXT-0 audit complete; MD-EXT-1 implementation and provenance/source-awareness follow-up complete; MD-EXT-2+ not started |
+| Current phase | MD-EXT-2 — COMPLETE / REVIEW-CLOSED; next MD-EXT-3 — NOT STARTED |
+| Current implementation state | PRD approved; MD-EXT-0 audit complete; MD-EXT-1 implementation and provenance/source-awareness follow-up complete; MD-EXT-2 implementation and reader/PDF/security follow-up complete; MD-EXT-3+ not started |
 | Shiki prerequisite | SHIKI-H0 through SHIKI-H8 COMPLETE; migration closed; no H9 |
 | Parser baseline | markdown-it 14.1.0 singleton |
 | Shiki baseline | Shiki 4.4.3, @shikijs/transformers 4.4.3 |
 | VitePress reference | Official Markdown Extensions documentation, version observed 2.0.0-alpha.19 on 2026-08-21 |
 | Scope of this document | Implementation planning only |
-| This lifecycle update changes | MD-EXT-1 implementation/tests/evidence, lifecycle metadata, and the Design index; no dependencies |
+| This lifecycle update changes | MD-EXT-2 implementation/tests/evidence, lifecycle metadata, and the Design index; no dependencies |
 
 The production baseline is the last production-code state before this Markdown
 extension program. The approved PRD commits after that point are documentation-only.
@@ -53,13 +53,14 @@ product conflict, work stops, the conflict is documented, and the PRD is reviewe
 before the affected phase continues.
 
 The original plan and MD-EXT-0 audit commits were planning/evidence-only. The current
-lifecycle records the reviewed completion of MD-EXT-1 and its corrective follow-up.
+lifecycle records the reviewed completion of MD-EXT-1 and MD-EXT-2, including their
+focused corrective follow-ups and evidence.
 This phase:
 
 - does not add or remove dependencies;
 - keeps the DOMPurify boundary and FORBID_ATTR: ['style'] invariant;
 - does not create a server resource endpoint;
-- does not start MD-EXT-2 or any later phase;
+- does not start MD-EXT-3 or any later phase;
 - does not reopen the completed Shiki migration.
 
 ## 3. Authoritative PRD and Baselines
@@ -149,7 +150,7 @@ VitePress but remain deferred Docus candidates.
 
 ## 5. Current Production Call Flow
 
-The audited H8/current flow is:
+The audited H8 + MD-EXT-2 current flow is:
 
 ~~~text
 raw post source
@@ -172,10 +173,13 @@ fresh real WikiLink env
     ↓
 md.render(markdown, env)
     ↓
-renderFence()
-    ├─ exact markmap → encoded .markmap-mount placeholder
-    ├─ exact mermaid → encoded .mermaid-mount placeholder
-    └─ normal fence → Shiki codeToHtml() or escaped plain fallback
+MarkdownIt block/core token pipeline
+    ├─ final heading IDs/TOC and Docus container tokens
+    ├─ existing callout/math/WikiLink body tokens
+    └─ renderFence()
+        ├─ exact markmap → encoded .markmap-mount placeholder
+        ├─ exact mermaid → encoded .mermaid-mount placeholder
+        └─ normal fence → Shiki codeToHtml() or escaped plain fallback
     ↓
 syncGeneratedShikiStylesheet()
     ↓
@@ -225,20 +229,22 @@ The current setup in src/lib/markdown.ts installs, in source order:
 5. markdown-it-mark;
 6. wikiLinkPlugin;
 7. calloutPlugin;
-8. mathPlugin;
-9. @mdit/plugin-emoji;
-10. table renderer overrides.
+8. markdownContainersPlugin (named block insertion before `paragraph`);
+9. mathPlugin;
+10. @mdit/plugin-emoji;
+11. table renderer overrides.
 
-MD-EXT-0 must capture the actual ruler names and runtime order from the installed
-markdown-it 14.1.0 instance. Later rules must be inserted by named ruler position,
-not by relying on incidental array indexes.
+The current installed 14.2.0 block ruler now contains the Docus container rule at
+the named position `... deflist, docus-container, paragraph, inline`; the rule is
+registered with `before('paragraph', ...)`, not an incidental numeric index. The
+container body reuses the same block tokenizer and final render env.
 
 ### 5.2 Current sanitizer boundary
 
 The current sanitizer in src/lib/markdown.ts allows semantic article tags including
 div, details, summary, pre, code, span, section, lists, tables, img, and a. It allows
-class, id, href, src, target, rel, role, aria-hidden, loading, and four Docus data
-attributes. Its hook removes event attributes and keeps only:
+class, id, href, src, target, rel, role, aria-hidden, loading, the narrow boolean
+`open`, and four Docus data attributes. Its hook removes event attributes and keeps only:
 
 ~~~text
 data-anchor
@@ -248,9 +254,9 @@ data-target
 ~~~
 
 It forbids style, script/style/iframe/object/embed/form/link/meta/base/math/svg and
-uses a Docus URI policy. MD-EXT-1 and MD-EXT-5 may propose narrowly reviewed
-allowlist additions; neither may remove FORBID_ATTR: ['style'] or enable wildcard
-data-/aria-/attribute behavior.
+uses a Docus URI policy. MD-EXT-2 added only `open` for the literal details `{open}`
+feature. Later phases may propose narrowly reviewed additions; none may remove
+FORBID_ATTR: ['style'] or enable wildcard data-/aria-/attribute behavior.
 
 ## 6. Target End-State Call Flow
 
@@ -314,7 +320,8 @@ waits for the same image/widget readiness contract, and exports the settled HTML
 | --- | --- | --- | --- |
 | package.json | Existing MarkdownIt, anchor, Shiki, DOMPurify, Vue, PDF, and test scripts/dependencies | MD-EXT-0 may audit; MD-EXT-7 may change only if approved | No VitePress/MDX dependency; any addition needs evidence |
 | package-lock.json | npm resolution for the current dependency graph | MD-EXT-0 may audit; only a reviewed dependency phase may change it | Never edit for convenience |
-| src/lib/markdown.ts | MarkdownIt singleton, sanitizer, fence callback, parse/render boundary | MD-EXT-1 | Keep async preparation before synchronous render |
+| src/lib/markdown.ts | MarkdownIt singleton, sanitizer, container registration, fence callback, parse/render boundary | MD-EXT-1 / MD-EXT-2 | Keep async preparation before synchronous render |
+| src/lib/markdownContainers.ts | Docus-owned fixed-type block parser, title tokens, delimiter matching, nested body tokenization | MD-EXT-2 | No generic attrs, arbitrary types, or module-global parser state |
 | src/lib/shiki.ts | Shiki singleton, language loading, codeToHtml, style transformer, generated CSS | MD-EXT-3 | Keep one highlighter and style registry |
 | src/lib/wikiLinks.ts | [[...]] inline rule and standard .md link_open classifier/renderer | MD-EXT-1 | External policy must compose with this renderer |
 | shared/linkResolve.ts | Isomorphic Docus note target resolution | MD-EXT-6 only if source-context extension is required | Preserve current no-escape semantics |
@@ -1367,7 +1374,7 @@ Next, only after this audit is reviewed: MD-EXT-1 — Anchors, TOC, Links & Lazy
 
 Status: COMPLETE / REVIEW-CLOSED. Evidence: [MD-EXT-1 Anchors, TOC, Links & Lazy Images](vitepress-markdown-extensions-md-ext-1-anchors-toc-links-images.md).
 Phase base: 579bda1850ceb955eb0796fec2cc3ec919b72a21. Next phase: MD-EXT-2 — Custom
-Containers — NOT STARTED.
+Containers — COMPLETE / REVIEW-CLOSED.
 
 ### Goal
 
@@ -1527,6 +1534,10 @@ final handoff rather than self-referenced here.
 MD-EXT-2 — Custom Containers.
 
 ## 21. MD-EXT-2 — Custom Containers
+
+Status: COMPLETE / REVIEW-CLOSED. Evidence: [MD-EXT-2 Custom Containers](vitepress-markdown-extensions-md-ext-2-containers.md).
+Phase base: 4c86783fc847fda43a5eaba95e1d32621d79b835. Next phase: MD-EXT-3 — Shiki
+Code Annotations & Unified Fence Metadata — NOT STARTED.
 
 ### Goal
 

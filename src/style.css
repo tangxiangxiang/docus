@@ -752,6 +752,35 @@ main.container.auth-page-shell {
 .article :first-child { margin-top: 0; }
 .article img { max-width: 100%; height: auto; }
 
+/* Docus-owned VitePress-style custom containers. The type names are fixed by
+   the Markdown block rule; no author value is interpolated into CSS. */
+.article .markdown-container {
+  box-sizing: border-box;
+  margin: 1.1em 0;
+  padding: 0.85em 1em;
+  border: 1px solid var(--vs-border, var(--border));
+  border-left: 4px solid var(--markdown-container-accent, var(--vs-accent, var(--accent)));
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--markdown-container-accent, var(--vs-accent, var(--accent))) 9%, var(--vs-bg-1, var(--bg)));
+  color: var(--vs-text-1, var(--text));
+}
+.article .markdown-container-title {
+  margin: 0 0 0.55em;
+  color: var(--markdown-container-accent, var(--vs-text-1, var(--text-h)));
+  font-weight: 650;
+  line-height: 1.35;
+}
+.article .markdown-container > :last-child { margin-bottom: 0; }
+.article .markdown-container-info { --markdown-container-accent: #2f81f7; }
+.article .markdown-container-tip { --markdown-container-accent: #2da44e; }
+.article .markdown-container-warning { --markdown-container-accent: #bf8700; }
+.article .markdown-container-danger { --markdown-container-accent: #cf222e; }
+.article .markdown-container-details { --markdown-container-accent: var(--vs-accent, var(--accent)); }
+.article .markdown-container-details > summary {
+  cursor: pointer;
+  list-style-position: inside;
+}
+
 .empty {
   color: var(--text-muted);
   font-style: italic;
