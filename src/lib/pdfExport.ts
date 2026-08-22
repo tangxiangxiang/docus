@@ -125,6 +125,25 @@ const PDF_DOWNLOAD_STYLES = `
   text-decoration: none !important;
 }
 
+.pdf-document .article .docus-toc {
+  margin: 1em 0 !important;
+  padding: 0.7em 0.9em !important;
+  border: 1px solid #d7dce2 !important;
+  border-radius: 4px;
+  background: #f5f6f8 !important;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.pdf-document .article .docus-toc ul {
+  margin: 0 !important;
+  padding-left: 1.35em !important;
+}
+
+.pdf-document .article .docus-toc li + li {
+  margin-top: 0.2em !important;
+}
+
 .pdf-document .article pre,
 .pdf-document .article blockquote,
 .pdf-document .article p,

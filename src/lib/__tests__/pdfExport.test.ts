@@ -170,6 +170,26 @@ describe('PDF export helpers', () => {
     expect(prepared).not.toContain('docus-pdf-download-styles')
   })
 
+  it('preserves final heading IDs, static TOC links, and lazy Markdown images', () => {
+    const article = document.createElement('article')
+    article.className = 'article reading'
+    article.innerHTML = `
+      <nav class="docus-toc" aria-label="Table of contents">
+        <ul><li><a href="#java-guide">Java Guide</a></li></ul>
+      </nav>
+      <h2 id="java-guide"><a class="header-anchor" href="#java-guide">Java Guide</a></h2>
+      <p><img src="image.png" alt="Example" loading="lazy"></p>`
+
+    const exported = document.createElement('div')
+    exported.innerHTML = preparePdfArticleHtml(article)
+
+    expect(exported.querySelector('nav.docus-toc')).not.toBeNull()
+    expect(exported.querySelector('a[href="#java-guide"]')).not.toBeNull()
+    expect(exported.querySelector('h2#java-guide')).not.toBeNull()
+    expect(exported.querySelector('img[loading="lazy"]')).not.toBeNull()
+    expect(__testing__.PDF_DOWNLOAD_STYLES).toContain('.pdf-document .article .docus-toc')
+  })
+
   it('keeps short text blocks together and only splits oversized blocks', () => {
     const root = document.createElement('div')
     root.innerHTML = `

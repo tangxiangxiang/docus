@@ -69,6 +69,7 @@ type MdToken = {
   content: string
   attrGet: (name: string) => string | null | undefined
   attrSet: (name: string, value: string) => void
+  attrJoin: (name: string, value: string) => void
 }
 type MdRenderer = { renderToken(tokens: MdToken[], idx: number, options: unknown): string }
 
@@ -196,6 +197,25 @@ function classifyLinkOpenToken(
   if (hash) t.attrSet('data-anchor', hash)
 }
 
+function applyGeneratedExternalLinkPolicy(tokens: MdToken[], idx: number): void {
+  const token = tokens[idx]
+  if (token.type !== 'link_open') return
+
+  // WikiLinks and Docus .md links are already classified by the owner above.
+  // They are vault navigation even when their final href is absolute-looking.
+  if (token.attrGet('class')?.includes('wiki-link')) return
+
+  const href = token.attrGet('href')
+  if (!href || !/^https?:/i.test(href)) return
+
+  // This policy is intentionally applied at the generated Markdown/linkify
+  // link_open boundary. Raw semantic HTML anchors are html_inline tokens and
+  // never pass through this function.
+  token.attrJoin('class', 'docus-external-link')
+  token.attrSet('target', '_blank')
+  token.attrSet('rel', 'noopener noreferrer')
+}
+
 /** Plugin signature: `(md, opts) => void`. markdown-it's `md.use`
  *  calls plugins with `(md, options?)` — so this is `PluginWithOptions`
  *  in markdown-it's terms. Currying `(opts) => (md) => void` would NOT
@@ -220,6 +240,7 @@ export function wikiLinkPlugin(
     self: MdRenderer,
   ): string {
     classifyLinkOpenToken(tokens, idx, resolverFromEnv(env, opts))
+    applyGeneratedExternalLinkPolicy(tokens, idx)
     return self.renderToken(tokens, idx, options)
   }
 }

@@ -142,12 +142,22 @@ describe('wikiLinkPlugin', () => {
       expect(html).toMatch(/<a [^>]*data-target="missing"[^>]*data-missing="true"/)
     })
 
-    it('leaves external links untouched', () => {
+    it('adds the generated external-link policy to explicit Markdown links', () => {
       const md = mdWith(allExist)
       const html = md.render('see [ext](https://example.com)')
       // External link has no wiki-link class.
       expect(html).not.toContain('wiki-link')
       expect(html).toContain('href="https://example.com"')
+      expect(html).toContain('target="_blank"')
+      expect(html).toContain('rel="noopener noreferrer"')
+    })
+
+    it('adds the same policy to linkify-generated HTTP(S) links', () => {
+      const md = mdWith(allExist)
+      const html = md.render('see https://example.com/docs')
+      expect(html).toContain('href="https://example.com/docs"')
+      expect(html).toContain('target="_blank"')
+      expect(html).toContain('rel="noopener noreferrer"')
     })
 
     it('leaves mailto links untouched', () => {

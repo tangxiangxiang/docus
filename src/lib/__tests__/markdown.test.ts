@@ -344,9 +344,12 @@ describe('markdown render()', () => {
       '`code-term`',
       ':   description with **bold** and a [link](https://example.com)',
     ].join('\n'))
+    const doc = new DOMParser().parseFromString(html, 'text/html')
     expect(html).toContain('<dt><code>code-term</code></dt>')
     expect(html).toContain('<strong>bold</strong>')
-    expect(html).toContain('<a href="https://example.com">link</a>')
+    expect(doc.querySelector('a[href="https://example.com"]')?.textContent).toBe('link')
+    expect(doc.querySelector('a[href="https://example.com"]')?.getAttribute('target')).toBe('_blank')
+    expect(doc.querySelector('a[href="https://example.com"]')?.getAttribute('rel')).toBe('noopener noreferrer')
   })
 
   it('groups multiple term/definition pairs into one <dl>', async () => {
@@ -992,5 +995,165 @@ describe('markdown H4 style-to-class and security closure', () => {
 
     await render('```totally-unknown\nplain code\n```')
     expect(document.head.querySelector('style#docus-shiki-generated-styles')).toBeNull()
+  })
+})
+
+describe('markdown MD-EXT-1 anchors, TOC, links, and images', () => {
+  it('supports narrow custom anchors and the id/id-2/id-3 collision contract', async () => {
+    const automatic = await render('## Hello\n## Hello\n## Hello')
+    expect(Array.from(new DOMParser().parseFromString(automatic, 'text/html').querySelectorAll('h2'))
+      .map((heading) => heading.id)).toEqual(['hello', 'hello-2', 'hello-3'])
+
+    const autoToCustom = await render('## Hello\n## Other {#hello}')
+    expect(Array.from(new DOMParser().parseFromString(autoToCustom, 'text/html').querySelectorAll('h2'))
+      .map((heading) => heading.id)).toEqual(['hello', 'hello-2'])
+
+    const customToAuto = await render('## First {#hello}\n## Hello')
+    expect(Array.from(new DOMParser().parseFromString(customToAuto, 'text/html').querySelectorAll('h2'))
+      .map((heading) => heading.id)).toEqual(['hello', 'hello-2'])
+
+    const customToCustom = await render('## First {#x}\n## Second {#x}')
+    expect(Array.from(new DOMParser().parseFromString(customToCustom, 'text/html').querySelectorAll('h2'))
+      .map((heading) => heading.id)).toEqual(['x', 'x-2'])
+
+    const mixed = await render('## Hello\n## Other {#hello}\n## Hello')
+    expect(Array.from(new DOMParser().parseFromString(mixed, 'text/html').querySelectorAll('h2'))
+      .map((heading) => heading.id)).toEqual(['hello', 'hello-2', 'hello-3'])
+  })
+
+  it('removes only a valid final custom suffix and preserves inline heading markup', async () => {
+    const html = await render([
+      '## **Java** Guide {#java-guide}',
+      '## `foo()` API {#foo-api}',
+      '## 中文标题 {#zh-title}',
+      '## Heading {.danger}',
+      '## Heading {style="color:red"}',
+      '## Heading {onclick="alert(1)"}',
+      '## Heading {#}',
+    ].join('\n'))
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const headings = Array.from(doc.querySelectorAll('h2'))
+
+    expect(headings[0]?.id).toBe('java-guide')
+    expect(headings[0]?.textContent).toBe('Java Guide')
+    expect(headings[0]?.querySelector('strong')?.textContent).toBe('Java')
+    expect(headings[1]?.id).toBe('foo-api')
+    expect(headings[1]?.textContent).toBe('foo() API')
+    expect(headings[2]?.id).toBe('zh-title')
+    expect(headings[2]?.textContent).toBe('中文标题')
+    expect(headings.slice(3).every((heading) => !heading.hasAttribute('style'))).toBe(true)
+    expect(headings.slice(3).every((heading) => !heading.hasAttribute('onclick'))).toBe(true)
+    expect(doc.querySelector('.danger')).toBeNull()
+    expect(html).toContain('{.danger}')
+    expect(html).toContain('{style=“color:red”}')
+    expect(html).toContain('{onclick=“alert(1)”}')
+    expect(html).toContain('{#}')
+  })
+
+  it('recognizes standalone case-sensitive TOC and uses final h2-h4 IDs', async () => {
+    const html = await render([
+      '[[toc]]',
+      '',
+      '# Document',
+      '## A',
+      '### A1',
+      '#### A1.1',
+      '### A2',
+      '## B',
+      '##### H5',
+      '###### H6',
+    ].join('\n'))
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const toc = doc.querySelector('nav.docus-toc')
+    expect(toc).not.toBeNull()
+    expect(Array.from(toc?.querySelectorAll('a') ?? []).map((link) => link.getAttribute('href')))
+      .toEqual(['#a', '#a1', '#a1-1', '#a2', '#b'])
+    expect(toc?.textContent).toContain('A1.1')
+    expect(toc?.querySelectorAll('ul').length).toBeGreaterThan(1)
+    expect(doc.querySelectorAll('h1, h5, h6')).toHaveLength(3)
+
+    const notToc = await render([
+      '[[TOC]]',
+      '',
+      'foo [[toc]] bar',
+      '',
+      '`[[toc]]`',
+      '',
+      '```text',
+      '[[toc]]',
+      '```',
+    ].join('\n'))
+    expect(new DOMParser().parseFromString(notToc, 'text/html').querySelector('nav.docus-toc')).toBeNull()
+  })
+
+  it('keeps TOC collection side-effect free and escapes unsafe heading HTML', async () => {
+    const resolver: WikiResolver = vi.fn((ref) => ({ target: `notes/${ref}` }))
+    const html = await render([
+      '[[toc]]',
+      '',
+      '## [[Target]] {#target}',
+      '## <img src=x onerror=alert(1)> Safe',
+      '## <script>alert(1)</script> Text',
+    ].join('\n'), { resolver })
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const toc = doc.querySelector('nav.docus-toc')
+
+    expect(resolver).toHaveBeenCalledTimes(1)
+    expect(toc?.querySelector('a[href="#target"]')?.textContent).toBe('Target')
+    expect(toc?.textContent).toContain('Safe')
+    expect(toc?.textContent).toContain('Text')
+    expect(toc?.querySelector('img, script')).toBeNull()
+    expect(toc?.innerHTML).not.toContain('<img')
+    expect(toc?.innerHTML).not.toContain('<script')
+  })
+
+  it('adds the generated external-link policy without rewriting internal or raw HTML links', async () => {
+    const html = await render([
+      '[HTTPS](https://example.com)',
+      '',
+      '[HTTP](http://example.org)',
+      '',
+      'https://linkify.example.test/path',
+      '',
+      '[Note](note.md)',
+      '[Relative](./note.md)',
+      '[Parent](../note.md)',
+      '[Fragment](#section)',
+      '[Mail](mailto:test@example.com)',
+      '[Tel](tel:+123456)',
+      '',
+      '<a href="https://raw.example" target="_self">Raw</a>',
+      '<a href="javascript:alert(1)">Unsafe</a>',
+    ].join('\n'))
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const generated = Array.from(doc.querySelectorAll<HTMLAnchorElement>('a[href^="http"]'))
+      .filter((link) => !link.textContent?.includes('Raw'))
+    expect(generated.length).toBeGreaterThanOrEqual(3)
+    for (const link of generated) {
+      expect(link.getAttribute('target')).toBe('_blank')
+      expect(link.getAttribute('rel')).toBe('noopener noreferrer')
+    }
+    expect(doc.querySelector('a.wiki-link')?.getAttribute('target')).toBeNull()
+    expect(doc.querySelector('a[href="#section"]')?.getAttribute('target')).toBeNull()
+    expect(doc.querySelector('a[href^="mailto:"]')?.getAttribute('target')).toBeNull()
+    expect(doc.querySelector('a[href^="tel:"]')?.getAttribute('target')).toBeNull()
+    expect(doc.querySelector('a[href="https://raw.example"]')?.getAttribute('target')).toBeNull()
+    expect(doc.querySelector('a[href^="javascript:"]')).toBeNull()
+  })
+
+  it('adds lazy loading only to Markdown image tokens', async () => {
+    const html = await render([
+      '![Markdown alt](image.png "Image title")',
+      '',
+      '<img src="raw.png" alt="Raw image">',
+    ].join('\n'))
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const images = Array.from(doc.querySelectorAll<HTMLImageElement>('img'))
+
+    expect(images).toHaveLength(2)
+    expect(images[0]?.getAttribute('loading')).toBe('lazy')
+    expect(images[0]?.getAttribute('alt')).toBe('Markdown alt')
+    expect(images[0]?.getAttribute('title')).toBe('Image title')
+    expect(images[1]?.getAttribute('loading')).toBeNull()
   })
 })

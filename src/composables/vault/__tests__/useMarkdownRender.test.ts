@@ -96,4 +96,24 @@ describe('useMarkdownRender (public API smoke)', () => {
     expect(captured!.html.value).toContain('Section')
     expect(captured!.ready.value).toBe(true)
   })
+
+  it('publishes custom heading IDs and clean labels from the final HTML', async () => {
+    let captured: ReturnType<typeof useMarkdownRender> | null = null
+    const Comp = defineComponent({
+      setup() {
+        captured = useMarkdownRender(ref('## Java Guide {#java-guide}\n\n## Usage'))
+        return () => h('div')
+      },
+    })
+    mount(Comp)
+
+    const deadline = Date.now() + 5000
+    while (captured!.headings.value.length < 2 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    expect(captured!.headings.value).toEqual([
+      { id: 'java-guide', text: 'Java Guide', level: 2 },
+      { id: 'usage', text: 'Usage', level: 2 },
+    ])
+  })
 })

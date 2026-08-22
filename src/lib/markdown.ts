@@ -11,6 +11,10 @@ import { calloutPlugin } from './callouts'
 import { mathPlugin } from './math'
 import { emojiDefinitions } from './emoji'
 import {
+  markdownHeadingsPlugin,
+  slugifyHeadingWithState,
+} from './markdownHeadings'
+import {
   extractFenceLanguageIdentifier,
   highlightShikiFence,
   prepareShikiLanguages,
@@ -62,6 +66,7 @@ const MARKDOWN_SANITIZE_CONFIG = {
     'label',
     'li',
     'mark',
+    'nav',
     'ol',
     'p',
     'pre',
@@ -87,6 +92,7 @@ const MARKDOWN_SANITIZE_CONFIG = {
   ],
   ALLOWED_ATTR: [
     'alt',
+    'aria-label',
     'aria-hidden',
     'checked',
     'class',
@@ -132,9 +138,22 @@ export function createMarkdownSanitizer(): MarkdownSanitizer {
   // without a DOM (for example, before Vitest installs jsdom). Creating the
   // instance lazily keeps the same code safe in the browser and test runtime.
   const purifier = DOMPurify(typeof window === 'undefined' ? undefined : window)
-  purifier.addHook('uponSanitizeAttribute', (_node, data) => {
+  purifier.addHook('uponSanitizeAttribute', (node, data) => {
     if (data.attrName.startsWith('on')) {
       data.keepAttr = false
+      return
+    }
+    // DOMPurify treats `target` as a URI-valued attribute and therefore
+    // removes `_blank` even when it is listed in ALLOWED_ATTR. Preserve only
+    // the renderer-owned value on the renderer-owned marker class. Raw HTML
+    // anchors continue through the existing sanitizer behavior unchanged.
+    if (
+      data.attrName === 'target'
+      && data.attrValue === '_blank'
+      && typeof (node as { classList?: { contains: (name: string) => boolean } }).classList?.contains === 'function'
+      && (node as { classList: { contains: (name: string) => boolean } }).classList.contains('docus-external-link')
+    ) {
+      data.forceKeepAttr = true
       return
     }
     // Permit only the four attributes used by our mount and wiki-link
@@ -200,14 +219,14 @@ async function getMd(): Promise<MarkdownIt> {
       .use(taskLists, { enabled: true, label: true, lineNumber: false })
       // 标题锚点:给 h2/h3/h4 加 id,锚点样式由 .article 下的样式处理
       .use(anchor, {
-        slugify: (s: string) =>
-          s
-            .toLowerCase()
-            .trim()
-            .replace(/[^a-z0-9一-龥]+/g, '-')
-            .replace(/^-+|-+$/g, ''),
+        slugifyWithState: slugifyHeadingWithState,
+        uniqueSlugStartIndex: 2,
         permalink: anchor.permalink.headerLink({ safariReaderFix: true }),
       })
+      // MD-EXT-1 heading metadata/TOC rules register around the named anchor
+      // core rule. The module owns only the narrow {#safe-id} suffix and the
+      // final-ID TOC; it is not a generic attribute parser.
+      .use(markdownHeadingsPlugin)
       // 脚注:pandoc 风格的 [^id] 引用 + 定义段。anchor id 始终按
       // 出现顺序编号(fn1, fn2, ...),[^label] 里的 label 只用来匹配
       // ref ↔ def,不参与 anchor 命名。放在 anchor 之后:脚注规则
@@ -236,6 +255,16 @@ async function getMd(): Promise<MarkdownIt> {
       .use(bareEmoji, { definitions: emojiDefinitions, shortcuts: {} })
     md.renderer.rules.table_open = () => '<div class="table-scroll"><table>\n'
     md.renderer.rules.table_close = () => '</table></div>\n'
+
+    const defaultImageRenderer = md.renderer.rules.image
+    md.renderer.rules.image = (tokens, index, options, env, self) => {
+      // This renderer is reached only for Markdown image tokens. Raw HTML
+      // <img> remains html_inline and therefore keeps its existing contract.
+      tokens[index].attrSet('loading', 'lazy')
+      return defaultImageRenderer
+        ? defaultImageRenderer(tokens, index, options, env, self)
+        : self.renderToken(tokens, index, options)
+    }
     return md
   })()
   return mdPromise

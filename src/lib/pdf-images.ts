@@ -19,6 +19,15 @@ function immediateOutcome(image: HTMLImageElement): PdfImageOutcome | null {
   return image.naturalWidth > 0 ? 'loaded' : 'error'
 }
 
+function promoteLazyImageForPdf(image: HTMLImageElement): void {
+  if (image.getAttribute('loading') !== 'lazy') return
+
+  // The PDF surface is a dedicated export surface rather than the reader.
+  // Promote Markdown-generated lazy images before waiting so browser lazy-load
+  // heuristics cannot keep an otherwise valid image unsettled indefinitely.
+  image.setAttribute('loading', 'eager')
+}
+
 function summarize(outcomes: PdfImageOutcome[]): PdfImageSettlementResult {
   return {
     total: outcomes.length,
@@ -66,6 +75,7 @@ export function waitForPdfImages(
     }
 
     images.forEach((image, index) => {
+      promoteLazyImageForPdf(image)
       const initialOutcome = immediateOutcome(image)
       if (initialOutcome) {
         settle(index, initialOutcome)

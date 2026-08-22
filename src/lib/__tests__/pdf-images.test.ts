@@ -54,6 +54,25 @@ describe('waitForPdfImages', () => {
     })
   })
 
+  it('promotes lazy images before waiting on the PDF surface', async () => {
+    const { article, images: [image] } = articleWithImages(1)
+    image.setAttribute('loading', 'lazy')
+    setImageState(image, false, 0)
+    const pending = waitForPdfImages(article, { timeoutMs: 100 })
+
+    expect(image.getAttribute('loading')).toBe('eager')
+
+    setImageState(image, true, 100)
+    image.dispatchEvent(new Event('load'))
+
+    await expect(pending).resolves.toMatchObject({
+      loaded: 1,
+      failed: 0,
+      timedOut: 0,
+      outcomes: ['loaded'],
+    })
+  })
+
   it('settles an already failed image as a local error', async () => {
     const { article, images: [image] } = articleWithImages(1)
     setImageState(image, true, 0)
