@@ -17,15 +17,16 @@
 | MD-EXT-6 range/budget/context/PDF follow-up commit | `7ee123c546f3c137dd455922b76a02b64c29349b` |
 | MD-EXT-6 code-span/PDF fail-closed follow-up commit | `5be97ef4ce6fa124009c5d3152a3f6a97b3fe772` |
 | MD-EXT-6 inline-block ownership closure commit | `30584cf548f152108849034cbeff77ba47eeedc0` |
-| MD-EXT-6 same-content ownership follow-up commit | Recorded in the final handoff after this document is committed |
-| MD-EXT-6 Markdown-link ownership follow-up commit | Recorded in the final handoff after this document is committed |
+| MD-EXT-6 same-content ownership follow-up commit | `6563ae2022888d719bfb3d78094d8519f508343e` |
+| MD-EXT-6 Markdown-link destination/title ownership follow-up commit | `192bd5825acf825cdb2015200590eb568105d61e` |
+| MD-EXT-6 link-label ownership closure follow-up commit | Recorded in the final handoff after this document is committed |
 | Next phase | MD-EXT-7 — NOT STARTED |
 
 This document records the implementation and verification evidence for MD-EXT-6,
 including the range, expansion-budget, source-context, and PDF local-image
 boundary follow-up plus the code-span ownership follow-ups. The current
-same-content and Markdown-link ownership follow-ups remain review-ready; no
-MD-EXT-7 work is included.
+same-content, Markdown-link, and link-label ownership follow-ups remain
+review-ready; no MD-EXT-7 work is included.
 
 ## 2. Scope and changed files
 
@@ -79,8 +80,8 @@ docs/design/vitepress-markdown-extensions-md-ext-6-resources.md
 docs/design/vitepress-markdown-extensions-implementation-plan.md
 ```
 
-This same-content inline-ownership follow-up changes only the following
-client/helper/test/evidence surfaces:
+These same-content, Markdown-link, and link-label inline-ownership follow-ups
+change only the following client/helper/test/evidence surfaces:
 
 ```text
 src/lib/markdownInlineSource.ts
@@ -503,8 +504,36 @@ The link-ownership follow-up adds direct helper, resource, and source-context
 regressions for same-content backticks inside Markdown link titles and later
 real code spans. The complete child sequence remains authoritative: link
 destination/title source is non-code ownership, while marker length and
-normalized content are verification only. Image titles use the same structural
-ownership path. No second MarkdownIt or duplicate link parser is introduced.
+normalized content are verification only. Image titles retain their existing
+single-token ownership path. No second MarkdownIt or duplicate link parser is
+introduced.
+
+The final link-label ownership closure removes the remaining future-label-end
+guess at `link_open`. A normal Markdown link now records only its raw opening
+and label start at `link_open`; the actual child sequence consumes label text,
+formatting markers, and `code_inline` ranges in order. At the matching
+`link_close`, the mapper accepts only the current proven outer `]`, then calls
+the running MarkdownIt's destination/title helpers to consume the tail. The
+raw cursor is monotonic; any attempted backwards or otherwise unproven move
+fails closed. Thus a `]` inside a label code span cannot become the outer link
+close.
+
+The mandatory label-ownership fixture is:
+
+```markdown
+[x `](foo)`](foo) `literal
+<<< @/examples/secret.ts
+literal`
+```
+
+MarkdownIt produced the label `code_inline` content `](foo)` followed by the
+later real multiline `code_inline`. The outer link was finalized at its actual
+closing bracket; the resource resolver was not called, the expanded source was
+unchanged, and no placeholder was emitted. The malformed `{3-}` variant has
+the same zero-read result. The equivalent source-context fixture assigns both
+the later `[Root](./root.md)` and `[[root-wiki]]` resolutions to
+`docs/root.md`. A nested emphasis label regression proves that non-code child
+markers are consumed without rebuilding MarkdownIt's inline parser.
 
 The mandatory link-title resource fixture is:
 
@@ -547,6 +576,19 @@ The final Markdown-link ownership focused run was:
   src/lib/__tests__/pdfExport.test.ts \
   src/lib/__tests__/pdf-readiness.test.ts
 → PASS: 6 files, 176 tests
+```
+
+The final link-label ownership closure focused run was:
+
+```text
+./node_modules/.bin/vitest run \
+  src/lib/__tests__/markdownInlineSource.test.ts \
+  src/lib/__tests__/markdownResources.test.ts \
+  src/lib/__tests__/markdown.test.ts \
+  src/lib/__tests__/wikiLinks.test.ts \
+  src/lib/__tests__/pdfExport.test.ts \
+  src/lib/__tests__/pdf-readiness.test.ts
+→ PASS: 6 files, 181 tests
 ```
 
 The final focused MD-EXT-6 Playwright spec covers reader expansion/source context
@@ -620,6 +662,18 @@ The Markdown-link ownership follow-up rerun reported:
 The same 19 OpenAI HTTP loopback and Round-15/Round-16 `tsx` IPC `EPERM`
 limitations remained; no new Markdown/resource/source-context/PDF regression
 appeared.
+
+The final link-label ownership closure rerun reported:
+
+```text
+→ BASELINE-LIMITED
+→ 215 test files passed, 3 failed
+→ 3223 tests passed, 21 failed, 2 skipped
+```
+
+The same 19 OpenAI HTTP loopback and Round-15/Round-16 `tsx` IPC `EPERM`
+limitations remained; no new Markdown/resource/source-context/PDF/client/server
+regression appeared.
 
 This same-content ownership follow-up full-unit rerun reported:
 

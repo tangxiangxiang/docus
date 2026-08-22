@@ -82,6 +82,10 @@ interface MarkdownLinkTail {
 interface MarkdownLinkOwnership {
   kind: 'markdown' | 'opaque' | 'transparent' | 'unresolved'
   surface?: MarkdownLinkSourceRange
+  rawStart?: number
+  labelStart?: number
+  owner?: MarkdownInlineSourceChild
+  consumedEnd?: number
 }
 
 function isLinkSpace(code: number): boolean {
@@ -166,33 +170,76 @@ function parseLinkTail(
   return { tailStart: labelEnd + 1, end: labelEnd + 1, kind: 'shortcut' }
 }
 
-function findMarkdownLinkSourceRange(
+function matchesLinkAttributes(
+  tail: MarkdownLinkTail,
+  owner: MarkdownInlineSourceChild,
+  parser: MarkdownInlineSourceParser,
+  destinationAttr: 'href' | 'src',
+): boolean {
+  if (tail.kind !== 'inline') return true
+
+  const expectedDestination = owner.attrs?.find(([name]) => name === destinationAttr)?.[1]
+  const expectedTitle = owner.attrs?.find(([name]) => name === 'title')?.[1]
+  if (
+    expectedDestination
+    && parser.normalizeLink
+    && parser.normalizeLink(tail.destination ?? '') !== expectedDestination
+  ) return false
+  if (expectedTitle !== undefined && expectedTitle !== tail.title) return false
+  return true
+}
+
+/**
+ * Finalize a normal Markdown link only after its actual `link_close` children
+ * have consumed the label. At this point `cursor` must be the outer `]`; no
+ * future label-end candidate is searched.
+ */
+function finalizeMarkdownLinkOwnership(
+  source: string,
+  cursor: number,
+  ownership: MarkdownLinkOwnership,
+  parser: MarkdownInlineSourceParser | undefined,
+): MarkdownLinkSourceRange | null {
+  if (
+    ownership.kind !== 'markdown'
+    || !parser
+    || ownership.rawStart === undefined
+    || ownership.labelStart === undefined
+    || !ownership.owner
+    || source[cursor] !== ']'
+  ) return null
+
+  const tail = parseLinkTail(source, cursor, parser)
+  if (!tail || !matchesLinkAttributes(tail, ownership.owner, parser, 'href')) return null
+
+  return {
+    start: ownership.rawStart,
+    end: tail.end,
+    labelStart: ownership.labelStart,
+    labelEnd: cursor,
+    tailStart: tail.tailStart,
+    kind: tail.kind,
+  }
+}
+
+function findImageSourceRange(
   source: string,
   start: number,
-  openerLength: number,
-  parser: MarkdownInlineSourceParser | undefined,
   owner: MarkdownInlineSourceChild,
-  destinationAttr: 'href' | 'src',
+  parser: MarkdownInlineSourceParser | undefined,
 ): MarkdownLinkSourceRange | null {
-  if (!parser || source[start] !== '[' || source[start + 1] === '[') return null
+  if (source[start] !== '!' || source[start + 1] !== '[') return null
+  if (!parser) return null
 
-  const labelStart = start + openerLength
+  // Images are emitted as one token, so there is no child sequence with which
+  // to consume the alt label. Keep their existing narrow candidate mapping,
+  // while ordinary Markdown links below use the child-driven link_close path.
+  const labelStart = start + 2
   let shortcut: MarkdownLinkSourceRange | null = null
-
   for (let close = source.indexOf(']', labelStart); close !== -1; close = source.indexOf(']', close + 1)) {
     if (isBackslashEscaped(source, close)) continue
     const tail = parseLinkTail(source, close, parser)
-    if (!tail) continue
-    if (tail.kind === 'inline') {
-      const expectedDestination = owner.attrs?.find(([name]) => name === destinationAttr)?.[1]
-      const expectedTitle = owner.attrs?.find(([name]) => name === 'title')?.[1]
-      if (
-        expectedDestination &&
-        parser.normalizeLink &&
-        parser.normalizeLink(tail.destination ?? '') !== expectedDestination
-      ) continue
-      if (expectedTitle !== undefined && expectedTitle !== tail.title) continue
-    }
+    if (!tail || !matchesLinkAttributes(tail, owner, parser, 'src')) continue
     const candidate: MarkdownLinkSourceRange = {
       start,
       end: tail.end,
@@ -204,26 +251,10 @@ function findMarkdownLinkSourceRange(
     if (tail.kind === 'shortcut') {
       shortcut ??= candidate
     } else {
-      // The first structurally valid link tail after this actual link_open is
-      // the link rule's closing surface. Do not keep scanning into sibling
-      // links after it; their `]` tokens are outside this ownership group.
       return candidate
     }
   }
-
   return shortcut
-}
-
-function findImageSourceRange(
-  source: string,
-  start: number,
-  owner: MarkdownInlineSourceChild,
-  parser: MarkdownInlineSourceParser | undefined,
-): MarkdownLinkSourceRange | null {
-  if (source[start] !== '!' || source[start + 1] !== '[') return null
-  const surface = findMarkdownLinkSourceRange(source, start + 1, 1, parser, owner, 'src')
-  if (!surface) return null
-  return { ...surface, start }
 }
 
 function findOpaqueAngleLinkEnd(source: string, start: number): number | null {
@@ -243,23 +274,24 @@ function beginLinkOwnership(
     const end = source.indexOf(']]', cursor + 2)
     if (end === -1) return { kind: 'unresolved' }
     nonCodeRanges.push({ start: cursor, end: end + 2 })
-    return { kind: 'opaque' }
+    return { kind: 'opaque', consumedEnd: end + 2 }
   }
 
   if (child.type === 'link_open' && source[cursor] === '[') {
-    const surface = findMarkdownLinkSourceRange(source, cursor, 1, parser, child, 'href')
-    if (!surface) return { kind: 'unresolved' }
-    if (surface.tailStart < surface.end) {
-      nonCodeRanges.push({ start: surface.tailStart, end: surface.end })
+    if (!parser) return { kind: 'unresolved' }
+    return {
+      kind: 'markdown',
+      rawStart: cursor,
+      labelStart: cursor + 1,
+      owner: child,
     }
-    return { kind: 'markdown', surface }
   }
 
   if (child.type === 'link_open') {
     const end = findOpaqueAngleLinkEnd(source, cursor)
     if (end !== null) {
       nonCodeRanges.push({ start: cursor, end })
-      return { kind: 'opaque' }
+      return { kind: 'opaque', consumedEnd: end }
     }
     // Linkify tokens have no Markdown link delimiter to skip. Only allow the
     // transparent path when the raw source visibly begins with the semantic
@@ -287,6 +319,16 @@ function rangesOverlap(
   return left.start < right.end && right.start < left.end
 }
 
+/**
+ * Keep source ownership strictly forward-only. A backwards transition means
+ * the preceding child mapping was not proven; failing closed prevents a later
+ * code_inline token from reclaiming already-consumed raw source.
+ */
+function advanceCursor(source: string, current: number, next: number): number {
+  if (next < current || next > source.length) return source.length
+  return next
+}
+
 function findExactChildSourceRange(
   source: string,
   cursor: number,
@@ -304,13 +346,27 @@ function findExactChildSourceRange(
     }
   }
 
+  if (child.type === 'html_inline') {
+    const content = child.content ?? ''
+    if (content.length === 0) return null
+    return source.startsWith(content, cursor)
+      ? { start: cursor, end: cursor + content.length }
+      : null
+  }
+
+  // Inline formatting markers are structural source owned by the actual
+  // MarkdownIt child sequence. Consume only an exact raw prefix; do not try to
+  // reverse-map normalized inline content or reproduce the inline parser.
+  if (
+    child.markup
+    && (child.type.endsWith('_open') || child.type.endsWith('_close'))
+    && source.startsWith(child.markup, cursor)
+  ) {
+    return { start: cursor, end: cursor + child.markup.length }
+  }
+
   const content = child.content ?? ''
   if (content.length === 0) return null
-
-  if (child.type === 'html_inline') {
-    const start = source.indexOf(content, cursor)
-    return start === -1 ? null : { start, end: start + content.length }
-  }
 
   // Plain text is only consumed when its token content is an exact raw prefix.
   // Entities, escapes, typographer output, and other normalized inline rules
@@ -387,12 +443,10 @@ export function findMarkdownCodeInlineSourceRanges(
     if (child.type === 'link_open') {
       const ownership = beginLinkOwnership(source, cursor, child, parser, nonCodeRanges)
       linkOwnership.push(ownership)
-      if (ownership.surface) {
-        if (ownership.kind === 'markdown') {
-          cursor = ownership.surface.labelStart
-        } else {
-          cursor = ownership.surface.end
-        }
+      if (ownership.kind === 'markdown' && ownership.labelStart !== undefined) {
+        cursor = advanceCursor(source, cursor, ownership.labelStart)
+      } else if (ownership.consumedEnd !== undefined) {
+        cursor = advanceCursor(source, cursor, ownership.consumedEnd)
       } else if (ownership.kind === 'unresolved') {
         cursor = source.length
       }
@@ -401,15 +455,26 @@ export function findMarkdownCodeInlineSourceRanges(
 
     if (child.type === 'image') {
       const ownership = beginLinkOwnership(source, cursor, child, parser, nonCodeRanges)
-      if (ownership.surface) cursor = ownership.surface.end
+      if (ownership.surface) cursor = advanceCursor(source, cursor, ownership.surface.end)
+      else if (ownership.consumedEnd !== undefined) {
+        cursor = advanceCursor(source, cursor, ownership.consumedEnd)
+      }
       else if (ownership.kind === 'unresolved') cursor = source.length
       continue
     }
 
     if (child.type === 'link_close') {
       const ownership = linkOwnership.pop()
-      if (ownership?.surface && ownership.kind === 'markdown') {
-        cursor = ownership.surface.end
+      if (ownership?.kind === 'markdown') {
+        const surface = finalizeMarkdownLinkOwnership(source, cursor, ownership, parser)
+        if (!surface) {
+          cursor = source.length
+        } else {
+          if (surface.tailStart < surface.end) {
+            nonCodeRanges.push({ start: surface.tailStart, end: surface.end })
+          }
+          cursor = advanceCursor(source, cursor, surface.end)
+        }
       }
       continue
     }
@@ -417,7 +482,7 @@ export function findMarkdownCodeInlineSourceRanges(
     if (child.type !== 'code_inline') {
       const exactRange = findExactChildSourceRange(source, cursor, child)
       if (exactRange) {
-        cursor = exactRange.end
+        cursor = advanceCursor(source, cursor, exactRange.end)
         nonCodeRanges.push(exactRange)
       } else if (child.type === 'html_inline') {
         // An HTML token is an ownership anchor. If its exact source cannot be
@@ -440,7 +505,7 @@ export function findMarkdownCodeInlineSourceRanges(
       // children would invent ownership. Preserve only proven ranges.
       cursor = source.length
     } else {
-      cursor = range.end
+      cursor = advanceCursor(source, cursor, range.end)
     }
   }
 

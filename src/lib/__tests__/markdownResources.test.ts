@@ -242,6 +242,34 @@ describe('Markdown resource logical resolution and expansion', () => {
     expect(resolver.read).not.toHaveBeenCalled()
   })
 
+  it('keeps a resource-looking directive literal after a code span inside a link label', async () => {
+    const resolver = resolverFor({ 'examples/secret.ts': 'const secret = true' })
+    const source = '[x `](foo)`](foo) `literal\n<<< @/examples/secret.ts\nliteral`'
+    const expanded = await expandMarkdownResources(source, {
+      md: new MarkdownIt({ html: true }),
+      sourcePath: 'docs/index',
+      resourceResolver: resolver,
+    })
+
+    expect(expanded.markdown).toBe(source)
+    expect(expanded.markdown).not.toContain('markdown-resource-error')
+    expect(resolver.read).not.toHaveBeenCalled()
+  })
+
+  it('keeps malformed resource syntax literal after a code span inside a link label', async () => {
+    const resolver = resolverFor({ 'examples/secret.ts': 'const secret = true' })
+    const source = '[x `](foo)`](foo) `literal\n<<< @/examples/secret.ts{3-}\nliteral`'
+    const expanded = await expandMarkdownResources(source, {
+      md: new MarkdownIt({ html: true }),
+      sourcePath: 'docs/index',
+      resourceResolver: resolver,
+    })
+
+    expect(expanded.markdown).toBe(source)
+    expect(expanded.markdown).not.toContain('markdown-resource-error')
+    expect(resolver.read).not.toHaveBeenCalled()
+  })
+
   it('does not let backticks across MarkdownIt blocks suppress a real directive', async () => {
     const resolver = resolverFor({
       'examples/demo.ts': 'const loaded = true',

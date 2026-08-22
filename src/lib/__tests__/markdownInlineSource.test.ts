@@ -128,6 +128,50 @@ describe('MarkdownIt-guided code_inline source ranges', () => {
     expect(source.slice(ranges[0]!.start, ranges[0]!.end)).toBe('`same\ncontent`')
   })
 
+  it('lets the actual child sequence consume a code span before finalizing the outer link label', () => {
+    const source = '[x `](foo)`](foo) `same`'
+    const children = inlineChildren(source)
+
+    expect(children.map((child) => child.type)).toEqual([
+      'link_open',
+      'text',
+      'code_inline',
+      'link_close',
+      'text',
+      'code_inline',
+    ])
+    expect(children.filter((child) => child.type === 'code_inline').map((child) => child.content))
+      .toEqual(['](foo)', 'same'])
+
+    const ranges = sourceRanges(source)
+    expect(ranges).toHaveLength(2)
+    expect(ranges.every(Boolean)).toBe(true)
+    expect(ranges.map((range) => source.slice(range!.start, range!.end)))
+      .toEqual(['`](foo)`', '`same`'])
+    expect(ranges[1]!.start).toBeGreaterThanOrEqual(ranges[0]!.end)
+  })
+
+  it('keeps later code spans mapped after nested non-code label formatting', () => {
+    const source = '[x *em*](foo "`same`") `same`'
+    const children = inlineChildren(source)
+    expect(children.map((child) => child.type)).toEqual([
+      'link_open',
+      'text',
+      'em_open',
+      'text',
+      'em_close',
+      'link_close',
+      'text',
+      'code_inline',
+    ])
+
+    const ranges = sourceRanges(source)
+    expect(ranges).toHaveLength(1)
+    expect(ranges[0]).not.toBeNull()
+    expect(source.slice(ranges[0]!.start, ranges[0]!.end)).toBe('`same`')
+    expect(ranges[0]!.start).toBe(source.lastIndexOf('`same`'))
+  })
+
   it('uses the same ownership boundary for image titles', () => {
     const source = '![x](image.png "`same`") `same`'
     const children = inlineChildren(source)
