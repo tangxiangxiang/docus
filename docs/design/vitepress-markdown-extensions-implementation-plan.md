@@ -14,13 +14,13 @@
 | Implementation Plan task base | 7e05e3bb43f4283a90ead1abd0c81325bc93281c |
 | Implementation baseline | 582e312a4c5752a4c9a5c6bba7b0e752b0b78078 |
 | Current phase | MD-EXT-6 — COMPLETE / REVIEW-READY; next MD-EXT-7 — NOT STARTED |
-| Current implementation state | PRD approved; MD-EXT-0 audit complete; MD-EXT-1 implementation and provenance/source-awareness follow-up complete; MD-EXT-2 implementation plus opaque-range and paragraph-context follow-ups complete; MD-EXT-3 fence metadata and Shiki source annotations plus sentinel/budget review follow-up complete; MD-EXT-4 bounded structural line numbers, unknown-language fallback, reader/PDF layout, browser evidence, and reader annotation-background follow-up complete; MD-EXT-5 static code groups, root-scoped reader enhancement, sanitizer delta, and all-panel PDF preparation complete; MD-EXT-6 safe snippets/includes, authenticated resource reads, exact range semantics, exact UTF-8 expansion accounting, per-child source context, cancellation, code-span-aware directive opacity, fail-closed local-image PDF cloning, and child-driven Markdown-link label ownership complete; MD-EXT-7 not started |
+| Current implementation state | PRD approved; MD-EXT-0 audit complete; MD-EXT-1 implementation and provenance/source-awareness follow-up complete; MD-EXT-2 implementation plus opaque-range and paragraph-context follow-ups complete; MD-EXT-3 fence metadata and Shiki source annotations plus sentinel/budget review follow-up complete; MD-EXT-4 bounded structural line numbers, unknown-language fallback, reader/PDF layout, browser evidence, and reader annotation-background follow-up complete; MD-EXT-5 static code groups, root-scoped reader enhancement, sanitizer delta, and all-panel PDF preparation complete; MD-EXT-6 safe snippets/includes, authenticated resource reads, exact range semantics, exact UTF-8 expansion accounting, per-child source context, cancellation, code-span-aware directive opacity, fail-closed local-image PDF cloning, and child-driven Markdown-link/image ownership complete; MD-EXT-7 not started |
 | Shiki prerequisite | SHIKI-H0 through SHIKI-H8 COMPLETE; migration closed; no H9 |
 | Parser baseline | markdown-it 14.2.0 singleton (package range `^14.1.0`) |
 | Shiki baseline | Shiki 4.4.3, @shikijs/transformers 4.4.3 |
 | VitePress reference | Official Markdown Extensions documentation, version observed 2.0.0-alpha.19 on 2026-08-21 |
 | Scope of this document | Implementation planning only |
-| This lifecycle update changes | MD-EXT-6 same-content, Markdown-link, and link-label inline-ownership follow-up implementation/evidence lifecycle metadata; MD-EXT-7 remains not started |
+| This lifecycle update changes | MD-EXT-6 same-content, Markdown-link, link-label, and image-alt inline-ownership follow-up implementation/evidence lifecycle metadata; MD-EXT-7 remains not started |
 
 The production baseline is the last production-code state before this Markdown
 extension program. The approved PRD commits after that point are documentation-only.
@@ -71,6 +71,10 @@ The completed MD-EXT-6 phase, including its review follow-up:
 - consumes a normal Markdown link label through its actual child sequence before
   `link_close` confirms the current outer `]`; destination/title helpers run only
   after that proof, and raw-source ownership never moves backwards;
+- consumes image alt ownership from MarkdownIt's existing `image.content` and
+  `image.children`, maps nested code ranges into outer coordinates, and derives
+  the outer image close from the parser-owned alt length rather than scanning
+  future `]` characters;
 - keeps settled local PDF resource images inside the export boundary so the
   browser makes no second resource-endpoint request;
 - omits local resource image source attributes from the PDF clone when snapshot

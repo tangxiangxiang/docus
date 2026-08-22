@@ -1,6 +1,6 @@
 import type MarkdownIt from 'markdown-it'
 import { authFetch } from './auth-session'
-import { findMarkdownCodeInlineSourceRanges } from './markdownInlineSource'
+import { findMarkdownInlineSourceOwnership } from './markdownInlineSource'
 
 export const MAX_SNIPPET_BYTES = 256 * 1024
 export const MAX_INCLUDE_BYTES = 512 * 1024
@@ -430,11 +430,11 @@ function collectOpaqueLines(md: MarkdownIt, source: string): {
 
   for (const token of tokens) {
     if (token.type !== 'inline' || !token.children || !token.map) continue
-    const codeSpans = findMarkdownCodeInlineSourceRanges(token.content, token.children, {
+    const ownership = findMarkdownInlineSourceOwnership(token.content, token.children, {
       ...md.helpers,
       normalizeLink: md.normalizeLink.bind(md),
     })
-      .filter((span): span is NonNullable<typeof span> => span !== null)
+    const codeSpans = ownership.allCodeRanges
     if (codeSpans.length === 0) continue
 
     let lineStart = 0

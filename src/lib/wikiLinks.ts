@@ -22,7 +22,7 @@
 // rule fires. So we don't need an explicit "am I inside code?" check.
 
 import MarkdownIt from 'markdown-it'
-import { findMarkdownCodeInlineSourceRanges } from './markdownInlineSource'
+import { findMarkdownInlineSourceOwnership } from './markdownInlineSource'
 
 export interface WikiLinkResolutionContext {
   /** Canonical source identity for the Markdown line being resolved. */
@@ -331,7 +331,7 @@ export function wikiLinkPlugin(
     for (const token of state.tokens as unknown as MdToken[]) {
       if (token.type !== 'inline' || !token.children || !token.map) continue
       let currentLine = token.map[0]
-      const codeSpanRanges = findMarkdownCodeInlineSourceRanges(
+      const ownership = findMarkdownInlineSourceOwnership(
         token.content,
         token.children,
         {
@@ -339,8 +339,9 @@ export function wikiLinkPlugin(
           normalizeLink: state.md.normalizeLink.bind(state.md),
         },
       )
+      const codeSpanRanges = ownership.topLevelCodeRanges
       let codeSpanIndex = 0
-      for (const child of token.children) {
+      for (const [childIndex, child] of token.children.entries()) {
         const sourcePath = sourcePaths[currentLine]
         if (sourcePath) {
           child.meta = { ...(child.meta ?? {}), [SOURCE_PATH_META]: sourcePath }
@@ -349,6 +350,16 @@ export function wikiLinkPlugin(
         // break belongs to the line before it; the next child starts on the
         // following flattened source line.
         if (child.type === 'softbreak' || child.type === 'hardbreak') currentLine += 1
+        if (child.type === 'image') {
+          const imageRange = ownership.childSourceRanges[childIndex]
+          if (imageRange) {
+            currentLine += token.content.slice(imageRange.start, imageRange.end).split('\n').length - 1
+          } else {
+            // An unproven image surface must not let later links inherit a
+            // guessed source path after the ownership walk failed closed.
+            currentLine = sourcePaths.length
+          }
+        }
         if (child.type === 'code_inline') {
           const span = codeSpanRanges[codeSpanIndex]
           if (span) {

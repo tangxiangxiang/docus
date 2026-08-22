@@ -14,12 +14,27 @@ export interface MarkdownCodeInlineSourceRange {
   markerLength: number
 }
 
+export interface MarkdownInlineSourceRange {
+  start: number
+  end: number
+}
+
 export interface MarkdownInlineSourceChild {
   type: string
   content?: string
   markup?: string
   attrs?: ReadonlyArray<readonly [string, string]> | null
   nesting?: number
+  children?: readonly MarkdownInlineSourceChild[] | null
+}
+
+export interface MarkdownInlineSourceOwnership {
+  /** Ranges aligned with top-level `code_inline` children. */
+  topLevelCodeRanges: Array<MarkdownCodeInlineSourceRange | null>
+  /** All proven code-owned ranges, including nested image-alt children. */
+  allCodeRanges: MarkdownCodeInlineSourceRange[]
+  /** Ranges aligned with the complete top-level child sequence. */
+  childSourceRanges: Array<MarkdownInlineSourceRange | null>
 }
 
 /**
@@ -59,11 +74,6 @@ function findMatchingCloser(source: string, openerEnd: number, markerLength: num
   }
 }
 
-interface MarkdownInlineSourceRange {
-  start: number
-  end: number
-}
-
 interface MarkdownLinkSourceRange extends MarkdownInlineSourceRange {
   labelStart: number
   labelEnd: number
@@ -81,7 +91,6 @@ interface MarkdownLinkTail {
 
 interface MarkdownLinkOwnership {
   kind: 'markdown' | 'opaque' | 'transparent' | 'unresolved'
-  surface?: MarkdownLinkSourceRange
   rawStart?: number
   labelStart?: number
   owner?: MarkdownInlineSourceChild
@@ -90,14 +99,6 @@ interface MarkdownLinkOwnership {
 
 function isLinkSpace(code: number): boolean {
   return code === 0x09 || code === 0x20 || code === 0x0A
-}
-
-function isBackslashEscaped(source: string, position: number): boolean {
-  let slashCount = 0
-  for (let index = position - 1; index >= 0 && source[index] === '\\'; index -= 1) {
-    slashCount += 1
-  }
-  return slashCount % 2 === 1
 }
 
 function findReferenceLabelEnd(source: string, start: number): number | null {
@@ -229,32 +230,25 @@ function findImageSourceRange(
   parser: MarkdownInlineSourceParser | undefined,
 ): MarkdownLinkSourceRange | null {
   if (source[start] !== '!' || source[start + 1] !== '[') return null
-  if (!parser) return null
+  if (!parser || owner.content === undefined || owner.children === null || owner.children === undefined) return null
 
-  // Images are emitted as one token, so there is no child sequence with which
-  // to consume the alt label. Keep their existing narrow candidate mapping,
-  // while ordinary Markdown links below use the child-driven link_close path.
+  // MarkdownIt's image rule already parsed the alt source and stores the exact
+  // raw label slice in `content`. Use that parser-owned fact instead of trying
+  // candidate `]` positions, which could be backticks inside nested alt code.
   const labelStart = start + 2
-  let shortcut: MarkdownLinkSourceRange | null = null
-  for (let close = source.indexOf(']', labelStart); close !== -1; close = source.indexOf(']', close + 1)) {
-    if (isBackslashEscaped(source, close)) continue
-    const tail = parseLinkTail(source, close, parser)
-    if (!tail || !matchesLinkAttributes(tail, owner, parser, 'src')) continue
-    const candidate: MarkdownLinkSourceRange = {
-      start,
-      end: tail.end,
-      labelStart,
-      labelEnd: close,
-      tailStart: tail.tailStart,
-      kind: tail.kind,
-    }
-    if (tail.kind === 'shortcut') {
-      shortcut ??= candidate
-    } else {
-      return candidate
-    }
+  const labelEnd = labelStart + owner.content.length
+  if (source.slice(labelStart, labelEnd) !== owner.content || source[labelEnd] !== ']') return null
+
+  const tail = parseLinkTail(source, labelEnd, parser)
+  if (!tail || !matchesLinkAttributes(tail, owner, parser, 'src')) return null
+  return {
+    start,
+    end: tail.end,
+    labelStart,
+    labelEnd,
+    tailStart: tail.tailStart,
+    kind: tail.kind,
   }
-  return shortcut
 }
 
 function findOpaqueAngleLinkEnd(source: string, start: number): number | null {
@@ -300,13 +294,6 @@ function beginLinkOwnership(
     if (href && (source.startsWith(href, cursor) || source.startsWith(href.replace(/^https?:\/\//iu, ''), cursor))) {
       return { kind: 'transparent' }
     }
-  }
-
-  if (child.type === 'image') {
-    const surface = findImageSourceRange(source, cursor, child, parser)
-    if (!surface) return { kind: 'unresolved' }
-    nonCodeRanges.push({ start: surface.start, end: surface.end })
-    return { kind: 'opaque', surface }
   }
 
   return { kind: 'unresolved' }
@@ -418,28 +405,30 @@ function findNextCodeInlineSourceRange(
   return null
 }
 
-/**
- * Locate the raw source ranges represented by MarkdownIt's code_inline
- * children in one inline block. The result is aligned to the `code_inline`
- * children in actual child order; a null entry means that exact mapping could
- * not be proven. A failed mapping never causes later children to be guessed.
- *
- * Every child is visited. Proven exact-source non-code children advance the
- * monotonic cursor and are recorded as unavailable to later code-span matches.
- * This is what prevents backticks inside an `html_inline` attribute from being
- * mistaken for a later real `code_inline` with identical normalized content.
- */
-export function findMarkdownCodeInlineSourceRanges(
+function translateCodeRange(
+  range: MarkdownCodeInlineSourceRange,
+  offset: number,
+): MarkdownCodeInlineSourceRange {
+  return {
+    start: offset + range.start,
+    end: offset + range.end,
+    markerLength: range.markerLength,
+  }
+}
+
+function walkMarkdownInlineSourceOwnership(
   source: string,
   children: readonly MarkdownInlineSourceChild[],
   parser?: MarkdownInlineSourceParser,
-): Array<MarkdownCodeInlineSourceRange | null> {
-  const ranges: Array<MarkdownCodeInlineSourceRange | null> = []
+): MarkdownInlineSourceOwnership {
+  const topLevelCodeRanges: Array<MarkdownCodeInlineSourceRange | null> = []
+  const allCodeRanges: MarkdownCodeInlineSourceRange[] = []
+  const childSourceRanges: Array<MarkdownInlineSourceRange | null> = children.map(() => null)
   let cursor = 0
   const nonCodeRanges: MarkdownInlineSourceRange[] = []
   const linkOwnership: MarkdownLinkOwnership[] = []
 
-  for (const child of children) {
+  for (const [childIndex, child] of children.entries()) {
     if (child.type === 'link_open') {
       const ownership = beginLinkOwnership(source, cursor, child, parser, nonCodeRanges)
       linkOwnership.push(ownership)
@@ -454,12 +443,23 @@ export function findMarkdownCodeInlineSourceRanges(
     }
 
     if (child.type === 'image') {
-      const ownership = beginLinkOwnership(source, cursor, child, parser, nonCodeRanges)
-      if (ownership.surface) cursor = advanceCursor(source, cursor, ownership.surface.end)
-      else if (ownership.consumedEnd !== undefined) {
-        cursor = advanceCursor(source, cursor, ownership.consumedEnd)
+      const surface = findImageSourceRange(source, cursor, child, parser)
+      if (!surface) {
+        cursor = source.length
+        continue
       }
-      else if (ownership.kind === 'unresolved') cursor = source.length
+
+      // `image.children` is already the child sequence produced by the
+      // running MarkdownIt image rule. Walk it recursively only to map its
+      // existing nested ownership; do not parse image.content again.
+      const nested = walkMarkdownInlineSourceOwnership(child.content ?? '', child.children ?? [], parser)
+      const altStart = cursor + 2
+      for (const range of nested.allCodeRanges) {
+        allCodeRanges.push(translateCodeRange(range, altStart))
+      }
+      childSourceRanges[childIndex] = surface
+      nonCodeRanges.push({ start: surface.start, end: surface.end })
+      cursor = advanceCursor(source, cursor, surface.end)
       continue
     }
 
@@ -499,15 +499,49 @@ export function findMarkdownCodeInlineSourceRanges(
       child.content ?? '',
       nonCodeRanges,
     )
-    ranges.push(range)
+    topLevelCodeRanges.push(range)
+    childSourceRanges[childIndex] = range
     if (range === null) {
       // Once one actual child cannot be mapped exactly, advancing later
       // children would invent ownership. Preserve only proven ranges.
       cursor = source.length
     } else {
+      allCodeRanges.push(range)
       cursor = advanceCursor(source, cursor, range.end)
     }
   }
 
-  return ranges
+  return { topLevelCodeRanges, allCodeRanges, childSourceRanges }
+}
+
+/**
+ * Locate the raw source ranges represented by MarkdownIt's code_inline
+ * children in one inline block. The result is aligned to the `code_inline`
+ * children in actual child order; a null entry means that exact mapping could
+ * not be proven. A failed mapping never causes later children to be guessed.
+ *
+ * Every child is visited. Proven exact-source non-code children advance the
+ * monotonic cursor and are recorded as unavailable to later code-span matches.
+ * This is what prevents backticks inside an `html_inline` attribute from being
+ * mistaken for a later real `code_inline` with identical normalized content.
+ */
+export function findMarkdownCodeInlineSourceRanges(
+  source: string,
+  children: readonly MarkdownInlineSourceChild[],
+  parser?: MarkdownInlineSourceParser,
+): Array<MarkdownCodeInlineSourceRange | null> {
+  return walkMarkdownInlineSourceOwnership(source, children, parser).topLevelCodeRanges
+}
+
+/**
+ * Return the single child-guided ownership walk used by resource expansion and
+ * source-context mapping. Nested image-alt `code_inline` ranges are translated
+ * into the outer source coordinates without reparsing the alt content.
+ */
+export function findMarkdownInlineSourceOwnership(
+  source: string,
+  children: readonly MarkdownInlineSourceChild[],
+  parser?: MarkdownInlineSourceParser,
+): MarkdownInlineSourceOwnership {
+  return walkMarkdownInlineSourceOwnership(source, children, parser)
 }

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import MarkdownIt from 'markdown-it'
-import { findMarkdownCodeInlineSourceRanges } from '../markdownInlineSource'
+import {
+  findMarkdownCodeInlineSourceRanges,
+  findMarkdownInlineSourceOwnership,
+} from '../markdownInlineSource'
 
 const testMd = new MarkdownIt({ html: true })
 
@@ -11,6 +14,13 @@ function inlineChildren(source: string) {
 
 function sourceRanges(source: string) {
   return findMarkdownCodeInlineSourceRanges(source, inlineChildren(source), {
+    ...testMd.helpers,
+    normalizeLink: testMd.normalizeLink.bind(testMd),
+  })
+}
+
+function sourceOwnership(source: string) {
+  return findMarkdownInlineSourceOwnership(source, inlineChildren(source), {
     ...testMd.helpers,
     normalizeLink: testMd.normalizeLink.bind(testMd),
   })
@@ -182,6 +192,52 @@ describe('MarkdownIt-guided code_inline source ranges', () => {
     expect(ranges[0]).not.toBeNull()
     expect(source.slice(ranges[0]!.start, ranges[0]!.end)).toBe('`same`')
     expect(ranges[0]!.start).toBe(source.lastIndexOf('`same`'))
+  })
+
+  it('maps nested image-alt code_inline ranges to outer source coordinates', () => {
+    const source = '![x `literal\n<<< @/examples/secret.ts\nliteral`](foo)'
+    const children = inlineChildren(source)
+    const image = children.find((child) => child.type === 'image')
+
+    expect(image?.content).toBe('x `literal\n<<< @/examples/secret.ts\nliteral`')
+    expect(image?.children?.filter((child) => child.type === 'code_inline')).toHaveLength(1)
+
+    const ownership = sourceOwnership(source)
+    expect(ownership.topLevelCodeRanges).toEqual([])
+    expect(ownership.allCodeRanges).toHaveLength(1)
+    expect(source.slice(ownership.allCodeRanges[0]!.start, ownership.allCodeRanges[0]!.end))
+      .toBe('`literal\n<<< @/examples/secret.ts\nliteral`')
+    expect(ownership.childSourceRanges[0]).not.toBeNull()
+    expect(source.slice(
+      ownership.childSourceRanges[0]!.start,
+      ownership.childSourceRanges[0]!.end,
+    )).toBe(source)
+  })
+
+  it('uses image children to protect an inner ](foo) and the later code span', () => {
+    const source = '![x `](foo)`](foo) `same`'
+    const children = inlineChildren(source)
+    const image = children.find((child) => child.type === 'image')
+    const ownership = sourceOwnership(source)
+
+    expect(image?.children?.filter((child) => child.type === 'code_inline').map((child) => child.content))
+      .toEqual(['](foo)'])
+    expect(ownership.topLevelCodeRanges).toHaveLength(1)
+    expect(ownership.allCodeRanges).toHaveLength(2)
+    expect(ownership.allCodeRanges.map((range) => source.slice(range.start, range.end)))
+      .toEqual(['`](foo)`', '`same`'])
+    expect(ownership.childSourceRanges[0]).not.toBeNull()
+    expect(ownership.allCodeRanges[1]!.start)
+      .toBeGreaterThanOrEqual(ownership.childSourceRanges[0]!.end)
+  })
+
+  it('does not mask plain image alt source without an actual nested code child', () => {
+    const source = '![plain alt\n<<< @/real.ts\n](foo)'
+    const children = inlineChildren(source)
+    const image = children.find((child) => child.type === 'image')
+
+    expect(image?.children?.some((child) => child.type === 'code_inline')).toBe(false)
+    expect(sourceOwnership(source).allCodeRanges).toEqual([])
   })
 
   it('does not manufacture a range for unmatched or unrelated blocks', () => {

@@ -242,6 +242,34 @@ describe('Markdown resource logical resolution and expansion', () => {
     expect(resolver.read).not.toHaveBeenCalled()
   })
 
+  it('keeps resource-looking lines inside image-alt code literal', async () => {
+    const resolver = resolverFor({ 'examples/secret.ts': 'const secret = true' })
+    const source = '![x `literal\n<<< @/examples/secret.ts\nliteral`](foo)'
+    const expanded = await expandMarkdownResources(source, {
+      md: new MarkdownIt({ html: true }),
+      sourcePath: 'docs/index',
+      resourceResolver: resolver,
+    })
+
+    expect(expanded.markdown).toBe(source)
+    expect(expanded.markdown).not.toContain('markdown-resource-error')
+    expect(resolver.read).not.toHaveBeenCalled()
+  })
+
+  it('keeps malformed resource syntax literal inside image-alt code', async () => {
+    const resolver = resolverFor({ 'examples/secret.ts': 'const secret = true' })
+    const source = '![x `literal\n<<< @/examples/secret.ts{3-}\nliteral`](foo)'
+    const expanded = await expandMarkdownResources(source, {
+      md: new MarkdownIt({ html: true }),
+      sourcePath: 'docs/index',
+      resourceResolver: resolver,
+    })
+
+    expect(expanded.markdown).toBe(source)
+    expect(expanded.markdown).not.toContain('markdown-resource-error')
+    expect(resolver.read).not.toHaveBeenCalled()
+  })
+
   it('keeps a resource-looking directive literal after a code span inside a link label', async () => {
     const resolver = resolverFor({ 'examples/secret.ts': 'const secret = true' })
     const source = '[x `](foo)`](foo) `literal\n<<< @/examples/secret.ts\nliteral`'

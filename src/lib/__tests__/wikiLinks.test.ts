@@ -286,6 +286,32 @@ describe('wikiLinkPlugin', () => {
       ])
     })
 
+    it('advances source context across a multi-line image alt', () => {
+      const calls: Array<{ ref: string; sourcePath?: string }> = []
+      const md = new MarkdownIt({ html: true, linkify: true, typographer: true })
+        .use(wikiLinkPlugin, {
+          resolve: (ref, _anchor, context) => {
+            calls.push({ ref, sourcePath: context?.sourcePath })
+            return { target: ref }
+          },
+        })
+      const source = '![x `included\nroot`](foo) [Root](./root.md) [[root-wiki]]'
+      const inline = md.parse(source, {}).find((token) => token.type === 'inline')
+      const image = inline?.children?.find((child) => child.type === 'image')
+      expect(image?.children?.filter((child) => child.type === 'code_inline')).toHaveLength(1)
+      calls.length = 0
+
+      md.render(source, {
+        deferWikiResolution: true,
+        resourceSourcePathByLine: ['docs/part.md', 'docs/root.md'],
+      })
+
+      expect(calls).toEqual([
+        { ref: './root', sourcePath: 'docs/root.md' },
+        { ref: 'root-wiki', sourcePath: 'docs/root.md' },
+      ])
+    })
+
     it('uses the outer link close after a code span label child for source context', () => {
       const calls: Array<{ ref: string; sourcePath?: string }> = []
       const md = new MarkdownIt({ html: true, linkify: true, typographer: true })

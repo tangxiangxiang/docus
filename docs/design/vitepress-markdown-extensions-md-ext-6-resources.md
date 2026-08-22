@@ -19,13 +19,14 @@
 | MD-EXT-6 inline-block ownership closure commit | `30584cf548f152108849034cbeff77ba47eeedc0` |
 | MD-EXT-6 same-content ownership follow-up commit | `6563ae2022888d719bfb3d78094d8519f508343e` |
 | MD-EXT-6 Markdown-link destination/title ownership follow-up commit | `192bd5825acf825cdb2015200590eb568105d61e` |
-| MD-EXT-6 link-label ownership closure follow-up commit | Recorded in the final handoff after this document is committed |
+| MD-EXT-6 link-label ownership closure follow-up commit | `e47d76f6334223a51af4a4c8015f7a388c1f1c20` |
+| MD-EXT-6 image-alt ownership follow-up commit | Recorded in the final handoff after this document is committed |
 | Next phase | MD-EXT-7 — NOT STARTED |
 
 This document records the implementation and verification evidence for MD-EXT-6,
 including the range, expansion-budget, source-context, and PDF local-image
 boundary follow-up plus the code-span ownership follow-ups. The current
-same-content, Markdown-link, and link-label ownership follow-ups remain
+same-content, Markdown-link, link-label, and image-alt ownership follow-ups remain
 review-ready; no MD-EXT-7 work is included.
 
 ## 2. Scope and changed files
@@ -80,7 +81,7 @@ docs/design/vitepress-markdown-extensions-md-ext-6-resources.md
 docs/design/vitepress-markdown-extensions-implementation-plan.md
 ```
 
-These same-content, Markdown-link, and link-label inline-ownership follow-ups
+These same-content, Markdown-link, link-label, and image-alt inline-ownership follow-ups
 change only the following client/helper/test/evidence surfaces:
 
 ```text
@@ -504,9 +505,8 @@ The link-ownership follow-up adds direct helper, resource, and source-context
 regressions for same-content backticks inside Markdown link titles and later
 real code spans. The complete child sequence remains authoritative: link
 destination/title source is non-code ownership, while marker length and
-normalized content are verification only. Image titles retain their existing
-single-token ownership path. No second MarkdownIt or duplicate link parser is
-introduced.
+normalized content are verification only. No second MarkdownIt or duplicate
+link parser is introduced.
 
 The final link-label ownership closure removes the remaining future-label-end
 guess at `link_open`. A normal Markdown link now records only its raw opening
@@ -517,6 +517,48 @@ the running MarkdownIt's destination/title helpers to consume the tail. The
 raw cursor is monotonic; any attempted backwards or otherwise unproven move
 fails closed. Thus a `]` inside a label code span cannot become the outer link
 close.
+
+The image-alt ownership follow-up applies the same child-driven monotonic model
+to MarkdownIt's single `image` token. MarkdownIt 14.2.0 stores the exact raw alt
+slice in `image.content` and the already-parsed nested inline children in
+`image.children`; the mapper uses those facts without reparsing the alt. The
+outer image label end is derived as `altStart + image.content.length` and must be
+the current `]`; no future-`]` candidate is searched. Only after that proof are
+the existing destination/title helpers used, and the complete image surface is
+consumed by the forward-only cursor.
+
+The shared ownership result preserves top-level `code_inline` alignment for
+WikiLink/source-context handling while also exposing all proven code ranges in
+outer coordinates for resource opacity. Thus a nested image-alt code span is
+literal to resource expansion without masking ordinary image-alt text. The
+image surface range also advances the source-context line cursor across
+multiline alt content before a following link or WikiLink is assigned.
+
+The mandatory image-alt resource fixture is:
+
+```markdown
+![x `literal
+<<< @/examples/secret.ts
+literal`](foo)
+```
+
+The image token contains one real nested `code_inline`; its translated outer
+range owns the resource-looking line, so the resolver is not called, the source
+is unchanged, and no placeholder is emitted. The malformed `{3-}` variant has
+the same zero-read result. A plain multiline image alt without a nested
+`code_inline` produces no synthetic code-owned range.
+
+The mandatory image-label ownership fixture is:
+
+```markdown
+![x `](foo)`](foo) `same`
+```
+
+The nested image child maps to `` `](foo)` ``, the outer image close is derived
+from `image.content`, and the later top-level `` `same` `` maps after the full
+image surface. The cursor never rewinds and no future label-end scan remains.
+The source-context fixture with a multiline image alt assigns both the later
+`[Root](./root.md)` and `[[root-wiki]]` resolutions to `docs/root.md`.
 
 The mandatory label-ownership fixture is:
 
@@ -589,6 +631,29 @@ The final link-label ownership closure focused run was:
   src/lib/__tests__/pdfExport.test.ts \
   src/lib/__tests__/pdf-readiness.test.ts
 → PASS: 6 files, 181 tests
+```
+
+The image-alt ownership follow-up focused run was:
+
+```text
+./node_modules/.bin/vitest run \
+  src/lib/__tests__/markdownInlineSource.test.ts \
+  src/lib/__tests__/markdownResources.test.ts \
+  src/lib/__tests__/wikiLinks.test.ts
+→ PASS: 3 files, 74 tests
+```
+
+The complete focused client rerun after the image-alt change was:
+
+```text
+./node_modules/.bin/vitest run \
+  src/lib/__tests__/markdownInlineSource.test.ts \
+  src/lib/__tests__/markdownResources.test.ts \
+  src/lib/__tests__/markdown.test.ts \
+  src/lib/__tests__/wikiLinks.test.ts \
+  src/lib/__tests__/pdfExport.test.ts \
+  src/lib/__tests__/pdf-readiness.test.ts
+→ PASS: 6 files, 187 tests
 ```
 
 The final focused MD-EXT-6 Playwright spec covers reader expansion/source context
@@ -686,6 +751,19 @@ This same-content ownership follow-up full-unit rerun reported:
 The 21 failures are the same known loopback/`tsx` IPC `EPERM` limitations; no
 new Markdown, resource, WikiLink, PDF, or client regression appeared.
 
+The image-alt ownership follow-up full-unit rerun reported:
+
+```text
+→ BASELINE-LIMITED
+→ 215 test files passed, 3 failed
+→ 3229 tests passed, 21 failed, 2 skipped
+```
+
+The six additional passing tests are the image-alt helper, resource, and
+source-context regressions; the same known loopback/`tsx` IPC `EPERM`
+limitations remained, with no new Markdown/resource/WikiLink/PDF/client/server
+regression.
+
 ### Browser/PDF
 
 The focused MD-EXT-6 Playwright spec covers reader expansion/source context and
@@ -696,9 +774,9 @@ The first sandbox attempt could not start the dev server because of the
 environment's loopback `listen EPERM`; the approved rerun with the required
 browser-server permission passed.
 
-The historical full-unit evidence above remains unchanged. The final follow-up
-rerun is recorded above with `3198` passing tests; the same known environment
-limitations remained and no new product failure appeared.
+The historical full-unit evidence above remains unchanged. The image-alt
+follow-up rerun is recorded above with `3229` passing tests; the same known
+environment limitations remained and no new product failure appeared.
 
 ## 12. Rollback and next phase
 
