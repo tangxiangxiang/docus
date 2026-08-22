@@ -849,7 +849,7 @@ function clonePdfNode(node: Node): Node {
     }
     if (dataUrl) {
       clone.setAttribute('src', dataUrl)
-    } else {
+    } else if (!isLocalMarkdownResourceImage(sourceImage)) {
       const src = element.getAttribute('src')
       if (src) clone.setAttribute('src', src)
       const srcset = element.getAttribute('srcset')

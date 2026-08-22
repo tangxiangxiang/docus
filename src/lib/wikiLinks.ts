@@ -22,6 +22,7 @@
 // rule fires. So we don't need an explicit "am I inside code?" check.
 
 import MarkdownIt from 'markdown-it'
+import { findMarkdownCodeInlineSourceRanges } from './markdownInlineSource'
 
 export interface WikiLinkResolutionContext {
   /** Canonical source identity for the Markdown line being resolved. */
@@ -88,6 +89,7 @@ type MdToken = {
   attrJoin: (name: string, value: string) => void
   map?: [number, number] | null
   children?: MdToken[] | null
+  markup?: string
   meta?: Record<string, unknown>
 }
 type MdRenderer = { renderToken(tokens: MdToken[], idx: number, options: unknown): string }
@@ -329,6 +331,13 @@ export function wikiLinkPlugin(
     for (const token of state.tokens as unknown as MdToken[]) {
       if (token.type !== 'inline' || !token.children || !token.map) continue
       let currentLine = token.map[0]
+      const codeSpanRanges = findMarkdownCodeInlineSourceRanges(
+        token.content,
+        token.children
+          .filter((child) => child.type === 'code_inline')
+          .map((child) => child.markup?.length ?? 0),
+      )
+      let codeSpanIndex = 0
       for (const child of token.children) {
         const sourcePath = sourcePaths[currentLine]
         if (sourcePath) {
@@ -338,6 +347,13 @@ export function wikiLinkPlugin(
         // break belongs to the line before it; the next child starts on the
         // following flattened source line.
         if (child.type === 'softbreak' || child.type === 'hardbreak') currentLine += 1
+        if (child.type === 'code_inline') {
+          const span = codeSpanRanges[codeSpanIndex]
+          if (span) {
+            currentLine += token.content.slice(span.start, span.end).split('\n').length - 1
+          }
+          codeSpanIndex += 1
+        }
       }
     }
   })

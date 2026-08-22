@@ -14,13 +14,13 @@
 | Implementation Plan task base | 7e05e3bb43f4283a90ead1abd0c81325bc93281c |
 | Implementation baseline | 582e312a4c5752a4c9a5c6bba7b0e752b0b78078 |
 | Current phase | MD-EXT-6 — COMPLETE / REVIEW-CLOSED; next MD-EXT-7 — NOT STARTED |
-| Current implementation state | PRD approved; MD-EXT-0 audit complete; MD-EXT-1 implementation and provenance/source-awareness follow-up complete; MD-EXT-2 implementation plus opaque-range and paragraph-context follow-ups complete; MD-EXT-3 fence metadata and Shiki source annotations plus sentinel/budget review follow-up complete; MD-EXT-4 bounded structural line numbers, unknown-language fallback, reader/PDF layout, browser evidence, and reader annotation-background follow-up complete; MD-EXT-5 static code groups, root-scoped reader enhancement, sanitizer delta, and all-panel PDF preparation complete; MD-EXT-6 safe snippets/includes, authenticated resource reads, exact range semantics, exact UTF-8 expansion accounting, per-child source context, cancellation, and proven no-reread PDF image boundary complete; MD-EXT-7 not started |
+| Current implementation state | PRD approved; MD-EXT-0 audit complete; MD-EXT-1 implementation and provenance/source-awareness follow-up complete; MD-EXT-2 implementation plus opaque-range and paragraph-context follow-ups complete; MD-EXT-3 fence metadata and Shiki source annotations plus sentinel/budget review follow-up complete; MD-EXT-4 bounded structural line numbers, unknown-language fallback, reader/PDF layout, browser evidence, and reader annotation-background follow-up complete; MD-EXT-5 static code groups, root-scoped reader enhancement, sanitizer delta, and all-panel PDF preparation complete; MD-EXT-6 safe snippets/includes, authenticated resource reads, exact range semantics, exact UTF-8 expansion accounting, per-child source context, cancellation, code-span-aware directive opacity, and fail-closed local-image PDF cloning complete; MD-EXT-7 not started |
 | Shiki prerequisite | SHIKI-H0 through SHIKI-H8 COMPLETE; migration closed; no H9 |
 | Parser baseline | markdown-it 14.1.0 singleton |
 | Shiki baseline | Shiki 4.4.3, @shikijs/transformers 4.4.3 |
 | VitePress reference | Official Markdown Extensions documentation, version observed 2.0.0-alpha.19 on 2026-08-21 |
 | Scope of this document | Implementation planning only |
-| This lifecycle update changes | MD-EXT-6 review-follow-up implementation/evidence lifecycle metadata; MD-EXT-7 remains not started |
+| This lifecycle update changes | MD-EXT-6 final review-follow-up implementation/evidence lifecycle metadata; MD-EXT-7 remains not started |
 
 The production baseline is the last production-code state before this Markdown
 extension program. The approved PRD commits after that point are documentation-only.
@@ -63,8 +63,12 @@ The completed MD-EXT-6 phase, including its review follow-up:
 - charges every resource expansion insertion against the exact final UTF-8 byte
   budget, while retaining per-render read caching;
 - maps source context to each merged inline child by its flattened source line;
+- keeps standalone-looking resource directives opaque inside variable-length,
+  multi-line inline code spans without introducing a second full Markdown parser;
 - keeps settled local PDF resource images inside the export boundary so the
   browser makes no second resource-endpoint request;
+- omits local resource image source attributes from the PDF clone when snapshot
+  materialization fails, so the authenticated endpoint can never be restored;
 - does not start MD-EXT-7;
 - does not reopen the completed Shiki migration.
 
@@ -2235,12 +2239,19 @@ Range metadata distinguishes `{N}` as a single line (`start === end`), `{N-M}`
 as an inclusive closed range, and `{N,}` as the only open-ended form; `N-` is
 invalid. The same selection contract applies to snippets and includes.
 
+A shared narrow MarkdownIt-compatible backtick source-position helper records
+the raw ranges represented by `code_inline` children. Resource expansion uses
+the exact standalone directive slice, not a whole-line blanket, so directives
+inside one-line, multi-line, variable-length-backtick, or include-comment code
+spans remain literal while ordinary standalone directives still expand.
+
 ### Likely production files
 
 - new server/markdownResources.ts and server/routes/markdownResources.ts or equivalent;
 - server/index.ts route mount;
 - server/paths.ts only if a narrowly scoped canonical/type helper is necessary;
 - new src/lib/markdownResources.ts;
+- new src/lib/markdownInlineSource.ts for narrow code-span source positions;
 - src/lib/markdown.ts and useMarkdownRender.ts for options/expansion;
 - src/lib/wikiLinks.ts/shared/linkResolve.ts for optional source context;
 - VaultView.vue, ReadingPane.vue, RenderedMarkdown.vue, PdfExportSurface.vue for
@@ -2263,17 +2274,21 @@ of inserting the cached content again. Failed local directives roll back all
 budget state before emitting their placeholder.
 
 When one MarkdownIt inline token spans root/include/root lines, source context is
-assigned per child while walking `softbreak`/`hardbreak` boundaries; the break
-retains the preceding line and the next child uses the next source path. No
-global source cursor or paragraph-semantic rewrite is allowed.
+assigned per child while walking `softbreak`/`hardbreak` boundaries and raw
+`code_inline` source ranges. The break retains the preceding line; a multi-line
+code span advances by the exact source line endings it consumes, rather than by
+normalized rendered content. No global source cursor, second full inline parser,
+or paragraph-semantic rewrite is allowed.
 
 Server: auth required, canonical path, safe physical resolver, symlink/junction/race,
 missing/directory/binary/invalid UTF-8/unsupported/oversized, asset MIME policy,
 concurrent reads and abort.
 
 Browser/PDF: included headings/TOC, relative links/images, snippet highlighting,
-code groups with included snippets, safe visible errors, exact local-image
-endpoint no-reread proof, settled HTML, and live-reader isolation.
+code groups with included snippets, safe visible errors, code-span opacity and
+source-context directionality, exact local-image endpoint no-reread proof,
+forced snapshot-failure fail-closed proof, settled HTML, and live-reader
+isolation.
 
 ### Dependency changes
 
@@ -2301,7 +2316,9 @@ same-origin local Markdown image, the export-only clone materializes the image
 without first cloning its resource endpoint URL, and html2canvas ignores live
 reader article roots outside the export root. The browser proof must show zero
 additional `/api/markdown-resources?kind=image` requests during preparation and
-download, while leaving the live reader unchanged.
+download, while leaving the live reader unchanged. If snapshotting fails, the
+clone must omit local resource `src`/`srcset`/`sizes` instead of restoring the
+endpoint URL; remote/raw images retain their existing behavior.
 
 ### Security risks
 
@@ -2328,9 +2345,11 @@ source: guides/java/index.md
 Verify canonical paths, included headings/TOC, relative image/link rebasing, nested
 WikiLinks, Shiki grammar preparation after expansion, cycle/depth/size/encoding errors,
 and no host path disclosure. Verify `{2}` versus `{3,}`, exact UTF-8 expansion
-accounting, and a merged root/include/root paragraph with per-child source context.
-Test a reader export after selecting a code-group tab; the PDF must use settled
-HTML and make no additional local-image endpoint request.
+accounting, code-span directive lookalikes, and both directions of a merged
+root/include/root paragraph with per-child source context. Test a reader export
+after selecting a code-group tab; the PDF must use settled HTML and make no
+additional local-image endpoint request. Force local-image snapshot failure and
+verify the prepared clone contains no endpoint URL and the live reader is unchanged.
 
 ### Validation commands
 
@@ -2356,11 +2375,12 @@ posts API/path helpers remain unchanged.
 - Server is authenticated and canonical-path/root/symlink/race safe.
 - Physical helper still rejects raw dot segments.
 - Text/UTF-8/extension/size/depth/cycle policy is enforced.
-- Source context survives nested expansion for links/images/WikiLinks.
+- Source context survives nested expansion for links/images/WikiLinks and
+  multi-line `code_inline` spans.
 - Final discovery occurs after expansion.
 - Resource failures are local and generic.
 - PDF does not reread resources; the real browser image-endpoint delta after the
-  settled export surface is zero.
+  settled export surface is zero, including forced local-image snapshot failure.
 
 ### Evidence required
 
@@ -2374,12 +2394,14 @@ COMPLETE / REVIEW-CLOSED. The implementation expands approved snippets and Markd
 includes before final MarkdownIt discovery/render, keeps logical source-relative
 resolution separate from the strict physical path boundary, forwards included source
 context to links/images/WikiLinks, and preserves the settled-HTML PDF contract. The
-review follow-up closes single-line/closed/open-ended range semantics, exact final
+review follow-ups close single-line/closed/open-ended range semantics, exact final
 UTF-8 byte accounting including separators, merged-inline per-child source context,
-and the authenticated local-image PDF no-reread boundary. The evidence document
-records the authenticated route, bounded text/image policy, per-render
-cache/stack/cancellation behavior, focused tests, browser network counts, and the
-known aggregate unit-suite environment limitations. MD-EXT-7 has not started.
+code-span-aware directive opacity and source-line advancement, the authenticated
+local-image PDF no-reread boundary, and fail-closed local-image snapshot failure.
+The evidence document records the authenticated route, bounded text/image policy,
+per-render cache/stack/cancellation behavior, focused tests, browser network counts,
+failure-mode PDF proof, and the known aggregate unit-suite environment limitations.
+MD-EXT-7 has not started.
 
 ### Next phase
 

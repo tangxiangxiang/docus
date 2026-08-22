@@ -199,6 +199,26 @@ describe('PDF export helpers', () => {
     expect(__testing__.PDF_DOWNLOAD_STYLES).toContain('.pdf-document .article .docus-toc')
   })
 
+  it('fails closed for a local resource image when PDF snapshotting fails', () => {
+    const article = document.createElement('article')
+    article.className = 'article reading'
+    article.innerHTML = '<p><img src="/api/markdown-resources?kind=image&amp;path=docs%2Flogo.png" srcset="/api/markdown-resources?kind=image&amp;path=docs%2Flogo.png 1x" sizes="100vw" alt="Local resource"></p>'
+    const image = article.querySelector<HTMLImageElement>('img')!
+    Object.defineProperties(image, {
+      complete: { configurable: true, value: true },
+      naturalWidth: { configurable: true, value: 1 },
+      naturalHeight: { configurable: true, value: 1 },
+    })
+    const originalSrc = image.getAttribute('src')
+
+    const prepared = preparePdfArticleHtml(article)
+
+    expect(prepared).not.toContain('/api/markdown-resources')
+    expect(prepared).not.toContain('srcset=')
+    expect(prepared).not.toContain('sizes=')
+    expect(article.querySelector('img')?.getAttribute('src')).toBe(originalSrc)
+  })
+
   it('expands generated details only in the PDF clone and preserves reader state', () => {
     const article = document.createElement('article')
     article.className = 'article reading'

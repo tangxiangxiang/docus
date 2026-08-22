@@ -1,5 +1,6 @@
 import type MarkdownIt from 'markdown-it'
 import { authFetch } from './auth-session'
+import { scanMarkdownCodeSpanSourceRanges } from './markdownInlineSource'
 
 export const MAX_SNIPPET_BYTES = 256 * 1024
 export const MAX_INCLUDE_BYTES = 512 * 1024
@@ -396,8 +397,10 @@ function isDirectiveLineAllowed(
   directive: ResourceDirective | null,
   opaqueLines: Set<number>,
   singleLineHtmlBlocks: Set<number>,
+  codeSpanDirectiveLines: Set<number>,
 ): boolean {
   if (!directive) return false
+  if (codeSpanDirectiveLines.has(lineNumber)) return false
   if (!opaqueLines.has(lineNumber)) return true
   // The approved include directive is itself an HTML comment. A standalone
   // one-line comment is a directive; comments embedded in a larger raw HTML
@@ -412,19 +415,40 @@ function looksLikeResourceDirective(line: string): boolean {
 function collectOpaqueLines(md: MarkdownIt, source: string): {
   opaqueLines: Set<number>
   singleLineHtmlBlocks: Set<number>
+  codeSpanDirectiveLines: Set<number>
 } {
   const opaqueLines = new Set<number>()
   const singleLineHtmlBlocks = new Set<number>()
+  const codeSpanDirectiveLines = new Set<number>()
   const tokens = md.parse(source, {})
   for (const token of tokens) {
-    if (!token.map) continue
-    if (token.type !== 'fence' && token.type !== 'code_block' && token.type !== 'html_block') continue
-    for (let line = token.map[0]; line < token.map[1]; line += 1) opaqueLines.add(line)
-    if (token.type === 'html_block' && token.map[1] - token.map[0] === 1) {
-      singleLineHtmlBlocks.add(token.map[0])
+    if (token.map && (token.type === 'fence' || token.type === 'code_block' || token.type === 'html_block')) {
+      for (let line = token.map[0]; line < token.map[1]; line += 1) opaqueLines.add(line)
+      if (token.type === 'html_block' && token.map[1] - token.map[0] === 1) {
+        singleLineHtmlBlocks.add(token.map[0])
+      }
     }
   }
-  return { opaqueLines, singleLineHtmlBlocks }
+
+  const codeSpans = scanMarkdownCodeSpanSourceRanges(source)
+  if (codeSpans.length > 0) {
+    const sourceLines = source.split('\n')
+    let lineStart = 0
+    for (let lineNumber = 0; lineNumber < sourceLines.length; lineNumber += 1) {
+      const line = sourceLines[lineNumber] ?? ''
+      const directive = parseMarkdownResourceDirective(line)
+      if (directive) {
+        const leadingWhitespace = line.search(/\S/u)
+        const start = lineStart + (leadingWhitespace === -1 ? line.length : leadingWhitespace)
+        const end = lineStart + line.trimEnd().length
+        if (codeSpans.some((span) => span.start <= start && end <= span.end)) {
+          codeSpanDirectiveLines.add(lineNumber)
+        }
+      }
+      lineStart += line.length + 1
+    }
+  }
+  return { opaqueLines, singleLineHtmlBlocks, codeSpanDirectiveLines }
 }
 
 interface ExpansionContext {
@@ -497,14 +521,14 @@ async function expandSource(
   throwIfAborted(context.signal)
   const normalized = source.replace(/\r\n?/gu, '\n')
   const lines = normalized.split('\n')
-  const { opaqueLines, singleLineHtmlBlocks } = collectOpaqueLines(context.md, normalized)
+  const { opaqueLines, singleLineHtmlBlocks, codeSpanDirectiveLines } = collectOpaqueLines(context.md, normalized)
   const output: Array<{ text: string; sourcePath?: string }> = []
 
   for (let index = 0; index < lines.length; index += 1) {
     throwIfAborted(context.signal)
     const line = lines[index] ?? ''
     const directive = parseMarkdownResourceDirective(line)
-    if (!isDirectiveLineAllowed(index, directive, opaqueLines, singleLineHtmlBlocks)) {
+    if (!isDirectiveLineAllowed(index, directive, opaqueLines, singleLineHtmlBlocks, codeSpanDirectiveLines)) {
       if (!directive && looksLikeResourceDirective(line) && !opaqueLines.has(index)) {
         addLines(context, output, placeholder(), sourcePath)
         continue

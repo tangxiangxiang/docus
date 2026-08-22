@@ -193,6 +193,20 @@ describe('wikiLinkPlugin', () => {
       const matches = html.match(/<a [^>]*wiki-link/g) ?? []
       expect(matches).toHaveLength(1)
     })
+
+    it('advances source context across a multi-line code_inline token', () => {
+      const calls: Array<{ ref: string; sourcePath?: string }> = []
+      const md = mdWith((ref, _anchor, context) => {
+        calls.push({ ref, sourcePath: context?.sourcePath })
+        return { target: ref }
+      })
+      md.render('`included\nroot` [[root-wiki]]', {
+        deferWikiResolution: true,
+        resourceSourcePathByLine: ['docs/part.md', 'docs/root.md'],
+      })
+
+      expect(calls).toEqual([{ ref: 'root-wiki', sourcePath: 'docs/root.md' }])
+    })
   })
 
   describe('edge cases', () => {

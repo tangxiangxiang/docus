@@ -13,13 +13,14 @@
 | Approved PRD | `7e05e3bb43f4283a90ead1abd0c81325bc93281c` |
 | Approved Implementation Plan | `582e312a4c5752a4c9a5c6bba7b0e752b0b78078` |
 | Original MD-EXT-6 implementation commit | `0ce35f1b2b838c590e92a435846de5a1ac770b42` |
-| MD-EXT-6 review follow-up commit | Recorded in the final handoff after this document is committed |
+| MD-EXT-6 range/budget/context/PDF follow-up commit | `7ee123c546f3c137dd455922b76a02b64c29349b` |
+| MD-EXT-6 final follow-up commit | Recorded in the final handoff after this document is committed |
 | Next phase | MD-EXT-7 — NOT STARTED |
 
 This document records the implementation and verification evidence for MD-EXT-6,
-including the review follow-up that closes the range, expansion-budget,
-source-context, and PDF local-image boundary findings. No MD-EXT-7 work is
-included.
+including the range, expansion-budget, source-context, and PDF local-image
+boundary follow-up plus the final code-span and fail-closed review follow-up.
+No MD-EXT-7 work is included.
 
 ## 2. Scope and changed files
 
@@ -64,6 +65,7 @@ The review follow-up changed or extended:
 
 ```text
 src/lib/markdownResources.ts
+src/lib/markdownInlineSource.ts
 src/lib/wikiLinks.ts
 src/lib/pdfExport.ts
 src/lib/__tests__/markdownResources.test.ts
@@ -236,9 +238,13 @@ reader/PDF surface
 Expansion therefore happens before fence discovery, so snippets introduced by
 an include participate in normal Shiki language preparation. The resource
 scanner uses MarkdownIt's existing parse information to keep fenced code,
-indented code, and multi-line raw HTML opaque. The approved standalone include
-HTML comment is expanded only when it is its own one-line Markdown directive;
-directives appearing inside code or a larger raw HTML block remain literal.
+indented code, and multi-line raw HTML opaque. A narrow source-position helper
+mirrors MarkdownIt's installed backtick delimiter rule so standalone-looking
+directive slices inside one-line or multi-line inline code spans remain literal,
+including variable-length backtick spans and include-comment lookalikes. The
+approved standalone include HTML comment is expanded only when it is its own
+one-line Markdown directive; directives appearing inside code or a larger raw
+HTML block remain literal.
 
 No second Markdown parser, highlighter, or renderer was introduced.
 
@@ -284,8 +290,10 @@ When MarkdownIt merges root/include/root lines into one inline token, the
 renderer walks inline children in source order. Each child receives the path
 for its current flattened line; only after assigning metadata to a
 `softbreak`/`hardbreak` does the cursor advance, so the break belongs to the
-preceding line and the first child after it uses the next source identity.
-There is no module-global source cursor.
+preceding line and the first child after it uses the next source identity. A
+multi-line `code_inline` child advances by the exact number of raw source line
+endings in its located span, rather than by normalized rendered content. There
+is no module-global source cursor or second full inline parser.
 
 Relative local Markdown images are rewritten to the authenticated image route
 using the same source context. Existing external-link policy, lazy image
@@ -325,6 +333,11 @@ export-only fix avoids cloning the endpoint URL first, materializes an already
 settled same-origin local image in the PDF clone, and tells html2canvas to
 ignore live reader article roots outside the export root. It does not fetch the
 image again, rerender Markdown, reread the filesystem, or mutate the live reader.
+If local-image snapshotting fails, the fresh PDF clone deliberately omits the
+local `src`, `srcset`, and `sizes` attributes rather than restoring the
+authenticated endpoint URL. The live reader retains its original source,
+remote/raw images keep their existing clone behavior, and the forced-failure
+browser proof also observes zero PDF-phase resource requests.
 
 ## 10. Security evidence
 
@@ -389,7 +402,7 @@ The focused client regression run after the follow-up was:
   src/composables/vault/__tests__/useMarkdownRender.test.ts \
   src/lib/__tests__/pdfExport.test.ts \
   src/lib/__tests__/pdf-readiness.test.ts
-→ PASS: 8 files, 198 tests
+→ PASS: 8 files, 204 tests
 ```
 
 The focused server safety run was:
@@ -414,10 +427,23 @@ included-wiki → docs/part.md
 root-after  → docs/root.md
 ```
 
-The focused MD-EXT-3 through MD-EXT-6 Playwright run passed 10 tests. The
-MD-EXT-6 spec itself passed 3 tests, including the local-image network proof:
-one initial image request and zero additional requests during PDF preparation
-and download.
+The final code-span/source-context follow-up additionally proves one-line,
+multi-line, variable-length-backtick, and include-comment code-span lookalikes
+make zero resolver reads while ordinary standalone directives still expand. It
+proves both include→root and root→include merged paragraphs assign links,
+WikiLinks, and images to the source line that actually follows the multi-line
+code span. The focused PDF unit regression proves a settled local image with a
+forced canvas snapshot failure produces no endpoint URL in prepared HTML and
+does not mutate the live image.
+
+The final focused MD-EXT-6 Playwright spec covers reader expansion/source context
+and settled-HTML PDF/no-reread behavior with four passing tests, including the
+forced snapshot-failure proof. The cross-phase MD-EXT-3 through MD-EXT-6 run
+passed 11 tests. The PDF Shiki/general/layout/pagination/stress run passed 12
+tests. The normal and forced-failure local-image cases each observed one initial
+image request and zero additional requests during PDF preparation/download; the
+forced-failure case also proved prepared HTML omitted the endpoint URL and the
+live reader source remained unchanged.
 
 ### Typecheck and build
 
@@ -426,7 +452,7 @@ npm run typecheck
 → PASS: client and server TypeScript checks
 
 npm run build
-→ PASS: 3936 modules transformed
+→ PASS: 3937 modules transformed
 ```
 
 The build retains the repository's existing Rolldown invalid-annotation and
@@ -446,20 +472,31 @@ loopback `listen EPERM` failures and the Round-15/Round-16 `tsx` IPC pipe
 `listen EPERM` failures. No Markdown, resource, client, Shiki, callout, or PDF
 product regression was observed.
 
+The final follow-up full-unit rerun reported:
+
+```text
+→ BASELINE-LIMITED
+→ 214 test files passed, 3 failed
+→ 3198 tests passed, 21 failed, 2 skipped
+```
+
+The same 19 OpenAI HTTP loopback and Round-15/Round-16 `tsx` IPC `EPERM`
+limitations remained; no new Markdown/resource/source-context/PDF regression
+appeared.
+
 ### Browser/PDF
 
 The focused MD-EXT-6 Playwright spec covers reader expansion/source context and
-settled-HTML PDF/no-reread behavior. It has three passing tests in the available
-Chromium environment, including the authenticated local-image request proof.
+settled-HTML PDF/no-reread behavior. It has four passing tests in the available
+Chromium environment, including the authenticated local-image request proof and
+the forced snapshot-failure proof.
 The first sandbox attempt could not start the dev server because of the
 environment's loopback `listen EPERM`; the approved rerun with the required
 browser-server permission passed.
 
-The historical full-unit evidence above remains unchanged. The follow-up rerun
-reported `214` passing files, `3` failing files, `3192` passing tests, `21`
-failing tests, and `2` skipped tests. The same 19 OpenAI HTTP loopback and
-Round-15/Round-16 `tsx` IPC `EPERM` limitations remained; no new product
-failure appeared.
+The historical full-unit evidence above remains unchanged. The final follow-up
+rerun is recorded above with `3198` passing tests; the same known environment
+limitations remained and no new product failure appeared.
 
 ## 12. Rollback and next phase
 

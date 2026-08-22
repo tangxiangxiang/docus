@@ -146,6 +146,57 @@ describe('Markdown resource logical resolution and expansion', () => {
     expect(resolver.read).not.toHaveBeenCalled()
   })
 
+  it('keeps one-line and multi-line inline code-span directives literal', async () => {
+    const resolver = resolverFor({
+      'examples/secret.ts': 'const secret = true',
+      'examples/secret.md': '# Secret',
+    })
+    const sources = [
+      '`<<< @/examples/secret.ts`',
+      [
+        'before',
+        '',
+        '`literal',
+        '<<< @/examples/secret.ts',
+        'literal`',
+        '',
+        'after',
+      ].join('\n'),
+      [
+        '``literal',
+        '` inside',
+        '<<< @/examples/secret.ts',
+        'literal``',
+      ].join('\n'),
+      [
+        '`literal',
+        '<!--@include: ./secret.md-->',
+        'literal`',
+      ].join('\n'),
+    ]
+
+    for (const source of sources) {
+      const expanded = await expandMarkdownResources(source, {
+        md: new MarkdownIt({ html: true }),
+        sourcePath: 'docs/index',
+        resourceResolver: resolver,
+      })
+      expect(expanded.markdown).toBe(source)
+    }
+    expect(resolver.read).not.toHaveBeenCalled()
+  })
+
+  it('still expands an ordinary standalone directive outside code spans', async () => {
+    const resolver = resolverFor({ 'examples/demo.ts': 'const value = 1' })
+    const expanded = await expandMarkdownResources('<<< @/examples/demo.ts', {
+      md: new MarkdownIt({ html: true }),
+      resourceResolver: resolver,
+    })
+
+    expect(resolver.read).toHaveBeenCalledTimes(1)
+    expect(expanded.markdown).toContain('const value = 1')
+  })
+
   it('expands nested includes with local source context and a per-render cache', async () => {
     const resolver = resolverFor({
       'docs/parts.md': '# Part\n\n[[child]]\n\n<!--@include: ./nested.md-->',
@@ -244,6 +295,56 @@ describe('Markdown resource logical resolution and expansion', () => {
     expect(html).toContain('path=docs%2Fincluded.png')
     expect(html).toContain('path=docs%2Froot-after.png')
     expect(html).toContain('/vault/docs/part.md:included-wiki')
+  })
+
+  it('tracks source context when an included line opens a code span and root closes it', async () => {
+    const resolver = resolverFor({ 'docs/part.md': '`included code' })
+    const wikiResolver = vi.fn((ref: string, _anchor?: string, context?: { sourcePath?: string }) => ({
+      target: `${context?.sourcePath ?? 'unknown'}:${ref}`,
+    }))
+    const html = await render([
+      '<!--@include: ./part.md-->',
+      'root code` [Root Link](./root.md) [[root-wiki]] ![Root image](./root.png)',
+    ].join('\n'), {
+      sourcePath: 'docs/root',
+      resourceResolver: resolver,
+      resolver: wikiResolver,
+    })
+
+    expect(wikiResolver.mock.calls.map(([ref, _anchor, context]) => ({
+      ref,
+      sourcePath: context?.sourcePath,
+    }))).toEqual([
+      { ref: './root', sourcePath: 'docs/root.md' },
+      { ref: 'root-wiki', sourcePath: 'docs/root.md' },
+    ])
+    expect(html).toContain('path=docs%2Froot.png')
+  })
+
+  it('tracks source context when root opens a code span and an included line closes it', async () => {
+    const resolver = resolverFor({
+      'docs/part.md': 'included code` [Included Link](./included.md) [[included-wiki]] ![Included image](./included.png)',
+    })
+    const wikiResolver = vi.fn((ref: string, _anchor?: string, context?: { sourcePath?: string }) => ({
+      target: `${context?.sourcePath ?? 'unknown'}:${ref}`,
+    }))
+    const html = await render([
+      '`root code',
+      '<!--@include: ./part.md-->',
+    ].join('\n'), {
+      sourcePath: 'docs/root',
+      resourceResolver: resolver,
+      resolver: wikiResolver,
+    })
+
+    expect(wikiResolver.mock.calls.map(([ref, _anchor, context]) => ({
+      ref,
+      sourcePath: context?.sourcePath,
+    }))).toEqual([
+      { ref: './included', sourcePath: 'docs/part.md' },
+      { ref: 'included-wiki', sourcePath: 'docs/part.md' },
+    ])
+    expect(html).toContain('path=docs%2Fincluded.png')
   })
 
   it('does not leak malformed directives or cyclic includes into a render error', async () => {

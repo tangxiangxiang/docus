@@ -237,3 +237,82 @@ test('MD-EXT-6 local image resources are not reread during real PDF download', a
     await fs.rm(fixtureRoot, { recursive: true, force: true })
   }
 })
+
+test('MD-EXT-6 local image snapshot failure fails closed without a PDF resource reread', async ({ page }) => {
+  const fixtureRoot = path.join(E2E_VAULT, 'md-ext-6-pdf-image-failure')
+  await fs.rm(fixtureRoot, { recursive: true, force: true })
+  await fs.mkdir(fixtureRoot, { recursive: true })
+  await fs.writeFile(path.join(fixtureRoot, 'parts.md'), '![Local resource image](./logo.png)\n', 'utf8')
+  await fs.writeFile(path.join(fixtureRoot, 'logo.png'), LOCAL_IMAGE)
+
+  let phase: 'initial' | 'pdf' = 'initial'
+  const imageRequests = { initial: 0, pdf: 0 }
+  const onRequest = (request: { url(): string }) => {
+    const url = new URL(request.url())
+    if (url.pathname !== '/api/markdown-resources' || url.searchParams.get('kind') !== 'image') return
+    imageRequests[phase] += 1
+  }
+  page.on('request', onRequest)
+
+  try {
+    await page.goto('/__markdown-test?mode=reading')
+    const downloadPromise = page.waitForEvent('download')
+    const result = await page.evaluate(async () => {
+      const { render } = await import('/src/lib/markdown.ts')
+      const pdf = await import('/src/lib/pdfExport.ts')
+      const article = document.createElement('article')
+      article.className = 'article reading md-ext-6-pdf-image-failure-fixture'
+      article.innerHTML = await render('<!--@include: ./parts.md-->', {
+        sourcePath: 'md-ext-6-pdf-image-failure/index',
+      })
+      document.body.append(article)
+      const image = article.querySelector<HTMLImageElement>('img')
+      if (!image) throw new Error('local resource image was not rendered')
+      await new Promise<void>((resolve, reject) => {
+        if (image.complete) {
+          if (image.naturalWidth > 0) resolve()
+          else reject(new Error('local resource image failed to load'))
+          return
+        }
+        image.addEventListener('load', () => resolve(), { once: true })
+        image.addEventListener('error', () => reject(new Error('local resource image failed to load')), { once: true })
+      })
+
+      const originalSrc = image.getAttribute('src')
+      const originalToDataURL = HTMLCanvasElement.prototype.toDataURL
+      let failNextSnapshot = true
+      HTMLCanvasElement.prototype.toDataURL = function (...args: Parameters<HTMLCanvasElement['toDataURL']>) {
+        if (failNextSnapshot) {
+          failNextSnapshot = false
+          throw new Error('forced PDF image snapshot failure')
+        }
+        return originalToDataURL.apply(this, args)
+      }
+
+      try {
+        const preparedHtml = pdf.preparePdfArticleHtml(article)
+        const preparedHasEndpoint = preparedHtml.includes('/api/markdown-resources')
+        await pdf.downloadPdfDocument({ title: 'MD-EXT-6 PDF Image Failure', articleHtml: preparedHtml })
+        return {
+          preparedHasEndpoint,
+          readerSrcUnchanged: image.getAttribute('src') === originalSrc,
+        }
+      } finally {
+        HTMLCanvasElement.prototype.toDataURL = originalToDataURL
+        article.remove()
+      }
+    })
+    const download = await downloadPromise
+    await download.delete()
+
+    expect(result).toEqual({
+      preparedHasEndpoint: false,
+      readerSrcUnchanged: true,
+    })
+    expect(imageRequests.initial).toBe(1)
+    expect(imageRequests.pdf).toBe(0)
+  } finally {
+    page.off('request', onRequest)
+    await fs.rm(fixtureRoot, { recursive: true, force: true })
+  }
+})
