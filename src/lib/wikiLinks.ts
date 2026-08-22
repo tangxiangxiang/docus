@@ -334,6 +334,10 @@ export function wikiLinkPlugin(
       const codeSpanRanges = findMarkdownCodeInlineSourceRanges(
         token.content,
         token.children,
+        {
+          ...state.md.helpers,
+          normalizeLink: state.md.normalizeLink.bind(state.md),
+        },
       )
       let codeSpanIndex = 0
       for (const child of token.children) {

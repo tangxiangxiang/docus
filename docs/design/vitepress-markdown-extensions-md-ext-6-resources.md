@@ -12,18 +12,20 @@
 | MD-EXT-6 base | `dd4768f67e77f190794cd7d046218705e2ce56e3` |
 | Approved PRD | `7e05e3bb43f4283a90ead1abd0c81325bc93281c` |
 | Approved Implementation Plan | `582e312a4c5752a4c9a5c6bba7b0e752b0b78078` |
+| Parser runtime | `markdown-it 14.2.0` (package range `^14.1.0`), singleton |
 | Original MD-EXT-6 implementation commit | `0ce35f1b2b838c590e92a435846de5a1ac770b42` |
 | MD-EXT-6 range/budget/context/PDF follow-up commit | `7ee123c546f3c137dd455922b76a02b64c29349b` |
 | MD-EXT-6 code-span/PDF fail-closed follow-up commit | `5be97ef4ce6fa124009c5d3152a3f6a97b3fe772` |
 | MD-EXT-6 inline-block ownership closure commit | `30584cf548f152108849034cbeff77ba47eeedc0` |
 | MD-EXT-6 same-content ownership follow-up commit | Recorded in the final handoff after this document is committed |
+| MD-EXT-6 Markdown-link ownership follow-up commit | Recorded in the final handoff after this document is committed |
 | Next phase | MD-EXT-7 — NOT STARTED |
 
 This document records the implementation and verification evidence for MD-EXT-6,
 including the range, expansion-budget, source-context, and PDF local-image
 boundary follow-up plus the code-span ownership follow-ups. The current
-same-content ownership follow-up remains review-ready; no MD-EXT-7 work is
-included.
+same-content and Markdown-link ownership follow-ups remain review-ready; no
+MD-EXT-7 work is included.
 
 ## 2. Scope and changed files
 
@@ -487,9 +489,39 @@ source-context regressions for identical raw backticks in `html_inline` and a
 later real `code_inline`. It also verifies that the installed MarkdownIt
 backtick rule's delimiter scan and normalization are mirrored without a
 separate backslash-escape test in the helper; escape handling remains owned by
-MarkdownIt's normal inline rule sequence. The package declares `markdown-it`
-`^14.1.0`; the current lockfile/node_modules resolve `14.2.0`, whose inspected
-`backticks.mjs` rule has the same relevant behavior.
+MarkdownIt's normal inline rule sequence. The parser baseline is
+`markdown-it` `14.2.0` from the lockfile/node_modules (package range
+`^14.1.0`), whose inspected `backticks.mjs` rule has the same relevant
+delimiter and normalization behavior. The installed `link.mjs` rule was also
+inspected: it consumes the full inline-link destination/title surface while
+emitting only semantic `link_open`/label/`link_close` children, so the shared
+source mapper receives the running instance's `parseLinkDestination` and
+`parseLinkTitle` helpers and reserves that raw link tail before matching later
+`code_inline` children.
+
+The link-ownership follow-up adds direct helper, resource, and source-context
+regressions for same-content backticks inside Markdown link titles and later
+real code spans. The complete child sequence remains authoritative: link
+destination/title source is non-code ownership, while marker length and
+normalized content are verification only. Image titles use the same structural
+ownership path. No second MarkdownIt or duplicate link parser is introduced.
+
+The mandatory link-title resource fixture is:
+
+```markdown
+[x](foo "`literal <<< @/examples/secret.ts literal`") `literal
+<<< @/examples/secret.ts
+literal`
+```
+
+MarkdownIt produced one link wrapper and one later real `code_inline`. The
+resource resolver was not called, the expanded source was byte-for-byte
+unchanged, and no `markdown-resource-error` placeholder was produced. The
+malformed `{3-}` variant has the same zero-read result. The source-context
+fixture with `[Root](./root.md)` and `[[root-wiki]]` assigns both later
+resolutions to `docs/root.md`; the preceding link title cannot consume the
+real multiline code span. A matching image-title case uses the same helper
+ownership boundary.
 
 The final same-content ownership focused run was:
 
@@ -502,6 +534,19 @@ The final same-content ownership focused run was:
   src/lib/__tests__/pdfExport.test.ts \
   src/lib/__tests__/pdf-readiness.test.ts
 → PASS: 6 files, 170 tests
+```
+
+The final Markdown-link ownership focused run was:
+
+```text
+./node_modules/.bin/vitest run \
+  src/lib/__tests__/markdownInlineSource.test.ts \
+  src/lib/__tests__/markdownResources.test.ts \
+  src/lib/__tests__/markdown.test.ts \
+  src/lib/__tests__/wikiLinks.test.ts \
+  src/lib/__tests__/pdfExport.test.ts \
+  src/lib/__tests__/pdf-readiness.test.ts
+→ PASS: 6 files, 176 tests
 ```
 
 The final focused MD-EXT-6 Playwright spec covers reader expansion/source context
@@ -563,6 +608,18 @@ This inline-ownership closure rerun reported:
 The additional passing tests are the direct inline-source, malformed-directive,
 cross-block, and raw-backtick-mismatch regressions; the same 19 OpenAI HTTP
 loopback and Round-15/Round-16 `tsx` IPC `EPERM` limitations remained.
+
+The Markdown-link ownership follow-up rerun reported:
+
+```text
+→ BASELINE-LIMITED
+→ 215 test files passed, 3 failed
+→ 3218 tests passed, 21 failed, 2 skipped
+```
+
+The same 19 OpenAI HTTP loopback and Round-15/Round-16 `tsx` IPC `EPERM`
+limitations remained; no new Markdown/resource/source-context/PDF regression
+appeared.
 
 This same-content ownership follow-up full-unit rerun reported:
 

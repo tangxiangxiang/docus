@@ -16,11 +16,11 @@
 | Current phase | MD-EXT-6 — COMPLETE / REVIEW-READY; next MD-EXT-7 — NOT STARTED |
 | Current implementation state | PRD approved; MD-EXT-0 audit complete; MD-EXT-1 implementation and provenance/source-awareness follow-up complete; MD-EXT-2 implementation plus opaque-range and paragraph-context follow-ups complete; MD-EXT-3 fence metadata and Shiki source annotations plus sentinel/budget review follow-up complete; MD-EXT-4 bounded structural line numbers, unknown-language fallback, reader/PDF layout, browser evidence, and reader annotation-background follow-up complete; MD-EXT-5 static code groups, root-scoped reader enhancement, sanitizer delta, and all-panel PDF preparation complete; MD-EXT-6 safe snippets/includes, authenticated resource reads, exact range semantics, exact UTF-8 expansion accounting, per-child source context, cancellation, code-span-aware directive opacity, and fail-closed local-image PDF cloning complete; MD-EXT-7 not started |
 | Shiki prerequisite | SHIKI-H0 through SHIKI-H8 COMPLETE; migration closed; no H9 |
-| Parser baseline | markdown-it 14.1.0 singleton |
+| Parser baseline | markdown-it 14.2.0 singleton (package range `^14.1.0`) |
 | Shiki baseline | Shiki 4.4.3, @shikijs/transformers 4.4.3 |
 | VitePress reference | Official Markdown Extensions documentation, version observed 2.0.0-alpha.19 on 2026-08-21 |
 | Scope of this document | Implementation planning only |
-| This lifecycle update changes | MD-EXT-6 same-content inline-ownership follow-up implementation/evidence lifecycle metadata; MD-EXT-7 remains not started |
+| This lifecycle update changes | MD-EXT-6 same-content and Markdown-link inline-ownership follow-up implementation/evidence lifecycle metadata; MD-EXT-7 remains not started |
 
 The production baseline is the last production-code state before this Markdown
 extension program. The approved PRD commits after that point are documentation-only.
@@ -173,7 +173,7 @@ useMarkdownRender() in src/composables/vault/useMarkdownRender.ts
     ↓
 render(markdown, options) in src/lib/markdown.ts
     ↓
-getMd() → one MarkdownIt 14.1.0 singleton
+getMd() → one MarkdownIt 14.2.0 singleton (package range `^14.1.0`)
     ↓
 md.parse(markdown, isolated discovery env)
     ↓
@@ -2245,15 +2245,17 @@ invalid. The same selection contract applies to snippets and includes.
 A shared narrow MarkdownIt-compatible backtick source-position helper receives
 one actual `inline` token's source and its complete real child sequence. It
 advances a monotonic raw-source cursor through exact-source non-code children,
-especially `html_inline`, records those ranges as unavailable to later code-span
-candidates, and uses marker length/normalized content only to verify an actual
-`code_inline` child. Resource expansion checks the exact standalone directive
-slice, not a whole-line blanket; ownership is decided before valid or malformed
-resource parsing. The helper never pairs backticks across MarkdownIt inline
-blocks, so one-line/multi-line and variable-length real code spans remain literal
-while an unmatched opener in one paragraph cannot suppress a directive in
-another. Same-content raw backticks in an HTML attribute cannot impersonate a
-later real `code_inline` mapping.
+especially `html_inline`, and through the full raw surface of Markdown links
+(including destination/title) using the running MarkdownIt's link helpers. It
+records those ranges as unavailable to later code-span candidates, and uses
+marker length/normalized content only to verify an actual `code_inline` child.
+Resource expansion checks the exact standalone directive slice, not a whole-line
+blanket; ownership is decided before valid or malformed resource parsing. The
+helper never pairs backticks across MarkdownIt inline blocks, so one-line/
+multi-line and variable-length real code spans remain literal while an unmatched
+opener in one paragraph cannot suppress a directive in another. Same-content
+raw backticks in an HTML attribute or Markdown link title cannot impersonate a
+later real `code_inline` mapping. Image titles use the same structural owner.
 
 ### Likely production files
 
@@ -2414,14 +2416,17 @@ context to links/images/WikiLinks, and preserves the settled-HTML PDF contract. 
 review follow-ups close single-line/closed/open-ended range semantics, exact final
 UTF-8 byte accounting including separators, merged-inline per-child source context,
 MarkdownIt-inline-block-scoped code-span ownership and source-line advancement,
-the authenticated local-image PDF no-reread boundary, and fail-closed local-image
-snapshot failure. The latest ownership follow-up does not touch PDF production
-code; it makes the complete actual child sequence authoritative, consumes exact
-`html_inline` source before later code-span matching, and rejects marker/content-only
-identity for same-content raw backticks. The evidence
-document records the authenticated route, bounded text/image policy,
-per-render cache/stack/cancellation behavior, focused tests, browser network counts,
-failure-mode PDF proof, and the known aggregate unit-suite environment limitations.
+the authenticated local-image PDF no-reread boundary, fail-closed local-image
+snapshot failure, and Markdown-link destination/title ownership. The latest
+ownership follow-up does not touch PDF production code; it makes the complete
+actual child sequence authoritative, consumes exact `html_inline` and full
+Markdown-link raw surfaces before later code-span matching, and rejects
+marker/content-only identity for same-content raw backticks. The evidence document
+records the authenticated route, bounded text/image policy, per-render
+cache/stack/cancellation behavior, focused tests, browser network counts,
+failure-mode PDF proof, the installed MarkdownIt 14.2.0 parser/link-rule audit,
+and the known aggregate unit-suite environment limitations. MD-EXT-6 remains
+review-ready; MD-EXT-7 has not started.
 MD-EXT-7 has not started.
 
 ### Next phase
@@ -2804,5 +2809,5 @@ implemented opportunistically in a phase that owns a related feature.
 
 The implementation plan remains the execution map. MD-EXT-0 is complete as an
 evidence-only phase, MD-EXT-1 through MD-EXT-5 are implemented with their evidence
-documents, MD-EXT-6 is implemented and review-closed with its evidence document,
+documents, MD-EXT-6 is implemented and review-ready with its evidence document,
 and MD-EXT-7 has not started.

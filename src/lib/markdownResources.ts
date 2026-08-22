@@ -430,7 +430,10 @@ function collectOpaqueLines(md: MarkdownIt, source: string): {
 
   for (const token of tokens) {
     if (token.type !== 'inline' || !token.children || !token.map) continue
-    const codeSpans = findMarkdownCodeInlineSourceRanges(token.content, token.children)
+    const codeSpans = findMarkdownCodeInlineSourceRanges(token.content, token.children, {
+      ...md.helpers,
+      normalizeLink: md.normalizeLink.bind(md),
+    })
       .filter((span): span is NonNullable<typeof span> => span !== null)
     if (codeSpans.length === 0) continue
 

@@ -214,6 +214,34 @@ describe('Markdown resource logical resolution and expansion', () => {
     expect(resolver.read).not.toHaveBeenCalled()
   })
 
+  it('does not let a Markdown link title impersonate a later resource code span', async () => {
+    const resolver = resolverFor({ 'examples/secret.ts': 'const secret = true' })
+    const source = '[x](foo "`literal <<< @/examples/secret.ts literal`") `literal\n<<< @/examples/secret.ts\nliteral`'
+    const expanded = await expandMarkdownResources(source, {
+      md: new MarkdownIt({ html: true }),
+      sourcePath: 'docs/index',
+      resourceResolver: resolver,
+    })
+
+    expect(expanded.markdown).toBe(source)
+    expect(expanded.markdown).not.toContain('markdown-resource-error')
+    expect(resolver.read).not.toHaveBeenCalled()
+  })
+
+  it('keeps malformed link-title resource syntax literal before parser ownership', async () => {
+    const resolver = resolverFor({ 'examples/secret.ts': 'const secret = true' })
+    const source = '[x](foo "`literal <<< @/examples/secret.ts{3-} literal`") `literal\n<<< @/examples/secret.ts{3-}\nliteral`'
+    const expanded = await expandMarkdownResources(source, {
+      md: new MarkdownIt({ html: true }),
+      sourcePath: 'docs/index',
+      resourceResolver: resolver,
+    })
+
+    expect(expanded.markdown).toBe(source)
+    expect(expanded.markdown).not.toContain('markdown-resource-error')
+    expect(resolver.read).not.toHaveBeenCalled()
+  })
+
   it('does not let backticks across MarkdownIt blocks suppress a real directive', async () => {
     const resolver = resolverFor({
       'examples/demo.ts': 'const loaded = true',
