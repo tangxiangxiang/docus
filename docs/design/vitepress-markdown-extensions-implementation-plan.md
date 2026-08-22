@@ -4,7 +4,7 @@
 
 | Field | Value |
 | --- | --- |
-| Document status | IMPLEMENTATION COMPLETE / MD-EXT-6 COMPLETE / REVIEW-READY |
+| Document status | IMPLEMENTATION COMPLETE / MD-EXT-6 COMPLETE / REVIEW-CLOSED |
 | Product program | Docus VitePress-Style Markdown Extensions |
 | Repository | tangxiangxiang/docus |
 | Branch | main |
@@ -13,14 +13,14 @@
 | Approved PRD baseline | 7e05e3bb43f4283a90ead1abd0c81325bc93281c |
 | Implementation Plan task base | 7e05e3bb43f4283a90ead1abd0c81325bc93281c |
 | Implementation baseline | 582e312a4c5752a4c9a5c6bba7b0e752b0b78078 |
-| Current phase | MD-EXT-6 — COMPLETE / REVIEW-READY; next MD-EXT-7 — NOT STARTED |
-| Current implementation state | PRD approved; MD-EXT-0 audit complete; MD-EXT-1 implementation and provenance/source-awareness follow-up complete; MD-EXT-2 implementation plus opaque-range and paragraph-context follow-ups complete; MD-EXT-3 fence metadata and Shiki source annotations plus sentinel/budget review follow-up complete; MD-EXT-4 bounded structural line numbers, unknown-language fallback, reader/PDF layout, browser evidence, and reader annotation-background follow-up complete; MD-EXT-5 static code groups, root-scoped reader enhancement, sanitizer delta, and all-panel PDF preparation complete; MD-EXT-6 safe snippets/includes, authenticated resource reads, bounded expansion, source context, cancellation, and no-reread PDF handoff complete; MD-EXT-7 not started |
+| Current phase | MD-EXT-6 — COMPLETE / REVIEW-CLOSED; next MD-EXT-7 — NOT STARTED |
+| Current implementation state | PRD approved; MD-EXT-0 audit complete; MD-EXT-1 implementation and provenance/source-awareness follow-up complete; MD-EXT-2 implementation plus opaque-range and paragraph-context follow-ups complete; MD-EXT-3 fence metadata and Shiki source annotations plus sentinel/budget review follow-up complete; MD-EXT-4 bounded structural line numbers, unknown-language fallback, reader/PDF layout, browser evidence, and reader annotation-background follow-up complete; MD-EXT-5 static code groups, root-scoped reader enhancement, sanitizer delta, and all-panel PDF preparation complete; MD-EXT-6 safe snippets/includes, authenticated resource reads, exact range semantics, exact UTF-8 expansion accounting, per-child source context, cancellation, and proven no-reread PDF image boundary complete; MD-EXT-7 not started |
 | Shiki prerequisite | SHIKI-H0 through SHIKI-H8 COMPLETE; migration closed; no H9 |
 | Parser baseline | markdown-it 14.1.0 singleton |
 | Shiki baseline | Shiki 4.4.3, @shikijs/transformers 4.4.3 |
 | VitePress reference | Official Markdown Extensions documentation, version observed 2.0.0-alpha.19 on 2026-08-21 |
 | Scope of this document | Implementation planning only |
-| This lifecycle update changes | MD-EXT-6 implementation/evidence lifecycle metadata; MD-EXT-7 remains not started |
+| This lifecycle update changes | MD-EXT-6 review-follow-up implementation/evidence lifecycle metadata; MD-EXT-7 remains not started |
 
 The production baseline is the last production-code state before this Markdown
 extension program. The approved PRD commits after that point are documentation-only.
@@ -55,11 +55,16 @@ before the affected phase continues.
 The original plan and MD-EXT-0 audit commits were planning/evidence-only. The current
 lifecycle records the reviewed completion of MD-EXT-1, MD-EXT-2, and MD-EXT-3,
 including their focused corrective follow-ups and evidence.
-The completed MD-EXT-6 phase:
+The completed MD-EXT-6 phase, including its review follow-up:
 
 - does not add or remove dependencies;
 - keeps the DOMPurify boundary and FORBID_ATTR: ['style'] invariant;
 - adds only the authenticated, canonical-path resource endpoint required by MD-EXT-6;
+- charges every resource expansion insertion against the exact final UTF-8 byte
+  budget, while retaining per-render read caching;
+- maps source context to each merged inline child by its flattened source line;
+- keeps settled local PDF resource images inside the export boundary so the
+  browser makes no second resource-endpoint request;
 - does not start MD-EXT-7;
 - does not reopen the completed Shiki migration.
 
@@ -144,7 +149,7 @@ VitePress but remain deferred Docus candidates.
 | Resource cache | Per render/request only | No unbounded cross-user global cache |
 | Async cancellation | Preserve useMarkdownRender stale-result protection | A newer document can cancel/ignore old resource work |
 | Reader page-nav | May continue reading final HTML h2-h4 IDs | It consumes the final IDs and does not create a second slugger |
-| PDF resource behavior | Reuse already-expanded/rendered article HTML | PDF does not reread resource files or re-run include expansion |
+| PDF resource behavior | Reuse already-expanded/rendered article HTML plus export-only settled-image materialization | PDF does not reread resource files, re-run include expansion, or make a second local-image endpoint request |
 | Dependencies | Prefer existing dependencies and Docus-owned narrow code | Any new dependency requires MD-EXT-0 review and bundle/security evidence |
 | Program namespace | MD-EXT-0 through MD-EXT-7 | There is no H9, SHIKI-H9, MDX-*, or VP-MD-* phase |
 
@@ -324,7 +329,10 @@ reader / PDF
 
 MD-EXT-6 does not make the PDF surface independently reread resource paths. The PDF
 surface receives the same already-expanded source context through the render pipeline,
-waits for the same image/widget readiness contract, and exports the settled HTML.
+waits for the same image/widget readiness contract, and exports the settled HTML. The
+review follow-up additionally keeps already-settled same-origin local resource images
+self-contained in the export clone and excludes live reader article roots from the
+html2canvas clone, so browser network evidence shows no second image-endpoint request.
 
 ## 7. Current File and Responsibility Inventory
 
@@ -356,7 +364,7 @@ waits for the same image/widget readiness contract, and exports the settled HTML
 | src/composables/useMarkmapMount.ts | MarkMap widget mount/unmount lifecycle | MD-EXT-0 audit only | Exact placeholder/mount contract remains |
 | src/composables/useMathMount.ts | KaTeX placeholder lifecycle | MD-EXT-0 audit only | Existing readiness contract remains |
 | src/composables/useCodeGroupMount.ts | Root-scoped code-group tab interaction/cleanup | MD-EXT-5 | No global listener or persisted active state |
-| src/lib/pdfExport.ts | Printable clone, CSS owner, widget staticization, pagination | MD-EXT-1 onward only for approved extension proof | PDF uses settled HTML; no resource reread |
+| src/lib/pdfExport.ts | Printable clone, CSS owner, widget staticization, pagination, settled local-image export boundary | MD-EXT-1 onward only for approved extension proof | PDF uses settled HTML; no resource reread or second local-image endpoint request |
 | src/lib/pdf-readiness.ts | Mermaid/MarkMap/math terminal-state gate | MD-EXT-5 when code groups/images need extension hooks | Error states remain settled, not hangs |
 | server/paths.ts | CONTENT_DIR, strict physical path resolver, symlink/race checks | MD-EXT-0 audit; MD-EXT-6 only for a narrow helper extension | Never weaken raw dot-segment rejection |
 | server/index.ts | Auth boundary and route mounting | MD-EXT-6 | Resource route remains behind authBoundary |
@@ -2022,7 +2030,7 @@ accessibility, copy, wrapping, PDF, and bound evidence.
 
 [MD-EXT-6 evidence](vitepress-markdown-extensions-md-ext-6-resources.md)
 
-MD-EXT-6 — Safe Snippets & Markdown Includes — COMPLETE / REVIEW-READY.
+MD-EXT-6 — Safe Snippets & Markdown Includes — COMPLETE / REVIEW-CLOSED.
 
 ## 24. MD-EXT-5 — Code Groups
 
@@ -2163,12 +2171,12 @@ token path, a root-scoped `useCodeGroupMount`, exact sanitizer additions, and a
 clone-only PDF all-panel transformation. The review follow-up additionally
 enforces the exact `tabindex` values `0` and `-1` at the final sanitizer boundary
 and proves grouped PDF line numbers, annotations, and printable-light Shiki
-token colors in Chromium. MD-EXT-6 has since been implemented and is review-ready;
+token colors in Chromium. MD-EXT-6 has since been implemented and is review-closed;
 MD-EXT-7 has not started.
 
 ### Next phase
 
-MD-EXT-6 — Safe Snippets & Markdown Includes — COMPLETE / REVIEW-READY.
+MD-EXT-6 — Safe Snippets & Markdown Includes — COMPLETE / REVIEW-CLOSED.
 
 ## 25. MD-EXT-6 — Safe Snippets & Markdown Includes
 
@@ -2223,6 +2231,9 @@ absolute paths.
 
 Resource expansion occurs before final MarkdownIt parse/discovery. Included code is
 escaped literal source, not executable HTML, and uses the existing Shiki path.
+Range metadata distinguishes `{N}` as a single line (`start === end`), `{N-M}`
+as an inclusive closed range, and `{N,}` as the only open-ended form; `N-` is
+invalid. The same selection contract applies to snippets and includes.
 
 ### Likely production files
 
@@ -2244,12 +2255,25 @@ NUL/protocol rejection, nested source context, ranges/regions, malformed directi
 cycles/depth/size, generic errors, final Shiki language discovery, resolver counts,
 concurrent renders, cancellation.
 
+The resource expansion budget is the exact UTF-8 byte length of the final
+`lines.map(({ text }) => text).join('\n')`, including every separator newline.
+It is enforced incrementally with per-render emitted-line accounting and a final
+defensive equality/limit check. Cache hits avoid reads but never waive the cost
+of inserting the cached content again. Failed local directives roll back all
+budget state before emitting their placeholder.
+
+When one MarkdownIt inline token spans root/include/root lines, source context is
+assigned per child while walking `softbreak`/`hardbreak` boundaries; the break
+retains the preceding line and the next child uses the next source path. No
+global source cursor or paragraph-semantic rewrite is allowed.
+
 Server: auth required, canonical path, safe physical resolver, symlink/junction/race,
 missing/directory/binary/invalid UTF-8/unsupported/oversized, asset MIME policy,
 concurrent reads and abort.
 
 Browser/PDF: included headings/TOC, relative links/images, snippet highlighting,
-code groups with included snippets, safe visible errors, PDF no reread.
+code groups with included snippets, safe visible errors, exact local-image
+endpoint no-reread proof, settled HTML, and live-reader isolation.
 
 ### Dependency changes
 
@@ -2269,9 +2293,15 @@ generated CSS. Resource errors remain readable in all four reader theme states.
 
 ### PDF impact
 
-PDF receives final articleHtml from the resource-aware render. It does not re-request,
-re-expand, or re-tokenize resources. Image readiness and existing widget readiness
-must remain settled; included code/TOC/links participate in normal clone behavior.
+PDF receives final articleHtml from the resource-aware render. It does not
+re-expand, re-tokenize, fetch the filesystem, or call the resource resolver.
+Image readiness and existing widget readiness must remain settled; included
+code/TOC/links participate in normal clone behavior. For an already-settled
+same-origin local Markdown image, the export-only clone materializes the image
+without first cloning its resource endpoint URL, and html2canvas ignores live
+reader article roots outside the export root. The browser proof must show zero
+additional `/api/markdown-resources?kind=image` requests during preparation and
+download, while leaving the live reader unchanged.
 
 ### Security risks
 
@@ -2297,8 +2327,10 @@ source: guides/java/index.md
 
 Verify canonical paths, included headings/TOC, relative image/link rebasing, nested
 WikiLinks, Shiki grammar preparation after expansion, cycle/depth/size/encoding errors,
-and no host path disclosure. Test a reader export after selecting a code-group tab;
-the PDF must use settled HTML and not reread.
+and no host path disclosure. Verify `{2}` versus `{3,}`, exact UTF-8 expansion
+accounting, and a merged root/include/root paragraph with per-child source context.
+Test a reader export after selecting a code-group tab; the PDF must use settled
+HTML and make no additional local-image endpoint request.
 
 ### Validation commands
 
@@ -2327,23 +2359,27 @@ posts API/path helpers remain unchanged.
 - Source context survives nested expansion for links/images/WikiLinks.
 - Final discovery occurs after expansion.
 - Resource failures are local and generic.
-- PDF does not reread resources.
+- PDF does not reread resources; the real browser image-endpoint delta after the
+  settled export surface is zero.
 
 ### Evidence required
 
 docs/design/vitepress-markdown-extensions-md-ext-6-resources.md with endpoint contract,
-path proof, auth, byte/encoding limits, source-context traces, resolver counts,
-cancellation, browser, PDF, and negative security cases.
+path proof, auth, exact range and UTF-8 byte limits, source-context traces,
+resolver/network counts, cancellation, browser, PDF, and negative security cases.
 
 ### Status
 
-COMPLETE / REVIEW-READY. The implementation expands approved snippets and Markdown
+COMPLETE / REVIEW-CLOSED. The implementation expands approved snippets and Markdown
 includes before final MarkdownIt discovery/render, keeps logical source-relative
 resolution separate from the strict physical path boundary, forwards included source
 context to links/images/WikiLinks, and preserves the settled-HTML PDF contract. The
-evidence document records the authenticated route, bounded text/image policy,
-per-render cache/stack/cancellation behavior, focused tests, and the known aggregate
-unit-suite environment limitations. MD-EXT-7 has not started.
+review follow-up closes single-line/closed/open-ended range semantics, exact final
+UTF-8 byte accounting including separators, merged-inline per-child source context,
+and the authenticated local-image PDF no-reread boundary. The evidence document
+records the authenticated route, bounded text/image policy, per-render
+cache/stack/cancellation behavior, focused tests, browser network counts, and the
+known aggregate unit-suite environment limitations. MD-EXT-7 has not started.
 
 ### Next phase
 
@@ -2725,5 +2761,5 @@ implemented opportunistically in a phase that owns a related feature.
 
 The implementation plan remains the execution map. MD-EXT-0 is complete as an
 evidence-only phase, MD-EXT-1 through MD-EXT-5 are implemented with their evidence
-documents, MD-EXT-6 is implemented and review-ready with its evidence document, and
-MD-EXT-7 has not started.
+documents, MD-EXT-6 is implemented and review-closed with its evidence document,
+and MD-EXT-7 has not started.

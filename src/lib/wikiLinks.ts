@@ -328,10 +328,16 @@ export function wikiLinkPlugin(
     if (!sourcePaths) return
     for (const token of state.tokens as unknown as MdToken[]) {
       if (token.type !== 'inline' || !token.children || !token.map) continue
-      const sourcePath = sourcePaths[token.map[0]]
-      if (!sourcePath) continue
+      let currentLine = token.map[0]
       for (const child of token.children) {
-        child.meta = { ...(child.meta ?? {}), [SOURCE_PATH_META]: sourcePath }
+        const sourcePath = sourcePaths[currentLine]
+        if (sourcePath) {
+          child.meta = { ...(child.meta ?? {}), [SOURCE_PATH_META]: sourcePath }
+        }
+        // MarkdownIt keeps soft/hard line breaks as inline children. The
+        // break belongs to the line before it; the next child starts on the
+        // following flattened source line.
+        if (child.type === 'softbreak' || child.type === 'hardbreak') currentLine += 1
       }
     }
   })

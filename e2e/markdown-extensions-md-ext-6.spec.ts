@@ -1,4 +1,7 @@
-import { expect, test } from '@playwright/test'
+import { promises as fs } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { expect, test } from './fixtures/auth'
 
 const resourceFiles: Record<string, string> = {
   'docs/parts.md': [
@@ -18,6 +21,13 @@ const resourceFiles: Record<string, string> = {
   'snippets/demo.py': 'print("included")',
   'snippets/demo.ts': 'const included = 1',
 }
+
+const E2E_VAULT = process.env.DOCUS_DRAFT_E2E_VAULT
+  ?? path.join(os.tmpdir(), 'docus-e2e-vault-4174')
+const LOCAL_IMAGE = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64',
+)
 
 test('MD-EXT-6 expands nested Markdown, snippets, source context, and code groups', async ({ page }) => {
   await page.goto('/__markdown-test?mode=reading')
@@ -160,4 +170,70 @@ test('MD-EXT-6 resource content is settled before PDF preparation and is not rer
     preparedHasBothPanels: true,
     preparedHasSnippet: true,
   })
+})
+
+test('MD-EXT-6 local image resources are not reread during real PDF download', async ({ page }) => {
+  const fixtureRoot = path.join(E2E_VAULT, 'md-ext-6-pdf-image')
+  await fs.rm(fixtureRoot, { recursive: true, force: true })
+  await fs.mkdir(fixtureRoot, { recursive: true })
+  await fs.writeFile(path.join(fixtureRoot, 'parts.md'), '![Local resource image](./logo.png)\n', 'utf8')
+  await fs.writeFile(path.join(fixtureRoot, 'logo.png'), LOCAL_IMAGE)
+
+  let phase: 'initial' | 'pdf' = 'initial'
+  const imageRequests = { initial: 0, pdf: 0 }
+  const onRequest = (request: { url(): string }) => {
+    const url = new URL(request.url())
+    if (url.pathname !== '/api/markdown-resources' || url.searchParams.get('kind') !== 'image') return
+    imageRequests[phase] += 1
+  }
+  page.on('request', onRequest)
+
+  try {
+    await page.goto('/__markdown-test?mode=reading')
+    await page.evaluate(async () => {
+      const { render } = await import('/src/lib/markdown.ts')
+      const article = document.createElement('article')
+      article.className = 'article reading md-ext-6-pdf-image-fixture'
+      article.innerHTML = await render('<!--@include: ./parts.md-->', {
+        sourcePath: 'md-ext-6-pdf-image/index',
+      })
+      document.body.append(article)
+      const image = article.querySelector<HTMLImageElement>('img')
+      if (!image) throw new Error('local resource image was not rendered')
+      await new Promise<void>((resolve, reject) => {
+        if (image.complete) {
+          if (image.naturalWidth > 0) resolve()
+          else reject(new Error('local resource image failed to load'))
+          return
+        }
+        image.addEventListener('load', () => resolve(), { once: true })
+        image.addEventListener('error', () => reject(new Error('local resource image failed to load')), { once: true })
+      })
+    })
+
+    expect(imageRequests.initial).toBe(1)
+    phase = 'pdf'
+    const downloadPromise = page.waitForEvent('download')
+    await page.evaluate(async () => {
+      const pdf = await import('/src/lib/pdfExport.ts')
+      const article = document.querySelector<HTMLElement>('.md-ext-6-pdf-image-fixture')
+      if (!article) throw new Error('PDF image fixture is missing')
+      const articleHtml = pdf.preparePdfArticleHtml(article)
+      if (articleHtml.includes('/api/markdown-resources')) {
+        throw new Error('PDF article HTML retained a resource endpoint image')
+      }
+      await pdf.downloadPdfDocument({
+        title: 'MD-EXT-6 PDF Image',
+        articleHtml,
+      })
+      article.remove()
+    })
+    const download = await downloadPromise
+    await download.delete()
+
+    expect(imageRequests.pdf).toBe(0)
+  } finally {
+    page.off('request', onRequest)
+    await fs.rm(fixtureRoot, { recursive: true, force: true })
+  }
 })

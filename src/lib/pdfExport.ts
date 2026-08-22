@@ -792,6 +792,79 @@ export function markOversizedPdfBlocks(root: HTMLElement): void {
   }
 }
 
+function isLocalMarkdownResourceImage(image: HTMLImageElement): boolean {
+  const source = image.getAttribute('src')
+  if (!source) return false
+  try {
+    const url = new URL(source, image.ownerDocument.baseURI)
+    const origin = image.ownerDocument.defaultView?.location.origin
+    return Boolean(origin)
+      && url.origin === origin
+      && url.pathname === '/api/markdown-resources'
+      && url.searchParams.get('kind') === 'image'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The settled reader image is already an authenticated, same-origin resource.
+ * html2pdf creates another DOM from articleHtml and would otherwise ask the
+ * resource endpoint for the same image again. Materialize only this narrow
+ * local-resource surface in the export clone; remote/raw images keep their
+ * existing behavior and the live reader is never modified.
+ */
+function snapshotSettledMarkdownResourceImage(image: HTMLImageElement): string | null {
+  if (!image.complete || image.naturalWidth <= 0 || image.naturalHeight <= 0) return null
+  try {
+    const canvas = image.ownerDocument.createElement('canvas')
+    canvas.width = image.naturalWidth
+    canvas.height = image.naturalHeight
+    const context = canvas.getContext('2d')
+    if (!context) return null
+    context.drawImage(image, 0, 0)
+    const dataUrl = canvas.toDataURL('image/png')
+    return dataUrl.startsWith('data:image/') ? dataUrl : null
+  } catch {
+    return null
+  }
+}
+
+function clonePdfNode(node: Node): Node {
+  if (node.nodeType !== Node.ELEMENT_NODE) return node.cloneNode(true)
+  const element = node as HTMLElement
+  if (element.tagName === 'IMG') {
+    const sourceImage = element as HTMLImageElement
+    const clone = element.ownerDocument.createElement('img')
+    const dataUrl = isLocalMarkdownResourceImage(sourceImage)
+      ? snapshotSettledMarkdownResourceImage(sourceImage)
+      : null
+
+    // Do not clone a local resource src first and replace it later: the
+    // browser can schedule that endpoint request before the export clone is
+    // attached. Copy attributes into a fresh image instead.
+    for (const attribute of Array.from(element.attributes)) {
+      if (attribute.name === 'src' || attribute.name === 'srcset' || attribute.name === 'sizes') continue
+      clone.setAttribute(attribute.name, attribute.value)
+    }
+    if (dataUrl) {
+      clone.setAttribute('src', dataUrl)
+    } else {
+      const src = element.getAttribute('src')
+      if (src) clone.setAttribute('src', src)
+      const srcset = element.getAttribute('srcset')
+      if (srcset) clone.setAttribute('srcset', srcset)
+      const sizes = element.getAttribute('sizes')
+      if (sizes) clone.setAttribute('sizes', sizes)
+    }
+    return clone
+  }
+
+  const clone = element.cloneNode(false) as HTMLElement
+  for (const child of Array.from(node.childNodes)) clone.appendChild(clonePdfNode(child))
+  return clone
+}
+
 /**
  * Clone the live article and remove reader-only Mermaid runtime state.
  *
@@ -800,7 +873,7 @@ export function markOversizedPdfBlocks(root: HTMLElement): void {
  * diagram's own viewBox and fit the PDF column.
  */
 export function preparePdfArticleHtml(article: HTMLElement): string {
-  const clone = article.cloneNode(true) as HTMLElement
+  const clone = clonePdfNode(article) as HTMLElement
 
   preparePdfCodeGroups(clone)
 
@@ -994,6 +1067,13 @@ export async function downloadPdfDocument(options: PdfDownloadOptions): Promise<
         backgroundColor: '#ffffff',
         imageTimeout: 15000,
         logging: false,
+        // html2canvas clones the whole document before selecting the export
+        // root. Ignore live reader articles outside that root so settled
+        // resource images are not requested a second time during cloning.
+        ignoreElements: (element: Element) => (
+          element.classList.contains('article')
+          && element.closest('[data-docus-pdf-download-root="true"]') === null
+        ),
         onclone: (clonedDocument: Document) => {
           const clonedRoot = clonedDocument.querySelector<HTMLElement>('[data-docus-pdf-download-root="true"]')
           if (!clonedRoot) return

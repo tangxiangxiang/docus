@@ -54,7 +54,7 @@ const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
 const RESOURCE_SEGMENT_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u
 const URI_SCHEME_RE = /^[A-Za-z][A-Za-z0-9+.-]*:/u
 const REGION_RE = /^[A-Za-z0-9_.-]{1,120}$/u
-const RANGE_ITEM_RE = /^([0-9]+)(?:-([0-9]+)?)?$/u
+const RANGE_ITEM_RE = /^([0-9]+)(?:-([0-9]+))?$/u
 const LANGUAGE_RE = /^[A-Za-z][A-Za-z0-9_+-]{0,63}$/u
 const FENCE_MODIFIER_RE = /^:(?:line-numbers|no-line-numbers)(?:=[0-9]+)?$/u
 
@@ -200,11 +200,11 @@ export function parseResourceRanges(value: string): ResourceRange[] | null {
     if (!match) return null
     const start = parsePositiveInteger(match[1] ?? '')
     const parsedEnd = match[2] === undefined || match[2] === ''
-      ? undefined
+      ? start
       : parsePositiveInteger(match[2])
-    if (start === null || (match[2] !== undefined && parsedEnd === null)) return null
+    if (start === null || parsedEnd === null) return null
     if (parsedEnd !== undefined && parsedEnd !== null && parsedEnd < start) return null
-    ranges.push({ start, ...(parsedEnd === undefined || parsedEnd === null ? {} : { end: parsedEnd }) })
+    ranges.push({ start, end: parsedEnd })
   }
   return ranges.length > 0 ? ranges : null
 }
@@ -434,6 +434,7 @@ interface ExpansionContext {
   cache: Map<string, Promise<string>>
   stack: Set<string>
   budgetUsed: number
+  emittedLineCount: number
 }
 
 function throwIfAborted(signal?: AbortSignal): void {
@@ -471,11 +472,19 @@ function addLines(
   sourcePath: string | undefined,
 ): void {
   const lines = text.replace(/\r\n?/gu, '\n').split('\n')
-  const bytes = byteLength(text)
-  if (context.budgetUsed + bytes > MAX_EXPANDED_MARKDOWN_BYTES) {
-    throw new MarkdownResourceError('expanded-size-limit')
+  let nextBudget = context.budgetUsed
+  let nextLineCount = context.emittedLineCount
+  for (const line of lines) {
+    const separatorBytes = nextLineCount > 0 ? 1 : 0
+    const nextBytes = separatorBytes + byteLength(line)
+    if (nextBudget + nextBytes > MAX_EXPANDED_MARKDOWN_BYTES) {
+      throw new MarkdownResourceError('expanded-size-limit')
+    }
+    nextBudget += nextBytes
+    nextLineCount += 1
   }
-  context.budgetUsed += bytes
+  context.budgetUsed = nextBudget
+  context.emittedLineCount = nextLineCount
   for (const line of lines) target.push({ text: line, ...(sourcePath ? { sourcePath } : {}) })
 }
 
@@ -505,6 +514,7 @@ async function expandSource(
     }
 
     const beforeBudget = context.budgetUsed
+    const beforeEmittedLineCount = context.emittedLineCount
     try {
       const current = directive as ResourceDirective
       const resourcePath = resolveLogicalResourceReference(sourcePath, current.pathReference)
@@ -539,6 +549,7 @@ async function expandSource(
     } catch (error) {
       if (isAbortError(error)) throw error
       context.budgetUsed = beforeBudget
+      context.emittedLineCount = beforeEmittedLineCount
       addLines(context, output, placeholder(), sourcePath)
     }
   }
@@ -562,10 +573,16 @@ export async function expandMarkdownResources(
     cache: new Map(),
     stack: new Set(sourcePath ? [sourcePath] : []),
     budgetUsed: 0,
+    emittedLineCount: 0,
   }
   const lines = await expandSource(markdown, sourcePath, 0, context)
+  const expandedMarkdown = lines.map(({ text }) => text).join('\n')
+  const actualBytes = byteLength(expandedMarkdown)
+  if (actualBytes !== context.budgetUsed || actualBytes > MAX_EXPANDED_MARKDOWN_BYTES) {
+    throw new MarkdownResourceError('expanded-size-limit')
+  }
   return {
-    markdown: lines.map(({ text }) => text).join('\n'),
+    markdown: expandedMarkdown,
     sourcePathByLine: lines.map(({ sourcePath: path }) => path),
   }
 }

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import MarkdownIt from 'markdown-it'
 import {
   expandMarkdownResources,
+  MAX_EXPANDED_MARKDOWN_BYTES,
   parseMarkdownResourceDirective,
   parseResourceRanges,
   resolveLogicalResourceReference,
@@ -37,13 +38,95 @@ describe('Markdown resource logical resolution and expansion', () => {
 
   it('parses bounded inclusive ranges including an open end', () => {
     expect(parseResourceRanges('2,4-6')).toEqual([
-      { start: 2 },
+      { start: 2, end: 2 },
       { start: 4, end: 6 },
     ])
     expect(parseResourceRanges('3,')).toEqual([{ start: 3 }])
+    expect(parseResourceRanges('2')).toEqual([{ start: 2, end: 2 }])
     expect(parseResourceRanges('0')).toBeNull()
     expect(parseResourceRanges('3-2')).toBeNull()
+    expect(parseResourceRanges('3-')).toBeNull()
     expect(parseResourceRanges('-1')).toBeNull()
+  })
+
+  it('applies single-line, closed, mixed, and open-ended ranges to final output', async () => {
+    const source = ['line1', 'line2', 'line3', 'line4', 'line5', 'line6'].join('\n')
+    const resolver = resolverFor({ 'examples/part.md': source, 'examples/demo.ts': source })
+
+    const single = await expandMarkdownResources(
+      '<!--@include: @/examples/part.md{2}-->',
+      { md: new MarkdownIt({ html: true }), resourceResolver: resolver },
+    )
+    expect(single.markdown).toBe('line2')
+
+    const closed = await expandMarkdownResources(
+      '<!--@include: @/examples/part.md{2-4}-->',
+      { md: new MarkdownIt({ html: true }), resourceResolver: resolver },
+    )
+    expect(closed.markdown).toBe('line2\nline3\nline4')
+
+    const mixed = await expandMarkdownResources(
+      '<!--@include: @/examples/part.md{2,4-6}-->',
+      { md: new MarkdownIt({ html: true }), resourceResolver: resolver },
+    )
+    expect(mixed.markdown).toBe('line2\nline4\nline5\nline6')
+
+    const open = await expandMarkdownResources(
+      '<!--@include: @/examples/part.md{3,}-->',
+      { md: new MarkdownIt({ html: true }), resourceResolver: resolver },
+    )
+    expect(open.markdown).toBe('line3\nline4\nline5\nline6')
+
+    const snippet = await expandMarkdownResources(
+      '<<< @/examples/demo.ts{2}',
+      { md: new MarkdownIt({ html: true }), resourceResolver: resolver },
+    )
+    expect(snippet.markdown).toContain('line2')
+    expect(snippet.markdown).not.toContain('line1')
+    expect(snippet.markdown).not.toContain('line3')
+  })
+
+  it('rejects malformed and out-of-bounds range syntax', async () => {
+    expect(parseResourceRanges('100001')).toBeNull()
+    expect(parseResourceRanges('3-')).toBeNull()
+    const resolver = resolverFor({ 'examples/part.ts': 'line1\nline2\nline3' })
+    const malformed = await expandMarkdownResources(
+      '<<< @/examples/part.ts{3-}',
+      { md: new MarkdownIt({ html: true }), resourceResolver: resolver },
+    )
+    expect(malformed.markdown).toContain('markdown-resource-error')
+  })
+
+  it('charges exact final UTF-8 bytes, including line separators', async () => {
+    const exact = 'x'.repeat(MAX_EXPANDED_MARKDOWN_BYTES)
+    const atLimit = await expandMarkdownResources(exact, {
+      md: new MarkdownIt({ html: true }),
+    })
+    expect(new TextEncoder().encode(atLimit.markdown).byteLength).toBe(MAX_EXPANDED_MARKDOWN_BYTES)
+
+    await expect(expandMarkdownResources(`${exact}x`, {
+      md: new MarkdownIt({ html: true }),
+    })).rejects.toMatchObject({ code: 'expanded-size-limit' })
+  })
+
+  it('counts newline amplification on repeated cached includes', async () => {
+    const lines = Array.from({ length: 512 }, (_, index) => 'x'.repeat(index === 0 ? 1024 : 1023))
+    const repeated = lines.join('\n')
+    const resolver = resolverFor({ 'examples/repeated.md': repeated })
+    const expanded = await expandMarkdownResources([
+      '<!--@include: @/examples/repeated.md-->',
+      '<!--@include: @/examples/repeated.md-->',
+      '<!--@include: @/examples/repeated.md-->',
+      '<!--@include: @/examples/repeated.md-->',
+    ].join('\n'), {
+      md: new MarkdownIt({ html: true }),
+      resourceResolver: resolver,
+    })
+
+    expect(resolver.read).toHaveBeenCalledTimes(1)
+    expect(expanded.markdown).toContain('markdown-resource-error')
+    expect(new TextEncoder().encode(expanded.markdown).byteLength)
+      .toBeLessThanOrEqual(MAX_EXPANDED_MARKDOWN_BYTES)
   })
 
   it('keeps directives inside fences and indented code opaque', async () => {
@@ -126,6 +209,41 @@ describe('Markdown resource logical resolution and expansion', () => {
     expect(html).toContain('/vault/docs/parts.md:wiki-child')
     expect(html).toContain('/api/markdown-resources?kind=image&amp;path=docs%2Flogo.png')
     expect(wikiResolver).toHaveBeenCalledWith('wiki-child', undefined, { sourcePath: 'docs/parts.md' })
+  })
+
+  it('keeps root/include/root source context across one merged paragraph', async () => {
+    const resolver = resolverFor({
+      'docs/part.md': [
+        '[Included](./included.md) ![Included image](./included.png)  ',
+        '[[included-wiki]]',
+      ].join('\n'),
+    })
+    const wikiResolver = vi.fn((ref: string, _anchor?: string, context?: { sourcePath?: string }) => ({
+      target: `${context?.sourcePath ?? 'unknown'}:${ref}`,
+    }))
+    const html = await render([
+      '[Root Before](./root-before.md) ![Root image](./root-before.png)  ',
+      '<!--@include: ./part.md-->',
+      '[Root After](./root-after.md) ![Root image](./root-after.png)',
+    ].join('\n'), {
+      sourcePath: 'docs/root',
+      resourceResolver: resolver,
+      resolver: wikiResolver,
+    })
+
+    expect(wikiResolver.mock.calls.map(([ref, _anchor, context]) => ({
+      ref,
+      sourcePath: context?.sourcePath,
+    }))).toEqual([
+      { ref: './root-before', sourcePath: 'docs/root.md' },
+      { ref: './included', sourcePath: 'docs/part.md' },
+      { ref: 'included-wiki', sourcePath: 'docs/part.md' },
+      { ref: './root-after', sourcePath: 'docs/root.md' },
+    ])
+    expect(html).toContain('path=docs%2Froot-before.png')
+    expect(html).toContain('path=docs%2Fincluded.png')
+    expect(html).toContain('path=docs%2Froot-after.png')
+    expect(html).toContain('/vault/docs/part.md:included-wiki')
   })
 
   it('does not leak malformed directives or cyclic includes into a render error', async () => {

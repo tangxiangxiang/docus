@@ -6,17 +6,20 @@
 | Field | Value |
 | --- | --- |
 | Phase | MD-EXT-6 — Safe Snippets & Markdown Includes |
-| Status | COMPLETE / REVIEW-READY |
+| Status | COMPLETE / REVIEW-CLOSED |
 | Implementation baseline | `582e312a4c5752a4c9a5c6bba7b0e752b0b78078` |
 | Previous phase final review closure | `dd4768f67e77f190794cd7d046218705e2ce56e3` |
 | MD-EXT-6 base | `dd4768f67e77f190794cd7d046218705e2ce56e3` |
 | Approved PRD | `7e05e3bb43f4283a90ead1abd0c81325bc93281c` |
 | Approved Implementation Plan | `582e312a4c5752a4c9a5c6bba7b0e752b0b78078` |
-| MD-EXT-6 completion commit | Recorded in the final handoff after this document is committed |
+| Original MD-EXT-6 implementation commit | `0ce35f1b2b838c590e92a435846de5a1ac770b42` |
+| MD-EXT-6 review follow-up commit | Recorded in the final handoff after this document is committed |
 | Next phase | MD-EXT-7 — NOT STARTED |
 
-This document records the implementation and verification evidence for MD-EXT-6.
-It is review-ready, not review-closed. No MD-EXT-7 work is included.
+This document records the implementation and verification evidence for MD-EXT-6,
+including the review follow-up that closes the range, expansion-budget,
+source-context, and PDF local-image boundary findings. No MD-EXT-7 work is
+included.
 
 ## 2. Scope and changed files
 
@@ -51,8 +54,23 @@ src/lib/__tests__/markdownResources.test.ts
 e2e/markdown-extensions-md-ext-6.spec.ts
 ```
 
-No dependency, `server/paths.ts`, Shiki transformer, FenceMeta, container,
-code-group, or PDF implementation change was required.
+No dependency, `server/paths.ts`, Shiki transformer, FenceMeta, container, or
+code-group change was required. The review follow-up added a narrow
+`src/lib/pdfExport.ts` clone/export boundary only after real browser evidence
+showed that html2canvas could otherwise request a settled local resource image
+again; no server/resource-route change was made.
+
+The review follow-up changed or extended:
+
+```text
+src/lib/markdownResources.ts
+src/lib/wikiLinks.ts
+src/lib/pdfExport.ts
+src/lib/__tests__/markdownResources.test.ts
+e2e/markdown-extensions-md-ext-6.spec.ts
+docs/design/vitepress-markdown-extensions-md-ext-6-resources.md
+docs/design/vitepress-markdown-extensions-implementation-plan.md
+```
 
 ## 3. Resource boundary
 
@@ -169,9 +187,18 @@ Supported examples are:
 Snippet metadata is converted to an ordinary fenced code block, using an
 allowlisted inferred or explicit language and the existing FenceMeta/Shiki
 path. Selected ranges are positive, inclusive, bounded integers; open-ended
-ranges such as `3,` are supported. Invalid, reversed, zero, negative,
-non-numeric, or excessive ranges fail locally without throwing the document
-render.
+ranges such as `3,` are supported. The internal representation distinguishes
+single-line, closed, and open-ended ranges:
+
+```text
+{2}   → { start: 2, end: 2 }   → line 2 only
+{2-4} → { start: 2, end: 4 }   → lines 2..4
+{3,}  → { start: 3 }           → line 3..EOF
+```
+
+Invalid, reversed, zero, negative, non-numeric, `3-`, or excessive ranges fail
+locally without throwing the document render. The same semantics apply to
+snippets and Markdown includes.
 
 Named regions use the supported `#region`/`#endregion` marker forms for the
 common `//`, `#`, `/*`, and `<!--` comment styles. Matching regions are selected
@@ -222,7 +249,9 @@ Each `expandMarkdownResources()` call owns its own:
 ```text
 resource cache: canonical kind/path → pending Promise
 include stack: canonical paths for cycle detection
-expanded-byte counter
+expanded-byte counter (UTF-8 bytes of the exact final flattened Markdown,
+including every inserted `\n` separator)
+emitted line count for separator accounting
 source-path map
 AbortSignal
 ```
@@ -232,7 +261,14 @@ renders do not share cache, source path, include stack, or visible error state.
 Cycles, depth overflow, per-resource limits, and final expansion overflow are
 caught at the directive boundary and become the safe
 `markdown-resource-error` placeholder. The error is local; unrelated Markdown
-continues to render.
+continues to render. Every expansion insertion is charged even when the
+canonical resource content is served from the per-render cache; cache hits
+avoid reads but do not make expansion free. Failed local directives restore
+both the byte counter and emitted-line count before the placeholder is charged.
+Expansion rejects before the tracked total exceeds 2 MiB and performs a final
+defensive check that the actual UTF-8 byte length of
+`lines.map(({ text }) => text).join('\n')` matches the tracked total and remains
+within the limit.
 
 `useMarkdownRender` creates an `AbortController` per reactive render and aborts
 the controller on cleanup. Abort errors are propagated as cancellation rather
@@ -244,6 +280,12 @@ The expansion result carries one source identity per flattened Markdown line.
 Included lines use the included file's canonical path; root lines retain the
 caller context. The final WikiLink/link renderer consumes this map so nested
 links resolve relative to the included source rather than the including note.
+When MarkdownIt merges root/include/root lines into one inline token, the
+renderer walks inline children in source order. Each child receives the path
+for its current flattened line; only after assigning metadata to a
+`softbreak`/`hardbreak` does the cursor advance, so the break belongs to the
+preceding line and the first child after it uses the next source identity.
+There is no module-global source cursor.
 
 Relative local Markdown images are rewritten to the authenticated image route
 using the same source context. Existing external-link policy, lazy image
@@ -269,9 +311,20 @@ PDF clone/preparation
 ```
 
 The focused PDF browser evidence renders an included code group, selects the
-second reader tab, records three resource reads before preparation, and observes
-the same read count after preparation/download. Both grouped panels and included
-snippet content remain present, while the live article HTML remains unchanged.
+second reader tab, records three text resource reads before preparation, and
+observes the same resolver read count after preparation/download. Both grouped
+panels and included snippet content remain present, while the live article HTML
+remains unchanged.
+
+The follow-up also uses an authenticated local `.png` in the controlled test
+vault and observes real browser traffic to
+`/api/markdown-resources?kind=image`. The settled reader surface makes one
+initial image request; the combined `preparePdfArticleHtml()` plus real PDF
+download phase makes zero additional image endpoint requests. The narrow
+export-only fix avoids cloning the endpoint URL first, materializes an already
+settled same-origin local image in the PDF clone, and tells html2canvas to
+ignore live reader article roots outside the export root. It does not fetch the
+image again, rerender Markdown, reread the filesystem, or mutate the live reader.
 
 ## 10. Security evidence
 
@@ -322,6 +375,50 @@ opaque fences/indented blocks, nested expansion/cache, named regions, final
 Shiki discovery, source-aware links/images/WikiLinks, cycle/malformed fallback,
 and AbortSignal propagation.
 
+### Review follow-up validation
+
+The focused client regression run after the follow-up was:
+
+```text
+./node_modules/.bin/vitest run \
+  src/lib/__tests__/markdownResources.test.ts \
+  src/lib/__tests__/markdown.test.ts \
+  src/lib/__tests__/wikiLinks.test.ts \
+  src/lib/__tests__/markdownCodeGroups.test.ts \
+  src/lib/__tests__/shiki.test.ts \
+  src/composables/vault/__tests__/useMarkdownRender.test.ts \
+  src/lib/__tests__/pdfExport.test.ts \
+  src/lib/__tests__/pdf-readiness.test.ts
+→ PASS: 8 files, 198 tests
+```
+
+The focused server safety run was:
+
+```text
+./node_modules/.bin/vitest run \
+  server/routes/markdownResources.test.ts \
+  server/__tests__/paths.test.ts
+→ PASS: 2 files, 45 tests
+```
+
+The final range/expansion tests prove `{2}` selects line 2 only, `{2-4}` is
+inclusive, `{2,4-6}` has no accidental EOF tail, `{3,}` reaches EOF, and `3-`
+is rejected. The exact final UTF-8 byte boundary accepts exactly 2 MiB,
+rejects one byte over, and counts separator bytes when the same cached include
+is inserted repeatedly. The merged-paragraph test records the resolver trace:
+
+```text
+root-before → docs/root.md
+included    → docs/part.md
+included-wiki → docs/part.md
+root-after  → docs/root.md
+```
+
+The focused MD-EXT-3 through MD-EXT-6 Playwright run passed 10 tests. The
+MD-EXT-6 spec itself passed 3 tests, including the local-image network proof:
+one initial image request and zero additional requests during PDF preparation
+and download.
+
 ### Typecheck and build
 
 ```text
@@ -352,10 +449,17 @@ product regression was observed.
 ### Browser/PDF
 
 The focused MD-EXT-6 Playwright spec covers reader expansion/source context and
-settled-HTML PDF/no-reread behavior. It has two passing tests in the available
-Chromium environment. The first sandbox attempt could not start the dev server
-because of the environment's loopback `listen EPERM`; the approved rerun with
-the required browser-server permission passed.
+settled-HTML PDF/no-reread behavior. It has three passing tests in the available
+Chromium environment, including the authenticated local-image request proof.
+The first sandbox attempt could not start the dev server because of the
+environment's loopback `listen EPERM`; the approved rerun with the required
+browser-server permission passed.
+
+The historical full-unit evidence above remains unchanged. The follow-up rerun
+reported `214` passing files, `3` failing files, `3192` passing tests, `21`
+failing tests, and `2` skipped tests. The same 19 OpenAI HTTP loopback and
+Round-15/Round-16 `tsx` IPC `EPERM` limitations remained; no new product
+failure appeared.
 
 ## 12. Rollback and next phase
 
