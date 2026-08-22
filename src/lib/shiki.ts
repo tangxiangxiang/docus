@@ -85,63 +85,93 @@ function shouldGateSourceNotation(body: string): boolean {
   return false
 }
 
-const DEFERRED_NOTATION_PREFIX = 'docus-deferred-notation '
-const DEFERRED_NOTATION_PATTERN = /\[!code docus-deferred-notation ([^\]]+)\]/gu
+const DEFERRED_NOTATION_PREFIX = 'docus-deferred-notation-'
+const DEFERRED_NOTATION_MAX_CANDIDATES = 1_024
 
-function createSourceNotationGate(): ShikiTransformer {
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
+}
+
+/**
+ * Pick an invocation-local marker that cannot be mistaken for author source.
+ * The bounded candidate loop handles normal inputs; the fallback contains a
+ * NUL run longer than the source itself, which is therefore collision-free.
+ */
+function createDeferredNotationSentinel(source: string): string {
+  for (let index = 0; index < DEFERRED_NOTATION_MAX_CANDIDATES; index += 1) {
+    const candidate = `${DEFERRED_NOTATION_PREFIX}${index}-`
+    if (!source.includes(candidate)) return candidate
+  }
+
+  return `${DEFERRED_NOTATION_PREFIX}fallback-${'\u0000'.repeat(source.length + 1)}`
+}
+
+function createSourceNotationGate(sentinel: string): ShikiTransformer {
   return {
     name: 'docus:source-notation-scope-gate',
     preprocess(source) {
       return source.replace(/\[!code ([^\]]+)\]/gu, (full, body: string) => (
         shouldGateSourceNotation(body)
-          ? `[!code ${DEFERRED_NOTATION_PREFIX}${body}]`
+          ? `[!code ${sentinel} ${body}]`
           : full
       ))
     },
   }
 }
 
-function restoreGatedSourceNotation(node: {
-  type: string
-  value?: string
-  children?: Array<{
+function restoreGatedSourceNotation(
+  node: {
     type: string
     value?: string
-    children?: Array<unknown>
-  }>
-}): void {
+    children?: Array<{
+      type: string
+      value?: string
+      children?: Array<unknown>
+    }>
+  },
+  deferredNotationPattern: RegExp,
+): void {
   if (node.type === 'text' && typeof node.value === 'string') {
-    node.value = node.value.replace(DEFERRED_NOTATION_PATTERN, '[!code $1]')
+    node.value = node.value.replace(deferredNotationPattern, '[!code $1]')
     return
   }
   for (const child of node.children ?? []) {
     if (typeof child === 'object' && child !== null) {
-      restoreGatedSourceNotation(child as Parameters<typeof restoreGatedSourceNotation>[0])
+      restoreGatedSourceNotation(
+        child as Parameters<typeof restoreGatedSourceNotation>[0],
+        deferredNotationPattern,
+      )
     }
   }
 }
 
-function createSourceNotationRestore(): ShikiTransformer {
+function createSourceNotationRestore(sentinel: string): ShikiTransformer {
+  const deferredNotationPattern = new RegExp(
+    `\\[!code ${escapeRegExp(sentinel)} ([^\\]]+)\\]`,
+    'gu',
+  )
+
   return {
     name: 'docus:source-notation-scope-restore',
     // This code hook is deliberately after the official notation transformers
     // and before the singleton style transformer in the array below.
     code(node) {
-      restoreGatedSourceNotation(node)
+      restoreGatedSourceNotation(node, deferredNotationPattern)
       return node
     },
   }
 }
 
-function createAnnotationTransformers(): ShikiTransformer[] {
+function createAnnotationTransformers(source: string): ShikiTransformer[] {
+  const sentinel = createDeferredNotationSentinel(source)
   const transformers: ShikiTransformer[] = [
     transformerMetaHighlight(),
-    createSourceNotationGate(),
+    createSourceNotationGate(sentinel),
     transformerNotationHighlight(),
     transformerNotationFocus(),
     transformerNotationDiff(),
     transformerNotationErrorLevel(),
-    createSourceNotationRestore(),
+    createSourceNotationRestore(sentinel),
     // H8's one trusted token-style registry must remain the final transformer.
     styleTransformer,
   ]
@@ -396,7 +426,7 @@ export function highlightShikiFence(source: string, input: FenceMetaInput): stri
       },
       defaultColor: false,
       ...(highlightRaw ? { meta: { __raw: highlightRaw } } : {}),
-      transformers: createAnnotationTransformers(),
+      transformers: createAnnotationTransformers(source),
     })
   } catch {
     // A single fence rendering failure must not poison the shared runtime or

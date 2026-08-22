@@ -960,6 +960,18 @@ describe('markdown H3 renderer cutover', () => {
     expect(lines[1]?.textContent).toContain('[!code focus:1001]')
   })
 
+  it('renders over-budget fence ranges safely without expanding them again during render', async () => {
+    const html = await render([
+      '```ts {1-100000} {1-100000}',
+      'const value = 1',
+      '```',
+    ].join('\n'))
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+
+    expect(doc.querySelector('pre.shiki')).not.toBeNull()
+    expect(html).not.toMatch(/\sstyle=/i)
+  })
+
   it('keeps metadata-bearing mermaid and markmap outside special mount mode', async () => {
     const { factory, loadLanguage } = installFakeShikiRuntime()
     const html = await render([

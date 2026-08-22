@@ -6,7 +6,7 @@
 | Field | Value |
 | --- | --- |
 | Phase | MD-EXT-3 — Shiki Code Annotations & Unified Fence Metadata |
-| Status | COMPLETE / REVIEW-READY |
+| Status | COMPLETE / REVIEW-CLOSED |
 | Implementation baseline | 582e312a4c5752a4c9a5c6bba7b0e752b0b78078 |
 | Previous phase review closure | aaac9a54a047e504850d497533216d2851c4e928 |
 | MD-EXT-3 base | aaac9a54a047e504850d497533216d2851c4e928 |
@@ -14,13 +14,14 @@
 | Approved Implementation Plan | 582e312a4c5752a4c9a5c6bba7b0e752b0b78078 |
 | Shiki | 4.4.3 |
 | @shikijs/transformers | 4.4.3 |
-| MD-EXT-3 completion commit | Recorded in the final handoff after this evidence commit is created |
+| MD-EXT-3 implementation commit | 5b88514f03a60b48cfb2528ccbbf3a375564b6f0 |
+| MD-EXT-3 review follow-up commit | Recorded in the final handoff after this evidence commit is created |
 | Next phase | MD-EXT-4 — Line Numbers — NOT STARTED |
 | Shiki prerequisite | H0-H8 COMPLETE / CLOSED; no H9 |
 
 The commands and test evidence in this document were collected from the
-MD-EXT-3 base and the implementation working tree. The future completion SHA is
-not written into the evidence before the commit that creates it.
+MD-EXT-3 base and implementation working tree. The review follow-up SHA is not
+written into the evidence before the commit that creates it.
 
 ## 2. Scope and changed files
 
@@ -161,6 +162,38 @@ fixed structural annotation classes
 special-fence classification, normal fence rendering, and Shiki meta ranges.
 Source notation is consumed per `codeToHtml` call and is not stored in the
 fence-info metadata object.
+
+## 5.1 Review follow-up — source fidelity and range work budget
+
+The review follow-up closes two parser-boundary findings without changing the
+MD-EXT-3 feature scope.
+
+Deferred source-notation gating now selects a per-`codeToHtml` invocation,
+collision-free marker. Candidate markers are checked against the complete
+author source before the gate transformer is created, and the restore
+transformer closes over the exact marker selected for that invocation. The
+previous fixed public sentinel is no longer used. Consequently:
+
+```text
+author-authored [!code docus-deferred-notation ...] text → source-preserved
+gate-inserted marker → restored only by its own invocation
+marker leakage → absent
+concurrent invocation cross-restore → absent
+```
+
+Fence range expansion now has a second bound in addition to
+`MAX_HIGHLIGHT_RANGE_LINE = 100000`:
+
+```text
+MAX_HIGHLIGHT_EXPANSION_WORK = 100000
+scope = one parseFenceMeta(info) call
+```
+
+Each range token is validated and charged atomically before its values are
+expanded. Duplicate ranges consume the same work budget as unique ranges. A
+token that exceeds the remaining budget is recorded in `malformed` and skipped
+as a whole; previously accepted tokens remain deterministic, sorted, and
+deduplicated.
 
 ## 6. Installed Shiki 4.4.3 evidence
 
@@ -323,13 +356,14 @@ printable line cue on the prepared PDF surface.
 
 ```text
 10 test files passed
-217 tests passed
+222 tests passed
 ```
 
 The focused assertions cover metadata-bearing language discovery, exact special
 fences, all approved notation classes, `focus:N` bounds, deferred
-`highlight:N`, no line-number DOM, container nesting, sanitizer behavior, PDF
-clone details, and stylesheet ownership.
+`highlight:N`, invocation-local source fidelity, total range-expansion budget,
+no line-number DOM, container nesting, sanitizer behavior, PDF clone details,
+and stylesheet ownership.
 
 ### Typecheck and build
 
@@ -357,7 +391,7 @@ environment limitation, not a product test result.
 ```text
 npm run test:unit → FAIL, exit code 1
 Test Files: 3 failed | 210 passed (213)
-Tests: 21 failed | 3149 passed | 2 skipped (3172)
+Tests: 21 failed | 3154 passed | 2 skipped (3177)
 ```
 
 The 21 failures are the same pre-existing environment class recorded by the
@@ -428,6 +462,8 @@ second parser or runtime and remains independently reviewable.
 ```text
 Fence-info parser only: PASS
 Source-notation transformer channel separate: PASS
+Invocation-local deferred marker/source fidelity: PASS
+Per-parse total range work budget: PASS
 Approved annotation classes: PASS
 focus:N bounded at 1000: PASS
 highlight:N deferred: PASS
@@ -449,7 +485,7 @@ MD-EXT-4: NOT STARTED
 
 ## 17. Next phase
 
-MD-EXT-3 is complete and ready for review. Only after review approval should
+MD-EXT-3 is complete and review-closed. Only after review approval should
 implementation begin for:
 
 ```text

@@ -505,6 +505,64 @@ describe('Shiki H3 synchronous fence rendering', () => {
       expect(lines[index]?.textContent, marker).toContain(marker)
     }
   })
+
+  it('preserves author-authored sentinel-like source while gating deferred notation', async () => {
+    await expect(ensureShikiLanguage('ts')).resolves.toMatchObject({ status: 'loaded' })
+    const source = [
+      '// [!code docus-deferred-notation hello]',
+      'const literal = "[!code docus-deferred-notation highlight:2]"',
+      'const deferred = 1 // [!code highlight:2]',
+      'const invalid = 2 // [!code focus:1001]',
+    ].join('\n')
+    const html = highlightShikiFence(source, parseFenceMeta('ts'))
+    if (!html) throw new Error('H3 expected Shiki HTML')
+
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const lines = Array.from(doc.querySelectorAll('pre.shiki .line'))
+    const text = lines.map((line) => line.textContent ?? '').join('\n')
+    expect(text).toContain('[!code docus-deferred-notation hello]')
+    expect(text).toContain('[!code docus-deferred-notation highlight:2]')
+    expect(text).toContain('[!code highlight:2]')
+    expect(text).toContain('[!code focus:1001]')
+    expect(lines[2]?.classList.contains('highlighted')).toBe(false)
+    expect(lines[3]?.classList.contains('focused')).toBe(false)
+    expect(html).not.toContain('docus-deferred-notation-0-')
+  })
+
+  it('chooses another invocation-local sentinel when the first candidate is in source', async () => {
+    await expect(ensureShikiLanguage('ts')).resolves.toMatchObject({ status: 'loaded' })
+    const source = [
+      'const literal = "[!code docus-deferred-notation-0- hello]"',
+      'const deferred = 1 // [!code highlight:2]',
+    ].join('\n')
+    const html = highlightShikiFence(source, parseFenceMeta('ts'))
+    if (!html) throw new Error('H3 expected Shiki HTML')
+
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const text = Array.from(doc.querySelectorAll('pre.shiki .line'))
+      .map((line) => line.textContent ?? '')
+      .join('\n')
+    expect(text).toContain('[!code docus-deferred-notation-0- hello]')
+    expect(text).toContain('[!code highlight:2]')
+    expect(html).not.toContain('docus-deferred-notation-1-')
+  })
+
+  it('keeps invocation-local deferred markers isolated across concurrent calls', async () => {
+    await expect(ensureShikiLanguage('ts')).resolves.toMatchObject({ status: 'loaded' })
+    const sourceA = 'const a = "[!code docus-deferred-notation-0- hello]"\nconst x = 1 // [!code highlight:2]'
+    const sourceB = 'const b = 1 // [!code focus:1001]'
+    const [htmlA, htmlB] = await Promise.all([
+      Promise.resolve().then(() => highlightShikiFence(sourceA, parseFenceMeta('ts'))),
+      Promise.resolve().then(() => highlightShikiFence(sourceB, parseFenceMeta('ts'))),
+    ])
+    if (!htmlA || !htmlB) throw new Error('H3 expected Shiki HTML')
+
+    expect(htmlA).toContain('[!code docus-deferred-notation-0- hello]')
+    expect(htmlA).toContain('[!code highlight:2]')
+    expect(htmlB).toContain('[!code focus:1001]')
+    expect(htmlA).not.toContain('docus-deferred-notation-1-')
+    expect(htmlB).not.toContain('docus-deferred-notation-')
+  })
 })
 
 describe('Shiki H4 style-to-class and stylesheet ownership', () => {

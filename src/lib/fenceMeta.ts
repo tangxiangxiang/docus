@@ -27,6 +27,15 @@ export const MAX_LINE_NUMBER_START = 100_000
 /** A conservative bound for fence metadata line ranges. */
 export const MAX_HIGHLIGHT_RANGE_LINE = 100_000
 
+/**
+ * Total range-expansion work permitted for one fence-info parse.
+ *
+ * This is intentionally separate from the largest useful line number: repeated
+ * valid ranges, including duplicate ranges, must not each expand to the full
+ * per-range limit.
+ */
+export const MAX_HIGHLIGHT_EXPANSION_WORK = 100_000
+
 const LANGUAGE_STOP_CHARS = /[\s:[\]{}]/u
 const RANGE_LIST_PATTERN = /^\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*$/u
 const LINE_NUMBER_MODIFIER_PATTERN = /^:(line-numbers|no-line-numbers)(?:=(.+))?$/u
@@ -38,10 +47,15 @@ function parseBoundedPositiveInteger(value: string, maximum: number): number | n
   return parsed
 }
 
-function parseRangeList(value: string, current: Set<number>): boolean {
+function parseRangeList(
+  value: string,
+  current: Set<number>,
+  budget: { remaining: number },
+): boolean {
   if (!RANGE_LIST_PATTERN.test(value)) return false
 
-  const parsed: number[] = []
+  const ranges: Array<{ start: number; end: number }> = []
+  let expansionWork = 0
   for (const item of value.split(',')) {
     const [startText, endText] = item.split('-')
     const start = parseBoundedPositiveInteger(startText ?? '', MAX_HIGHLIGHT_RANGE_LINE)
@@ -50,15 +64,24 @@ function parseRangeList(value: string, current: Set<number>): boolean {
       : parseBoundedPositiveInteger(endText, MAX_HIGHLIGHT_RANGE_LINE)
     if (start === null || end === null || end < start) return false
 
+    const rangeSize = end - start + 1
     // Keep malformed/hostile input from forcing an unbounded allocation. The
-    // range is expanded only after every element has passed the bound check.
-    if ((end - start + 1) > MAX_HIGHLIGHT_RANGE_LINE || parsed.length + (end - start + 1) > MAX_HIGHLIGHT_RANGE_LINE) {
+    // complete token is validated and budgeted before the current Set changes.
+    if (
+      rangeSize > MAX_HIGHLIGHT_RANGE_LINE
+      || expansionWork > MAX_HIGHLIGHT_EXPANSION_WORK - rangeSize
+      || expansionWork > budget.remaining - rangeSize
+    ) {
       return false
     }
-    for (let line = start; line <= end; line += 1) parsed.push(line)
+    expansionWork += rangeSize
+    ranges.push({ start, end })
   }
 
-  for (const line of parsed) current.add(line)
+  budget.remaining -= expansionWork
+  for (const { start, end } of ranges) {
+    for (let line = start; line <= end; line += 1) current.add(line)
+  }
   return true
 }
 
@@ -85,6 +108,7 @@ export function parseFenceMeta(info: string): FenceMeta {
   const language = info.slice(languageStart, cursor)
   const malformed: string[] = []
   const highlightSet = new Set<number>()
+  const highlightBudget = { remaining: MAX_HIGHLIGHT_EXPANSION_WORK }
   let lineNumbers: FenceLineNumbers = 'off'
   let lineNumberStart: number | undefined
   let label: string | undefined
@@ -102,7 +126,7 @@ export function parseFenceMeta(info: string): FenceMeta {
       }
       const token = info.slice(cursor, close + 1)
       const rangeText = info.slice(cursor + 1, close)
-      if (!parseRangeList(rangeText, highlightSet)) malformed.push(token)
+      if (!parseRangeList(rangeText, highlightSet, highlightBudget)) malformed.push(token)
       cursor = close + 1
       continue
     }

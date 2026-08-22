@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   getFenceMetaHighlightRaw,
+  MAX_HIGHLIGHT_EXPANSION_WORK,
   parseFenceMeta,
 } from '../fenceMeta'
 
@@ -59,6 +60,18 @@ describe('FenceMeta parser', () => {
       expect(meta.malformed).toContain(value)
       expect(getFenceMetaHighlightRaw(meta)).toBe('')
     }
+  })
+
+  it('bounds total range expansion work across every range token in one parse', () => {
+    const repeated = parseFenceMeta('ts {1-100000} {1-100000}')
+    expect(repeated.highlightRanges).toHaveLength(MAX_HIGHLIGHT_EXPANSION_WORK)
+    expect(repeated.malformed).toEqual(['{1-100000}'])
+
+    const mixed = parseFenceMeta('ts {1-60000} {60001-100000} {1-100000}')
+    expect(mixed.highlightRanges).toHaveLength(MAX_HIGHLIGHT_EXPANSION_WORK)
+    expect(mixed.highlightRanges[0]).toBe(1)
+    expect(mixed.highlightRanges.at(-1)).toBe(100000)
+    expect(mixed.malformed).toEqual(['{1-100000}'])
   })
 
   it('bounds future line-number metadata at 100000 and keeps it non-rendering', () => {

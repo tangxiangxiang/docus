@@ -74,6 +74,45 @@ test('MD-EXT-3 separates fence metadata from approved Shiki source notation', as
   })
 })
 
+test('MD-EXT-3 preserves author sentinel-like source and deferred markers', async ({ page }) => {
+  await page.goto('/__markdown-test?mode=reading')
+
+  const result = await page.evaluate(async () => {
+    const { render } = await import('/src/lib/markdown.ts')
+    const article = document.createElement('article')
+    article.className = 'article reading md-ext-3-source-fidelity-fixture'
+    article.innerHTML = await render([
+      '```ts',
+      'const old = "[!code docus-deferred-notation hello]"',
+      'const collision = "[!code docus-deferred-notation-0- hello]"',
+      'const deferred = 1 // [!code highlight:2]',
+      '```',
+    ].join('\n'))
+    document.body.append(article)
+
+    const lines = Array.from(article.querySelectorAll<HTMLElement>('pre.shiki .line'))
+    const text = lines.map((line) => line.textContent ?? '').join('\n')
+    const deferred = lines.find((line) => line.textContent?.includes('const deferred'))
+    const result = {
+      oldSentinelPreserved: text.includes('[!code docus-deferred-notation hello]'),
+      collisionCandidatePreserved: text.includes('[!code docus-deferred-notation-0- hello]'),
+      deferredMarkerPreserved: text.includes('[!code highlight:2]'),
+      deferredNotActivated: deferred?.classList.contains('highlighted') === false,
+      invocationMarkerLeaked: article.innerHTML.includes('docus-deferred-notation-1-'),
+    }
+    article.remove()
+    return result
+  })
+
+  expect(result).toEqual({
+    oldSentinelPreserved: true,
+    collisionCandidatePreserved: true,
+    deferredMarkerPreserved: true,
+    deferredNotActivated: true,
+    invocationMarkerLeaked: false,
+  })
+})
+
 test('MD-EXT-3 keeps annotations and expands generated details only in the PDF surface', async ({ page }) => {
   await page.goto('/__markdown-test?mode=reading')
 
