@@ -21,7 +21,7 @@
 
 import { ref, watchEffect, type Ref } from 'vue'
 import { parseDoc } from '../../lib/frontmatter'
-import { render } from '../../lib/markdown'
+import { render, type MarkdownRenderOptions } from '../../lib/markdown'
 import type { Resolver as WikiResolver } from '../../lib/wikiLinks'
 
 export interface Heading {
@@ -95,6 +95,7 @@ export const __testing__ = { extractHeadings, stripTags }
 export function useMarkdownRender(
   source: Ref<string> | (() => string),
   resolver?: WikiResolver,
+  options: Omit<MarkdownRenderOptions, 'resolver' | 'signal'> = {},
 ): MarkdownRender {
   const html = ref<string>('')
   const error = ref<string | null>(null)
@@ -109,7 +110,11 @@ export function useMarkdownRender(
        AFTER the new one and clobber the html/headings, leaving the
        reader looking at stale content + a stale TOC. */
     let cancelled = false
-    onCleanup(() => { cancelled = true })
+    const controller = new AbortController()
+    onCleanup(() => {
+      cancelled = true
+      controller.abort()
+    })
     try {
       const { frontmatter, content } = parseDoc(raw)
       const title = typeof frontmatter.title === 'string' ? frontmatter.title.trim() : ''
@@ -117,7 +122,7 @@ export function useMarkdownRender(
       const body = !startsWithH1 && title
         ? `# ${title}\n\n${content.replace(/^\n+/, '')}`
         : content
-      const rendered = await render(body, { resolver })
+      const rendered = await render(body, { ...options, resolver, signal: controller.signal })
       if (cancelled) return
       html.value = rendered
       headings.value = extractHeadings(rendered)

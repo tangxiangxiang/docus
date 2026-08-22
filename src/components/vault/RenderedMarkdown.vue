@@ -8,10 +8,13 @@ import { useCodeGroupMount } from '../../composables/useCodeGroupMount'
 import { useVaultContext } from '../../composables/vault/context/useVaultContext'
 import type { Resolver as WikiResolver } from '../../lib/wikiLinks'
 import type { Theme } from '../../composables/useTheme'
+import type { MarkdownResourceResolver } from '../../lib/markdownResources'
 
 const props = withDefaults(defineProps<{
   raw: string
   resolver?: WikiResolver
+  sourcePath?: string
+  resourceResolver?: MarkdownResourceResolver
   tag?: 'div' | 'article'
   renderTheme?: Theme
 }>(), { tag: 'div' })
@@ -20,7 +23,14 @@ const emit = defineEmits<{
   rendered: [el: HTMLElement | null]
 }>()
 
-const { html, error, headings, ready } = useMarkdownRender(toRef(props, 'raw'), props.resolver)
+const { html, error, headings, ready } = useMarkdownRender(
+  toRef(props, 'raw'),
+  props.resolver,
+  {
+    sourcePath: props.sourcePath,
+    resourceResolver: props.resourceResolver,
+  },
+)
 const articleEl = ref<HTMLElement | null>(null)
 const vaultContext = useVaultContext()
 useMarkmapMount(articleEl, toRef(props, 'renderTheme'))

@@ -6,6 +6,7 @@ import { authBoundary } from './auth/middleware.js'
 import folderRoutes from './routes/folders.js'
 import healthRoutes from './routes/health.js'
 import linkRoutes from './routes/links.js'
+import markdownResourceRoutes from './routes/markdownResources.js'
 import metadataRoutes from './routes/metadata.js'
 import postRoutes from './routes/posts.js'
 import tagRoutes from './routes/tags.js'
@@ -31,6 +32,7 @@ app.route('/', postRoutes)
 app.route('/', tagRoutes)
 app.route('/', vaultRoutes)
 app.route('/', linkRoutes)
+app.route('/', markdownResourceRoutes)
 app.route('/api/ai', aiRoutes)
 app.route('/api/history', historyRoutes)
 

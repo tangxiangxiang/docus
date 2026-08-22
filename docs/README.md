@@ -67,6 +67,7 @@ Docus is a self-hosted Markdown knowledge base with a Vue interface, a Hono serv
 - [Docus VitePress-Style Markdown Extensions MD-EXT-3 Shiki Code Annotations & Unified Fence Metadata](design/vitepress-markdown-extensions-md-ext-3-code-annotations.md)
 - [Docus VitePress-Style Markdown Extensions MD-EXT-4 Line Numbers](design/vitepress-markdown-extensions-md-ext-4-line-numbers.md)
 - [Docus VitePress-Style Markdown Extensions MD-EXT-5 Code Groups](design/vitepress-markdown-extensions-md-ext-5-code-groups.md)
+- [Docus VitePress-Style Markdown Extensions MD-EXT-6 Safe Snippets & Markdown Includes](design/vitepress-markdown-extensions-md-ext-6-resources.md)
 - [PDF Export V1 PRD](design/pdf-export-prd.md)
 - [PDF Export V1 Implementation Plan](design/pdf-export-implementation-plan.md)
 - [Logo](design/logo.md)

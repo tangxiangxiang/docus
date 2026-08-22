@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import RenderedMarkdown from './RenderedMarkdown.vue'
 import type { Resolver as WikiResolver } from '../../lib/wikiLinks'
+import type { MarkdownResourceResolver } from '../../lib/markdownResources'
 
 defineProps<{
   raw: string
   resolver?: WikiResolver
+  sourcePath?: string
+  resourceResolver?: MarkdownResourceResolver
 }>()
 
 const emit = defineEmits<{
@@ -19,6 +22,8 @@ const emit = defineEmits<{
     <RenderedMarkdown
       :raw="raw"
       :resolver="resolver"
+      :source-path="sourcePath"
+      :resource-resolver="resourceResolver"
       tag="article"
       render-theme="light"
       @rendered="(el) => emit('rendered', el)"

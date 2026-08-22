@@ -33,7 +33,32 @@ export function resolveWikiTarget(
   allPaths: string[],
 ): string | null {
   if (!ref) return null
-  // Reject anything that smells like an escape attempt or non-vault syntax.
+  // Resource-aware Markdown may use source-relative references. Normalize them
+  // in the logical vault namespace before the ordinary Docus lookup; no raw
+  // traversal syntax is ever passed to a filesystem helper.
+  if (/^(?:\.\/|\.\.\/|@\/)/u.test(ref)) {
+    if (ref.includes('\\') || ref.startsWith('/')) return null
+    const sourceBare = sourcePath.replace(/\.md$/iu, '')
+    const base = ref.startsWith('@/')
+      ? []
+      : dirname(sourceBare).split('/').filter(Boolean)
+    const raw = ref.startsWith('@/') ? ref.slice(2) : ref
+    const segments = [...base]
+    for (const segment of raw.split('/')) {
+      if (!segment || segment === '.') continue
+      if (segment === '..') {
+        if (segments.length === 0) return null
+        segments.pop()
+        continue
+      }
+      if (!/^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$/iu.test(segment)) return null
+      segments.push(segment)
+    }
+    const relative = segments.join('/').replace(/\.md$/iu, '')
+    return relative && allPaths.includes(relative) ? relative : null
+  }
+
+  // Reject anything else that smells like an escape attempt or non-vault syntax.
   if (ref.includes('..') || ref.includes('\\') || ref.startsWith('/')) return null
 
   // Strip a trailing .md (case-insensitive) before matching.

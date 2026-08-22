@@ -1734,10 +1734,11 @@ useLinkIndexSubscription(fileChanges)
 // render-scoped markdown-it env, so panes always see the latest index
 // without sharing resolver state or having to re-mount.
 const linkIndex = getLinkIndex(fileChanges)
-const wikiResolver = (ref: string, _anchor?: string) => {
+const wikiResolver = (ref: string, _anchor?: string, context?: { sourcePath?: string }) => {
   const allPaths = Array.from(linkIndex.value.paths)
+  const sourcePath = context?.sourcePath?.replace(/\.md$/iu, '') ?? activePath.value ?? ''
   return {
-    target: resolveWikiTarget(ref, activePath.value ?? '', allPaths),
+    target: resolveWikiTarget(ref, sourcePath, allPaths),
     alias: ref,
   }
 }
@@ -1762,10 +1763,14 @@ let pdfRenderWaiter: PdfRenderWaiter | null = null
 
 // A PDF export may target a document other than the active tab. Resolve
 // wiki-links relative to that target instead of borrowing activePath.
-const pdfWikiResolver = (ref: string, _anchor?: string) => {
+const pdfWikiResolver = (ref: string, _anchor?: string, context?: { sourcePath?: string }) => {
   const allPaths = Array.from(linkIndex.value.paths)
+  const sourcePath = context?.sourcePath?.replace(/\.md$/iu, '')
+    ?? pdfExportRequest.value?.path
+    ?? activePath.value
+    ?? ''
   return {
-    target: resolveWikiTarget(ref, pdfExportRequest.value?.path ?? activePath.value ?? '', allPaths),
+    target: resolveWikiTarget(ref, sourcePath, allPaths),
     alias: ref,
   }
 }
@@ -2088,6 +2093,7 @@ watch(isReadMode, async (reading) => {
           <ReadingPane
             :raw="activeTab.raw"
             :resolver="wikiResolver"
+            :source-path="activeTab.path"
           />
         </div>
         <div v-if="!tabs.length" class="content-empty">
@@ -2188,6 +2194,7 @@ watch(isReadMode, async (reading) => {
       :key="pdfExportRequest.id"
       :raw="pdfExportRequest.raw"
       :resolver="pdfWikiResolver"
+      :source-path="pdfExportRequest.path"
       @rendered="onPdfExportRendered"
     />
   </div>

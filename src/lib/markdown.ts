@@ -27,6 +27,12 @@ import {
   syncGeneratedShikiStylesheet,
 } from './shiki'
 import { parseFenceMeta, type FenceMeta } from './fenceMeta'
+import {
+  authenticatedMarkdownResourceResolver,
+  expandMarkdownResources,
+  markdownResourceImageUrl,
+  type MarkdownResourceResolver,
+} from './markdownResources'
 
 function escapeHtml(s: string): string {
   return s
@@ -372,7 +378,16 @@ async function getMd(): Promise<MarkdownIt> {
     md.renderer.rules.image = (tokens, index, options, env, self) => {
       // This renderer is reached only for Markdown image tokens. Raw HTML
       // <img> remains html_inline and therefore keeps its existing contract.
-      tokens[index].attrSet('loading', 'lazy')
+      const token = tokens[index]
+      const sourcePath = typeof token.meta?.docusSourcePath === 'string'
+        ? token.meta.docusSourcePath
+        : undefined
+      const resourceEnv = env as WikiLinkEnv
+      if (resourceEnv.resourceSourcePathByLine && sourcePath) {
+        const resourceUrl = markdownResourceImageUrl(sourcePath, token.attrGet('src') ?? '')
+        if (resourceUrl) token.attrSet('src', resourceUrl)
+      }
+      token.attrSet('loading', 'lazy')
       return defaultImageRenderer
         ? defaultImageRenderer(tokens, index, options, env, self)
         : self.renderToken(tokens, index, options)
@@ -384,6 +399,9 @@ async function getMd(): Promise<MarkdownIt> {
 
 export interface MarkdownRenderOptions {
   resolver?: WikiResolver
+  sourcePath?: string
+  resourceResolver?: MarkdownResourceResolver
+  signal?: AbortSignal
 }
 
 /**
@@ -412,7 +430,14 @@ export function discoverFenceMetas(md: MarkdownIt, markdown: string): FenceMeta[
 
 export async function render(markdown: string, options: MarkdownRenderOptions = {}): Promise<string> {
   const md = await getMd()
-  const fenceMetas = discoverFenceMetas(md, markdown)
+  const expanded = await expandMarkdownResources(markdown, {
+    md,
+    sourcePath: options.sourcePath,
+    resourceResolver: options.resourceResolver
+      ?? (options.sourcePath ? authenticatedMarkdownResourceResolver : undefined),
+    signal: options.signal,
+  })
+  const fenceMetas = discoverFenceMetas(md, expanded.markdown)
   await prepareShikiLanguages(fenceMetas)
 
   // Keep the final env separate from the discovery env. In particular, the
@@ -422,8 +447,10 @@ export async function render(markdown: string, options: MarkdownRenderOptions = 
     ...(options.resolver ? { wikiResolver: options.resolver } : {}),
     externalLinkProvenance,
     codeGroupRenderScope: createCodeGroupRenderScope(),
+    resourceSourcePathByLine: expanded.sourcePathByLine,
+    deferWikiResolution: expanded.sourcePathByLine.some(Boolean),
   }
-  const html = md.render(markdown, env)
+  const html = md.render(expanded.markdown, env)
   syncGeneratedShikiStylesheet()
   return sanitizeMarkdownHtml(html, externalLinkProvenance)
 }

@@ -14,6 +14,7 @@ import RenderedMarkdown from './RenderedMarkdown.vue'
 import type { Heading } from '../../composables/vault/useMarkdownRender'
 import { useVaultTocState } from '../../composables/vault/useTocState'
 import type { Resolver as WikiResolver } from '../../lib/wikiLinks'
+import type { MarkdownResourceResolver } from '../../lib/markdownResources'
 
 const { tocHeadings, tocActiveId, tocScrollTo } = useVaultTocState()
 
@@ -21,6 +22,8 @@ const props = defineProps<{
   raw: string
   /** Resolver for [[wiki]] / [t](path.md) links. See ReadingPane. */
   resolver?: WikiResolver
+  sourcePath?: string
+  resourceResolver?: MarkdownResourceResolver
 }>()
 const headings = ref<Heading[]>([])
 
@@ -203,6 +206,8 @@ watch(() => props.raw, () => {
         <RenderedMarkdown
           :raw="raw"
           :resolver="resolver"
+          :source-path="sourcePath"
+          :resource-resolver="resourceResolver"
           tag="article"
           @update:headings="headings = $event"
           @rendered="articleEl = $event"

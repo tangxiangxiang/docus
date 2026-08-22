@@ -23,7 +23,12 @@
 
 import MarkdownIt from 'markdown-it'
 
-export type Resolver = (ref: string, anchor?: string) => {
+export interface WikiLinkResolutionContext {
+  /** Canonical source identity for the Markdown line being resolved. */
+  sourcePath?: string
+}
+
+export type Resolver = (ref: string, anchor?: string, context?: WikiLinkResolutionContext) => {
   /** Resolved vault path (no .md, no #anchor) or null if the target
    *  doesn't exist. */
   target: string | null
@@ -49,6 +54,10 @@ export interface WikiLinkEnv {
   externalLinkProvenance?: string
   /** Opaque render-scoped namespace for generated code-group IDs. */
   codeGroupRenderScope?: string
+  /** Source identity for each flattened Markdown line in resource-aware renders. */
+  resourceSourcePathByLine?: Array<string | undefined>
+  /** Defer [[wiki]] resolution until inline tokens have source context. */
+  deferWikiResolution?: boolean
 }
 
 /** Temporary marker used only between MarkdownIt rendering and sanitization. */
@@ -77,6 +86,9 @@ type MdToken = {
   attrGet: (name: string) => string | null | undefined
   attrSet: (name: string, value: string) => void
   attrJoin: (name: string, value: string) => void
+  map?: [number, number] | null
+  children?: MdToken[] | null
+  meta?: Record<string, unknown>
 }
 type MdRenderer = { renderToken(tokens: MdToken[], idx: number, options: unknown): string }
 
@@ -89,6 +101,32 @@ interface WikiLinkInlineState {
   src: string
   push: (type: string, tag: string, nesting: number) => MdToken
   env: Record<string, unknown>
+}
+
+const DEFERRED_WIKI_META = 'docusDeferredWiki'
+const SOURCE_PATH_META = 'docusSourcePath'
+
+type DeferredWiki = {
+  ref: string
+  anchor?: string
+  alias?: string
+}
+
+function getTokenSourcePath(token: MdToken): string | undefined {
+  const value = token.meta?.[SOURCE_PATH_META]
+  return typeof value === 'string' && value ? value : undefined
+}
+
+function getDeferredWiki(token: MdToken): DeferredWiki | null {
+  const value = token.meta?.[DEFERRED_WIKI_META]
+  if (!value || typeof value !== 'object') return null
+  const candidate = value as Partial<DeferredWiki>
+  if (typeof candidate.ref !== 'string' || !candidate.ref) return null
+  return {
+    ref: candidate.ref,
+    ...(typeof candidate.anchor === 'string' ? { anchor: candidate.anchor } : {}),
+    ...(typeof candidate.alias === 'string' ? { alias: candidate.alias } : {}),
+  }
 }
 
 function wikiLinkRule(
@@ -134,8 +172,29 @@ function wikiLinkRule(
 
   if (silent) return true  // validation only
 
-  const resolved = resolverFromEnv(state.env, opts)(ref, anchor)
+  const defer = state.env.deferWikiResolution === true
   const display = alias ?? ref
+  if (defer) {
+    const open = state.push('link_open', 'a', 1)
+    open.attrs = [
+      ['class', 'wiki-link wiki-link-missing'],
+      ['href', '#'],
+      ['data-target', ref],
+      ['data-missing', 'true'],
+    ]
+    if (anchor) open.attrs.push(['data-anchor', anchor])
+    open.meta = {
+      ...(open.meta ?? {}),
+      [DEFERRED_WIKI_META]: { ref, ...(anchor ? { anchor } : {}), ...(alias ? { alias } : {}) },
+    }
+    const text = state.push('text', '', 0)
+    text.content = display
+    state.push('link_close', 'a', -1)
+    state.pos = end + 2
+    return true
+  }
+
+  const resolved = resolverFromEnv(state.env, opts)(ref, anchor)
   // data-target is the as-written ref for missing links; for
   // resolved links, it's the resolved path (so the click handler
   // can navigate to the right note).
@@ -166,7 +225,7 @@ function wikiLinkRule(
 // Vault-internal markdown link: href starts with a kebab segment, no
 // scheme, not absolute. Matches foo, foo.md, foo/bar, foo/bar.md,
 // foo.md#a, foo#a.
-const INTERNAL_HREF_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*(?:\.md)?(?:#[^\s)]*)?$/i
+const INTERNAL_HREF_RE = /^(?:(?:\.\/|\.\.\/)+|@\/)?[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?(?:\/[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?)*(?:\.md)?(?:#[^\s)]*)?$/iu
 
 /** Classify a single `link_open` token in-place. Used by the renderer
  *  rule below — we can't iterate the token stream in a `core` rule
@@ -180,6 +239,24 @@ function classifyLinkOpenToken(
 ): void {
   const t = tokens[idx]
   if (t.type !== 'link_open') return
+  const deferred = getDeferredWiki(t)
+  if (deferred) {
+    const sourcePath = getTokenSourcePath(t)
+    const resolved = sourcePath
+      ? resolve(deferred.ref, deferred.anchor, { sourcePath })
+      : resolve(deferred.ref, deferred.anchor)
+    const missing = resolved?.target ? 'false' : 'true'
+    const target = resolved?.target ?? deferred.ref
+    const href = resolved?.target
+      ? '/vault/' + encodeURI(resolved.target) + (deferred.anchor ? '#' + encodeURIComponent(deferred.anchor) : '')
+      : '#'
+    t.attrSet('class', `wiki-link${missing === 'true' ? ' wiki-link-missing' : ''}`)
+    t.attrSet('href', href)
+    t.attrSet('data-target', target)
+    t.attrSet('data-missing', missing)
+    if (deferred.anchor) t.attrSet('data-anchor', deferred.anchor)
+    return
+  }
   if (t.attrGet('class')?.includes('wiki-link')) return  // already classified by inline rule
   const hrefAttr = t.attrGet('href')
   if (!hrefAttr) return
@@ -190,7 +267,11 @@ function classifyLinkOpenToken(
   const hash = hashIdx === -1 ? '' : hrefAttr.slice(hashIdx + 1)
   const cleanPath = pathPart.replace(/\.md$/i, '')
   if (!cleanPath) return
-  const resolved = resolve(cleanPath, hash || undefined)
+  const sourcePath = getTokenSourcePath(t)
+  if (/^(?:\.\/|\.\.\/|@\/)/u.test(pathPart) && !sourcePath) return
+  const resolved = sourcePath
+    ? resolve(cleanPath, hash || undefined, { sourcePath })
+    : resolve(cleanPath, hash || undefined)
   const missing = resolved?.target ? 'false' : 'true'
   const target = resolved?.target ?? cleanPath
   const newHref = resolved?.target
@@ -241,6 +322,19 @@ export function wikiLinkPlugin(
     const inlineState = state as unknown as WikiLinkInlineState
     return wikiLinkRule(inlineState, silent, opts)
   })
+  md.core.ruler.after('inline', 'docus-wiki-source-context', (state) => {
+    const env = state.env as WikiLinkEnv
+    const sourcePaths = env.resourceSourcePathByLine
+    if (!sourcePaths) return
+    for (const token of state.tokens as unknown as MdToken[]) {
+      if (token.type !== 'inline' || !token.children || !token.map) continue
+      const sourcePath = sourcePaths[token.map[0]]
+      if (!sourcePath) continue
+      for (const child of token.children) {
+        child.meta = { ...(child.meta ?? {}), [SOURCE_PATH_META]: sourcePath }
+      }
+    }
+  })
   // Renderer rule for `link_open`: classifies standard `[t](path.md)`
   // links into wiki-links. Runs once per `link_open` token as the
   // renderer walks the flattened stream.
@@ -261,4 +355,6 @@ export function wikiLinkPlugin(
 // Exposed for tests: regexes used by the plugin.
 export const __testing__ = {
   INTERNAL_HREF_RE,
+  DEFERRED_WIKI_META,
+  SOURCE_PATH_META,
 }
