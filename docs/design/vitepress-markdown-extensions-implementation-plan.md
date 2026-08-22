@@ -4,7 +4,7 @@
 
 | Field | Value |
 | --- | --- |
-| Document status | IMPLEMENTATION COMPLETE / MD-EXT-6 COMPLETE / REVIEW-READY |
+| Document status | IMPLEMENTATION COMPLETE / MD-EXT-6 COMPLETE / REVIEW-CLOSED |
 | Product program | Docus VitePress-Style Markdown Extensions |
 | Repository | tangxiangxiang/docus |
 | Branch | main |
@@ -13,14 +13,14 @@
 | Approved PRD baseline | 7e05e3bb43f4283a90ead1abd0c81325bc93281c |
 | Implementation Plan task base | 7e05e3bb43f4283a90ead1abd0c81325bc93281c |
 | Implementation baseline | 582e312a4c5752a4c9a5c6bba7b0e752b0b78078 |
-| Current phase | MD-EXT-6 — COMPLETE / REVIEW-READY; next MD-EXT-7 — NOT STARTED |
-| Current implementation state | PRD approved; MD-EXT-0 audit complete; MD-EXT-1 implementation and provenance/source-awareness follow-up complete; MD-EXT-2 implementation plus opaque-range and paragraph-context follow-ups complete; MD-EXT-3 fence metadata and Shiki source annotations plus sentinel/budget review follow-up complete; MD-EXT-4 bounded structural line numbers, unknown-language fallback, reader/PDF layout, browser evidence, and reader annotation-background follow-up complete; MD-EXT-5 static code groups, root-scoped reader enhancement, sanitizer delta, and all-panel PDF preparation complete; MD-EXT-6 safe snippets/includes, authenticated resource reads, exact range semantics, exact UTF-8 expansion accounting, per-child source context, cancellation, code-span-aware directive opacity, fail-closed local-image PDF cloning, and child-driven Markdown-link/image ownership complete; MD-EXT-7 not started |
+| Current phase | MD-EXT-6 — COMPLETE / REVIEW-CLOSED; next MD-EXT-7 — READY TO START / NOT STARTED |
+| Current implementation state | PRD approved; MD-EXT-0 audit complete; MD-EXT-1 implementation and provenance/source-awareness follow-up complete; MD-EXT-2 implementation plus opaque-range and paragraph-context follow-ups complete; MD-EXT-3 fence metadata and Shiki source annotations plus sentinel/budget review follow-up complete; MD-EXT-4 bounded structural line numbers, unknown-language fallback, reader/PDF layout, browser evidence, and reader annotation-background follow-up complete; MD-EXT-5 static code groups, root-scoped reader enhancement, sanitizer delta, and all-panel PDF preparation complete; MD-EXT-6 safe snippets/includes, authenticated resource reads, exact range semantics, exact UTF-8 expansion accounting, per-child source context, cancellation, code-span-aware directive opacity, fail-closed local-image PDF cloning, and child-driven Markdown-link/image ownership complete; MD-EXT-7 ready to start / not started |
 | Shiki prerequisite | SHIKI-H0 through SHIKI-H8 COMPLETE; migration closed; no H9 |
 | Parser baseline | markdown-it 14.2.0 singleton (package range `^14.1.0`) |
 | Shiki baseline | Shiki 4.4.3, @shikijs/transformers 4.4.3 |
 | VitePress reference | Official Markdown Extensions documentation, version observed 2.0.0-alpha.19 on 2026-08-21 |
 | Scope of this document | Implementation planning only |
-| This lifecycle update changes | MD-EXT-6 same-content, Markdown-link, link-label, and image-alt inline-ownership follow-up implementation/evidence lifecycle metadata; MD-EXT-7 remains not started |
+| This lifecycle update changes | MD-EXT-6 final external-review lifecycle metadata and image-alt implementation SHA; MD-EXT-7 is ready to start / not started |
 
 The production baseline is the last production-code state before this Markdown
 extension program. The approved PRD commits after that point are documentation-only.
@@ -2044,7 +2044,7 @@ accessibility, copy, wrapping, PDF, and bound evidence.
 
 [MD-EXT-6 evidence](vitepress-markdown-extensions-md-ext-6-resources.md)
 
-MD-EXT-6 — Safe Snippets & Markdown Includes — COMPLETE / REVIEW-READY.
+MD-EXT-6 — Safe Snippets & Markdown Includes — COMPLETE / REVIEW-CLOSED.
 
 ## 24. MD-EXT-5 — Code Groups
 
@@ -2185,12 +2185,12 @@ token path, a root-scoped `useCodeGroupMount`, exact sanitizer additions, and a
 clone-only PDF all-panel transformation. The review follow-up additionally
 enforces the exact `tabindex` values `0` and `-1` at the final sanitizer boundary
 and proves grouped PDF line numbers, annotations, and printable-light Shiki
-token colors in Chromium. MD-EXT-6 has since been implemented and is review-ready;
-MD-EXT-7 has not started.
+token colors in Chromium. MD-EXT-6 has since been implemented and is review-closed;
+MD-EXT-7 is ready to start but has not started.
 
 ### Next phase
 
-MD-EXT-6 — Safe Snippets & Markdown Includes — COMPLETE / REVIEW-READY.
+MD-EXT-6 — Safe Snippets & Markdown Includes — COMPLETE / REVIEW-CLOSED.
 
 ## 25. MD-EXT-6 — Safe Snippets & Markdown Includes
 
@@ -2421,7 +2421,7 @@ resolver/network counts, cancellation, browser, PDF, and negative security cases
 
 ### Status
 
-COMPLETE / REVIEW-READY. The implementation expands approved snippets and Markdown
+COMPLETE / REVIEW-CLOSED. The implementation expands approved snippets and Markdown
 includes before final MarkdownIt discovery/render, keeps logical source-relative
 resolution separate from the strict physical path boundary, forwards included source
 context to links/images/WikiLinks, and preserves the settled-HTML PDF contract. The
@@ -2438,13 +2438,12 @@ marker/content-only identity for same-content raw backticks. The evidence docume
 records the authenticated route, bounded text/image policy, per-render
 cache/stack/cancellation behavior, focused tests, browser network counts,
 failure-mode PDF proof, the installed MarkdownIt 14.2.0 parser/link-rule audit,
-and the known aggregate unit-suite environment limitations. MD-EXT-6 remains
-review-ready; MD-EXT-7 has not started.
-MD-EXT-7 has not started.
+and the known aggregate unit-suite environment limitations. MD-EXT-6 is
+review-closed; MD-EXT-7 is ready to start but has not started.
 
 ### Next phase
 
-MD-EXT-7 — Full Regression, Bundle Audit & Release Gate — NOT STARTED.
+MD-EXT-7 — Full Regression, Bundle Audit & Release Gate — READY TO START / NOT STARTED.
 
 ## 26. MD-EXT-7 — Full Regression, Bundle Audit & Release Gate
 
@@ -2822,5 +2821,5 @@ implemented opportunistically in a phase that owns a related feature.
 
 The implementation plan remains the execution map. MD-EXT-0 is complete as an
 evidence-only phase, MD-EXT-1 through MD-EXT-5 are implemented with their evidence
-documents, MD-EXT-6 is implemented and review-ready with its evidence document,
-and MD-EXT-7 has not started.
+documents, MD-EXT-6 is implemented and review-closed with its evidence document.
+MD-EXT-7 is the next phase and has not started.

@@ -6,7 +6,7 @@
 | Field | Value |
 | --- | --- |
 | Phase | MD-EXT-6 — Safe Snippets & Markdown Includes |
-| Status | COMPLETE / REVIEW-READY |
+| Status | COMPLETE / REVIEW-CLOSED |
 | Implementation baseline | `582e312a4c5752a4c9a5c6bba7b0e752b0b78078` |
 | Previous phase final review closure | `dd4768f67e77f190794cd7d046218705e2ce56e3` |
 | MD-EXT-6 base | `dd4768f67e77f190794cd7d046218705e2ce56e3` |
@@ -20,14 +20,14 @@
 | MD-EXT-6 same-content ownership follow-up commit | `6563ae2022888d719bfb3d78094d8519f508343e` |
 | MD-EXT-6 Markdown-link destination/title ownership follow-up commit | `192bd5825acf825cdb2015200590eb568105d61e` |
 | MD-EXT-6 link-label ownership closure follow-up commit | `e47d76f6334223a51af4a4c8015f7a388c1f1c20` |
-| MD-EXT-6 image-alt ownership follow-up commit | Recorded in the final handoff after this document is committed |
-| Next phase | MD-EXT-7 — NOT STARTED |
+| MD-EXT-6 image-alt ownership follow-up commit | `fc78da8b0dd23e5b543ed346b5bf63032778c181` |
+| Next phase | MD-EXT-7 — READY TO START / NOT STARTED |
 
 This document records the implementation and verification evidence for MD-EXT-6,
 including the range, expansion-budget, source-context, and PDF local-image
 boundary follow-up plus the code-span ownership follow-ups. The current
-same-content, Markdown-link, link-label, and image-alt ownership follow-ups remain
-review-ready; no MD-EXT-7 work is included.
+same-content, Markdown-link, link-label, and image-alt ownership follow-ups are
+review-closed; no MD-EXT-7 work is included.
 
 ## 2. Scope and changed files
 
@@ -778,6 +778,30 @@ The historical full-unit evidence above remains unchanged. The image-alt
 follow-up rerun is recorded above with `3229` passing tests; the same known
 environment limitations remained and no new product failure appeared.
 
+## Final external review closure
+
+| Field | Final status |
+| --- | --- |
+| Final implementation SHA | `fc78da8b0dd23e5b543ed346b5bf63032778c181` |
+| External review | APPROVED |
+| Lifecycle | COMPLETE / REVIEW-CLOSED |
+| P0 / P1 / P2 | NONE / NONE / NONE |
+| Next | MD-EXT-7 — READY TO START / NOT STARTED |
+
+The final externally reviewed boundaries are closed:
+
+| Boundary | Status |
+| --- | --- |
+| Resource ranges / UTF-8 budget | CLOSED |
+| Cache / cycle / depth; abort / auth / physical path | CLOSED |
+| Root/include source context | CLOSED |
+| Top-level, cross-paragraph, malformed-directive, and monotonic code-span ownership | CLOSED |
+| HTML same-content, Markdown link-title, Markdown link-label, image-title, and image-alt ownership | CLOSED |
+| PDF no-reread and snapshot-failure fail-closed behavior | CLOSED |
+
+No independent GitHub status/workflow evidence was available for the final SHA;
+closure is based on the external review and the recorded local validation above.
+
 ## 12. Rollback and next phase
 
 The phase is independently revertible by removing the resource client/service,
@@ -785,5 +809,6 @@ route mount, expansion/source-context forwarding, focused tests, and evidence.
 MD-EXT-1 through MD-EXT-5, the existing `posts` API, and the strict physical
 path helpers remain independent.
 
-MD-EXT-7 is not started. It is the later full regression, bundle audit, and
-release gate; no resource feature is being added there by this phase.
+MD-EXT-7 is ready to start but not started. It is the later full regression,
+bundle audit, and release gate; no resource feature is being added there by this
+phase.
