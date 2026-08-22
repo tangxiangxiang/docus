@@ -214,10 +214,14 @@ export function createMarkdownSanitizer(provenanceToken?: string): MarkdownSanit
     }
     // DOMPurify classifies tabindex as a URI-like attribute when the
     // Markdown URI policy is active. Code-group roving tabindex only needs
-    // these two fixed values; preserve them without opening a generic
-    // attribute/value channel.
-    if (data.attrName === 'tabindex' && (data.attrValue === '0' || data.attrValue === '-1')) {
-      data.forceKeepAttr = true
+    // these two fixed values; enforce the exact string allowlist rather than
+    // opening a generic author-controlled focus-order channel.
+    if (data.attrName === 'tabindex') {
+      if (data.attrValue === '0' || data.attrValue === '-1') {
+        data.forceKeepAttr = true
+      } else {
+        data.keepAttr = false
+      }
       return
     }
     // Permit only the four attributes used by our mount and wiki-link

@@ -396,6 +396,43 @@ describe('markdown render()', () => {
     expect(html).not.toMatch(/javascript:/i)
   })
 
+  it('allows only exact roving tabindex values through the final sanitizer', async () => {
+    const html = await render([
+      '<button tabindex="999">bad-999</button>',
+      '<button tabindex="1">bad-1</button>',
+      '<button tabindex="-2">bad-minus-two</button>',
+      '<button tabindex="abc">bad-text</button>',
+      '<button tabindex="01">bad-leading-zero</button>',
+      '<button tabindex="+1">bad-plus-one</button>',
+      '<button tabindex="0">good-zero</button>',
+      '<button tabindex="-1">good-minus-one</button>',
+      '<div tabindex="999">bad-div</div>',
+      '<div tabindex="0">good-div</div>',
+      '',
+      '::: code-group',
+      '```ts [TypeScript]',
+      'const ts = 1',
+      '```',
+      '```js [JavaScript]',
+      'const js = 2',
+      '```',
+      ':::',
+    ].join('\n'))
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const elementWithText = (selector: string, text: string) => Array.from(doc.querySelectorAll<HTMLElement>(selector))
+      .find((element) => element.textContent === text)
+
+    for (const text of ['bad-999', 'bad-1', 'bad-minus-two', 'bad-text', 'bad-leading-zero', 'bad-plus-one', 'bad-div']) {
+      expect(elementWithText('button, div', text)?.hasAttribute('tabindex'), text).toBe(false)
+    }
+    expect(elementWithText('button', 'good-zero')?.getAttribute('tabindex')).toBe('0')
+    expect(elementWithText('button', 'good-minus-one')?.getAttribute('tabindex')).toBe('-1')
+    expect(elementWithText('div', 'good-div')?.getAttribute('tabindex')).toBe('0')
+
+    expect(Array.from(doc.querySelectorAll<HTMLElement>('.docus-code-group [role="tab"]'))
+      .map((tab) => tab.getAttribute('tabindex'))).toEqual(['0', '-1'])
+  })
+
   it('keeps only Docus data attributes and strips forged internal attributes', async () => {
     const html = await render([
       '<div class="math-mount math-inline" data-content="safe" data-target="note" data-evil="123" data-onclick="alert(1)">safe</div>',

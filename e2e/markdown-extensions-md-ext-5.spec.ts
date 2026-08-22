@@ -184,15 +184,19 @@ test('MD-EXT-5 exports all code-group panels without mutating reader state', asy
     const { render } = await import('/src/lib/markdown.ts')
     const pdf = await import('/src/lib/pdfExport.ts')
     const { activateCodeGroupTab } = await import('/src/composables/useCodeGroupMount.ts')
+    const { useTheme } = await import('/src/composables/useTheme.ts')
+    useTheme().set('dark')
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
     const article = document.createElement('article')
     article.className = 'article reading'
     article.innerHTML = await render([
       '::: code-group',
-      '```ts [TypeScript]',
-      'const ts = 1',
+      '```ts {2}:line-numbers=98 [TypeScript]',
+      'const first = 1',
+      'const second = 2 // [!code error]',
       '```',
       '```js [JavaScript]',
-      'const js = 2',
+      "console.log('js')",
       '```',
       ':::',
     ].join('\n'))
@@ -207,16 +211,43 @@ test('MD-EXT-5 exports all code-group panels without mutating reader state', asy
     const preparedHtml = pdf.preparePdfArticleHtml(article)
     const preparedNoInlineStyles = !preparedHtml.includes(' style=')
     const win = window as Window & { __docusMdExt5PdfEvidence?: unknown }
-    pdf.__testing__.setPdfCloneObserver((_clonedDocument, clonedRoot) => {
+    pdf.__testing__.setPdfCloneObserver((clonedDocument, clonedRoot) => {
       const cloneArticle = clonedRoot.querySelector<HTMLElement>('.article')
       const group = cloneArticle?.querySelector<HTMLElement>('.docus-code-group')
       const items = group ? Array.from(group.querySelectorAll<HTMLElement>('.docus-code-group-pdf-item')) : []
+      const typeScriptPre = items[0]?.querySelector<HTMLElement>('pre.shiki.docus-line-numbers')
+      const errorLine = typeScriptPre?.querySelector<HTMLElement>('.line.error')
+      const token = typeScriptPre
+        ? Array.from(typeScriptPre.querySelectorAll<HTMLElement>('.docus-line-content span'))
+          .find((element) => Array.from(element.classList).some((name) => name.startsWith('docus-shiki-')))
+        : undefined
+      if (!cloneArticle || !group || !typeScriptPre || !errorLine || !token) {
+        throw new Error('MD-EXT-5 grouped PDF Shiki fixture is incomplete')
+      }
+
+      const view = clonedDocument.defaultView ?? window
+      const normalizeColor = (value: string) => {
+        const probe = clonedDocument.createElement('span')
+        probe.style.color = value.trim()
+        clonedRoot.append(probe)
+        const normalized = view.getComputedStyle(probe).color
+        probe.remove()
+        return normalized
+      }
+      const tokenStyle = view.getComputedStyle(token)
       win.__docusMdExt5PdfEvidence = {
         tabsRemoved: group?.querySelector('.docus-code-group-tabs') === null,
         labels: items.map((item) => item.querySelector('.docus-code-group-pdf-label')?.textContent),
         panelsVisible: items.every((item) => item.querySelector('[role="tabpanel"]')?.getAttribute('aria-hidden') === 'false'),
-        sourceOrder: items.map((item) => item.querySelector('pre')?.textContent?.trim()),
+        sourceOrder: items.map((item) => item.querySelector('.docus-code-group-pdf-label')?.textContent),
+        panelText: items.map((item) => item.querySelector('pre')?.textContent?.trim()),
         noInlineStyles: preparedNoInlineStyles,
+        lineNumbers: Array.from(typeScriptPre.querySelectorAll('.docus-line-number')).map((node) => node.textContent),
+        annotation: errorLine.classList.contains('error'),
+        lineBackground: view.getComputedStyle(errorLine).backgroundColor,
+        tokenColor: tokenStyle.color,
+        lightTokenColor: normalizeColor(tokenStyle.getPropertyValue('--shiki-light')),
+        darkTokenColor: normalizeColor(tokenStyle.getPropertyValue('--shiki-dark')),
       }
     })
 
@@ -233,6 +264,7 @@ test('MD-EXT-5 exports all code-group panels without mutating reader state', asy
     } finally {
       pdf.__testing__.setPdfCloneObserver(null)
       article.remove()
+      useTheme().set('light')
     }
   })
 
@@ -245,7 +277,18 @@ test('MD-EXT-5 exports all code-group panels without mutating reader state', asy
     tabsRemoved: true,
     labels: ['TypeScript', 'JavaScript'],
     panelsVisible: true,
-    sourceOrder: ['const ts = 1', 'const js = 2'],
+    sourceOrder: ['TypeScript', 'JavaScript'],
+    panelText: expect.arrayContaining([expect.stringContaining('const first'), expect.stringContaining("console.log('js')")]),
     noInlineStyles: true,
+    lineNumbers: expect.arrayContaining(['98', '99']),
+    annotation: true,
+    lineBackground: expect.not.stringMatching(/^(|rgba\(0, 0, 0, 0\))$/),
+    tokenColor: expect.any(String),
+    lightTokenColor: expect.any(String),
+    darkTokenColor: expect.any(String),
   })
+  expect((result.evidence as { tokenColor: string; lightTokenColor: string; darkTokenColor: string }).tokenColor)
+    .toBe((result.evidence as { lightTokenColor: string }).lightTokenColor)
+  expect((result.evidence as { tokenColor: string; darkTokenColor: string }).tokenColor)
+    .not.toBe((result.evidence as { darkTokenColor: string }).darkTokenColor)
 })

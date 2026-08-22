@@ -6,10 +6,11 @@
 | Field | Value |
 | --- | --- |
 | Phase | MD-EXT-5 |
-| Status | COMPLETE / REVIEW-READY |
+| Status | COMPLETE / REVIEW-CLOSED |
 | Implementation baseline | 582e312a4c5752a4c9a5c6bba7b0e752b0b78078 |
 | Previous phase review closure | 57919e17e61bb10aea8530093386562d2ac02062 |
 | MD-EXT-5 base | 57919e17e61bb10aea8530093386562d2ac02062 |
+| Original MD-EXT-5 implementation | bd4a1eb458e68f18a9e1329e94f7080b7eec1062 |
 | Approved PRD | 7e05e3bb43f4283a90ead1abd0c81325bc93281c |
 | Approved Implementation Plan | 582e312a4c5752a4c9a5c6bba7b0e752b0b78078 |
 | MD-EXT-5 completion commit | Recorded in the final handoff after this commit is created |
@@ -166,8 +167,12 @@ attrs: aria-selected, aria-controls, aria-labelledby, tabindex
 `role`, `id`, `type`, `class`, and the existing semantic attributes were already
 allowed. The sanitizer still has `FORBID_ATTR: ['style']`; event attributes,
 unknown data attributes, scripts, SVG, and generic attribute syntax remain
-blocked. The `tabindex` hook retains only the fixed roving values `0` and `-1`
-under the existing DOMPurify policy; it is not a generic value bridge.
+blocked. The `tabindex` hook now explicitly retains only the fixed roving values
+`0` and `-1` and removes every other author value under the existing DOMPurify
+policy; it is not a generic value bridge. The final-render regression covers
+`999`, `1`, `-2`, `abc`, `01`, and `+1` removal, while `0` and `-1` survive for
+both buttons and non-button elements. Generated code-group tabs still retain
+their `0`/`-1` roving values.
 
 Labels are escaped before they enter generated button text. PDF labels use
 `textContent`, not `innerHTML`. No inline event handler, inline style, source
@@ -268,6 +273,71 @@ evidence. MD-EXT-1 through MD-EXT-4, H8 Shiki, existing containers/callouts,
 Mermaid/MarkMap/math, and the existing PDF baseline remain available.
 
 ```text
-MD-EXT-5: COMPLETE / REVIEW-READY
+MD-EXT-5: COMPLETE / REVIEW-CLOSED
 MD-EXT-6: NOT STARTED
 ```
+
+## 12. Review follow-up closure
+
+The original MD-EXT-5 implementation is recorded at:
+
+```text
+bd4a1eb458e68f18a9e1329e94f7080b7eec1062
+```
+
+This follow-up closes the two review findings without changing the code-group
+parser, reader mount, Shiki/FenceMeta path, or PDF production implementation.
+
+### Sanitizer value boundary
+
+The final `MarkdownIt → DOMPurify` path now enforces the exact attribute-value
+contract:
+
+```text
+tabindex="0"   → retained
+tabindex="-1"  → retained
+all other tabindex values → removed
+```
+
+The regression is attribute-wide: invalid values are removed from raw
+`<button>` and `<div>` elements, while generated code-group tabs keep their
+roving `0`/`-1` values. `FORBID_ATTR: ['style']`, event-attribute blocking, and
+the narrow `data-*` allowlist are unchanged.
+
+### Grouped PDF integration proof
+
+The MD-EXT-5 Chromium PDF test now uses a real grouped fixture:
+
+```markdown
+::: code-group
+```ts {2}:line-numbers=98 [TypeScript]
+const first = 1
+const second = 2 // [!code error]
+```
+```js [JavaScript]
+console.log('js')
+```
+:::
+```
+
+The reader selects the non-first JavaScript tab before export. The PDF clone
+still contains both panels and labels in TypeScript/JavaScript source order,
+while the live reader selection and HTML remain unchanged. In the grouped
+TypeScript panel the test observes visible gutter text `98` and `99`, the real
+`.line.error` class, and a non-transparent printable annotation background.
+It also reads a real Shiki token in Chromium: its computed foreground equals
+the normalized `--shiki-light` value and differs from `--shiki-dark`, proving
+that a dark reader palette does not leak into the grouped PDF surface.
+
+Follow-up validation:
+
+| Command/surface | Result |
+| --- | --- |
+| focused Vitest (`markdown`, code groups, PDF, mount) | PASS — 4 files, 97 tests |
+| `npm run typecheck` | PASS |
+| `npm run build` | PASS — 3,935 modules transformed; existing warnings only |
+| `npm run test:unit` | BASELINE-LIMITED — 212 files passed, 3 failed; 3,173 passed, 21 failed, 2 skipped |
+| `e2e/markdown-extensions-md-ext-5.spec.ts` | PASS — 2 tests |
+| MD-EXT-3/4, MD-EXT-5, PDF Shiki/general/layout/pagination/stress E2E | PASS — 19 tests |
+
+MD-EXT-5 is therefore review-closed. MD-EXT-6 remains not started.

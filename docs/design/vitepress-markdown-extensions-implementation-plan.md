@@ -4,7 +4,7 @@
 
 | Field | Value |
 | --- | --- |
-| Document status | IMPLEMENTATION COMPLETE / MD-EXT-5 COMPLETE / REVIEW-READY |
+| Document status | IMPLEMENTATION COMPLETE / MD-EXT-5 COMPLETE / REVIEW-CLOSED |
 | Product program | Docus VitePress-Style Markdown Extensions |
 | Repository | tangxiangxiang/docus |
 | Branch | main |
@@ -13,14 +13,14 @@
 | Approved PRD baseline | 7e05e3bb43f4283a90ead1abd0c81325bc93281c |
 | Implementation Plan task base | 7e05e3bb43f4283a90ead1abd0c81325bc93281c |
 | Implementation baseline | 582e312a4c5752a4c9a5c6bba7b0e752b0b78078 |
-| Current phase | MD-EXT-5 — COMPLETE / REVIEW-READY; next MD-EXT-6 — NOT STARTED |
+| Current phase | MD-EXT-5 — COMPLETE / REVIEW-CLOSED; next MD-EXT-6 — NOT STARTED |
 | Current implementation state | PRD approved; MD-EXT-0 audit complete; MD-EXT-1 implementation and provenance/source-awareness follow-up complete; MD-EXT-2 implementation plus opaque-range and paragraph-context follow-ups complete; MD-EXT-3 fence metadata and Shiki source annotations plus sentinel/budget review follow-up complete; MD-EXT-4 bounded structural line numbers, unknown-language fallback, reader/PDF layout, browser evidence, and reader annotation-background follow-up complete; MD-EXT-5 static code groups, root-scoped reader enhancement, sanitizer delta, and all-panel PDF preparation complete; MD-EXT-6+ not started |
 | Shiki prerequisite | SHIKI-H0 through SHIKI-H8 COMPLETE; migration closed; no H9 |
 | Parser baseline | markdown-it 14.1.0 singleton |
 | Shiki baseline | Shiki 4.4.3, @shikijs/transformers 4.4.3 |
 | VitePress reference | Official Markdown Extensions documentation, version observed 2.0.0-alpha.19 on 2026-08-21 |
 | Scope of this document | Implementation planning only |
-| This lifecycle update changes | MD-EXT-5 implementation/tests/evidence and lifecycle metadata; no dependencies |
+| This lifecycle update changes | MD-EXT-5 review follow-up evidence/lifecycle metadata; no parser, mount, Shiki, PDF production, or dependency changes |
 
 The production baseline is the last production-code state before this Markdown
 extension program. The approved PRD commits after that point are documentation-only.
@@ -1861,7 +1861,16 @@ follow-up evidence and tests are recorded in the linked MD-EXT-3 document.
 
 [MD-EXT-5 evidence](vitepress-markdown-extensions-md-ext-5-code-groups.md)
 
-MD-EXT-5 — Code Groups — COMPLETE / REVIEW-READY.
+MD-EXT-5 — Code Groups — COMPLETE / REVIEW-CLOSED.
+
+The MD-EXT-5 review follow-up is closed. The sanitizer retains `tabindex` only
+for exact string values `0` and `-1`, removes all other author values, and keeps
+generated roving tabs intact. The grouped PDF browser evidence selects the
+non-first panel in a dark reader, then proves all panels remain in source order
+and the grouped TypeScript panel preserves line numbers, `.line.error`, a
+printable annotation background, and a computed token color equal to
+`--shiki-light` and different from `--shiki-dark`. No parser, mount, Shiki,
+FenceMeta, or PDF production change was required.
 
 ## 23. MD-EXT-4 — Line Numbers
 
@@ -2083,8 +2092,10 @@ None. No tab framework.
 ### Sanitizer changes
 
 Add only approved button/ARIA attributes: button, aria-selected, aria-controls,
-aria-labelledby, and tabindex; role is already allowed. Do not add onclick, style,
-wildcard data, or Vue directive attrs.
+aria-labelledby, and tabindex; role is already allowed. The globally allowed
+`tabindex` name is enforced by a final-value hook: only exact string values `0`
+and `-1` survive, and every other author value is removed. Do not add onclick,
+style, wildcard data, or Vue directive attrs.
 
 ### Theme impact
 
@@ -2145,9 +2156,12 @@ sanitized DOM, ARIA/lifecycle, interaction, PDF all-panel, and no-reread evidenc
 
 ### Status
 
-COMPLETE / REVIEW-READY. The implementation uses the existing MarkdownIt fence
+COMPLETE / REVIEW-CLOSED. The implementation uses the existing MarkdownIt fence
 token path, a root-scoped `useCodeGroupMount`, exact sanitizer additions, and a
-clone-only PDF all-panel transformation. MD-EXT-6 has not started.
+clone-only PDF all-panel transformation. The review follow-up additionally
+enforces the exact `tabindex` values `0` and `-1` at the final sanitizer boundary
+and proves grouped PDF line numbers, annotations, and printable-light Shiki
+token colors in Chromium. MD-EXT-6 has not started.
 
 ### Next phase
 
