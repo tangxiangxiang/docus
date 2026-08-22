@@ -4,7 +4,7 @@
 
 | Field | Value |
 | --- | --- |
-| Document status | IMPLEMENTATION COMPLETE / MD-EXT-3 REVIEW-CLOSED |
+| Document status | IMPLEMENTATION COMPLETE / MD-EXT-4 COMPLETE |
 | Product program | Docus VitePress-Style Markdown Extensions |
 | Repository | tangxiangxiang/docus |
 | Branch | main |
@@ -13,14 +13,14 @@
 | Approved PRD baseline | 7e05e3bb43f4283a90ead1abd0c81325bc93281c |
 | Implementation Plan task base | 7e05e3bb43f4283a90ead1abd0c81325bc93281c |
 | Implementation baseline | 582e312a4c5752a4c9a5c6bba7b0e752b0b78078 |
-| Current phase | MD-EXT-3 — COMPLETE / REVIEW-CLOSED; next MD-EXT-4 — NOT STARTED |
-| Current implementation state | PRD approved; MD-EXT-0 audit complete; MD-EXT-1 implementation and provenance/source-awareness follow-up complete; MD-EXT-2 implementation plus opaque-range and paragraph-context follow-ups complete; MD-EXT-3 fence metadata and Shiki source annotations plus sentinel/budget review follow-up complete; MD-EXT-4+ not started |
+| Current phase | MD-EXT-4 — COMPLETE; next MD-EXT-5 — NOT STARTED |
+| Current implementation state | PRD approved; MD-EXT-0 audit complete; MD-EXT-1 implementation and provenance/source-awareness follow-up complete; MD-EXT-2 implementation plus opaque-range and paragraph-context follow-ups complete; MD-EXT-3 fence metadata and Shiki source annotations plus sentinel/budget review follow-up complete; MD-EXT-4 bounded structural line numbers, unknown-language fallback, reader/PDF layout, and browser evidence complete; MD-EXT-5+ not started |
 | Shiki prerequisite | SHIKI-H0 through SHIKI-H8 COMPLETE; migration closed; no H9 |
 | Parser baseline | markdown-it 14.1.0 singleton |
 | Shiki baseline | Shiki 4.4.3, @shikijs/transformers 4.4.3 |
 | VitePress reference | Official Markdown Extensions documentation, version observed 2.0.0-alpha.19 on 2026-08-21 |
 | Scope of this document | Implementation planning only |
-| This lifecycle update changes | MD-EXT-3 review follow-up implementation/tests/evidence and lifecycle metadata; no dependencies |
+| This lifecycle update changes | MD-EXT-4 implementation/tests/evidence and lifecycle metadata; no dependencies |
 
 The production baseline is the last production-code state before this Markdown
 extension program. The approved PRD commits after that point are documentation-only.
@@ -60,7 +60,7 @@ This phase:
 - does not add or remove dependencies;
 - keeps the DOMPurify boundary and FORBID_ATTR: ['style'] invariant;
 - does not create a server resource endpoint;
-- does not start MD-EXT-4 or any later phase;
+- does not start MD-EXT-5 or any later phase;
 - does not reopen the completed Shiki migration.
 
 ## 3. Authoritative PRD and Baselines
@@ -150,7 +150,7 @@ VitePress but remain deferred Docus candidates.
 
 ## 5. Current Production Call Flow
 
-The audited H8 + MD-EXT-3 current flow is:
+The audited H8 + MD-EXT-4 current flow is:
 
 ~~~text
 raw post source
@@ -182,7 +182,8 @@ MarkdownIt block/core token pipeline
         └─ normal fence → FenceMeta → Shiki codeToHtml()
              ├─ official meta/notation classes
              ├─ Docus deferred-notation gate
-             └─ escaped plain fallback when unavailable
+             ├─ opt-in docus:line-numbers structural transform
+             └─ escaped plain fallback, with the same line structure when enabled
     ↓
 syncGeneratedShikiStylesheet()
     ↓
@@ -206,7 +207,11 @@ Current facts that later phases must preserve:
   MD-EXT-3 parses each fence info string through the single FenceMeta parser.
 - H8 uses the same parsed source again for final synchronous render.
 - src/lib/shiki.ts passes the approved annotation pipeline to codeToHtml and keeps the
-  one styleTransformer last and shared.
+  one styleTransformer last and shared. When FenceMeta enables line numbers, a
+  per-fence structural code hook wraps the existing `.line` children after the
+  annotation hooks and before that shared style transformer.
+- src/lib/markdown.ts preserves the unnumbered plain fallback and emits the same
+  normalized logical-line contract for numbered unknown-language fences.
 - src/lib/fenceMeta.ts owns fence-info metadata only; source `[!code ...]` notation is
   consumed by Shiki transformers and is not stored in FenceMeta.
 - MarkMap and Mermaid are exact, case-sensitive special identifiers before normal
@@ -328,7 +333,7 @@ waits for the same image/widget readiness contract, and exports the settled HTML
 | package-lock.json | npm resolution for the current dependency graph | MD-EXT-0 may audit; only a reviewed dependency phase may change it | Never edit for convenience |
 | src/lib/markdown.ts | MarkdownIt singleton, sanitizer, container registration, fence callback, parse/render boundary | MD-EXT-1 / MD-EXT-2 | Keep async preparation before synchronous render |
 | src/lib/markdownContainers.ts | Docus-owned fixed-type block parser, title tokens, delimiter matching, nested body tokenization | MD-EXT-2 | No generic attrs, arbitrary types, or module-global parser state |
-| src/lib/shiki.ts | Shiki singleton, language loading, codeToHtml, style transformer, generated CSS | MD-EXT-3 | Keep one highlighter and style registry |
+| src/lib/shiki.ts | Shiki singleton, language loading, codeToHtml, style transformer, generated CSS, and the MD-EXT-4 structural line transform | MD-EXT-3 / MD-EXT-4 | Keep one highlighter and style registry |
 | src/lib/wikiLinks.ts | [[...]] inline rule and standard .md link_open classifier/renderer | MD-EXT-1 | External policy must compose with this renderer |
 | shared/linkResolve.ts | Isomorphic Docus note target resolution | MD-EXT-6 only if source-context extension is required | Preserve current no-escape semantics |
 | src/lib/callouts.ts | Obsidian blockquote callouts and aliases | MD-EXT-0 audit only; MD-EXT-2 only for a proven coexistence fix | Do not replace callout syntax |
@@ -338,7 +343,7 @@ waits for the same image/widget readiness contract, and exports the settled HTML
 | src/lib/markdownHeadings.ts | New narrow heading metadata/TOC module, if MD-EXT-0 confirms this boundary | MD-EXT-1 | Owns final ID integration but not generic attrs |
 | src/lib/fenceMeta.ts | Canonical fence-info parser and normalized FenceMeta | MD-EXT-3 | Discovery and renderer consume FenceMeta; source notation stays in Shiki |
 | src/lib/markdownResources.ts | New client logical expansion/resource interface, if selected | MD-EXT-6 | Per-render state only |
-| src/shiki.css | Reader palette and MD-EXT-3 annotation CSS; future line-number CSS | MD-EXT-3 | CSS-only theme switching; no user-derived selectors |
+| src/shiki.css | Reader palette, MD-EXT-3 annotation CSS, and MD-EXT-4 line-number CSS | MD-EXT-3 / MD-EXT-4 | CSS-only theme switching; no user-derived selectors |
 | src/style.css | Article layout, callouts, reader/PDF shared styling | MD-EXT-1 / MD-EXT-2 as needed | Keep generic layout and theme boundaries |
 | src/main.ts | Static stylesheet imports | MD-EXT-3 only if new CSS file is selected | No runtime theme retokenization |
 | src/composables/vault/useMarkdownRender.ts | Async render lifecycle, stale-result cancellation, final HTML heading extraction | MD-EXT-1; source options at MD-EXT-6 | Keep stale renders from replacing newer content |
@@ -356,7 +361,7 @@ waits for the same image/widget readiness contract, and exports the settled HTML
 | server/routes/vault.ts | Vault/tree and file-state API | MD-EXT-0 audit only | No generic file endpoint |
 | server/markdownResources.ts / route equivalent | Future authenticated text/asset resource boundary | MD-EXT-6 | Canonical path only; generic errors |
 | src/lib/__tests__/markdown.test.ts | Current Markdown integration and Shiki behavior | MD-EXT-1 onward | Preserve all current tests and add focused cases |
-| src/lib/__tests__/shiki.test.ts | H8 runtime, transformer, lazy language, CSS ownership | MD-EXT-3 | Add annotation coverage without new runtime |
+| src/lib/__tests__/shiki.test.ts | H8 runtime, transformer, lazy language, CSS ownership, and line-number structure | MD-EXT-3 / MD-EXT-4 | Add coverage without new runtime |
 | src/lib/__tests__/wikiLinks.test.ts | WikiLink and .md link classification | MD-EXT-1/6 | Test renderer composition and context |
 | src/lib/__tests__/callouts.test.ts | Existing callout contract | MD-EXT-2 | Regression file, not rewritten |
 | src/composables/vault/__tests__/useMarkdownRender.test.ts | Final HTML heading extraction/page-nav contract | MD-EXT-1 | Continue consuming final IDs |
@@ -1210,8 +1215,8 @@ Semantic dependencies:
   container token model for code-group syntax.
 - MD-EXT-3 owns the unified fence-info model and the separate Shiki source-notation
   transformer ordering.
-- MD-EXT-4 extends the fence-info model for line-number behavior but must not
-  duplicate it or absorb source notation.
+- MD-EXT-4 consumes the existing FenceMeta line-number fields but must not
+  duplicate the parser or absorb source notation.
 - MD-EXT-5 consumes fence labels and the final static code-rendering contract.
 - MD-EXT-6 happens after heading/fence contracts because expansion affects headings,
   links, source context, and final Shiki discovery.
@@ -1740,7 +1745,7 @@ deferred highlight:N.
 
 ### Likely production files
 
-- src/lib/fenceMeta.ts;
+- src/lib/fenceMeta.ts (reuse only; no source change expected);
 - src/lib/markdown.ts;
 - src/lib/shiki.ts;
 - src/shiki.css and/or narrowly scoped style.css additions;
@@ -1849,9 +1854,13 @@ follow-up evidence and tests are recorded in the linked MD-EXT-3 document.
 
 [MD-EXT-3 evidence](vitepress-markdown-extensions-md-ext-3-code-annotations.md)
 
-MD-EXT-4 — Line Numbers — NOT STARTED.
+[MD-EXT-4 evidence](vitepress-markdown-extensions-md-ext-4-line-numbers.md)
+
+MD-EXT-5 — Code Groups — NOT STARTED.
 
 ## 23. MD-EXT-4 — Line Numbers
+
+Status: COMPLETE / REVIEW-READY. Evidence: [MD-EXT-4 Line Numbers](vitepress-markdown-extensions-md-ext-4-line-numbers.md).
 
 ### Goal
 
@@ -1894,6 +1903,13 @@ sets user-select:none on the gutter, keeps it out of screen-reader traversal thr
 aria-hidden, preserves wrapped content width, and avoids inline style/custom property
 state. Unknown-language fallback uses the same escaped structural contract when
 line numbers are requested.
+
+The implementation uses a per-fence `docus:line-numbers` Shiki HAST code hook. It
+runs after the approved MD-EXT-3 annotation hooks, preserves annotation classes on
+each original `.line`, and leaves the singleton `style-to-class` transformer last.
+It adds no FenceMeta parser, no second highlighter, and no module-global counter.
+Shiki 4.4.3 represents a source ending in a newline with a final empty `.line`; the
+fallback deliberately matches that logical-line behavior.
 
 ### Likely production files
 
@@ -1978,7 +1994,9 @@ accessibility, copy, wrapping, PDF, and bound evidence.
 
 ### Next phase
 
-MD-EXT-5 — Code Groups.
+[MD-EXT-4 evidence](vitepress-markdown-extensions-md-ext-4-line-numbers.md)
+
+MD-EXT-5 — Code Groups — NOT STARTED.
 
 ## 24. MD-EXT-5 — Code Groups
 

@@ -219,8 +219,38 @@ function encodeMountAttr(s: string): string {
   return encodeURIComponent(s)
 }
 
-function renderPlainCodeFallback(source: string): string {
-  return `<pre class="shiki docus-shiki-plain"><code>${escapeHtml(source)}</code></pre>`
+function normalizeCodeLineEndings(source: string): string {
+  return source.replace(/\r\n?/gu, '\n')
+}
+
+function formatFallbackLineNumber(start: number, index: number): string {
+  const value = start + index
+  if (Number.isSafeInteger(value)) return String(value)
+  return (BigInt(start) + BigInt(index)).toString()
+}
+
+function renderPlainCodeFallback(source: string, meta: FenceMeta): string {
+  if (meta.lineNumbers === 'off') {
+    return `<pre class="shiki docus-shiki-plain"><code>${escapeHtml(source)}</code></pre>`
+  }
+
+  const start = meta.lineNumbers === 'start'
+    && Number.isSafeInteger(meta.lineNumberStart)
+    && (meta.lineNumberStart ?? 0) >= 1
+    ? meta.lineNumberStart as number
+    : 1
+  const lines = normalizeCodeLineEndings(source).split('\n')
+  const lineHtml = lines.map((line, index) => {
+    const separator = index < lines.length - 1 ? '\n' : ''
+    return [
+      '<span class="line">',
+      `<span class="docus-line-number" aria-hidden="true">${formatFallbackLineNumber(start, index)}</span>`,
+      `<span class="docus-line-content">${escapeHtml(line)}${separator}</span>`,
+      '</span>',
+    ].join('')
+  }).join('')
+
+  return `<pre class="shiki docus-shiki-plain docus-line-numbers"><code>${lineHtml}</code></pre>`
 }
 
 function renderFence(str: string, info: string): string {
@@ -239,7 +269,7 @@ function renderFence(str: string, info: string): string {
     return `<div class="mermaid-mount" data-content="${encodeMountAttr(str)}"></div>`
   }
 
-  return highlightShikiFence(str, meta) ?? renderPlainCodeFallback(str)
+  return highlightShikiFence(str, meta) ?? renderPlainCodeFallback(str, meta)
 }
 
 let mdPromise: Promise<MarkdownIt> | null = null

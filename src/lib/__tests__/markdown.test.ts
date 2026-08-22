@@ -844,6 +844,61 @@ describe('markdown H3 renderer cutover', () => {
     expect(loadLanguage).not.toHaveBeenCalled()
   })
 
+  it('renders numbered unknown fallbacks with the Shiki line contract and escaped source', async () => {
+    const { factory, loadLanguage } = installFakeShikiRuntime()
+    const html = await render([
+      '```definitely-not-a-language:line-numbers=7',
+      '<script>alert(1)</script>',
+      'a < b && c > d',
+      '```',
+    ].join('\n'))
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const pre = doc.querySelector('pre.docus-shiki-plain.docus-line-numbers')
+    const lines = Array.from(doc.querySelectorAll('pre.docus-shiki-plain.docus-line-numbers .line'))
+
+    expect(pre).not.toBeNull()
+    expect(lines).toHaveLength(3)
+    expect(lines.map((line) => line.querySelector('.docus-line-number')?.textContent))
+      .toEqual(['7', '8', '9'])
+    expect(lines.map((line) => line.querySelector('.docus-line-content')?.textContent))
+      .toEqual(['<script>alert(1)</script>\n', 'a < b && c > d\n', ''])
+    expect(doc.querySelector('script')).toBeNull()
+    expect(doc.querySelector('[onerror]')).toBeNull()
+    expect(html).not.toMatch(/\sstyle=/i)
+    expect(factory).not.toHaveBeenCalled()
+    expect(loadLanguage).not.toHaveBeenCalled()
+  })
+
+  it('isolates line-number starts per fence and keeps default/off modes unchanged', async () => {
+    const html = await render([
+      '```ts:line-numbers',
+      'const first = 1',
+      '```',
+      '',
+      '```ts:line-numbers=50',
+      'const second = 2',
+      '```',
+      '',
+      '```ts:no-line-numbers',
+      'const third = 3',
+      '```',
+      '',
+      '```ts',
+      'const fourth = 4',
+      '```',
+    ].join('\n'))
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const numbered = Array.from(doc.querySelectorAll('pre.shiki.docus-line-numbers'))
+    const unnumbered = Array.from(doc.querySelectorAll('pre.shiki:not(.docus-line-numbers)'))
+
+    expect(numbered).toHaveLength(2)
+    expect(numbered[0]?.querySelector('.docus-line-number')?.textContent).toBe('1')
+    expect(numbered[1]?.querySelector('.docus-line-number')?.textContent).toBe('50')
+    expect(unnumbered).toHaveLength(2)
+    expect(unnumbered.every((block) => block.querySelector('.docus-line-number, .docus-line-content') === null))
+      .toBe(true)
+  })
+
   it('maps a grammar preparation failure to one fence fallback while preserving other Shiki fences', async () => {
     const { factory, loadLanguage, codeToHtml } = installFakeShikiRuntime()
     loadLanguage
@@ -939,7 +994,11 @@ describe('markdown H3 renderer cutover', () => {
     expect(lines[3]?.classList.contains('highlighted')).toBe(false)
     expect(lines[4]?.classList.contains('highlighted')).toBe(false)
     expect(lines[2]?.textContent).toContain('[!code highlight:2]')
-    expect(doc.querySelector('.docus-line-number, .docus-line-content')).toBeNull()
+    expect(doc.querySelectorAll('pre.shiki.docus-line-numbers .line')).toHaveLength(5)
+    expect(doc.querySelectorAll('.docus-line-number')).toHaveLength(5)
+    expect(doc.querySelectorAll('.docus-line-content')).toHaveLength(5)
+    expect(doc.querySelector('.docus-line-number')?.textContent).toBe('10')
+    expect(doc.querySelector('.docus-line-number')?.getAttribute('aria-hidden')).toBe('true')
     expect(html).not.toMatch(/\sstyle=/i)
   })
 

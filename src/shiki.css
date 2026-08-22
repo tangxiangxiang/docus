@@ -84,3 +84,44 @@
   background-color: rgba(47, 129, 247, 0.14);
   box-shadow: inset 3px 0 0 #2f81f7;
 }
+
+/* MD-EXT-4 opt-in structural gutters. The default Shiki DOM is intentionally
+   untouched; only fences whose FenceMeta enables line numbers receive this
+   class and the grid/content wrappers below. */
+.article pre.shiki.docus-line-numbers {
+  white-space: pre-wrap;
+}
+
+.article pre.shiki.docus-line-numbers code {
+  display: block;
+  width: 100%;
+  min-width: 0;
+}
+
+.article pre.shiki.docus-line-numbers .line {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: 0.9rem;
+  align-items: start;
+  width: 100%;
+  min-width: 0;
+}
+
+.article pre.shiki.docus-line-numbers .docus-line-number {
+  display: block;
+  min-width: max-content;
+  padding-right: 0.75rem;
+  border-right: 1px solid var(--border, #d7dce2);
+  color: var(--text-muted, #6b7280);
+  text-align: right;
+  user-select: none;
+  white-space: pre;
+}
+
+.article pre.shiki.docus-line-numbers .docus-line-content {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: inherit;
+}

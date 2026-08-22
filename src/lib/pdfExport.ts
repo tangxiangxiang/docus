@@ -171,6 +171,49 @@ const PDF_DOWNLOAD_STYLES = `
   word-break: break-word !important;
 }
 
+/* MD-EXT-4 numbered fences reuse the already-rendered structural gutter. The
+   printable layout keeps the gutter intrinsic, lets the content column wrap,
+   and never derives CSS from the author-supplied start value. */
+.pdf-document .article pre.shiki.docus-line-numbers {
+  white-space: pre-wrap !important;
+}
+
+.pdf-document .article pre.shiki.docus-line-numbers code {
+  display: block !important;
+  width: 100% !important;
+  min-width: 0 !important;
+}
+
+.pdf-document .article pre.shiki.docus-line-numbers .line {
+  display: grid !important;
+  grid-template-columns: max-content minmax(0, 1fr) !important;
+  column-gap: 0.75rem;
+  align-items: start;
+  width: 100%;
+  min-width: 0;
+}
+
+.pdf-document .article pre.shiki.docus-line-numbers .docus-line-number {
+  display: block;
+  min-width: max-content;
+  padding-right: 0.6rem;
+  border-right: 1px solid #b8c0ca;
+  color: #6b7280 !important;
+  background-color: transparent !important;
+  text-align: right;
+  user-select: none;
+  white-space: pre;
+}
+
+.pdf-document .article pre.shiki.docus-line-numbers .docus-line-content {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere !important;
+  word-break: break-word !important;
+  white-space: inherit !important;
+  background-color: transparent !important;
+}
+
 /* Shiki's generated CSS contains trusted light/dark variables, while the
    reader's static stylesheet selects one palette from the live root theme.
    PDF is a separate printable boundary: consume the light variables here so
@@ -191,6 +234,18 @@ const PDF_DOWNLOAD_STYLES = `
 .pdf-document .article pre.shiki.docus-shiki-plain span {
   color: #202124 !important;
   background-color: #f5f6f8 !important;
+}
+
+/* The generic Shiki span rule above intentionally forces token colors to the
+   printable-light palette. Reassert the non-token structural surfaces after
+   it so the gutter stays muted and annotation backgrounds remain visible. */
+.pdf-document .article pre.shiki.docus-line-numbers .docus-line-number {
+  color: #6b7280 !important;
+  background-color: transparent !important;
+}
+
+.pdf-document .article pre.shiki.docus-line-numbers .docus-line-content {
+  background-color: transparent !important;
 }
 
 /* MD-EXT-3 annotation classes remain structural in print. These selectors

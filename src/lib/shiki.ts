@@ -162,7 +162,102 @@ function createSourceNotationRestore(sentinel: string): ShikiTransformer {
   }
 }
 
-function createAnnotationTransformers(source: string): ShikiTransformer[] {
+const LINE_NUMBER_TRANSFORMER_NAME = 'docus:line-numbers'
+
+function hasHastClass(node: { properties: Record<string, unknown> }, className: string): boolean {
+  const value = node.properties.class
+  const classes = Array.isArray(value)
+    ? value.map(String)
+    : typeof value === 'string'
+      ? value.split(/\s+/u)
+      : []
+  return classes.includes(className)
+}
+
+function formatVisibleLineNumber(start: number, line: number): string {
+  const offset = line - 1
+  const value = start + offset
+  if (Number.isSafeInteger(value)) return String(value)
+  return (BigInt(start) + BigInt(offset)).toString()
+}
+
+function createLineNumberTransformer(meta: FenceMeta): ShikiTransformer {
+  const start = meta.lineNumbers === 'start'
+    && Number.isSafeInteger(meta.lineNumberStart)
+    && (meta.lineNumberStart ?? 0) >= 1
+    ? meta.lineNumberStart as number
+    : 1
+
+  return {
+    name: LINE_NUMBER_TRANSFORMER_NAME,
+    pre(node) {
+      this.addClassToHast(node, 'docus-line-numbers')
+      return node
+    },
+    code(node) {
+      const lineNodes = node.children.filter((child) => (
+        child.type === 'element'
+        && child.tagName === 'span'
+        && hasHastClass(child, 'line')
+      ))
+      let line = 0
+      const children = []
+
+      for (const child of node.children) {
+        if (child.type !== 'element' || child.tagName !== 'span') {
+          // Shiki's classic structure uses text newlines between `.line`
+          // nodes. Move each separator into the preceding content wrapper so
+          // grid rows do not create anonymous blank lines while preserving
+          // copy/textContent fidelity.
+          if (child.type === 'text' && child.value === '\n') continue
+          children.push(child)
+          continue
+        }
+
+        if (!hasHastClass(child, 'line')) {
+          children.push(child)
+          continue
+        }
+
+        line += 1
+        const contentChildren = [...child.children]
+        // A trailing newline is represented by a final empty Shiki line. The
+        // separator belongs to the preceding content wrapper, not a phantom
+        // extra DOM line, so the fallback and Shiki paths share this contract.
+        if (line < lineNodes.length) {
+          contentChildren.push({ type: 'text', value: '\n' })
+        }
+
+        child.children = [
+          {
+            type: 'element',
+            tagName: 'span',
+            properties: {
+              class: 'docus-line-number',
+              'aria-hidden': 'true',
+            },
+            children: [{
+              type: 'text',
+              value: formatVisibleLineNumber(start, line),
+            }],
+          },
+          {
+            type: 'element',
+            tagName: 'span',
+            properties: { class: 'docus-line-content' },
+            children: contentChildren,
+          },
+        ]
+        children.push(child)
+      }
+
+      node.children = children
+      return node
+    },
+  }
+}
+
+function createAnnotationTransformers(source: string, meta: FenceMeta): ShikiTransformer[] {
   const sentinel = createDeferredNotationSentinel(source)
   const transformers: ShikiTransformer[] = [
     transformerMetaHighlight(),
@@ -172,9 +267,14 @@ function createAnnotationTransformers(source: string): ShikiTransformer[] {
     transformerNotationDiff(),
     transformerNotationErrorLevel(),
     createSourceNotationRestore(sentinel),
-    // H8's one trusted token-style registry must remain the final transformer.
-    styleTransformer,
   ]
+
+  if (meta.lineNumbers !== 'off') {
+    transformers.push(createLineNumberTransformer(meta))
+  }
+
+  // H8's one trusted token-style registry must remain the final transformer.
+  transformers.push(styleTransformer)
 
   return transformers
 }
@@ -426,7 +526,7 @@ export function highlightShikiFence(source: string, input: FenceMetaInput): stri
       },
       defaultColor: false,
       ...(highlightRaw ? { meta: { __raw: highlightRaw } } : {}),
-      transformers: createAnnotationTransformers(source),
+      transformers: createAnnotationTransformers(source, meta),
     })
   } catch {
     // A single fence rendering failure must not poison the shared runtime or

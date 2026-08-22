@@ -424,6 +424,7 @@ describe('Shiki H3 synchronous fence rendering', () => {
       '@shikijs/transformers:notation-diff',
       '@shikijs/transformers:notation-error-level',
       'docus:source-notation-scope-restore',
+      'docus:line-numbers',
       '@shikijs/transformers:style-to-class',
     ])
     expect(transformers.at(-1)).toBe(getShikiStyleTransformer())
@@ -474,6 +475,53 @@ describe('Shiki H3 synchronous fence rendering', () => {
     const lines = Array.from(doc.querySelectorAll('pre.shiki .line'))
     expect(lines[0]?.classList.contains('highlighted')).toBe(true)
     expect(lines[1]?.classList.contains('highlighted')).toBe(false)
+  })
+
+  it('wraps enabled Shiki lines without moving annotation classes or token children', async () => {
+    await expect(ensureShikiLanguage('ts')).resolves.toMatchObject({ status: 'loaded' })
+    const html = highlightShikiFence([
+      'const first = 1',
+      'const second = 2 // [!code error]',
+    ].join('\n'), parseFenceMeta('ts {2}:line-numbers=98'))
+    if (!html) throw new Error('MD-EXT-4 expected Shiki HTML')
+
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const pre = doc.querySelector('pre.shiki.docus-line-numbers')
+    const lines = Array.from(doc.querySelectorAll('pre.shiki.docus-line-numbers .line'))
+    expect(pre).not.toBeNull()
+    expect(lines).toHaveLength(2)
+    expect(lines.map((line) => line.querySelector('.docus-line-number')?.textContent))
+      .toEqual(['98', '99'])
+    expect(lines.every((line) => line.querySelectorAll('.docus-line-number').length === 1)).toBe(true)
+    expect(lines.every((line) => line.querySelectorAll('.docus-line-content').length === 1)).toBe(true)
+    expect(lines[1]?.classList.contains('highlighted')).toBe(true)
+    expect(lines[1]?.classList.contains('error')).toBe(true)
+    expect(lines[1]?.querySelector('[class^="docus-shiki-"]')).not.toBeNull()
+    expect(lines.every((line) => line.querySelector('.docus-line-number')?.getAttribute('aria-hidden') === 'true'))
+      .toBe(true)
+    expect(html).not.toMatch(/\sstyle=/i)
+  })
+
+  it('matches Shiki logical-line semantics for empty and trailing-newline sources', async () => {
+    await expect(ensureShikiLanguage('ts')).resolves.toMatchObject({ status: 'loaded' })
+    const cases = [
+      { source: 'alpha\nbeta', count: 2 },
+      { source: 'alpha\nbeta\n', count: 3 },
+      { source: '', count: 1 },
+      { source: 'alpha\r\nbeta\r\n', count: 3 },
+    ]
+
+    for (const testCase of cases) {
+      const html = highlightShikiFence(testCase.source, parseFenceMeta('ts:line-numbers=100000'))
+      if (!html) throw new Error('MD-EXT-4 expected Shiki HTML')
+      const doc = new DOMParser().parseFromString(html, 'text/html')
+      const lines = Array.from(doc.querySelectorAll('pre.shiki.docus-line-numbers .line'))
+      expect(lines, testCase.source).toHaveLength(testCase.count)
+      expect(lines[0]?.querySelector('.docus-line-number')?.textContent, testCase.source).toBe('100000')
+      expect(lines.at(-1)?.querySelector('.docus-line-number')?.textContent, testCase.source)
+        .toBe(String(100000 + testCase.count - 1))
+      expect(doc.querySelector('.docus-line-content')?.textContent).not.toContain('\r')
+    }
   })
 
   it('keeps malformed and deferred source notation as ordinary source', async () => {

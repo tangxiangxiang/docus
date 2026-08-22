@@ -107,6 +107,9 @@ describe('PDF export helpers', () => {
       expect(owner?.textContent).toContain('--shiki-light')
       expect(owner?.textContent).toContain('--shiki-dark')
       expect(owner?.textContent).toContain('.pdf-document .article pre.shiki')
+      expect(owner?.textContent).toContain('.pdf-document .article pre.shiki.docus-line-numbers')
+      expect(owner?.textContent).toContain('.docus-line-number')
+      expect(owner?.textContent).toContain('grid-template-columns: max-content minmax(0, 1fr)')
       expect(owner?.textContent).toContain('var(--shiki-light)')
       expect(owner?.textContent).toContain('.pdf-document .article pre.shiki .line.highlighted')
       expect(owner?.textContent).toContain('.pdf-document .article pre.shiki .line.focused')
@@ -160,7 +163,7 @@ describe('PDF export helpers', () => {
   it('preserves Shiki article classes without moving the PDF stylesheet into article HTML', () => {
     const article = document.createElement('article')
     article.className = 'article reading'
-    article.innerHTML = '<pre class="shiki docus-shiki-root"><code><span class="line"><span class="docus-shiki-token">const</span></span></code></pre>'
+    article.innerHTML = '<pre class="shiki docus-shiki-root docus-line-numbers"><code><span class="line"><span class="docus-line-number" aria-hidden="true">98</span><span class="docus-line-content"><span class="docus-shiki-token">const</span></span></span></code></pre>'
 
     const prepared = preparePdfArticleHtml(article)
     const exported = document.createElement('div')
@@ -168,6 +171,9 @@ describe('PDF export helpers', () => {
 
     expect(exported.querySelector('pre.shiki')).not.toBeNull()
     expect(exported.querySelector('span.line')).not.toBeNull()
+    expect(exported.querySelector('.docus-line-number')?.textContent).toBe('98')
+    expect(exported.querySelector('.docus-line-number')?.getAttribute('aria-hidden')).toBe('true')
+    expect(exported.querySelector('.docus-line-content')).not.toBeNull()
     expect(exported.querySelector('[class~="docus-shiki-token"]')).not.toBeNull()
     expect(exported.querySelector('style#docus-pdf-download-styles')).toBeNull()
     expect(prepared).not.toContain('docus-pdf-download-styles')
