@@ -2239,11 +2239,14 @@ Range metadata distinguishes `{N}` as a single line (`start === end`), `{N-M}`
 as an inclusive closed range, and `{N,}` as the only open-ended form; `N-` is
 invalid. The same selection contract applies to snippets and includes.
 
-A shared narrow MarkdownIt-compatible backtick source-position helper records
-the raw ranges represented by `code_inline` children. Resource expansion uses
-the exact standalone directive slice, not a whole-line blanket, so directives
-inside one-line, multi-line, variable-length-backtick, or include-comment code
-spans remain literal while ordinary standalone directives still expand.
+A shared narrow MarkdownIt-compatible backtick source-position helper receives
+one actual `inline` token's source and its real `code_inline` children. Resource
+expansion checks the exact standalone directive slice, not a whole-line blanket;
+ownership is decided before valid or malformed resource parsing. The helper never
+pairs backticks across MarkdownIt inline blocks, so one-line/multi-line and
+variable-length real code spans remain literal while an unmatched opener in one
+paragraph cannot suppress a directive in another. Unrelated raw backticks in an
+`html_inline` child do not invalidate a later real `code_inline` mapping.
 
 ### Likely production files
 
@@ -2275,10 +2278,12 @@ budget state before emitting their placeholder.
 
 When one MarkdownIt inline token spans root/include/root lines, source context is
 assigned per child while walking `softbreak`/`hardbreak` boundaries and raw
-`code_inline` source ranges. The break retains the preceding line; a multi-line
-code span advances by the exact source line endings it consumes, rather than by
-normalized rendered content. No global source cursor, second full inline parser,
-or paragraph-semantic rewrite is allowed.
+`code_inline` source ranges from the same token-guided helper. The break retains
+the preceding line; a multi-line code span advances by the exact source line
+endings it consumes, rather than by normalized rendered content. A failed exact
+mapping is represented as unknown rather than guessed. No global source cursor,
+whole-document backtick scan, second full inline parser, or paragraph-semantic
+rewrite is allowed.
 
 Server: auth required, canonical path, safe physical resolver, symlink/junction/race,
 missing/directory/binary/invalid UTF-8/unsupported/oversized, asset MIME policy,
@@ -2345,7 +2350,9 @@ source: guides/java/index.md
 Verify canonical paths, included headings/TOC, relative image/link rebasing, nested
 WikiLinks, Shiki grammar preparation after expansion, cycle/depth/size/encoding errors,
 and no host path disclosure. Verify `{2}` versus `{3,}`, exact UTF-8 expansion
-accounting, code-span directive lookalikes, and both directions of a merged
+accounting, valid and malformed directive-looking code spans, variable-length
+backticks, an unmatched opener across separate MarkdownIt blocks, unrelated raw
+backticks before a real code span, and both directions of a merged
 root/include/root paragraph with per-child source context. Test a reader export
 after selecting a code-group tab; the PDF must use settled HTML and make no
 additional local-image endpoint request. Force local-image snapshot failure and
@@ -2354,7 +2361,7 @@ verify the prepared clone contains no endpoint URL and the live reader is unchan
 ### Validation commands
 
 ~~~
-./node_modules/.bin/vitest run src/lib/__tests__/markdown.test.ts src/lib/__tests__/wikiLinks.test.ts src/lib/__tests__/pdf-readiness.test.ts
+./node_modules/.bin/vitest run src/lib/__tests__/markdownInlineSource.test.ts src/lib/__tests__/markdownResources.test.ts src/lib/__tests__/markdown.test.ts src/lib/__tests__/wikiLinks.test.ts src/lib/__tests__/pdfExport.test.ts src/lib/__tests__/pdf-readiness.test.ts
 ./node_modules/.bin/vitest run server/__tests__/paths.test.ts server/routes/markdownResources.test.ts server/__tests__/auth-middleware.test.ts
 npm run typecheck
 npm run build
@@ -2396,9 +2403,13 @@ resolution separate from the strict physical path boundary, forwards included so
 context to links/images/WikiLinks, and preserves the settled-HTML PDF contract. The
 review follow-ups close single-line/closed/open-ended range semantics, exact final
 UTF-8 byte accounting including separators, merged-inline per-child source context,
-code-span-aware directive opacity and source-line advancement, the authenticated
-local-image PDF no-reread boundary, and fail-closed local-image snapshot failure.
-The evidence document records the authenticated route, bounded text/image policy,
+MarkdownIt-inline-block-scoped code-span ownership and source-line advancement,
+the authenticated local-image PDF no-reread boundary, and fail-closed local-image
+snapshot failure. The final closure follow-up does not touch PDF production code;
+it removes the whole-document raw backtick ownership path, makes malformed
+code-span directives literal before resource parsing, and preserves real
+`code_inline` mapping in the presence of unrelated raw backticks. The evidence
+document records the authenticated route, bounded text/image policy,
 per-render cache/stack/cancellation behavior, focused tests, browser network counts,
 failure-mode PDF proof, and the known aggregate unit-suite environment limitations.
 MD-EXT-7 has not started.

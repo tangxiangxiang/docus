@@ -170,7 +170,7 @@ describe('Markdown resource logical resolution and expansion', () => {
       ].join('\n'),
       [
         '`literal',
-        '<!--@include: ./secret.md-->',
+        '<!--@include: ./secret.md{not-valid}-->',
         'literal`',
       ].join('\n'),
     ]
@@ -186,6 +186,46 @@ describe('Markdown resource logical resolution and expansion', () => {
     expect(resolver.read).not.toHaveBeenCalled()
   })
 
+  it('does not let backticks across MarkdownIt blocks suppress a real directive', async () => {
+    const resolver = resolverFor({
+      'examples/demo.ts': 'const loaded = true',
+      'docs/part.md': '# Included part',
+    })
+    const snippetSource = [
+      '`unclosed opener',
+      '',
+      '<<< @/examples/demo.ts',
+      '',
+      'later closer`',
+    ].join('\n')
+    const snippet = await expandMarkdownResources(snippetSource, {
+      md: new MarkdownIt({ html: true }),
+      sourcePath: 'docs/index',
+      resourceResolver: resolver,
+    })
+    expect(resolver.read).toHaveBeenCalledTimes(1)
+    expect(snippet.markdown).toContain('const loaded = true')
+    expect(snippet.markdown).not.toContain('markdown-resource-error')
+
+    const includeSource = [
+      '`unclosed opener',
+      '',
+      'paragraph text',
+      '',
+      '<!--@include: @/docs/part.md-->',
+      '',
+      'later closer`',
+    ].join('\n')
+    const include = await expandMarkdownResources(includeSource, {
+      md: new MarkdownIt({ html: true }),
+      sourcePath: 'docs/index',
+      resourceResolver: resolver,
+    })
+    expect(resolver.read).toHaveBeenCalledTimes(2)
+    expect(include.markdown).toContain('# Included part')
+    expect(include.markdown).not.toContain('markdown-resource-error')
+  })
+
   it('still expands an ordinary standalone directive outside code spans', async () => {
     const resolver = resolverFor({ 'examples/demo.ts': 'const value = 1' })
     const expanded = await expandMarkdownResources('<<< @/examples/demo.ts', {
@@ -195,6 +235,24 @@ describe('Markdown resource logical resolution and expansion', () => {
 
     expect(resolver.read).toHaveBeenCalledTimes(1)
     expect(expanded.markdown).toContain('const value = 1')
+  })
+
+  it('keeps malformed resource syntax literal when a real code span owns it', async () => {
+    const resolver = resolverFor({ 'examples/demo.ts': 'const loaded = true' })
+    const source = [
+      '`literal',
+      '<<< @/examples/demo.ts{3-}',
+      'literal`',
+    ].join('\n')
+    const expanded = await expandMarkdownResources(source, {
+      md: new MarkdownIt({ html: true }),
+      sourcePath: 'docs/index',
+      resourceResolver: resolver,
+    })
+
+    expect(expanded.markdown).toBe(source)
+    expect(expanded.markdown).not.toContain('markdown-resource-error')
+    expect(resolver.read).not.toHaveBeenCalled()
   })
 
   it('expands nested includes with local source context and a per-render cache', async () => {

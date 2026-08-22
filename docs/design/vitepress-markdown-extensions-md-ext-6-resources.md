@@ -14,7 +14,8 @@
 | Approved Implementation Plan | `582e312a4c5752a4c9a5c6bba7b0e752b0b78078` |
 | Original MD-EXT-6 implementation commit | `0ce35f1b2b838c590e92a435846de5a1ac770b42` |
 | MD-EXT-6 range/budget/context/PDF follow-up commit | `7ee123c546f3c137dd455922b76a02b64c29349b` |
-| MD-EXT-6 final follow-up commit | Recorded in the final handoff after this document is committed |
+| MD-EXT-6 code-span/PDF fail-closed follow-up commit | `5be97ef4ce6fa124009c5d3152a3f6a97b3fe772` |
+| MD-EXT-6 inline-ownership closure commit | Recorded in the final handoff after this document is committed |
 | Next phase | MD-EXT-7 — NOT STARTED |
 
 This document records the implementation and verification evidence for MD-EXT-6,
@@ -61,7 +62,7 @@ code-group change was required. The review follow-up added a narrow
 showed that html2canvas could otherwise request a settled local resource image
 again; no server/resource-route change was made.
 
-The review follow-up changed or extended:
+The code-span/PDF fail-closed review follow-up changed or extended:
 
 ```text
 src/lib/markdownResources.ts
@@ -70,6 +71,20 @@ src/lib/wikiLinks.ts
 src/lib/pdfExport.ts
 src/lib/__tests__/markdownResources.test.ts
 e2e/markdown-extensions-md-ext-6.spec.ts
+docs/design/vitepress-markdown-extensions-md-ext-6-resources.md
+docs/design/vitepress-markdown-extensions-implementation-plan.md
+```
+
+This final inline-ownership closure follow-up changes only the following
+client/helper/test/evidence surfaces:
+
+```text
+src/lib/markdownInlineSource.ts
+src/lib/markdownResources.ts
+src/lib/wikiLinks.ts
+src/lib/__tests__/markdownInlineSource.test.ts
+src/lib/__tests__/markdownResources.test.ts
+src/lib/__tests__/wikiLinks.test.ts
 docs/design/vitepress-markdown-extensions-md-ext-6-resources.md
 docs/design/vitepress-markdown-extensions-implementation-plan.md
 ```
@@ -237,14 +252,18 @@ reader/PDF surface
 
 Expansion therefore happens before fence discovery, so snippets introduced by
 an include participate in normal Shiki language preparation. The resource
-scanner uses MarkdownIt's existing parse information to keep fenced code,
-indented code, and multi-line raw HTML opaque. A narrow source-position helper
-mirrors MarkdownIt's installed backtick delimiter rule so standalone-looking
-directive slices inside one-line or multi-line inline code spans remain literal,
-including variable-length backtick spans and include-comment lookalikes. The
-approved standalone include HTML comment is expanded only when it is its own
-one-line Markdown directive; directives appearing inside code or a larger raw
-HTML block remain literal.
+scanner uses MarkdownIt's existing block parse to keep fenced code, indented
+code, and multi-line raw HTML opaque. For each actual `inline` token, the same
+narrow source-position helper receives that token's `content` and the
+`code_inline` children MarkdownIt actually produced. It locates only those
+children, mirrors the installed backtick delimiter/content-normalization rule,
+and never pairs backticks across paragraphs or other inline blocks. Therefore
+standalone-looking `<<<` slices inside one-line or multi-line real code spans
+remain literal, including variable-length backtick spans and malformed
+resource syntax; malformed include-comment lookalikes remain literal under the
+existing raw-HTML safety path. A valid standalone include HTML comment retains
+its approved one-line directive behavior, and an unmatched backtick in another
+paragraph cannot suppress a real directive there.
 
 No second Markdown parser, highlighter, or renderer was introduced.
 
@@ -290,10 +309,13 @@ When MarkdownIt merges root/include/root lines into one inline token, the
 renderer walks inline children in source order. Each child receives the path
 for its current flattened line; only after assigning metadata to a
 `softbreak`/`hardbreak` does the cursor advance, so the break belongs to the
-preceding line and the first child after it uses the next source identity. A
-multi-line `code_inline` child advances by the exact number of raw source line
-endings in its located span, rather than by normalized rendered content. There
-is no module-global source cursor or second full inline parser.
+preceding line and the first child after it uses the next source identity. The
+shared helper is called with that inline block's actual children, so unrelated
+raw backticks in an `html_inline` child cannot discard a valid later code span.
+A multi-line `code_inline` child advances by the exact number of raw source
+line endings in its located span, rather than by normalized rendered content.
+There is no module-global source cursor, whole-document backtick scan, or
+second full inline parser.
 
 Relative local Markdown images are rewritten to the authenticated image route
 using the same source context. Existing external-link policy, lazy image
@@ -428,13 +450,29 @@ root-after  → docs/root.md
 ```
 
 The final code-span/source-context follow-up additionally proves one-line,
-multi-line, variable-length-backtick, and include-comment code-span lookalikes
-make zero resolver reads while ordinary standalone directives still expand. It
-proves both include→root and root→include merged paragraphs assign links,
-WikiLinks, and images to the source line that actually follows the multi-line
-code span. The focused PDF unit regression proves a settled local image with a
-forced canvas snapshot failure produces no endpoint URL in prepared HTML and
-does not mutate the live image.
+multi-line, and variable-length-backtick real `code_inline` spans keep valid and
+malformed snippet-looking directives literal before resource parsing. Malformed
+include-comment lookalikes remain literal under the existing raw-HTML ownership
+path, while valid directives in separate MarkdownIt blocks still expand. It
+also proves that unrelated raw backticks in an `html_inline` child do not erase
+the real later `code_inline` source range. Both include→root and root→include
+merged paragraphs assign links, WikiLinks, and images to the source line that
+actually follows the multi-line code span. The focused PDF unit regression
+proves a settled local image with a forced canvas snapshot failure produces no
+endpoint URL in prepared HTML and does not mutate the live image.
+
+The final inline-ownership closure focused run was:
+
+```text
+./node_modules/.bin/vitest run \
+  src/lib/__tests__/markdownInlineSource.test.ts \
+  src/lib/__tests__/markdownResources.test.ts \
+  src/lib/__tests__/markdown.test.ts \
+  src/lib/__tests__/wikiLinks.test.ts \
+  src/lib/__tests__/pdfExport.test.ts \
+  src/lib/__tests__/pdf-readiness.test.ts
+→ PASS: 6 files, 162 tests
+```
 
 The final focused MD-EXT-6 Playwright spec covers reader expansion/source context
 and settled-HTML PDF/no-reread behavior with four passing tests, including the
@@ -483,6 +521,18 @@ The final follow-up full-unit rerun reported:
 The same 19 OpenAI HTTP loopback and Round-15/Round-16 `tsx` IPC `EPERM`
 limitations remained; no new Markdown/resource/source-context/PDF regression
 appeared.
+
+This inline-ownership closure rerun reported:
+
+```text
+→ BASELINE-LIMITED
+→ 215 test files passed, 3 failed
+→ 3204 tests passed, 21 failed, 2 skipped
+```
+
+The additional passing tests are the direct inline-source, malformed-directive,
+cross-block, and raw-backtick-mismatch regressions; the same 19 OpenAI HTTP
+loopback and Round-15/Round-16 `tsx` IPC `EPERM` limitations remained.
 
 ### Browser/PDF
 

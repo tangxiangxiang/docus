@@ -1,6 +1,6 @@
 import type MarkdownIt from 'markdown-it'
 import { authFetch } from './auth-session'
-import { scanMarkdownCodeSpanSourceRanges } from './markdownInlineSource'
+import { findMarkdownCodeInlineSourceRanges } from './markdownInlineSource'
 
 export const MAX_SNIPPET_BYTES = 256 * 1024
 export const MAX_INCLUDE_BYTES = 512 * 1024
@@ -397,10 +397,8 @@ function isDirectiveLineAllowed(
   directive: ResourceDirective | null,
   opaqueLines: Set<number>,
   singleLineHtmlBlocks: Set<number>,
-  codeSpanDirectiveLines: Set<number>,
 ): boolean {
   if (!directive) return false
-  if (codeSpanDirectiveLines.has(lineNumber)) return false
   if (!opaqueLines.has(lineNumber)) return true
   // The approved include directive is itself an HTML comment. A standalone
   // one-line comment is a directive; comments embedded in a larger raw HTML
@@ -430,20 +428,24 @@ function collectOpaqueLines(md: MarkdownIt, source: string): {
     }
   }
 
-  const codeSpans = scanMarkdownCodeSpanSourceRanges(source)
-  if (codeSpans.length > 0) {
-    const sourceLines = source.split('\n')
+  for (const token of tokens) {
+    if (token.type !== 'inline' || !token.children || !token.map) continue
+    const codeSpans = findMarkdownCodeInlineSourceRanges(token.content, token.children)
+      .filter((span): span is NonNullable<typeof span> => span !== null)
+    if (codeSpans.length === 0) continue
+
     let lineStart = 0
-    for (let lineNumber = 0; lineNumber < sourceLines.length; lineNumber += 1) {
-      const line = sourceLines[lineNumber] ?? ''
-      const directive = parseMarkdownResourceDirective(line)
-      if (directive) {
-        const leadingWhitespace = line.search(/\S/u)
-        const start = lineStart + (leadingWhitespace === -1 ? line.length : leadingWhitespace)
-        const end = lineStart + line.trimEnd().length
-        if (codeSpans.some((span) => span.start <= start && end <= span.end)) {
-          codeSpanDirectiveLines.add(lineNumber)
-        }
+    const inlineLines = token.content.split('\n')
+    for (let lineIndex = 0; lineIndex < inlineLines.length; lineIndex += 1) {
+      const line = inlineLines[lineIndex] ?? ''
+      // Record ownership of the complete non-whitespace slice without asking
+      // whether it is a valid or malformed resource directive. The expansion
+      // pass checks this set before all directive parsing and lookalike logic.
+      const leadingWhitespace = line.search(/\S/u)
+      const start = lineStart + (leadingWhitespace === -1 ? line.length : leadingWhitespace)
+      const end = lineStart + line.trimEnd().length
+      if (codeSpans.some((span) => span.start <= start && end <= span.end)) {
+        codeSpanDirectiveLines.add(token.map[0] + lineIndex)
       }
       lineStart += line.length + 1
     }
@@ -527,8 +529,15 @@ async function expandSource(
   for (let index = 0; index < lines.length; index += 1) {
     throwIfAborted(context.signal)
     const line = lines[index] ?? ''
+    // Code-span ownership has priority over both valid and malformed resource
+    // directive parsing. A standalone-looking slice owned by code_inline is
+    // literal source, never a resource read or a local error placeholder.
+    if (codeSpanDirectiveLines.has(index)) {
+      addLines(context, output, line, sourcePath)
+      continue
+    }
     const directive = parseMarkdownResourceDirective(line)
-    if (!isDirectiveLineAllowed(index, directive, opaqueLines, singleLineHtmlBlocks, codeSpanDirectiveLines)) {
+    if (!isDirectiveLineAllowed(index, directive, opaqueLines, singleLineHtmlBlocks)) {
       if (!directive && looksLikeResourceDirective(line) && !opaqueLines.has(index)) {
         addLines(context, output, placeholder(), sourcePath)
         continue

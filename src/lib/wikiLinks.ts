@@ -333,9 +333,7 @@ export function wikiLinkPlugin(
       let currentLine = token.map[0]
       const codeSpanRanges = findMarkdownCodeInlineSourceRanges(
         token.content,
-        token.children
-          .filter((child) => child.type === 'code_inline')
-          .map((child) => child.markup?.length ?? 0),
+        token.children,
       )
       let codeSpanIndex = 0
       for (const child of token.children) {
