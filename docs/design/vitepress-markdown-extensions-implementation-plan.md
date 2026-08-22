@@ -4,7 +4,7 @@
 
 | Field | Value |
 | --- | --- |
-| Document status | IMPLEMENTATION IN PROGRESS |
+| Document status | IMPLEMENTATION COMPLETE / REVIEW-CLOSED |
 | Product program | Docus VitePress-Style Markdown Extensions |
 | Repository | tangxiangxiang/docus |
 | Branch | main |
@@ -13,8 +13,8 @@
 | Approved PRD baseline | 7e05e3bb43f4283a90ead1abd0c81325bc93281c |
 | Implementation Plan task base | 7e05e3bb43f4283a90ead1abd0c81325bc93281c |
 | Implementation baseline | 582e312a4c5752a4c9a5c6bba7b0e752b0b78078 |
-| Current phase | MD-EXT-1 — COMPLETE; next MD-EXT-2 — NOT STARTED |
-| Current implementation state | PRD approved; MD-EXT-0 audit complete; MD-EXT-1 implementation/evidence complete; MD-EXT-2+ not started |
+| Current phase | MD-EXT-1 — COMPLETE / REVIEW-CLOSED; next MD-EXT-2 — NOT STARTED |
+| Current implementation state | PRD approved; MD-EXT-0 audit complete; MD-EXT-1 implementation and provenance/source-awareness follow-up complete; MD-EXT-2+ not started |
 | Shiki prerequisite | SHIKI-H0 through SHIKI-H8 COMPLETE; migration closed; no H9 |
 | Parser baseline | markdown-it 14.1.0 singleton |
 | Shiki baseline | Shiki 4.4.3, @shikijs/transformers 4.4.3 |
@@ -53,7 +53,8 @@ product conflict, work stops, the conflict is documented, and the PRD is reviewe
 before the affected phase continues.
 
 The original plan and MD-EXT-0 audit commits were planning/evidence-only. The current
-lifecycle records the reviewed completion of MD-EXT-1. This phase:
+lifecycle records the reviewed completion of MD-EXT-1 and its corrective follow-up.
+This phase:
 
 - does not add or remove dependencies;
 - keeps the DOMPurify boundary and FORBID_ATTR: ['style'] invariant;
@@ -1364,7 +1365,7 @@ Next, only after this audit is reviewed: MD-EXT-1 — Anchors, TOC, Links & Lazy
 
 ## 20. MD-EXT-1 — Anchors, TOC, Links & Lazy Images
 
-Status: COMPLETE. Evidence: [MD-EXT-1 Anchors, TOC, Links & Lazy Images](vitepress-markdown-extensions-md-ext-1-anchors-toc-links-images.md).
+Status: COMPLETE / REVIEW-CLOSED. Evidence: [MD-EXT-1 Anchors, TOC, Links & Lazy Images](vitepress-markdown-extensions-md-ext-1-anchors-toc-links-images.md).
 Phase base: 579bda1850ceb955eb0796fec2cc3ec919b72a21. Next phase: MD-EXT-2 — Custom
 Containers — NOT STARTED.
 
@@ -1401,11 +1402,15 @@ the single final heading-ID model.
 
 The phase adds the narrow heading/TOC module described in section 12 and registers it
 around the named markdown-it-anchor rule. The anchor integration uses one per-render
-allocator with uniqueSlugStartIndex: 2. wikiLinks.ts composes existing internal
+allocator with uniqueSlugStartIndex: 2. Custom-anchor authorization checks the raw
+heading inline source before mutating rendered children, so escaped/entity-produced
+`{#id}` text remains literal and automatic. wikiLinks.ts composes existing internal
 classification with generated external classification on the same token and calls
-the final renderer exactly once. The existing image renderer is wrapped rather than
-replacing raw html_inline handling. PDF image readiness promotes lazy images to eager
-only on the dedicated export surface when waiting for settlement requires it.
+the final renderer exactly once. Its stable CSS class is presentation-only; target
+privilege uses an opaque per-render marker passed through the render env and stripped
+by the matching sanitizer context. The existing image renderer is wrapped rather
+than replacing raw html_inline handling. PDF image readiness promotes lazy images to
+eager only on the dedicated export surface when waiting for settlement requires it.
 
 ### Likely production files
 
@@ -1428,10 +1433,12 @@ only on the dedicated export surface when waiting for settlement requires it.
 - e2e/markdown-visual.spec.ts and a focused anchor/TOC browser test;
 - e2e/pdf-export.spec.ts or a focused PDF anchor/TOC test.
 
-Required cases: auto/custom/duplicate ids, malformed metadata, inline heading Markdown,
-TOC hierarchy/no eligible heading, resolver call count, generated external Markdown
-and linkify links, raw HTML anchors unchanged, internal links untouched, lazy images,
-unsafe URI, and PDF IDs.
+Required cases: auto/custom/duplicate ids, source-aware escaped/entity literal
+headings, malformed metadata, inline heading Markdown, TOC hierarchy/no eligible
+heading, resolver call count, generated external Markdown and linkify links, raw HTML
+anchors unchanged, forged stable class/marker cannot gain target privilege, concurrent
+render provenance isolation, internal links untouched, lazy images, unsafe URI, and
+PDF IDs.
 
 ### Dependency changes
 
@@ -1439,9 +1446,11 @@ None expected. Reuse markdown-it-anchor and existing MarkdownIt.
 
 ### Sanitizer changes
 
-Only the MD-EXT-0-approved nav/aria-label addition, plus the narrowly scoped generated
-external target hook required by the current DOMPurify runtime. No generic attrs or
-raw HTML mutation.
+Only the MD-EXT-0-approved nav/aria-label addition, plus a narrowly scoped generated
+external target hook required by the current DOMPurify runtime. The hook accepts only
+the matching opaque per-render provenance marker, normalizes trusted generated rel,
+and strips that temporary marker. No forgeable class/data attribute grants trust; no
+generic attrs or raw HTML mutation.
 
 ### Theme impact
 
@@ -1468,11 +1477,12 @@ render-scoped. No module-global slugger or TOC array.
 
 ### Manual acceptance
 
-Render a document containing duplicate auto/custom headings, [[toc]], inline formatting,
-generated HTTPS links, a linkify URL, an internal .md link, a WikiLink, raw HTML <a>,
-and normal/raw images. Verify visible suffix removal, final ids, one resolver call per
-real link, target/rel only on generated external links, and lazy only on generated
-Markdown images.
+Render a document containing duplicate auto/custom headings, source-escaped and
+entity-produced `{#id}` literals, [[toc]], inline formatting, generated HTTPS links,
+a linkify URL, an internal .md link, a WikiLink, raw HTML <a>, and normal/raw images.
+Verify visible suffix removal, final ids, one resolver call per real link,
+target/rel only on generated external links, forged class/marker rejection, no marker
+leakage, and lazy only on generated Markdown images.
 
 ### Validation commands
 
@@ -1494,8 +1504,11 @@ image output without changing Shiki, containers, or future resource APIs.
 ### Exit criteria
 
 - One final ID source powers anchor permalink, reader page-nav, TOC, and PDF.
-- Generated external HTTP(S) links have target=_blank and rel=noopener noreferrer.
+- Generated external HTTP(S) links have target=_blank and rel=noopener noreferrer;
+  sanitizer privilege is proven by an opaque per-render marker, not a public class.
 - Raw HTML anchors retain existing sanitizer behavior.
+- Escaped/entity-produced custom-anchor-looking text remains literal and uses an
+  automatic final ID.
 - Lazy loading applies only to generated Markdown images.
 - PDF image readiness settles generated lazy images on the export surface.
 - Existing WikiLink and Markdown tests remain green.
@@ -1504,8 +1517,10 @@ image output without changing Shiki, containers, or future resource APIs.
 ### Evidence required
 
 [docs/design/vitepress-markdown-extensions-md-ext-1-anchors-toc-links-images.md](vitepress-markdown-extensions-md-ext-1-anchors-toc-links-images.md)
-records the phase base SHA, changed files, sanitizer delta, test results,
-browser/PDF evidence, bundle comparison, and rollback/next-phase statement.
+records the phase base SHA, changed files, source-aware anchor and opaque-provenance
+security corrections, test results, browser/PDF evidence, bundle comparison, and
+rollback/next-phase statement. The corrective follow-up commit SHA is recorded in the
+final handoff rather than self-referenced here.
 
 ### Next phase
 

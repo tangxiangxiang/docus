@@ -1,7 +1,7 @@
 import MarkdownIt from 'markdown-it'
 
 const HEADING_STATE_KEY = '__docusMarkdownHeadingState'
-const CUSTOM_ANCHOR_RE = /\s+\{#([A-Za-z][A-Za-z0-9._:-]{0,127})\}$/
+const CUSTOM_ANCHOR_ID_RE = /^[A-Za-z][A-Za-z0-9._:-]{0,127}$/
 
 type TokenNesting = 1 | 0 | -1
 
@@ -66,22 +66,69 @@ export function slugifyDocusHeading(text: string): string {
     .replace(/^-+|-+$/g, '')
 }
 
+interface CustomAnchorSourceMatch {
+  id: string
+  escapedBackslashes: number
+}
+
+function trailingBackslashCount(value: string): number {
+  let count = 0
+  for (let index = value.length - 1; index >= 0 && value[index] === '\\'; index -= 1) {
+    count += 1
+  }
+  return count
+}
+
 /**
- * Returns the approved explicit ID and removes only the final `{#id}` suffix
- * from the heading's inline children. Keeping this at token level preserves
- * strong/emphasis/code/emoji/link children that precede the suffix.
+ * Author-source authorization for the narrow final `{#id}` grammar. The
+ * inline token content is the normalized/rendered form, so it is not enough
+ * to inspect that content: `\{#id}` and `&#123;#id}` can both become visible
+ * text that resembles metadata. The raw inline source is authoritative.
  */
-function consumeCustomAnchor(children: MdToken[] | null): string | null {
+function parseCustomAnchorSource(source: string): CustomAnchorSourceMatch | null {
+  if (!source.endsWith('}')) return null
+  const markerStart = source.lastIndexOf('{#')
+  if (markerStart === -1) return null
+
+  const id = source.slice(markerStart + 2, -1)
+  if (!CUSTOM_ANCHOR_ID_RE.test(id)) return null
+
+  const beforeMarker = source.slice(0, markerStart)
+  const escapedBackslashes = trailingBackslashCount(beforeMarker)
+  // A backslash pair produces a literal backslash and leaves the `{` opener
+  // active; an odd run escapes the opener and therefore remains literal.
+  if (escapedBackslashes % 2 === 1) return null
+
+  const delimiterEnd = beforeMarker.length - escapedBackslashes
+  if (delimiterEnd === 0 || !/\s/.test(beforeMarker[delimiterEnd - 1] ?? '')) return null
+
+  return { id, escapedBackslashes }
+}
+
+/**
+ * Removes only the authorized final `{#id}` suffix from inline children.
+ * Keeping this at token level preserves strong/emphasis/code/emoji/link
+ * children that precede the suffix. A literal backslash produced by an even
+ * source escape run remains visible; only the metadata marker is removed.
+ */
+function consumeCustomAnchor(
+  children: MdToken[] | null,
+  id: string,
+): string | null {
   if (!children || children.length === 0) return null
   const last = children.at(-1)
   if (!last || last.type !== 'text') return null
 
-  const match = last.content.match(CUSTOM_ANCHOR_RE)
-  if (!match || match.index === undefined) return null
+  const marker = `{#${id}}`
+  if (!last.content.endsWith(marker)) return null
 
-  last.content = last.content.slice(0, match.index)
+  const markerStart = last.content.length - marker.length
+  const beforeMarker = last.content.slice(0, markerStart)
+  const hasLiteralBackslash = trailingBackslashCount(beforeMarker) > 0
+  const visibleEnd = hasLiteralBackslash ? markerStart : beforeMarker.trimEnd().length
+  last.content = last.content.slice(0, visibleEnd)
   if (!last.content) children.pop()
-  return match[1]
+  return id
 }
 
 function collectHeadingMetadata(state: CoreStateLike): void {
@@ -92,8 +139,11 @@ function collectHeadingMetadata(state: CoreStateLike): void {
     const opening = state.tokens[index]
     if (opening.type !== 'heading_open') continue
     const inline = state.tokens[index + 1]
-    const explicitId = inline?.type === 'inline'
-      ? consumeCustomAnchor(inline.children)
+    const sourceMatch = inline?.type === 'inline'
+      ? parseCustomAnchorSource(inline.content)
+      : null
+    const explicitId = sourceMatch
+      ? consumeCustomAnchor(inline.children, sourceMatch.id)
       : null
     headingState.explicitIds.push(explicitId)
   }
@@ -232,6 +282,7 @@ export function markdownHeadingsPlugin(md: MarkdownIt): void {
 
 export const __testing__ = {
   consumeCustomAnchor,
+  parseCustomAnchorSource,
   buildTocTree,
   collectTocEntries,
   headingText,

@@ -8,8 +8,9 @@
 // async Shiki language preparation).
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
 import { createHighlighter, type Highlighter } from 'shiki'
-import { render } from '../markdown'
+import { createMarkdownSanitizer, render } from '../markdown'
 import type { Resolver as WikiResolver } from '../wikiLinks'
+import { EXTERNAL_LINK_PROVENANCE_ATTR } from '../wikiLinks'
 import { __testing__ as shikiTesting, getGeneratedShikiCss } from '../shiki'
 
 type LanguageInput = Parameters<Highlighter['loadLanguage']>[0]
@@ -1021,6 +1022,46 @@ describe('markdown MD-EXT-1 anchors, TOC, links, and images', () => {
       .map((heading) => heading.id)).toEqual(['hello', 'hello-2', 'hello-3'])
   })
 
+  it('authorizes custom anchors from source syntax, not rendered text', async () => {
+    const html = await render([
+      String.raw`## Escaped \{#literal}`,
+      '## Entity &#123;#entity}',
+      String.raw`## Even \\{#active}`,
+      String.raw`## Odd \\\{#literal-odd}`,
+      '## Heading {#one} {#two}',
+    ].join('\n'))
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const headings = Array.from(doc.querySelectorAll('h2'))
+
+    expect(headings.map((heading) => heading.id)).toEqual([
+      'escaped-literal',
+      'entity-entity',
+      'active',
+      'odd-literal-odd',
+      'two',
+    ])
+    expect(headings[0]?.textContent).toContain('Escaped {#literal}')
+    expect(headings[1]?.textContent).toContain('Entity {#entity}')
+    expect(headings[2]?.textContent).toBe('Even \\')
+    expect(headings[3]?.textContent).toContain('Odd \\{#literal-odd}')
+    expect(headings[4]?.textContent).toBe('Heading {#one}')
+  })
+
+  it('uses the automatic final ID for escaped literals in the TOC', async () => {
+    const html = await render([
+      '[[toc]]',
+      '',
+      String.raw`## Example \{#literal}`,
+    ].join('\n'))
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const heading = doc.querySelector('h2')
+    const tocLink = doc.querySelector<HTMLAnchorElement>('nav.docus-toc a')
+
+    expect(heading?.id).toBe('example-literal')
+    expect(heading?.textContent).toContain('Example {#literal}')
+    expect(tocLink?.getAttribute('href')).toBe('#example-literal')
+  })
+
   it('removes only a valid final custom suffix and preserves inline heading markup', async () => {
     const html = await render([
       '## **Java** Guide {#java-guide}',
@@ -1123,11 +1164,19 @@ describe('markdown MD-EXT-1 anchors, TOC, links, and images', () => {
       '[Tel](tel:+123456)',
       '',
       '<a href="https://raw.example" target="_self">Raw</a>',
+      '<a class="docus-external-link" href="https://forged.example" target="_blank">Forged</a>',
+      '<a class="docus-external-link" href="https://forged-opener.example" target="_blank" rel="opener">Forged opener</a>',
+      `<a ${EXTERNAL_LINK_PROVENANCE_ATTR}="guessed" href="https://guessed.example" target="_blank">Guessed marker</a>`,
       '<a href="javascript:alert(1)">Unsafe</a>',
     ].join('\n'))
     const doc = new DOMParser().parseFromString(html, 'text/html')
+    const generatedHrefs = new Set([
+      'https://example.com',
+      'http://example.org',
+      'https://linkify.example.test/path',
+    ])
     const generated = Array.from(doc.querySelectorAll<HTMLAnchorElement>('a[href^="http"]'))
-      .filter((link) => !link.textContent?.includes('Raw'))
+      .filter((link) => generatedHrefs.has(link.getAttribute('href') ?? ''))
     expect(generated.length).toBeGreaterThanOrEqual(3)
     for (const link of generated) {
       expect(link.getAttribute('target')).toBe('_blank')
@@ -1138,7 +1187,35 @@ describe('markdown MD-EXT-1 anchors, TOC, links, and images', () => {
     expect(doc.querySelector('a[href^="mailto:"]')?.getAttribute('target')).toBeNull()
     expect(doc.querySelector('a[href^="tel:"]')?.getAttribute('target')).toBeNull()
     expect(doc.querySelector('a[href="https://raw.example"]')?.getAttribute('target')).toBeNull()
+    expect(doc.querySelector('a[href="https://forged.example"]')?.getAttribute('target')).toBeNull()
+    expect(doc.querySelector('a[href="https://forged-opener.example"]')?.getAttribute('target')).toBeNull()
+    expect(doc.querySelector('a[href="https://forged-opener.example"]')?.getAttribute('rel')).toBe('opener')
+    expect(doc.querySelector('a[href="https://guessed.example"]')?.getAttribute('target')).toBeNull()
+    expect(html).not.toContain(EXTERNAL_LINK_PROVENANCE_ATTR)
     expect(doc.querySelector('a[href^="javascript:"]')).toBeNull()
+  })
+
+  it('keeps generated-link provenance isolated per sanitizer and per render', async () => {
+    const marked = `<a class="docus-external-link" ${EXTERNAL_LINK_PROVENANCE_ATTR}="token-a" href="https://example.com" target="_blank" rel="noopener noreferrer">A</a>`
+    const sanitizedA = createMarkdownSanitizer('token-a')(marked)
+    const sanitizedB = createMarkdownSanitizer('token-b')(marked)
+
+    expect(sanitizedA).toContain('target="_blank"')
+    expect(sanitizedA).toContain('rel="noopener noreferrer"')
+    expect(sanitizedB).not.toContain('target="_blank"')
+    expect(sanitizedA).not.toContain(EXTERNAL_LINK_PROVENANCE_ATTR)
+    expect(sanitizedB).not.toContain(EXTERNAL_LINK_PROVENANCE_ATTR)
+
+    const [htmlA, htmlB] = await Promise.all([
+      render('[A](https://a.example)'),
+      render('[B](https://b.example)'),
+    ])
+    expect(htmlA).toContain('target="_blank"')
+    expect(htmlA).toContain('rel="noopener noreferrer"')
+    expect(htmlB).toContain('target="_blank"')
+    expect(htmlB).toContain('rel="noopener noreferrer"')
+    expect(htmlA).not.toContain(EXTERNAL_LINK_PROVENANCE_ATTR)
+    expect(htmlB).not.toContain(EXTERNAL_LINK_PROVENANCE_ATTR)
   })
 
   it('adds lazy loading only to Markdown image tokens', async () => {

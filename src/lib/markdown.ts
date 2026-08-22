@@ -6,7 +6,12 @@ import footnote from 'markdown-it-footnote'
 import deflist from 'markdown-it-deflist'
 import mark from 'markdown-it-mark'
 import { bareEmoji } from '@mdit/plugin-emoji'
-import { wikiLinkPlugin, type Resolver as WikiResolver, type WikiLinkEnv } from './wikiLinks'
+import {
+  EXTERNAL_LINK_PROVENANCE_ATTR,
+  wikiLinkPlugin,
+  type Resolver as WikiResolver,
+  type WikiLinkEnv,
+} from './wikiLinks'
 import { calloutPlugin } from './callouts'
 import { mathPlugin } from './math'
 import { emojiDefinitions } from './emoji'
@@ -133,25 +138,60 @@ const ALLOWED_MARKDOWN_DATA_ATTRS = new Set([
 
 export type MarkdownSanitizer = (html: string) => string
 
-export function createMarkdownSanitizer(): MarkdownSanitizer {
+function createExternalLinkProvenance(): string {
+  const secureCrypto = globalThis.crypto
+  if (typeof secureCrypto?.randomUUID === 'function') return secureCrypto.randomUUID()
+  if (typeof secureCrypto?.getRandomValues === 'function') {
+    const bytes = secureCrypto.getRandomValues(new Uint8Array(16))
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+  }
+  throw new Error('Secure randomness is required for Markdown link provenance')
+}
+
+function isGeneratedExternalAnchor(node: Element, provenanceToken: string): boolean {
+  return typeof node?.tagName === 'string'
+    && typeof node.getAttribute === 'function'
+    && node.tagName.toLowerCase() === 'a'
+    && node.getAttribute(EXTERNAL_LINK_PROVENANCE_ATTR) === provenanceToken
+    && /^https?:/i.test(node.getAttribute('href') ?? '')
+    && node.getAttribute('target') === '_blank'
+}
+
+export function createMarkdownSanitizer(provenanceToken?: string): MarkdownSanitizer {
   // DOMPurify's ESM default export is a factory when the module is evaluated
   // without a DOM (for example, before Vitest installs jsdom). Creating the
   // instance lazily keeps the same code safe in the browser and test runtime.
   const purifier = DOMPurify(typeof window === 'undefined' ? undefined : window)
+  const trustedGeneratedAnchors = new WeakSet<Element>()
+
+  purifier.addHook('beforeSanitizeAttributes', (node) => {
+    if (!provenanceToken || !isGeneratedExternalAnchor(node, provenanceToken)) return
+    trustedGeneratedAnchors.add(node)
+    // The generated renderer owns this value. Normalize it here so a trusted
+    // generated link cannot be weakened before the final sanitized output.
+    node.setAttribute('rel', 'noopener noreferrer')
+  })
   purifier.addHook('uponSanitizeAttribute', (node, data) => {
     if (data.attrName.startsWith('on')) {
       data.keepAttr = false
       return
     }
+
+    // The provenance marker is a temporary sanitizer input, never a public
+    // Markdown data attribute. It is removed for both valid and forged values.
+    if (data.attrName === EXTERNAL_LINK_PROVENANCE_ATTR) {
+      data.keepAttr = false
+      return
+    }
+
     // DOMPurify treats `target` as a URI-valued attribute and therefore
     // removes `_blank` even when it is listed in ALLOWED_ATTR. Preserve only
-    // the renderer-owned value on the renderer-owned marker class. Raw HTML
-    // anchors continue through the existing sanitizer behavior unchanged.
+    // the renderer-produced value whose opaque per-render marker was verified
+    // by beforeSanitizeAttributes. A public class is intentionally irrelevant.
     if (
       data.attrName === 'target'
       && data.attrValue === '_blank'
-      && typeof (node as { classList?: { contains: (name: string) => boolean } }).classList?.contains === 'function'
-      && (node as { classList: { contains: (name: string) => boolean } }).classList.contains('docus-external-link')
+      && trustedGeneratedAnchors.has(node)
     ) {
       data.forceKeepAttr = true
       return
@@ -165,8 +205,8 @@ export function createMarkdownSanitizer(): MarkdownSanitizer {
   return (html: string) => purifier.sanitize(html, MARKDOWN_SANITIZE_CONFIG)
 }
 
-export function sanitizeMarkdownHtml(html: string): string {
-  return createMarkdownSanitizer()(html)
+export function sanitizeMarkdownHtml(html: string, provenanceToken?: string): string {
+  return createMarkdownSanitizer(provenanceToken)(html)
 }
 
 /* URL-encode the markmap / mermaid source before putting it in a data
@@ -295,8 +335,12 @@ export async function render(markdown: string, options: MarkdownRenderOptions = 
 
   // Keep the final env separate from the discovery env. In particular, the
   // real resolver must only be visible to the actual render pass.
-  const env: WikiLinkEnv = options.resolver ? { wikiResolver: options.resolver } : {}
+  const externalLinkProvenance = createExternalLinkProvenance()
+  const env: WikiLinkEnv = {
+    ...(options.resolver ? { wikiResolver: options.resolver } : {}),
+    externalLinkProvenance,
+  }
   const html = md.render(markdown, env)
   syncGeneratedShikiStylesheet()
-  return sanitizeMarkdownHtml(html)
+  return sanitizeMarkdownHtml(html, externalLinkProvenance)
 }

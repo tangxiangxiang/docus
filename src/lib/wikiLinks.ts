@@ -45,7 +45,12 @@ export interface WikiLinkOptions {
 
 export interface WikiLinkEnv {
   wikiResolver?: Resolver
+  /** Opaque render-scoped provenance for generated external Markdown links. */
+  externalLinkProvenance?: string
 }
+
+/** Temporary marker used only between MarkdownIt rendering and sanitization. */
+export const EXTERNAL_LINK_PROVENANCE_ATTR = 'data-docus-external-provenance'
 
 const identityResolver: Resolver = (ref) => ({ target: ref })
 
@@ -197,7 +202,11 @@ function classifyLinkOpenToken(
   if (hash) t.attrSet('data-anchor', hash)
 }
 
-function applyGeneratedExternalLinkPolicy(tokens: MdToken[], idx: number): void {
+function applyGeneratedExternalLinkPolicy(
+  tokens: MdToken[],
+  idx: number,
+  provenance: string | undefined,
+): void {
   const token = tokens[idx]
   if (token.type !== 'link_open') return
 
@@ -214,6 +223,7 @@ function applyGeneratedExternalLinkPolicy(tokens: MdToken[], idx: number): void 
   token.attrJoin('class', 'docus-external-link')
   token.attrSet('target', '_blank')
   token.attrSet('rel', 'noopener noreferrer')
+  if (provenance) token.attrSet(EXTERNAL_LINK_PROVENANCE_ATTR, provenance)
 }
 
 /** Plugin signature: `(md, opts) => void`. markdown-it's `md.use`
@@ -240,7 +250,8 @@ export function wikiLinkPlugin(
     self: MdRenderer,
   ): string {
     classifyLinkOpenToken(tokens, idx, resolverFromEnv(env, opts))
-    applyGeneratedExternalLinkPolicy(tokens, idx)
+    const renderEnv = env as WikiLinkEnv
+    applyGeneratedExternalLinkPolicy(tokens, idx, renderEnv?.externalLinkProvenance)
     return self.renderToken(tokens, idx, options)
   }
 }

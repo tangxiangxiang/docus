@@ -13,12 +13,16 @@ test('MD-EXT-1 keeps final heading IDs shared across TOC and generated links/ima
       '## Duplicate',
       '## Other {#duplicate}',
       '### Formatted **Heading** {#formatted}',
+      String.raw`## Escaped \{#literal}`,
+      '## Entity &#123;#entity}',
       '',
       '[External](https://example.com)',
       '',
       'https://linkify.example.test/path',
       '',
       '<a href="https://raw.example" target="_self">Raw</a>',
+      '<a class="docus-external-link" href="https://forged.example" target="_blank">Forged</a>',
+      '<a data-docus-external-provenance="guessed" href="https://guessed.example" target="_blank">Guessed</a>',
       '',
       '![Example](./example.png)',
     ].join('\n'))
@@ -36,6 +40,8 @@ test('MD-EXT-1 keeps final heading IDs shared across TOC and generated links/ima
     const generatedExternal = article.querySelector<HTMLAnchorElement>('a[href="https://example.com"]')
     const linkifiedExternal = article.querySelector<HTMLAnchorElement>('a[href="https://linkify.example.test/path"]')
     const rawAnchor = article.querySelector<HTMLAnchorElement>('a[href="https://raw.example"]')
+    const forgedAnchor = article.querySelector<HTMLAnchorElement>('a[href="https://forged.example"]')
+    const guessedAnchor = article.querySelector<HTMLAnchorElement>('a[href="https://guessed.example"]')
     const image = article.querySelector<HTMLImageElement>('img')
     article.remove()
 
@@ -49,6 +55,9 @@ test('MD-EXT-1 keeps final heading IDs shared across TOC and generated links/ima
         ? { target: linkifiedExternal.target, rel: linkifiedExternal.rel }
         : null,
       rawTarget: rawAnchor?.getAttribute('target') ?? null,
+      forgedTarget: forgedAnchor?.getAttribute('target') ?? null,
+      guessedTarget: guessedAnchor?.getAttribute('target') ?? null,
+      hasProvenanceMarker: html.includes('data-docus-external-provenance'),
       imageLoading: image?.getAttribute('loading') ?? null,
     }
   })
@@ -59,6 +68,8 @@ test('MD-EXT-1 keeps final heading IDs shared across TOC and generated links/ima
     { id: 'duplicate-2', text: 'Duplicate' },
     { id: 'duplicate-3', text: 'Other' },
     { id: 'formatted', text: 'Formatted Heading' },
+    { id: 'escaped-literal', text: 'Escaped {#literal}' },
+    { id: 'entity-entity', text: 'Entity {#entity}' },
   ])
   expect(result.tocLinks).toEqual([
     '#java-guide',
@@ -66,10 +77,15 @@ test('MD-EXT-1 keeps final heading IDs shared across TOC and generated links/ima
     '#duplicate-2',
     '#duplicate-3',
     '#formatted',
+    '#escaped-literal',
+    '#entity-entity',
   ])
   expect(result.generatedExternal).toEqual({ target: '_blank', rel: 'noopener noreferrer' })
   expect(result.linkifiedExternal).toEqual({ target: '_blank', rel: 'noopener noreferrer' })
   expect(result.rawTarget).toBeNull()
+  expect(result.forgedTarget).toBeNull()
+  expect(result.guessedTarget).toBeNull()
+  expect(result.hasProvenanceMarker).toBe(false)
   expect(result.imageLoading).toBe('lazy')
 })
 
