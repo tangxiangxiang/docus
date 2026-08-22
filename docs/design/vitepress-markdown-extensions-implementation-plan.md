@@ -1535,7 +1535,8 @@ MD-EXT-2 — Custom Containers.
 
 ## 21. MD-EXT-2 — Custom Containers
 
-Status: COMPLETE / REVIEW-CLOSED. Evidence: [MD-EXT-2 Custom Containers](vitepress-markdown-extensions-md-ext-2-containers.md).
+Status: COMPLETE / REVIEW-CLOSED. The opaque-block review follow-up is applied and
+recorded in the evidence handoff: [MD-EXT-2 Custom Containers](vitepress-markdown-extensions-md-ext-2-containers.md).
 Phase base: 4c86783fc847fda43a5eaba95e1d32621d79b835. Next phase: MD-EXT-3 — Shiki
 Code Annotations & Unified Fence Metadata — NOT STARTED.
 
@@ -1574,6 +1575,14 @@ tokens. The outer delimiter must be longer than a nested delimiter. Body content
 passed through normal MarkdownIt parsing using the same render env, so existing
 callouts, links, math, and fenced code remain visible to their existing plugins.
 
+The MD-EXT-2 review follow-up additionally requires close discovery to respect the
+source ranges owned by earlier opaque block rules: `code`, `docus_math_block`,
+`fence`, and `html_block`. The implementation uses narrow range detectors aligned
+with the installed MarkdownIt/Docus rules and jumps over those ranges before
+looking for container delimiters. It does not create a second MarkdownIt parser,
+render a substring, or disable `html: true`; raw HTML remains under the existing
+DOMPurify boundary.
+
 Unknown types and malformed/unclosed fences use safe ordinary/fallback handling and
 must not swallow the document tail. details maps only the literal open modifier to
 the boolean open attribute; all other brace text is not parsed as attrs.
@@ -1589,11 +1598,12 @@ the boolean open attribute; all other brace text is not parsed as attrs.
 ### Likely tests/E2E
 
 Unit: each built-in type/default title/custom title, inline title safety, body Markdown,
-nested longer/shorter fences, unknown/unclosed/malformed input, code fences inside
-containers, callout-in-container, container-in-callout, ordinary blockquotes, and
-details open.
+nested longer/shorter fences, unknown/unclosed/malformed input, opaque earlier
+blocks (indented code, math, fenced code, raw HTML), callout-in-container,
+container-in-callout, ordinary blockquotes, and details open.
 
-Browser: light/dark rendering, focus/summary interaction, nested layout.
+Browser: light/dark rendering, real native summary click interaction, nested layout,
+and raw HTML delimiter ownership.
 
 PDF: printable containers, details state, heading pagination, long content, and no
 style/event leakage.
@@ -1631,14 +1641,16 @@ module-global delimiter stack or resolver context.
 
 ### Manual acceptance
 
-Render nested outer/inner fences, a code fence containing ::: text, a callout inside a
-container, a container inside a callout, unknown/unclosed forms, dangerous titles, and
-details {open}. Verify unrelated trailing Markdown remains intact.
+Render nested outer/inner fences, raw HTML/math/indented-code ranges containing
+delimiter-looking lines, a code fence containing ::: text, a callout inside a
+container, a container inside a callout, unknown/unclosed forms, dangerous titles,
+and details {open}. Verify unrelated trailing Markdown remains intact and use a
+real Chromium summary click to prove native disclosure behavior.
 
 ### Validation commands
 
 ~~~
-./node_modules/.bin/vitest run src/lib/__tests__/markdown.test.ts src/lib/__tests__/callouts.test.ts
+./node_modules/.bin/vitest run src/lib/__tests__/markdownContainers.test.ts src/lib/__tests__/markdown.test.ts src/lib/__tests__/callouts.test.ts
 npm run typecheck
 npm run build
 npm run test:unit
@@ -1655,6 +1667,8 @@ behavior remains intact.
 
 - All five fixed types work with deterministic HTML/class contracts.
 - Nested fences do not swallow code or document tail.
+- Close discovery respects earlier opaque `code`, `docus_math_block`, `fence`, and
+  `html_block` source ranges without a second MarkdownIt parse.
 - Existing callouts remain unchanged and coexist.
 - Generic attrs/raw bypass remain absent.
 - Reader/PDF styles and details semantics are proven.
@@ -1662,7 +1676,8 @@ behavior remains intact.
 ### Evidence required
 
 docs/design/vitepress-markdown-extensions-md-ext-2-containers.md with parser decisions,
-sanitizer delta, malformed-input evidence, browser/PDF results, and rollback boundary.
+opaque-block follow-up evidence, sanitizer delta, malformed-input evidence,
+native-browser/PDF results, and rollback boundary.
 
 ### Next phase
 

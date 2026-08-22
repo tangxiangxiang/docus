@@ -1,4 +1,6 @@
 import type MarkdownIt from 'markdown-it'
+import htmlBlockNames from 'markdown-it/lib/common/html_blocks.mjs'
+import { HTML_OPEN_CLOSE_TAG_RE } from 'markdown-it/lib/common/html_re.mjs'
 import type StateBlock from 'markdown-it/lib/rules_block/state_block.mjs'
 
 const CONTAINER_DEFINITIONS = {
@@ -25,6 +27,10 @@ interface ContainerClosing {
 interface FencedCodeOpening {
   marker: number
   markerLength: number
+}
+
+interface HtmlBlockOpening {
+  close: RegExp
 }
 
 function isSupportedType(value: string): value is MarkdownContainerType {
@@ -134,6 +140,141 @@ function findFencedCodeEnd(
   return endLine
 }
 
+function findIndentedCodeEnd(
+  state: StateBlock,
+  openingLine: number,
+  endLine: number,
+): number {
+  let nextLine = openingLine + 1
+  let lastLine = nextLine
+
+  while (nextLine < endLine) {
+    if (state.isEmpty(nextLine)) {
+      nextLine += 1
+      continue
+    }
+
+    if (state.sCount[nextLine] - state.blkIndent >= 4) {
+      nextLine += 1
+      lastLine = nextLine
+      continue
+    }
+
+    break
+  }
+
+  return lastLine
+}
+
+/* Keep the source-range detector aligned with markdown-it's html_block rule.
+   The container rule runs later than html_block, so a line such as `<div>` has
+   already claimed the following source range before container rendering. The
+   scanner must honor that same ownership without invoking a second parser. */
+const HTML_BLOCK_TAG_RE = new RegExp(
+  '^</?(' + htmlBlockNames.join('|') + ')(?=(\\s|/?>|$))',
+  'i',
+)
+
+const HTML_BLOCK_SEQUENCES: readonly (readonly [RegExp, RegExp])[] = [
+  [/^<(script|pre|style|textarea)(?=(\s|>|$))/i, /<\/(script|pre|style|textarea)>/i],
+  [/^<!--/, /-->/],
+  [/^<\?/, /\?>/],
+  [/^<![A-Z]/, />/],
+  [/^<!\[CDATA\[/, /\]\]>/],
+  [HTML_BLOCK_TAG_RE, /^$/],
+  [new RegExp(HTML_OPEN_CLOSE_TAG_RE.source + '\\s*$'), /^$/],
+]
+
+function parseHtmlBlockOpening(state: StateBlock, line: number): HtmlBlockOpening | null {
+  if (!state.md.options.html) return null
+  if (state.sCount[line] - state.blkIndent >= 4) return null
+
+  const lineStart = getLineStart(state, line)
+  const lineEnd = getLineEnd(state, line)
+  if (lineStart >= lineEnd || state.src.charCodeAt(lineStart) !== 0x3c /* < */) return null
+
+  const lineText = state.src.slice(lineStart, lineEnd)
+  const sequence = HTML_BLOCK_SEQUENCES.find(([opening]) => opening.test(lineText))
+  return sequence ? { close: sequence[1] } : null
+}
+
+function findHtmlBlockEnd(
+  state: StateBlock,
+  openingLine: number,
+  endLine: number,
+  opening: HtmlBlockOpening,
+): number {
+  const openingStart = getLineStart(state, openingLine)
+  const openingEnd = getLineEnd(state, openingLine)
+  const openingText = state.src.slice(openingStart, openingEnd)
+  const endsOnBlankLine = opening.close.test('')
+  let nextLine = openingLine + 1
+
+  if (!opening.close.test(openingText)) {
+    for (; nextLine < endLine; nextLine += 1) {
+      if (state.sCount[nextLine] < state.blkIndent) {
+        if (endsOnBlankLine || !state.isEmpty(nextLine)) break
+      }
+
+      const lineStart = getLineStart(state, nextLine)
+      const lineEnd = getLineEnd(state, nextLine)
+      const lineText = state.src.slice(lineStart, lineEnd)
+      if (!opening.close.test(lineText)) continue
+
+      if (lineText.length !== 0) nextLine += 1
+      break
+    }
+  }
+
+  return nextLine
+}
+
+function findMathBlockEnd(state: StateBlock, openingLine: number, endLine: number): number | null {
+  if (state.sCount[openingLine] - state.blkIndent >= 4) return null
+
+  const openingStart = getLineStart(state, openingLine)
+  const openingEnd = getLineEnd(state, openingLine)
+  const openingText = state.src.slice(openingStart, openingEnd)
+  const singleLine = /^\$\$(.*?)\$\$\s*$/.exec(openingText)
+  if (singleLine && singleLine[1].trim()) return openingLine + 1
+  if (openingText.trim() !== '$$') return null
+
+  for (let line = openingLine + 1; line < endLine; line += 1) {
+    const lineStart = getLineStart(state, line)
+    const lineEnd = getLineEnd(state, line)
+    if (state.src.slice(lineStart, lineEnd).trim() === '$$') return line + 1
+  }
+
+  // An unterminated $$ block is not owned by the Docus math rule, so leave it
+  // visible to the normal delimiter scan and preserve the existing fallback.
+  return null
+}
+
+function findOpaqueBlockEnd(state: StateBlock, line: number, endLine: number): number | null {
+  // This order follows the relevant earlier block rules: indented code, the
+  // Docus math rule, fenced code, then raw HTML. Each detector only returns a
+  // range when the corresponding earlier rule would own the source.
+  if (state.sCount[line] - state.blkIndent >= 4) {
+    return findIndentedCodeEnd(state, line, endLine)
+  }
+
+  const mathEnd = findMathBlockEnd(state, line, endLine)
+  if (mathEnd !== null) return mathEnd
+
+  const fencedOpening = parseFencedCodeOpening(state, line)
+  if (fencedOpening) {
+    const fencedEnd = findFencedCodeEnd(state, line, endLine, fencedOpening)
+    // findFencedCodeEnd returns the closing fence line for a closed fence;
+    // normalize it to the first line after the opaque range for the scanner.
+    return fencedEnd < endLine ? fencedEnd + 1 : endLine
+  }
+
+  const htmlOpening = parseHtmlBlockOpening(state, line)
+  if (htmlOpening) return findHtmlBlockEnd(state, line, endLine, htmlOpening)
+
+  return null
+}
+
 /**
  * Find a close owned by the current opener. A shorter supported opener starts
  * a nested container and is skipped together with its own matching close. A
@@ -147,13 +288,12 @@ function findClosingLine(
   openerLength: number,
 ): number {
   for (let line = bodyStart; line < endLine; line += 1) {
-    // The scan is only looking for container delimiters. Fenced code is
-    // parsed by MarkdownIt's earlier fence rule and may contain arbitrary
-    // `:::` text, so skip its complete source range before considering any
-    // opener or closer inside it.
-    const fencedOpening = parseFencedCodeOpening(state, line)
-    if (fencedOpening) {
-      line = findFencedCodeEnd(state, line, endLine, fencedOpening)
+    // Earlier opaque block rules own their complete source ranges. Do not
+    // reinterpret delimiter-looking lines inside code, math, or raw HTML as
+    // container metadata.
+    const opaqueEnd = findOpaqueBlockEnd(state, line, endLine)
+    if (opaqueEnd !== null) {
+      line = opaqueEnd - 1
       continue
     }
 

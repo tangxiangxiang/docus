@@ -138,6 +138,127 @@ describe('Docus custom Markdown containers', () => {
       .toContain('After the code fence.')
   })
 
+  it('does not treat delimiter-looking lines inside raw HTML blocks as closes', async () => {
+    const doc = parse(await render([
+      ':::: info HTML example',
+      '',
+      '<div>',
+      '::::',
+      '</div>',
+      '',
+      'After HTML.',
+      '',
+      '::::',
+    ].join('\n')))
+
+    const container = doc.querySelector('.markdown-container-info')
+    expect(doc.querySelectorAll('.markdown-container')).toHaveLength(1)
+    expect(container?.textContent).toContain('After HTML.')
+    expect(container?.querySelector('.markdown-container')).toBeNull()
+    expect(container?.querySelector('div:not(.markdown-container-title)')?.textContent)
+      .toContain('::::')
+  })
+
+  it('keeps nested-container-looking lines inside raw HTML ownership', async () => {
+    const doc = parse(await render([
+      ':::: warning HTML boundary',
+      '',
+      '<section>',
+      '::: details',
+      'Not a Docus container here.',
+      ':::',
+      '</section>',
+      '',
+      'After raw HTML.',
+      '',
+      '::::',
+    ].join('\n')))
+
+    const container = doc.querySelector('.markdown-container-warning')
+    expect(doc.querySelectorAll('.markdown-container')).toHaveLength(1)
+    expect(container?.textContent).toContain('Not a Docus container here.')
+    expect(container?.textContent).toContain('After raw HTML.')
+    expect(container?.querySelector('.markdown-container-details')).toBeNull()
+  })
+
+  it('keeps raw HTML ownership while preserving the sanitizer boundary', async () => {
+    const doc = parse(await render([
+      ':::: info Sanitized HTML',
+      '',
+      '<div onclick="alert(1)">',
+      '::::',
+      '</div>',
+      '',
+      'After unsafe HTML.',
+      '',
+      '::::',
+    ].join('\n')))
+
+    const container = doc.querySelector('.markdown-container-info')
+    expect(container?.textContent).toContain('After unsafe HTML.')
+    expect(container?.querySelector('[onclick]')).toBeNull()
+  })
+
+  it('keeps closer-looking lines inside Docus math blocks', async () => {
+    const doc = parse(await render([
+      ':::: info Math boundary',
+      '',
+      '$$',
+      'a = 1',
+      '::::',
+      'b = 2',
+      '$$',
+      '',
+      'After math.',
+      '',
+      '::::',
+    ].join('\n')))
+
+    const container = doc.querySelector('.markdown-container-info')
+    expect(doc.querySelectorAll('.markdown-container')).toHaveLength(1)
+    expect(container?.textContent).toContain('After math.')
+    expect(container?.querySelector('.math-mount')).not.toBeNull()
+    const mathContent = container?.querySelector('.math-mount')?.getAttribute('data-content') ?? ''
+    expect(decodeURIComponent(mathContent)).toContain('::::')
+  })
+
+  it('keeps closer-looking lines inside indented code blocks', async () => {
+    const doc = parse(await render([
+      ':::: info Indented code',
+      '',
+      '    ::::',
+      '    literal code',
+      '',
+      'After code.',
+      '',
+      '::::',
+    ].join('\n')))
+
+    const container = doc.querySelector('.markdown-container-info')
+    expect(doc.querySelectorAll('.markdown-container')).toHaveLength(1)
+    expect(container?.textContent).toContain('::::\nliteral code')
+    expect(container?.textContent).toContain('After code.')
+  })
+
+  it('keeps closer-looking lines inside tilde fenced code', async () => {
+    const doc = parse(await render([
+      ':::: info Tilde fence',
+      '',
+      '~~~text',
+      '::::',
+      '~~~',
+      '',
+      'After tilde fence.',
+      '',
+      '::::',
+    ].join('\n')))
+
+    const container = doc.querySelector('.markdown-container-info')
+    expect(doc.querySelectorAll('.markdown-container')).toHaveLength(1)
+    expect(container?.querySelector('pre code')?.textContent).toContain('::::')
+    expect(container?.textContent).toContain('After tilde fence.')
+  })
+
   it('supports three-level nesting without a module-global container stack', async () => {
     const [htmlA, htmlB] = await Promise.all([
       render([

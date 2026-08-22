@@ -34,7 +34,12 @@ test('MD-EXT-2 renders fixed containers, nested bodies, and existing Markdown fe
       ':::',
       '',
       '::: danger STOP',
-      'Danger body.',
+      '',
+      '<div>',
+      '::::',
+      '</div>',
+      '',
+      'After raw HTML.',
       ':::',
       '',
       '::: details Closed',
@@ -59,6 +64,7 @@ test('MD-EXT-2 renders fixed containers, nested bodies, and existing Markdown fe
       toc: article.querySelector('nav.docus-toc a[href="#container-heading"]') !== null,
       closed: closed?.open === false,
       opened: opened?.open === true,
+      rawHtmlTail: article.querySelector('.markdown-container-danger')?.textContent?.includes('After raw HTML.') ?? false,
       external: external ? { target: external.target, rel: external.rel } : null,
       imageLoading: article.querySelector('img')?.getAttribute('loading') ?? null,
       genericAttrs: article.querySelectorAll('[style], [onclick], [onerror], [id="foo"]').length,
@@ -74,6 +80,7 @@ test('MD-EXT-2 renders fixed containers, nested bodies, and existing Markdown fe
   expect(result.toc).toBe(true)
   expect(result.closed).toBe(true)
   expect(result.opened).toBe(true)
+  expect(result.rawHtmlTail).toBe(true)
   expect(result.external).toEqual({ target: '_blank', rel: 'noopener noreferrer' })
   expect(result.imageLoading).toBe('lazy')
   expect(result.genericAttrs).toBe(0)
@@ -112,4 +119,31 @@ test('MD-EXT-2 expands generated details only in the PDF clone', async ({ page }
     cloneOpen: true,
     cloneBody: true,
   })
+})
+
+test('MD-EXT-2 uses native summary click interaction for closed details', async ({ page }) => {
+  await page.goto('/__markdown-test?mode=reading')
+
+  await page.evaluate(async () => {
+    const { render } = await import('/src/lib/markdown.ts')
+    const article = document.createElement('article')
+    article.className = 'article reading md-ext-2-summary-click-fixture'
+    article.style.cssText = 'position:fixed; inset:16px auto auto 16px; z-index:999999; background:white; padding:16px;'
+    article.innerHTML = await render([
+      '::: details Click to open',
+      'Native details body.',
+      ':::',
+    ].join('\n'))
+    document.body.append(article)
+  })
+
+  const details = page.locator('.md-ext-2-summary-click-fixture details.markdown-container-details')
+  const summary = details.locator('summary')
+  await expect(details).toHaveJSProperty('open', false)
+  await summary.click()
+  await expect(details).toHaveJSProperty('open', true)
+  await summary.click()
+  await expect(details).toHaveJSProperty('open', false)
+
+  await page.locator('.md-ext-2-summary-click-fixture').evaluate((article) => article.remove())
 })

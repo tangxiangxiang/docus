@@ -12,11 +12,13 @@
 | MD-EXT-2 base | 4c86783fc847fda43a5eaba95e1d32621d79b835 |
 | Approved PRD | 7e05e3bb43f4283a90ead1abd0c81325bc93281c |
 | Approved Implementation Plan | 582e312a4c5752a4c9a5c6bba7b0e752b0b78078 |
+| Original MD-EXT-2 implementation | 5bc39e84b9e859b23275a8b02302348b10616a55 |
 | MD-EXT-2 completion commit | Recorded in the final handoff after this evidence commit is created |
+| Opaque-block review follow-up | Recorded in the final handoff after this follow-up commit is created |
 | Next phase | MD-EXT-3 — Shiki Code Annotations & Unified Fence Metadata — NOT STARTED |
 | Shiki prerequisite | H0-H8 COMPLETE / CLOSED; no H9 |
 
-The task started from a clean `main` checkout at `4c86783fc847fda43a5eaba95e1d32621d79b835`. No dependency, server, resource, Shiki-runtime, or MD-EXT-1 architecture changes were made.
+The original MD-EXT-2 implementation started from a clean `main` checkout at `4c86783fc847fda43a5eaba95e1d32621d79b835`. The opaque-block review follow-up is applied on top of `5bc39e84b9e859b23275a8b02302348b10616a55`; the original implementation commit is not being rewritten to claim it contained this correction. No dependency, server, resource, Shiki-runtime, or MD-EXT-1 architecture changes were made.
 
 ## 2. Scope and changed files
 
@@ -73,6 +75,21 @@ docus-container, paragraph, inline
 ```
 
 The named insertion point is stable and does not depend on numeric ruler indexes. The implementation does not preprocess the whole document, post-process HTML, invoke a second Markdown parser, or use module-global nesting state.
+
+The follow-up explicitly classifies the earlier source-owning rules relevant to
+close discovery:
+
+| Rule | Classification | Scanner behavior |
+| --- | --- | --- |
+| `code` | opaque indented-code range | skip the complete range using MarkdownIt's indentation/blank-line ownership |
+| `docus_math_block` | opaque Docus math range | skip a recognized `$$ ... $$` block, including delimiter-looking source lines |
+| `fence` | opaque fenced-code range | retain backtick/tilde fence matching and skip through its close |
+| `html_block` | opaque raw-HTML range | mirror MarkdownIt's installed HTML block sequences and skip through the owned range |
+
+The close scanner does not probe by rendering, call `md.parse()` on substrings, or
+create another MarkdownIt instance. It uses narrow source-range detectors aligned
+with the installed MarkdownIt 14.2.0 rules and the existing Docus math rule, then
+jumps directly to the first line after an opaque range.
 
 The flow is:
 
@@ -162,6 +179,36 @@ Same-type nesting uses the same delimiter rule; container type is never used to 
 
 Fenced code ranges are skipped while looking for container delimiters. Therefore `:::` and longer colon runs inside a code fence remain literal code source. This prevents a code example from closing or opening a surrounding container accidentally.
 
+### Opaque earlier-block ownership follow-up
+
+The original implementation's source scan was extended after review so raw HTML and
+the other earlier opaque block rules retain ownership of their complete source
+ranges. In particular:
+
+```markdown
+:::: info HTML example
+
+<div>
+::::
+</div>
+
+After HTML
+
+::::
+```
+
+keeps the inner `::::` inside the raw HTML block and keeps `After HTML` inside the
+outer container. The same boundary is covered for nested-container-looking lines
+inside a raw `<section>`, delimiter-looking math source, indented code, and both
+backtick and tilde fenced code. Raw HTML remains enabled and still passes through
+the existing DOMPurify boundary; this is parser ownership protection, not a
+sanitizer relaxation.
+
+An unclosed opaque block follows the same safe fallback semantics as MarkdownIt:
+the scanner does not invent a close or swallow unrelated content. No module-global
+opaque-range state is introduced, and normal nested-container delimiter ownership
+is unchanged.
+
 If a supported opener has no owned close, the rule returns `false` and MarkdownIt falls back to ordinary Markdown parsing. The implementation does not consume the unrelated document tail. Unknown types, including `success`, `note`, `custom`, and `code-group`, are not mapped to a Docus container or arbitrary class. `::: code-group` remains outside MD-EXT-2.
 
 ## 6. Details `{open}` contract
@@ -207,7 +254,7 @@ The existing `src/lib/callouts.ts` plugin was not rewritten or replaced. Callout
 
 Reader styles are scoped under `.article .markdown-container` and use Docus/VS Code theme variables. The type colors are fixed CSS declarations for the five allowlisted types; no Markdown value becomes a selector or inline style.
 
-`details` is native browser disclosure state. Closed details are closed by default; literal `{open}` details start open; summary click behavior requires no custom mount composable and no application-global state. Theme switching remains CSS-only and does not rerender Markdown or retokenize Shiki.
+`details` is native browser disclosure state. Closed details are closed by default; literal `{open}` details start open; a real Chromium `summary.click()` regression confirms native disclosure toggles closed → open → closed without custom JavaScript. Theme switching remains CSS-only and does not rerender Markdown or retokenize Shiki.
 
 ## 9. Sanitizer and security delta
 
@@ -281,10 +328,15 @@ Existing PDF layout, wrapping, oversized-block splitting, Mermaid/MarkMap/math s
 Result:
 
 ```text
-PASS — 9 test files, 190 tests
+Original implementation baseline: PASS — 9 test files, 190 tests
+Follow-up rerun: PASS — 9 test files, 197 tests
 ```
 
 The container/PDF subset alone also passed 2 files / 27 tests.
+
+The opaque-block follow-up focused unit run passed all 17
+`markdownContainers.test.ts` tests, including raw HTML, math, indented-code, and
+fenced-code ownership cases.
 
 ### Typecheck and build
 
@@ -309,6 +361,15 @@ npm run test:e2e -- \
 
 PASS — 11 tests
 ```
+
+The follow-up's native disclosure browser regression also passed: Chromium located
+the generated `<summary>`, clicked it with Playwright, observed `details.open ===
+true`, then clicked again and observed `false`.
+
+The follow-up focused browser command covering the MD-EXT-2, MD-EXT-1, Shiki
+security, Markdown visual, and PDF Shiki specs passed 9 tests. The original
+implementation's broader Markdown/PDF command remains recorded above as the
+historical 11-test result.
 
 The existing PDF compatibility/layout/pagination/stress set also passed:
 
@@ -337,6 +398,15 @@ All 21 failures are the existing environment/shared-fixture class:
 - one Round-16 crash-child test has the same `tsx` IPC restriction.
 
 No Markdown, container, callout, Shiki, client, or PDF product regression failed in the full run. The command remains honestly recorded as FAIL rather than relabeled PASS.
+
+The follow-up rerun remained limited to the same environment failures:
+
+```text
+Test Files: 3 failed | 209 passed (212)
+Tests: 21 failed | 3129 passed | 2 skipped (3152)
+```
+
+No new Markdown, container, math, Shiki, client, or PDF failure appeared.
 
 ## 12. Bundle comparison
 
@@ -399,6 +469,8 @@ MD-EXT-3: NOT STARTED
 ```text
 MD-EXT-2: COMPLETE / REVIEW-CLOSED
 Implementation: COMPLETE
+Original implementation: 5bc39e84b9e859b23275a8b02302348b10616a55
+Opaque-block review follow-up: applied; final SHA recorded in handoff
 MD-EXT-3: READY / NOT STARTED
 Shiki H0-H8: COMPLETE / CLOSED
 No H9 created
