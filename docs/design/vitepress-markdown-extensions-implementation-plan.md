@@ -4,7 +4,7 @@
 
 | Field | Value |
 | --- | --- |
-| Document status | IMPLEMENTATION COMPLETE / MD-EXT-6 COMPLETE / REVIEW-CLOSED |
+| Document status | IMPLEMENTATION COMPLETE / MD-EXT-7 COMPLETE / REVIEW-READY |
 | Product program | Docus VitePress-Style Markdown Extensions |
 | Repository | tangxiangxiang/docus |
 | Branch | main |
@@ -13,14 +13,14 @@
 | Approved PRD baseline | 7e05e3bb43f4283a90ead1abd0c81325bc93281c |
 | Implementation Plan task base | 7e05e3bb43f4283a90ead1abd0c81325bc93281c |
 | Implementation baseline | 582e312a4c5752a4c9a5c6bba7b0e752b0b78078 |
-| Current phase | MD-EXT-6 — COMPLETE / REVIEW-CLOSED; next MD-EXT-7 — READY TO START / NOT STARTED |
-| Current implementation state | PRD approved; MD-EXT-0 audit complete; MD-EXT-1 implementation and provenance/source-awareness follow-up complete; MD-EXT-2 implementation plus opaque-range and paragraph-context follow-ups complete; MD-EXT-3 fence metadata and Shiki source annotations plus sentinel/budget review follow-up complete; MD-EXT-4 bounded structural line numbers, unknown-language fallback, reader/PDF layout, browser evidence, and reader annotation-background follow-up complete; MD-EXT-5 static code groups, root-scoped reader enhancement, sanitizer delta, and all-panel PDF preparation complete; MD-EXT-6 safe snippets/includes, authenticated resource reads, exact range semantics, exact UTF-8 expansion accounting, per-child source context, cancellation, code-span-aware directive opacity, fail-closed local-image PDF cloning, and child-driven Markdown-link/image ownership complete; MD-EXT-7 ready to start / not started |
+| Current phase | MD-EXT-7 — COMPLETE / REVIEW-READY; program RELEASE GATE PASS / EXTERNAL REVIEW PENDING |
+| Current implementation state | PRD approved; MD-EXT-0 audit complete; MD-EXT-1 implementation and provenance/source-awareness follow-up complete; MD-EXT-2 implementation plus opaque-range and paragraph-context follow-ups complete; MD-EXT-3 fence metadata and Shiki source annotations plus sentinel/budget review follow-up complete; MD-EXT-4 bounded structural line numbers, unknown-language fallback, reader/PDF layout, browser evidence, and reader annotation-background follow-up complete; MD-EXT-5 static code groups, root-scoped reader enhancement, sanitizer delta, and all-panel PDF preparation complete; MD-EXT-6 safe snippets/includes, authenticated resource reads, exact range semantics, exact UTF-8 expansion accounting, per-child source context, cancellation, code-span-aware directive opacity, fail-closed local-image PDF cloning, and child-driven Markdown-link/image ownership complete; MD-EXT-7 full regression, browser/PDF, security, architecture, bundle, and documentation release gate complete / review-ready |
 | Shiki prerequisite | SHIKI-H0 through SHIKI-H8 COMPLETE; migration closed; no H9 |
 | Parser baseline | markdown-it 14.2.0 singleton (package range `^14.1.0`) |
 | Shiki baseline | Shiki 4.4.3, @shikijs/transformers 4.4.3 |
 | VitePress reference | Official Markdown Extensions documentation, version observed 2.0.0-alpha.19 on 2026-08-21 |
 | Scope of this document | Implementation planning only |
-| This lifecycle update changes | MD-EXT-6 final external-review lifecycle metadata and image-alt implementation SHA; MD-EXT-7 is ready to start / not started |
+| This lifecycle update changes | MD-EXT-7 release-gate evidence and COMPLETE / REVIEW-READY lifecycle metadata; program release gate pass remains pending external review |
 
 The production baseline is the last production-code state before this Markdown
 extension program. The approved PRD commits after that point are documentation-only.
@@ -2185,8 +2185,8 @@ token path, a root-scoped `useCodeGroupMount`, exact sanitizer additions, and a
 clone-only PDF all-panel transformation. The review follow-up additionally
 enforces the exact `tabindex` values `0` and `-1` at the final sanitizer boundary
 and proves grouped PDF line numbers, annotations, and printable-light Shiki
-token colors in Chromium. MD-EXT-6 has since been implemented and is review-closed;
-MD-EXT-7 is ready to start but has not started.
+token colors in Chromium. MD-EXT-6 has since been implemented and is review-closed.
+At the MD-EXT-5 handoff, MD-EXT-7 was ready to start but had not started.
 
 ### Next phase
 
@@ -2439,13 +2439,18 @@ records the authenticated route, bounded text/image policy, per-render
 cache/stack/cancellation behavior, focused tests, browser network counts,
 failure-mode PDF proof, the installed MarkdownIt 14.2.0 parser/link-rule audit,
 and the known aggregate unit-suite environment limitations. MD-EXT-6 is
-review-closed; MD-EXT-7 is ready to start but has not started.
+review-closed. At the MD-EXT-6 handoff, MD-EXT-7 was ready to start but had not
+started.
 
 ### Next phase
 
-MD-EXT-7 — Full Regression, Bundle Audit & Release Gate — READY TO START / NOT STARTED.
+MD-EXT-7 — Full Regression, Bundle Audit & Release Gate — COMPLETE / REVIEW-READY.
 
 ## 26. MD-EXT-7 — Full Regression, Bundle Audit & Release Gate
+
+Status: COMPLETE / REVIEW-READY. Evidence: [MD-EXT-7 Release Gate](vitepress-markdown-extensions-md-ext-7-release-gate.md).
+Program status: RELEASE GATE PASS / EXTERNAL REVIEW PENDING. MD-EXT-7 does not
+self-close the program.
 
 ### Goal
 
@@ -2575,7 +2580,8 @@ ledger, release verdict, and final implementation commit references.
 
 ### Next phase
 
-If all criteria pass: program status MD-EXT PROGRAM — COMPLETE. Otherwise stop at the
+If all criteria pass: program status MD-EXT PROGRAM — RELEASE GATE PASS / EXTERNAL
+REVIEW PENDING. External review owns final program closure. Otherwise stop at the
 owning phase; do not advance by relabeling a failure.
 
 ## 27. Phase Summary Table
@@ -2820,6 +2826,6 @@ implemented opportunistically in a phase that owns a related feature.
 | Release gate finds a real product failure | Block; fix owning phase separately |
 
 The implementation plan remains the execution map. MD-EXT-0 is complete as an
-evidence-only phase, MD-EXT-1 through MD-EXT-5 are implemented with their evidence
-documents, MD-EXT-6 is implemented and review-closed with its evidence document.
-MD-EXT-7 is the next phase and has not started.
+evidence-only phase, MD-EXT-1 through MD-EXT-6 are implemented and review-closed
+with their evidence documents. MD-EXT-7 is complete / review-ready, and the
+program is at RELEASE GATE PASS / EXTERNAL REVIEW PENDING.
