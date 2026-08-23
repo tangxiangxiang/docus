@@ -297,6 +297,41 @@ test('MD-EXT-3 keeps the focused row visibly selected in the reader', async ({ p
   expect(result.unfocusedFilter).not.toBe('none')
 })
 
+test('MD-EXT-3 reveals softened rows when the focused block is hovered', async ({ page }) => {
+  await page.goto('/__markdown-test?mode=reading')
+
+  await page.evaluate(async () => {
+    const { render } = await import('/src/lib/markdown.ts')
+    const vault = document.createElement('div')
+    vault.className = 'vault'
+    const article = document.createElement('article')
+    article.className = 'article reading md-ext-3-focused-hover-fixture'
+    article.innerHTML = await render([
+      '```js',
+      'const before = 1',
+      'const focused = 2 // [!code focus]',
+      'const after = 3',
+      '```',
+    ].join('\n'))
+    vault.append(article)
+    document.body.append(vault)
+  })
+
+  const pre = page.locator('.md-ext-3-focused-hover-fixture pre.shiki')
+  const unfocused = pre.locator('.line:not(.focused)').first()
+  await expect(pre).toBeVisible()
+  await expect(unfocused).toHaveCSS('opacity', '0.4')
+  await expect(unfocused).toHaveCSS('filter', /blur\(/u)
+
+  await pre.hover()
+  await expect(unfocused).toHaveCSS('opacity', '1')
+  await expect(unfocused).toHaveCSS('filter', 'none')
+
+  await page.evaluate(() => {
+    document.querySelector('.md-ext-3-focused-hover-fixture')?.closest('.vault')?.remove()
+  })
+})
+
 test('MD-EXT-3 preserves author sentinel-like source and deferred markers', async ({ page }) => {
   await page.goto('/__markdown-test?mode=reading')
 

@@ -180,6 +180,11 @@
   transition: filter 0.35s ease, opacity 0.35s ease;
 }
 
+:root .vault:not(.pdf-document) .article pre.shiki.has-focused:hover .line:not(.focused) {
+  filter: none;
+  opacity: 1;
+}
+
 /* MD-EXT-4 opt-in structural gutters. The default Shiki DOM is intentionally
    untouched; only fences whose FenceMeta enables line numbers receive this
    class and the grid/content wrappers below. */
