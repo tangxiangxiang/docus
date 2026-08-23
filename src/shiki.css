@@ -157,6 +157,15 @@
   background-color: var(--vs-bg-2, var(--code-bg));
 }
 
+/* A code-group already owns the outer frame and tab-to-panel spacing. Do not
+   let the generic fence margin/border create a second floating card with
+   large blank bands inside that frame. */
+:root .vault:not(.pdf-document) .article .docus-code-group .docus-code-group-panel > pre.shiki {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+}
+
 :root .vault:not(.pdf-document) .article pre.shiki:not(.docus-line-numbers):not(.docus-shiki-plain) > code {
   display: block;
   line-height: 0;

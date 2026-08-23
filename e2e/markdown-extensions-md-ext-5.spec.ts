@@ -97,6 +97,7 @@ test('MD-EXT-5 renders static panels and mounts independent accessible tabs', as
     const languageLabel = firstPre
       ? getComputedStyle(firstPre, '::after').content
       : ''
+    const codePanelStyle = firstPre ? getComputedStyle(firstPre) : undefined
     firstTabs[1]?.click()
     const afterClick = {
       selected: firstTabs.map((tab) => tab.getAttribute('aria-selected')),
@@ -135,6 +136,11 @@ test('MD-EXT-5 renders static panels and mounts independent accessible tabs', as
         hasNativeTitle: firstPre?.hasAttribute('title') === true,
         renderedLabel: languageLabel,
       },
+      codePanel: {
+        marginTop: codePanelStyle?.marginTop,
+        marginBottom: codePanelStyle?.marginBottom,
+        borderRadius: codePanelStyle?.borderRadius,
+      },
       afterClick,
       afterHome,
       independent,
@@ -169,6 +175,11 @@ test('MD-EXT-5 renders static panels and mounts independent accessible tabs', as
     dataLanguage: 'ts',
     hasNativeTitle: false,
     renderedLabel: '"ts"',
+  })
+  expect(result.codePanel).toEqual({
+    marginTop: '0px',
+    marginBottom: '0px',
+    borderRadius: '0px',
   })
   expect(result.afterClick).toEqual({
     selected: ['false', 'true'],
