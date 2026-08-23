@@ -164,6 +164,15 @@
   box-shadow: none;
 }
 
+/* Focused rows need an explicit reader surface: the surrounding `.has-focused`
+   treatment dims non-focused rows, while this row keeps the semantic blue cue
+   visible above the code-block surface. PDF owns its own printable palette. */
+:root .vault:not(.pdf-document) .article pre.shiki.has-focused .line.focused {
+  background-color: rgba(45, 129, 247, 0.14);
+  box-shadow: inset 3px 0 0 #2f81f7;
+  opacity: 1;
+}
+
 /* MD-EXT-4 opt-in structural gutters. The default Shiki DOM is intentionally
    untouched; only fences whose FenceMeta enables line numbers receive this
    class and the grid/content wrappers below. */

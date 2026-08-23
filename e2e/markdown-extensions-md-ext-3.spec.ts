@@ -248,6 +248,54 @@ test('MD-EXT-3 keeps annotated line surfaces visible across reader themes', asyn
   expect(['transparent', 'rgba(0,0,0,0)', 'rgb(0,0,0,0)']).toContain(darkTokenBackground)
 })
 
+test('MD-EXT-3 keeps the focused row visibly selected in the reader', async ({ page }) => {
+  await page.goto('/__markdown-test?mode=reading')
+
+  const result = await page.evaluate(async () => {
+    const { render } = await import('/src/lib/markdown.ts')
+    const vault = document.createElement('div')
+    vault.className = 'vault'
+    const article = document.createElement('article')
+    article.className = 'article reading md-ext-3-focused-surface-fixture'
+    article.innerHTML = await render([
+      '```js',
+      'const before = 1',
+      'const focused = 2 // [!code focus]',
+      'const after = 3',
+      '```',
+    ].join('\n'))
+    vault.append(article)
+    document.body.append(vault)
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+
+    const pre = article.querySelector<HTMLElement>('pre.shiki')
+    const focused = pre?.querySelector<HTMLElement>('.line.focused')
+    const unfocused = pre?.querySelector<HTMLElement>('.line:not(.focused)')
+    if (!pre || !focused || !unfocused) throw new Error('focused reader fixture is incomplete')
+
+    const preStyle = getComputedStyle(pre)
+    const focusedStyle = getComputedStyle(focused)
+    const unfocusedStyle = getComputedStyle(unfocused)
+    const result = {
+      hasFocused: pre.classList.contains('has-focused'),
+      focusedBackground: focusedStyle.backgroundColor,
+      focusedBorder: focusedStyle.boxShadow,
+      focusedOpacity: focusedStyle.opacity,
+      unfocusedOpacity: unfocusedStyle.opacity,
+      rootBackground: preStyle.backgroundColor,
+    }
+    vault.remove()
+    return result
+  })
+
+  expect(result.hasFocused).toBe(true)
+  expect(result.focusedBackground).not.toMatch(/^(transparent|rgba\(0, 0, 0, 0\))$/u)
+  expect(result.focusedBackground).not.toBe(result.rootBackground)
+  expect(result.focusedBorder).toContain('inset')
+  expect(result.focusedOpacity).toBe('1')
+  expect(result.unfocusedOpacity).toBe('0.58')
+})
+
 test('MD-EXT-3 preserves author sentinel-like source and deferred markers', async ({ page }) => {
   await page.goto('/__markdown-test?mode=reading')
 
