@@ -27,17 +27,40 @@ content inside continues to use normal Markdown.
 > This is a note.
 ```
 
-The supported markers are `NOTE`, `TIP`, `IMPORTANT`, `WARNING`, and `CAUTION`.
-The marker must occupy its line by itself, and the displayed title is always
-the uppercase canonical type:
+The supported markers are exactly `NOTE`, `TIP`, `IMPORTANT`, `WARNING`, and
+`CAUTION`. Markers are case-sensitive and must occupy the first line of the
+blockquote by themselves. Alert titles are localized in the rendered UI:
+
+| Marker | Display title |
+| --- | --- |
+| `NOTE` | 注意 |
+| `TIP` | 提示 |
+| `IMPORTANT` | 重要 |
+| `WARNING` | 警告 |
+| `CAUTION` | 小心 |
+
+For example:
 
 ```md
 > [!WARNING]
 > Back up your data first.
 ```
 
-Legacy, unknown, lowercase, titled, and folded markers remain ordinary
-blockquotes. Foldable Alerts (`+` / `-` markers) are not enabled.
+Custom titles are not supported, and folded Alerts (`+` / `-` markers) are not
+enabled. Legacy, unknown, lowercase, titled, and folded forms remain ordinary
+blockquotes; Docus does not silently convert them to canonical Alerts.
+
+## Inline table of contents
+
+Docus does not provide an inline `[[toc]]` Markdown extension. The document's
+right-side heading navigation remains available, but no table of contents is
+inserted into the Markdown body.
+
+`[[toc]]`, `[[TOC]]`, and `[[Toc]]` all use the normal WikiLink resolver, just
+like any other WikiLink. Existing notes that relied on the removed inline
+extension should be reviewed manually. See the
+[post-MD-EXT compatibility note](../migrations/markdown-post-md-ext-compatibility.md)
+for the migration contract.
 
 ## Mathematics
 

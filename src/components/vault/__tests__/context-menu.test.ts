@@ -5,6 +5,7 @@ import { flushPromises } from "@vue/test-utils"
 import FileTree from '../FileTree.vue'
 import type { TreeNode } from '../../../lib/api'
 import { installDialogMocks } from '../../../__test-helpers__/dialogs'
+import { useScopeFilter } from '../../../composables/vault/useScopeFilter'
 
 installDialogMocks()
 
@@ -42,6 +43,9 @@ const TREE: TreeNode[] = [
 describe('FileTree context menu', () => {
   beforeEach(() => {
     localStorage.clear()
+    // Context-menu coverage exercises the unfiltered tree, including a
+    // user-defined top-level folder outside the default note scope.
+    useScopeFilter().activeScope.value = null
     // The context menu is teleported to <body>, so it survives
     // w.unmount() and would leak into the next case's
     // document.querySelector('.tree-context-menu'). Wipe any leftover

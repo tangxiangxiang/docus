@@ -64,7 +64,7 @@
 /* Unknown/empty/unavailable fences have no Shiki theme variables. Keep the
    existing Docus text and code-surface tokens instead of resolving undefined
    Shiki variables. */
-.article pre.shiki.docus-shiki-plain {
+:root .article pre.shiki.docus-shiki-plain {
   color: var(--text);
   background-color: var(--code-bg);
 }

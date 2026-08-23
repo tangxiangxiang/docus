@@ -2,6 +2,34 @@
 
 All notable changes to Docus are documented in this file.
 
+## Markdown Rendering Maintenance — 2026-08-24
+
+### Compatibility
+
+- Switched callouts to strict GitHub-style Alert markers: only uppercase
+  `NOTE`, `TIP`, `IMPORTANT`, `WARNING`, and `CAUTION` are recognized.
+- Legacy, lowercase, titled, folded, and unknown Obsidian-style callout forms
+  now remain ordinary blockquotes.
+- Removed the inline `[[toc]]` extension; `[[toc]]`, `[[TOC]]`, and `[[Toc]]`
+  now follow normal WikiLink semantics.
+
+### Rendering
+
+- Completed the Shiki syntax-highlighting migration and the VitePress-style
+  Markdown Extensions program.
+- Refined reader code blocks, line highlighting, diff/focus/error/warning
+  surfaces, and language labels.
+- Unified Alert and Markdown-container reader/PDF surfaces.
+
+### Hardening
+
+- Bounded Markdown include/snippet resource selection by UTF-8 byte limits
+  before output materialization.
+
+### Migration
+
+- See the [post-MD-EXT Markdown compatibility note](docs/migrations/markdown-post-md-ext-compatibility.md).
+
 ## Authentication v1 — 2026-08-11
 
 ### Product capability
