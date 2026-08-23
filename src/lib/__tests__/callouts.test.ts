@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import MarkdownIt from 'markdown-it'
 import { render } from '../markdown'
 import { calloutPlugin } from '../callouts'
@@ -31,7 +33,7 @@ describe('GitHub-style Markdown Alerts', () => {
     expect(seenCloseMeta).toMatchObject({ fromOtherPlugin: true, callout: { type: 'NOTE' } })
   })
 
-  it('renders exactly the five canonical Alert types with fixed uppercase titles', async () => {
+  it('renders exactly the five canonical Alert types with Title Case titles', async () => {
     const html = await render([
       '> [!NOTE]',
       '> note',
@@ -58,7 +60,7 @@ describe('GitHub-style Markdown Alerts', () => {
     }
     expect(doc.querySelectorAll('.callout')).toHaveLength(5)
     expect(Array.from(doc.querySelectorAll('.callout-title-text')).map((node) => node.textContent))
-      .toEqual(['NOTE', 'TIP', 'IMPORTANT', 'WARNING', 'CAUTION'])
+      .toEqual(['Note', 'Tip', 'Important', 'Warning', 'Caution'])
   })
 
   it('requires a marker-only canonical line and does not support custom titles', async () => {
@@ -71,7 +73,7 @@ describe('GitHub-style Markdown Alerts', () => {
       'text/html',
     )
 
-    expect(canonical.querySelector('.callout-warning .callout-title-text')?.textContent).toBe('WARNING')
+    expect(canonical.querySelector('.callout-warning .callout-title-text')?.textContent).toBe('Warning')
     expect(titled.querySelector('.callout')).toBeNull()
     expect(titled.querySelector('blockquote')?.textContent).toContain('[!WARNING] Database migration')
   })
@@ -212,7 +214,7 @@ describe('GitHub-style Markdown Alerts', () => {
     const alert = doc.querySelector('.callout-warning')
 
     expect(alert).not.toBeNull()
-    expect(alert?.querySelector('.callout-title-text')?.textContent).toBe('WARNING')
+    expect(alert?.querySelector('.callout-title-text')?.textContent).toBe('Warning')
     expect(alert?.querySelector('script, img')).toBeNull()
     expect(alert?.textContent).toContain('Safe text')
     expect(doc.querySelector('[onerror], [onclick], [onload]')).toBeNull()
@@ -226,5 +228,17 @@ describe('GitHub-style Markdown Alerts', () => {
 
     expect(doc.querySelector('blockquote')?.textContent).toContain('Normal quote')
     expect(doc.querySelector('.callout')).toBeNull()
+  })
+
+  it('uses deterministic CSS mask icons instead of Unicode Alert glyphs', () => {
+    const styles = readFileSync(resolve(process.cwd(), 'src/style.css'), 'utf8')
+
+    expect(styles).not.toMatch(/[ⓘ✦‼⚠⛔]/u)
+    expect(styles).toContain('-webkit-mask-image: var(--callout-icon-mask)')
+    expect(styles).toContain('mask-image: var(--callout-icon-mask)')
+    expect(styles).toContain('--callout-fg-color')
+    expect(styles).toContain('--callout-border-color')
+    expect(styles).toContain('width: 16px')
+    expect(styles).toContain('height: 16px')
   })
 })

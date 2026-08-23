@@ -2,6 +2,13 @@ import { promises as fs } from 'node:fs'
 import { expect, test } from './fixtures/auth'
 
 const slug = 'inbox/pdf-export-e2e'
+const printableAlertColors: Record<string, { foreground: string; border: string }> = {
+  'callout-note': { foreground: 'rgb(9, 105, 218)', border: 'rgb(9, 105, 218)' },
+  'callout-tip': { foreground: 'rgb(26, 127, 55)', border: 'rgb(26, 127, 55)' },
+  'callout-important': { foreground: 'rgb(130, 80, 223)', border: 'rgb(130, 80, 223)' },
+  'callout-warning': { foreground: 'rgb(154, 103, 0)', border: 'rgb(154, 103, 0)' },
+  'callout-caution': { foreground: 'rgb(209, 36, 47)', border: 'rgb(207, 34, 46)' },
+}
 
 type PdfSurfaceSnapshot = {
   surfaceCount: number
@@ -14,6 +21,20 @@ type PdfSurfaceSnapshot = {
   inlineCodeText: string
   hasCallout: boolean
   calloutTypes: string[]
+  calloutEvidence: Array<{
+    type: string
+    title: string
+    foreground: string
+    border: string
+    borderWidth: string
+    borderStyle: string
+    background: string
+    fontWeight: string
+    lineHeight: string
+    iconWidth: string
+    iconHeight: string
+    mask: string
+  }>
   taskCheckboxCount: number
   checkedTaskCount: number
   footnoteMarkerCount: number
@@ -149,6 +170,30 @@ test('exports the Kitchen Sink with settled content from the file-tree menu', as
         hasCallout: article.querySelector('.callout') !== null,
         calloutTypes: Array.from(preparedArticle.querySelectorAll<HTMLElement>('.callout'))
           .map((callout) => Array.from(callout.classList).find((name) => name.startsWith('callout-') && name !== 'callout') ?? ''),
+        calloutEvidence: Array.from(preparedArticle.querySelectorAll<HTMLElement>('.callout')).map((callout) => {
+          const type = Array.from(callout.classList)
+            .find((name) => name.startsWith('callout-') && name !== 'callout') ?? ''
+          const title = callout.querySelector<HTMLElement>('.callout-title')
+          const icon = callout.querySelector<HTMLElement>('.callout-icon')
+          const calloutStyle = getComputedStyle(callout)
+          const iconStyle = icon ? getComputedStyle(icon, '::before') : null
+          return {
+            type,
+            title: title?.querySelector('.callout-title-text')?.textContent ?? '',
+            foreground: title ? getComputedStyle(title).color : '',
+            border: calloutStyle.borderLeftColor,
+            borderWidth: calloutStyle.borderLeftWidth,
+            borderStyle: calloutStyle.borderLeftStyle,
+            background: calloutStyle.backgroundColor,
+            fontWeight: title ? getComputedStyle(title).fontWeight : '',
+            lineHeight: title ? getComputedStyle(title).lineHeight : '',
+            iconWidth: icon ? getComputedStyle(icon).width : '',
+            iconHeight: icon ? getComputedStyle(icon).height : '',
+            mask: iconStyle
+              ? (iconStyle.getPropertyValue('-webkit-mask-image') || iconStyle.getPropertyValue('mask-image'))
+              : '',
+          }
+        }),
         taskCheckboxCount: article.querySelectorAll('input.task-list-item-checkbox').length,
         checkedTaskCount: article.querySelectorAll('input.task-list-item-checkbox:checked').length,
         footnoteMarkerCount: article.querySelectorAll('.footnote-ref').length,
@@ -320,6 +365,24 @@ test('exports the Kitchen Sink with settled content from the file-tree menu', as
     'callout-warning',
     'callout-caution',
   ])
+  expect(snapshot.calloutEvidence.map((alert) => alert.title)).toEqual([
+    'Note', 'Tip', 'Important', 'Warning', 'Caution',
+  ])
+  expect(snapshot.calloutEvidence).toHaveLength(5)
+  for (const alert of snapshot.calloutEvidence) {
+    const colors = printableAlertColors[alert.type]
+    expect(colors).toBeDefined()
+    expect(alert.foreground).toBe(colors.foreground)
+    expect(alert.border).toBe(colors.border)
+    expect(alert.borderWidth).toBe('4px')
+    expect(alert.borderStyle).toBe('solid')
+    expect(alert.background).toMatch(/transparent|rgba\(0, 0, 0, 0\)/)
+    expect(alert.fontWeight).toBe('500')
+    expect(Number.parseFloat(alert.lineHeight)).toBeCloseTo(15.33, 1)
+    expect(alert.iconWidth).toBe('16px')
+    expect(alert.iconHeight).toBe('16px')
+    expect(alert.mask).toContain('data:image/svg+xml')
+  }
   expect(snapshot.taskCheckboxCount).toBe(2)
   expect(snapshot.checkedTaskCount).toBe(1)
   expect(snapshot.footnoteMarkerCount).toBeGreaterThan(0)

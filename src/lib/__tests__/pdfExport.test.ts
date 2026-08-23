@@ -89,6 +89,17 @@ describe('PDF export helpers', () => {
 
     expect(styles).toContain('.pdf-document .article .callout {')
     expect(styles).toContain('background: transparent !important;')
+    expect(styles).toContain('padding: 0.5rem 1rem !important;')
+    expect(styles).toContain('font-weight: 500 !important;')
+    expect(styles).toContain('line-height: 1 !important;')
+    expect(styles).toContain('-webkit-mask-image: var(--callout-icon-mask)')
+    expect(styles).toContain('mask-image: var(--callout-icon-mask)')
+    expect(styles).not.toMatch(/[ⓘ✦‼⚠⛔]/u)
+    for (const color of [
+      '#0969da', '#1a7f37', '#8250df', '#9a6700', '#d1242f', '#cf222e',
+    ]) {
+      expect(styles).toContain(color)
+    }
     for (const type of ['note', 'tip', 'important', 'warning', 'caution']) {
       expect(styles).toContain(`.pdf-document .article .callout-${type}`)
     }
