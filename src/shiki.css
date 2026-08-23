@@ -4,10 +4,13 @@
    layout remains owned by style.css. */
 
 .shiki,
-.shiki span,
 .article pre.shiki {
   color: var(--shiki-light);
   background-color: var(--shiki-light-bg);
+}
+
+.shiki span {
+  color: var(--shiki-light);
 }
 
 /* With no explicit Docus theme, follow the OS only for the initial/CSS
@@ -15,8 +18,13 @@
    OS dark. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) .shiki,
+  :root:not([data-theme='light']) .article pre.shiki,
   :root:not([data-theme='light']) .shiki span {
     color: var(--shiki-dark);
+  }
+
+  :root:not([data-theme='light']) .shiki,
+  :root:not([data-theme='light']) .article pre.shiki {
     background-color: var(--shiki-dark-bg);
   }
 }
@@ -24,20 +32,30 @@
 /* Explicit Docus choices are ordered after the media fallback so they win
    at equal specificity when the operating system prefers the other palette. */
 :root[data-theme='light'] .shiki,
+:root[data-theme='light'] .article pre.shiki,
 :root[data-theme='light'] .shiki span {
   color: var(--shiki-light);
+}
+
+:root[data-theme='light'] .shiki,
+:root[data-theme='light'] .article pre.shiki {
   background-color: var(--shiki-light-bg);
 }
 
 :root[data-theme='dark'] .shiki,
+:root[data-theme='dark'] .article pre.shiki,
 :root[data-theme='dark'] .shiki span {
   color: var(--shiki-dark);
+}
+
+:root[data-theme='dark'] .shiki,
+:root[data-theme='dark'] .article pre.shiki {
   background-color: var(--shiki-dark-bg);
 }
 
-/* Generic `.shiki span` rules paint token backgrounds. These two MD-EXT-4
-   spans are structural wrappers, not syntax tokens, so they stay transparent
-   and expose the semantic annotation background owned by `.line`. */
+/* These MD-EXT-4 spans are structural wrappers, not syntax tokens, so they
+   stay transparent and expose the semantic annotation background owned by
+   `.line`. */
 .article pre.shiki.docus-line-numbers .docus-line-number,
 .article pre.shiki.docus-line-numbers .docus-line-content {
   background-color: transparent;
@@ -91,6 +109,14 @@
 .article pre.shiki .line.info {
   background-color: rgba(47, 129, 247, 0.14);
   box-shadow: inset 3px 0 0 #2f81f7;
+}
+
+/* Give ordinary highlighted lines a full code-row surface. Numbered and
+   plain fallback fences keep their existing layout contracts below. */
+.article pre.shiki:not(.docus-line-numbers):not(.docus-shiki-plain) .line {
+  display: inline-block;
+  width: 100%;
+  min-width: 100%;
 }
 
 /* MD-EXT-4 opt-in structural gutters. The default Shiki DOM is intentionally

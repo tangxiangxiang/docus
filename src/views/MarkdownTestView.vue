@@ -122,6 +122,30 @@ $$
 const consistent = preview.style === reading.style
 \`\`\`
 
+### Code line surfaces
+
+\`\`\`typescript {1,3-5}
+const metaFirst = 1
+const metaSecond = 2
+const metaThird = 3
+const metaFourth = 4
+const metaFifth = 5
+const metaSixth = 6
+\`\`\`
+
+\`\`\`typescript
+const sourceFirst = 1
+const sourceHighlighted = 2 // [!code highlight]
+const sourceThird = 3
+\`\`\`
+
+\`\`\`typescript {2,4}:line-numbers=20
+const numberedFirst = 1
+const numberedSecond = 2
+const numberedThird = 3
+const numberedFourth = 4
+\`\`\`
+
 \`\`\`mermaid
 flowchart LR
   Markdown --> Preview

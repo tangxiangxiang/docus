@@ -175,6 +175,12 @@ const PDF_DOWNLOAD_STYLES = `
   min-width: 0;
 }
 
+.pdf-document .article pre.shiki:not(.docus-line-numbers):not(.docus-shiki-plain) .line {
+  display: inline-block !important;
+  width: 100% !important;
+  min-width: 100% !important;
+}
+
 .pdf-document .article pre.shiki.docus-line-numbers .docus-line-number {
   display: block;
   min-width: max-content;
@@ -207,7 +213,6 @@ const PDF_DOWNLOAD_STYLES = `
 
 .pdf-document .article pre.shiki:not(.docus-shiki-plain) span {
   color: var(--shiki-light) !important;
-  background-color: var(--shiki-light-bg) !important;
 }
 
 /* Plain/unknown fences do not have Shiki variables. Keep their established

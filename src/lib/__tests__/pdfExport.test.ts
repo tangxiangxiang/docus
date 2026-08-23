@@ -145,6 +145,12 @@ describe('PDF export helpers', () => {
       expect(owner?.textContent).toContain('.pdf-document .article pre.shiki .line.highlighted')
       expect(owner?.textContent).toContain('.pdf-document .article pre.shiki .line.focused')
       expect(owner?.textContent).toContain('.pdf-document .article pre.shiki .line.error')
+      expect(owner?.textContent).toMatch(
+        /\.pdf-document \.article pre\.shiki:not\(\.docus-shiki-plain\) span \{\s*color: var\(--shiki-light\) !important;\s*\}/u,
+      )
+      expect(owner?.textContent).not.toMatch(
+        /\.pdf-document \.article pre\.shiki:not\(\.docus-shiki-plain\) span \{[^}]*background-color/u,
+      )
       expect(owner?.textContent).not.toContain('DOCUS_H6_USER_SOURCE_SENTINEL')
       expect(source.querySelector('article')?.textContent).toContain('DOCUS_H6_USER_SOURCE_SENTINEL')
       expect(liveOwner.textContent).toBe('.docus-shiki-live { --shiki-light: blue; }')

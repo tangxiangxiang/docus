@@ -1044,6 +1044,26 @@ describe('markdown H3 renderer cutover', () => {
     expect(html).not.toMatch(/\sstyle=/i)
   })
 
+  it('preserves final-render line highlight classes for a non-numbered fence', async () => {
+    const html = await render([
+      '```ts {1,3-5}',
+      'const first = 1',
+      'const second = 2',
+      'const third = 3',
+      'const fourth = 4',
+      'const fifth = 5',
+      'const sixth = 6',
+      '```',
+    ].join('\n'))
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const lines = Array.from(doc.querySelectorAll('pre.shiki .line'))
+
+    expect(lines).toHaveLength(7)
+    expect(lines.map((line) => line.classList.contains('highlighted')))
+      .toEqual([true, false, true, true, true, false, false])
+    expect(html).not.toMatch(/\sstyle=/i)
+  })
+
   it('does not activate deferred or out-of-bound source notation', async () => {
     const html = await render([
       '```ts',

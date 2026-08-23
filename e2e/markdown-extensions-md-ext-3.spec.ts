@@ -74,6 +74,180 @@ test('MD-EXT-3 separates fence metadata from approved Shiki source notation', as
   })
 })
 
+test('MD-EXT-3 keeps annotated line surfaces visible across reader themes', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'dark' })
+  await page.goto('/__markdown-test?mode=reading')
+
+  const source = [
+    '```ts {1,3-5}',
+    'const meta = 1',
+    'const plain = 2',
+    'const metaThree = 3',
+    'const metaFour = 4',
+    'const metaFive = 5',
+    'const metaTail = 6',
+    '```',
+    '',
+    '```ts',
+    'const source = 1 // [!code highlight]',
+    'const focused = 2 // [!code focus]',
+    'const added = 3 // [!code ++]',
+    'const removed = 4 // [!code --]',
+    'const warning = 5 // [!code warning]',
+    'const error = 6 // [!code error]',
+    'const info = 7 // [!code info]',
+    '```',
+    '',
+    '```ts {2,4}:line-numbers=30',
+    'const numberedOne = 1',
+    'const numberedTwo = 2',
+    'const numberedThree = 3',
+    'const numberedFour = 4',
+    '```',
+  ].join('\n')
+
+  const light = await page.evaluate(async (markdown: string) => {
+    const { render } = await import('/src/lib/markdown.ts')
+    const { useTheme } = await import('/src/composables/useTheme.ts')
+    useTheme().set('light')
+    const article = document.createElement('article')
+    article.className = 'article reading md-ext-3-line-surface-fixture'
+    article.style.width = '760px'
+    article.innerHTML = await render(markdown)
+    document.body.append(article)
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+
+    const isTransparent = (value: string) => {
+      const normalized = value.trim().toLowerCase().replace(/\s+/gu, '')
+      return normalized === 'transparent'
+        || normalized === 'rgba(0,0,0,0)'
+        || normalized === 'rgb(0,0,0,0)'
+        || normalized === 'rgb(0,0,0/0)'
+    }
+    const nonNumbered = Array.from(article.querySelectorAll<HTMLElement>(
+      'pre.shiki:not(.docus-line-numbers):not(.docus-shiki-plain)',
+    ))
+    const numbered = article.querySelector<HTMLElement>('pre.shiki.docus-line-numbers')
+    const meta = nonNumbered[0]
+    const notation = nonNumbered[1]
+    if (!meta || !notation || !numbered) throw new Error('line-surface fixture is incomplete')
+
+    const readLine = (line: HTMLElement | null, pre: HTMLElement) => {
+      if (!line) throw new Error('expected annotated line is missing')
+      const token = Array.from(line.querySelectorAll<HTMLElement>('span'))
+        .find((element) => Array.from(element.classList).some((name) => name.startsWith('docus-shiki-')))
+      if (!token) throw new Error('expected Shiki token is missing')
+      const lineStyle = getComputedStyle(line)
+      const tokenStyle = getComputedStyle(token)
+      return {
+        lineBackground: lineStyle.backgroundColor,
+        lineBorder: lineStyle.boxShadow,
+        tokenBackground: tokenStyle.backgroundColor,
+        tokenTransparent: isTransparent(tokenStyle.backgroundColor),
+        tokenDoesNotMatchRoot: tokenStyle.backgroundColor !== getComputedStyle(pre).backgroundColor,
+      }
+    }
+
+    const metaLine = meta.querySelector<HTMLElement>('.line.highlighted')
+    const plainLine = meta.querySelector<HTMLElement>('.line:not(.highlighted)')
+    const notationLine = notation.querySelector<HTMLElement>('.line.highlighted')
+    const focusedLine = notation.querySelector<HTMLElement>('.line.focused')
+    const addedLine = notation.querySelector<HTMLElement>('.line.diff.add')
+    const removedLine = notation.querySelector<HTMLElement>('.line.diff.remove')
+    const warningLine = notation.querySelector<HTMLElement>('.line.warning')
+    const errorLine = notation.querySelector<HTMLElement>('.line.error')
+    const infoLine = notation.querySelector<HTMLElement>('.line.info')
+    const numberedLine = numbered.querySelector<HTMLElement>('.line.highlighted')
+    const numberedNumber = numberedLine?.querySelector<HTMLElement>('.docus-line-number')
+    const numberedContent = numberedLine?.querySelector<HTMLElement>('.docus-line-content')
+    const code = meta.querySelector<HTMLElement>('code')
+    if (!numberedNumber || !numberedContent || !code) throw new Error('line-surface structure is incomplete')
+
+    const rootBackground = getComputedStyle(meta).backgroundColor
+    return {
+      rootBackground,
+      fullWidth: metaLine
+        ? metaLine.getBoundingClientRect().width >= code.getBoundingClientRect().width - 2
+        : false,
+      meta: readLine(metaLine, meta),
+      plain: readLine(plainLine, meta),
+      notation: readLine(notationLine, notation),
+      focused: readLine(focusedLine, notation),
+      added: readLine(addedLine, notation),
+      removed: readLine(removedLine, notation),
+      warning: readLine(warningLine, notation),
+      error: readLine(errorLine, notation),
+      info: readLine(infoLine, notation),
+      numbered: readLine(numberedLine, numbered),
+      numberedNumberTransparent: isTransparent(getComputedStyle(numberedNumber).backgroundColor),
+      numberedContentTransparent: isTransparent(getComputedStyle(numberedContent).backgroundColor),
+    }
+  }, source)
+
+  await page.emulateMedia({ colorScheme: 'light' })
+  const dark = await page.evaluate(async () => {
+    const { useTheme } = await import('/src/composables/useTheme.ts')
+    useTheme().set('dark')
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    const article = document.querySelector<HTMLElement>('.md-ext-3-line-surface-fixture')
+    if (!article) throw new Error('line-surface fixture is missing after theme switch')
+    const meta = article.querySelector<HTMLElement>(
+      'pre.shiki:not(.docus-line-numbers):not(.docus-shiki-plain)',
+    )
+    const line = meta?.querySelector<HTMLElement>('.line.highlighted')
+    const token = line
+      ? Array.from(line.querySelectorAll<HTMLElement>('span'))
+        .find((element) => Array.from(element.classList).some((name) => name.startsWith('docus-shiki-')))
+      : null
+    if (!meta || !line || !token) throw new Error('dark line-surface fixture is incomplete')
+    return {
+      rootBackground: getComputedStyle(meta).backgroundColor,
+      lineBackground: getComputedStyle(line).backgroundColor,
+      lineBorder: getComputedStyle(line).boxShadow,
+      tokenBackground: getComputedStyle(token).backgroundColor,
+    }
+  })
+
+  await page.evaluate(() => {
+    document.querySelector('.md-ext-3-line-surface-fixture')?.remove()
+  })
+
+  const isVisibleSurface = (surface: { lineBackground: string; lineBorder: string }, root: string) => {
+    const normalized = surface.lineBackground.trim().toLowerCase().replace(/\s+/gu, '')
+    expect(normalized).not.toBe('transparent')
+    expect(normalized).not.toBe('rgba(0,0,0,0)')
+    expect(normalized).not.toBe('rgb(0,0,0,0)')
+    expect(surface.lineBackground).not.toBe(root)
+    expect(surface.lineBorder).not.toBe('none')
+  }
+
+  isVisibleSurface(light.meta, light.rootBackground)
+  isVisibleSurface(light.notation, light.rootBackground)
+  isVisibleSurface(light.numbered, light.rootBackground)
+  for (const surface of [light.focused, light.added, light.removed, light.warning, light.error, light.info]) {
+    isVisibleSurface(surface, light.rootBackground)
+    expect(surface.tokenTransparent).toBe(true)
+    expect(surface.tokenDoesNotMatchRoot).toBe(true)
+  }
+  expect(light.meta.tokenTransparent).toBe(true)
+  expect(light.meta.tokenDoesNotMatchRoot).toBe(true)
+  expect(['transparent', 'rgba(0,0,0,0)', 'rgb(0,0,0,0)'])
+    .toContain(light.plain.lineBackground.trim().toLowerCase().replace(/\s+/gu, ''))
+  expect(light.plain.lineBorder).toBe('none')
+  expect(light.fullWidth).toBe(true)
+  expect(light.numberedNumberTransparent).toBe(true)
+  expect(light.numberedContentTransparent).toBe(true)
+
+  const darkLineBackground = dark.lineBackground.trim().toLowerCase().replace(/\s+/gu, '')
+  expect(darkLineBackground).not.toBe('transparent')
+  expect(darkLineBackground).not.toBe('rgba(0,0,0,0)')
+  expect(darkLineBackground).not.toBe('rgb(0,0,0,0)')
+  expect(dark.lineBackground).not.toBe(dark.rootBackground)
+  expect(dark.lineBorder).not.toBe('none')
+  const darkTokenBackground = dark.tokenBackground.trim().toLowerCase().replace(/\s+/gu, '')
+  expect(['transparent', 'rgba(0,0,0,0)', 'rgb(0,0,0,0)']).toContain(darkTokenBackground)
+})
+
 test('MD-EXT-3 preserves author sentinel-like source and deferred markers', async ({ page }) => {
   await page.goto('/__markdown-test?mode=reading')
 
@@ -153,6 +327,7 @@ test('MD-EXT-3 keeps annotations and expands generated details only in the PDF s
     if (!cloneDetails || !errorLine || !token) throw new Error('MD-EXT-3 PDF fixture is incomplete')
 
     const tokenStyle = getComputedStyle(token)
+    const rootStyle = getComputedStyle(errorLine.closest('pre.shiki'))
     const normalize = (value: string) => {
       const probe = document.createElement('span')
       probe.style.color = value.trim()
@@ -168,6 +343,8 @@ test('MD-EXT-3 keeps annotations and expands generated details only in the PDF s
       lineBackground: getComputedStyle(errorLine).backgroundColor,
       lineBorder: getComputedStyle(errorLine).boxShadow,
       tokenColor: tokenStyle.color,
+      tokenBackground: tokenStyle.backgroundColor,
+      rootBackground: rootStyle.backgroundColor,
       lightTokenColor: normalize(tokenStyle.getPropertyValue('--shiki-light')),
       darkTokenColor: normalize(tokenStyle.getPropertyValue('--shiki-dark')),
       noInlineStyle: prepared.querySelector('[style]') === null,
@@ -184,6 +361,8 @@ test('MD-EXT-3 keeps annotations and expands generated details only in the PDF s
   expect(result.errorClass).toBe(true)
   expect(result.lineBackground).not.toBe('rgba(0, 0, 0, 0)')
   expect(result.lineBorder).not.toBe('none')
+  expect(result.tokenBackground).toMatch(/^(transparent|rgba\(0, 0, 0, 0\))$/u)
+  expect(result.tokenBackground).not.toBe(result.rootBackground)
   expect(result.tokenColor).toBe(result.lightTokenColor)
   expect(result.tokenColor).not.toBe(result.darkTokenColor)
   expect(result.noInlineStyle).toBe(true)
