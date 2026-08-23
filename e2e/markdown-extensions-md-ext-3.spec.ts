@@ -234,14 +234,14 @@ test('MD-EXT-3 keeps annotated line surfaces visible across reader themes', asyn
     expect(surface.tokenDoesNotMatchRoot).toBe(true)
   }
   for (const surface of [light.warning, light.error]) {
-    isVisibleSurface(surface, light.rootBackground)
+    isVisibleSurface(surface, light.rootBackground, false)
     expect(surface.tokenTransparent).toBe(true)
     expect(surface.tokenDoesNotMatchRoot).toBe(true)
   }
   expect(light.warning.lineBackground).toBe('rgba(234, 179, 8, 0.14)')
-  expect(light.warning.lineBorder).toContain('rgb(183, 129, 3)')
+  expect(light.warning.lineBorder).toBe('none')
   expect(light.error.lineBackground).toBe('rgba(244, 63, 94, 0.14)')
-  expect(light.error.lineBorder).toContain('rgb(207, 34, 46)')
+  expect(light.error.lineBorder).toBe('none')
   for (const surface of [light.added, light.removed]) {
     isVisibleSurface(surface, light.rootBackground, false)
     expect(surface.tokenTransparent).toBe(true)
@@ -444,8 +444,8 @@ test('MD-EXT-3 keeps error and warning colors in the reader surface', async ({ p
   expect(result.warning.className).toContain('warning')
   expect(result.error.background).toBe('rgba(244, 63, 94, 0.14)')
   expect(result.warning.background).toBe('rgba(234, 179, 8, 0.14)')
-  expect(result.error.border).toContain('rgb(207, 34, 46)')
-  expect(result.warning.border).toContain('rgb(183, 129, 3)')
+  expect(result.error.border).toBe('none')
+  expect(result.warning.border).toBe('none')
 })
 
 test('MD-EXT-3 preserves author sentinel-like source and deferred markers', async ({ page }) => {
