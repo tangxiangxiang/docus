@@ -185,7 +185,7 @@
   padding-left: 2rem;
 }
 
-:root .vault:not(.pdf-document) .article pre.shiki .line.highlighted {
+:root .vault:not(.pdf-document) .article pre.shiki .line.highlighted:not(.error):not(.warning):not(.info):not(.diff):not(.focused) {
   background-color: rgba(142, 150, 170, 0.16);
   box-shadow: none;
 }

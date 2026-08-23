@@ -401,6 +401,53 @@ test('MD-EXT-3 renders diff rows with full semantic colors and markers', async (
   expect(result.added.markerColor).toBe('rgb(24, 121, 78)')
 })
 
+test('MD-EXT-3 keeps error and warning colors in the reader surface', async ({ page }) => {
+  await page.goto('/__markdown-test?mode=reading')
+
+  const result = await page.evaluate(async () => {
+    const { render } = await import('/src/lib/markdown.ts')
+    const { useTheme } = await import('/src/composables/useTheme.ts')
+    useTheme().set('light')
+    const vault = document.createElement('div')
+    vault.className = 'vault'
+    const article = document.createElement('article')
+    article.className = 'article reading md-ext-3-error-warning-fixture'
+    article.innerHTML = await render([
+      '```js',
+      "const error = 'Error' // [!code error]",
+      "const warning = 'Warning' // [!code warning]",
+      '```',
+    ].join('\n'))
+    vault.append(article)
+    document.body.append(vault)
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+
+    const read = (selector: string) => {
+      const line = article.querySelector<HTMLElement>(selector)
+      if (!line) throw new Error(`${selector} is missing`)
+      const style = getComputedStyle(line)
+      return {
+        className: line.className,
+        background: style.backgroundColor,
+        border: style.boxShadow,
+      }
+    }
+    const result = {
+      error: read('.line.error'),
+      warning: read('.line.warning'),
+    }
+    vault.remove()
+    return result
+  })
+
+  expect(result.error.className).toContain('error')
+  expect(result.warning.className).toContain('warning')
+  expect(result.error.background).toBe('rgba(244, 63, 94, 0.14)')
+  expect(result.warning.background).toBe('rgba(234, 179, 8, 0.14)')
+  expect(result.error.border).toContain('rgb(207, 34, 46)')
+  expect(result.warning.border).toContain('rgb(183, 129, 3)')
+})
+
 test('MD-EXT-3 preserves author sentinel-like source and deferred markers', async ({ page }) => {
   await page.goto('/__markdown-test?mode=reading')
 
