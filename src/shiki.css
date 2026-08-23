@@ -87,13 +87,39 @@
 }
 
 .article pre.shiki .line.diff.add {
-  background-color: rgba(45, 164, 78, 0.14);
-  box-shadow: inset 3px 0 0 #2da44e;
+  position: relative;
+  background-color: rgba(16, 185, 129, 0.14);
+  box-shadow: none;
 }
 
 .article pre.shiki .line.diff.remove {
-  background-color: rgba(207, 34, 46, 0.14);
-  box-shadow: inset 3px 0 0 #cf222e;
+  position: relative;
+  background-color: rgba(244, 63, 94, 0.14);
+  box-shadow: none;
+}
+
+.article pre.shiki .line.diff.add::before,
+.article pre.shiki .line.diff.remove::before {
+  position: absolute;
+  left: 1rem;
+  width: 1rem;
+  color: currentColor;
+  font: inherit;
+  font-weight: 500;
+  line-height: inherit;
+  text-align: center;
+  pointer-events: none;
+  user-select: none;
+}
+
+.article pre.shiki .line.diff.add::before {
+  content: '+';
+  color: #18794e;
+}
+
+.article pre.shiki .line.diff.remove::before {
+  content: '-';
+  color: #b91c1c;
 }
 
 .article pre.shiki .line.warning {

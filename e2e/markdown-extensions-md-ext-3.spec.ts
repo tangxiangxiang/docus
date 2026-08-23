@@ -212,20 +212,29 @@ test('MD-EXT-3 keeps annotated line surfaces visible across reader themes', asyn
     document.querySelector('.md-ext-3-line-surface-fixture')?.remove()
   })
 
-  const isVisibleSurface = (surface: { lineBackground: string; lineBorder: string }, root: string) => {
+  const isVisibleSurface = (
+    surface: { lineBackground: string; lineBorder: string },
+    root: string,
+    requireBorder = true,
+  ) => {
     const normalized = surface.lineBackground.trim().toLowerCase().replace(/\s+/gu, '')
     expect(normalized).not.toBe('transparent')
     expect(normalized).not.toBe('rgba(0,0,0,0)')
     expect(normalized).not.toBe('rgb(0,0,0,0)')
     expect(surface.lineBackground).not.toBe(root)
-    expect(surface.lineBorder).not.toBe('none')
+    if (requireBorder) expect(surface.lineBorder).not.toBe('none')
   }
 
   isVisibleSurface(light.meta, light.rootBackground)
   isVisibleSurface(light.notation, light.rootBackground)
   isVisibleSurface(light.numbered, light.rootBackground)
-  for (const surface of [light.focused, light.added, light.removed, light.warning, light.error, light.info]) {
+  for (const surface of [light.focused, light.warning, light.error, light.info]) {
     isVisibleSurface(surface, light.rootBackground)
+    expect(surface.tokenTransparent).toBe(true)
+    expect(surface.tokenDoesNotMatchRoot).toBe(true)
+  }
+  for (const surface of [light.added, light.removed]) {
+    isVisibleSurface(surface, light.rootBackground, false)
     expect(surface.tokenTransparent).toBe(true)
     expect(surface.tokenDoesNotMatchRoot).toBe(true)
   }
@@ -330,6 +339,57 @@ test('MD-EXT-3 reveals softened rows when the focused block is hovered', async (
   await page.evaluate(() => {
     document.querySelector('.md-ext-3-focused-hover-fixture')?.closest('.vault')?.remove()
   })
+})
+
+test('MD-EXT-3 renders diff rows with full semantic colors and markers', async ({ page }) => {
+  await page.goto('/__markdown-test?mode=reading')
+
+  const result = await page.evaluate(async () => {
+    const { render } = await import('/src/lib/markdown.ts')
+    const { useTheme } = await import('/src/composables/useTheme.ts')
+    useTheme().set('light')
+    const vault = document.createElement('div')
+    vault.className = 'vault'
+    const article = document.createElement('article')
+    article.className = 'article reading md-ext-3-diff-surface-fixture'
+    article.innerHTML = await render([
+      '```ts',
+      'const removed = 1 // [!code --]',
+      'const added = 2 // [!code ++]',
+      '```',
+    ].join('\n'))
+    vault.append(article)
+    document.body.append(vault)
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+
+    const removed = article.querySelector<HTMLElement>('.line.diff.remove')
+    const added = article.querySelector<HTMLElement>('.line.diff.add')
+    if (!removed || !added) throw new Error('diff reader fixture is incomplete')
+
+    const read = (line: HTMLElement) => {
+      const style = getComputedStyle(line)
+      const marker = getComputedStyle(line, '::before')
+      return {
+        background: style.backgroundColor,
+        border: style.boxShadow,
+        marker: marker.content,
+        markerColor: marker.color,
+      }
+    }
+    const result = { removed: read(removed), added: read(added) }
+    vault.remove()
+    return result
+  })
+
+  expect(result.removed.background).not.toBe(result.added.background)
+  expect(result.removed.background).not.toMatch(/^(transparent|rgba\(0, 0, 0, 0\))$/u)
+  expect(result.added.background).not.toMatch(/^(transparent|rgba\(0, 0, 0, 0\))$/u)
+  expect(result.removed.border).toBe('none')
+  expect(result.added.border).toBe('none')
+  expect(result.removed.marker).toBe('"-"')
+  expect(result.added.marker).toBe('"+"')
+  expect(result.removed.markerColor).toBe('rgb(185, 28, 28)')
+  expect(result.added.markerColor).toBe('rgb(24, 121, 78)')
 })
 
 test('MD-EXT-3 preserves author sentinel-like source and deferred markers', async ({ page }) => {
