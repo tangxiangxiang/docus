@@ -810,6 +810,9 @@ main.container.auth-page-shell {
   cursor: pointer;
   list-style-position: inside;
 }
+.article .markdown-container-details:not([open]) > summary.markdown-container-title {
+  margin-bottom: 0;
+}
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) .article .callout-note,
   :root:not([data-theme='light']) .article .markdown-container-info,

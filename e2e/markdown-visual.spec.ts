@@ -127,6 +127,19 @@ for (const theme of ['light', 'dark'] as const) {
       expect(Number.parseFloat(container.lineHeight)).toBeCloseTo(19.6, 1)
     })
     expect(containers.find((container) => container.type === 'details')?.open).toBe(false)
+    const detailsSpacing = await article.evaluate((root) => {
+      const details = root.querySelector<HTMLDetailsElement>('.markdown-container-details')
+      const summary = details?.querySelector<HTMLElement>('summary.markdown-container-title')
+      if (!details || !summary) return null
+      const closedMarginBottom = getComputedStyle(summary).marginBottom
+      details.open = true
+      const openMarginBottom = getComputedStyle(summary).marginBottom
+      details.open = false
+      return { closedMarginBottom, openMarginBottom }
+    })
+    expect(detailsSpacing).not.toBeNull()
+    expect(Number.parseFloat(detailsSpacing?.closedMarginBottom ?? '')).toBe(0)
+    expect(Number.parseFloat(detailsSpacing?.openMarginBottom ?? '')).toBeCloseTo(5.6, 1)
 
     await expect(article.locator('.math-inline .katex')).toBeVisible()
     await expect(article.locator('.math-block .katex-display')).toBeVisible()
