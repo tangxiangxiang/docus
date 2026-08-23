@@ -357,78 +357,42 @@ const PDF_DOWNLOAD_STYLES = `
   color: #4b5563 !important;
 }
 
-/* Resolve the reader Alert palette at the printable boundary. The PDF keeps
-   the GitHub-style transparent surface, type-specific left edge, compact
-   title row, and deterministic mask icon without relying on reader theme
-   variables or color-mix(). */
+/* Resolve the reader Alert palette at the printable boundary. PDF uses the
+   same Docus pastel-card surface as the reader, with fixed light colors so
+   reader theme variables never leak into the printable document. */
 .pdf-document .article .callout {
-  --callout-fg-color: #0969da !important;
-  --callout-border-color: #0969da !important;
-  --callout-icon-mask: none !important;
-  margin: 1rem 0 !important;
-  padding: 0.5rem 1rem !important;
-  background: transparent !important;
+  --callout-bg: #f1f2f4 !important;
+  margin: 1.75rem 0 !important;
+  padding: 1.25rem 1.5rem !important;
   border: 0 !important;
-  border-left: 0.25rem solid var(--callout-border-color) !important;
-  color: #4b5563 !important;
+  border-radius: 12px !important;
+  background: var(--callout-bg) !important;
+  box-shadow: none !important;
+  color: #202124 !important;
 }
 .pdf-document .article .callout-note {
-  --callout-fg-color: #0969da !important;
-  --callout-border-color: #0969da !important;
-  --callout-icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6.25' fill='none' stroke='white' stroke-width='1.5'/%3E%3Cpath d='M8 7v4M8 4.5v.5' fill='none' stroke='white' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E") !important;
+  --callout-bg: #f1f2f4 !important;
 }
 .pdf-document .article .callout-tip {
-  --callout-fg-color: #1a7f37 !important;
-  --callout-border-color: #1a7f37 !important;
-  --callout-icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M5.25 7.5a2.75 2.75 0 1 1 5.5 0c0 1-.3 1.65-.9 2.25-.35.35-.6.65-.7 1.25h-2.3c-.1-.6-.35-.9-.7-1.25-.6-.6-.9-1.25-.9-2.25Z' fill='none' stroke='white' stroke-width='1.25' stroke-linejoin='round'/%3E%3Cpath d='M6.6 13h2.8M7 14.25h2' fill='none' stroke='white' stroke-width='1.25' stroke-linecap='round'/%3E%3C/svg%3E") !important;
+  --callout-bg: #eef0ff !important;
 }
 .pdf-document .article .callout-important {
-  --callout-fg-color: #8250df !important;
-  --callout-border-color: #8250df !important;
-  --callout-icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6.25' fill='none' stroke='white' stroke-width='1.5'/%3E%3Cpath d='M8 4.5v4M8 10.75v.75' fill='none' stroke='white' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E") !important;
+  --callout-bg: #f3edff !important;
 }
 .pdf-document .article .callout-warning {
-  --callout-fg-color: #9a6700 !important;
-  --callout-border-color: #9a6700 !important;
-  --callout-icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1.5 14.5 13H1.5Z' fill='none' stroke='white' stroke-width='1.35' stroke-linejoin='round'/%3E%3Cpath d='M8 5.25v3.5M8 10.75v.5' fill='none' stroke='white' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E") !important;
+  --callout-bg: #fff7e3 !important;
 }
 .pdf-document .article .callout-caution {
-  --callout-fg-color: #d1242f !important;
-  --callout-border-color: #cf222e !important;
-  --callout-icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M5 1.75h6L14.25 5v6L11 14.25H5L1.75 11V5Z' fill='none' stroke='white' stroke-width='1.35' stroke-linejoin='round'/%3E%3Cpath d='M8 4.75v3.5M8 10.75v.5' fill='none' stroke='white' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E") !important;
+  --callout-bg: #ffe9ec !important;
 }
 .pdf-document .article .callout-title {
-  display: flex !important;
-  align-items: center !important;
-  gap: 0.5rem !important;
-  margin-bottom: 0.5rem !important;
-  color: var(--callout-fg-color) !important;
-  font-weight: 500 !important;
-  line-height: 1 !important;
+  margin: 0 0 0.8rem !important;
+  color: #202124 !important;
+  font-size: 1rem !important;
+  font-weight: 700 !important;
+  line-height: 1.5 !important;
 }
-.pdf-document .article .callout-icon {
-  display: inline-block !important;
-  flex: 0 0 16px !important;
-  width: 16px !important;
-  height: 16px !important;
-  color: var(--callout-fg-color) !important;
-  line-height: 0 !important;
-}
-.pdf-document .article .callout-icon::before {
-  display: block;
-  width: 16px;
-  height: 16px;
-  content: '';
-  background-color: currentColor;
-  -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat;
-  -webkit-mask-position: center;
-  mask-position: center;
-  -webkit-mask-size: 16px 16px;
-  mask-size: 16px 16px;
-  -webkit-mask-image: var(--callout-icon-mask);
-  mask-image: var(--callout-icon-mask);
-}
+.pdf-document .article .callout-content { color: inherit !important; }
 .pdf-document .article .callout-content > :first-child { margin-top: 0 !important; }
 .pdf-document .article .callout-content > :last-child { margin-bottom: 0 !important; }
 

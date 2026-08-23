@@ -84,19 +84,21 @@ describe('PDF export helpers', () => {
     expect(__testing__.PDF_DOWNLOAD_STYLES).toContain('size: A4')
   })
 
-  it('keeps all GitHub Alert types printable with a transparent surface', () => {
+  it('keeps all GitHub Alert types printable as Docus pastel cards', () => {
     const styles = __testing__.PDF_DOWNLOAD_STYLES
 
     expect(styles).toContain('.pdf-document .article .callout {')
-    expect(styles).toContain('background: transparent !important;')
-    expect(styles).toContain('padding: 0.5rem 1rem !important;')
-    expect(styles).toContain('font-weight: 500 !important;')
-    expect(styles).toContain('line-height: 1 !important;')
-    expect(styles).toContain('-webkit-mask-image: var(--callout-icon-mask)')
-    expect(styles).toContain('mask-image: var(--callout-icon-mask)')
+    expect(styles).toContain('background: var(--callout-bg) !important;')
+    expect(styles).toContain('padding: 1.25rem 1.5rem !important;')
+    expect(styles).toContain('border-radius: 12px !important;')
+    expect(styles).toContain('box-shadow: none !important;')
+    expect(styles).toContain('font-weight: 700 !important;')
+    expect(styles).toContain('line-height: 1.5 !important;')
+    expect(styles).not.toContain('callout-icon')
+    expect(styles).not.toContain('mask-image')
     expect(styles).not.toMatch(/[ⓘ✦‼⚠⛔]/u)
     for (const color of [
-      '#0969da', '#1a7f37', '#8250df', '#9a6700', '#d1242f', '#cf222e',
+      '#f1f2f4', '#eef0ff', '#f3edff', '#fff7e3', '#ffe9ec',
     ]) {
       expect(styles).toContain(color)
     }

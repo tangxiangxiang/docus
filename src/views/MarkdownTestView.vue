@@ -59,19 +59,19 @@ Explicit link: [:smile:](https://example.com)
 > 同一份内容在 Preview 和 Reading 中应保持相同的视觉语义，只改变阅读密度和页面留白。
 
 > [!NOTE]
-> A normal note alert.
-
-> [!WARNING]
-> Be careful.
+> 强调用户在快速浏览文档时也不应忽略的重要信息。
 
 > [!TIP]
-> Everything worked.
+> 有助于用户更顺利达成目标的建议性信息。
 
 > [!IMPORTANT]
-> Read this before continuing.
+> 对用户达成目标至关重要的信息。
+
+> [!WARNING]
+> 因为可能存在风险，所以需要用户立即关注的关键内容。
 
 > [!CAUTION]
-> This action may have consequences.
+> 行为可能带来的负面影响。
 
 ### Mathematics
 

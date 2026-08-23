@@ -33,7 +33,7 @@ describe('GitHub-style Markdown Alerts', () => {
     expect(seenCloseMeta).toMatchObject({ fromOtherPlugin: true, callout: { type: 'NOTE' } })
   })
 
-  it('renders exactly the five canonical Alert types with Title Case titles', async () => {
+  it('renders exactly the five canonical Alert types with Chinese titles', async () => {
     const html = await render([
       '> [!NOTE]',
       '> note',
@@ -56,11 +56,11 @@ describe('GitHub-style Markdown Alerts', () => {
       const alert = doc.querySelector(`.callout.callout-${type}`)
       expect(alert).not.toBeNull()
       expect(alert?.querySelector('.callout-title')).not.toBeNull()
-      expect(alert?.querySelector('.callout-icon')?.getAttribute('aria-hidden')).toBe('true')
+      expect(alert?.querySelector('.callout-icon')).toBeNull()
     }
     expect(doc.querySelectorAll('.callout')).toHaveLength(5)
     expect(Array.from(doc.querySelectorAll('.callout-title-text')).map((node) => node.textContent))
-      .toEqual(['Note', 'Tip', 'Important', 'Warning', 'Caution'])
+      .toEqual(['注意', '提示', '重要', '警告', '小心'])
   })
 
   it('requires a marker-only canonical line and does not support custom titles', async () => {
@@ -73,7 +73,7 @@ describe('GitHub-style Markdown Alerts', () => {
       'text/html',
     )
 
-    expect(canonical.querySelector('.callout-warning .callout-title-text')?.textContent).toBe('Warning')
+    expect(canonical.querySelector('.callout-warning .callout-title-text')?.textContent).toBe('警告')
     expect(titled.querySelector('.callout')).toBeNull()
     expect(titled.querySelector('blockquote')?.textContent).toContain('[!WARNING] Database migration')
   })
@@ -214,7 +214,7 @@ describe('GitHub-style Markdown Alerts', () => {
     const alert = doc.querySelector('.callout-warning')
 
     expect(alert).not.toBeNull()
-    expect(alert?.querySelector('.callout-title-text')?.textContent).toBe('Warning')
+    expect(alert?.querySelector('.callout-title-text')?.textContent).toBe('警告')
     expect(alert?.querySelector('script, img')).toBeNull()
     expect(alert?.textContent).toContain('Safe text')
     expect(doc.querySelector('[onerror], [onclick], [onload]')).toBeNull()
@@ -230,15 +230,21 @@ describe('GitHub-style Markdown Alerts', () => {
     expect(doc.querySelector('.callout')).toBeNull()
   })
 
-  it('uses deterministic CSS mask icons instead of Unicode Alert glyphs', () => {
+  it('uses the Docus pastel-card Alert visual contract', () => {
     const styles = readFileSync(resolve(process.cwd(), 'src/style.css'), 'utf8')
+    const start = styles.indexOf('/* ---------- GitHub-style Alerts')
+    const end = styles.indexOf('/* ---------- Footnotes', start)
+    const alertStyles = styles.slice(start, end)
 
-    expect(styles).not.toMatch(/[ⓘ✦‼⚠⛔]/u)
-    expect(styles).toContain('-webkit-mask-image: var(--callout-icon-mask)')
-    expect(styles).toContain('mask-image: var(--callout-icon-mask)')
-    expect(styles).toContain('--callout-fg-color')
-    expect(styles).toContain('--callout-border-color')
-    expect(styles).toContain('width: 16px')
-    expect(styles).toContain('height: 16px')
+    expect(alertStyles).not.toMatch(/[ⓘ✦‼⚠⛔]/u)
+    expect(alertStyles).not.toContain('callout-icon')
+    expect(alertStyles).not.toContain('mask-image')
+    expect(alertStyles).not.toContain('--callout-fg-color')
+    expect(alertStyles).not.toContain('--callout-border-color')
+    expect(alertStyles).toContain('--callout-bg')
+    expect(alertStyles).toContain('border-radius: 1rem')
+    expect(alertStyles).toContain('background: var(--callout-bg)')
+    expect(alertStyles).toContain('box-shadow: none')
+    expect(alertStyles).toContain('padding: 1.5rem 2rem')
   })
 })

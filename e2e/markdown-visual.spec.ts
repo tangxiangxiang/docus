@@ -2,23 +2,23 @@ import { expect, test } from '@playwright/test'
 
 const mode = 'reading'
 const alertTypes = ['note', 'tip', 'important', 'warning', 'caution'] as const
-const alertColors = {
+const alertBackgrounds = {
   light: {
-    note: { foreground: 'rgb(9, 105, 218)', border: 'rgb(9, 105, 218)' },
-    tip: { foreground: 'rgb(26, 127, 55)', border: 'rgb(26, 127, 55)' },
-    important: { foreground: 'rgb(130, 80, 223)', border: 'rgb(130, 80, 223)' },
-    warning: { foreground: 'rgb(154, 103, 0)', border: 'rgb(154, 103, 0)' },
-    caution: { foreground: 'rgb(209, 36, 47)', border: 'rgb(207, 34, 46)' },
+    note: 'rgb(241, 242, 244)',
+    tip: 'rgb(238, 240, 255)',
+    important: 'rgb(243, 237, 255)',
+    warning: 'rgb(255, 247, 227)',
+    caution: 'rgb(255, 233, 236)',
   },
   dark: {
-    note: { foreground: 'rgb(68, 147, 248)', border: 'rgb(31, 111, 235)' },
-    tip: { foreground: 'rgb(63, 185, 80)', border: 'rgb(35, 134, 54)' },
-    important: { foreground: 'rgb(171, 125, 248)', border: 'rgb(137, 87, 229)' },
-    warning: { foreground: 'rgb(210, 153, 34)', border: 'rgb(158, 106, 3)' },
-    caution: { foreground: 'rgb(248, 81, 73)', border: 'rgb(218, 54, 51)' },
+    note: 'rgb(36, 38, 43)',
+    tip: 'rgb(34, 38, 58)',
+    important: 'rgb(41, 35, 56)',
+    warning: 'rgb(48, 41, 29)',
+    caution: 'rgb(53, 34, 38)',
   },
 } as const
-const alertTitles = ['Note', 'Tip', 'Important', 'Warning', 'Caution']
+const alertTitles = ['注意', '提示', '重要', '警告', '小心']
 
 for (const theme of ['light', 'dark'] as const) {
   test(`${mode} ${theme} Markdown visual regression`, async ({ page }) => {
@@ -42,44 +42,39 @@ for (const theme of ['light', 'dark'] as const) {
     const alerts = await article.evaluate((root, values) => values.map((type) => {
       const callout = root.querySelector<HTMLElement>(`.callout-${type}`)
       const title = callout?.querySelector<HTMLElement>('.callout-title')
-      const icon = callout?.querySelector<HTMLElement>('.callout-icon')
-      const iconStyle = icon ? getComputedStyle(icon, '::before') : null
       const calloutStyle = callout ? getComputedStyle(callout) : null
       return {
         type,
         title: title?.querySelector('.callout-title-text')?.textContent ?? '',
         foreground: title ? getComputedStyle(title).color : '',
-        border: calloutStyle?.borderLeftColor ?? '',
-        borderWidth: calloutStyle?.borderLeftWidth ?? '',
-        borderStyle: calloutStyle?.borderLeftStyle ?? '',
+        borderLeftWidth: calloutStyle?.borderLeftWidth ?? '',
+        borderTopWidth: calloutStyle?.borderTopWidth ?? '',
         background: calloutStyle?.backgroundColor ?? '',
         radius: calloutStyle?.borderRadius ?? '',
+        shadow: calloutStyle?.boxShadow ?? '',
+        paddingTop: calloutStyle?.paddingTop ?? '',
+        paddingLeft: calloutStyle?.paddingLeft ?? '',
         fontWeight: title ? getComputedStyle(title).fontWeight : '',
-        fontSize: title ? getComputedStyle(title).fontSize : '',
         lineHeight: title ? getComputedStyle(title).lineHeight : '',
-        iconWidth: icon ? getComputedStyle(icon).width : '',
-        iconHeight: icon ? getComputedStyle(icon).height : '',
-        mask: iconStyle
-          ? (iconStyle.getPropertyValue('-webkit-mask-image') || iconStyle.getPropertyValue('mask-image'))
-          : '',
+        hasIcon: callout?.querySelector('.callout-icon') !== null,
       }
     }), alertTypes)
 
     expect(alerts).toHaveLength(5)
     alerts.forEach((alert, index) => {
-      const colors = alertColors[theme][alert.type]
+      const background = alertBackgrounds[theme][alert.type]
       expect(alert.title).toBe(alertTitles[index])
-      expect(alert.foreground).toBe(colors.foreground)
-      expect(alert.border).toBe(colors.border)
-      expect(alert.borderWidth).toBe('4px')
-      expect(alert.borderStyle).toBe('solid')
-      expect(alert.background).toMatch(/transparent|rgba\(0, 0, 0, 0\)/)
-      expect(alert.radius).toBe('0px')
-      expect(alert.fontWeight).toBe('500')
-      expect(alert.lineHeight).toBe(alert.fontSize)
-      expect(alert.iconWidth).toBe('16px')
-      expect(alert.iconHeight).toBe('16px')
-      expect(alert.mask).toContain('data:image/svg+xml')
+      expect(alert.foreground).toBe(theme === 'light' ? 'rgb(31, 31, 31)' : 'rgb(212, 212, 212)')
+      expect(alert.background).toBe(background)
+      expect(alert.borderLeftWidth).toBe('0px')
+      expect(alert.borderTopWidth).toBe('0px')
+      expect(alert.radius).toBe('16px')
+      expect(alert.shadow).toBe('none')
+      expect(alert.paddingTop).toBe('24px')
+      expect(alert.paddingLeft).toBe('32px')
+      expect(alert.fontWeight).toBe('700')
+      expect(alert.lineHeight).toBe('24px')
+      expect(alert.hasIcon).toBe(false)
     })
 
     await expect(article.locator('.math-inline .katex')).toBeVisible()
@@ -108,7 +103,7 @@ test('reading forced Alert theme overrides the operating-system color scheme', a
   await page.goto('/__markdown-test?mode=reading')
   const noteTitle = page.locator('.article.reading .callout-note .callout-title')
   await expect(noteTitle).toBeVisible()
-  await expect(noteTitle).toHaveCSS('color', 'rgb(9, 105, 218)')
+  await expect(noteTitle).toHaveCSS('color', 'rgb(31, 31, 31)')
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
 
   const forcedDarkPage = await page.context().newPage()
@@ -118,7 +113,7 @@ test('reading forced Alert theme overrides the operating-system color scheme', a
     await forcedDarkPage.goto('/__markdown-test?mode=reading')
     const darkNoteTitle = forcedDarkPage.locator('.article.reading .callout-note .callout-title')
     await expect(darkNoteTitle).toBeVisible()
-    await expect(darkNoteTitle).toHaveCSS('color', 'rgb(68, 147, 248)')
+    await expect(darkNoteTitle).toHaveCSS('color', 'rgb(212, 212, 212)')
     await expect(forcedDarkPage.locator('html')).toHaveAttribute('data-theme', 'dark')
   } finally {
     await forcedDarkPage.close()
