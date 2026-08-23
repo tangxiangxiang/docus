@@ -2445,7 +2445,7 @@ started.
 ### Next phase
 
 At the MD-EXT-6 handoff, MD-EXT-7 — Full Regression, Bundle Audit & Release Gate —
-COMPLETE / REVIEW-READY.
+READY TO START / NOT STARTED.
 
 ## 26. MD-EXT-7 — Full Regression, Bundle Audit & Release Gate
 
