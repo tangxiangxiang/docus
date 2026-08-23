@@ -752,33 +752,105 @@ main.container.auth-page-shell {
 .article :first-child { margin-top: 0; }
 .article img { max-width: 100%; height: auto; }
 
-/* Docus-owned VitePress-style custom containers. The type names are fixed by
-   the Markdown block rule; no author value is interpolated into CSS. */
+/* ---------- Docus notice cards: Alerts + Markdown Containers ----------
+   Alerts and custom containers have different Markdown syntax, but they share
+   one quiet pastel-card surface. Type names are fixed by their parsers; no
+   author value is interpolated into CSS. */
+.article .callout,
 .article .markdown-container {
+  --notice-bg: #f1f2f4;
   box-sizing: border-box;
-  margin: 1.1em 0;
-  padding: 0.85em 1em;
-  border: 1px solid var(--vs-border, var(--border));
-  border-left: 4px solid var(--markdown-container-accent, var(--vs-accent, var(--accent)));
-  border-radius: 5px;
-  background: color-mix(in srgb, var(--markdown-container-accent, var(--vs-accent, var(--accent))) 9%, var(--vs-bg-1, var(--bg)));
+  width: auto;
+  margin: 1rem 0;
+  padding: 0.75rem 1rem;
+  border: 0;
+  border-radius: 0.75rem;
+  background: var(--notice-bg);
+  box-shadow: none;
   color: var(--vs-text-1, var(--text));
+  font-size: 0.875rem;
+  line-height: 1.5;
 }
+.article .callout-note,
+.article .markdown-container-info,
+.article .markdown-container-details {
+  --notice-bg: #f1f2f4;
+}
+.article .callout-tip,
+.article .markdown-container-tip {
+  --notice-bg: #eef0ff;
+}
+.article .callout-important {
+  --notice-bg: #f3edff;
+}
+.article .callout-warning,
+.article .markdown-container-warning {
+  --notice-bg: #fff7e3;
+}
+.article .callout-caution,
+.article .markdown-container-danger {
+  --notice-bg: #ffe9ec;
+}
+.article .callout-title,
 .article .markdown-container-title {
-  margin: 0 0 0.55em;
-  color: var(--markdown-container-accent, var(--vs-text-1, var(--text-h)));
-  font-weight: 650;
-  line-height: 1.35;
+  margin: 0 0 0.35rem;
+  color: var(--vs-text-1, var(--text-h));
+  font-size: 0.875rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+.article .callout-content { color: inherit; }
+.article .callout-content > :first-child { margin-top: 0; }
+.article .callout-content > :last-child { margin-bottom: 0; }
+.article .markdown-container > .markdown-container-title + :not(.markdown-container-title) {
+  margin-top: 0;
 }
 .article .markdown-container > :last-child { margin-bottom: 0; }
-.article .markdown-container-info { --markdown-container-accent: #2f81f7; }
-.article .markdown-container-tip { --markdown-container-accent: #2da44e; }
-.article .markdown-container-warning { --markdown-container-accent: #bf8700; }
-.article .markdown-container-danger { --markdown-container-accent: #cf222e; }
-.article .markdown-container-details { --markdown-container-accent: var(--vs-accent, var(--accent)); }
 .article .markdown-container-details > summary {
   cursor: pointer;
   list-style-position: inside;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .article .callout-note,
+  :root:not([data-theme='light']) .article .markdown-container-info,
+  :root:not([data-theme='light']) .article .markdown-container-details {
+    --notice-bg: #24262b;
+  }
+  :root:not([data-theme='light']) .article .callout-tip,
+  :root:not([data-theme='light']) .article .markdown-container-tip {
+    --notice-bg: #22263a;
+  }
+  :root:not([data-theme='light']) .article .callout-important {
+    --notice-bg: #292338;
+  }
+  :root:not([data-theme='light']) .article .callout-warning,
+  :root:not([data-theme='light']) .article .markdown-container-warning {
+    --notice-bg: #30291d;
+  }
+  :root:not([data-theme='light']) .article .callout-caution,
+  :root:not([data-theme='light']) .article .markdown-container-danger {
+    --notice-bg: #352226;
+  }
+}
+:root[data-theme='dark'] .article .callout-note,
+:root[data-theme='dark'] .article .markdown-container-info,
+:root[data-theme='dark'] .article .markdown-container-details {
+  --notice-bg: #24262b;
+}
+:root[data-theme='dark'] .article .callout-tip,
+:root[data-theme='dark'] .article .markdown-container-tip {
+  --notice-bg: #22263a;
+}
+:root[data-theme='dark'] .article .callout-important {
+  --notice-bg: #292338;
+}
+:root[data-theme='dark'] .article .callout-warning,
+:root[data-theme='dark'] .article .markdown-container-warning {
+  --notice-bg: #30291d;
+}
+:root[data-theme='dark'] .article .callout-caution,
+:root[data-theme='dark'] .article .markdown-container-danger {
+  --notice-bg: #352226;
 }
 
 /* Docus code groups keep every panel in the DOM. The small reader enhancer
@@ -4732,82 +4804,6 @@ main.container.auth-page-shell {
   color: var(--vs-danger, #d73a49);
   white-space: pre-wrap;
 }
-
-/* ---------- GitHub-style Alerts ----------
-   GitHub supplies the five semantic marker types; Docus presents them as
-   calm, rounded pastel cards. The markup remains ordinary div/span elements,
-   so it stays inside the existing sanitizer boundary. */
-.article .callout {
-  --callout-bg: #f1f2f4;
-  box-sizing: border-box;
-  width: auto;
-  margin: 1rem 0;
-  padding: 0.75rem 1rem;
-  border: 0;
-  border-radius: 0.75rem;
-  background: var(--callout-bg);
-  box-shadow: none;
-  color: var(--vs-text-1, var(--text));
-  font-size: 0.875rem;
-  line-height: 1.5;
-}
-.article .callout-note {
-  --callout-bg: #f1f2f4;
-}
-.article .callout-tip {
-  --callout-bg: #eef0ff;
-}
-.article .callout-important {
-  --callout-bg: #f3edff;
-}
-.article .callout-warning {
-  --callout-bg: #fff7e3;
-}
-.article .callout-caution {
-  --callout-bg: #ffe9ec;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) .article .callout-note {
-    --callout-bg: #24262b;
-  }
-  :root:not([data-theme='light']) .article .callout-tip {
-    --callout-bg: #22263a;
-  }
-  :root:not([data-theme='light']) .article .callout-important {
-    --callout-bg: #292338;
-  }
-  :root:not([data-theme='light']) .article .callout-warning {
-    --callout-bg: #30291d;
-  }
-  :root:not([data-theme='light']) .article .callout-caution {
-    --callout-bg: #352226;
-  }
-}
-:root[data-theme='dark'] .article .callout-note {
-  --callout-bg: #24262b;
-}
-:root[data-theme='dark'] .article .callout-tip {
-  --callout-bg: #22263a;
-}
-:root[data-theme='dark'] .article .callout-important {
-  --callout-bg: #292338;
-}
-:root[data-theme='dark'] .article .callout-warning {
-  --callout-bg: #30291d;
-}
-:root[data-theme='dark'] .article .callout-caution {
-  --callout-bg: #352226;
-}
-.article .callout-title {
-  margin: 0 0 0.35rem;
-  color: var(--vs-text-1, var(--text-h));
-  font-size: 0.875rem;
-  font-weight: 700;
-  line-height: 1.4;
-}
-.article .callout-content { color: inherit; }
-.article .callout-content > :first-child { margin-top: 0; }
-.article .callout-content > :last-child { margin-bottom: 0; }
 
 /* ---------- Footnotes (markdown-it-footnote) ----------
    The plugin emits: <sup class="footnote-ref">, then later

@@ -84,11 +84,12 @@ describe('PDF export helpers', () => {
     expect(__testing__.PDF_DOWNLOAD_STYLES).toContain('size: A4')
   })
 
-  it('keeps all GitHub Alert types printable as Docus pastel cards', () => {
+  it('keeps Alerts and custom containers printable as shared Docus pastel cards', () => {
     const styles = __testing__.PDF_DOWNLOAD_STYLES
 
-    expect(styles).toContain('.pdf-document .article .callout {')
-    expect(styles).toContain('background: var(--callout-bg) !important;')
+    expect(styles).toContain('.pdf-document .article .callout,')
+    expect(styles).toContain('.pdf-document .article .markdown-container {')
+    expect(styles).toContain('background: var(--notice-bg) !important;')
     expect(styles).toContain('padding: 0.75rem 1rem !important;')
     expect(styles).toContain('border-radius: 12px !important;')
     expect(styles).toContain('box-shadow: none !important;')
@@ -105,6 +106,9 @@ describe('PDF export helpers', () => {
     }
     for (const type of ['note', 'tip', 'important', 'warning', 'caution']) {
       expect(styles).toContain(`.pdf-document .article .callout-${type}`)
+    }
+    for (const type of ['info', 'tip', 'warning', 'danger', 'details']) {
+      expect(styles).toContain(`.pdf-document .article .markdown-container-${type}`)
     }
     expect(styles).not.toContain('.pdf-document .article .callout-info')
     expect(styles).not.toContain('.pdf-document .article .callout-success')

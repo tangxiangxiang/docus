@@ -73,6 +73,26 @@ Explicit link: [:smile:](https://example.com)
 > [!CAUTION]
 > 行为可能带来的负面影响。
 
+::: info 信息
+这是 Info Container。
+:::
+
+::: tip 提示
+这是 Tip Container。
+:::
+
+::: warning 警告
+这是 Warning Container。
+:::
+
+::: danger 危险
+这是 Danger Container。
+:::
+
+::: details 查看详情
+这是 Details Container。
+:::
+
 ### Mathematics
 
 Inline: $E = mc^2$

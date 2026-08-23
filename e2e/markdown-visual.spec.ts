@@ -2,6 +2,14 @@ import { expect, test } from '@playwright/test'
 
 const mode = 'reading'
 const alertTypes = ['note', 'tip', 'important', 'warning', 'caution'] as const
+const containerTypes = ['info', 'tip', 'warning', 'danger', 'details'] as const
+const noticePair: Record<(typeof containerTypes)[number], (typeof alertTypes)[number]> = {
+  info: 'note',
+  tip: 'tip',
+  warning: 'warning',
+  danger: 'caution',
+  details: 'note',
+}
 const alertBackgrounds = {
   light: {
     note: 'rgb(241, 242, 244)',
@@ -38,6 +46,9 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(article.locator('.callout-important')).toBeVisible()
     await expect(article.locator('.callout-warning')).toBeVisible()
     await expect(article.locator('.callout-caution')).toBeVisible()
+    for (const type of containerTypes) {
+      await expect(article.locator(`.markdown-container-${type}`)).toBeVisible()
+    }
 
     const alerts = await article.evaluate((root, values) => values.map((type) => {
       const callout = root.querySelector<HTMLElement>(`.callout-${type}`)
@@ -61,6 +72,27 @@ for (const theme of ['light', 'dark'] as const) {
       }
     }), alertTypes)
 
+    const containers = await article.evaluate((root, values) => values.map((type) => {
+      const container = root.querySelector<HTMLElement>(`.markdown-container-${type}`)
+      const title = container?.querySelector<HTMLElement>('.markdown-container-title')
+      const containerStyle = container ? getComputedStyle(container) : null
+      return {
+        type,
+        title: title?.textContent ?? '',
+        background: containerStyle?.backgroundColor ?? '',
+        borderLeftWidth: containerStyle?.borderLeftWidth ?? '',
+        borderTopWidth: containerStyle?.borderTopWidth ?? '',
+        radius: containerStyle?.borderRadius ?? '',
+        shadow: containerStyle?.boxShadow ?? '',
+        paddingTop: containerStyle?.paddingTop ?? '',
+        paddingLeft: containerStyle?.paddingLeft ?? '',
+        fontSize: title ? getComputedStyle(title).fontSize : '',
+        fontWeight: title ? getComputedStyle(title).fontWeight : '',
+        lineHeight: title ? getComputedStyle(title).lineHeight : '',
+        open: container instanceof HTMLDetailsElement ? container.open : null,
+      }
+    }), containerTypes)
+
     expect(alerts).toHaveLength(5)
     alerts.forEach((alert, index) => {
       const background = alertBackgrounds[theme][alert.type]
@@ -78,6 +110,23 @@ for (const theme of ['light', 'dark'] as const) {
       expect(Number.parseFloat(alert.lineHeight)).toBeCloseTo(19.6, 1)
       expect(alert.hasIcon).toBe(false)
     })
+
+    expect(containers.map((container) => container.title)).toEqual(['信息', '提示', '警告', '危险', '查看详情'])
+    containers.forEach((container) => {
+      const alert = alerts.find((candidate) => candidate.type === noticePair[container.type])
+      expect(alert).toBeDefined()
+      expect(container.background).toBe(alert?.background)
+      expect(container.borderLeftWidth).toBe('0px')
+      expect(container.borderTopWidth).toBe('0px')
+      expect(container.radius).toBe(alert?.radius)
+      expect(container.shadow).toBe('none')
+      expect(container.paddingTop).toBe(alert?.paddingTop)
+      expect(container.paddingLeft).toBe(alert?.paddingLeft)
+      expect(container.fontSize).toBe(alert?.fontSize)
+      expect(container.fontWeight).toBe(alert?.fontWeight)
+      expect(Number.parseFloat(container.lineHeight)).toBeCloseTo(19.6, 1)
+    })
+    expect(containers.find((container) => container.type === 'details')?.open).toBe(false)
 
     await expect(article.locator('.math-inline .katex')).toBeVisible()
     await expect(article.locator('.math-block .katex-display')).toBeVisible()
@@ -104,8 +153,10 @@ test('reading forced Alert theme overrides the operating-system color scheme', a
   await page.addInitScript(() => localStorage.setItem('docus.theme', 'light'))
   await page.goto('/__markdown-test?mode=reading')
   const noteTitle = page.locator('.article.reading .callout-note .callout-title')
+  const infoCard = page.locator('.article.reading .markdown-container-info')
   await expect(noteTitle).toBeVisible()
   await expect(noteTitle).toHaveCSS('color', 'rgb(31, 31, 31)')
+  await expect(infoCard).toHaveCSS('background-color', 'rgb(241, 242, 244)')
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
 
   const forcedDarkPage = await page.context().newPage()
@@ -114,8 +165,10 @@ test('reading forced Alert theme overrides the operating-system color scheme', a
     await forcedDarkPage.addInitScript(() => localStorage.setItem('docus.theme', 'dark'))
     await forcedDarkPage.goto('/__markdown-test?mode=reading')
     const darkNoteTitle = forcedDarkPage.locator('.article.reading .callout-note .callout-title')
+    const darkInfoCard = forcedDarkPage.locator('.article.reading .markdown-container-info')
     await expect(darkNoteTitle).toBeVisible()
     await expect(darkNoteTitle).toHaveCSS('color', 'rgb(212, 212, 212)')
+    await expect(darkInfoCard).toHaveCSS('background-color', 'rgb(36, 38, 43)')
     await expect(forcedDarkPage.locator('html')).toHaveAttribute('data-theme', 'dark')
   } finally {
     await forcedDarkPage.close()

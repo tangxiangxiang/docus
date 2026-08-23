@@ -34,6 +34,28 @@ Regular **bold**, *italic*, `inline code`, and a [safe external link](https://ex
 > [!CAUTION]
 > This caution should retain its semantic color in the PDF.
 
+## Containers
+
+::: info Information
+This info container should use the same pastel card surface.
+:::
+
+::: tip Tip
+This tip container should use the same pastel card surface.
+:::
+
+::: warning Warning
+This warning container should use the same pastel card surface.
+:::
+
+::: danger Danger
+This danger container should use the same pastel card surface.
+:::
+
+::: details Details
+This details container should remain printable when closed in the reader.
+:::
+
 ## Code
 
 ```java

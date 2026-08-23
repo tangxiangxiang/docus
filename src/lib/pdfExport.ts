@@ -268,45 +268,6 @@ const PDF_DOWNLOAD_STYLES = `
   box-shadow: inset 3px 0 0 #005fb8;
 }
 
-/* Custom containers use a fixed printable-light palette. Keep the selector
-   on the container/title only: descendant Shiki spans must retain their own
-   computed token colors from the trusted generated stylesheet. */
-.pdf-document .article .markdown-container {
-  box-sizing: border-box;
-  margin: 1em 0 !important;
-  padding: 0.8em 0.95em !important;
-  border: 1px solid #d7dce2 !important;
-  border-left: 4px solid #005fb8 !important;
-  background: #f5f6f8 !important;
-  color: #202124 !important;
-}
-
-.pdf-document .article .markdown-container-title {
-  margin: 0 0 0.55em !important;
-  color: #005fb8 !important;
-  font-weight: 650 !important;
-  line-height: 1.35 !important;
-  break-after: avoid;
-  page-break-after: avoid;
-}
-
-.pdf-document .article .markdown-container-tip {
-  border-left-color: #217a37 !important;
-}
-
-.pdf-document .article .markdown-container-warning {
-  border-left-color: #8a6400 !important;
-}
-
-.pdf-document .article .markdown-container-danger {
-  border-left-color: #b42318 !important;
-}
-
-.pdf-document .article .markdown-container-details > summary {
-  color: #005fb8 !important;
-  cursor: default !important;
-}
-
 /* Code groups are interactive in the reader, but a PDF is a complete
    source-order export. preparePdfArticleHtml() removes the tablist and puts
    every labeled panel into this printable surface. Keep the panel contents
@@ -357,46 +318,59 @@ const PDF_DOWNLOAD_STYLES = `
   color: #4b5563 !important;
 }
 
-/* Resolve the reader Alert palette at the printable boundary. PDF uses the
-   same Docus pastel-card surface as the reader, with fixed light colors so
-   reader theme variables never leak into the printable document. */
-.pdf-document .article .callout {
-  --callout-bg: #f1f2f4 !important;
+/* Resolve the shared Docus notice-card palette at the printable boundary.
+   Reader theme variables never leak into the printable document. */
+.pdf-document .article .callout,
+.pdf-document .article .markdown-container {
+  --notice-bg: #f1f2f4 !important;
   margin: 1rem 0 !important;
   padding: 0.75rem 1rem !important;
   border: 0 !important;
   border-radius: 12px !important;
-  background: var(--callout-bg) !important;
+  background: var(--notice-bg) !important;
   box-shadow: none !important;
   color: #202124 !important;
   font-size: 0.875rem !important;
   line-height: 1.5 !important;
 }
-.pdf-document .article .callout-note {
-  --callout-bg: #f1f2f4 !important;
+.pdf-document .article .callout-note,
+.pdf-document .article .markdown-container-info,
+.pdf-document .article .markdown-container-details {
+  --notice-bg: #f1f2f4 !important;
 }
-.pdf-document .article .callout-tip {
-  --callout-bg: #eef0ff !important;
+.pdf-document .article .callout-tip,
+.pdf-document .article .markdown-container-tip {
+  --notice-bg: #eef0ff !important;
 }
 .pdf-document .article .callout-important {
-  --callout-bg: #f3edff !important;
+  --notice-bg: #f3edff !important;
 }
-.pdf-document .article .callout-warning {
-  --callout-bg: #fff7e3 !important;
+.pdf-document .article .callout-warning,
+.pdf-document .article .markdown-container-warning {
+  --notice-bg: #fff7e3 !important;
 }
-.pdf-document .article .callout-caution {
-  --callout-bg: #ffe9ec !important;
+.pdf-document .article .callout-caution,
+.pdf-document .article .markdown-container-danger {
+  --notice-bg: #ffe9ec !important;
 }
-.pdf-document .article .callout-title {
+.pdf-document .article .callout-title,
+.pdf-document .article .markdown-container-title {
   margin: 0 0 0.35rem !important;
   color: #202124 !important;
   font-size: 0.875rem !important;
   font-weight: 700 !important;
   line-height: 1.4 !important;
+  break-after: avoid;
+  page-break-after: avoid;
 }
 .pdf-document .article .callout-content { color: inherit !important; }
 .pdf-document .article .callout-content > :first-child { margin-top: 0 !important; }
 .pdf-document .article .callout-content > :last-child { margin-bottom: 0 !important; }
+.pdf-document .article .markdown-container > .markdown-container-title + :not(.markdown-container-title) {
+  margin-top: 0 !important;
+}
+.pdf-document .article .markdown-container > :last-child { margin-bottom: 0 !important; }
+.pdf-document .article .markdown-container-details > summary { cursor: default !important; }
 
 .pdf-document .article .table-scroll {
   box-sizing: border-box;

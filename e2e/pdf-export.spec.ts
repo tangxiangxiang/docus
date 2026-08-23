@@ -9,6 +9,13 @@ const printableAlertBackgrounds: Record<string, string> = {
   'callout-warning': 'rgb(255, 247, 227)',
   'callout-caution': 'rgb(255, 233, 236)',
 }
+const printableContainerBackgrounds: Record<string, string> = {
+  'markdown-container-info': 'rgb(241, 242, 244)',
+  'markdown-container-tip': 'rgb(238, 240, 255)',
+  'markdown-container-warning': 'rgb(255, 247, 227)',
+  'markdown-container-danger': 'rgb(255, 233, 236)',
+  'markdown-container-details': 'rgb(241, 242, 244)',
+}
 
 type PdfSurfaceSnapshot = {
   surfaceCount: number
@@ -34,6 +41,22 @@ type PdfSurfaceSnapshot = {
     fontWeight: string
     lineHeight: string
     hasIcon: boolean
+  }>
+  hasContainer: boolean
+  containerTypes: string[]
+  containerEvidence: Array<{
+    type: string
+    title: string
+    background: string
+    borderWidth: string
+    borderTopWidth: string
+    radius: string
+    shadow: string
+    paddingTop: string
+    paddingLeft: string
+    fontWeight: string
+    lineHeight: string
+    open: boolean | null
   }>
   taskCheckboxCount: number
   checkedTaskCount: number
@@ -188,6 +211,30 @@ test('exports the Kitchen Sink with settled content from the file-tree menu', as
             fontWeight: title ? getComputedStyle(title).fontWeight : '',
             lineHeight: title ? getComputedStyle(title).lineHeight : '',
             hasIcon: callout.querySelector('.callout-icon') !== null,
+          }
+        }),
+        hasContainer: preparedArticle.querySelector('.markdown-container') !== null,
+        containerTypes: Array.from(preparedArticle.querySelectorAll<HTMLElement>('.markdown-container'))
+          .map((container) => Array.from(container.classList)
+            .find((name) => name.startsWith('markdown-container-') && name !== 'markdown-container') ?? ''),
+        containerEvidence: Array.from(preparedArticle.querySelectorAll<HTMLElement>('.markdown-container')).map((container) => {
+          const type = Array.from(container.classList)
+            .find((name) => name.startsWith('markdown-container-') && name !== 'markdown-container') ?? ''
+          const title = container.querySelector<HTMLElement>('.markdown-container-title')
+          const containerStyle = getComputedStyle(container)
+          return {
+            type,
+            title: title?.textContent ?? '',
+            background: containerStyle.backgroundColor,
+            borderWidth: containerStyle.borderLeftWidth,
+            borderTopWidth: containerStyle.borderTopWidth,
+            radius: containerStyle.borderRadius,
+            shadow: containerStyle.boxShadow,
+            paddingTop: containerStyle.paddingTop,
+            paddingLeft: containerStyle.paddingLeft,
+            fontWeight: title ? getComputedStyle(title).fontWeight : '',
+            lineHeight: title ? getComputedStyle(title).lineHeight : '',
+            open: container instanceof HTMLDetailsElement ? container.open : null,
           }
         }),
         taskCheckboxCount: article.querySelectorAll('input.task-list-item-checkbox').length,
@@ -377,6 +424,31 @@ test('exports the Kitchen Sink with settled content from the file-tree menu', as
     expect(Number.parseFloat(alert.lineHeight)).toBeCloseTo(19.6, 1)
     expect(alert.hasIcon).toBe(false)
   }
+  expect(snapshot.hasContainer).toBe(true)
+  expect(snapshot.containerTypes).toEqual([
+    'markdown-container-info',
+    'markdown-container-tip',
+    'markdown-container-warning',
+    'markdown-container-danger',
+    'markdown-container-details',
+  ])
+  expect(snapshot.containerEvidence.map((container) => container.title)).toEqual([
+    'Information', 'Tip', 'Warning', 'Danger', 'Details',
+  ])
+  expect(snapshot.containerEvidence).toHaveLength(5)
+  for (const container of snapshot.containerEvidence) {
+    expect(container.background).toBe(printableContainerBackgrounds[container.type])
+    expect(container.borderWidth).toBe('0px')
+    expect(container.borderTopWidth).toBe('0px')
+    expect(container.radius).toBe('12px')
+    expect(container.shadow).toBe('none')
+    expect(container.paddingTop).toBe('12px')
+    expect(container.paddingLeft).toBe('16px')
+    expect(container.fontWeight).toBe('700')
+    expect(Number.parseFloat(container.lineHeight)).toBeCloseTo(19.6, 1)
+  }
+  expect(snapshot.containerEvidence.find((container) => container.type === 'markdown-container-details')?.open)
+    .toBe(true)
   expect(snapshot.taskCheckboxCount).toBe(2)
   expect(snapshot.checkedTaskCount).toBe(1)
   expect(snapshot.footnoteMarkerCount).toBeGreaterThan(0)
