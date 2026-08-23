@@ -333,9 +333,9 @@ async function getMd(): Promise<MarkdownIt> {
         uniqueSlugStartIndex: 2,
         permalink: anchor.permalink.headerLink({ safariReaderFix: true }),
       })
-      // MD-EXT-1 heading metadata/TOC rules register around the named anchor
-      // core rule. The module owns only the narrow {#safe-id} suffix and the
-      // final-ID TOC; it is not a generic attribute parser.
+      // Docus heading metadata registers around the named anchor core rule.
+      // The module owns only the narrow {#safe-id} suffix and heading-ID
+      // allocation/integration; it is not a generic attribute parser.
       .use(markdownHeadingsPlugin)
       // 脚注:pandoc 风格的 [^id] 引用 + 定义段。anchor id 始终按
       // 出现顺序编号(fn1, fn2, ...),[^label] 里的 label 只用来匹配

@@ -21,7 +21,7 @@ export interface FenceMeta {
   malformed: string[]
 }
 
-/** The approved MD-EXT-3 bound for future line-number metadata. */
+/** Maximum shipped starting line number accepted by FenceMeta. */
 export const MAX_LINE_NUMBER_START = 100_000
 
 /** A conservative bound for fence metadata line ranges. */

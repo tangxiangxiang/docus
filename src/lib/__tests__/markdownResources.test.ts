@@ -3,7 +3,9 @@ import { describe, expect, it, vi } from 'vitest'
 import MarkdownIt from 'markdown-it'
 import {
   expandMarkdownResources,
+  MAX_INCLUDE_BYTES,
   MAX_EXPANDED_MARKDOWN_BYTES,
+  MAX_SNIPPET_BYTES,
   parseMarkdownResourceDirective,
   parseResourceRanges,
   resolveLogicalResourceReference,
@@ -127,6 +129,118 @@ describe('Markdown resource logical resolution and expansion', () => {
     expect(expanded.markdown).toContain('markdown-resource-error')
     expect(new TextEncoder().encode(expanded.markdown).byteLength)
       .toBeLessThanOrEqual(MAX_EXPANDED_MARKDOWN_BYTES)
+  })
+
+  it('bounds duplicate and overlapping selections without deduplicating valid output', async () => {
+    const resolver = resolverFor({
+      'examples/repeated.ts': 'x'.repeat(1024),
+      'examples/overlap.ts': Array.from({ length: 512 }, () => 'x'.repeat(400)).join('\n'),
+      'examples/part.md': 'line1\nline2\nline3',
+    })
+    const duplicateRanges = Array.from({ length: 1_000 }, () => '1').join(',')
+    const duplicate = await expandMarkdownResources(
+      `<<< @/examples/repeated.ts{${duplicateRanges}}`,
+      { md: new MarkdownIt({ html: true }), resourceResolver: resolver },
+    )
+    expect(duplicate.markdown).toContain('markdown-resource-error')
+
+    const overlapping = await expandMarkdownResources(
+      '<<< @/examples/overlap.ts{1-256,129-384,257-512}',
+      { md: new MarkdownIt({ html: true }), resourceResolver: resolver },
+    )
+    expect(overlapping.markdown).toContain('markdown-resource-error')
+
+    const repeated = await expandMarkdownResources(
+      '<!--@include: @/examples/part.md{1,1,2}-->',
+      { md: new MarkdownIt({ html: true }), resourceResolver: resolver },
+    )
+    expect(repeated.markdown).toBe('line1\nline1\nline2')
+
+    const overlap = await expandMarkdownResources(
+      '<!--@include: @/examples/part.md{1-2,2-3}-->',
+      { md: new MarkdownIt({ html: true }), resourceResolver: resolver },
+    )
+    expect(overlap.markdown).toBe('line1\nline2\nline2\nline3')
+  })
+
+  it('enforces exact per-kind UTF-8 selection limits before materializing output', async () => {
+    const multibyteLine = '界'.repeat(Math.floor(MAX_SNIPPET_BYTES / 3)) + 'a'
+    expect(new TextEncoder().encode(multibyteLine).byteLength).toBe(MAX_SNIPPET_BYTES)
+    expect(multibyteLine.length).toBeLessThan(MAX_SNIPPET_BYTES)
+
+    const resolver = resolverFor({
+      'examples/exact.ts': multibyteLine,
+      'examples/over.ts': `${multibyteLine}b`,
+      'examples/separator.ts': `${'s'.repeat(MAX_SNIPPET_BYTES - 1)}\n`,
+      'examples/exact.md': 'y'.repeat(MAX_INCLUDE_BYTES),
+      'examples/over.md': `${'y'.repeat(MAX_INCLUDE_BYTES)}z`,
+    })
+    const exactSnippet = await expandMarkdownResources(
+      '<<< @/examples/exact.ts{1}',
+      { md: new MarkdownIt({ html: true }), resourceResolver: resolver },
+    )
+    expect(exactSnippet.markdown).toContain(multibyteLine)
+    expect(exactSnippet.markdown).not.toContain('markdown-resource-error')
+
+    const overSnippet = await expandMarkdownResources(
+      '<<< @/examples/over.ts{1}',
+      { md: new MarkdownIt({ html: true }), resourceResolver: resolver },
+    )
+    expect(overSnippet.markdown).toContain('markdown-resource-error')
+
+    const exactWithSeparator = await expandMarkdownResources(
+      '<<< @/examples/separator.ts{1-2}',
+      { md: new MarkdownIt({ html: true }), resourceResolver: resolver },
+    )
+    expect(exactWithSeparator.markdown).not.toContain('markdown-resource-error')
+
+    const overWithSeparator = await expandMarkdownResources(
+      '<<< @/examples/separator.ts{1-2,2}',
+      { md: new MarkdownIt({ html: true }), resourceResolver: resolver },
+    )
+    expect(overWithSeparator.markdown).toContain('markdown-resource-error')
+
+    const exactInclude = await expandMarkdownResources(
+      '<!--@include: @/examples/exact.md-->',
+      { md: new MarkdownIt({ html: true }), resourceResolver: resolver },
+    )
+    expect(exactInclude.markdown).toBe('y'.repeat(MAX_INCLUDE_BYTES))
+
+    const overInclude = await expandMarkdownResources(
+      '<!--@include: @/examples/over.md-->',
+      { md: new MarkdownIt({ html: true }), resourceResolver: resolver },
+    )
+    expect(overInclude.markdown).toContain('markdown-resource-error')
+  })
+
+  it('counts repeated empty lines and their LF separators toward selection limits', async () => {
+    const source = Array.from({ length: 1_000 }, () => '').join('\n')
+    const ranges = Array.from({ length: 1_000 }, () => '1-1000').join(',')
+    const resolver = resolverFor({ 'examples/empty.ts': source })
+    const expanded = await expandMarkdownResources(
+      `<<< @/examples/empty.ts{${ranges}}`,
+      { md: new MarkdownIt({ html: true }), resourceResolver: resolver },
+    )
+
+    expect(expanded.markdown).toContain('markdown-resource-error')
+  })
+
+  it('applies the same bounded discipline to overlapping named regions', async () => {
+    const body = 'z'.repeat(140 * 1024)
+    const source = [
+      '// #region target',
+      '// #region target',
+      body,
+      '// #endregion target',
+      '// #endregion target',
+    ].join('\n')
+    const resolver = resolverFor({ 'examples/regions.ts': source })
+    const expanded = await expandMarkdownResources(
+      '<<< @/examples/regions.ts#target',
+      { md: new MarkdownIt({ html: true }), resourceResolver: resolver },
+    )
+
+    expect(expanded.markdown).toContain('markdown-resource-error')
   })
 
   it('keeps directives inside fences and indented code opaque', async () => {

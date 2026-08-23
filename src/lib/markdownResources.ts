@@ -314,10 +314,46 @@ function regionMarker(line: string): { kind: 'start' | 'end'; name?: string } | 
   return null
 }
 
-function selectNamedRegion(source: string, name: string): string | null {
+/**
+ * Accumulates normalized selected lines while counting the exact UTF-8 cost
+ * of each line and its emitted LF separator before retaining it.
+ */
+class BoundedLineAccumulator {
+  private readonly lines: string[] = []
+
+  private bytes = 0
+
+  private readonly maxBytes: number | undefined
+
+  constructor(maxBytes?: number) {
+    this.maxBytes = maxBytes
+  }
+
+  append(line: string): boolean {
+    const nextBytes = this.bytes + (this.lines.length > 0 ? 1 : 0) + byteLength(line)
+    if (this.maxBytes !== undefined && nextBytes > this.maxBytes) return false
+    this.lines.push(line)
+    this.bytes = nextBytes
+    return true
+  }
+
+  appendLines(lines: string[], start: number, end: number): boolean {
+    for (let index = start; index <= end; index += 1) {
+      if (!this.append(lines[index] ?? '')) return false
+    }
+    return true
+  }
+
+  finish(): string {
+    return this.lines.join('\n')
+  }
+}
+
+function selectNamedRegion(source: string, name: string, maxBytes?: number): string | null {
   const lines = source.replace(/\r\n?/gu, '\n').split('\n')
   const stack: Array<{ name: string; start: number }> = []
-  const matches: Array<[number, number]> = []
+  const selected = new BoundedLineAccumulator(maxBytes)
+  let matched = false
   for (let index = 0; index < lines.length; index += 1) {
     const marker = regionMarker(lines[index] ?? '')
     if (!marker) continue
@@ -328,31 +364,34 @@ function selectNamedRegion(source: string, name: string): string | null {
     const current = stack.at(-1)
     if (!current || (marker.name && marker.name !== current.name)) return null
     stack.pop()
-    if (current.name === name) matches.push([current.start + 1, index - 1])
+    if (current.name === name) {
+      matched = true
+      if (!selected.appendLines(lines, current.start + 1, index - 1)) return null
+    }
   }
-  if (stack.length > 0 || matches.length === 0) return null
-  const selected: string[] = []
-  for (const [start, end] of matches) {
-    if (end >= start) selected.push(...lines.slice(start, end + 1))
-  }
-  return selected.join('\n')
+  if (stack.length > 0 || !matched) return null
+  return selected.finish()
 }
 
-function selectRanges(source: string, ranges: ResourceRange[]): string | null {
+function selectRanges(source: string, ranges: ResourceRange[], maxBytes?: number): string | null {
   const lines = source.replace(/\r\n?/gu, '\n').split('\n')
-  const selected: string[] = []
+  const selected = new BoundedLineAccumulator(maxBytes)
   for (const range of ranges) {
     const end = range.end ?? lines.length
     if (range.start > lines.length || end > lines.length) return null
-    for (let line = range.start; line <= end; line += 1) selected.push(lines[line - 1] ?? '')
+    if (!selected.appendLines(lines, range.start - 1, end - 1)) return null
   }
-  return selected.join('\n')
+  return selected.finish()
 }
 
-function selectResourceContent(source: string, selection?: ResourceSelection): string | null {
-  if (!selection) return source.replace(/\r\n?/gu, '\n')
-  if (selection.region) return selectNamedRegion(source, selection.region)
-  if (selection.ranges) return selectRanges(source, selection.ranges)
+function selectResourceContent(
+  source: string,
+  selection: ResourceSelection | undefined,
+  maxBytes: number,
+): string | null {
+  if (!selection) return selectRanges(source, [{ start: 1 }], maxBytes)
+  if (selection.region) return selectNamedRegion(source, selection.region, maxBytes)
+  if (selection.ranges) return selectRanges(source, selection.ranges, maxBytes)
   return null
 }
 
@@ -565,9 +604,14 @@ async function expandSource(
       }
 
       const raw = await readTextResource(context, current.kind, resourcePath)
-      const selected = selectResourceContent(raw, current.selection)
+      const maxSelectedBytes = current.kind === 'snippet' ? MAX_SNIPPET_BYTES : MAX_INCLUDE_BYTES
+      const selected = selectResourceContent(
+        raw,
+        current.selection,
+        maxSelectedBytes,
+      )
       if (selected === null) throw new MarkdownResourceError('resource-selection-rejected')
-      if (byteLength(selected) > (current.kind === 'snippet' ? MAX_SNIPPET_BYTES : MAX_INCLUDE_BYTES)) {
+      if (byteLength(selected) > maxSelectedBytes) {
         throw new MarkdownResourceError('resource-size-limit')
       }
 
