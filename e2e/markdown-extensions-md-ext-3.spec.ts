@@ -228,11 +228,20 @@ test('MD-EXT-3 keeps annotated line surfaces visible across reader themes', asyn
   isVisibleSurface(light.meta, light.rootBackground)
   isVisibleSurface(light.notation, light.rootBackground)
   isVisibleSurface(light.numbered, light.rootBackground)
-  for (const surface of [light.focused, light.warning, light.error, light.info]) {
+  for (const surface of [light.focused, light.info]) {
     isVisibleSurface(surface, light.rootBackground)
     expect(surface.tokenTransparent).toBe(true)
     expect(surface.tokenDoesNotMatchRoot).toBe(true)
   }
+  for (const surface of [light.warning, light.error]) {
+    isVisibleSurface(surface, light.rootBackground, false)
+    expect(surface.tokenTransparent).toBe(true)
+    expect(surface.tokenDoesNotMatchRoot).toBe(true)
+  }
+  expect(light.warning.lineBackground).toBe('rgba(234, 179, 8, 0.14)')
+  expect(light.warning.lineBorder).toBe('none')
+  expect(light.error.lineBackground).toBe('rgba(244, 63, 94, 0.14)')
+  expect(light.error.lineBorder).toBe('none')
   for (const surface of [light.added, light.removed]) {
     isVisibleSurface(surface, light.rootBackground, false)
     expect(surface.tokenTransparent).toBe(true)

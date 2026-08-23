@@ -123,13 +123,13 @@
 }
 
 .article pre.shiki .line.warning {
-  background-color: rgba(191, 135, 0, 0.16);
-  box-shadow: inset 3px 0 0 #bf8700;
+  background-color: rgba(234, 179, 8, 0.14);
+  box-shadow: none;
 }
 
 .article pre.shiki .line.error {
-  background-color: rgba(207, 34, 46, 0.16);
-  box-shadow: inset 3px 0 0 #cf222e;
+  background-color: rgba(244, 63, 94, 0.14);
+  box-shadow: none;
 }
 
 .article pre.shiki .line.info {
