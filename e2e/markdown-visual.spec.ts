@@ -126,6 +126,29 @@ for (const theme of ['light', 'dark'] as const) {
       expect(container.fontWeight).toBe(alert?.fontWeight)
       expect(Number.parseFloat(container.lineHeight)).toBeCloseTo(19.6, 1)
     })
+    const codeSurface = await article.evaluate((root) => {
+      const pre = Array.from(root.querySelectorAll<HTMLElement>('pre.shiki'))
+        .find((candidate) => candidate.textContent?.includes('metaFirst'))
+      const highlighted = pre?.querySelector<HTMLElement>('.line.highlighted')
+      if (!pre || !highlighted) return null
+      const preStyle = getComputedStyle(pre)
+      const lineStyle = getComputedStyle(highlighted)
+      return {
+        language: pre.getAttribute('title'),
+        borderTopWidth: preStyle.borderTopWidth,
+        borderRadius: preStyle.borderRadius,
+        background: preStyle.backgroundColor,
+        lineBackground: lineStyle.backgroundColor,
+        lineShadow: lineStyle.boxShadow,
+      }
+    })
+    expect(codeSurface).not.toBeNull()
+    expect(codeSurface?.language).toBe('typescript')
+    expect(codeSurface?.borderTopWidth).toBe('0px')
+    expect(codeSurface?.borderRadius).toBe('8px')
+    expect(codeSurface?.background).not.toMatch(/^(transparent|rgba\(0, 0, 0, 0\))$/u)
+    expect(codeSurface?.lineBackground).not.toBe(codeSurface?.background)
+    expect(codeSurface?.lineShadow).toBe('none')
     expect(containers.find((container) => container.type === 'details')?.open).toBe(false)
     const detailsSpacing = await article.evaluate((root) => {
       const details = root.querySelector<HTMLDetailsElement>('.markdown-container-details')

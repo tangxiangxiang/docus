@@ -251,6 +251,15 @@ function encodeMountAttr(s: string): string {
   return encodeURIComponent(s)
 }
 
+function addCodeLanguageLabel(html: string, language: string): string {
+  const label = language.trim()
+  if (!label) return html
+  const openingTag = /^<pre\b[^>]*>/u.exec(html)?.[0]
+  if (!openingTag) return html
+  const labeledOpeningTag = openingTag.replace(/>$/u, ` title="${escapeHtml(label)}">`)
+  return `${labeledOpeningTag}${html.slice(openingTag.length)}`
+}
+
 function normalizeCodeLineEndings(source: string): string {
   return source.replace(/\r\n?/gu, '\n')
 }
@@ -301,7 +310,10 @@ function renderFence(str: string, info: string): string {
     return `<div class="mermaid-mount" data-content="${encodeMountAttr(str)}"></div>`
   }
 
-  return highlightShikiFence(str, meta) ?? renderPlainCodeFallback(str, meta)
+  const highlighted = highlightShikiFence(str, meta)
+  return highlighted === null
+    ? renderPlainCodeFallback(str, meta)
+    : addCodeLanguageLabel(highlighted, meta.language)
 }
 
 let mdPromise: Promise<MarkdownIt> | null = null

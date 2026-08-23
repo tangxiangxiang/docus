@@ -119,6 +119,44 @@
   min-width: 100%;
 }
 
+/* Vault reading uses the compact VitePress-like code surface. The language
+   label is generated as escaped text by the Markdown renderer; all code
+   backgrounds still belong to the pre surface, not token spans. */
+:root .vault:not(.pdf-document) .article pre.shiki:not(.docus-shiki-plain) {
+  position: relative;
+  padding: 1rem 2rem;
+  border: 0;
+  border-radius: 8px;
+  background-color: var(--vs-bg-2, var(--code-bg));
+}
+
+:root .vault:not(.pdf-document) .article pre.shiki:not(.docus-shiki-plain)[title]::after {
+  content: attr(title);
+  position: absolute;
+  top: 0.75rem;
+  right: 1rem;
+  color: var(--vs-text-3, var(--text-muted));
+  font: 0.75rem/1 var(--mono);
+  pointer-events: none;
+  user-select: none;
+}
+
+:root .vault:not(.pdf-document) .article pre.shiki:not(.docus-line-numbers):not(.docus-shiki-plain) .line {
+  display: block;
+  width: auto;
+  min-width: 100%;
+  box-sizing: border-box;
+  margin-right: -2rem;
+  margin-left: -2rem;
+  padding-right: 2rem;
+  padding-left: 2rem;
+}
+
+:root .vault:not(.pdf-document) .article pre.shiki .line.highlighted {
+  background-color: rgba(142, 150, 170, 0.16);
+  box-shadow: none;
+}
+
 /* MD-EXT-4 opt-in structural gutters. The default Shiki DOM is intentionally
    untouched; only fences whose FenceMeta enables line numbers receive this
    class and the grid/content wrappers below. */
