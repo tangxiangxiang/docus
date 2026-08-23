@@ -117,7 +117,7 @@ describe('Markdown math placeholders', () => {
 
   it('keeps math placeholders inside a callout', async () => {
     const html = await render([
-      '> [!info] Formula',
+      '> [!IMPORTANT]',
       '> Einstein: $E = mc^2$',
       '>',
       '> $$',
@@ -125,7 +125,7 @@ describe('Markdown math placeholders', () => {
       '> $$',
     ].join('\n'))
     const doc = parse(html)
-    const callout = doc.querySelector('.callout-info')
+    const callout = doc.querySelector('.callout-important')
 
     expect(callout).not.toBeNull()
     expect(callout?.querySelector('.math-inline')).not.toBeNull()

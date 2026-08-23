@@ -19,8 +19,20 @@ Regular **bold**, *italic*, `inline code`, and a [safe external link](https://ex
 
 > This is a printable blockquote.
 
-> [!note]
-> This callout should retain a clear visual hierarchy in the PDF.
+> [!NOTE]
+> This alert should retain a clear visual hierarchy in the PDF.
+
+> [!TIP]
+> This tip should remain readable in the PDF.
+
+> [!IMPORTANT]
+> This important information should remain visible in the PDF.
+
+> [!WARNING]
+> This warning should remain visually distinct in the PDF.
+
+> [!CAUTION]
+> This caution should retain its semantic color in the PDF.
 
 ## Code
 

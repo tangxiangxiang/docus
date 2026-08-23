@@ -4756,60 +4756,62 @@ main.container.auth-page-shell {
   white-space: pre-wrap;
 }
 
-/* ---------- Callouts (Obsidian-style admonitions) ----------
-   Callout markup is emitted by src/lib/callouts.ts as ordinary div/span
+/* ---------- GitHub-style Alerts ----------
+   Alert markup is emitted by src/lib/callouts.ts as ordinary div/span
    elements, so it stays inside the existing sanitizer boundary. Keep the
-   treatment deliberately quiet: a semantic color on the left edge, a very
-   soft background, and a small CSS marker instead of user-controlled HTML
-   icons. The --callout-color values inherit the light/dark vault tokens and
-   have concrete fallbacks for public article surfaces. */
+   article surface transparent and use only the semantic left edge, title,
+   and decorative CSS icon for the type distinction. */
 .article .callout {
-  --callout-color: var(--vs-accent, #005fb8);
-  margin: 1em 0;
-  padding: 0.8em 1em;
-  border: 1px solid color-mix(in srgb, var(--callout-color) 28%, var(--vs-border, #e0e0e0));
-  border-left: 3px solid var(--callout-color);
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--callout-color) 7%, var(--vs-bg-1, #ffffff));
+  --callout-color: #0969da;
+  margin: 1rem 0;
+  padding: 0.25rem 1rem;
+  border: 0;
+  border-left: 0.25rem solid var(--callout-color);
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
 }
-.article .callout-info,
-.article .callout-question,
-.article .callout-example { --callout-color: var(--vs-accent, #005fb8); }
-.article .callout-tip { --callout-color: var(--vs-accent, #005fb8); }
-.article .callout-success { --callout-color: var(--vs-success, #16803c); }
-.article .callout-warning { --callout-color: var(--vs-warning, #b7791f); }
-.article .callout-danger,
-.article .callout-bug { --callout-color: var(--vs-danger, #d73a49); }
-.article .callout-quote { --callout-color: var(--vs-text-2, #6f6f6f); }
+.article .callout-note { --callout-color: #0969da; }
+.article .callout-tip { --callout-color: #1a7f37; }
+.article .callout-important { --callout-color: #8250df; }
+.article .callout-warning { --callout-color: #9a6700; }
+.article .callout-caution { --callout-color: #cf222e; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .article .callout-note { --callout-color: #4493f8; }
+  :root:not([data-theme='light']) .article .callout-tip { --callout-color: #3fb950; }
+  :root:not([data-theme='light']) .article .callout-important { --callout-color: #ab7df8; }
+  :root:not([data-theme='light']) .article .callout-warning { --callout-color: #d29922; }
+  :root:not([data-theme='light']) .article .callout-caution { --callout-color: #f85149; }
+}
+:root[data-theme='dark'] .article .callout-note { --callout-color: #4493f8; }
+:root[data-theme='dark'] .article .callout-tip { --callout-color: #3fb950; }
+:root[data-theme='dark'] .article .callout-important { --callout-color: #ab7df8; }
+:root[data-theme='dark'] .article .callout-warning { --callout-color: #d29922; }
+:root[data-theme='dark'] .article .callout-caution { --callout-color: #f85149; }
 .article .callout-title {
   display: flex;
   align-items: center;
-  gap: 0.45em;
-  margin-bottom: 0.4em;
+  gap: 0.45rem;
+  margin-bottom: 0.35rem;
   color: var(--callout-color);
-  font-weight: 650;
+  font-weight: 600;
   line-height: 1.35;
 }
 .article .callout-icon {
   display: inline-flex;
-  flex: 0 0 1.1em;
-  width: 1.1em;
+  flex: 0 0 1.1rem;
+  width: 1.1rem;
   align-items: center;
   justify-content: center;
   color: var(--callout-color);
-  font-size: 0.9em;
+  font-size: 1rem;
   line-height: 1;
 }
-.article .callout-note .callout-icon::before { content: '●'; }
-.article .callout-info .callout-icon::before { content: 'i'; font-weight: 700; }
+.article .callout-note .callout-icon::before { content: 'ⓘ'; }
 .article .callout-tip .callout-icon::before { content: '✦'; }
-.article .callout-success .callout-icon::before { content: '✓'; font-weight: 700; }
-.article .callout-question .callout-icon::before { content: '?'; font-weight: 700; }
-.article .callout-warning .callout-icon::before,
-.article .callout-danger .callout-icon::before { content: '!'; font-weight: 700; }
-.article .callout-bug .callout-icon::before { content: '◆'; font-size: 0.8em; }
-.article .callout-example .callout-icon::before { content: '◇'; }
-.article .callout-quote .callout-icon::before { content: '”'; font-size: 1.2em; }
+.article .callout-important .callout-icon::before { content: '‼'; font-weight: 700; }
+.article .callout-warning .callout-icon::before { content: '⚠'; }
+.article .callout-caution .callout-icon::before { content: '⛔'; }
 .article .callout-content > :first-child { margin-top: 0; }
 .article .callout-content > :last-child { margin-bottom: 0; }
 

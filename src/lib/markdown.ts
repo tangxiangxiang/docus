@@ -354,8 +354,8 @@ async function getMd(): Promise<MarkdownIt> {
       // Wiki link + standard `.md` link classification. The resolver is
       // supplied through markdown-it's per-render env by render().
       .use(wikiLinkPlugin)
-      // Obsidian-style `> [!note]` callouts. The plugin transforms the
-      // parsed blockquote token and leaves ordinary blockquotes untouched.
+      // GitHub-style `> [!NOTE]` Alerts. The plugin transforms the parsed
+      // blockquote token and leaves unsupported markers untouched.
       .use(calloutPlugin)
       // Docus-owned VitePress-style built-in containers. The rule is inserted
       // by name before MarkdownIt's paragraph rule and keeps the existing

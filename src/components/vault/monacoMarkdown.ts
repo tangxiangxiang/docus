@@ -54,7 +54,7 @@ export const MARKDOWN_SLASH_COMMANDS: readonly MarkdownSlashCommand[] = [
   { label: 'numbered list', detail: '有序列表', insertText: '1. ${1:Item}' },
   { label: 'task', detail: '任务列表', insertText: '- [ ] ${1:Task}' },
   { label: 'quote', detail: '引用', insertText: '> ${1:Quote}' },
-  { label: 'callout', detail: '提示块', insertText: '> [!note] ${1:Title}\n> ${2:Content}' },
+  { label: 'callout', detail: '提示块', insertText: '> [!NOTE]\n> ${1:Content}' },
   { label: 'inline math', detail: '行内公式', insertText: '$${1:x + y}$' },
   { label: 'math block', detail: '块级公式', insertText: '$$\n${1:E = mc^2}\n$$' },
   { label: 'code block', detail: '代码块', insertText: '```$1\n$2\n```' },

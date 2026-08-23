@@ -37,7 +37,7 @@ describe('Monaco Markdown helpers', () => {
     expect(filterMarkdownSlashCommands('图表').map((item) => item.label)).toEqual(['mermaid'])
     expect(filterMarkdownSlashCommands('提示').map((item) => item.label)).toEqual(['callout'])
     expect(filterMarkdownSlashCommands('callout')).toEqual([
-      { label: 'callout', detail: '提示块', insertText: '> [!note] ${1:Title}\n> ${2:Content}' },
+      { label: 'callout', detail: '提示块', insertText: '> [!NOTE]\n> ${1:Content}' },
     ])
     expect(filterMarkdownSlashCommands('math').map((item) => item.label)).toEqual(['inline math', 'math block'])
     expect(filterMarkdownSlashCommands('公式')).toEqual([

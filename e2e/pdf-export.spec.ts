@@ -13,6 +13,7 @@ type PdfSurfaceSnapshot = {
   hasEm: boolean
   inlineCodeText: string
   hasCallout: boolean
+  calloutTypes: string[]
   taskCheckboxCount: number
   checkedTaskCount: number
   footnoteMarkerCount: number
@@ -146,6 +147,8 @@ test('exports the Kitchen Sink with settled content from the file-tree menu', as
         hasEm: article.querySelector('em') !== null,
         inlineCodeText: article.querySelector('p code')?.textContent ?? '',
         hasCallout: article.querySelector('.callout') !== null,
+        calloutTypes: Array.from(preparedArticle.querySelectorAll<HTMLElement>('.callout'))
+          .map((callout) => Array.from(callout.classList).find((name) => name.startsWith('callout-') && name !== 'callout') ?? ''),
         taskCheckboxCount: article.querySelectorAll('input.task-list-item-checkbox').length,
         checkedTaskCount: article.querySelectorAll('input.task-list-item-checkbox:checked').length,
         footnoteMarkerCount: article.querySelectorAll('.footnote-ref').length,
@@ -310,6 +313,13 @@ test('exports the Kitchen Sink with settled content from the file-tree menu', as
   expect(snapshot.hasEm).toBe(true)
   expect(snapshot.inlineCodeText).toBe('inline code')
   expect(snapshot.hasCallout).toBe(true)
+  expect(snapshot.calloutTypes).toEqual([
+    'callout-note',
+    'callout-tip',
+    'callout-important',
+    'callout-warning',
+    'callout-caution',
+  ])
   expect(snapshot.taskCheckboxCount).toBe(2)
   expect(snapshot.checkedTaskCount).toBe(1)
   expect(snapshot.footnoteMarkerCount).toBeGreaterThan(0)

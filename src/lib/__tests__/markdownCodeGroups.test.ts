@@ -237,7 +237,7 @@ describe('Docus code groups', () => {
 
   it('coexists with an existing blockquote callout when nested by normal Markdown rules', async () => {
     const doc = parse(await render([
-      '> [!NOTE] Existing callout',
+      '> [!NOTE]',
       '>',
       '> ::: code-group',
       '> ```ts [TypeScript]',

@@ -58,14 +58,20 @@ Explicit link: [:smile:](https://example.com)
 
 > 同一份内容在 Preview 和 Reading 中应保持相同的视觉语义，只改变阅读密度和页面留白。
 
-> [!note]
-> A normal note callout.
+> [!NOTE]
+> A normal note alert.
 
-> [!warning] Custom warning
+> [!WARNING]
 > Be careful.
 
-> [!success]
+> [!TIP]
 > Everything worked.
+
+> [!IMPORTANT]
+> Read this before continuing.
+
+> [!CAUTION]
+> This action may have consequences.
 
 ### Mathematics
 

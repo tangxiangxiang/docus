@@ -220,7 +220,7 @@ describe('markdown render()', () => {
     const html = await render([
       '# Integration',
       '',
-      '> [!info] Formula',
+      '> [!IMPORTANT]',
       '> [[math-note]] explains **$E = mc^2$**.',
       '>',
       '> - [x] Reviewed',
@@ -237,11 +237,11 @@ describe('markdown render()', () => {
     const doc = new DOMParser().parseFromString(html, 'text/html')
 
     expect(doc.querySelector('h1')?.textContent).toContain('Integration')
-    expect(doc.querySelector('.callout-info')).not.toBeNull()
-    expect(doc.querySelector('.callout-info a.wiki-link')?.getAttribute('href')).toBe('/vault/notes/math-note')
-    expect(doc.querySelector('.callout-info strong .math-inline')).not.toBeNull()
-    expect(doc.querySelector('.callout-info ul.contains-task-list')).not.toBeNull()
-    expect(doc.querySelector('.callout-info input[checked]')).not.toBeNull()
+    expect(doc.querySelector('.callout-important')).not.toBeNull()
+    expect(doc.querySelector('.callout-important a.wiki-link')?.getAttribute('href')).toBe('/vault/notes/math-note')
+    expect(doc.querySelector('.callout-important strong .math-inline')).not.toBeNull()
+    expect(doc.querySelector('.callout-important ul.contains-task-list')).not.toBeNull()
+    expect(doc.querySelector('.callout-important input[checked]')).not.toBeNull()
     expect(doc.querySelector('mark')?.textContent).toBe('Important')
     expect(doc.querySelector('section.footnotes')).not.toBeNull()
     expect(doc.querySelector('.math-block')).not.toBeNull()
@@ -559,7 +559,7 @@ describe('markdown render()', () => {
 
   it('keeps Emoji working through task, callout, highlight, definition, and footnote output', async () => {
     const html = await render([
-      '> [!note] Review',
+      '> [!NOTE]',
       '> Body :smile:',
       '',
       '- [ ] :rocket:',

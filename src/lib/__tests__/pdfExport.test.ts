@@ -84,6 +84,19 @@ describe('PDF export helpers', () => {
     expect(__testing__.PDF_DOWNLOAD_STYLES).toContain('size: A4')
   })
 
+  it('keeps all GitHub Alert types printable with a transparent surface', () => {
+    const styles = __testing__.PDF_DOWNLOAD_STYLES
+
+    expect(styles).toContain('.pdf-document .article .callout {')
+    expect(styles).toContain('background: transparent !important;')
+    for (const type of ['note', 'tip', 'important', 'warning', 'caution']) {
+      expect(styles).toContain(`.pdf-document .article .callout-${type}`)
+    }
+    expect(styles).not.toContain('.pdf-document .article .callout-info')
+    expect(styles).not.toContain('.pdf-document .article .callout-success')
+    expect(styles).not.toContain('.pdf-document .article .callout-danger')
+  })
+
   it('composes one trusted PDF stylesheet from the Shiki snapshot', async () => {
     const liveOwner = document.createElement('style')
     liveOwner.id = 'docus-shiki-generated-styles'

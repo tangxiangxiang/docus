@@ -2,49 +2,14 @@ import MarkdownIt from 'markdown-it'
 import type StateCore from 'markdown-it/lib/rules_core/state_core.mjs'
 
 export const CALLOUT_TYPES = {
-  note: { title: 'Note' },
-  info: { title: 'Info' },
-  tip: { title: 'Tip' },
-  success: { title: 'Success' },
-  question: { title: 'Question' },
-  warning: { title: 'Warning' },
-  danger: { title: 'Danger' },
-  bug: { title: 'Bug' },
-  example: { title: 'Example' },
-  quote: { title: 'Quote' },
+  NOTE: { title: 'NOTE' },
+  TIP: { title: 'TIP' },
+  IMPORTANT: { title: 'IMPORTANT' },
+  WARNING: { title: 'WARNING' },
+  CAUTION: { title: 'CAUTION' },
 } as const
 
 export type CalloutType = keyof typeof CALLOUT_TYPES
-
-const CALLOUT_ALIASES: Readonly<Record<string, CalloutType>> = {
-  note: 'note',
-  abstract: 'note',
-  summary: 'note',
-  tldr: 'note',
-  info: 'info',
-  todo: 'info',
-  tip: 'tip',
-  hint: 'tip',
-  important: 'tip',
-  success: 'success',
-  check: 'success',
-  done: 'success',
-  question: 'question',
-  help: 'question',
-  faq: 'question',
-  warning: 'warning',
-  caution: 'warning',
-  attention: 'warning',
-  danger: 'danger',
-  error: 'danger',
-  failure: 'danger',
-  fail: 'danger',
-  missing: 'danger',
-  bug: 'bug',
-  example: 'example',
-  quote: 'quote',
-  cite: 'quote',
-}
 
 interface CalloutMeta {
   type: CalloutType
@@ -57,10 +22,11 @@ interface CalloutMarker {
   bodyStart: number
 }
 
-/* A marker must occupy the beginning of the first paragraph and end at the
-   line boundary. In particular, `[!note]+` / `[!note]-` do not match: folded
-   callouts are intentionally left as ordinary blockquotes in this phase. */
-const CALLOUT_MARKER_RE = /^\[!([A-Za-z][A-Za-z0-9_-]*)\](?:[ \t]+([^\n]*))?(?:\n|$)/
+/* A marker must occupy the beginning of the first paragraph and be the only
+   content on its source line. Matching is intentionally exact and
+   case-sensitive: unsupported, legacy, folded, and titled markers remain
+   ordinary blockquotes. */
+const CALLOUT_MARKER_RE = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \t]*(?:\n|$)/
 
 function escapeHtml(value: string): string {
   return value
@@ -71,15 +37,11 @@ function escapeHtml(value: string): string {
     .replace(/'/g, '&#39;')
 }
 
-function normalizeType(rawType: string): CalloutType {
-  return CALLOUT_ALIASES[rawType.toLowerCase()] ?? 'note'
-}
-
 function parseMarker(content: string): CalloutMarker | null {
   const match = CALLOUT_MARKER_RE.exec(content)
   if (!match) return null
-  const type = normalizeType(match[1])
-  const title = match[2]?.trim() || CALLOUT_TYPES[type].title
+  const type = match[1] as CalloutType
+  const title = CALLOUT_TYPES[type].title
   return { type, title, bodyStart: match[0].length }
 }
 
@@ -170,7 +132,7 @@ export function calloutPlugin(md: MarkdownIt): void {
         ? previousOpen(tokens, index, options, env, self)
         : self.renderToken(tokens, index, options)
     }
-    return `<div class="callout callout-${meta.type}">\n`
+    return `<div class="callout callout-${meta.type.toLowerCase()}">\n`
       + '<div class="callout-title">'
       + '<span class="callout-icon" aria-hidden="true"></span>'
       + `<span class="callout-title-text">${escapeHtml(meta.title)}</span>`

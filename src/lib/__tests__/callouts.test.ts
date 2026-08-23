@@ -5,7 +5,7 @@ import { render } from '../markdown'
 import { calloutPlugin } from '../callouts'
 import type { Resolver as WikiResolver } from '../wikiLinks'
 
-describe('Markdown callouts', () => {
+describe('GitHub-style Markdown Alerts', () => {
   it('preserves metadata supplied by another markdown-it core rule', () => {
     const md = new MarkdownIt()
     let seenOpenMeta: Record<string, unknown> | undefined
@@ -25,37 +25,93 @@ describe('Markdown callouts', () => {
       seenCloseMeta = close?.meta
     })
 
-    md.render('> [!note]\n> content')
+    md.render('> [!NOTE]\n> content')
 
-    expect(seenOpenMeta).toMatchObject({ fromOtherPlugin: true, callout: { type: 'note' } })
-    expect(seenCloseMeta).toMatchObject({ fromOtherPlugin: true, callout: { type: 'note' } })
+    expect(seenOpenMeta).toMatchObject({ fromOtherPlugin: true, callout: { type: 'NOTE' } })
+    expect(seenCloseMeta).toMatchObject({ fromOtherPlugin: true, callout: { type: 'NOTE' } })
   })
 
-  it('renders a basic callout with its default title and content wrapper', async () => {
-    const html = await render('> [!note]\n> Hello')
+  it('renders exactly the five canonical Alert types with fixed uppercase titles', async () => {
+    const html = await render([
+      '> [!NOTE]',
+      '> note',
+      '',
+      '> [!TIP]',
+      '> tip',
+      '',
+      '> [!IMPORTANT]',
+      '> important',
+      '',
+      '> [!WARNING]',
+      '> warning',
+      '',
+      '> [!CAUTION]',
+      '> caution',
+    ].join('\n'))
     const doc = new DOMParser().parseFromString(html, 'text/html')
 
-    const callout = doc.querySelector('.callout.callout-note')
-    expect(callout).not.toBeNull()
-    expect(callout?.querySelector('.callout-title')).not.toBeNull()
-    expect(callout?.querySelector('.callout-icon')).not.toBeNull()
-    expect(callout?.querySelector('.callout-title-text')?.textContent).toBe('Note')
-    expect(callout?.querySelector('.callout-content p')?.textContent).toBe('Hello')
-    expect(callout?.querySelector('blockquote')).toBeNull()
+    for (const type of ['note', 'tip', 'important', 'warning', 'caution']) {
+      const alert = doc.querySelector(`.callout.callout-${type}`)
+      expect(alert).not.toBeNull()
+      expect(alert?.querySelector('.callout-title')).not.toBeNull()
+      expect(alert?.querySelector('.callout-icon')?.getAttribute('aria-hidden')).toBe('true')
+    }
+    expect(doc.querySelectorAll('.callout')).toHaveLength(5)
+    expect(Array.from(doc.querySelectorAll('.callout-title-text')).map((node) => node.textContent))
+      .toEqual(['NOTE', 'TIP', 'IMPORTANT', 'WARNING', 'CAUTION'])
   })
 
-  it('supports a custom title as escaped plain text', async () => {
-    const html = await render('> [!warning] Database migration\n> Backup first.')
+  it('requires a marker-only canonical line and does not support custom titles', async () => {
+    const canonical = new DOMParser().parseFromString(
+      await render('> [!WARNING]\n> Back up first.'),
+      'text/html',
+    )
+    const titled = new DOMParser().parseFromString(
+      await render('> [!WARNING] Database migration\n> Back up first.'),
+      'text/html',
+    )
+
+    expect(canonical.querySelector('.callout-warning .callout-title-text')?.textContent).toBe('WARNING')
+    expect(titled.querySelector('.callout')).toBeNull()
+    expect(titled.querySelector('blockquote')?.textContent).toContain('[!WARNING] Database migration')
+  })
+
+  it.each([
+    'INFO', 'SUCCESS', 'QUESTION', 'DANGER', 'BUG', 'EXAMPLE', 'QUOTE',
+    'ABSTRACT', 'SUMMARY', 'TLDR', 'TODO', 'HINT', 'CHECK', 'DONE', 'HELP',
+    'FAQ', 'ATTENTION', 'ERROR', 'FAILURE', 'FAIL', 'MISSING', 'CITE',
+    'WHATEVER', 'note', 'Tip', 'important',
+  ])('keeps unsupported marker %s as an ordinary blockquote', async (type) => {
+    const marker = `[!${type}]`
+    const html = await render(`> ${marker}\n> Content`)
     const doc = new DOMParser().parseFromString(html, 'text/html')
 
-    expect(doc.querySelector('.callout-warning')).not.toBeNull()
-    expect(doc.querySelector('.callout-title-text')?.textContent).toBe('Database migration')
-    expect(doc.querySelector('.callout-content')?.textContent).toContain('Backup first.')
+    expect(doc.querySelector('.callout')).toBeNull()
+    expect(doc.querySelector('blockquote')?.textContent).toContain(marker)
+  })
+
+  it('does not partially implement malformed or folded marker text', async () => {
+    const source = [
+      '> [!NOTE',
+      '> [!!NOTE]',
+      '> [!NOTE]+',
+      '> [!NOTE]-',
+      '> [!NOTE foo]',
+      '> [!NOTE" onclick="alert(1)]',
+      '> Content',
+    ].join('\n')
+    const html = await render(source)
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+
+    expect(doc.querySelector('.callout')).toBeNull()
+    expect(doc.querySelector('blockquote')?.textContent).toContain('[!NOTE]+')
+    expect(doc.querySelector('blockquote')?.textContent).toContain('[!NOTE foo]')
+    expect(doc.querySelector('[onclick]')).toBeNull()
   })
 
   it('keeps multiple paragraphs and lists inside the content wrapper', async () => {
     const html = await render([
-      '> [!info] Details',
+      '> [!NOTE]',
       '> First paragraph.',
       '>',
       '> Second paragraph.',
@@ -71,38 +127,10 @@ describe('Markdown callouts', () => {
     expect(content?.textContent).toContain('Second paragraph.')
   })
 
-  it('normalizes Obsidian aliases to canonical callout classes', async () => {
-    const html = await render([
-      '> [!caution] Be careful',
-      '> Warning text',
-      '',
-      '> [!done]',
-      '> Finished',
-      '',
-      '> [!tldr]',
-      '> Summary',
-    ].join('\n'))
-    const doc = new DOMParser().parseFromString(html, 'text/html')
-
-    expect(doc.querySelectorAll('.callout-warning')).toHaveLength(1)
-    expect(doc.querySelectorAll('.callout-success')).toHaveLength(1)
-    expect(doc.querySelectorAll('.callout-note')).toHaveLength(1)
-    expect(doc.querySelector('.callout-warning .callout-title-text')?.textContent).toBe('Be careful')
-    expect(doc.querySelector('.callout-success .callout-title-text')?.textContent).toBe('Success')
-  })
-
-  it('keeps an ordinary blockquote unchanged', async () => {
-    const html = await render('> Normal quote')
-    const doc = new DOMParser().parseFromString(html, 'text/html')
-
-    expect(doc.querySelector('blockquote')?.textContent).toContain('Normal quote')
-    expect(doc.querySelector('.callout')).toBeNull()
-  })
-
-  it('keeps rich Markdown and the render-scoped Wiki resolver inside a callout', async () => {
+  it('keeps rich Markdown and the render-scoped Wiki resolver inside an Alert', async () => {
     const resolver: WikiResolver = (ref) => ({ target: `notes/${ref}` })
     const html = await render([
-      '> [!tip] Rich',
+      '> [!TIP]',
       '> Use **bold**, `code`, ==highlight==, [external](https://example.com) and [[note]].',
       '>',
       '> - item 1',
@@ -121,12 +149,12 @@ describe('Markdown callouts', () => {
 
   it('preserves task-list checkbox and label output after sanitization', async () => {
     const html = await render([
-      '> [!todo]',
+      '> [!IMPORTANT]',
       '> - [x] Done',
       '> - [ ] Todo',
     ].join('\n'))
     const doc = new DOMParser().parseFromString(html, 'text/html')
-    const callout = doc.querySelector('.callout-info')
+    const callout = doc.querySelector('.callout-important')
     const inputs = Array.from(callout?.querySelectorAll<HTMLInputElement>('input.task-list-item-checkbox') ?? [])
     const labels = Array.from(callout?.querySelectorAll('label') ?? [])
 
@@ -140,9 +168,9 @@ describe('Markdown callouts', () => {
     expect(callout?.querySelector('ul.contains-task-list')).not.toBeNull()
   })
 
-  it('keeps fenced code as code inside a callout', async () => {
+  it('keeps fenced code as code inside an Alert', async () => {
     const html = await render([
-      '> [!example] TypeScript',
+      '> [!TIP]',
       '>',
       '> ```ts',
       '> const x = 1',
@@ -150,36 +178,16 @@ describe('Markdown callouts', () => {
     ].join('\n'))
     const doc = new DOMParser().parseFromString(html, 'text/html')
 
-    expect(doc.querySelector('.callout-example pre code')?.textContent).toContain('const x = 1')
-    expect(doc.querySelector('.callout-example .callout-content')).not.toBeNull()
+    expect(doc.querySelector('.callout-tip pre code')?.textContent).toContain('const x = 1')
+    expect(doc.querySelector('.callout-tip .callout-content')).not.toBeNull()
   })
 
-  it('falls back to note for unknown types without copying input into a class', async () => {
-    const html = await render('> [!whatever]\n> Content')
-    const doc = new DOMParser().parseFromString(html, 'text/html')
-    const callout = doc.querySelector('.callout')
-
-    expect(callout?.className).toBe('callout callout-note')
-    expect(callout?.querySelector('.callout-title-text')?.textContent).toBe('Note')
-    expect(callout?.textContent).toContain('Content')
-    expect(callout?.className).not.toContain('whatever')
-  })
-
-  it('does not partially implement folded callouts', async () => {
-    const html = await render('> [!note]+\n> expanded')
-    const doc = new DOMParser().parseFromString(html, 'text/html')
-
-    expect(doc.querySelector('blockquote')?.textContent).toContain('[!note]+')
-    expect(doc.querySelector('.callout')).toBeNull()
-    expect(doc.querySelector('details, summary')).toBeNull()
-  })
-
-  it('keeps nested callouts valid and independently typed', async () => {
+  it('keeps nested canonical Alerts valid and independently typed', async () => {
     const html = await render([
-      '> [!note] Outer',
+      '> [!NOTE]',
       '> Outer content',
       '>',
-      '> > [!warning] Inner',
+      '> > [!WARNING]',
       '> > Inner content',
     ].join('\n'))
     const doc = new DOMParser().parseFromString(html, 'text/html')
@@ -193,31 +201,30 @@ describe('Markdown callouts', () => {
     expect(doc.querySelectorAll('blockquote')).toHaveLength(0)
   })
 
-  it('sanitizes dangerous title and body HTML without changing callout structure', async () => {
+  it('sanitizes dangerous body HTML without changing Alert structure', async () => {
     const html = await render([
-      '> [!warning] <img src=x onerror=alert(1)>',
+      '> [!WARNING]',
       '> <script>alert(1)</script>',
       '> <a href="javascript:alert(1)">Run</a>',
       '> Safe text',
     ].join('\n'))
     const doc = new DOMParser().parseFromString(html, 'text/html')
-    const callout = doc.querySelector('.callout-warning')
+    const alert = doc.querySelector('.callout-warning')
 
-    expect(callout).not.toBeNull()
-    expect(callout?.querySelector('.callout-title-text')?.textContent).toBe('<img src=x onerror=alert(1)>')
-    expect(callout?.querySelector('script, img')).toBeNull()
-    expect(callout?.textContent).toContain('Safe text')
+    expect(alert).not.toBeNull()
+    expect(alert?.querySelector('.callout-title-text')?.textContent).toBe('WARNING')
+    expect(alert?.querySelector('script, img')).toBeNull()
+    expect(alert?.textContent).toContain('Safe text')
     expect(doc.querySelector('[onerror], [onclick], [onload]')).toBeNull()
     expect(html).not.toMatch(/<script\b/i)
     expect(doc.querySelector('a[href^="javascript:"]')).toBeNull()
   })
 
-  it('does not recognize malformed marker text as a callout', async () => {
-    const html = await render('> [!note" onclick="alert(1)]\n> Content')
+  it('keeps an ordinary blockquote unchanged', async () => {
+    const html = await render('> Normal quote')
     const doc = new DOMParser().parseFromString(html, 'text/html')
 
+    expect(doc.querySelector('blockquote')?.textContent).toContain('Normal quote')
     expect(doc.querySelector('.callout')).toBeNull()
-    expect(doc.querySelector('blockquote')?.textContent).toContain('Content')
-    expect(doc.querySelector('[onclick]')).toBeNull()
   })
 })

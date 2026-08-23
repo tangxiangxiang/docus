@@ -376,19 +376,53 @@ const PDF_DOWNLOAD_STYLES = `
   color: #4b5563 !important;
 }
 
-/* The reader callout theme uses color-mix(), which html2canvas's CSS parser
-   cannot consume in every Chromium build. Resolve the printable palette here
-   so a callout cannot abort the entire PDF transaction. */
+/* Resolve the reader Alert palette at the printable boundary. The PDF keeps
+   the GitHub-style transparent surface and type-specific left edge without
+   relying on reader theme variables or color-mix(). */
 .pdf-document .article .callout {
-  background: #f5f6f8 !important;
-  border-color: #d7dce2 !important;
-  border-left-color: #005fb8 !important;
+  background: transparent !important;
+  border: 0 !important;
+  border-left: 0.25rem solid #0969da !important;
   color: #4b5563 !important;
 }
-
+.pdf-document .article .callout-note {
+  border-left-color: #0969da !important;
+}
 .pdf-document .article .callout-title,
 .pdf-document .article .callout-icon {
-  color: #005fb8 !important;
+  color: #0969da !important;
+}
+.pdf-document .article .callout-note .callout-title,
+.pdf-document .article .callout-note .callout-icon {
+  color: #0969da !important;
+}
+.pdf-document .article .callout-tip {
+  border-left-color: #1a7f37 !important;
+}
+.pdf-document .article .callout-tip .callout-title,
+.pdf-document .article .callout-tip .callout-icon {
+  color: #1a7f37 !important;
+}
+.pdf-document .article .callout-important {
+  border-left-color: #8250df !important;
+}
+.pdf-document .article .callout-important .callout-title,
+.pdf-document .article .callout-important .callout-icon {
+  color: #8250df !important;
+}
+.pdf-document .article .callout-warning {
+  border-left-color: #9a6700 !important;
+}
+.pdf-document .article .callout-warning .callout-title,
+.pdf-document .article .callout-warning .callout-icon {
+  color: #9a6700 !important;
+}
+.pdf-document .article .callout-caution {
+  border-left-color: #cf222e !important;
+}
+.pdf-document .article .callout-caution .callout-title,
+.pdf-document .article .callout-caution .callout-icon {
+  color: #cf222e !important;
 }
 
 .pdf-document .article .table-scroll {
