@@ -1,13 +1,11 @@
 import { expect, test } from '@playwright/test'
 
-test('MD-EXT-1 keeps final heading IDs shared across TOC and generated links/images', async ({ page }) => {
+test('MD-EXT-1 keeps final heading IDs shared across generated links/images', async ({ page }) => {
   await page.goto('/__markdown-test?mode=reading')
 
   const result = await page.evaluate(async () => {
     const { render } = await import('/src/lib/markdown.ts')
     const html = await render([
-      '[[toc]]',
-      '',
       '## Java Guide {#java-guide}',
       '## Duplicate',
       '## Duplicate',
@@ -35,8 +33,6 @@ test('MD-EXT-1 keeps final heading IDs shared across TOC and generated links/ima
       id: heading.id,
       text: heading.textContent,
     }))
-    const tocLinks = Array.from(article.querySelectorAll<HTMLAnchorElement>('nav.docus-toc a'))
-      .map((link) => link.getAttribute('href'))
     const generatedExternal = article.querySelector<HTMLAnchorElement>('a[href="https://example.com"]')
     const linkifiedExternal = article.querySelector<HTMLAnchorElement>('a[href="https://linkify.example.test/path"]')
     const rawAnchor = article.querySelector<HTMLAnchorElement>('a[href="https://raw.example"]')
@@ -47,7 +43,6 @@ test('MD-EXT-1 keeps final heading IDs shared across TOC and generated links/ima
 
     return {
       headings,
-      tocLinks,
       generatedExternal: generatedExternal
         ? { target: generatedExternal.target, rel: generatedExternal.rel }
         : null,
@@ -71,15 +66,6 @@ test('MD-EXT-1 keeps final heading IDs shared across TOC and generated links/ima
     { id: 'escaped-literal', text: 'Escaped {#literal}' },
     { id: 'entity-entity', text: 'Entity {#entity}' },
   ])
-  expect(result.tocLinks).toEqual([
-    '#java-guide',
-    '#duplicate',
-    '#duplicate-2',
-    '#duplicate-3',
-    '#formatted',
-    '#escaped-literal',
-    '#entity-entity',
-  ])
   expect(result.generatedExternal).toEqual({ target: '_blank', rel: 'noopener noreferrer' })
   expect(result.linkifiedExternal).toEqual({ target: '_blank', rel: 'noopener noreferrer' })
   expect(result.rawTarget).toBeNull()
@@ -89,7 +75,7 @@ test('MD-EXT-1 keeps final heading IDs shared across TOC and generated links/ima
   expect(result.imageLoading).toBe('lazy')
 })
 
-test('MD-EXT-1 prepared PDF HTML retains TOC targets, anchors, and lazy images', async ({ page }) => {
+test('MD-EXT-1 prepared PDF HTML retains heading anchors and lazy images', async ({ page }) => {
   await page.goto('/__markdown-test?mode=reading')
 
   const result = await page.evaluate(async () => {
@@ -98,8 +84,6 @@ test('MD-EXT-1 prepared PDF HTML retains TOC targets, anchors, and lazy images',
     const article = document.createElement('article')
     article.className = 'article reading'
     article.innerHTML = await render([
-      '[[toc]]',
-      '',
       '## Java Guide {#java-guide}',
       '',
       '![Example](./example.png)',
@@ -107,16 +91,14 @@ test('MD-EXT-1 prepared PDF HTML retains TOC targets, anchors, and lazy images',
     const prepared = document.createElement('div')
     prepared.innerHTML = preparePdfArticleHtml(article)
     return {
-      hasToc: prepared.querySelector('nav.docus-toc') !== null,
-      tocHref: prepared.querySelector<HTMLAnchorElement>('nav.docus-toc a')?.getAttribute('href') ?? null,
+      hasInlineToc: prepared.querySelector('nav.docus-toc') !== null,
       heading: prepared.querySelector('h2#java-guide') !== null,
       imageLoading: prepared.querySelector('img')?.getAttribute('loading') ?? null,
     }
   })
 
   expect(result).toEqual({
-    hasToc: true,
-    tocHref: '#java-guide',
+    hasInlineToc: false,
     heading: true,
     imageLoading: 'lazy',
   })

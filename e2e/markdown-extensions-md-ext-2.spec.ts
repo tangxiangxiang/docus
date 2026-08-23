@@ -8,8 +8,6 @@ test('MD-EXT-2 renders fixed containers, nested bodies, and existing Markdown fe
     const article = document.createElement('article')
     article.className = 'article reading md-ext-2-browser-fixture'
     article.innerHTML = await render([
-      '[[toc]]',
-      '',
       '## Container heading {#container-heading}',
       '',
       '::::: info Information',
@@ -72,7 +70,6 @@ test('MD-EXT-2 renders fixed containers, nested bodies, and existing Markdown fe
       nested: article.querySelector('.markdown-container-warning .markdown-container-details') !== null,
       callout: article.querySelector('.markdown-container-info .callout-note') !== null,
       heading: article.querySelector('h2#container-heading') !== null,
-      toc: article.querySelector('nav.docus-toc a[href="#container-heading"]') !== null,
       closed: closed?.open === false,
       opened: opened?.open === true,
       rawHtmlTail: article.querySelector('.markdown-container-danger')?.textContent?.includes('After raw HTML.') ?? false,
@@ -92,7 +89,6 @@ test('MD-EXT-2 renders fixed containers, nested bodies, and existing Markdown fe
   expect(result.nested).toBe(true)
   expect(result.callout).toBe(true)
   expect(result.heading).toBe(true)
-  expect(result.toc).toBe(true)
   expect(result.closed).toBe(true)
   expect(result.opened).toBe(true)
   expect(result.rawHtmlTail).toBe(true)

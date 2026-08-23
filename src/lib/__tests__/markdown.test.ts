@@ -1192,7 +1192,7 @@ describe('markdown H4 style-to-class and security closure', () => {
   })
 })
 
-describe('markdown MD-EXT-1 anchors, TOC, links, and images', () => {
+describe('markdown anchors, links, and images', () => {
   it('supports narrow custom anchors and the id/id-2/id-3 collision contract', async () => {
     const automatic = await render('## Hello\n## Hello\n## Hello')
     expect(Array.from(new DOMParser().parseFromString(automatic, 'text/html').querySelectorAll('h2'))
@@ -1240,19 +1240,14 @@ describe('markdown MD-EXT-1 anchors, TOC, links, and images', () => {
     expect(headings[4]?.textContent).toBe('Heading {#one}')
   })
 
-  it('uses the automatic final ID for escaped literals in the TOC', async () => {
-    const html = await render([
-      '[[toc]]',
-      '',
-      String.raw`## Example \{#literal}`,
-    ].join('\n'))
+  it('keeps the automatic final ID for escaped literals without an inline TOC', async () => {
+    const html = await render(String.raw`## Example \{#literal}`)
     const doc = new DOMParser().parseFromString(html, 'text/html')
     const heading = doc.querySelector('h2')
-    const tocLink = doc.querySelector<HTMLAnchorElement>('nav.docus-toc a')
 
     expect(heading?.id).toBe('example-literal')
     expect(heading?.textContent).toContain('Example {#literal}')
-    expect(tocLink?.getAttribute('href')).toBe('#example-literal')
+    expect(doc.querySelector('.docus-toc')).toBeNull()
   })
 
   it('removes only a valid final custom suffix and preserves inline heading markup', async () => {
@@ -1284,61 +1279,41 @@ describe('markdown MD-EXT-1 anchors, TOC, links, and images', () => {
     expect(html).toContain('{#}')
   })
 
-  it('recognizes standalone case-sensitive TOC and uses final h2-h4 IDs', async () => {
-    const html = await render([
-      '[[toc]]',
-      '',
-      '# Document',
-      '## A',
-      '### A1',
-      '#### A1.1',
-      '### A2',
-      '## B',
-      '##### H5',
-      '###### H6',
-    ].join('\n'))
+  it('treats every toc casing as a normal WikiLink', async () => {
+    const calls: string[] = []
+    const html = await render('[[toc]]\n[[TOC]]\n[[Toc]]', {
+      resolver: (ref) => {
+        calls.push(ref)
+        return { target: `notes/${ref}` }
+      },
+    })
     const doc = new DOMParser().parseFromString(html, 'text/html')
-    const toc = doc.querySelector('nav.docus-toc')
-    expect(toc).not.toBeNull()
-    expect(Array.from(toc?.querySelectorAll('a') ?? []).map((link) => link.getAttribute('href')))
-      .toEqual(['#a', '#a1', '#a1-1', '#a2', '#b'])
-    expect(toc?.textContent).toContain('A1.1')
-    expect(toc?.querySelectorAll('ul').length).toBeGreaterThan(1)
-    expect(doc.querySelectorAll('h1, h5, h6')).toHaveLength(3)
 
-    const notToc = await render([
-      '[[TOC]]',
-      '',
-      'foo [[toc]] bar',
-      '',
-      '`[[toc]]`',
-      '',
-      '```text',
-      '[[toc]]',
-      '```',
-    ].join('\n'))
-    expect(new DOMParser().parseFromString(notToc, 'text/html').querySelector('nav.docus-toc')).toBeNull()
+    expect(calls).toEqual(['toc', 'TOC', 'Toc'])
+    expect(doc.querySelectorAll('.docus-toc, nav[aria-label="Table of contents"]')).toHaveLength(0)
+    expect(Array.from(doc.querySelectorAll('a.wiki-link')).map((link) => link.textContent))
+      .toEqual(['toc', 'TOC', 'Toc'])
   })
 
-  it('keeps TOC collection side-effect free and escapes unsafe heading HTML', async () => {
+  it('keeps heading links side-effect free and escapes unsafe heading HTML', async () => {
     const resolver: WikiResolver = vi.fn((ref) => ({ target: `notes/${ref}` }))
     const html = await render([
-      '[[toc]]',
-      '',
       '## [[Target]] {#target}',
       '## <img src=x onerror=alert(1)> Safe',
       '## <script>alert(1)</script> Text',
     ].join('\n'), { resolver })
     const doc = new DOMParser().parseFromString(html, 'text/html')
-    const toc = doc.querySelector('nav.docus-toc')
+    const headingText = Array.from(doc.querySelectorAll('h2'))
+      .map((heading) => heading.textContent ?? '')
+      .join(' ')
 
     expect(resolver).toHaveBeenCalledTimes(1)
-    expect(toc?.querySelector('a[href="#target"]')?.textContent).toBe('Target')
-    expect(toc?.textContent).toContain('Safe')
-    expect(toc?.textContent).toContain('Text')
-    expect(toc?.querySelector('img, script')).toBeNull()
-    expect(toc?.innerHTML).not.toContain('<img')
-    expect(toc?.innerHTML).not.toContain('<script')
+    expect(headingText).toContain('Target')
+    expect(headingText).toContain('Safe')
+    expect(headingText).toContain('Text')
+    expect(doc.querySelector('script, [onerror]')).toBeNull()
+    expect(doc.querySelectorAll('.docus-toc')).toHaveLength(0)
+    expect(html).not.toContain('<script')
   })
 
   it('adds the generated external-link policy without rewriting internal or raw HTML links', async () => {

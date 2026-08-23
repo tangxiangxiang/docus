@@ -47,8 +47,6 @@ test('MD-EXT-6 expands nested Markdown, snippets, source context, and code group
       },
     }
     const html = await render([
-      '[[toc]]',
-      '',
       '# Resource Demo',
       '',
       '<!--@include: ./parts.md-->',
@@ -85,7 +83,6 @@ test('MD-EXT-6 expands nested Markdown, snippets, source context, and code group
 
     const result = {
       includedHeading: article.querySelector('h2')?.textContent,
-      tocHref: article.querySelector('nav.docus-toc a')?.getAttribute('href'),
       relativeLinkTarget: article.querySelector('a.wiki-link')?.getAttribute('data-target'),
       snippetPython: article.querySelector('pre.shiki')?.textContent?.includes('print'),
       groupPanels: group?.querySelectorAll('[role="tabpanel"]').length,
@@ -101,7 +98,6 @@ test('MD-EXT-6 expands nested Markdown, snippets, source context, and code group
   }, { files: resourceFiles })
 
   expect(result.includedHeading).toContain('Included Heading')
-  expect(result.tocHref).toBe('#included-heading')
   expect(result.relativeLinkTarget).toContain('docs/parts.md:./sibling')
   expect(result.snippetPython).toBe(true)
   expect(result.groupPanels).toBe(2)

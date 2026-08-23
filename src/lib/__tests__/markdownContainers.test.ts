@@ -412,10 +412,8 @@ describe('Docus custom Markdown containers', () => {
     expect(unknown.querySelector('.markdown-container-code-group')).toBeNull()
   })
 
-  it('keeps normal Markdown, anchors, TOC, links, images, and callouts in the same body flow', async () => {
+  it('keeps normal Markdown, anchors, links, images, and callouts in the same body flow', async () => {
     const doc = parse(await render([
-      '[[toc]]',
-      '',
       '::: info Container',
       '## Nested {#nested}',
       '',
@@ -430,7 +428,7 @@ describe('Docus custom Markdown containers', () => {
 
     expect(doc.querySelector('.markdown-container-info')).not.toBeNull()
     expect(doc.querySelector('.markdown-container-info h2#nested')).not.toBeNull()
-    expect(doc.querySelector('nav.docus-toc a[href="#nested"]')).not.toBeNull()
+    expect(doc.querySelector('.docus-toc')).toBeNull()
     expect(doc.querySelector('.markdown-container-info .callout-note')).not.toBeNull()
     expect(doc.querySelector<HTMLAnchorElement>('a[href="https://example.com"]')?.target).toBe('_blank')
     expect(doc.querySelector<HTMLAnchorElement>('a[href="https://example.com"]')?.rel)
