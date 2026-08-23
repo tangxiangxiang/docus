@@ -9,8 +9,17 @@
 | Branch | `main` |
 | Historical MD-EXT-7 release-gate baseline | `810ad55941d2a5df8a91d5728d51ebbeb0196aa3` |
 | Historical MD-EXT production closure baseline | `fc78da8b0dd23e5b543ed346b5bf63032778c181` |
-| Revalidation candidate HEAD | `734ab9b1c11ba8c83aac445ec86bc49b3d087a41` |
+| Revalidation input HEAD | `734ab9b1c11ba8c83aac445ec86bc49b3d087a41` |
+| Validated implementation baseline | `a6bed596eadc0437ef4d488c21c799feeee04f69` |
 | Date | 2026-08-24 |
+
+The revalidation started from `734ab9b1c11ba8c83aac445ec86bc49b3d087a41`.
+The corrections and evidence produced by that revalidation were committed as
+`a6bed596eadc0437ef4d488c21c799feeee04f69`. Therefore
+`a6bed596eadc0437ef4d488c21c799feeee04f69` is the validated implementation
+baseline for this Post-MD-EXT maintenance review. The follow-up commit that
+updates this evidence document is documentation-only and is not itself a new
+implementation baseline.
 
 This document records a new validation pass for the current post-closure
 maintenance state. It does not rewrite or reopen MD-EXT-7. MD-EXT-7 remains a
