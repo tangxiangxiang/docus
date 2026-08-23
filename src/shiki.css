@@ -124,12 +124,12 @@
 
 .article pre.shiki .line.warning {
   background-color: rgba(234, 179, 8, 0.14);
-  box-shadow: none;
+  box-shadow: inset 3px 0 0 #b78103;
 }
 
 .article pre.shiki .line.error {
   background-color: rgba(244, 63, 94, 0.14);
-  box-shadow: none;
+  box-shadow: inset 3px 0 0 #cf222e;
 }
 
 .article pre.shiki .line.info {
