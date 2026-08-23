@@ -29,6 +29,8 @@ type PdfSurfaceSnapshot = {
     borderTopWidth: string
     radius: string
     shadow: string
+    paddingTop: string
+    paddingLeft: string
     fontWeight: string
     lineHeight: string
     hasIcon: boolean
@@ -181,6 +183,8 @@ test('exports the Kitchen Sink with settled content from the file-tree menu', as
             borderTopWidth: calloutStyle.borderTopWidth,
             radius: calloutStyle.borderRadius,
             shadow: calloutStyle.boxShadow,
+            paddingTop: calloutStyle.paddingTop,
+            paddingLeft: calloutStyle.paddingLeft,
             fontWeight: title ? getComputedStyle(title).fontWeight : '',
             lineHeight: title ? getComputedStyle(title).lineHeight : '',
             hasIcon: callout.querySelector('.callout-icon') !== null,
@@ -368,7 +372,9 @@ test('exports the Kitchen Sink with settled content from the file-tree menu', as
     expect(alert.radius).toBe('12px')
     expect(alert.shadow).toBe('none')
     expect(alert.fontWeight).toBe('700')
-    expect(Number.parseFloat(alert.lineHeight)).toBeCloseTo(24, 1)
+    expect(alert.paddingTop).toBe('12px')
+    expect(alert.paddingLeft).toBe('16px')
+    expect(Number.parseFloat(alert.lineHeight)).toBeCloseTo(19.6, 1)
     expect(alert.hasIcon).toBe(false)
   }
   expect(snapshot.taskCheckboxCount).toBe(2)

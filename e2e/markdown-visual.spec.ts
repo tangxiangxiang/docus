@@ -54,6 +54,7 @@ for (const theme of ['light', 'dark'] as const) {
         shadow: calloutStyle?.boxShadow ?? '',
         paddingTop: calloutStyle?.paddingTop ?? '',
         paddingLeft: calloutStyle?.paddingLeft ?? '',
+        fontSize: title ? getComputedStyle(title).fontSize : '',
         fontWeight: title ? getComputedStyle(title).fontWeight : '',
         lineHeight: title ? getComputedStyle(title).lineHeight : '',
         hasIcon: callout?.querySelector('.callout-icon') !== null,
@@ -68,12 +69,13 @@ for (const theme of ['light', 'dark'] as const) {
       expect(alert.background).toBe(background)
       expect(alert.borderLeftWidth).toBe('0px')
       expect(alert.borderTopWidth).toBe('0px')
-      expect(alert.radius).toBe('16px')
+      expect(alert.radius).toBe('12px')
       expect(alert.shadow).toBe('none')
-      expect(alert.paddingTop).toBe('24px')
-      expect(alert.paddingLeft).toBe('32px')
+      expect(alert.paddingTop).toBe('12px')
+      expect(alert.paddingLeft).toBe('16px')
+      expect(alert.fontSize).toBe('14px')
       expect(alert.fontWeight).toBe('700')
-      expect(alert.lineHeight).toBe('24px')
+      expect(Number.parseFloat(alert.lineHeight)).toBeCloseTo(19.6, 1)
       expect(alert.hasIcon).toBe(false)
     })
 

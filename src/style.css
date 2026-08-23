@@ -4741,13 +4741,15 @@ main.container.auth-page-shell {
   --callout-bg: #f1f2f4;
   box-sizing: border-box;
   width: auto;
-  margin: 1.75rem 0;
-  padding: 1.5rem 2rem;
+  margin: 1rem 0;
+  padding: 0.75rem 1rem;
   border: 0;
-  border-radius: 1rem;
+  border-radius: 0.75rem;
   background: var(--callout-bg);
   box-shadow: none;
   color: var(--vs-text-1, var(--text));
+  font-size: 0.875rem;
+  line-height: 1.5;
 }
 .article .callout-note {
   --callout-bg: #f1f2f4;
@@ -4797,11 +4799,11 @@ main.container.auth-page-shell {
   --callout-bg: #352226;
 }
 .article .callout-title {
-  margin: 0 0 0.8rem;
+  margin: 0 0 0.35rem;
   color: var(--vs-text-1, var(--text-h));
-  font-size: 1rem;
+  font-size: 0.875rem;
   font-weight: 700;
-  line-height: 1.5;
+  line-height: 1.4;
 }
 .article .callout-content { color: inherit; }
 .article .callout-content > :first-child { margin-top: 0; }

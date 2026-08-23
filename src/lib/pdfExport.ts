@@ -362,13 +362,15 @@ const PDF_DOWNLOAD_STYLES = `
    reader theme variables never leak into the printable document. */
 .pdf-document .article .callout {
   --callout-bg: #f1f2f4 !important;
-  margin: 1.75rem 0 !important;
-  padding: 1.25rem 1.5rem !important;
+  margin: 1rem 0 !important;
+  padding: 0.75rem 1rem !important;
   border: 0 !important;
   border-radius: 12px !important;
   background: var(--callout-bg) !important;
   box-shadow: none !important;
   color: #202124 !important;
+  font-size: 0.875rem !important;
+  line-height: 1.5 !important;
 }
 .pdf-document .article .callout-note {
   --callout-bg: #f1f2f4 !important;
@@ -386,11 +388,11 @@ const PDF_DOWNLOAD_STYLES = `
   --callout-bg: #ffe9ec !important;
 }
 .pdf-document .article .callout-title {
-  margin: 0 0 0.8rem !important;
+  margin: 0 0 0.35rem !important;
   color: #202124 !important;
-  font-size: 1rem !important;
+  font-size: 0.875rem !important;
   font-weight: 700 !important;
-  line-height: 1.5 !important;
+  line-height: 1.4 !important;
 }
 .pdf-document .article .callout-content { color: inherit !important; }
 .pdf-document .article .callout-content > :first-child { margin-top: 0 !important; }
