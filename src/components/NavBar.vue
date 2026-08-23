@@ -4,8 +4,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { useTheme } from '../composables/useTheme'
 import { VaultViewModeKey } from '../composables/vault/viewMode'
 import { useScopeFilter } from '../composables/vault/useScopeFilter'
-import { PROTECTED_ROOTS } from '../../shared/archiveProtocol'
-import { ICON_EDIT, ICON_EYE, ICON_PANEL_RIGHT_OPEN, ICON_SCOPE_INBOX, ICON_SCOPE_LITERATURE, ICON_SCOPE_ARCHIVE, ICON_SEARCH, ICON_NAV_THEME_LIGHT, ICON_NAV_THEME_DARK } from './vault/icons'
+import type { ScopeKey } from '../../shared/scopeProtocol'
+import { ICON_EDIT, ICON_EYE, ICON_PANEL_RIGHT_OPEN, ICON_SCOPE_NOTE, ICON_SCOPE_DIARY, ICON_SCOPE_LEDGER, ICON_SEARCH, ICON_NAV_THEME_LIGHT, ICON_NAV_THEME_DARK } from './vault/icons'
 import { useVaultLayout } from '../composables/vault/useVaultLayout'
 import { useI18n } from '../composables/useI18n'
 
@@ -29,10 +29,16 @@ const themeTitle = computed<string>(() => {
   return t('nav.theme', { current, next })
 })
 
-function scopeLabel(root: string): string {
-  return activeScope.value === root
-    ? t('nav.scope_active', { scope: root })
-    : t('nav.scope_only', { scope: root })
+const SCOPE_CHIPS = [
+  { scope: 'note', label: 'note', icon: ICON_SCOPE_NOTE },
+  { scope: 'diary', label: 'diary', icon: ICON_SCOPE_DIARY },
+  { scope: 'ledger', label: 'ledger', icon: ICON_SCOPE_LEDGER },
+] as const
+
+function scopeLabel(scope: ScopeKey, label: string): string {
+  return activeScope.value === scope
+    ? t('nav.scope_active', { scope: label })
+    : t('nav.scope_only', { scope: label })
 }
 
 /* View-mode toggle. The button shows the icon of the *opposite*
@@ -117,11 +123,6 @@ onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', onVisibilityChange)
 })
 
-const SCOPE_ICONS: Record<string, string> = {
-  inbox: ICON_SCOPE_INBOX,
-  literature: ICON_SCOPE_LITERATURE,
-  archive: ICON_SCOPE_ARCHIVE,
-}
 </script>
 
 <template>
@@ -147,17 +148,17 @@ const SCOPE_ICONS: Record<string, string> = {
            rest of the app doesn't have a file tree to filter. -->
       <div v-if="props.isVault" class="scope-chips" role="tablist" :aria-label="t('nav.scope_label')">
         <button
-          v-for="root in PROTECTED_ROOTS"
-          :key="root"
+          v-for="chip in SCOPE_CHIPS"
+          :key="chip.scope"
           class="scope-chip"
-          :class="{ active: activeScope === root }"
-          :aria-pressed="activeScope === root"
-          :aria-label="scopeLabel(root)"
-          :title="scopeLabel(root)"
-          @click="toggleScope(root)"
+          :class="{ active: activeScope === chip.scope }"
+          :aria-pressed="activeScope === chip.scope"
+          :aria-label="scopeLabel(chip.scope, chip.label)"
+          :title="scopeLabel(chip.scope, chip.label)"
+          @click="toggleScope(chip.scope)"
         >
-          <span class="scope-chip-icon" aria-hidden="true" v-html="SCOPE_ICONS[root]" />
-          <span class="scope-chip-label">{{ root }}</span>
+          <span class="scope-chip-icon" aria-hidden="true" v-html="chip.icon" />
+          <span class="scope-chip-label">{{ chip.label }}</span>
         </button>
       </div>
       <div class="nav-spacer" />

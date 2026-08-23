@@ -6,6 +6,7 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import NavBar from '../NavBar.vue'
 import { VaultViewModeKey, type VaultViewMode } from '../../composables/vault/viewMode'
 import { useI18n } from '../../composables/useI18n'
+import { useScopeFilter } from '../../composables/vault/useScopeFilter'
 
 function makeViewModeApi(initial: VaultViewMode = 'edit') {
   const mode = ref<VaultViewMode>(initial)
@@ -80,6 +81,35 @@ describe('NavBar — view-toggle button', () => {
   it('shows ICON_EDIT in read mode (offering "switch to edit")', () => {
     const { wrapper } = mountNavBar('read')
     expect(wrapper.find('[data-testid="view-toggle"]').attributes('aria-label')).toBe('Switch to edit')
+  })
+})
+
+describe('NavBar — scope chips', () => {
+  beforeEach(() => {
+    useI18n().setLocale('en')
+    useScopeFilter().activeScope.value = 'note'
+  })
+  afterEach(() => useI18n().setLocale('zh'))
+
+  it('shows the content-oriented scope names', () => {
+    const { wrapper } = mountNavBar()
+
+    expect(wrapper.findAll('.scope-chip')[0].attributes('aria-pressed')).toBe('true')
+    expect(wrapper.findAll('.scope-chip-label').map((chip) => chip.text())).toEqual([
+      'note',
+      'diary',
+      'ledger',
+    ])
+  })
+
+  it('uses content scopes instead of exposing individual vault roots', async () => {
+    const { wrapper } = mountNavBar()
+    const chips = wrapper.findAll('.scope-chip')
+
+    await chips[1].trigger('click')
+
+    expect(chips[1].attributes('aria-pressed')).toBe('true')
+    expect(chips[1].attributes('aria-label')).toBe('Filtered to diary (click again to clear)')
   })
 })
 

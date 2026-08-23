@@ -90,32 +90,24 @@ export const ICON_SEARCH = `
   <path d="M10.25 10.25L13.5 13.5"/>
 </svg>`
 
-// Scope chip glyphs. Each maps to a vault root.
-//   inbox       — capture bucket: tray with a downward arrow into it
-//   literature  — long-form reference: open book
-//   archive     — archived note: archive box (same family as ICON_ARCHIVE)
-export const ICON_SCOPE_INBOX = `
+// Scope chip glyphs. The visible scopes are note / diary / ledger; their
+// underlying vault roots remain governed by archiveProtocol.
+export const ICON_SCOPE_NOTE = `
 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-  <path d="M2 9.5l1.5-5.5h9L14 9.5"/>
-  <path d="M2 9.5h3l1 1.5h4l1-1.5h3v3.5c0 .55-.45 1-1 1H3c-.55 0-1-.45-1-1V9.5z"/>
-  <path d="M8 2v5M5.5 4.5L8 7l2.5-2.5"/>
+  <path d="M4 2.5h6l2 2v9H4a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1z"/>
+  <path d="M10 2.5v2h2M5.5 7h5M5.5 9.5h5M5.5 12h3"/>
 </svg>`
 
-export const ICON_SCOPE_LITERATURE = `
+export const ICON_SCOPE_DIARY = `
 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-  <path d="M2 3.5C2 2.95 2.45 2.5 3 2.5h3.5c.83 0 1.5.67 1.5 1.5v8.5c0-.83-.67-1.5-1.5-1.5H3c-.55 0-1-.45-1-1V3.5z"/>
-  <path d="M14 3.5C14 2.95 13.55 2.5 13 2.5H9.5C8.67 2.5 8 3.17 8 4v8.5c0-.83.67-1.5 1.5-1.5H13c.55 0 1-.45 1-1V3.5z"/>
-  <path d="M8 4v8.5"/>
+  <rect x="2.5" y="3.5" width="11" height="10" rx="1"/>
+  <path d="M5 2v3M11 2v3M2.5 6.5h11M5.5 9h1M9.5 9h1M5.5 11.5h1M9.5 11.5h1"/>
 </svg>`
 
-// Archive box family — same lid + body + handle language as
-// ICON_ARCHIVE, with a small gap between lid and body so the two
-// icons stay related but visually distinct.
-export const ICON_SCOPE_ARCHIVE = `
+export const ICON_SCOPE_LEDGER = `
 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-  <rect x="2.5" y="2.5" width="11" height="3" rx="1"/>
-  <path d="M3.5 6.5h9v6.5h-9z"/>
-  <path d="M6.5 9h3"/>
+  <path d="M3 2.5h10v11H3z"/>
+  <path d="M5.5 5.5h5M5.5 8h5M5.5 10.5h3"/>
 </svg>`
 
 // Tag — outline + small hole. The hole is the only fill element, kept

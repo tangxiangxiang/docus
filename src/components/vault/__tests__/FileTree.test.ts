@@ -6,6 +6,7 @@ import FileTree from '../FileTree.vue'
 import type { PostSummary, TreeNode } from '../../../lib/api'
 import { installDialogMocks } from '../../../__test-helpers__/dialogs'
 import { useI18n } from '../../../composables/useI18n'
+import { useScopeFilter } from '../../../composables/vault/useScopeFilter'
 import { VaultContextKey } from '../../../composables/vault/context/vaultContext'
 import { getFallbackVaultFileChanges } from '../../../composables/vault/context/fileChanges'
 import { metadataDrafts } from '../metadataDraftStore'
@@ -14,6 +15,7 @@ installDialogMocks()
 
 beforeEach(() => {
   localStorage.clear()
+  useScopeFilter().activeScope.value = null
   metadataDrafts.clear()
   useI18n().setLocale('zh')
 })
@@ -134,6 +136,17 @@ describe('Files filter', () => {
   function mountTree() {
     return mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
   }
+
+  it('groups inbox, literature, and archive under the note scope', () => {
+    useScopeFilter().activeScope.value = 'note'
+    const wrapper = mountTree()
+
+    expect(wrapper.text()).toContain('inbox')
+    expect(wrapper.text()).toContain('literature')
+    expect(wrapper.text()).toContain('archive')
+
+    wrapper.unmount()
+  })
 
   it('matches title, filename, and directory path without case sensitivity', async () => {
     const wrapper = mountTree()

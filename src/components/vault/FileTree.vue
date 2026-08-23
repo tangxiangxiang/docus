@@ -11,6 +11,7 @@ import { createPost, createFolder as createFolderApi, patchPost, deletePost, ren
 import { suggestSlug } from '../../lib/ai-api'
 import { isSlugSegment, toLocalSlug } from '../../lib/slug'
 import { useScopeFilter } from '../../composables/vault/useScopeFilter'
+import { scopeRootsFor } from '../../../shared/scopeProtocol'
 import { useArchiveNote } from '../../composables/vault/useArchiveNote'
 import { getFallbackVaultFileChanges } from '../../composables/vault/context/fileChanges'
 import { useOptionalVaultContext } from '../../composables/vault/context/useVaultContext'
@@ -82,7 +83,8 @@ const topLevel = computed<TreeNode[]>(() => {
   if (!root || root.kind !== 'folder') return []
   let children = root.children
   if (activeScope.value) {
-    children = children.filter((c) => c.path === activeScope.value)
+    const roots = scopeRootsFor(activeScope.value)
+    children = children.filter((c) => roots.includes(c.path))
   }
   // Rebuild the subtree so non-matching files are hidden while matching
   // ancestors remain visible. A matching folder keeps its complete
