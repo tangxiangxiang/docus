@@ -138,6 +138,8 @@ for (const theme of ['light', 'dark'] as const) {
         borderTopWidth: preStyle.borderTopWidth,
         borderRadius: preStyle.borderRadius,
         background: preStyle.backgroundColor,
+        marginTop: preStyle.marginTop,
+        marginBottom: preStyle.marginBottom,
         lineBackground: lineStyle.backgroundColor,
         lineShadow: lineStyle.boxShadow,
       }
@@ -146,9 +148,43 @@ for (const theme of ['light', 'dark'] as const) {
     expect(codeSurface?.language).toBe('typescript')
     expect(codeSurface?.borderTopWidth).toBe('0px')
     expect(codeSurface?.borderRadius).toBe('8px')
+    expect(codeSurface?.marginTop).toBe('16px')
+    expect(codeSurface?.marginBottom).toBe('16px')
     expect(codeSurface?.background).not.toMatch(/^(transparent|rgba\(0, 0, 0, 0\))$/u)
     expect(codeSurface?.lineBackground).not.toBe(codeSurface?.background)
     expect(codeSurface?.lineShadow).toBe('none')
+    const singleLineCode = await page.evaluate(async () => {
+      const { render } = await import('/src/lib/markdown.ts')
+      const host = document.createElement('article')
+      host.className = 'article reading'
+      const fence = String.fromCharCode(96, 96, 96)
+      host.innerHTML = await render([fence + 'java', 'System.out.println("Hello, world");', fence].join('\n'))
+      const mountRoot = document.querySelector('.vault') ?? document.body
+      mountRoot.append(host)
+      const pre = host.querySelector<HTMLElement>('pre.shiki')
+      const code = pre?.querySelector<HTMLElement>('code')
+      const line = pre?.querySelector<HTMLElement>('.line')
+      const preStyle = pre ? getComputedStyle(pre) : null
+      const lineStyle = line ? getComputedStyle(line) : null
+      const result = pre && code && line && preStyle && lineStyle
+        ? {
+            lineHeight: line.getBoundingClientRect().height,
+            codeHeight: code.getBoundingClientRect().height,
+            paddingTop: preStyle.paddingTop,
+            paddingBottom: preStyle.paddingBottom,
+            marginTop: preStyle.marginTop,
+            marginBottom: preStyle.marginBottom,
+          }
+        : null
+      host.remove()
+      return result
+    })
+    expect(singleLineCode).not.toBeNull()
+    expect(singleLineCode?.paddingTop).toBe('16px')
+    expect(singleLineCode?.paddingBottom).toBe('16px')
+    expect(singleLineCode?.marginTop).toBe('16px')
+    expect(singleLineCode?.marginBottom).toBe('16px')
+    expect(singleLineCode?.codeHeight).toBeCloseTo(singleLineCode?.lineHeight ?? 0, 1)
     expect(containers.find((container) => container.type === 'details')?.open).toBe(false)
     const detailsSpacing = await article.evaluate((root) => {
       const details = root.querySelector<HTMLDetailsElement>('.markdown-container-details')
