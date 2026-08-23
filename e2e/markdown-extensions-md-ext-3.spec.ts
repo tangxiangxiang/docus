@@ -282,6 +282,7 @@ test('MD-EXT-3 keeps the focused row visibly selected in the reader', async ({ p
       focusedBorder: focusedStyle.boxShadow,
       focusedOpacity: focusedStyle.opacity,
       unfocusedOpacity: unfocusedStyle.opacity,
+      unfocusedFilter: unfocusedStyle.filter,
       rootBackground: preStyle.backgroundColor,
     }
     vault.remove()
@@ -289,11 +290,11 @@ test('MD-EXT-3 keeps the focused row visibly selected in the reader', async ({ p
   })
 
   expect(result.hasFocused).toBe(true)
-  expect(result.focusedBackground).not.toMatch(/^(transparent|rgba\(0, 0, 0, 0\))$/u)
-  expect(result.focusedBackground).not.toBe(result.rootBackground)
-  expect(result.focusedBorder).toContain('inset')
+  expect(result.focusedBackground).toMatch(/^(transparent|rgba\(0, 0, 0, 0\))$/u)
+  expect(result.focusedBorder).toBe('none')
   expect(result.focusedOpacity).toBe('1')
-  expect(result.unfocusedOpacity).toBe('0.58')
+  expect(result.unfocusedOpacity).toBe('0.4')
+  expect(result.unfocusedFilter).not.toBe('none')
 })
 
 test('MD-EXT-3 preserves author sentinel-like source and deferred markers', async ({ page }) => {

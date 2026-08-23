@@ -164,13 +164,20 @@
   box-shadow: none;
 }
 
-/* Focused rows need an explicit reader surface: the surrounding `.has-focused`
-   treatment dims non-focused rows, while this row keeps the semantic blue cue
-   visible above the code-block surface. PDF owns its own printable palette. */
+/* Focus mode follows VitePress semantics: the focused row stays on the normal
+   code surface, while the surrounding rows are softened. `focus` is distinct
+   from `highlight`, whose line-level color remains above. PDF owns its own
+   printable palette. */
 :root .vault:not(.pdf-document) .article pre.shiki.has-focused .line.focused {
-  background-color: rgba(45, 129, 247, 0.14);
-  box-shadow: inset 3px 0 0 #2f81f7;
+  background-color: transparent;
+  box-shadow: none;
   opacity: 1;
+}
+
+:root .vault:not(.pdf-document) .article pre.shiki.has-focused .line:not(.focused) {
+  filter: blur(0.095rem);
+  opacity: 0.4;
+  transition: filter 0.35s ease, opacity 0.35s ease;
 }
 
 /* MD-EXT-4 opt-in structural gutters. The default Shiki DOM is intentionally
