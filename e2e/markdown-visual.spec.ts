@@ -134,7 +134,7 @@ for (const theme of ['light', 'dark'] as const) {
       const preStyle = getComputedStyle(pre)
       const lineStyle = getComputedStyle(highlighted)
       return {
-        language: pre.getAttribute('title'),
+        language: pre.getAttribute('data-language'),
         borderTopWidth: preStyle.borderTopWidth,
         borderRadius: preStyle.borderRadius,
         background: preStyle.backgroundColor,

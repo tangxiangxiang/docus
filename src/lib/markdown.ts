@@ -116,6 +116,7 @@ const MARKDOWN_SANITIZE_CONFIG = {
     'colspan',
     'data-anchor',
     'data-content',
+    'data-language',
     'data-missing',
     'data-target',
     'disabled',
@@ -134,7 +135,7 @@ const MARKDOWN_SANITIZE_CONFIG = {
     'type',
     'width',
   ],
-  // The hook below narrows this back down to the four data-* attributes
+  // The hook below narrows this back down to the five data-* attributes
   // used by Docus; DOMPurify needs this enabled before the hook can inspect
   // and retain those explicitly supported attributes.
   ALLOW_DATA_ATTR: true,
@@ -146,6 +147,7 @@ const MARKDOWN_SANITIZE_CONFIG = {
 const ALLOWED_MARKDOWN_DATA_ATTRS = new Set([
   'data-anchor',
   'data-content',
+  'data-language',
   'data-missing',
   'data-target',
 ])
@@ -256,7 +258,7 @@ function addCodeLanguageLabel(html: string, language: string): string {
   if (!label) return html
   const openingTag = /^<pre\b[^>]*>/u.exec(html)?.[0]
   if (!openingTag) return html
-  const labeledOpeningTag = openingTag.replace(/>$/u, ` title="${escapeHtml(label)}">`)
+  const labeledOpeningTag = openingTag.replace(/>$/u, ` data-language="${escapeHtml(label)}">`)
   return `${labeledOpeningTag}${html.slice(openingTag.length)}`
 }
 

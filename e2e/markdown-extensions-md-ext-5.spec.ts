@@ -43,7 +43,10 @@ test('MD-EXT-5 renders static panels and mounts independent accessible tabs', as
     const { useTheme } = await import('/src/composables/useTheme.ts')
     const html = await render(markdown)
     const host = document.createElement('div')
-    document.body.append(host)
+    const vault = document.createElement('div')
+    vault.className = 'vault'
+    vault.append(host)
+    document.body.append(vault)
 
     const Harness = {
       setup() {
@@ -90,6 +93,10 @@ test('MD-EXT-5 renders static panels and mounts independent accessible tabs', as
     }
 
     const firstLine = first.querySelector('.line')
+    const firstPre = first.querySelector<HTMLElement>('pre.shiki')
+    const languageLabel = firstPre
+      ? getComputedStyle(firstPre, '::after').content
+      : ''
     firstTabs[1]?.click()
     const afterClick = {
       selected: firstTabs.map((tab) => tab.getAttribute('aria-selected')),
@@ -123,6 +130,11 @@ test('MD-EXT-5 renders static panels and mounts independent accessible tabs', as
     const allPanelIds = Array.from(article.querySelectorAll<HTMLElement>('[role="tabpanel"]')).map((panel) => panel.id)
     const result = {
       initial,
+      languageLabel: {
+        dataLanguage: firstPre?.getAttribute('data-language'),
+        hasNativeTitle: firstPre?.hasAttribute('title') === true,
+        renderedLabel: languageLabel,
+      },
       afterClick,
       afterHome,
       independent,
@@ -136,7 +148,7 @@ test('MD-EXT-5 renders static panels and mounts independent accessible tabs', as
     }
 
     app.unmount()
-    host.remove()
+    vault.remove()
     useTheme().set('light')
     return result
   }, codeGroupFixture)
@@ -152,6 +164,11 @@ test('MD-EXT-5 renders static panels and mounts independent accessible tabs', as
     unknownFallback: true,
     labeledMermaidNotMounted: true,
     labeledMarkMapNotMounted: true,
+  })
+  expect(result.languageLabel).toEqual({
+    dataLanguage: 'ts',
+    hasNativeTitle: false,
+    renderedLabel: '"ts"',
   })
   expect(result.afterClick).toEqual({
     selected: ['false', 'true'],

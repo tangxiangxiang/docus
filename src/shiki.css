@@ -162,8 +162,8 @@
   line-height: 0;
 }
 
-:root .vault:not(.pdf-document) .article pre.shiki:not(.docus-shiki-plain)[title]::after {
-  content: attr(title);
+:root .vault:not(.pdf-document) .article pre.shiki:not(.docus-shiki-plain)[data-language]::after {
+  content: attr(data-language);
   position: absolute;
   top: 0.75rem;
   right: 1rem;

@@ -1061,7 +1061,8 @@ describe('markdown H3 renderer cutover', () => {
     expect(lines).toHaveLength(7)
     expect(lines.map((line) => line.classList.contains('highlighted')))
       .toEqual([true, false, true, true, true, false, false])
-    expect(doc.querySelector('pre.shiki')?.getAttribute('title')).toBe('ts')
+    expect(doc.querySelector('pre.shiki')?.getAttribute('data-language')).toBe('ts')
+    expect(doc.querySelector('pre.shiki')?.getAttribute('title')).toBeNull()
     expect(html).not.toMatch(/\sstyle=/i)
   })
 
