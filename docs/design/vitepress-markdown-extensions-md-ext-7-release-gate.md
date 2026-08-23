@@ -6,9 +6,9 @@
 | Field | Value |
 | --- | --- |
 | Phase | MD-EXT-7 — Full Regression, Bundle Audit & Release Gate |
-| Status | COMPLETE / REVIEW-READY |
+| Status | COMPLETE / REVIEW-CLOSED |
 | Release gate | PASS |
-| Program status | RELEASE GATE PASS / EXTERNAL REVIEW PENDING |
+| Program status | COMPLETE / REVIEW-CLOSED |
 | Repository | `tangxiangxiang/docus` |
 | Branch | `main` |
 | MD-EXT-7 base | `810ad55941d2a5df8a91d5728d51ebbeb0196aa3` |
@@ -19,11 +19,11 @@
 | Shiki H0-H8 release closure | `c32f5bc9c1597c6c2f6b3e9581f327636fe8d8c2` |
 | Parser runtime | `markdown-it 14.2.0` (package range `^14.1.0`), singleton |
 | Evidence date | 2026-08-23 |
-| MD-EXT-7 completion commit | Recorded in final handoff after this evidence is committed |
+| MD-EXT-7 completion commit | `6306e053f73f595c9326ecdd80212cff27399f2b` |
 
 MD-EXT-0 through MD-EXT-6 are closed. This document records the final local release
-gate result; it does not self-close the program or claim independent GitHub status
-checks. External review remains pending.
+gate result and the externally approved program closure; it does not claim
+independent GitHub status checks.
 
 ## 2. Environment inventory
 
@@ -321,13 +321,28 @@ and the recorded browser/PDF/bundle/security evidence.
 All release-critical gates passed:
 
 ```text
-MD-EXT-7 — COMPLETE / REVIEW-READY
+MD-EXT-7 — COMPLETE / REVIEW-CLOSED
 Release gate — PASS
-MD-EXT PROGRAM — RELEASE GATE PASS / EXTERNAL REVIEW PENDING
+MD-EXT PROGRAM — COMPLETE / REVIEW-CLOSED
 ```
 
-External review owns the transition to `REVIEW-CLOSED`. MD-EXT-7 introduces no
+External review approved the final lifecycle closure. MD-EXT-7 introduces no
 feature code, no production behavior change, no dependency change, and no H9.
+
+## Final external review closure
+
+| Field | Final state |
+| --- | --- |
+| MD-EXT-7 | COMPLETE / REVIEW-CLOSED |
+| Release gate | PASS |
+| External review | APPROVED |
+| P0 / P1 / P2 | NONE / NONE / NONE |
+| MD-EXT PROGRAM | COMPLETE / REVIEW-CLOSED |
+| Final production SHA | `fc78da8b0dd23e5b543ed346b5bf63032778c181` |
+| Final release-gate SHA | `6306e053f73f595c9326ecdd80212cff27399f2b` |
+
+No MD-EXT-8 phase or H9 phase is planned by this program. Future Markdown
+features require a new independently approved scope/PRD.
 
 ## 13. Final references
 
@@ -355,4 +370,7 @@ fc78da8b0dd23e5b543ed346b5bf63032778c181
 
 MD-EXT-6 lifecycle closure / MD-EXT-7 base:
 810ad55941d2a5df8a91d5728d51ebbeb0196aa3
+
+MD-EXT-7 release-gate evidence:
+6306e053f73f595c9326ecdd80212cff27399f2b
 ```
