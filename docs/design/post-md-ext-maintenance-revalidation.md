@@ -4,7 +4,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | COMPLETE / REVIEW-READY |
+| Status | COMPLETE / REVIEW-CLOSED |
 | Repository | `tangxiangxiang/docus` |
 | Branch | `main` |
 | Historical MD-EXT-7 release-gate baseline | `810ad55941d2a5df8a91d5728d51ebbeb0196aa3` |
@@ -125,6 +125,6 @@ icon-lint violations listed above predate this maintenance work and remain an
 existing P2-quality backlog item outside this scope; they are not represented
 as a passing lint result.
 
-The revalidation is therefore `COMPLETE / REVIEW-READY`, pending independent
-review. The historical MD-EXT-7 release-gate document remains unchanged, and
-no MD-EXT-8 has been created.
+The independent review is complete, so the revalidation is therefore
+`COMPLETE / REVIEW-CLOSED`. The historical MD-EXT-7 release-gate document
+remains unchanged, and no MD-EXT-8 has been created.
