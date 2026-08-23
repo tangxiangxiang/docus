@@ -168,6 +168,7 @@ for (const theme of ['light', 'dark'] as const) {
       const lineStyle = line ? getComputedStyle(line) : null
       const result = pre && code && line && preStyle && lineStyle
         ? {
+            preHeight: pre.getBoundingClientRect().height,
             lineHeight: line.getBoundingClientRect().height,
             codeHeight: code.getBoundingClientRect().height,
             paddingTop: preStyle.paddingTop,
@@ -184,6 +185,7 @@ for (const theme of ['light', 'dark'] as const) {
     expect(singleLineCode?.paddingBottom).toBe('16px')
     expect(singleLineCode?.marginTop).toBe('16px')
     expect(singleLineCode?.marginBottom).toBe('16px')
+    expect(singleLineCode?.preHeight).toBeCloseTo((singleLineCode?.lineHeight ?? 0) + 32, 1)
     expect(singleLineCode?.codeHeight).toBeCloseTo(singleLineCode?.lineHeight ?? 0, 1)
     expect(containers.find((container) => container.type === 'details')?.open).toBe(false)
     const detailsSpacing = await article.evaluate((root) => {
