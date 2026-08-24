@@ -652,6 +652,7 @@ const STRINGS: Strings = {
   'file_tree.protected_delete': { zh: '{path} 是固定目录，不能删除', en: '{path} is a fixed directory and cannot be deleted' },
   'file_tree.protected_move': { zh: '{path} 是固定目录，不能移动', en: '{path} is a fixed directory and cannot be moved' },
   'file_tree.diary_identity_locked': { zh: '有效 Diary 的日期路径是固定身份，不能重命名或移动。', en: 'A managed Diary date path is its fixed identity and cannot be renamed or moved.' },
+  'file_tree.diary_namespace_move_blocked': { zh: '普通文件不能移动到 Diary 目录；Diary 只能通过日期命令创建。', en: 'Generic files cannot be moved into the Diary namespace; Diary entries must use the date command.' },
   'file_tree.diary_generic_create_disabled': { zh: 'Diary 只能通过日期命令创建，不能使用通用文件或文件夹创建。', en: 'Diary entries can only be created by the date command, not by generic file or folder creation.' },
   'archive.done': { zh: '已归档', en: 'Archived' },
   'archive.done_to': { zh: '已归档到 {path}', en: 'Archived to {path}' },

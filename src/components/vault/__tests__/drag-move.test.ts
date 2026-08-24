@@ -2,10 +2,12 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { flushPromises } from "@vue/test-utils"
+import { dialogStubs, installDialogMocks, makeDT, rowByLabel } from '../../../__test-helpers__/dialogs'
+import { useScopeFilter } from '../../../composables/vault/useScopeFilter'
 import FileTree from '../FileTree.vue'
+import TreeRow from '../TreeRow.vue'
 import type { TreeNode } from '../../../lib/api'
 import * as api from '../../../lib/api'
-import { installDialogMocks, rowByLabel } from '../../../__test-helpers__/dialogs'
 
 installDialogMocks()
 
@@ -32,6 +34,9 @@ const TREE: TreeNode[] = [
           { kind: 'folder', name: 'concepts', path: 'archive/concepts', children: [] },
         ],
       },
+      {
+        kind: 'folder', name: 'diary', path: 'diary', children: [],
+      },
     ],
   },
 ]
@@ -41,7 +46,9 @@ const TREE: TreeNode[] = [
 describe('FileTree drag-move (sub-documents)', () => {
   beforeEach(() => {
     localStorage.clear()
+    useScopeFilter().activeScope.value = null
     vi.restoreAllMocks()
+    dialogStubs.toast.error.mockClear()
   })
 
   it('does not expose folder re-parent drag for ordinary or archive folders', async () => {
@@ -249,6 +256,60 @@ describe('FileTree drag-move (sub-documents)', () => {
 
     expect(patchSpy).not.toHaveBeenCalled()
     void inbox
+    w.unmount()
+  })
+
+  it('blocks an ordinary file dropped onto the Diary root before calling the rename API', async () => {
+    const patchSpy = vi.spyOn(api, 'patchPost').mockResolvedValue({
+      path: 'diary/test1', title: 'test1', created: '', updated: '', tags: [], size: 0, mtime: 0,
+    })
+    const w = mount(FileTree, { props: { tree: TREE, currentPath: null }, attachTo: document.body })
+    await w.vm.$nextTick()
+
+    const inbox = rowByLabel(w.findAll('li.tree-row'), 'inbox')
+    const diary = rowByLabel(w.findAll('li.tree-row'), 'diary')
+    await inbox.find('.chevron').trigger('click')
+    await w.vm.$nextTick()
+    const testFolder = rowByLabel(w.findAll('li.tree-row'), 'test')
+    await testFolder.find('.chevron').trigger('click')
+    await w.vm.$nextTick()
+
+    const dataTransfer = makeDT()
+    dataTransfer.setData('text/x-docus-path', 'inbox/test/test1')
+    dataTransfer.setData('text/x-docus-kind', 'file')
+    await diary.trigger('dragenter', { dataTransfer })
+    await diary.trigger('dragover', { dataTransfer })
+    expect(diary.classes()).not.toContain('drop-target')
+    expect((dataTransfer as { dropEffect: string }).dropEffect).toBe('none')
+    await diary.trigger('drop', { dataTransfer })
+    await w.vm.$nextTick()
+    await flushPromises()
+
+    expect(patchSpy).not.toHaveBeenCalled()
+    const diaryComponent = w.findAllComponents(TreeRow)
+      .find((component) => component.attributes('data-tree-path') === 'diary')
+    expect(diaryComponent).toBeDefined()
+    diaryComponent!.vm.$emit('move', 'inbox/test/test1', 'diary', 'file')
+    await flushPromises()
+    expect(patchSpy).not.toHaveBeenCalled()
+    expect(dialogStubs.toast.error).toHaveBeenCalledWith('普通文件不能移动到 Diary 目录；Diary 只能通过日期命令创建。')
+    w.unmount()
+  })
+
+  it('blocks a root drop whose filename would become the Diary root', async () => {
+    const patchSpy = vi.spyOn(api, 'patchPost')
+    const w = mount(FileTree, { props: { tree: TREE, currentPath: null }, attachTo: document.body })
+    await w.vm.$nextTick()
+
+    await w.find('.file-tree').trigger('drop', {
+      dataTransfer: {
+        getData: (key: string) => key === 'text/x-docus-path' ? 'inbox/diary' : 'file',
+      },
+    })
+    await w.vm.$nextTick()
+    await flushPromises()
+
+    expect(patchSpy).not.toHaveBeenCalled()
     w.unmount()
   })
 })

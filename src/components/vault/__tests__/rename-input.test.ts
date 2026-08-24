@@ -6,6 +6,7 @@ import { dialogStubs, installDialogMocks, resetDialogMocks, rowByLabel } from '.
 import FileTree from '../FileTree.vue'
 import type { TreeNode } from '../../../lib/api'
 import * as api from '../../../lib/api'
+import { useScopeFilter } from '../../../composables/vault/useScopeFilter'
 
 installDialogMocks()
 
@@ -23,6 +24,18 @@ const TREE: TreeNode[] = [
   },
 ]
 
+const DIARY_TREE: TreeNode[] = [
+  {
+    kind: 'folder', name: 'content', path: '', children: [
+      {
+        kind: 'folder', name: 'diary', path: 'diary', children: [
+          { kind: 'file', name: 'legacy', path: 'diary/legacy', title: 'Legacy', mtime: 0 },
+        ],
+      },
+    ],
+  },
+]
+
 async function clickRenameMenuButton() {
   const btn = [...document.querySelectorAll<HTMLButtonElement>('.tree-context-menu button')]
     .find((b) => b.textContent?.includes('重命名'))
@@ -36,6 +49,7 @@ async function clickRenameMenuButton() {
 describe('FileTree prompt rename', () => {
   beforeEach(() => {
     localStorage.clear()
+    useScopeFilter().activeScope.value = null
     resetDialogMocks()
     vi.restoreAllMocks()
   })
@@ -110,5 +124,25 @@ describe('FileTree prompt rename', () => {
     await flushPromises()
 
     expect(patchSpy).not.toHaveBeenCalled()
+  })
+
+  it('does not offer a generic same-parent rename for unmanaged Diary content', async () => {
+    const patchSpy = vi.spyOn(api, 'patchPost')
+    vi.spyOn(api, 'getRenameImpact').mockResolvedValue({ path: 'diary/legacy', count: 0, sources: [] })
+    dialogStubs.prompt.mockResolvedValueOnce('renamed')
+
+    const w = mount(FileTree, { props: { tree: DIARY_TREE, currentPath: null } })
+    await w.vm.$nextTick()
+    const diary = rowByLabel(w.findAll('.tree-row'), 'diary')
+    await diary.find('.chevron').trigger('click')
+    await w.vm.$nextTick()
+    const legacy = rowByLabel(w.findAll('.tree-row'), 'legacy')
+    await legacy.trigger('contextmenu', { clientX: 10, clientY: 10 })
+    await clickRenameMenuButton()
+    await flushPromises()
+
+    expect(patchSpy).not.toHaveBeenCalled()
+    expect(dialogStubs.toast.error).toHaveBeenCalledWith('普通文件不能移动到 Diary 目录；Diary 只能通过日期命令创建。')
+    w.unmount()
   })
 })

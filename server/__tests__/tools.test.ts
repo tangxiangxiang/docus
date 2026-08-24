@@ -657,6 +657,7 @@ describe('AI Diary mutation contract', () => {
   it('blocks generic Diary creation and identity changes while allowing edit/delete', async () => {
     fs.mkdirSync(path.join(contentDir, 'diary'), { recursive: true })
     writeFile('diary/2000-05-01.md', '# 2000-05-01\n')
+    writeFile('diary/legacy.md', '# legacy external\n')
     saveDocumentMetadata(db, { path: 'diary/2000-05-01', title: '2000-05-01' })
     writeFile('inbox/source.md', '# source\n')
     saveDocumentMetadata(db, { path: 'inbox/source', title: 'source' })
@@ -673,6 +674,12 @@ describe('AI Diary mutation contract', () => {
     const renameIn = await executeToolCall('rename_file', {
       path: 'inbox/source', new_path: 'diary/2000-05-02', update_references: false,
     }, ctx)
+    const renameInUnmanaged = await executeToolCall('rename_file', {
+      path: 'inbox/source', new_path: 'diary/unmanaged', update_references: false,
+    }, ctx)
+    const cleanupOut = await executeToolCall('rename_file', {
+      path: 'diary/legacy', new_path: 'inbox/legacy', update_references: false,
+    }, ctx)
     const write = await executeToolCall('write_file', {
       path: 'diary/2000-05-01', content: '# edited\n',
     }, ctx)
@@ -685,10 +692,17 @@ describe('AI Diary mutation contract', () => {
     expect(renameOut.content).toMatch(/cannot change identity/)
     expect(renameIn.isError).toBe(true)
     expect(renameIn.content).toMatch(/cannot change identity/)
+    expect(renameInUnmanaged.isError).toBe(true)
+    expect(renameInUnmanaged.content).toMatch(/Diary namespace/)
+    expect(cleanupOut.isError).toBe(false)
     expect(write.isError).toBe(false)
     expect(deleted.isError).toBe(false)
     expect(fs.existsSync(path.join(contentDir, 'diary', 'generic.md'))).toBe(false)
     expect(fs.existsSync(path.join(contentDir, 'diary', 'missing.md'))).toBe(false)
+    expect(fs.existsSync(path.join(contentDir, 'inbox', 'source.md'))).toBe(true)
+    expect(fs.existsSync(path.join(contentDir, 'diary', 'unmanaged.md'))).toBe(false)
+    expect(fs.existsSync(path.join(contentDir, 'diary', 'legacy.md'))).toBe(false)
+    expect(fs.existsSync(path.join(contentDir, 'inbox', 'legacy.md'))).toBe(true)
   })
 })
 

@@ -189,6 +189,27 @@ describe('Diary REST mutation contract', () => {
     await expect(fs.stat(path.join(vault, 'inbox', 'moved-in.md'))).resolves.toBeTruthy()
   })
 
+  it('rejects an ordinary document move into Diary before any filesystem or metadata mutation', async () => {
+    const sourcePath = 'inbox/ordinary'
+    const destinationPath = 'diary/ordinary'
+    const created = await call('POST', '/api/posts', { path: sourcePath, title: 'Ordinary' })
+    expect(created.status).toBe(201)
+    const sourceMetadataBefore = getDocumentMetadata(db, sourcePath)
+    expect(sourceMetadataBefore).not.toBeNull()
+
+    const move = await call('PATCH', `/api/posts/${sourcePath}`, { targetPath: destinationPath })
+
+    expect(move.status).toBe(422)
+    expect(await move.json()).toMatchObject({
+      error: expect.stringContaining('Diary namespace'),
+    })
+    await expect(fs.readFile(path.join(vault, 'inbox', 'ordinary.md'), 'utf8'))
+      .resolves.toBe('# Ordinary\n')
+    await expect(fs.stat(path.join(vault, 'diary', 'ordinary.md'))).rejects.toThrow()
+    expect(getDocumentMetadata(db, sourcePath)).toMatchObject({ id: sourceMetadataBefore!.id, path: sourcePath })
+    expect(getDocumentMetadata(db, destinationPath)).toBeNull()
+  })
+
   it('fails closed for generic recovery even when a missing Diary path looks managed', async () => {
     const date = '2999-12-31'
 

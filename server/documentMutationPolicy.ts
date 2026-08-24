@@ -1,4 +1,4 @@
-import { DIARY_ROOT, isManagedDiaryPath } from '../shared/diaryProtocol.js'
+import { classifyDiaryPath, isManagedDiaryPath } from '../shared/diaryProtocol.js'
 import { isProtectedRoot } from '../shared/archiveProtocol.js'
 
 export type DocumentMutation =
@@ -31,11 +31,12 @@ function rejectMutation(message: string): never {
 }
 
 function isDiaryPath(path: string): boolean {
-  return path === DIARY_ROOT || path.startsWith(`${DIARY_ROOT}/`)
+  return classifyDiaryPath(path) !== 'outside'
 }
 
 function isDiaryDescendant(path: string): boolean {
-  return path.startsWith(`${DIARY_ROOT}/`)
+  const kind = classifyDiaryPath(path)
+  return kind === 'managed' || kind === 'unmanaged'
 }
 
 /** The server-side root contract shared by REST and AI mutations. */
@@ -80,6 +81,16 @@ export function validateDocumentMutation(mutation: DocumentMutation): void {
   if (mutation.operation === 'rename'
     && (isManagedDiaryPath(mutation.sourcePath) || isManagedDiaryPath(mutation.destinationPath))) {
     rejectMutation('managed Diary documents cannot change identity')
+  }
+
+  // The Diary namespace is reserved for the date command and trusted
+  // identity-preserving flows.  A generic document rename/move must not be
+  // able to manufacture either an unmanaged `diary/foo` file or a managed
+  // date path.  Keep this destination rule separate from the source rule:
+  // an existing unmanaged external file may still be moved out for cleanup.
+  if (mutation.operation === 'rename'
+    && classifyDiaryPath(mutation.destinationPath) !== 'outside') {
+    rejectMutation('generic document rename/move cannot enter the Diary namespace')
   }
 
   // Archive descendants are intentionally ordinary content. This validator

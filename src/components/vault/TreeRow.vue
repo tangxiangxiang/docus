@@ -79,6 +79,8 @@ const parentPath = computed(() => {
   parts.pop()
   return parts.join('/')
 })
+const dropTargetPath = computed(() => isFolder.value ? props.node.path : parentPath.value)
+const canReceiveDrop = computed(() => classifyDiaryPath(dropTargetPath.value) === 'outside')
 const displayTitle = computed(() => props.node.kind === 'file' && props.node.title.trim()
   ? props.node.title.trim()
   : props.node.name)
@@ -188,6 +190,11 @@ function onDragEnd() {
 function onDragEnter(e: DragEvent) {
   e.preventDefault()
   e.stopPropagation()
+  if (!canReceiveDrop.value) {
+    isDropTarget.value = false
+    clearExpandTimer()
+    return
+  }
   dragDepth.value++
   isDropTarget.value = true
   if (isFolder.value && !isExpanded.value && !expandTimer) {
@@ -207,7 +214,8 @@ function onDragLeave() {
 function onDragOver(e: DragEvent) {
   e.preventDefault()
   e.stopPropagation()
-  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+  if (e.dataTransfer) e.dataTransfer.dropEffect = canReceiveDrop.value ? 'move' : 'none'
+  if (!canReceiveDrop.value) isDropTarget.value = false
 }
 function onDrop(e: DragEvent) {
   e.preventDefault()
@@ -222,6 +230,9 @@ function onDrop(e: DragEvent) {
   isDropTarget.value = false
   dragDepth.value = 0
   clearExpandTimer()
+  // Keep emitting a blocked drop so FileTree can provide the same user-facing
+  // message as synthetic/custom payloads. No API call can occur because
+  // FileTree performs the final-path namespace guard before lifecycle.renameFile.
   emit('move', src, isFolder.value ? props.node.path : parentPath.value, srcKind)
 }
 

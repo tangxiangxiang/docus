@@ -52,6 +52,15 @@ const publishChange = vaultContext?.fileChanges.publish ?? getFallbackVaultFileC
 const searchInputRef = ref<HTMLInputElement | null>(null)
 const fileTreeRootRef = ref<HTMLElement | null>(null)
 
+// Presentation defense only. The server-side document mutation policy is the
+// authority, but the tree should not offer an ordinary move into the reserved
+// Diary namespace in the first place.
+function blockDiaryDestination(path: string): boolean {
+  if (classifyDiaryPath(path) === 'outside') return false
+  toast.error(t('file_tree.diary_namespace_move_blocked'))
+  return true
+}
+
 const STORAGE_KEY = 'docus.vault.expandedPaths'
 const expanded = ref<Set<string>>(new Set(loadExpanded()))
 
@@ -419,6 +428,7 @@ async function onRootDrop(e: DragEvent) {
   const filename = src.split('/').pop()!
   const targetPath = filename
   if (targetPath === src) return
+  if (blockDiaryDestination(targetPath)) return
   try {
     const moved = lifecycle
       ? await lifecycle.renameFile(src, { targetPath })
@@ -521,6 +531,9 @@ async function onRename(oldPath: string, newName: string, kind: 'file' | 'folder
         updateMetadataDraftPath(oldFilePath, nextFilePath)
       }
       } else {
+      const parent = oldPath.split('/').slice(0, -1).join('/')
+      const newPath = parent ? `${parent}/${safeName}` : safeName
+      if (blockDiaryDestination(newPath)) return
       let updateReferences = false
       let referencePaths: string[] = []
       try {
@@ -635,6 +648,7 @@ async function onMove(srcPath: string, targetFolder: string, srcKind: 'file' | '
   const filename = srcPath.split('/').pop()!
   const newPath = targetFolder ? `${targetFolder}/${filename}` : filename
   if (newPath === srcPath) return
+  if (blockDiaryDestination(newPath)) return
   // Cycle check — kind-aware lookup. Without the kind filter, dragging a
   // file that shares a name with a folder would never trigger this
   // guard even if the path happened to also be an ancestor of the

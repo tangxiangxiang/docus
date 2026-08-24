@@ -17,6 +17,35 @@ describe('server document mutation policy', () => {
     allowed({ operation: 'rename', sourcePath: 'literature/a', destinationPath: 'archive/a' })
   })
 
+  it('blocks every generic document destination inside the Diary namespace', () => {
+    for (const destinationPath of ['diary/foo']) {
+      blocked(
+        { operation: 'rename', sourcePath: 'inbox/foo', destinationPath },
+        /Diary namespace/,
+      )
+    }
+    blocked(
+      { operation: 'rename', sourcePath: 'inbox/foo', destinationPath: 'diary' },
+      /protected root/,
+    )
+
+    blocked(
+      { operation: 'rename', sourcePath: 'archive/foo', destinationPath: 'diary/foo' },
+      /Diary namespace/,
+    )
+    blocked(
+      { operation: 'rename', sourcePath: 'ledger/foo', destinationPath: 'diary/foo' },
+      /Diary namespace/,
+    )
+    blocked(
+      { operation: 'rename', sourcePath: 'inbox/foo', destinationPath: 'diary/2026-08-24' },
+      /cannot change identity/,
+    )
+    allowed({ operation: 'rename', sourcePath: 'diary/foo', destinationPath: 'inbox/foo' })
+    allowed({ operation: 'rename', sourcePath: 'inbox/foo', destinationPath: 'archive/foo' })
+    allowed({ operation: 'rename', sourcePath: 'inbox/foo', destinationPath: 'literature/foo' })
+  })
+
   it('reserves the system root names without restricting descendants', () => {
     blocked({ operation: 'create', destinationPath: 'archive' }, /protected root/)
     blocked({ operation: 'write', destinationPath: 'archive', destinationExists: true }, /protected root/)
