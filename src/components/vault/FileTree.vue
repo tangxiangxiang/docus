@@ -19,6 +19,7 @@ import { ICON_SEARCH } from './icons'
 import { useI18n } from '../../composables/useI18n'
 import { useFileTreePreferences } from '../../composables/vault/useFileTreePreferences'
 import { clearMetadataDraftForPath, updateMetadataDraftPath } from './metadataDraftStore'
+import { classifyDiaryPath, isManagedDiaryPath } from '../../../shared/diaryProtocol'
 
 const props = withDefaults(defineProps<{
   tree: TreeNode[]
@@ -411,6 +412,10 @@ async function onRootDrop(e: DragEvent) {
     const msg = blockedMessage(src, 'move', t)
     if (msg) { toast.error(msg); return }
   }
+  if (isManagedDiaryPath(src)) {
+    toast.error(t('file_tree.diary_identity_locked'))
+    return
+  }
   const filename = src.split('/').pop()!
   const targetPath = filename
   if (targetPath === src) return
@@ -467,6 +472,10 @@ async function onRename(oldPath: string, newName: string, kind: 'file' | 'folder
   // folder `inbox/notes/` also exists must rename the file, not the folder.
   const node = findNode(props.tree, oldPath, kind)
   if (!node) return
+  if (isManagedDiaryPath(oldPath)) {
+    toast.error(t('file_tree.diary_identity_locked'))
+    return
+  }
   {
     const msg = blockedMessage(oldPath, 'rename', t)
     if (msg) { toast.error(msg); return }
@@ -541,6 +550,10 @@ async function onRename(oldPath: string, newName: string, kind: 'file' | 'folder
 async function onRequestRename(oldPath: string, kind: 'file' | 'folder') {
   const node = findNode(props.tree, oldPath, kind)
   if (!node) return
+  if (isManagedDiaryPath(oldPath)) {
+    toast.error(t('file_tree.diary_identity_locked'))
+    return
+  }
   {
     const msg = blockedMessage(oldPath, 'rename', t)
     if (msg) { toast.error(msg); return }
@@ -605,6 +618,10 @@ async function onDelete(p: string, kind: 'file' | 'folder') {
 }
 
 async function onMove(srcPath: string, targetFolder: string, srcKind: 'file' | 'folder') {
+  if (isManagedDiaryPath(srcPath)) {
+    toast.error(t('file_tree.diary_identity_locked'))
+    return
+  }
   {
     const msg = blockedMessage(srcPath, 'move', t)
     if (msg) { toast.error(msg); return }
@@ -656,6 +673,10 @@ async function onArchiveNote(path: string) {
 }
 
 async function onCreateIn(folder: string, kind: 'file' | 'folder') {
+  if (classifyDiaryPath(folder) !== 'outside') {
+    toast.error(t('file_tree.diary_generic_create_disabled'))
+    return
+  }
   {
     const msg = blockedMessage(folder, kind === 'file' ? 'create-file' : 'create-folder', t)
     if (msg) { toast.error(msg); return }

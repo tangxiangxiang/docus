@@ -127,7 +127,7 @@ onBeforeUnmount(() => {
 
 <template>
   <header
-    :class="['navbar', { 'is-vault': props.isVault }]"
+    :class="['navbar', { 'is-vault': props.isVault, 'diary-calendar-mode': props.isVault && activeScope === 'diary' }]"
     :inert="props.logoutBusy || undefined"
     :aria-busy="props.logoutBusy || undefined"
   >

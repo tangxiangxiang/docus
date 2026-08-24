@@ -504,3 +504,34 @@ describe('VaultView AI live context capture wiring', () => {
     expect(source).toContain('liveDocument: (path) => liveEditorForPath(tabs.value, path)')
   })
 })
+
+describe('VaultView D3.2 Diary surface wiring', () => {
+  it('shows Calendar-first only for the diary scope without replacing FileTree', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+    const branch = source.match(
+      /v-if="isDiaryCalendarMode"[\s\S]*?<DiaryCalendarSurface[\s\S]*?\/>/,
+    )?.[0]
+
+    expect(source).toContain("import DiaryCalendarSurface from '../components/diary/DiaryCalendarSurface.vue'")
+    expect(source).toContain("const isDiaryScope = computed(() => activeScope.value === 'diary')")
+    expect(source).toContain('const isDiaryCalendarMode = computed(() => isDiaryScope.value && workspaceTabs.value.length === 0)')
+    expect(branch).toBeDefined()
+    expect(branch).toContain(':tree="tree"')
+    expect(branch).toContain(':loading="treeLoading"')
+    expect(branch).toContain(':error="treeError"')
+    expect(source).toContain('<FileTree')
+    expect(source).toContain(':tree="tree"')
+    expect(source).toContain("v-if=\"activePanel === 'files'\"")
+  })
+
+  it('keeps D3.2 free of date-create, editor, tab, and route lifecycle', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+    const branch = source.match(
+      /v-if="isDiaryCalendarMode"[\s\S]*?<DiaryCalendarSurface[\s\S]*?\/>/,
+    )?.[0] ?? ''
+
+    expect(branch).not.toMatch(/openDiaryDate|createPost|openPost|router\.|\/api\/diary\/dates|activePath|activeScope\.value\s*=/)
+    expect(source).not.toContain('openDiaryDate')
+    expect(source).not.toContain('/api/diary/dates')
+  })
+})

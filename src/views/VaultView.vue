@@ -58,6 +58,7 @@ import { useDocumentLifecycle } from '../composables/vault/useDocumentLifecycle'
 import type { DocumentLifecycle } from '../composables/vault/useDocumentLifecycle'
 import { applyMetadataToPostSummary } from './metadataPostSummary'
 import FileTree from '../components/vault/FileTree.vue'
+import DiaryCalendarSurface from '../components/diary/DiaryCalendarSurface.vue'
 import TagPanel from '../components/vault/TagPanel.vue'
 import TagManagementPanel from '../components/vault/TagManagementPanel.vue'
 import ReadingPane from '../components/vault/ReadingPane.vue'
@@ -282,7 +283,7 @@ const draftPersistence = createUnsavedDraftPersistence({
 const authoritativeVaultId = requireVaultId()
 let lifecycleCreateFile: DocumentLifecycle['createFile'] | null = null
 const {
-  tree, vaultId, posts, tabs, activePath, activeTab, activeSize,
+  tree, treeLoading, treeError, vaultId, posts, tabs, activePath, activeTab, activeSize,
   refresh, applyPostSummary, openPost: openEditorPost, closeTab: closeEditorTab,
   confirmCloseMany: confirmCloseEditorTabs,
   closeManyConfirmed: closeManyEditorTabsConfirmed,
@@ -1569,6 +1570,8 @@ async function showExternalDiff() {
 // `activeScope` / `toggleScope` from the same instance, and FileTree
 // filters `topLevel` off the same `activeScope` ref.
 const { activeScope } = useScopeFilter()
+const isDiaryScope = computed(() => activeScope.value === 'diary')
+const isDiaryCalendarMode = computed(() => isDiaryScope.value && workspaceTabs.value.length === 0)
 
 /* ---------- Tag filter ---------- */
 const selectedTag = ref<string | null>(null)
@@ -1913,7 +1916,7 @@ watch(isReadMode, async (reading) => {
   <div
     ref="vaultRef"
     class="vault"
-    :class="{ 'is-read': isReadMode, 'right-rail-open': rightRailVisible }"
+    :class="{ 'is-read': isReadMode, 'right-rail-open': rightRailVisible, 'diary-calendar-mode': isDiaryCalendarMode }"
     tabindex="0"
     :style="vaultStyle"
     @keydown="onVaultKeydown"
@@ -2035,9 +2038,24 @@ watch(isReadMode, async (reading) => {
         @reorder="reorderWorkspaceTabs"
       />
 
+      <!-- D3.2 Calendar-first surface: it occupies the empty primary
+           workspace only. Existing document, diff, and recovery tabs stay
+           untouched when the user changes scope. Date clicks remain surface
+           intents; D4 owns any open/create lifecycle. -->
+      <div
+        v-if="isDiaryCalendarMode"
+        class="content diary-calendar-content"
+      >
+        <DiaryCalendarSurface
+          :tree="tree"
+          :loading="treeLoading"
+          :error="treeError"
+        />
+      </div>
+
       <!-- Edit mode: single Monaco editor surface. -->
       <div
-        v-if="!isReadMode"
+        v-else-if="!isReadMode"
         v-show="!activeHistoryComparison && !activeWorkingTreeDiff && !activeDraftRecovery"
         class="content"
       >

@@ -990,6 +990,49 @@ main.container.auth-page-shell {
   --accent-bg: var(--vs-accent-bg);
 }
 
+/* D3.2 Calendar-first mode keeps both the Diary FileTree and the calendar
+   reachable on narrow screens. The normal Vault layout reserves a usable
+   280px minimum for the right rail; at phone widths that would consume the
+   whole editor column before the calendar gets any space. This scoped rule
+   only applies while the empty Diary workspace is showing the presentation
+   surface; document tabs and their existing Vault layout are unchanged. */
+@media (max-width: 720px) {
+  .navbar.is-vault.diary-calendar-mode .navbar-inner {
+    gap: 8px;
+    padding-left: 6px;
+    padding-right: 4px;
+  }
+
+  .navbar.is-vault.diary-calendar-mode .brand-wordmark,
+  .navbar.is-vault.diary-calendar-mode .scope-chip-label {
+    display: none;
+  }
+
+  .navbar.is-vault.diary-calendar-mode .scope-chips {
+    gap: 0;
+    margin-left: 0;
+  }
+
+  .navbar.is-vault.diary-calendar-mode .scope-chip {
+    padding-left: 5px;
+    padding-right: 5px;
+  }
+
+  .navbar.is-vault.diary-calendar-mode .nav-actions {
+    flex-shrink: 0;
+    gap: 2px;
+  }
+
+  .vault.diary-calendar-mode {
+    grid-template-columns: 40px minmax(150px, 40vw) 1px minmax(0, 1fr) !important;
+  }
+
+  .vault.diary-calendar-mode .splitter-toc,
+  .vault.diary-calendar-mode .right-rail-slot {
+    display: none !important;
+  }
+}
+
 /* Activity Bar */
 .activity-bar {
   background: var(--vs-bg-3);

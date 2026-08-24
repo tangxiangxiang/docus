@@ -13,6 +13,7 @@ import {
   canMove,
   canCreateFileChild,
 } from '../../../shared/archiveProtocol'
+import { classifyDiaryPath, isManagedDiaryPath } from '../../../shared/diaryProtocol'
 import type { MatchInfo } from './FileTree.vue'
 
 const props = defineProps<{
@@ -98,17 +99,17 @@ function showHoverCard(event: MouseEvent) {
 }
 // Three independent write-permission flags. Only the three reserved root
 // entries are protected; descendants, including archive content, use ordinary
-// user-content CRUD rules. Folder creation is available for every folder row.
+// user-content CRUD rules. Diary's date identity is a presentation guard on
+// rename/move only; managed Diary delete remains an ordinary allowed action.
 const canModifyRow = computed(() => canModify(props.node.path))
-// canMoveRow is the shared protected-root policy only. The current Docus
-// move capability is file-only: folders retain same-parent rename/delete and
-// child creation, but do not expose general drag/re-parenting.
-const canMoveRow = computed(() => canMove(props.node.path))
+const canRenameRow = computed(() => canModifyRow.value && !isManagedDiaryPath(props.node.path))
+const canDeleteRow = computed(() => canModifyRow.value)
+// canMoveRow is the shared protected-root policy plus the Diary presentation
+// guard. The server remains the authority for the mutation policy.
+const canMoveRow = computed(() => canMove(props.node.path) && !isManagedDiaryPath(props.node.path))
 const canDragRow = computed(() => props.node.kind === 'file' && canMoveRow.value)
-const canCreateFileChildRow = computed(() => canCreateFileChild(props.node.path))
-// True if the row has at least one context-menu item to render. Folders
-// always have at least the folder-create button, so `isFolder` alone covers
-// the create branch.
+const canCreateInRow = computed(() => isFolder.value && classifyDiaryPath(props.node.path) === 'outside')
+const canCreateFileChildRow = computed(() => canCreateInRow.value && canCreateFileChild(props.node.path))
 
 // True for files under inbox/ or literature/. The archive menu item
 // is gated on this — the server route also enforces it, but hiding
@@ -365,25 +366,24 @@ function menuAction(fn: () => void) {
         :style="{ left: menuX + 'px', top: menuY + 'px' }"
         @click.stop
         >
-        <!-- create-in is allowed for ordinary folders and all protected roots,
-             including archive/. Archive descendants are ordinary user
-             content, so both direct file and folder creation are available.
-             The folder button is unconditional on isFolder.
+        <!-- create-in is allowed for ordinary folders and protected roots except diary/;
+             Archive descendants remain ordinary user content. The Diary
+             exception is a presentation guard; D2 server policy is authority.
              Render the create buttons first so the most-common action on
              a folder is the first thing under the cursor. -->
-        <template v-if="isFolder">
+        <template v-if="isFolder && canCreateInRow">
           <div class="tree-menu-label">{{ t('file_tree.create') }}</div>
           <button v-if="canCreateFileChildRow" @click="menuAction(() => emit('create-in', node.path, 'file'))"><span class="menu-icon" v-html="ICON_FILE_PLUS" />{{ t('file_tree.new_file') }}</button>
           <button @click="menuAction(() => emit('create-in', node.path, 'folder'))"><span class="menu-icon" v-html="ICON_FOLDER_PLUS" />{{ t('file_tree.new_folder') }}</button>
         </template>
-        <div v-if="canModifyRow || canArchive" class="tree-menu-label">{{ t('file_tree.organize') }}</div>
-        <button v-if="canModifyRow" @click="menuAction(() => emit('request-rename', node.path, node.kind))"><span class="menu-icon" v-html="ICON_RENAME" />{{ t('file_tree.rename') }}<kbd>F2</kbd></button>
+        <div v-if="canRenameRow || canArchive" class="tree-menu-label">{{ t('file_tree.organize') }}</div>
+        <button v-if="canRenameRow" @click="menuAction(() => emit('request-rename', node.path, node.kind))"><span class="menu-icon" v-html="ICON_RENAME" />{{ t('file_tree.rename') }}<kbd>F2</kbd></button>
         <button v-if="canArchive" @click="menuAction(() => emit('archive-note', node.path))"><span class="menu-icon" v-html="ICON_ARCHIVE" />{{ t('file_tree.archive') }}</button>
         <div v-if="!isFolder" class="tree-menu-label">{{ t('file_tree.document') }}</div>
         <button v-if="!isFolder" @click="menuAction(() => emit('export-pdf', node.path))"><span class="menu-icon" v-html="ICON_FILE_PDF" />{{ t('file_tree.export_pdf') }}</button>
         <button v-if="!isFolder" @click="menuAction(() => emit('open-history', node.path))"><span class="menu-icon" v-html="ICON_HISTORY" />{{ t('file_tree.view_history') }}</button>
-        <div v-if="canModifyRow" class="tree-menu-label">{{ t('file_tree.danger') }}</div>
-        <button v-if="canModifyRow" class="danger" @click="menuAction(() => emit('delete', node.path, node.kind))"><span class="menu-icon" v-html="ICON_DELETE" />{{ t('file_tree.delete') }}<kbd>Delete</kbd></button>
+        <div v-if="canDeleteRow" class="tree-menu-label">{{ t('file_tree.danger') }}</div>
+        <button v-if="canDeleteRow" class="danger" @click="menuAction(() => emit('delete', node.path, node.kind))"><span class="menu-icon" v-html="ICON_DELETE" />{{ t('file_tree.delete') }}<kbd>Delete</kbd></button>
       </div>
     </Teleport>
 

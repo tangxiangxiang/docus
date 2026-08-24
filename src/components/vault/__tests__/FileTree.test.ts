@@ -45,6 +45,17 @@ const TREE: TreeNode[] = [{
   ],
 }]
 
+const DIARY_TREE: TreeNode[] = [{
+  kind: 'folder', name: 'content', path: '', children: [
+    {
+      kind: 'folder', name: 'diary', path: 'diary', children: [
+        { kind: 'file', name: '2026-08-24', path: 'diary/2026-08-24', title: 'Diary', mtime: 0 },
+        { kind: 'file', name: 'legacy', path: 'diary/legacy', title: 'Legacy external file', mtime: 0 },
+      ],
+    },
+  ],
+}]
+
 const POSTS: PostSummary[] = [
   { path: 'inbox/draft', title: 'Release checklist', tags: ['redis'], summary: 'secret body phrase', created: '', updated: '', size: 0, mtime: 0 },
 ]
@@ -344,5 +355,17 @@ describe('Files filter', () => {
     expect(rowByName(wrapper, 'draft')).toBeDefined()
     expect(rowByName(wrapper, 'cache-paper')).toBeDefined()
     expect(rowByName(wrapper, 'history')).toBeDefined()
+  })
+})
+
+describe('Diary FileTree presentation boundary', () => {
+  it('keeps managed and invalid Diary files visible in the FileTree', async () => {
+    useScopeFilter().activeScope.value = 'diary'
+    const wrapper = mount(FileTree, { props: { tree: DIARY_TREE, currentPath: null } })
+
+    expect(wrapper.text()).toContain('diary')
+    await rowByName(wrapper, 'diary').find('.chevron').trigger('click')
+    expect(wrapper.text()).toContain('2026-08-24')
+    expect(wrapper.text()).toContain('legacy')
   })
 })

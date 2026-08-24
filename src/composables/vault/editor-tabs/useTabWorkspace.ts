@@ -35,6 +35,11 @@ export function useTabWorkspace(options: {
   const { t } = useI18n()
   const router = useRouter()
   const tree = ref<TreeNode[]>([])
+  // Tree state is shared by FileTree and the D3.2 Diary projection. Keep
+  // loading/error separate from the data so a failed refresh is never
+  // represented as an empty calendar.
+  const treeLoading = ref(true)
+  const treeError = ref<string | null>(null)
   const posts = ref<PostSummary[]>([])
   const tabs = ref<Tab[]>([])
   const activePath = ref<string | null>(null)
@@ -76,18 +81,31 @@ export function useTabWorkspace(options: {
   async function refresh() {
     const requestId = ++refreshRequestId
     const startedAtPatchSeq = localPostPatches.currentSeq()
-    const [nextTree, nextPosts] = await Promise.all([getTree(), listPosts()])
-    if (requestId !== refreshRequestId) return
-    let mergedTree = nextTree
-    let mergedPosts = nextPosts
-    for (const patch of localPostPatches.after(startedAtPatchSeq)) {
-      const merged = applyPostSummaryToWorkspace(mergedTree, mergedPosts, patch.post)
-      mergedTree = merged.tree
-      mergedPosts = merged.posts
+    treeLoading.value = true
+    treeError.value = null
+    try {
+      const [nextTree, nextPosts] = await Promise.all([getTree(), listPosts()])
+      if (requestId !== refreshRequestId) return
+      let mergedTree = nextTree
+      let mergedPosts = nextPosts
+      for (const patch of localPostPatches.after(startedAtPatchSeq)) {
+        const merged = applyPostSummaryToWorkspace(mergedTree, mergedPosts, patch.post)
+        mergedTree = merged.tree
+        mergedPosts = merged.posts
+      }
+      tree.value = mergedTree
+      posts.value = mergedPosts
+      localPostPatches.settleThrough(startedAtPatchSeq)
+    } catch (error) {
+      if (requestId === refreshRequestId) {
+        treeError.value = error instanceof Error && error.message
+          ? error.message
+          : String(error)
+      }
+      throw error
+    } finally {
+      if (requestId === refreshRequestId) treeLoading.value = false
     }
-    tree.value = mergedTree
-    posts.value = mergedPosts
-    localPostPatches.settleThrough(startedAtPatchSeq)
   }
 
   function applyPostSummary(post: PostSummary): void {
@@ -338,6 +356,8 @@ export function useTabWorkspace(options: {
 
   return {
     tree,
+    treeLoading,
+    treeError,
     posts,
     tabs,
     activePath,

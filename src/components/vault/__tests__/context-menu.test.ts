@@ -45,6 +45,19 @@ const TREE: TreeNode[] = [
   },
 ]
 
+const DIARY_TREE: TreeNode[] = [
+  {
+    kind: 'folder', name: 'content', path: '', children: [
+      {
+        kind: 'folder', name: 'diary', path: 'diary', children: [
+          { kind: 'file', name: '2026-08-24', path: 'diary/2026-08-24', title: 'Diary', mtime: 0 },
+          { kind: 'file', name: 'legacy', path: 'diary/legacy', title: 'Legacy external file', mtime: 0 },
+        ],
+      },
+    ],
+  },
+]
+
 describe('FileTree context menu', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -231,6 +244,48 @@ describe('FileTree context menu', () => {
     expect(permanentRow.attributes('draggable')).toBe('true')
     const organizedRow = w.findAll('li.tree-row').find((r: any) => r.find('.row-name')?.text() === 'organized')!
     expect(organizedRow.attributes('draggable')).toBe('false')
+    w.unmount()
+  })
+})
+
+describe('FileTree context menu — Diary presentation guards', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    useScopeFilter().activeScope.value = null
+    document.querySelectorAll('.tree-context-menu').forEach((el) => el.remove())
+  })
+
+  it('hides generic create actions at the Diary root', async () => {
+    const w = mount(FileTree, { props: { tree: DIARY_TREE, currentPath: null }, attachTo: document.body })
+    const diaryRow = w.findAll('li.tree-row').find((row: any) => row.find('.row-name')?.text() === 'diary')!
+    await diaryRow.trigger('contextmenu', { clientX: 100, clientY: 100 })
+    await w.vm.$nextTick()
+    await flushPromises()
+
+    const menu = document.querySelector('.tree-context-menu')
+    expect(menu).not.toBeNull()
+    expect(menu!.textContent).not.toContain('新建文件')
+    expect(menu!.textContent).not.toContain('新建文件夹')
+    expect(menu!.textContent).not.toContain('重命名')
+    expect(menu!.textContent).not.toContain('删除')
+    w.unmount()
+  })
+
+  it('hides managed Diary rename/move while retaining delete', async () => {
+    const w = mount(FileTree, { props: { tree: DIARY_TREE, currentPath: null }, attachTo: document.body })
+    const diaryRow = w.findAll('li.tree-row').find((row: any) => row.find('.row-name')?.text() === 'diary')!
+    await diaryRow.find('.chevron').trigger('click')
+    await w.vm.$nextTick()
+    const managedRow = w.findAll('li.tree-row').find((row: any) => row.find('.row-name')?.text() === '2026-08-24')!
+    await managedRow.trigger('contextmenu', { clientX: 100, clientY: 100 })
+    await w.vm.$nextTick()
+    await flushPromises()
+
+    const menu = document.querySelector('.tree-context-menu')
+    expect(menu).not.toBeNull()
+    expect(menu!.textContent).not.toContain('重命名')
+    expect(menu!.textContent).toContain('删除')
+    expect(managedRow.attributes('draggable')).toBe('false')
     w.unmount()
   })
 })

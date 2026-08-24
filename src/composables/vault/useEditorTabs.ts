@@ -57,6 +57,8 @@ export function useEditorTabs(opts: {
 
   const {
     tree,
+    treeLoading,
+    treeError,
     posts,
     tabs,
     activePath,
@@ -358,6 +360,8 @@ export function useEditorTabs(opts: {
 
   return {
     tree,
+    treeLoading,
+    treeError,
     vaultId,
     posts,
     tabs,
