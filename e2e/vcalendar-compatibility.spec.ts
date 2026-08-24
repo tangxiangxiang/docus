@@ -10,7 +10,9 @@ test('VCalendar browser compatibility across desktop and narrow viewports', asyn
   })
 
   await page.setViewportSize({ width: 1280, height: 800 })
-  await page.goto('/')
+  // The probe is a static Vite entry under e2e/vcalendar-compatibility;
+  // the application root is no longer the compatibility fixture.
+  await page.goto('/e2e/vcalendar-compatibility/')
 
   await expect(page.locator('.vc-monthly')).toBeVisible()
   await expect(page.locator('.vc-title').filter({ hasText: 'August 2026' })).toHaveCount(1)
@@ -62,7 +64,7 @@ test('VCalendar browser compatibility across desktop and narrow viewports', asyn
   for (const timezoneId of ['Pacific/Kiritimati', 'Etc/GMT+12', 'America/New_York']) {
     const boundaryContext = await browser.newContext({ timezoneId, viewport: { width: 800, height: 600 } })
     const boundaryPage = await boundaryContext.newPage()
-    await boundaryPage.goto('/')
+    await boundaryPage.goto('/e2e/vcalendar-compatibility/')
     await boundaryPage.locator('[data-date="2026-08-24"]').click()
     await expect(boundaryPage.getByTestId('selected-date')).toHaveText('2026-08-24')
     await boundaryContext.close()

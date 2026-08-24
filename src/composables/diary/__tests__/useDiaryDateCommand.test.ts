@@ -118,6 +118,29 @@ describe('useDiaryDateCommand', () => {
     expect(state.openPost).toHaveBeenCalledWith('diary/2026-08-24', { refresh: false })
   })
 
+  it('opens the exact server-resolved path when date creation reports created:false', async () => {
+    const state = harness({
+      createDiaryDate: vi.fn(async (input: { date: DiaryDate; timeZone: string }) => ({
+        date: input.date,
+        path: diaryLogicalPathForDate(input.date),
+        created: false,
+        post: { path: diaryLogicalPathForDate(input.date) } as PostSummary,
+      })),
+    })
+
+    const result = await state.openDiaryDate('2026-08-24')
+
+    expect(result).toEqual({
+      status: 'opened',
+      date: date('2026-08-24'),
+      path: 'diary/2026-08-24',
+    })
+    expect(state.createDiaryDate).toHaveBeenCalledTimes(1)
+    expect(state.refresh).toHaveBeenCalledTimes(1)
+    expect(state.publish).not.toHaveBeenCalled()
+    expect(state.openPost).toHaveBeenCalledWith('diary/2026-08-24', { refresh: false })
+  })
+
   it.each(['0000-02-29', '0001-01-01', '0099-12-31', '0100-01-01', '2026-08-24'])(
     'preserves exact logical path identity for %s',
     async (value) => {

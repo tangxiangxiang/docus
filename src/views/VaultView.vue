@@ -1589,6 +1589,11 @@ async function showExternalDiff() {
 // filters `topLevel` off the same `activeScope` ref.
 const { activeScope } = useScopeFilter()
 const isDiaryScope = computed(() => activeScope.value === 'diary')
+// Keep the VCalendar subtree mounted for the whole Diary scope. v-calendar
+// 3.1.2 can throw while a day-click is still unwinding if the resulting tab
+// transition synchronously unmounts its Calendar. Visibility still follows
+// the empty-workspace presentation mode below.
+const isDiaryCalendarMounted = computed(() => isDiaryScope.value)
 const isDiaryCalendarMode = computed(() => isDiaryScope.value && workspaceTabs.value.length === 0)
 
 /* ---------- Tag filter ---------- */
@@ -2061,7 +2066,8 @@ watch(isReadMode, async (reading) => {
            untouched when the user changes scope. Date clicks remain surface
            intents; D4 owns any open/create lifecycle. -->
       <div
-        v-if="isDiaryCalendarMode"
+        v-if="isDiaryCalendarMounted"
+        v-show="isDiaryCalendarMode"
         class="content diary-calendar-content"
       >
         <DiaryCalendarSurface
@@ -2074,8 +2080,8 @@ watch(isReadMode, async (reading) => {
 
       <!-- Edit mode: single Monaco editor surface. -->
       <div
-        v-else-if="!isReadMode"
-        v-show="!activeHistoryComparison && !activeWorkingTreeDiff && !activeDraftRecovery"
+        v-if="!isReadMode"
+        v-show="!isDiaryCalendarMode && !activeHistoryComparison && !activeWorkingTreeDiff && !activeDraftRecovery"
         class="content"
       >
         <div
@@ -2112,7 +2118,8 @@ watch(isReadMode, async (reading) => {
            panel, tabs, and status bar above/below stay untouched so
            navigation still works while reading. -->
       <div
-        v-else-if="!activeHistoryComparison && !activeWorkingTreeDiff && !activeDraftRecovery"
+        v-if="isReadMode && !activeHistoryComparison && !activeWorkingTreeDiff && !activeDraftRecovery"
+        v-show="!isDiaryCalendarMode"
         class="content reading-content"
       >
         <!-- Only the active tab is mounted. Mounting one ReadingPane
