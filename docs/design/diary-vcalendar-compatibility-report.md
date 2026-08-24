@@ -5,7 +5,7 @@
 - D3.0: `REVIEW-CLOSED`
 - Gate result: `PASS`
 - Independent D3.0 review: closed (`P0 = 0`, `P1 = 0`, `P2 = 0`)
-- D3.1: `NOT STARTED`
+- D3.1: `COMPLETE / REVIEW-READY` (adapter implementation is recorded separately; independent review pending)
 - Validation date: 2026-08-24 (Asia/Shanghai)
 - Baseline commit: `71e53445e6e6c14d23ec7b58a198450be8a7628f`
 - Final validation commit SHA (D3.0): `106e9ac601c4949a692dd4b11401786602d1a33c`
@@ -13,7 +13,7 @@
 - Required Popper peer: `@popperjs/core@2.11.8`
 - GitHub CI: `NOT VERIFIED` (not queried for this docs-only closure)
 
-This report approves the exact VCalendar candidate for the D3.1 entry gate. It does not implement `DiaryCalendar.vue`, Diary navigation, Vault integration, editor integration, or Diary create/open lifecycle.
+This report approves the exact VCalendar candidate for the D3.1 entry gate. The report itself does not implement `DiaryCalendar.vue`, Diary navigation, Vault integration, editor integration, or Diary create/open lifecycle; the separate D3.1 adapter implementation is `931828da31166d68cb7897343c695a761bf6fc80`.
 
 ## Exact Docus Stack
 
@@ -181,7 +181,7 @@ The isolated probe and browser fixture are retained as low-coupling D3.0 regress
 - no blocker-level runtime exception was reproduced;
 - Docus core versions were not downgraded.
 
-D3.0 is `REVIEW-CLOSED`; D3.1 is `NOT STARTED`. This report does not authorize Calendar adapter implementation or any later Diary phase.
+D3.0 is `REVIEW-CLOSED`; the separate D3.1 adapter implementation is `COMPLETE / REVIEW-READY` pending independent review. This report remains the D3.0 compatibility evidence and does not authorize D3.2 Calendar surface, Vault integration, editor integration, or Diary create/open lifecycle.
 
 ## P0 / P1 / P2
 
