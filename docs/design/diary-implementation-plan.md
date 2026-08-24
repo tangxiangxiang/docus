@@ -3,18 +3,19 @@
 
 ## 1. Status
 
-- **Status:** D0 REVIEW-CLOSED；D1 REVIEW-CLOSED；D2 REVIEW-CLOSED；D3.0 COMPLETE / REVIEW-READY。本文件继续定义 Diary 的阶段边界、测试、证据和 review gate；D3.1 仍 blocked。
+- **Status:** D0 REVIEW-CLOSED；D1 REVIEW-CLOSED；D2 REVIEW-CLOSED；D3.0 REVIEW-CLOSED；D3.1 NOT STARTED；D3.2/D4/D5 BLOCKED。本文件继续定义 Diary 的阶段边界、测试、证据和 review gate。
 - **Planning baseline:** f342e7ad85e30b8bfb9073ac22f668dae154a7d0 (docs(diary): add vcalendar compatibility gate).
 - **Product source:** [diary-prd.md](./diary-prd.md)。PRD 是产品契约的唯一 source of truth；本文件不能重新定义产品行为。
-- **VCalendar status:** `v-calendar@3.1.2` exact candidate；D3.0 gate `PASS`，等待独立 review closure 后才可进入 D3.1。
+- **VCalendar status:** `v-calendar@3.1.2` exact candidate；D3.0 gate `PASS / REVIEW-CLOSED`；D3.1 `NOT STARTED`。
 - **D1 status:** REVIEW-CLOSED。implementation commit 为 `d0a5d4e82e930445bd9e549e27d39e8c18b30819`；独立 review 结果为 P0 = 0、P1 = 0、P2 = 0。
-- **VCalendar runtime gate:** `PASS`。D3.0 已安装并验证 exact candidate；evidence 见 [`diary-vcalendar-compatibility-report.md`](./diary-vcalendar-compatibility-report.md)。
-- **Current phase boundary:** D2 server/root/mutation contract 已实现并完成独立复审；generic recovery provenance follow-up 已由 `acaf548c048c2948de726208ea4d2a1c1c9b3be3`（`fix(diary): close generic recovery provenance gap`）收口，D2 = REVIEW-CLOSED；D3.0 compatibility gate 已完成，但没有开始 D3.1 或后续 Diary implementation。
+- **D3.0 closure:** Implementation commit 为 `106e9ac601c4949a692dd4b11401786602d1a33c`；独立 review 结果为 P0 = 0、P1 = 0、P2 = 0。
+- **VCalendar runtime gate:** `PASS / REVIEW-CLOSED`。D3.0 已安装并验证 exact candidate；evidence 见 [`diary-vcalendar-compatibility-report.md`](./diary-vcalendar-compatibility-report.md)。
+- **Current phase boundary:** D2 server/root/mutation contract 已实现并完成独立复审；generic recovery provenance follow-up 已由 `acaf548c048c2948de726208ea4d2a1c1c9b3be3`（`fix(diary): close generic recovery provenance gap`）收口，D2 = REVIEW-CLOSED；D3.0 compatibility gate 已 REVIEW-CLOSED；D3.1 尚未开始，D3.2/D4/D5 继续 BLOCKED。
 - **Self-review result:** P0 = 0、P1 = 0、P2 = 0，表示本 Implementation Plan 的施工 contract 已补齐，不表示任何 Diary runtime 阶段已经通过。
 
 ### Planning-state note
 
-PRD 与本 Implementation Plan 的阶段状态为：PRD = REVIEW-CLOSED，D0 = REVIEW-CLOSED，D1 = REVIEW-CLOSED，D2 = REVIEW-CLOSED，D3.0 = COMPLETE / REVIEW-READY，VCalendar runtime compatibility gate = PASS。D3.0 独立 review 尚未 closure，D3.1 仍 BLOCKED；该状态不代表 Diary Calendar、Vault integration 或完整 Diary lifecycle 已实现。
+PRD 与本 Implementation Plan 的阶段状态为：PRD = REVIEW-CLOSED，D0 = REVIEW-CLOSED，D1 = REVIEW-CLOSED，D2 = REVIEW-CLOSED，D3.0 = REVIEW-CLOSED，VCalendar runtime compatibility gate = PASS，D3.1 = NOT STARTED，D3.2/D4/D5 = BLOCKED。该状态不代表 Diary Calendar、Vault integration 或完整 Diary lifecycle 已实现。
 
 ## 2. Source of Truth
 
@@ -636,7 +637,7 @@ feat(diary): enforce diary server lifecycle
 
 ### Review Status
 
-REVIEW-CLOSED；实现 commit 为 `bb32349247914061e6ad71989538c995028faeea`，generic recovery provenance follow-up commit 为 `acaf548c048c2948de726208ea4d2a1c1c9b3be3`。独立复审确认代码 P0 = 0、P1 = 0；当前事实文档同步后 P2 = 0。D2 closure 时 D3.0 为 NOT STARTED；随后 D3.0 已按第 10 节完成并处于 COMPLETE / REVIEW-READY。
+REVIEW-CLOSED；实现 commit 为 `bb32349247914061e6ad71989538c995028faeea`，generic recovery provenance follow-up commit 为 `acaf548c048c2948de726208ea4d2a1c1c9b3be3`。独立复审确认代码 P0 = 0、P1 = 0；当前事实文档同步后 P2 = 0。D2 closure 时 D3.0 为 NOT STARTED；随后 D3.0 已按第 10 节完成并 REVIEW-CLOSED。
 
 ### Implementation Evidence
 
@@ -801,8 +802,8 @@ D3.0 执行结果记录在 [`diary-vcalendar-compatibility-report.md`](./diary-v
 - Spike：real Calendar mount、month navigation、attributes/dot/customData、reactive update、dayclick/local DiaryDate、day-content、locale、first-day-of-week、masks、light/dark、narrow/mobile、unmount/remount 和 UTC+14/UTC-12/DST timezone contexts 全部 PASS。
 - `npm run typecheck` PASS；elevated `npm run build` PASS；dedicated `node node_modules/vite/bin/vite.js build --config vite.vcalendar.config.ts` PASS（71 modules，candidate CSS/ESM resolved）；focused lane 5 files / 58 tests PASS；focused Chromium smoke 1/1 PASS；pageerror/console.error 为空。
 - 初次 unprivileged Vite/Vitest/Playwright 启动的 Windows `spawn EPERM` 仅标 `BASELINE-LIMITED`，提升权限重跑后 feature evidence PASS；GitHub CI 未查询。
-- Gate：`PASS`；D3.0 = `COMPLETE / REVIEW-READY`；task-scoped self-review P0/P1/P2 = `0/0/0`。
-- Upstream Vue 3.5/dayIndex issue #1498 与 candidate maintenance date 作为 non-blocking Known Compatibility Risk 记录；未在 exact Calendar/day-content spike 中复现。
+- Gate：`PASS`；D3.0 = `REVIEW-CLOSED`；Implementation commit 为 `106e9ac601c4949a692dd4b11401786602d1a33c`；独立 review P0/P1/P2 = `0/0/0`。
+- Upstream Vue 3.5/dayIndex issues #1498 与 #1514，以及 candidate maintenance date，作为 non-blocking Known Compatibility Risks 记录；未在 exact Calendar/day-content spike 中复现；D3.1 = `NOT STARTED`。
 
 ### STOP Conditions
 
@@ -819,7 +820,7 @@ D3.0 执行结果记录在 [`diary-vcalendar-compatibility-report.md`](./diary-v
 - spike required matrix 完整。
 - 结论为 PASS，或有完整且安全的 CONDITIONAL PASS。
 - 若 FAIL，已停止完整 D3 并创建 Calendar ADR follow-up，D3.1 保持 blocked。
-- 独立 review 后 D3.0 REVIEW-CLOSED，然后 STOP。
+- D3.0 独立 review 已关闭并同步为 REVIEW-CLOSED，然后 STOP；D3.1 保持 NOT STARTED。
 
 ### Suggested Commit
 
@@ -829,7 +830,7 @@ D3.0 执行结果记录在 [`diary-vcalendar-compatibility-report.md`](./diary-v
 
 ### Review Status
 
-COMPLETE / REVIEW-READY；Gate = PASS；独立 review 后 REVIEW-CLOSED。只有 closure 后 D3.1 才能从 blocked 变为可实施。
+REVIEW-CLOSED；Gate = PASS；Implementation commit 为 `106e9ac601c4949a692dd4b11401786602d1a33c`；独立 review：P0 = 0、P1 = 0、P2 = 0。D3.1 = NOT STARTED；本 closure 不开始 Calendar adapter implementation 或任何后续 Diary phase。
 
 ## 11. D3.1 — DiaryCalendar Adapter
 
@@ -1511,13 +1512,13 @@ D3.0 还必须报告 candidate version/tag、resolved peerDependencies、exact D
 | D0 | PRD + Implementation Plan | REVIEW-CLOSED | independent IP review 已通过；PRD closure status 已同步 |
 | D1 | Diary domain protocol | REVIEW-CLOSED | implementation commit `d0a5d4e82e930445bd9e549e27d39e8c18b30819`；independent review P0/P1/P2 = 0 |
 | D2 | Root / server / mutation | REVIEW-CLOSED | D1 REVIEW-CLOSED；独立复审 P0/P1/P2 = 0 |
-| D3.0 | VCalendar compatibility | COMPLETE / REVIEW-READY | Gate PASS；evidence report 已记录；等待独立 review closure |
-| D3.1 | DiaryCalendar adapter | BLOCKED | D3.0 PASS/approved CONDITIONAL + REVIEW-CLOSED |
+| D3.0 | VCalendar compatibility | REVIEW-CLOSED | Gate PASS；Implementation commit `106e9ac601c4949a692dd4b11401786602d1a33c`；independent review P0/P1/P2 = 0/0/0 |
+| D3.1 | DiaryCalendar adapter | NOT STARTED | D3.0 REVIEW-CLOSED；本任务未开始实现 |
 | D3.2 | Monthly Diary surface | BLOCKED | D3.1 REVIEW-CLOSED |
 | D4 | Vault lifecycle integration | BLOCKED | D3.2 REVIEW-CLOSED |
 | D5 | Responsive / release / closure | BLOCKED | D4 REVIEW-CLOSED |
 
-当前状态为：D0 REVIEW-CLOSED；D1 REVIEW-CLOSED；D2 REVIEW-CLOSED；D3.0 COMPLETE / REVIEW-READY；D3.1、D3.2、D4、D5 均 BLOCKED。VCalendar runtime compatibility gate = PASS；D3.0 独立 review 尚未 closure。
+当前状态为：D0 REVIEW-CLOSED；D1 REVIEW-CLOSED；D2 REVIEW-CLOSED；D3.0 REVIEW-CLOSED；D3.1 NOT STARTED；D3.2、D4、D5 BLOCKED。VCalendar runtime compatibility gate = PASS / REVIEW-CLOSED。
 
 ## 22. Final Closure Criteria
 
@@ -1526,7 +1527,7 @@ Diary 只有在以下条件全部满足、每阶段都独立 review closed 后�
 - [x] D0 Implementation Plan review closed。
 - [x] D1 pure Diary domain、strict date validation、classification 和 root contract closed；implementation commit 和独立 review evidence 已记录。
 - [x] D2 seed、date create、one/day/no suffix、future、edit/delete、rename/move guards、generic/AI/folder bypass guards closed；generic recovery provenance follow-up 已独立复审关闭。
-- [x] D3.0 exact-stack VCalendar gate PASS；custom `day-content` seam、typecheck/build、Vitest/jsdom、browser/timezone evidence 已记录；独立 review closure pending。
+- [x] D3.0 exact-stack VCalendar gate PASS；custom `day-content` seam、typecheck/build、Vitest/jsdom、browser/timezone evidence 已记录；validation commit `106e9ac601c4949a692dd4b11401786602d1a33c`；独立 review P0 = 0、P1 = 0、P2 = 0；D3.0 REVIEW-CLOSED。
 - [ ] D3.1 adapter tests、VCalendar presentation isolation 和 custom rendering seam closed。
 - [ ] D3.2 monthly Calendar-first diary surface、FileTree relationship、mobile/accessibility states closed。
 - [ ] D4 single openDiaryDate、existing editor/tabs/route、fileChanges、History、Recovery、draft and selection integration closed。
@@ -1543,4 +1544,4 @@ Diary 只有在以下条件全部满足、每阶段都独立 review closed 后�
 - [ ] typecheck/build/relevant tests/integration/browser gates have explicit PASS or baseline-limited evidence。
 - [ ] GitHub CI status is reported only if actually queried。
 
-本 Implementation Plan 当前完成 D0、D1、D2 closure，并完成 D3.0 compatibility gate：D3.0 = COMPLETE / REVIEW-READY，Gate = PASS；D3.0 独立 review 尚未 closure，D3.1 仍 BLOCKED。这不表示 Diary Calendar、Vault integration 或完整 Diary lifecycle 已实现。
+本 Implementation Plan 当前完成 D0、D1、D2、D3.0 closure：D3.0 = REVIEW-CLOSED，Gate = PASS；D3.1 = NOT STARTED；D3.2/D4/D5 = BLOCKED。这不表示 Diary Calendar、Vault integration 或完整 Diary lifecycle 已实现。
