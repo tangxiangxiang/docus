@@ -6,6 +6,7 @@
 - Gate result: `PASS`
 - Independent D3.0 review: closed (`P0 = 0`, `P1 = 0`, `P2 = 0`)
 - D3.1: `REVIEW-CLOSED` (adapter implementation and early-year Date bridge follow-up are recorded separately; independent review closed with `P0 = 0`, `P1 = 0`, `P2 = 0`)
+- Post-closure D3.0 compatibility regression follow-up: `FIXED / REVIEW-READY` (fix commit: `ed47c94`; independent re-review pending)
 - Validation date: 2026-08-24 (Asia/Shanghai)
 - Baseline commit: `71e53445e6e6c14d23ec7b58a198450be8a7628f`
 - Final validation commit SHA (D3.0): `106e9ac601c4949a692dd4b11401786602d1a33c`
@@ -13,7 +14,7 @@
 - Required Popper peer: `@popperjs/core@2.11.8`
 - GitHub CI: `NOT VERIFIED` (not queried for this docs-only closure)
 
-This report approves the exact VCalendar candidate for the D3.1 entry gate. The report itself does not implement `DiaryCalendar.vue`, Diary navigation, Vault integration, editor integration, or Diary create/open lifecycle; the separate D3.1 adapter implementation is `931828da31166d68cb7897343c695a761bf6fc80`.
+This report approves the exact VCalendar candidate for the D3.1 entry gate. At the original D3.0 closure, the report itself did not implement `DiaryCalendar.vue`, Diary navigation, Vault integration, editor integration, or Diary create/open lifecycle; the separate D3.1 adapter implementation is `931828da31166d68cb7897343c695a761bf6fc80`. The later D4 browser-closure regression and its bounded workaround are recorded below without changing the historical D3.0 Gate result.
 
 ## Exact Docus Stack
 
@@ -181,7 +182,31 @@ The isolated probe and browser fixture are retained as low-coupling D3.0 regress
 - no blocker-level runtime exception was reproduced;
 - Docus core versions were not downgraded.
 
-D3.0 is `REVIEW-CLOSED`; the separate D3.1 adapter implementation is `REVIEW-CLOSED` after independent review (`P0 = 0`, `P1 = 0`, `P2 = 0`). This report remains the D3.0 compatibility evidence and does not authorize D3.2 Calendar surface, Vault integration, editor integration, or Diary create/open lifecycle.
+D3.0 is `REVIEW-CLOSED`; the separate D3.1 adapter implementation is `REVIEW-CLOSED` after independent review (`P0 = 0`, `P1 = 0`, `P2 = 0`). At that historical gate boundary this report did not authorize D3.2 Calendar surface, Vault integration, editor integration, or Diary create/open lifecycle.
+
+## Post-closure Compatibility Regression Follow-up
+
+During D4 browser closure, the real production chain exposed a lifecycle-specific VCalendar runtime regression that was not exercised by the original isolated D3.0 probe:
+
+- Exact runtime boundary: Vue `3.5.35`, `v-calendar@3.1.2`, and `@popperjs/core@2.11.8`.
+- Raw error: `TypeError: Cannot read properties of undefined (reading 'dayIndex')` at `DateRangeContext.render` in `node_modules/v-calendar/dist/es/index.js:3044:34`.
+- The stack indicates VCalendar reads `days[0].dayIndex` during a Calendar update/teardown window. The evidence establishes the trigger boundary; it does not claim a stronger internal explanation for why the transient `days` value is empty.
+- Isolation matrix: bare Calendar click PASS; bare Calendar plus synchronous unmount PASS; custom `day-content` without forwarding PASS; `dayProps`/`dayEvents` forwarding PASS; attributes/dot PASS; attributes plus production-like custom day content PASS; real `DiaryCalendar` with a no-op parent PASS; real `DiaryCalendar` with synchronous click-triggered parent unmount FAIL in 5/5 runs.
+- The real D4 chain (`Calendar click -> openDiaryDate -> route/tab/editor`) reproduced the same page error in 2/2 pre-fix runs. Router, tab, editor, and API behavior were not required for the raw trigger.
+- Candidate comparison: W1 keep mounted and toggle visibility passed 5/5 with Calendar still attached and `display: none`; W2 `nextTick` unmount failed 5/5; W3 `setTimeout(0)` unmount failed 5/5. W1 was selected because it does not depend on scheduler timing or delay the Diary command.
+
+The production workaround is confined to `src/views/VaultView.vue`:
+
+- `isDiaryCalendarMounted` follows Diary scope, so the Calendar remains mounted while the Diary scope is active.
+- `isDiaryCalendarMode` retains its existing meaning: the Calendar is visible only while `workspaceTabs.length === 0`.
+- `v-show` hides the Calendar when the workspace tab appears; it does not delay `openDiaryDate`, tab creation, route navigation, editor mounting, or fileChanges behavior.
+- The real D4 lifecycle passed 5/5 after the fix with `pageerror = 0`; exact route, Diary tab, editor content, no-create behavior, hidden-but-attached Calendar, and Calendar restoration after closing the last tab all passed.
+- Missing future Diary remains a no-op: no create request, route/tab unchanged, and the only browser console 404 is precisely allowlisted as the expected `GET /api/posts/diary/<future-date>` response; page errors remain zero.
+- The historical D3.0 browser probe also passed after a test-only correction from the stale application-root URL to its current static fixture entry. This is harness drift, not the `dayIndex` root cause.
+
+Fix commit: `ed47c94` (`fix(diary): keep calendar mounted across document open`). The focused Diary/Vault lane passed 72/72 tests; History integration passed 173/173; Recovery integration passed 193/193 after the repository's permitted elevated rerun; full typecheck, production build, and `git diff --check` passed. The temporary A–J diagnosis harness was removed; the real D4 browser test remains as the long-term regression. No `DiaryCalendar.vue`, `useDiaryDateCommand.ts`, tab/router lifecycle, server/shared code, package/lockfile, VCalendar version, Popper version, fork, or `node_modules` file changed.
+
+This follow-up does not change the historical result: D3.0 remains `REVIEW-CLOSED / PASS`. The post-closure compatibility regression is `FIXED / REVIEW-READY` with task-scoped `P0 = 0`, `P1 = 0`, `P2 = 0`; independent re-review remains pending. GitHub status for this follow-up is `NOT VERIFIED` because it was not queried.
 
 ## P0 / P1 / P2
 
