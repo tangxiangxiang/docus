@@ -8,6 +8,7 @@ import {
   diaryCalendarAttributes,
   diaryDateFromCalendarDay,
   diaryDateFromLocalDate,
+  localCalendarDateForDiaryDate,
   type DiaryCalendarDay,
 } from '../diaryCalendarAdapter'
 import { parseDiaryDate, type DiaryDate } from '../../../../shared/diaryProtocol'
@@ -100,6 +101,28 @@ describe('DiaryCalendar presentation adapter', () => {
 
     const localDate = new Date(2026, 7, 24, 23, 59, 59)
     expect(diaryDateFromLocalDate(localDate)).toBe('2026-08-24')
+  })
+
+  it('preserves every supported Diary year through the local Date bridge', () => {
+    const values = [
+      '0000-02-29',
+      '0001-01-01',
+      '0099-12-31',
+      '0100-01-01',
+      '2026-08-24',
+      '0099-02-28',
+      '0099-03-01',
+      '0100-02-28',
+      '0400-02-29',
+    ] as const
+
+    for (const value of values) {
+      const diaryDate = parseDiaryDate(value)!
+      const localDate = localCalendarDateForDiaryDate(diaryDate)
+
+      expect(localDate.getHours()).toBe(12)
+      expect(diaryDateFromLocalDate(localDate)).toBe(diaryDate)
+    }
   })
 
   it('normalizes duplicate projection dates to one deterministic dot attribute', () => {

@@ -85,7 +85,15 @@ export function diaryCalendarMonthFromPage(value: unknown): DiaryCalendarMonth |
 /** Convert a validated DiaryDate into a local Date only for Calendar navigation. */
 export function localCalendarDateForDiaryDate(date: DiaryDate): Date {
   const [year, month, day] = date.split('-').map(Number)
-  return new Date(year, month - 1, day, 12, 0, 0, 0)
+  const value = new Date(0)
+
+  // Date(year, ...) applies the legacy 1900 offset to years 0 through 99.
+  // setFullYear() does not, so the complete four-digit Diary year survives
+  // the local navigation bridge. Noon remains intentional for DST safety.
+  value.setFullYear(year, month - 1, day)
+  value.setHours(12, 0, 0, 0)
+
+  return value
 }
 
 /** Stable key used for one marker per Diary date. */
