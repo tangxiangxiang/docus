@@ -414,13 +414,9 @@ postRoutes.patch('/api/posts/*', async (c) => {
   let destPath: string
   if (body.name !== undefined) {
     if (!isValidSegment(body.name)) return bad(c, 'invalid name')
-    // In-place rename within the same parent. The protocol forbids
-    // renaming archive items, so block this branch server-side too —
-    // the client already hides the menu item via canModify, but the
-    // API is the backstop for any non-UI caller.
-    if (isInArchive(srcPath)) {
-      return bad(c, 'archive notes cannot be renamed', 422)
-    }
+    // In-place rename within the same parent. Archive descendants are
+    // ordinary documents; validateDocumentMutation still protects reserved
+    // root paths for non-UI callers.
     const parent = path.dirname(src)
     dest = path.join(parent, body.name + '.md')
     const parentRel = path.dirname(srcPath)
@@ -431,25 +427,6 @@ postRoutes.patch('/api/posts/*', async (c) => {
     // Cycle check: cannot move into own descendant.
     if (dest !== src && body.targetPath!.startsWith(srcPath + '/')) {
       return bad(c, 'cannot move into descendant', 422)
-    }
-    // Archive movement policy:
-    //   - inbox/ and literature/ notes may be archived into archive/.
-    //   - existing archive notes may move within archive/ for reclassification.
-    //   - archive notes may not be moved out of archive/.
-    // This mirrors the file-tree UX while keeping the API as the backstop.
-    const targetInArchive = isInArchive(destPath)
-    const sourceInArchive = isInArchive(srcPath)
-    if (sourceInArchive && !targetInArchive) {
-      return bad(c, 'archive notes can only be moved within archive', 422)
-    }
-    if (targetInArchive) {
-      const sourceArchiveable =
-        srcPath === 'inbox' || srcPath.startsWith('inbox/') ||
-        srcPath === 'literature' || srcPath.startsWith('literature/') ||
-        sourceInArchive
-      if (!sourceArchiveable) {
-        return bad(c, 'only inbox/ and literature/ notes can be archived to archive', 422)
-      }
     }
   }
   try {
@@ -693,13 +670,10 @@ postRoutes.patch('/api/posts/*', async (c) => {
   })
 })
 
-// Delete a file. Archive items cannot be deleted per protocol; the client
-// hides the menu item via canModify but the API is the backstop.
+// Delete a file. Archive descendants use the same lifecycle as other files;
+// path validation and the reserved-root contract remain in force.
 postRoutes.delete('/api/posts/*', async (c) => {
   const splat = c.req.path.replace(/^\/api\/posts\//, '')
-  if (isInArchive(splat)) {
-    return bad(c, 'archive notes cannot be deleted', 422)
-  }
   let abs: string
   try { abs = filePathFor(splat) } catch (e: any) { return bad(c, e.message) }
   // Deleting a file changes tree membership: structure lock first.

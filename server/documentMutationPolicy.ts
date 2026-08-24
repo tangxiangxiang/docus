@@ -1,5 +1,4 @@
-import path from 'node:path'
-import { isInArchive } from '../shared/archiveProtocol.js'
+import { isProtectedRoot } from '../shared/archiveProtocol.js'
 
 export type DocumentMutation =
   | { operation: 'create'; destinationPath: string }
@@ -7,43 +6,23 @@ export type DocumentMutation =
   | { operation: 'delete'; sourcePath: string }
   | { operation: 'rename'; sourcePath: string; destinationPath: string }
 
-/** The server-side Archive protocol shared by REST and AI mutations. */
+/** The server-side root contract shared by REST and AI mutations. */
 export function validateDocumentMutation(mutation: DocumentMutation): void {
-  if (mutation.operation === 'create'
-    || (mutation.operation === 'write' && !mutation.destinationExists)) {
-    if (isInArchive(mutation.destinationPath)) {
-      throw new Error('archive notes must be created through archive flow')
-    }
-    return
+  const protectedPath = mutation.operation === 'create' || mutation.operation === 'write'
+    ? mutation.destinationPath
+    : mutation.operation === 'delete'
+      ? mutation.sourcePath
+      : null
+  if (protectedPath && isProtectedRoot(protectedPath)) {
+    throw new Error('protected root cannot be modified')
   }
 
-  if (mutation.operation === 'write') return
-
-  if (mutation.operation === 'delete') {
-    if (isInArchive(mutation.sourcePath)) {
-      throw new Error('archive notes cannot be deleted')
-    }
-    return
+  if (mutation.operation === 'rename'
+    && (isProtectedRoot(mutation.sourcePath) || isProtectedRoot(mutation.destinationPath))) {
+    throw new Error('protected root cannot be modified')
   }
 
-  const sourceInArchive = isInArchive(mutation.sourcePath)
-  const destinationInArchive = isInArchive(mutation.destinationPath)
-  if (sourceInArchive && !destinationInArchive) {
-    throw new Error('archive notes can only be moved within archive')
-  }
-  if (sourceInArchive && destinationInArchive) {
-    if (path.posix.dirname(mutation.sourcePath) === path.posix.dirname(mutation.destinationPath)) {
-      throw new Error('archive notes cannot be renamed')
-    }
-    return
-  }
-  if (destinationInArchive) {
-    const archiveable = mutation.sourcePath === 'inbox'
-      || mutation.sourcePath.startsWith('inbox/')
-      || mutation.sourcePath === 'literature'
-      || mutation.sourcePath.startsWith('literature/')
-    if (!archiveable) {
-      throw new Error('only inbox/ and literature/ notes can be archived to archive')
-    }
-  }
+  // Archive descendants are intentionally ordinary content. This validator
+  // still runs for every REST/AI mutation, but only reserves the root names;
+  // path traversal and filesystem confinement remain enforced by paths.ts.
 }

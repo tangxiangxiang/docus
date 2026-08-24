@@ -588,12 +588,12 @@ describe('write routes update the index', () => {
     } finally { remove.mockRestore() }
   })
 
-  it('rejects rename and delete for protected roots and archive descendants', async () => {
+  it('protects system roots while allowing archive descendants', async () => {
     await fs.mkdir(path.join(sandbox, 'inbox'), { recursive: true })
     await fs.mkdir(path.join(sandbox, 'literature'), { recursive: true })
     await fs.mkdir(path.join(sandbox, 'archive', 'organized'), { recursive: true })
 
-    for (const folder of ['inbox', 'literature', 'archive', 'archive/organized']) {
+    for (const folder of ['inbox', 'literature', 'archive']) {
       const rename = await fetchApp(new Request(`http://localhost/api/folders/${folder}`, {
         method: 'PATCH', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ newPath: `${path.posix.dirname(folder)}/renamed`.replace(/^\.\//, '') }),
@@ -604,6 +604,16 @@ describe('write routes update the index', () => {
       }))
       expect(remove.status, folder).toBe(422)
     }
+
+    const renameChild = await fetchApp(new Request('http://localhost/api/folders/archive/organized', {
+      method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ newPath: 'archive/renamed' }),
+    }))
+    expect(renameChild.status).toBe(200)
+    const removeChild = await fetchApp(new Request('http://localhost/api/folders/archive/renamed?recursive=true', {
+      method: 'DELETE',
+    }))
+    expect(removeChild.status).toBe(200)
   })
 })
 

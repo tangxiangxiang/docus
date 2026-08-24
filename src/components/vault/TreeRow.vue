@@ -52,9 +52,8 @@ const emit = defineEmits<{
   move: [srcPath: string, targetFolder: string, srcKind: 'file' | 'folder']
   'create-in': [folder: string, kind: 'file' | 'folder']
   // File only: archive-note moves inbox/* or literature/* straight
-  // into archive/ (the archived-notes root). Distinct from `move` because
-  // `move` into archive/ is still blocked — archiving is a deliberate
-  // product action that only the menu can trigger.
+  // into archive/ (the reserved root). It remains a convenient, explicit
+  // workflow distinct from an ordinary drag/move operation.
   'archive-note': [path: string]
   'export-pdf': [path: string]
   'open-history': [path: string]
@@ -97,24 +96,15 @@ const { hoverCardVisible, hoverCardStyle, showHoverCard: showDocumentHoverCard, 
 function showHoverCard(event: MouseEvent) {
   if (!isFolder.value) showDocumentHoverCard(event)
 }
-// Three independent write-permission flags. The protocol distinguishes:
-//   • canModify — rename / delete. Blocked for both the archive subtree AND
-//     protected roots (the three top-level folder names are pinned by the
-//     vault spec).
-//   • canMove — drag-out. Protected roots are pinned; archive children can
-//     move within archive for reclassification.
-//   • canCreateFileChild — in-place note creation. Blocked for the archive
-//     subtree so archived notes still enter via explicit archive/move flows.
-// Folder creation is always allowed for any folder row, so the "新建文件夹"
-// button is rendered unconditionally on `isFolder` (no gate needed).
+// Three independent write-permission flags. Only the three reserved root
+// entries are protected; descendants, including archive content, use ordinary
+// user-content CRUD rules. Folder creation is available for every folder row.
 const canModifyRow = computed(() => canModify(props.node.path))
 const canMoveRow = computed(() => canMove(props.node.path))
 const canCreateFileChildRow = computed(() => canCreateFileChild(props.node.path))
-// True if the row has at least one context-menu item to render. Without
-// this gate, right-clicking a fully locked row (e.g. an in-archive file)
-// would show an empty menu box. Skip the menu entirely when there's
-// nothing to show. Folders always have at least the folder-create button,
-// so `isFolder` alone covers the create branch.
+// True if the row has at least one context-menu item to render. Folders
+// always have at least the folder-create button, so `isFolder` alone covers
+// the create branch.
 
 // True for files under inbox/ or literature/. The archive menu item
 // is gated on this — the server route also enforces it, but hiding
@@ -171,7 +161,7 @@ function onDragStart(e: DragEvent) {
   e.stopPropagation()
   // Protected roots (inbox/literature/archive) cannot be re-parented. We
   // still want their children to be draggable, including archive children
-  // that are being reclassified inside the archived-notes subtree.
+  // that are being reorganized in the advisory archive area.
   if (!canMoveRow.value) { e.preventDefault(); return }
   if (!e.dataTransfer) return
   e.dataTransfer.setData('text/x-docus-path', props.node.path)
@@ -372,11 +362,10 @@ function menuAction(fn: () => void) {
         :style="{ left: menuX + 'px', top: menuY + 'px' }"
         @click.stop
         >
-        <!-- create-in is allowed for ordinary folders and protected roots.
-             Inside archive/ only the folder button is offered; archived
-             notes still enter through explicit archive/move flows (gated by
-             canCreateFileChild). The folder button is unconditional on
-             isFolder — there's no protocol gate against sub-foldering.
+        <!-- create-in is allowed for ordinary folders and all protected roots,
+             including archive/. Archive descendants are ordinary user
+             content, so both direct file and folder creation are available.
+             The folder button is unconditional on isFolder.
              Render the create buttons first so the most-common action on
              a folder is the first thing under the cursor. -->
         <template v-if="isFolder">

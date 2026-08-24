@@ -61,10 +61,10 @@ The default vault is `src/content/`. Set `VAULT_DIR` for another location.
 src/content/
 ├── inbox/       active notes and new material
 ├── literature/  reading and source notes
-└── archive/     retained, intentionally constrained notes
+└── archive/     recommended area for inactive notes
 ```
 
-The three roots cannot be renamed or deleted. Notes move from active roots into `archive`; archived notes cannot be renamed, deleted, or moved back out through Docus. See [Vault and Archive Protocol](docs/user-guide/vault.md).
+The three roots are reserved by Docus and cannot be renamed, deleted, or moved. `archive/` is a recommended organizational area for inactive content: notes inside it remain ordinary editable files and can be created, renamed, deleted, or moved normally. The built-in Archive action is a convenience workflow that defaults to `archive/<filename>`. See [Vault and Archive Protocol](docs/user-guide/vault.md).
 
 ## Production Deployment
 

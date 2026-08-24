@@ -1,7 +1,7 @@
 // Lazy-seed the three vault root folders under the content root.
 //
 // The vault protocol (shared/archiveProtocol.ts) treats
-// `inbox`, `literature`, and `archive` as immutable top-level roots —
+// `inbox`, `literature`, and `archive` as reserved top-level roots —
 // they must exist for the tree, scope filter, and rename/delete
 // guards to behave correctly. With a fresh content directory
 // (typical on the first `docker compose up` against an empty named

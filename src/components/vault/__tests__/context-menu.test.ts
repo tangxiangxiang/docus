@@ -25,6 +25,11 @@ const TREE: TreeNode[] = [
       {
         kind: 'folder', name: 'archive', path: 'archive', children: [
           { kind: 'file', name: 'permanent', path: 'archive/permanent', title: 'Permanent', mtime: 0 },
+          {
+            kind: 'folder', name: 'organized', path: 'archive/organized', children: [
+              { kind: 'file', name: 'nested', path: 'archive/organized/nested', title: 'Nested', mtime: 0 },
+            ],
+          },
         ],
       },
       // A user-defined top-level folder that is NOT one of the three
@@ -113,8 +118,8 @@ describe('FileTree context menu', () => {
   // their names but their *children* are still user content. The original
   // menu gated everything on a single "readonly" boolean, so right-clicking
   // inbox/literature offered no way to add a child. These cases pin the
-  // matrix: protected root → create-in, archive folder → create folders
-  // only, ordinary file → full menu.
+  // matrix: protected root → create-in, archive folder → full CRUD menu,
+  // ordinary file → full menu.
   it('right-click on a protected root (inbox) shows create-in buttons but no rename/delete', async () => {
     const w = mount(FileTree, { props: { tree: TREE, currentPath: null }, attachTo: document.body })
     await w.vm.$nextTick()
@@ -150,7 +155,7 @@ describe('FileTree context menu', () => {
     w.unmount()
   })
 
-  it('right-click on archive shows new-folder only, not direct note creation', async () => {
+  it('right-click on archive shows both direct creation actions but no root rename/delete', async () => {
     const w = mount(FileTree, { props: { tree: TREE, currentPath: null }, attachTo: document.body })
     await w.vm.$nextTick()
     const archiveRow = w.findAll('li.tree-row').find((r: any) => r.find('.row-name')?.text() === 'archive')!
@@ -165,10 +170,44 @@ describe('FileTree context menu', () => {
     // contributes whitespace to textContent. Substring equality keeps
     // the test focused on the label rather than the SVG formatting.
     const labels = Array.from(menu!.querySelectorAll('button')).map((b) => (b.textContent ?? '').trim())
+    expect(labels).toContain('新建文件')
     expect(labels).toContain('新建文件夹')
-    expect(labels).not.toContain('新建文件')
     expect(labels).not.toContain('重命名')
     expect(labels).not.toContain('删除')
+    w.unmount()
+  })
+
+  it('archive child file has ordinary rename/delete actions', async () => {
+    const w = mount(FileTree, { props: { tree: TREE, currentPath: null }, attachTo: document.body })
+    await w.vm.$nextTick()
+    const archiveRow = w.findAll('li.tree-row').find((r: any) => r.find('.row-name')?.text() === 'archive')!
+    await archiveRow.find('.chevron').trigger('click')
+    await w.vm.$nextTick()
+    const fileRow = w.findAll('li.tree-row').find((r: any) => r.find('.row-name')?.text() === 'permanent')!
+    await fileRow.trigger('contextmenu', { clientX: 100, clientY: 100 })
+    await w.vm.$nextTick()
+    await flushPromises()
+    const menu = document.querySelector('.tree-context-menu')!
+    expect(menu.textContent).toContain('重命名')
+    expect(menu.textContent).toContain('删除')
+    w.unmount()
+  })
+
+  it('archive child folder has ordinary CRUD actions', async () => {
+    const w = mount(FileTree, { props: { tree: TREE, currentPath: null }, attachTo: document.body })
+    await w.vm.$nextTick()
+    const archiveRow = w.findAll('li.tree-row').find((r: any) => r.find('.row-name')?.text() === 'archive')!
+    await archiveRow.find('.chevron').trigger('click')
+    await w.vm.$nextTick()
+    const folderRow = w.findAll('li.tree-row').find((r: any) => r.find('.row-name')?.text() === 'organized')!
+    await folderRow.trigger('contextmenu', { clientX: 100, clientY: 100 })
+    await w.vm.$nextTick()
+    await flushPromises()
+    const menu = document.querySelector('.tree-context-menu')!
+    expect(menu.textContent).toContain('新建文件')
+    expect(menu.textContent).toContain('新建文件夹')
+    expect(menu.textContent).toContain('重命名')
+    expect(menu.textContent).toContain('删除')
     w.unmount()
   })
 
@@ -197,9 +236,9 @@ describe('FileTree context menu', () => {
   })
 })
 
-// Archive-to-archive visibility. The action promotes a file directly from
-// inbox/ or literature/ into archive/ — distinct from the drag-and-drop
-// "move into archive" path that remains blocked. The menu button is gated
+// Archive action visibility. The action promotes a file directly from
+// inbox/ or literature/ into archive/ — distinct from ordinary drag-and-drop
+// moves. The menu button is gated
 // by canArchive which restricts the action to source paths in those
 // two roots, so these cases pin that matrix.
 describe('FileTree context menu — archive-note visibility', () => {

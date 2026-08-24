@@ -150,10 +150,18 @@ describe('POST /api/posts', () => {
     }
   })
 
-  it('rejects direct note creation inside archive/', async () => {
-    const r = await call('POST', '/api/posts', { path: 'archive/direct', title: 'Direct' })
-    expect(r.status).toBe(422)
-    await expect(fs.stat(path.join(CONTENT_DIR, 'archive', 'direct.md'))).rejects.toThrow()
+  it('allows direct note creation inside archive/', async () => {
+    const archivePath = 'archive/direct'
+    const archiveAbs = path.join(CONTENT_DIR, 'archive', 'direct.md')
+    try {
+      const r = await call('POST', '/api/posts', { path: archivePath, title: 'Direct' })
+      expect(r.status).toBe(201)
+      expect(await fs.readFile(archiveAbs, 'utf8')).toBe('# Direct\n')
+      expect(getDocumentMetadata(db, archivePath)?.title).toBe('Direct')
+    } finally {
+      await fs.rm(archiveAbs, { force: true })
+      deleteDocumentMetadata(db, archivePath)
+    }
   })
 
   it('allows organizational folder creation inside archive/', async () => {
@@ -168,10 +176,9 @@ describe('POST /api/posts', () => {
   })
 
   it('rejects case-variant Archive/ prefix before it can create a file', async () => {
-    // The strict path validator now rejects uppercase path segments before
-    // the case-insensitive archive policy guard runs. The important contract
-    // is unchanged: a client cannot POST `Archive/note` and create a parallel
-    // namespace on Linux or a colliding file on macOS.
+    // The strict path validator rejects uppercase path segments before any
+    // archive-area semantics run. This keeps the canonical namespace and
+    // filesystem confinement unchanged.
     const r = await call('POST', '/api/posts', { path: 'Archive/direct', title: 'Direct' })
     expect(r.status).toBe(400)
     await expect(fs.stat(path.join(CONTENT_DIR, 'Archive', 'direct.md'))).rejects.toThrow()

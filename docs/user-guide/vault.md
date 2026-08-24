@@ -14,19 +14,18 @@ The three top-level folders are part of the product protocol:
 - `literature/` for source-oriented reading notes.
 - `archive/` for settled notes.
 
-Their names cannot be changed, deleted, or moved. Missing roots are created automatically by the production server; source-development users must create them before the first dev run.
+The roots themselves cannot be renamed, deleted, or moved. Missing roots are created automatically by the production server; source-development users must create them before the first dev run.
 
 ## Archive Rules
 
-Archive is deliberately stricter than an ordinary folder:
+`archive/` is a recommended organizational area for inactive content, not an immutable or compliance archive:
 
-- Notes cannot be created directly in `archive/`.
-- A note under `inbox/` or `literature/` enters through the explicit Archive action or an allowed move into an archive subfolder.
-- Archived notes cannot be renamed, deleted, or moved back out.
-- Existing archived items may move between archive subfolders for organization.
-- Archive subfolders may be created.
+- The top-level `archive` directory is reserved by Docus so the built-in Archive action has a stable destination.
+- Files and folders inside `archive/` are ordinary user content. They can be created, edited, renamed, deleted, and moved within or out of the archive.
+- Content from any otherwise-legal location can be moved into `archive/`.
+- The built-in Archive action remains a convenience workflow and defaults to `archive/<filename>`, with its existing collision suffix handling.
 
-The Vue interface and server both enforce the rules. Direct filesystem edits remain possible because the vault is ordinary files; Docus reconciles the resulting view on later reads but cannot impose UI rules on an external editor.
+The UI and server protect only the reserved root names. Filesystem confinement, path validation, authentication, lifecycle coordination, history, and recovery guarantees are unchanged.
 
 ## File Operations
 

@@ -7,22 +7,21 @@ const blocked = (mutation: Parameters<typeof validateDocumentMutation>[0], messa
   expect(() => validateDocumentMutation(mutation)).toThrow(message)
 
 describe('server document mutation policy', () => {
-  it('blocks both explicit and write-as-create paths in archive', () => {
-    blocked({ operation: 'create', destinationPath: 'archive/new' }, /archive flow/)
-    blocked({ operation: 'write', destinationPath: 'Archive/new', destinationExists: false }, /archive flow/)
+  it('allows archive descendants through every document mutation path', () => {
+    allowed({ operation: 'create', destinationPath: 'archive/new' })
+    allowed({ operation: 'write', destinationPath: 'archive/new', destinationExists: false })
     allowed({ operation: 'write', destinationPath: 'archive/existing', destinationExists: true })
-  })
-
-  it('blocks archive deletion, same-folder rename, and moving out', () => {
-    blocked({ operation: 'delete', sourcePath: 'archive/a' }, /cannot be deleted/)
-    blocked({ operation: 'rename', sourcePath: 'archive/a', destinationPath: 'archive/b' }, /cannot be renamed/)
-    blocked({ operation: 'rename', sourcePath: 'archive/a', destinationPath: 'inbox/a' }, /only be moved within/)
-  })
-
-  it('allows archive reclassification and only eligible inbound moves', () => {
-    allowed({ operation: 'rename', sourcePath: 'archive/a', destinationPath: 'archive/topic/a' })
-    allowed({ operation: 'rename', sourcePath: 'inbox/a', destinationPath: 'archive/a' })
+    allowed({ operation: 'delete', sourcePath: 'archive/existing' })
+    allowed({ operation: 'rename', sourcePath: 'archive/a', destinationPath: 'archive/b' })
+    allowed({ operation: 'rename', sourcePath: 'archive/a', destinationPath: 'literature/a' })
     allowed({ operation: 'rename', sourcePath: 'literature/a', destinationPath: 'archive/a' })
-    blocked({ operation: 'rename', sourcePath: 'notes/a', destinationPath: 'archive/a' }, /only inbox/)
+  })
+
+  it('reserves the system root names without restricting descendants', () => {
+    blocked({ operation: 'create', destinationPath: 'archive' }, /protected root/)
+    blocked({ operation: 'write', destinationPath: 'archive', destinationExists: true }, /protected root/)
+    blocked({ operation: 'delete', sourcePath: 'archive' }, /protected root/)
+    blocked({ operation: 'rename', sourcePath: 'archive', destinationPath: 'archive-renamed' }, /protected root/)
+    blocked({ operation: 'rename', sourcePath: 'notes/a', destinationPath: 'archive' }, /protected root/)
   })
 })

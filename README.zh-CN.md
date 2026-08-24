@@ -61,10 +61,10 @@ flowchart LR
 src/content/
 ├── inbox/       活跃笔记与新材料
 ├── literature/  阅读与来源笔记
-└── archive/     需要保留且受到约束的归档笔记
+└── archive/     建议用于存放不再活跃的内容
 ```
 
-三个根目录不能重命名或删除。笔记可从活跃目录移入 `archive`；归档笔记不能通过 Docus 重命名、删除或移回活跃区。详见[笔记库与归档协议](docs/user-guide/vault.md)。
+三个根目录由 Docus 保留，不能重命名、删除或移动。`archive/` 是建议性归档区域：其中的内容仍是普通可编辑文件，可以正常新建、重命名、删除和移动。内置“归档”操作仍会默认将内容移到 `archive/<filename>`。详见[笔记库与归档协议](docs/user-guide/vault.md)。
 
 ## 生产部署
 

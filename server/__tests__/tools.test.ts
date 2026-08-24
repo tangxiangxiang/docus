@@ -193,11 +193,10 @@ describe('create_file', () => {
     expect(fs.existsSync(path.join(contentDir, 'a/yaml.md'))).toBe(false)
   })
 
-  it('cannot create a note directly in archive', async () => {
-    const r = await executeToolCall('create_file', { path: 'archive/new', content: 'blocked' }, ctx)
-    expect(r.isError).toBe(true)
-    expect(r.content).toMatch(/archive flow/)
-    expect(fs.existsSync(path.join(contentDir, 'archive/new.md'))).toBe(false)
+  it('can create a note directly in archive', async () => {
+    const r = await executeToolCall('create_file', { path: 'archive/new', content: 'created' }, ctx)
+    expect(r.isError).toBe(false)
+    expect(fs.readFileSync(path.join(contentDir, 'archive/new.md'), 'utf8')).toBe('created')
   })
 
   it('restores an absent file, its old documentId, and migrations exactly when metadata commit fails', async () => {
@@ -269,14 +268,14 @@ describe('write_file', () => {
     expect(r.isError).toBe(true)
   })
 
-  it('may update an archived note but cannot create one', async () => {
+  it('may update an archived note and create another one', async () => {
     writeFile('archive/existing.md', 'old')
     const update = await executeToolCall('write_file', { path: 'archive/existing', content: 'new' }, ctx)
     const create = await executeToolCall('write_file', { path: 'archive/new', content: 'new' }, ctx)
     expect(update.isError).toBe(false)
-    expect(create.isError).toBe(true)
+    expect(create.isError).toBe(false)
     expect(fs.readFileSync(path.join(contentDir, 'archive/existing.md'), 'utf8')).toBe('new')
-    expect(fs.existsSync(path.join(contentDir, 'archive/new.md'))).toBe(false)
+    expect(fs.readFileSync(path.join(contentDir, 'archive/new.md'), 'utf8')).toBe('new')
   })
 })
 

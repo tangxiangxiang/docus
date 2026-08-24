@@ -9,7 +9,7 @@ The workspace is `src/content/`. Every `.md` file under it is one note. A note's
 Top-level directories carry intent:
 - `inbox/` — raw, unprocessed thoughts. Default home for new notes.
 - `literature/` — notes taken while reading.
-- `archive/` — polished notes the user has reviewed and decided to preserve. These notes are organized and ready for long-term reference.
+- `archive/` — a recommended area for notes the user has reviewed and decided to preserve. These notes are organized and ready for long-term reference, but remain ordinary editable user content.
 
 ## Document metadata
 
@@ -73,6 +73,6 @@ Any other language identifier (`js`, `py`, `ts`, …) renders as a normal highli
 
 The Markdown renderer permits semantic HTML through a strict sanitizer. Safe elements such as `<br>`, formatting tags, tables, and links may be preserved, while scripts, event handlers, iframes, objects, embeds, styles, and `javascript:` URLs are removed. Do not rely on unsafe HTML; prefer prose, code fences, or the `markmap` / `mermaid` fences for diagrams.
 
-## Archive — preserved knowledge
+## Archive — recommended preserved knowledge
 
-Archive notes are documents the user has finished writing and reviewing. They represent polished, organized knowledge — not necessarily short or atomic, just complete. A note in `archive/` can be 200 words or 20,000; what matters is that the user has decided it's ready to keep.
+Archive notes are documents the user has finished writing and reviewing. They represent polished, organized knowledge — not necessarily short or atomic, just complete. A note in `archive/` can be 200 words or 20,000; what matters is that the user has decided it's ready to keep. Archive is an organizational suggestion, not an immutable or compliance boundary, so its files may still be edited, renamed, moved, or deleted when the user asks.

@@ -8,7 +8,7 @@ A document's path can change while its metadata and draft identity remain associ
 
 ## Mutation flow
 
-1. Validate the requested path and archive policy.
+1. Validate the requested path and reserved-root contract.
 2. Acquire the relevant document or folder coordination barrier.
 3. Flush or block conflicting saves where the operation requires it.
 4. Prepare durable filesystem and metadata work.
@@ -21,17 +21,17 @@ Folder moves use a durable journal because one folder can contain many documents
 
 Rename and move operations can rewrite supported Wiki and Markdown links that point to the moved document. Reference rewriting is journaled so a process interruption does not leave it half-applied without a recovery record.
 
-## Archive constraints
+## Archive workflow
 
 The shared archive protocol is enforced on both client and server:
 
-- `inbox`, `literature`, and `archive` are immutable top-level roots;
-- notes are created in `inbox` or `literature`, not directly in `archive`;
-- active notes can move into `archive`;
-- archived notes can move within `archive` but cannot be renamed, deleted, or moved back out;
-- folders may be created inside `archive`.
+- `inbox`, `literature`, and `archive` are reserved top-level roots;
+- the roots themselves cannot be renamed, deleted, or re-parented;
+- `archive/` is a recommended organizational area, not a permission boundary;
+- descendants of `archive/` use ordinary document and folder CRUD/move lifecycle rules;
+- the built-in Archive action defaults to `archive/<filename>` and retains collision handling.
 
-The server remains authoritative even if a client bypasses the interface.
+The server remains authoritative even if a client bypasses the interface. Filesystem confinement, authentication, history, recovery, and lifecycle safety remain independent of archive membership.
 
 ## Failure behavior
 

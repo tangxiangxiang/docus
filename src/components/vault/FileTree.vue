@@ -6,7 +6,7 @@ import TreeRow from './TreeRow.vue'
 import { useConfirm } from '../../composables/useConfirm'
 import { usePrompt } from '../../composables/usePrompt'
 import { useToast } from '../../composables/useToast'
-import { blockedMessage, isInArchive } from '../../../shared/archiveProtocol'
+import { blockedMessage } from '../../../shared/archiveProtocol'
 import { createPost, createFolder as createFolderApi, patchPost, deletePost, renameFolder, deleteFolder, getRenameImpact } from '../../lib/api'
 import { suggestSlug } from '../../lib/ai-api'
 import { isSlugSegment, toLocalSlug } from '../../lib/slug'
@@ -32,9 +32,8 @@ const emit = defineEmits<{
   refresh: []
   // archive-note is self-contained inside FileTree: handler calls
   // patchPost + emit('refresh') + (optionally) emit('select'). VaultView
-  // doesn't need to know. Distinct from `move` because move-into-archive
-  // remains blocked by onMove — archive is a deliberate menu action that
-  // bypasses that block.
+  // doesn't need to know. It remains a convenience workflow even though
+  // ordinary move operations can also target archive/.
   'archive-note': [path: string]
   'export-pdf': [path: string]
   'open-history': [path: string]
@@ -404,13 +403,12 @@ async function onRootDrop(e: DragEvent) {
     return
   }
   // Reject moves of protected roots (the three top-level folders are part
-  // of the vault protocol and cannot be re-parented). Archive children
-  // are handled below because they may move inside archive but not out of it.
+  // of the vault protocol and cannot be re-parented). Archive descendants
+  // are ordinary movable content.
   {
     const msg = blockedMessage(src, 'move', t)
     if (msg) { toast.error(msg); return }
   }
-  if (isInArchive(src)) { toast.error(t('file_tree.archive_inside_only')); return }
   const filename = src.split('/').pop()!
   const targetPath = filename
   if (targetPath === src) return
@@ -609,15 +607,6 @@ async function onMove(srcPath: string, targetFolder: string, srcKind: 'file' | '
     const msg = blockedMessage(srcPath, 'move', t)
     if (msg) { toast.error(msg); return }
   }
-  // The three top-level folders keep their names but their contents are
-  // editable according to the protocol. Dropping a non-archive note directly
-  // on archive/ is still too vague, so the explicit archive action owns that
-  // path. Existing archive items may move within archive for reclassification,
-  // but not out into inbox/literature/root.
-  const sourceInArchive = isInArchive(srcPath)
-  const targetInArchive = isInArchive(targetFolder)
-  if (!sourceInArchive && targetFolder === 'archive') { toast.error(t('file_tree.archive_direct_write')); return }
-  if (sourceInArchive && !targetInArchive) { toast.error(t('file_tree.archive_inside_only')); return }
   if (srcKind === 'folder') {
     toast.error(t('file_tree.move_failed', { error: 'folder move is not supported' }))
     return
@@ -650,9 +639,8 @@ async function onMove(srcPath: string, targetFolder: string, srcKind: 'file' | '
 
 // Archive handler. Distinct from onMove: this is the explicit product action
 // of archiving a finished note from inbox/ or literature/ straight into the
-// archive/ root. Classified archiving can also happen by dragging an eligible
-// inbox/literature note onto an archive subfolder; the server whitelist's
-// "source must be in inbox/ or literature/" check backs up both paths.
+// archive/ root. Ordinary move operations can also target archive descendants;
+// this action remains the one-click workflow for the default root target.
 async function onArchiveNote(path: string) {
   const movedPath = await archiveNote(path)
   if (!movedPath) return

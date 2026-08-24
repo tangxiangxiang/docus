@@ -1,9 +1,8 @@
-// PATCH /api/posts/* archive-note whitelist.
+// PATCH /api/posts/* Archive Soft-Policy regression coverage.
 //
-// The archive action and classified drops onto archive subfolders can land a
-// file in archive/. The server is the second line of defense: PATCH must refuse
-// any targetPath under archive/ unless the source currently lives under inbox/
-// or literature/.
+// The built-in Archive action remains a convenience workflow, while ordinary
+// archive descendants use the same rename/move/delete lifecycle as all other
+// user documents.
 //
 // We mock filePathFor into a per-test tmp dir (same pattern as
 // get-post.test.ts and split.test.ts) so the test never touches the
@@ -73,7 +72,7 @@ afterEach(async () => {
 
 afterAll(() => db.close())
 
-describe('PATCH /api/posts/* archive-note whitelist', () => {
+describe('PATCH /api/posts/* Archive Soft-Policy contract', () => {
   it('moves inbox/foo.md to archive/foo.md', async () => {
     const r = await patch('/api/posts/inbox/foo', { targetPath: 'archive/foo' })
     expect(r.status).toBe(200)
@@ -125,57 +124,45 @@ describe('PATCH /api/posts/* archive-note whitelist', () => {
     expect(await fs.stat(path.join(tmpRoot, 'archive', 'concepts', 'perm.md'))).toBeTruthy()
   })
 
-  it('refuses archive/* → inbox/* (permanent notes stay in archive)', async () => {
+  it('allows archive/* → inbox/*', async () => {
     const r = await patch('/api/posts/archive/perm', { targetPath: 'inbox/perm' })
-    expect(r.status).toBe(422)
-    expect(await fs.stat(path.join(tmpRoot, 'archive', 'perm.md'))).toBeTruthy()
-    await expect(fs.stat(path.join(tmpRoot, 'inbox', 'perm.md'))).rejects.toThrow()
+    expect(r.status).toBe(200)
+    await expect(fs.stat(path.join(tmpRoot, 'archive', 'perm.md'))).rejects.toThrow()
+    expect(await fs.stat(path.join(tmpRoot, 'inbox', 'perm.md'))).toBeTruthy()
   })
 
-  it('refuses archive rename via PATCH body.name (server backstop)', async () => {
-    // The client hides the rename menu item inside archive via canModify,
-    // but a non-UI caller hitting the API directly must still be blocked.
+  it('allows archive rename via PATCH body.name', async () => {
     const r = await patch('/api/posts/archive/perm', { name: 'renamed' })
-    expect(r.status).toBe(422)
-    expect(await fs.stat(path.join(tmpRoot, 'archive', 'perm.md'))).toBeTruthy()
-    await expect(fs.stat(path.join(tmpRoot, 'archive', 'renamed.md'))).rejects.toThrow()
+    expect(r.status).toBe(200)
+    await expect(fs.stat(path.join(tmpRoot, 'archive', 'perm.md'))).rejects.toThrow()
+    expect(await fs.stat(path.join(tmpRoot, 'archive', 'renamed.md'))).toBeTruthy()
   })
 
-  it('refuses DELETE inside archive/ (server backstop)', async () => {
-    // Same rationale as the rename guard: the client hides the menu
-    // item, but a non-UI caller hitting the API directly must be blocked.
+  it('allows DELETE inside archive/', async () => {
     const r = await del('/api/posts/archive/perm')
-    expect(r.status).toBe(422)
-    expect(await fs.stat(path.join(tmpRoot, 'archive', 'perm.md'))).toBeTruthy()
+    expect(r.status).toBe(200)
+    await expect(fs.stat(path.join(tmpRoot, 'archive', 'perm.md'))).rejects.toThrow()
   })
 
-  it('treats case-variant Archive/ prefix as archive (refuses archive → non-archive move)', async () => {
-    // isInArchive is case-insensitive on purpose: macOS APFS (the default
-    // dev filesystem) collapses case variants to the same dir at the OS
-    // level, so the protocol layer must too. Without this, a capital-A
-    // path could escape the "archive notes stay in archive" gate.
-    // Seed a file under the case-variant path and try to move it out.
+  it('does not add a case-variant archive workflow restriction', async () => {
+    // Real requests reject uppercase segments in paths.ts. This mocked path
+    // seam only checks that archive membership itself is not a write gate.
     await fs.mkdir(path.join(tmpRoot, 'Archive'), { recursive: true })
     await fs.writeFile(path.join(tmpRoot, 'Archive', 'perm.md'), '---\ntitle: P\n---\n\nbody\n', 'utf8')
     const r = await patch('/api/posts/Archive/perm', { targetPath: 'inbox/perm' })
-    expect(r.status).toBe(422)
-    expect(await fs.stat(path.join(tmpRoot, 'Archive', 'perm.md'))).toBeTruthy()
-    await expect(fs.stat(path.join(tmpRoot, 'inbox', 'perm.md'))).rejects.toThrow()
+    expect(r.status).toBe(200)
+    await expect(fs.stat(path.join(tmpRoot, 'Archive', 'perm.md'))).rejects.toThrow()
+    expect(await fs.stat(path.join(tmpRoot, 'inbox', 'perm.md'))).toBeTruthy()
   })
 
-  it('refuses projects/old.md → archive/old (source not in inbox/literature)', async () => {
-    // The user-defined `projects/` folder is user content but not part
-    // of the vault ingest flow — only inbox/ and literature/
-    // notes are eligible to be archived.
+  it('allows projects/old.md → archive/old as an ordinary move', async () => {
     const r = await patch('/api/posts/projects/old', { targetPath: 'archive/old' })
-    expect(r.status).toBe(422)
-    // File must still exist at source — the move was rejected.
-    expect(await fs.stat(path.join(tmpRoot, 'projects', 'old.md'))).toBeTruthy()
+    expect(r.status).toBe(200)
+    await expect(fs.stat(path.join(tmpRoot, 'projects', 'old.md'))).rejects.toThrow()
+    expect(await fs.stat(path.join(tmpRoot, 'archive', 'old.md'))).toBeTruthy()
   })
 
-  it('still allows ordinary inbox → literature moves (not blocked by whitelist)', async () => {
-    // The whitelist only catches moves INTO archive/. Ordinary moves
-    // between user folders must still work.
+  it('still allows ordinary inbox → literature moves', async () => {
     const r = await patch('/api/posts/inbox/foo', { targetPath: 'literature/foo' })
     expect(r.status).toBe(200)
     expect(await fs.stat(path.join(tmpRoot, 'literature', 'foo.md'))).toBeTruthy()

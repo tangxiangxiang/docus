@@ -81,7 +81,7 @@ describe('FileTree drag-move (sub-documents)', () => {
     w.unmount()
   })
 
-  it('still blocks dropping non-archive notes directly onto the archive root', async () => {
+  it('allows dropping a note directly onto the archive root', async () => {
     const patchSpy = vi.spyOn(api, 'patchPost').mockResolvedValue({
       path: 'archive/test1', title: 'test1', created: '', updated: '', tags: [], size: 0, mtime: 0,
     })
@@ -109,7 +109,7 @@ describe('FileTree drag-move (sub-documents)', () => {
     await w.vm.$nextTick()
     await flushPromises()
 
-    expect(patchSpy).not.toHaveBeenCalled()
+    expect(patchSpy).toHaveBeenCalledWith('inbox/test/test1', { targetPath: 'archive/test1' })
     w.unmount()
   })
 
@@ -175,7 +175,7 @@ describe('FileTree drag-move (sub-documents)', () => {
     w.unmount()
   })
 
-  it('blocks moving a archive note out to inbox', async () => {
+  it('allows moving an archive note out to inbox', async () => {
     const patchSpy = vi.spyOn(api, 'patchPost').mockResolvedValue({
       path: 'inbox/permanent', title: 'permanent', created: '', updated: '', tags: [], size: 0, mtime: 0,
     })
@@ -195,7 +195,7 @@ describe('FileTree drag-move (sub-documents)', () => {
     await w.vm.$nextTick()
     await flushPromises()
 
-    expect(patchSpy).not.toHaveBeenCalled()
+    expect(patchSpy).toHaveBeenCalledWith('archive/permanent', { targetPath: 'inbox/permanent' })
     w.unmount()
   })
 

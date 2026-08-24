@@ -2,6 +2,12 @@
 
 All notable changes to Docus are documented in this file.
 
+## Archive workflow — 2026-08-24
+
+- Relaxed `archive/` from a protected content subtree to a recommended organizational area.
+- Archived files and folders can now be created, renamed, moved, and deleted normally.
+- The top-level `archive` root remains reserved so the built-in Archive action keeps a stable destination.
+
 ## Markdown Rendering Maintenance — 2026-08-24
 
 ### Compatibility
