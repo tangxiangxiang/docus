@@ -12,7 +12,7 @@ import {
 const t = (key: string) => key
 
 describe('Archive Soft-Policy protocol', () => {
-  it('keeps the three top-level system roots protected', () => {
+  it('keeps the existing top-level system roots protected', () => {
     for (const root of ['inbox', 'literature', 'archive']) {
       expect(isProtectedRoot(root)).toBe(true)
       expect(canModify(root)).toBe(false)
@@ -24,6 +24,21 @@ describe('Archive Soft-Policy protocol', () => {
       expect(blockedMessage(root, 'create-file', t)).toBeNull()
       expect(blockedMessage(root, 'create-folder', t)).toBeNull()
     }
+  })
+
+  it('protects the Diary root without protecting its descendants', () => {
+    expect(isProtectedRoot('diary')).toBe(true)
+    expect(readonlyReason('diary')).toBe('root')
+    expect(canModify('diary')).toBe(false)
+    expect(canMove('diary')).toBe(false)
+    expect(blockedMessage('diary', 'rename', t)).not.toBeNull()
+    expect(blockedMessage('diary', 'delete', t)).not.toBeNull()
+    expect(blockedMessage('diary', 'move', t)).not.toBeNull()
+
+    expect(isProtectedRoot('diary/2026-08-24')).toBe(false)
+    expect(readonlyReason('diary/2026-08-24')).toBeNull()
+    expect(canModify('diary/2026-08-24')).toBe(true)
+    expect(canMove('diary/2026-08-24')).toBe(true)
   })
 
   it('does not impose an archive-specific root policy on descendants', () => {

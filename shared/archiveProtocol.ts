@@ -1,9 +1,9 @@
-// The Archive protocol reserves the three top-level folders (inbox /
-// literature / archive), but archive descendants are ordinary user content.
+// The vault protocol reserves the top-level system folders (inbox / literature
+// / archive / diary), but archive descendants are ordinary user content.
 // These predicates are pure so the Vue UI and Node server can share the same
 // root contract without turning archive membership into a permission gate.
 
-export const PROTECTED_ROOTS: ReadonlySet<string> = new Set(['inbox', 'literature', 'archive'])
+export const PROTECTED_ROOTS: ReadonlySet<string> = new Set(['inbox', 'literature', 'archive', 'diary'])
 
 /** True for any path inside the advisory archive area. */
 export function isInArchive(path: string | null | undefined): boolean {
@@ -12,7 +12,7 @@ export function isInArchive(path: string | null | undefined): boolean {
   return p === 'archive' || p.startsWith('archive/')
 }
 
-/** True for the three top-level folders that must keep their names. */
+/** True for top-level system folders that must keep their names. */
 export function isProtectedRoot(path: string | null | undefined): boolean {
   return !!path && PROTECTED_ROOTS.has(path.toLowerCase())
 }
