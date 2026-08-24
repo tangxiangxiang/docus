@@ -12,7 +12,7 @@
 - Final validation commit SHA (D3.0): `106e9ac601c4949a692dd4b11401786602d1a33c`
 - Exact candidate: `v-calendar@3.1.2`
 - Required Popper peer: `@popperjs/core@2.11.8`
-- GitHub CI: `NOT VERIFIED` (not queried for this docs-only closure)
+- GitHub status queried; no checks available (CI PASS is not claimed)
 
 This report approves the exact VCalendar candidate for the D3.1 entry gate. At the original D3.0 closure, the report itself did not implement `DiaryCalendar.vue`, Diary navigation, Vault integration, editor integration, or Diary create/open lifecycle; the separate D3.1 adapter implementation is `931828da31166d68cb7897343c695a761bf6fc80`. The later D4 browser-closure regression and its bounded workaround are recorded below without changing the historical D3.0 Gate result.
 
@@ -76,11 +76,13 @@ The official installation contract was also checked: Vue 3.2+, Popper 2+, and an
 
 ## Known Compatibility Risks
 
-The upstream [Vue 3.5 `dayIndex` issue #1498](https://github.com/nathanreyes/v-calendar/issues/1498) remains an open, reported risk. The report describes a Vue 3.5.1 runtime error in a `day-content`/DatePicker path. D3.0 exercised the exact Docus Calendar/day-content path without reproducing that failure, so #1498 remains a Known Compatibility Risk rather than an automatic failure.
+The upstream [Vue 3.5 `dayIndex` issue #1498](https://github.com/nathanreyes/v-calendar/issues/1498) remains an open, reported risk. The report describes a Vue 3.5.1 runtime error in a `day-content`/DatePicker path. At the historical D3.0 gate, the exact Docus Calendar/day-content probe did not reproduce that upstream report, so #1498 was correctly retained as a non-blocking Known Compatibility Risk and the historical Gate remained `PASS`.
 
 The upstream [issue #1514](https://github.com/nathanreyes/v-calendar/issues/1514) reports the same class of `dayIndex`/runtime problem in an environment containing `v-calendar@3.1.2` and Vue 3.5.x (the report identifies Vue 3.5.13). The reported path is primarily DatePicker and range-mode behavior. Diary MVP currently uses only the monthly `Calendar` surface; it does not use DatePicker or range product behavior.
 
-Docus's exact D3.0 stack is Vue 3.5.35 with `v-calendar@3.1.2`. The real probe verified `Calendar`, `day-content`, attributes, `customData`, `dayclick`, navigation, reactive update, and unmount/remount, and did not reproduce #1514. Therefore #1514 is a non-blocking Known Compatibility Risk, not `FAIL` and not `CONDITIONAL PASS`; the D3.0 Gate remains `PASS`.
+Docus's exact D3.0 stack is Vue 3.5.35 with `v-calendar@3.1.2`. At that historical gate, the real probe verified `Calendar`, `day-content`, attributes, `customData`, `dayclick`, navigation, reactive update, and unmount/remount without reproducing #1514. Therefore #1514 was correctly retained as a non-blocking Known Compatibility Risk, not `FAIL` and not `CONDITIONAL PASS`; the historical D3.0 Gate remains `PASS`.
+
+Post-closure current fact: D4 production integration later reproduced the same `dayIndex` failure class under the exact `v-calendar@3.1.2` + Vue 3.5.x boundary, specifically during click-triggered synchronous parent unmount. This is class-level compatibility evidence; it does not claim that Docus has proven an identical internal root cause to #1498 or #1514. The current Diary MVP still does not enter the reported DatePicker/range product path, and the Calendar lifecycle regression is mitigated by `ed47c94` and covered by the real D4 browser regression. The upstream issues therefore remain non-blocking Known Compatibility Risks under the current product scope, not evidence that the risk is unrelated, and not `FAIL` or `CONDITIONAL PASS`.
 
 If Diary later introduces DatePicker, range selection, a Vue upgrade, a VCalendar upgrade, or changes the custom day-rendering implementation, re-check #1498, #1514, and the latest relevant upstream issues at that time. The age of the `v-calendar@3.1.2` release remains a separate non-blocking maintenance risk.
 
@@ -179,7 +181,7 @@ The isolated probe and browser fixture are retained as low-coupling D3.0 regress
 - all required Calendar/MVP capabilities passed;
 - the future Mood `day-content` seam passed;
 - exact-stack typecheck, production build, Vitest/jsdom, and browser smoke passed;
-- no blocker-level runtime exception was reproduced;
+- no blocker-level runtime exception was reproduced in the historical isolated D3.0 probe;
 - Docus core versions were not downgraded.
 
 D3.0 is `REVIEW-CLOSED`; the separate D3.1 adapter implementation is `REVIEW-CLOSED` after independent review (`P0 = 0`, `P1 = 0`, `P2 = 0`). At that historical gate boundary this report did not authorize D3.2 Calendar surface, Vault integration, editor integration, or Diary create/open lifecycle.
@@ -206,10 +208,10 @@ The production workaround is confined to `src/views/VaultView.vue`:
 
 Fix commit: `ed47c94` (`fix(diary): keep calendar mounted across document open`). The focused Diary/Vault lane passed 72/72 tests; History integration passed 173/173; Recovery integration passed 193/193 after the repository's permitted elevated rerun; full typecheck, production build, and `git diff --check` passed. The temporary A–J diagnosis harness was removed; the real D4 browser test remains as the long-term regression. No `DiaryCalendar.vue`, `useDiaryDateCommand.ts`, tab/router lifecycle, server/shared code, package/lockfile, VCalendar version, Popper version, fork, or `node_modules` file changed.
 
-This follow-up does not change the historical result: D3.0 remains `REVIEW-CLOSED / PASS`. The post-closure compatibility regression is `FIXED / REVIEW-READY` with task-scoped `P0 = 0`, `P1 = 0`, `P2 = 0`; independent re-review remains pending. GitHub status for this follow-up is `NOT VERIFIED` because it was not queried.
+This follow-up does not change the historical result: D3.0 remains `REVIEW-CLOSED / PASS`. The post-closure compatibility regression is `FIXED / REVIEW-READY` with task-scoped `P0 = 0`, `P1 = 0`, `P2 = 0`; the docs-only current-fact correction is now recorded, while final independent re-review remains pending. GitHub status queried; no checks available, so CI PASS is not claimed.
 
 ## P0 / P1 / P2
 
 Independent D3.0 closure review: `P0 = 0`, `P1 = 0`, `P2 = 0`.
 
-The prior documentation P2 is closed: the baseline commit, D3.0 validation commit, exact candidate, Gate result, and both upstream risk assessments are now self-contained in this report. The upstream Vue 3.5/dayIndex reports and the 2023 candidate maintenance date remain non-blocking Known Compatibility Risks, not silently ignored and not promoted to a failure without reproduction.
+The prior documentation P2 is closed: the baseline commit, D3.0 validation commit, exact candidate, Gate result, and both upstream risk assessments are self-contained in this report. The historical D3.0 probe did not reproduce the upstream reports; the later D4 production integration did reproduce the same `dayIndex` failure class, which is recorded in the post-closure follow-up above and mitigated by `ed47c94`. The upstream reports and the 2023 candidate maintenance date remain non-blocking Known Compatibility Risks under the current scope. Docs-only follow-up self-review: `P0 = 0`, `P1 = 0`, `P2 = 0`; final independent re-review remains pending.
