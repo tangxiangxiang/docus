@@ -1,6 +1,8 @@
 # Diary Calendar PRD
 
-状态：`REVIEW-READY`（VCalendar/Mood 架构修订；需独立 review；仅完成 PRD、仓库现状审计与技术可行性确认）
+状态：`REVIEW-READY`（VCalendar preferred candidate；D3 exact-stack compatibility gate pending；仅完成 PRD、仓库现状审计与技术可行性确认，未验证 runtime compatibility）
+
+PRD review status：`P0 = 0`、`P1 = 0`、`P2 = 0`。这表示 compatibility gate contract 已补齐，不表示 VCalendar runtime compatibility 已通过。
 
 日期：2026-08-24
 范围：Diary 产品模型、存储协议、日历交互、编辑器复用与实施边界
@@ -71,7 +73,7 @@ Diary 的产品限制是日期领域规则，不是新的文件系统权限模�
 | [`src/components/vault/FileTree.vue`](../../src/components/vault/FileTree.vue) | 当前 tree 通过 shared root protocol 保护已有系统 roots；root drop 与 folder re-parent 也有 defensive guard | Diary Calendar 不替换 FileTree；后续 Diary 规则需在 UI 入口与 server/domain guard 一致执行 |
 | `src/components/`、`src/views/`、`src/composables/` | 没有 Diary Calendar 或 Diary editor | 后续只新增 Calendar 视图/组件，不复制编辑器生命周期 |
 | `src/content/` | 当前没有 `diary/` 根目录 | 启动 seed 需要补充固定根目录，并同时修正 dev/prod 一致性 |
-| `package.json` | 当前没有 `v-calendar`、`@popperjs/core` 或 Schedule-X 依赖 | 本阶段不安装依赖；实现时按锁定的官方 VCalendar 文档处理 |
+| `package.json` | 当前没有 `v-calendar`、`@popperjs/core` 或 Schedule-X 依赖；当前 Docus 以 Vue 3.5、Vite 8、TypeScript 6 为技术栈方向 | 本阶段不安装依赖；D3 entry 必须按 package.json 与 lockfile 重新解析精确 toolchain，并在 candidate 明确 pin 后再集成 |
 
 ### 3.2 路径与文件身份
 
@@ -373,6 +375,7 @@ MVP 的视觉语义是：
 - month navigation 使用 VCalendar 原生 header/navigation；Today 是 Docus 提供的明确 action，可放在 Calendar footer 或外部 toolbar。
 - 保留 VCalendar 的 day focus/keyboard navigation，并确保 `●` 不承担唯一语义：day cell 应有“YYYY 年 M 月 D 日，已写日记/无日记”的可访问名称。
 - Calendar wrapper 应提供稳定宽度；mobile 端使用单月、单列、expanded 的布局策略，避免横向滚动和过小的触控目标。
+- 上述产品与 presentation 设计不等于 VCalendar 已获 runtime approval；完整 Calendar integration 必须先通过第 9.3 节的 exact-stack compatibility gate。
 
 ## 7. 编辑器与生命周期集成
 
@@ -499,13 +502,13 @@ request 概念字段：
 
 ### 9.1 ADR 决策
 
-**Decision：MVP 使用 VCalendar。**
+**Decision：VCalendar 是 MVP 的 preferred candidate，subject to a mandatory exact-stack compatibility gate before D3 integration。**
 
 Diary 的数据模型是 Date → Diary exists?，不是带 start/end/duration/resize/recurrence 的 Event。VCalendar 的 date-centric attributes 更贴合某天是否存在内容的状态表达，也更自然地为未来 Mood day-cell rendering 留出空间。
 
 | Library | Fit | Trade-off | Decision |
 | --- | --- | --- | --- |
-| VCalendar | Date attributes、dots、customData、day-content 和月视图直接对应 DiaryDay | VCalendar 使用 JavaScript Date/string；需要本地日期 adapter，响应式布局由外层负责 | Selected for MVP |
+| VCalendar | Date attributes、dots、customData、day-content 和月视图直接对应 DiaryDay | VCalendar 使用 JavaScript Date/string；需要本地日期 adapter，响应式布局由外层负责；真实 Vue/Vite/TypeScript runtime 尚未验证 | Preferred candidate for MVP; pending gate |
 | Schedule-X | 技术上可实现 Calendar 导航 | Event scheduling abstraction 超出 MVP；不需要 time slots、duration、drag、recurrence；未来 Mood 更需要 date-cell rendering | Rejected / not selected for MVP |
 | FullCalendar | 成熟的日历与事件生态 | 同样偏 event-centric，产品表面积和事件语义超过 Diary 需要 | Not selected |
 | Custom Docus Calendar | 可完全控制 EMMO/Mood cell、视觉和交互 | 当前没有必要承担自研 Calendar 的实现与可访问性成本 | Future possibility |
@@ -514,10 +517,10 @@ Schedule-X 不是技术不可行，而是当前 Diary MVP 的 abstraction 偏重
 
 ### 9.2 当前官方 VCalendar 能力核对
 
-本审计以当前官方文档为准，不锁死易过期的 package version：
+本审计以当前官方文档为准，不锁死易过期的 package version。这里必须区分 package peer compatibility 与 runtime compatibility：
 
-- Vue compatibility：官方安装页要求 Vue.js 3.2+；当前仓库使用 Vue 3，版本方向兼容。
-- Package requirements：官方安装页列出 v-calendar 与 @popperjs/core，并要求显式导入 v-calendar/style.css；实现阶段再按 lockfile 安装，不在本阶段变更依赖。
+- Vue compatibility：官方安装页要求 Vue.js 3.2+；这只能说明 Vue peer/dependency-resolution 方向覆盖 Vue 3.5，不能证明 Docus 当前 Vue 3.5.x + Vite 8 + TypeScript 6 的 runtime、build 或 test 已兼容。
+- Package requirements：官方安装页列出 v-calendar 与 @popperjs/core，并要求显式导入 v-calendar/style.css；实现阶段必须先核对 candidate 的官方 Vue 3 package line、npm dist-tags/release、peerDependencies 与 maintenance status，再明确版本后安装；本阶段不变更依赖。
 - Calendar API：VCalendar 支持 monthly view、attributes、locale、timezone、initial-page、rows、columns、expanded 和 trim-weeks 等 props。
 - Date click：dayclick 事件提供 CalendarDay 与鼠标事件；adapter 从 CalendarDay 的本地 fields 生成并校验 DiaryDate。
 - Attributes：attribute 可使用 dates、dot、highlight、content、customData 和 order，正好覆盖 Diary existence marker 与未来 day-state 扩展。
@@ -527,9 +530,94 @@ Schedule-X 不是技术不可行，而是当前 Diary MVP 的 abstraction 偏重
 - Timezone：官方默认使用 browser local timezone；Diary 仍必须以 local date/DiaryDate 为身份，不能使用 UTC serialization。
 - License：官方项目页面标注 MIT；实现时不引入 premium 功能或额外的事件调度层。
 
-参考官方资料：[Installation](https://vcalendar.io/getting-started/installation.html)、[Calendar API](https://vcalendar.io/calendar/api.html)、[Attributes](https://vcalendar.io/calendar/attributes)、[Navigation](https://vcalendar.io/calendar/navigation)、[Locales](https://vcalendar.io/i18n/locales.html)、[Layouts](https://vcalendar.io/calendar/layouts) 和 [VCalendar homepage](https://vcalendar.io/)。
+参考官方资料：[Installation](https://vcalendar.io/getting-started/installation.html)、[Calendar API](https://vcalendar.io/calendar/api.html)、[Attributes](https://vcalendar.io/calendar/attributes)、[Navigation](https://vcalendar.io/calendar/navigation)、[Locales](https://vcalendar.io/i18n/locales.html)、[Layouts](https://vcalendar.io/calendar/layouts) 和 [VCalendar homepage](https://vcalendar.io/)。这些资料用于确认 API 方向；它们不替代 Docus exact-stack spike。
 
-### 9.3 Responsive 决策
+### 9.3 VCalendar Compatibility Gate
+
+VCalendar 目前是 `preferred candidate`，不是已经通过 runtime 验证的 implementation dependency。Compatibility Gate 必须发生在真正的 Diary Calendar implementation 之前，作为 D3 的第一小步 `D3.0`；D0 本次 docs-only follow-up 不安装 VCalendar，也不执行 spike。
+
+#### D3.0 — Exact-stack validation
+
+进入 D3 时，必须从当时实际的 `package.json` 与 lockfile 解析 Docus 的精确技术栈，而不能只写“Vue 3”：
+
+| Toolchain | 当前审计快照（仅供基线参考） | D3 gate 要做什么 |
+| --- | --- | --- |
+| Vue | `package.json` 声明 `^3.5.34`；当前 lockfile resolved `3.5.35` | 重新确认实际 resolved version，并验证 mount/runtime |
+| Vite | `package.json` 声明 `^8.0.12`；当前 lockfile resolved `8.0.16` | 重新确认实际 resolved version，并验证 production build |
+| TypeScript | `package.json` 声明 `~6.0.2`；当前 lockfile resolved `6.0.3` | 重新确认实际 resolved version，并验证 client typecheck |
+| `@vitejs/plugin-vue` | `package.json` 声明 `^6.0.6`；当前 lockfile resolved `6.0.7` | 验证 Vue SFC transform/build integration |
+| `vue-tsc` | `package.json` 声明 `^3.2.8`；当前 lockfile resolved `3.3.3` | 验证 Calendar wrapper 的 client typecheck |
+| Vitest / jsdom | `package.json` 声明 `^4.1.8` / `^29.1.1`；当前 lockfile resolved `4.1.8` / `29.1.1` | 验证 component test environment 下的 mount/unmount/reactivity |
+
+上表中的 resolved version 是本次 PRD 审计时的 lockfile snapshot，不是未来 D3 的预先 pin；D3 entry 必须重新读取当时的仓库状态。若 Docus 在 D3 前升级，gate 以升级后的真实 resolution 为准。
+
+在任何安装或集成动作前，D3 必须依次完成：
+
+1. 确认官方当前 Vue 3 package line，而不是沿用 legacy Vue 2 line 或模糊 tag。
+2. 检查当前 npm dist-tags 与 release 信息。
+3. 检查 candidate 的 `peerDependencies`，并与上表 exact Docus stack 对照。
+4. 检查 candidate 的 package maintenance status 和官方安装要求。
+5. 明确 candidate version/tag，并记录选择依据。
+6. 只安装已明确的 candidate，例如 `npm install v-calendar@<verified-vue3-version>`；禁止执行无版本的 `npm install v-calendar`，不能让 npm 默认 dist-tag 决定 architecture。
+7. 只有 candidate 需要时才按该版本官方要求加入 `@popperjs/core`；不能从旧版文档推断所有版本依赖完全相同。
+
+随后创建一个最小、可丢弃的 compatibility spike。它不是完整 D3，也不应改变 Diary domain、server contract、editor lifecycle 或 Mood MVP 范围。Spike 至少验证：
+
+- Calendar component mount。
+- basic monthly view render。
+- previous month 和 next month。
+- attributes、dot indicator、customData。
+- day click，以及 Calendar date → local `DiaryDate` adapter。
+- `day-content` 或当时官方等价的 custom day rendering seam。
+- locale、first-day-of-week/masks 所需的 locale integration。
+- mobile/narrow-width render。
+- dark/light appearance integration。
+- Vue unmount/remount。
+- reactive attributes update。
+- production build。
+- client typecheck。
+- Vitest/jsdom component test。
+- browser smoke test。
+
+`day-content` 不是 Diary MVP 首屏 dot 的必要依赖，但它是未来 Mood day-cell rendering 的架构依据。因此，basic Calendar 能工作而 custom day rendering seam 崩溃或不可用，不能被记录为最终 `PASS`。
+
+#### Gate result
+
+**PASS**：candidate 能在当前 Docus exact stack 稳定 mount；monthly navigation、attributes/dot、dayclick、reactive indicator、locale、narrow/mobile render、typecheck、production build、Vitest/jsdom component test 和 browser smoke 均通过；custom day rendering seam 可用；没有 blocker-level runtime crash。结果是继续 `D3.1 — Calendar adapter integration` 和后续 D3。
+
+**CONDITIONAL PASS**：基础 Calendar 与 MVP 所需能力通过，但存在已知、可界定的非 MVP 限制。只有当该限制不影响 MVP，也不破坏未来 Mood architecture 时才允许；必须记录 exact limitation、workaround 和 future impact，不能静默忽略。
+
+**FAIL**：出现 Vue 3.5 runtime crash、mount 不稳定、attributes/dayclick 失效、custom rendering seam 不可用、typecheck integration 根本不兼容、production build blocker 或 production runtime blocker。此时停止完整 D3，新增 Calendar ADR follow-up 并重新评估候选，不为了保住 VCalendar 默认 downgrade Vue/Vite/TypeScript。
+
+Fallback 评估顺序只能作为后续 ADR 的候选顺序，不在本 PRD 预先选 winner：
+
+1. 当前仍在维护且与 exact stack 兼容的 VCalendar line/fork。
+2. 轻量 Vue date-calendar alternative。
+3. Custom Docus Diary Calendar。
+4. 只有 Diary 产品演化为 event/calendar scheduling 时，才重新评估 Schedule-X。
+
+官方 repository 或 issue tracker 中关于 Vue 3.5、`day-content`、`dayIndex`、DatePicker 或 range 的报告，应先记录为 `Known Compatibility Risk` 并由 spike 复现；外部 issue report 本身不等于 Docus 已确认 incompatible。
+
+当前 D0 状态：`PENDING`。尚未安装 candidate、尚未执行 compatibility spike，因此不能写成 VCalendar compatibility verified 或 gate PASS。
+
+### 9.4 Compatibility validation matrix
+
+以下是 D3 entry/release criteria，不是本次 docs-only commit 的执行结果：
+
+| Capability | Required for MVP | Required for future Mood | Gate |
+| --- | --- | --- | --- |
+| Monthly render | YES | YES | PASS required |
+| Prev/next month | YES | YES | PASS required |
+| Day click | YES | YES | PASS required |
+| Attributes | YES | YES | PASS required |
+| Dot indicator | YES | NO | PASS required |
+| `customData` | Preferred | YES | Validate |
+| `day-content` / custom rendering | NO for first MVP | YES | PASS required before final library approval |
+| Locale | YES | YES | PASS required |
+| Narrow/mobile render | YES | YES | PASS required |
+| Typecheck/build | YES | YES | PASS required |
+
+### 9.5 Responsive 决策
 
 VCalendar 的 monthly view 在 desktop 和 mobile 保持同一产品模型，不新增 Month Agenda：
 
@@ -539,19 +627,20 @@ VCalendar 的 monthly view 在 desktop 和 mobile 保持同一产品模型，不
 - 目标 touch target 至少 44×44 CSS px；通过实际设备检查 cell、prev/next、Today 和 date click。
 - 禁止横向滚动和依赖 hover 才可见的 Diary indicator。
 
-### 9.4 计划中的依赖
+### 9.6 计划中的依赖
 
-实现阶段按官方当前安装说明和仓库 package manager resolution 增加依赖，不在本 PRD 阶段安装或锁死版本。预计核心依赖为：
+实现阶段按第 9.3 节 gate 的 candidate resolution 增加依赖，不在本 PRD 阶段安装或锁死版本。候选版本可能需要：
 
 - `v-calendar`
-- `@popperjs/core`
+- `@popperjs/core`（仅当该 candidate 的官方安装要求需要）
 
 样式需要显式导入 `v-calendar/style.css`。VCalendar import 只能出现在 Calendar adapter/presentation 层；Diary domain、server、API、path protocol 和 domain tests 不得 import VCalendar。
 
-### 9.5 风险与缓解
+### 9.7 风险与缓解
 
 | 风险 | 影响 | 缓解 |
 | --- | --- | --- |
+| VCalendar / Vue 3.5 compatibility | Vue peer range 只说明 dependency resolution 方向，不保证 Docus 当前 Vue/Vite/TypeScript stack 的 runtime、build 或 test；VCalendar 历史上存在多个 release line，外部 issue report 也可能提示 Vue 3.5 相关风险 | 在完整 D3 前执行 exact-stack Compatibility Gate；不为 Calendar integration 降级 Docus core stack；外部报告先记录为 risk，只有 spike 复现才升级为 blocker |
 | VCalendar 使用 JavaScript Date/string | 可能发生 UTC 或本地日界线偏移 | 明确 Calendar date → local fields → DiaryDate adapter；禁止 `toISOString()` |
 | v3 没有内置 `$screens` | mobile layout 不能靠 library 自动完成 | Docus CSS/media query、expanded 和 touch target contract；实现阶段做真实 viewport 检查 |
 | attributes 与 fileChanges 不同步 | dot 状态过期 | 以 `listPosts()`/tree refresh/fileChanges 重新生成 DiaryDay[]，不维护第二份事实源 |
@@ -603,11 +692,13 @@ Diary 的用户文案应解释“按日期进入文档”，而不是制造第�
 - 允许 valid date 的 edit/delete；拒绝 managed date rename/move、generic create、nested folder create。
 - 保留现有 path/auth/atomic/history/recovery checks。
 
-### D3 — Calendar surface
+### D3 — Calendar surface（gated）
 
-- 接入 VCalendar monthly view，并将 library 隔离在 DiaryCalendar adapter。
-- 加载有效 Diary dates，使用 attributes/dot，接 Today、month navigation、day click。
-- 保留 local date normalization；不把 Diary 映射为 event card，也不引入 event scheduling 能力。
+D3 必须从 compatibility spike 开始，未通过第 9.3 节 gate 不能进入完整 Calendar integration：
+
+- **D3.0 — VCalendar Compatibility Gate**：按当时实际 `package.json`/lockfile 解析 exact Docus stack，明确并 pin candidate version/tag，完成 isolated spike；不使用无版本 `npm install v-calendar`。
+- **D3.1 — Calendar adapter integration**：只有 `PASS`，或记录完整 limitation/workaround/future impact 且不伤害 MVP 与 Mood architecture 的 `CONDITIONAL PASS`，才能把 VCalendar 接入 `DiaryCalendar` adapter。
+- **D3.2 — Monthly Diary surface**：加载有效 Diary dates，使用 attributes/dot，接 Today、month navigation、day click；保留 local date normalization，不把 Diary 映射为 event card，也不引入 event scheduling 能力。
 
 ### D4 — Vault editor/lifecycle integration
 
@@ -646,7 +737,29 @@ Diary 的用户文案应解释“按日期进入文档”，而不是制造第�
 - protected root rename/delete/move 仍失败。
 - auth、CSRF/origin、path traversal、absolute path、symlink/junction、root escape regression 保持通过。
 
-### 12.3 Calendar/UI tests
+### 12.3 VCalendar Compatibility Gate tests（D3 entry/release criteria）
+
+以下 checkbox 是后续 D3 entry/release criteria，不是当前 docs-only commit 的执行结果：
+
+- [ ] VCalendar Vue 3 candidate version/tag 在安装前已明确解析并记录依据。
+- [ ] 未执行无版本的 `npm install v-calendar`。
+- [ ] candidate `peerDependencies` 已检查，并与 Docus exact Vue/Vite/TypeScript stack 对照。
+- [ ] official Vue 3 package line、npm dist-tags/release 和 maintenance status 已核对。
+- [ ] exact Docus stack compatibility 已通过 isolated spike 验证。
+- [ ] basic monthly Calendar mount/render 通过。
+- [ ] previous/next month 通过。
+- [ ] attributes、dot indicator 和 `customData` 通过。
+- [ ] dayclick 与 local `DiaryDate` adapter 通过。
+- [ ] reactive Diary indicator update 通过。
+- [ ] `day-content` 或当时官方等价的 custom day rendering seam 通过。
+- [ ] locale、narrow/mobile render 和 dark/light appearance integration 通过。
+- [ ] Vue unmount/remount 通过。
+- [ ] client typecheck、production build、Vitest/jsdom component test 和 browser smoke test 通过。
+- [ ] 没有 blocker-level runtime exception。
+- [ ] 没有为了 VCalendar 降级 Docus core Vue/Vite/TypeScript stack。
+- [ ] 若 gate FAIL，已停止完整 D3 并创建 Calendar ADR follow-up，而不是隐藏 workaround。
+
+### 12.4 Calendar/UI tests
 
 - 已有日期显示 marker；没有文档的日期不显示 marker。
 - 点击 existing/today/past/future 四种状态进入正确 state machine。
@@ -656,14 +769,14 @@ Diary 的用户文案应解释“按日期进入文档”，而不是制造第�
 - Calendar 复用现有 `openPost`，不会创建 DiaryEditor 或平行 tab/save state。
 - create/delete/refresh/fileChanges 会增删 marker，且当前 tab/route/selection 正确。
 - desktop/mobile monthly view 可用；日期 cell、dot、Today、prev/next 可通过键盘和辅助技术理解。
-- Calendar library selected = VCalendar；Schedule-X not used in MVP。
+- Calendar library = VCalendar preferred candidate subject to Compatibility Gate；Schedule-X not used in MVP。
 - Diary domain 与 server/domain tests 不 import VCalendar；VCalendar 只存在于 Calendar wrapper/adapter。
 - `hasDiary` 映射为轻量 date indicator，不渲染 event cards。
 - `dayclick` 经过 local date adapter 后 emit validated `DiaryDate`。
 - date conversion 不经过 UTC ISO serialization。
 - future Mood rendering 可以在不改变 Diary identity 的情况下加入；Mood 不在 MVP 实现。
 
-### 12.4 回归 tests
+### 12.5 回归 tests
 
 - `note` scope 仍只包含 inbox/literature/archive；`diary` scope 仍独立。
 - Archive action、archive collision suffix、archive file CRUD/move 和 protected roots 不变。
@@ -680,6 +793,7 @@ Diary 的用户文案应解释“按日期进入文档”，而不是制造第�
 5. **新日期初始 Markdown？** 推荐沿用现有 `POST /api/posts` 的 `# YYYY-MM-DD\n` 行为，避免新增 template engine；替代方案是空文档，优点是更安静，缺点是与当前 create semantics 不一致。
 6. **是否首期增加 range API？** 推荐不增加，先复用 `listPosts()` 并按严格 Diary path 过滤；只有数据规模证明全量 posts 不足时再新增 range endpoint。
 7. **Future Mood 的 storage location？** 推荐未来优先复用 Docus 现有 metadata architecture；frontmatter 可作为兼容方案，但不建立独立 Mood DB。本问题不阻塞当前 MVP。
+8. **Which exact VCalendar Vue-3 release should D3 pin？** 推荐在 D3 compatibility spike 时结合 official docs、npm dist-tags、candidate `peerDependencies`、maintenance status 与 Docus 当前 exact stack 选择并 pin；不在本 PRD 阶段提前写死可能过期的版本号。版本解析属于 D3 entry gate，不阻塞当前 PRD 产品 review。
 
 ## 14. 完成定义
 
@@ -691,17 +805,22 @@ Diary 的用户文案应解释“按日期进入文档”，而不是制造第�
 - [x] 已定义 `diary/` root、valid managed date、invalid unmanaged content 三类边界。
 - [x] 已定义 one/day、no suffix、today/past/future 和 local date 规则。
 - [x] 已定义 Calendar 与现有 editor/history/recovery 的复用边界。
-- [x] 已核实 VCalendar 官方 Vue compatibility、monthly API、dayclick、attributes/dots/customData、day-content、locale、navigation、responsive 限制与 MIT 许可。
+- [x] 已核实 VCalendar 官方 API 方向、monthly API、dayclick、attributes/dots/customData、day-content、locale、navigation、responsive 限制与 MIT 许可；没有把文档能力核对写成 runtime compatibility 通过。
+- [x] 已明确 package peer/dependency-resolution compatibility 不等于 Docus exact-stack runtime/build/test compatibility。
+- [x] 已定义 D3.0 VCalendar Compatibility Gate、isolated spike、PASS/CONDITIONAL PASS/FAIL 与失败后的 Calendar ADR 流程。
+- [x] 已明确禁止无版本 `npm install v-calendar`，并要求在 D3 entry 解析、核对和 pin candidate version/tag。
 - [x] 已明确 Schedule-X 仅作为 rejected/not selected for MVP 记录，没有残留其 implementation API 或 event model。
 - [x] 已定义 Diary domain 与 VCalendar 解耦，VCalendar 只存在于 DiaryCalendar adapter。
 - [x] 已预留 DiaryDay 的 future Mood 字段与 day-cell rendering seam，但没有把 Mood 放入 MVP。
 - [x] 已定义 generic API、folder API、AI 工具不能绕过 Diary domain guard。
 - [x] 已列出实施阶段、测试矩阵、风险与 open questions。
+- [x] 本次 follow-up 未安装 VCalendar、未执行 compatibility spike、未修改生产代码、测试、依赖或 lockfile。
+- [ ] VCalendar candidate 已在 D3 entry 通过 exact-stack compatibility gate。
 - [ ] 生产代码、测试、依赖和 lockfile 已实现并验证（不属于本阶段）。
 
 ## 15. 评审结论
 
-Diary 在当前 Docus 架构中技术可行，最小正确路径是“新增日期领域规则 + 复用现有 Markdown lifecycle + VCalendar adapter 作为可替换的导航 UI”。关键不可妥协的边界是：
+Diary 在当前 Docus 架构中产品与架构上可行，最小正确路径是“新增日期领域规则 + 复用现有 Markdown lifecycle + 通过 exact-stack gate 后使用 VCalendar adapter 作为可替换的导航 UI”。关键不可妥协的边界是：
 
 1. `diary/` root 固定保留，但不把整个 subtree 做成 filesystem readonly。
 2. 日期文档的 logical path 是 `diary/YYYY-MM-DD`，physical file 才是 `.md`。
@@ -711,5 +830,6 @@ Diary 在当前 Docus 架构中技术可行，最小正确路径是“新增日�
 6. 所有入口（UI、server、AI）共享同一个 domain contract。
 7. Archive、note scope、filesystem/auth/history/recovery 和现有 Vault lifecycle 不因 Diary 设计被放宽或重写。
 8. VCalendar 只负责绘制日期状态；未来 Mood 可从 `24 ●` 演进到 `24 😊`，但不改变 Diary filename identity。
+9. VCalendar 只有在当前 Docus exact Vue/Vite/TypeScript stack 的 compatibility gate 通过后，才能从 preferred candidate 进入 D3 implementation dependency；失败时必须走 Calendar ADR，不得降级 Docus core stack 迁就它。
 
-本文件完成的是设计与审计，不代表 Diary 已经实现，也不代表 VCalendar 依赖已经加入仓库。
+本文件完成的是设计、审计与 compatibility gate contract，不代表 Diary 已经实现，也不代表 VCalendar runtime compatibility 已通过或依赖已经加入仓库。
