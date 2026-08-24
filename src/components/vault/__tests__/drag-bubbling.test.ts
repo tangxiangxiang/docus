@@ -55,8 +55,9 @@ describe('FileTree full drag flow (with bubbling)', () => {
     w.unmount()
   })
 
-  it('dragging a sub-folder onto a sibling folder keeps the sub-folder path', async () => {
-    // Extend the tree with a sibling sub-folder so the move is observable.
+  it('does not start a drag from a folder because folder re-parenting is unsupported', async () => {
+    // Extend the tree with a sibling sub-folder to make the capability
+    // boundary explicit without adding a folder move API.
     const TREE2: TreeNode[] = [
       {
         kind: 'folder', name: 'content', path: '', children: [
@@ -82,15 +83,11 @@ describe('FileTree full drag flow (with bubbling)', () => {
     await w.vm.$nextTick()
 
     const testRow = rowByLabel(w.findAll('li.tree-row'), 'test')
-    const notesRow = rowByLabel(w.findAll('li.tree-row'), 'notes')
-
     const dt = makeDT()
     await testRow.trigger('dragstart', { dataTransfer: dt })
     await w.vm.$nextTick()
 
-    // If dragstart bubbled to inbox, payload would be 'inbox' not 'inbox/test'.
-    expect(dt.getData('text/x-docus-path')).toBe('inbox/test')
-    void notesRow
+    expect(dt.getData('text/x-docus-path')).toBe('')
     w.unmount()
   })
 

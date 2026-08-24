@@ -605,6 +605,14 @@ describe('write routes update the index', () => {
       expect(remove.status, folder).toBe(422)
     }
 
+    // Folder lifecycle remains same-parent rename only. Archive soft-policy
+    // does not add a cross-parent folder re-parent capability.
+    const crossParent = await fetchApp(new Request('http://localhost/api/folders/archive/organized', {
+      method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ newPath: 'inbox/organized' }),
+    }))
+    expect(crossParent.status).toBe(422)
+
     const renameChild = await fetchApp(new Request('http://localhost/api/folders/archive/organized', {
       method: 'PATCH', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ newPath: 'archive/renamed' }),

@@ -28,7 +28,13 @@ export function canModify(path: string | null | undefined): boolean {
   return !!path && !isProtectedRoot(path)
 }
 
-/** True for entries that can be dragged or re-parented. */
+/**
+ * True when the protected-root policy allows a move for this path.
+ *
+ * This is intentionally a path-only policy predicate. It does not claim that
+ * every entity kind has a move capability: files are currently draggable,
+ * while folders do not have a general re-parent operation in Docus.
+ */
 export function canMove(path: string | null | undefined): boolean {
   return !!path && !isProtectedRoot(path)
 }

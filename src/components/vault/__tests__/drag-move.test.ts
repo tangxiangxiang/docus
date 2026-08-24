@@ -21,7 +21,11 @@ const TREE: TreeNode[] = [
           },
         ],
       },
-      { kind: 'folder', name: 'literature', path: 'literature', children: [] },
+      {
+        kind: 'folder', name: 'literature', path: 'literature', children: [
+          { kind: 'folder', name: 'reference', path: 'literature/reference', children: [] },
+        ],
+      },
       {
         kind: 'folder', name: 'archive', path: 'archive', children: [
           { kind: 'file', name: 'permanent', path: 'archive/permanent', title: 'Permanent', mtime: 0 },
@@ -38,6 +42,27 @@ describe('FileTree drag-move (sub-documents)', () => {
   beforeEach(() => {
     localStorage.clear()
     vi.restoreAllMocks()
+  })
+
+  it('does not expose folder re-parent drag for ordinary or archive folders', async () => {
+    const w = mount(FileTree, { props: { tree: TREE, currentPath: null }, attachTo: document.body })
+    await w.vm.$nextTick()
+
+    const inbox = rowByLabel(w.findAll('li.tree-row'), 'inbox')
+    const literature = rowByLabel(w.findAll('li.tree-row'), 'literature')
+    const archive = rowByLabel(w.findAll('li.tree-row'), 'archive')
+    await inbox.find('.chevron').trigger('click')
+    await literature.find('.chevron').trigger('click')
+    await archive.find('.chevron').trigger('click')
+    await w.vm.$nextTick()
+
+    expect(rowByLabel(w.findAll('li.tree-row'), 'test', 'folder').attributes('draggable')).toBe('false')
+    expect(rowByLabel(w.findAll('li.tree-row'), 'reference', 'folder').attributes('draggable')).toBe('false')
+    expect(rowByLabel(w.findAll('li.tree-row'), 'concepts', 'folder').attributes('draggable')).toBe('false')
+    expect(inbox.attributes('draggable')).toBe('false')
+    expect(archive.attributes('draggable')).toBe('false')
+    expect(rowByLabel(w.findAll('li.tree-row'), 'permanent', 'file').attributes('draggable')).toBe('true')
+    w.unmount()
   })
 
   it('drops a sub-document onto its top-level inbox folder', async () => {

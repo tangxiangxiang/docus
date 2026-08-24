@@ -26,7 +26,7 @@ describe('Archive Soft-Policy protocol', () => {
     }
   })
 
-  it('treats archive descendants as ordinary editable content', () => {
+  it('does not impose an archive-specific root policy on descendants', () => {
     expect(isInArchive('archive/foo.md')).toBe(true)
     expect(isInArchive('archive/folder/foo.md')).toBe(true)
     expect(isProtectedRoot('archive/foo.md')).toBe(false)
@@ -36,6 +36,9 @@ describe('Archive Soft-Policy protocol', () => {
     expect(canModify('archive/foo.md')).toBe(true)
     expect(canModify('archive/folder/foo.md')).toBe(true)
     expect(canMove('archive/foo.md')).toBe(true)
+    // canMove() answers only whether the root policy blocks this path. The
+    // current entity capability is applied by the FileTree UI: files can be
+    // dragged, while folders do not support general re-parenting.
     expect(canMove('archive/folder')).toBe(true)
     expect(canCreateFileChild('archive')).toBe(true)
     expect(canCreateFileChild('archive/folder')).toBe(true)

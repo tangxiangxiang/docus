@@ -21,7 +21,9 @@ The roots themselves cannot be renamed, deleted, or moved. Missing roots are cre
 `archive/` is a recommended organizational area for inactive content, not an immutable or compliance archive:
 
 - The top-level `archive` directory is reserved by Docus so the built-in Archive action has a stable destination.
-- Files and folders inside `archive/` are ordinary user content. They can be created, edited, renamed, deleted, and moved within or out of the archive.
+- `archive/` descendants follow the same file and folder operations available to ordinary Docus content.
+- Files can be created, edited, renamed, deleted, and moved within or out of the archive.
+- Folders can be created, renamed, and deleted normally. General folder re-parenting is not currently a Docus capability.
 - Content from any otherwise-legal location can be moved into `archive/`.
 - The built-in Archive action remains a convenience workflow and defaults to `archive/<filename>`, with its existing collision suffix handling.
 

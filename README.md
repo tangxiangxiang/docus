@@ -64,7 +64,7 @@ src/content/
 └── archive/     recommended area for inactive notes
 ```
 
-The three roots are reserved by Docus and cannot be renamed, deleted, or moved. `archive/` is a recommended organizational area for inactive content: notes inside it remain ordinary editable files and can be created, renamed, deleted, or moved normally. The built-in Archive action is a convenience workflow that defaults to `archive/<filename>`. See [Vault and Archive Protocol](docs/user-guide/vault.md).
+The three roots are reserved by Docus and cannot be renamed, deleted, or moved. `archive/` is a recommended organizational area whose descendants follow the same file and folder capabilities as ordinary Docus content: files can be created, edited, renamed, deleted, and moved normally; folders can be created, renamed, and deleted normally. General folder re-parenting is not currently a Docus capability. The built-in Archive action is a convenience workflow that defaults to `archive/<filename>`. See [Vault and Archive Protocol](docs/user-guide/vault.md).
 
 ## Production Deployment
 

@@ -15,7 +15,7 @@ A document's path can change while its metadata and draft identity remain associ
 5. Commit the mutation and any reference rewrites.
 6. Update client state using the server result.
 
-Folder moves use a durable journal because one folder can contain many documents and metadata identities. Recovery validates that a journal still owns the paths it describes before replaying or rolling it back.
+Folder rename transactions use a durable journal because one folder can contain many documents and metadata identities. Recovery validates that a journal still owns the paths it describes before replaying or rolling it back.
 
 ## Reference updates
 
@@ -28,7 +28,8 @@ The shared archive protocol is enforced on both client and server:
 - `inbox`, `literature`, and `archive` are reserved top-level roots;
 - the roots themselves cannot be renamed, deleted, or re-parented;
 - `archive/` is a recommended organizational area, not a permission boundary;
-- descendants of `archive/` use ordinary document and folder CRUD/move lifecycle rules;
+- descendants of `archive/` use the same file and folder lifecycle rules as ordinary Docus content;
+- files can use the existing move workflow, while folders retain create/rename/delete and do not support general cross-parent re-parenting;
 - the built-in Archive action defaults to `archive/<filename>` and retains collision handling.
 
 The server remains authoritative even if a client bypasses the interface. Filesystem confinement, authentication, history, recovery, and lifecycle safety remain independent of archive membership.

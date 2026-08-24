@@ -399,6 +399,8 @@ async function onRootDrop(e: DragEvent) {
   rootDragDepth.value = 0
   if (!src) return
   if (srcKind === 'folder') {
+    // Folder re-parenting is not currently a Docus capability. TreeRow only
+    // exposes file drags, but keep this guard for synthetic/custom payloads.
     toast.error(t('file_tree.move_failed', { error: 'folder move is not supported' }))
     return
   }
@@ -608,6 +610,8 @@ async function onMove(srcPath: string, targetFolder: string, srcKind: 'file' | '
     if (msg) { toast.error(msg); return }
   }
   if (srcKind === 'folder') {
+    // Folder re-parenting is not currently a Docus capability. This remains
+    // a defensive backstop even though normal UI folder rows are not draggable.
     toast.error(t('file_tree.move_failed', { error: 'folder move is not supported' }))
     return
   }

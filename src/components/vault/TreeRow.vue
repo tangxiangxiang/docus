@@ -100,7 +100,11 @@ function showHoverCard(event: MouseEvent) {
 // entries are protected; descendants, including archive content, use ordinary
 // user-content CRUD rules. Folder creation is available for every folder row.
 const canModifyRow = computed(() => canModify(props.node.path))
+// canMoveRow is the shared protected-root policy only. The current Docus
+// move capability is file-only: folders retain same-parent rename/delete and
+// child creation, but do not expose general drag/re-parenting.
 const canMoveRow = computed(() => canMove(props.node.path))
+const canDragRow = computed(() => props.node.kind === 'file' && canMoveRow.value)
 const canCreateFileChildRow = computed(() => canCreateFileChild(props.node.path))
 // True if the row has at least one context-menu item to render. Folders
 // always have at least the folder-create button, so `isFolder` alone covers
@@ -159,17 +163,16 @@ function onDragStart(e: DragEvent) {
   // isProtectedRoot() then rejects with a confusing toast). Stop the event
   // here so only the row the user actually grabbed sets the drag payload.
   e.stopPropagation()
-  // Protected roots (inbox/literature/archive) cannot be re-parented. We
-  // still want their children to be draggable, including archive children
-  // that are being reorganized in the advisory archive area.
-  if (!canMoveRow.value) { e.preventDefault(); return }
+  // Protected roots (inbox/literature/archive) cannot be re-parented. Folder
+  // re-parenting is also not currently a Docus capability, so only files
+  // reach the normal drag path. Keep this guard for synthetic/custom events.
+  if (!canDragRow.value) { e.preventDefault(); return }
   if (!e.dataTransfer) return
   e.dataTransfer.setData('text/x-docus-path', props.node.path)
   // Carry the source kind in the payload too. Path is not enough to
   // disambiguate a file from a folder when they share a name (see
-  // emit signature comment above); the drop handler reads this back to
-  // route the move to the right API endpoint and to run the cycle check
-  // only when the source is a folder.
+  // emit signature comment above); the defensive drop handler reads this
+  // back to reject synthetic folder moves as well.
   e.dataTransfer.setData('text/x-docus-kind', props.node.kind)
   e.dataTransfer.effectAllowed = 'move'
   isDragging.value = true
@@ -277,7 +280,7 @@ function menuAction(fn: () => void) {
     :aria-selected="!isFolder ? isActive : undefined"
     :aria-label="!isFolder ? `${displayTitle}, ${node.path}` : node.name"
     :tabindex="focusedNodeKey === `${node.kind}:${node.path}` ? 0 : -1"
-    :draggable="canMoveRow"
+    :draggable="canDragRow"
     @dragstart="onDragStart"
     @dragend="onDragEnd"
     @dragenter="onDragEnter"

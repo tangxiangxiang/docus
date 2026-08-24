@@ -211,19 +211,16 @@ describe('FileTree context menu', () => {
     w.unmount()
   })
 
-  it('protected root row is not draggable (draggable attribute reflects canMove)', async () => {
+  it('protected root row is not draggable', async () => {
     const w = mount(FileTree, { props: { tree: TREE, currentPath: null }, attachTo: document.body })
     await w.vm.$nextTick()
     const inboxRow = w.findAll('li.tree-row').find((r: any) => r.find('.row-name')?.text() === 'inbox')!
-    // The draggable attribute is the public contract for "this row can be
-    // dragged out of its parent". A protected root cannot be re-parented,
-    // so the attribute should be the string "false" (Vue binds booleans
-    // that way to the DOM property).
+    // A protected root cannot be re-parented, so the attribute is false.
     expect(inboxRow.attributes('draggable')).toBe('false')
     w.unmount()
   })
 
-  it('archive child rows are draggable for reclassification', async () => {
+  it('archive child files are draggable but archive child folders are not', async () => {
     const w = mount(FileTree, { props: { tree: TREE, currentPath: null }, attachTo: document.body })
     await w.vm.$nextTick()
     const archiveRow = w.findAll('li.tree-row').find((r: any) => r.find('.row-name')?.text() === 'archive')!
@@ -232,6 +229,8 @@ describe('FileTree context menu', () => {
 
     const permanentRow = w.findAll('li.tree-row').find((r: any) => r.find('.row-name')?.text() === 'permanent')!
     expect(permanentRow.attributes('draggable')).toBe('true')
+    const organizedRow = w.findAll('li.tree-row').find((r: any) => r.find('.row-name')?.text() === 'organized')!
+    expect(organizedRow.attributes('draggable')).toBe('false')
     w.unmount()
   })
 })
