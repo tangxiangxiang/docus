@@ -4,7 +4,7 @@
 
 PRD review status：`P0 = 0`、`P1 = 0`、`P2 = 0`。这表示 compatibility gate contract 已补齐，不表示 VCalendar runtime compatibility 已通过。
 
-当前实施状态：`D1 = NOT STARTED`；`VCalendar runtime compatibility gate = PENDING`。PRD closure 不代表 Diary 已开始实现，也不代表 VCalendar 已安装或通过 exact-stack 验证。
+当前实施状态：`D1 = REVIEW-CLOSED`（implementation commit：`d0a5d4e82e930445bd9e549e27d39e8c18b30819`；独立 review：P0 = 0、P1 = 0、P2 = 0）；`D2 = NOT STARTED`；`VCalendar runtime compatibility gate = PENDING`。D1 closure 只表示 domain protocol 已完成并通过独立 review，不代表 D2、Diary 全部实现或 VCalendar 已安装/通过 exact-stack 验证。
 
 日期：2026-08-24
 范围：Diary 产品模型、存储协议、日历交互、编辑器复用与实施边界
