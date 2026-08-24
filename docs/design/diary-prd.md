@@ -4,7 +4,7 @@
 
 PRD review status：`P0 = 0`、`P1 = 0`、`P2 = 0`。这表示 compatibility gate contract 已补齐，不表示 VCalendar runtime compatibility 已通过。
 
-当前实施状态：`D1 = REVIEW-CLOSED`（implementation commit：`d0a5d4e82e930445bd9e549e27d39e8c18b30819`；独立 review：P0 = 0、P1 = 0、P2 = 0）；`D2 = COMPLETE / REVIEW-READY`（implementation commit：`bb32349247914061e6ad71989538c995028faeea`；generic recovery provenance follow-up：`acaf548c048c2948de726208ea4d2a1c1c9b3be3`；独立 review pending）；`VCalendar runtime compatibility gate = BLOCKED / PENDING`。D2 server contract 已实现且 generic Diary recovery 已对缺失目标 fail-closed，但不代表 D2 已独立 review closed、Diary Calendar 已实现或 VCalendar 已安装/通过 exact-stack 验证。
+当前实施状态：`D1 = REVIEW-CLOSED`（implementation commit：`d0a5d4e82e930445bd9e549e27d39e8c18b30819`；独立 review：P0 = 0、P1 = 0、P2 = 0）；`D2 = REVIEW-CLOSED`（implementation commit：`bb32349247914061e6ad71989538c995028faeea`；generic recovery provenance follow-up：`acaf548c048c2948de726208ea4d2a1c1c9b3be3`；独立复审最终 P0 = 0、P1 = 0、P2 = 0）；`D3.0 = NOT STARTED`；`VCalendar runtime compatibility gate = PENDING`。D2 server contract 已实现并完成独立复审，generic Diary recovery 已对缺失目标 fail-closed；这不代表 Diary Calendar 已实现或 VCalendar 已安装/通过 exact-stack 验证。
 
 日期：2026-08-24
 范围：Diary 产品模型、存储协议、日历交互、编辑器复用与实施边界
@@ -63,7 +63,7 @@ Diary 的产品限制是日期领域规则，不是新的文件系统权限模�
 
 ### 3.1 当前已存在的 Diary 能力
 
-仓库目前没有 Diary domain、日期协议、Calendar 页面或 Diary API。当前只有 scope 和导航层面的预留：
+初始审计时仓库没有 Diary domain、日期协议、Calendar 页面或 Diary API；D1/D2 已建立 shared Diary domain 与 server mutation/date-create contract，Calendar 页面仍未开始。当前仍需区分已完成的 domain/server 能力与尚未开始的 Calendar/UI 能力：
 
 审计确认：`diary` 是独立 scope，`ledger` 也是独立 scope；ledger 不属于 Diary 或 note，本次不改变其语义。
 
@@ -74,7 +74,7 @@ Diary 的产品限制是日期领域规则，不是新的文件系统权限模�
 | [`src/components/vault/icons.ts`](../../src/components/vault/icons.ts) | 已有 diary icon | 可复用现有视觉系统 |
 | [`src/components/vault/FileTree.vue`](../../src/components/vault/FileTree.vue) | 当前 tree 通过 shared root protocol 保护已有系统 roots；root drop 与 folder re-parent 也有 defensive guard | Diary Calendar 不替换 FileTree；后续 Diary 规则需在 UI 入口与 server/domain guard 一致执行 |
 | `src/components/`、`src/views/`、`src/composables/` | 没有 Diary Calendar 或 Diary editor | 后续只新增 Calendar 视图/组件，不复制编辑器生命周期 |
-| `src/content/` | 当前没有 `diary/` 根目录 | 启动 seed 需要补充固定根目录，并同时修正 dev/prod 一致性 |
+| `src/content/` | 运行时 `CONTENT_DIR` 由统一 startup seed 确保包含 `diary/`；不是依赖静态 content fixture | `diary/` 已纳入固定根目录初始化，dev/prod 复用同一 helper |
 | `package.json` | 当前没有 `v-calendar`、`@popperjs/core` 或 Schedule-X 依赖；当前 Docus 以 Vue 3.5、Vite 8、TypeScript 6 为技术栈方向 | 本阶段不安装依赖；D3 entry 必须按 package.json 与 lockfile 重新解析精确 toolchain，并在 candidate 明确 pin 后再集成 |
 
 ### 3.2 路径与文件身份
@@ -105,18 +105,19 @@ Diary 的产品限制是日期领域规则，不是新的文件系统权限模�
 
 | 位置 | 当前事实 | Diary 设计约束 |
 | --- | --- | --- |
-| [`server/seed.ts`](../../server/seed.ts) | `INITIAL_FOLDERS` 当前是 `inbox`、`literature`、`archive`；`ensureInitialFolders()` 幂等创建根目录 | 后续增加 `diary`，并保留冲突告警与幂等性 |
-| [`server/prod.ts`](../../server/prod.ts) | 生产启动会调用 `ensureInitialFolders(CONTENT_DIR)` | 生产根目录初始化可复用 |
-| [`server/vite-plugin.ts`](../../server/vite-plugin.ts) | 当前 Vite dev 启动没有调用同一个 seed helper | 后续必须补齐 dev/prod 一致性，避免开发环境缺少 `diary/` |
-| [`server/documentMutationPolicy.ts`](../../server/documentMutationPolicy.ts) | 目前只按 exact protected root 保护 `inbox`、`literature`、`archive`；archive descendants 已是普通内容 | 后续扩展 root contract 时只增加 `diary` 根保护，不恢复 archive subtree gate |
-| [`shared/archiveProtocol.ts`](../../shared/archiveProtocol.ts) | 当前 `PROTECTED_ROOTS` 仍只有 `inbox`、`literature`、`archive`；`isInArchive()` 不再代表 readonly；`canMove()` 是 root-policy predicate，不是实体 move capability | Diary root contract 后续应作为独立领域/root 约束加入；不改变 archive soft-policy，也不把 ledger 加入 note scope |
-| [`server/routes/posts.ts`](../../server/routes/posts.ts) | 通用 POST 可按合法 path 创建文件；PUT 编辑；PATCH 支持文件 rename/move；DELETE 有生命周期安全 | Diary 需要在通用入口增加 domain guard，避免 generic create/rename/move 绕过日期规则；编辑/删除仍复用既有流程 |
-| [`server/routes/folders.ts`](../../server/routes/folders.ts) | 创建文件夹、同父目录 rename、递归删除；不支持通用跨父目录 folder re-parent | Diary 下不允许创建子目录；root 仍不可 rename/delete/move |
-| [`server/ai/tools.ts`](../../server/ai/tools.ts) | AI 有 read/list/create/write/patch/delete/rename file 工具，没有 folder mutation 工具 | generic AI 工具必须遵守 Diary domain guard，不能成为旁路 |
+| [`server/seed.ts`](../../server/seed.ts) | `INITIAL_FOLDERS` 已包含 `inbox`、`literature`、`archive`、`diary`；`ensureInitialFolders()` 幂等创建四个根目录，遇到同名文件保留冲突告警且不覆盖 | 固定根目录初始化已落地，必须继续保持幂等与 no-overwrite |
+| [`server/prod.ts`](../../server/prod.ts) | 生产启动在接受请求前调用 `ensureInitialFolders(CONTENT_DIR)` | 生产根目录初始化与 dev 共用同一 helper |
+| [`server/vite-plugin.ts`](../../server/vite-plugin.ts) | Vite dev 启动也在 auth、recovery、metadata 扫描前调用同一个 seed helper | dev/prod root initialization 已一致，避免开发环境缺少 `diary/` |
+| [`server/documentMutationPolicy.ts`](../../server/documentMutationPolicy.ts) | 共享 policy 按 exact protected root 保护 `inbox`、`literature`、`archive`、`diary`；managed Diary 的 identity-changing mutation、generic create 和无 provenance generic recovery 被拒绝，managed edit/delete 保持普通生命周期；archive descendants 已是普通内容 | Diary root contract 与 Diary domain guard 已由 server authoritative policy 执行；不恢复 archive subtree gate |
+| [`shared/archiveProtocol.ts`](../../shared/archiveProtocol.ts) | `PROTECTED_ROOTS` 已包含 `inbox`、`literature`、`archive`、`diary`；`isInArchive()` 不代表 readonly；`canMove()` 是 root-policy predicate，不是实体 move capability | 保持四个 system roots；不改变 archive soft-policy，也不把 ledger 加入 note scope |
+| [`server/routes/diary.ts`](../../server/routes/diary.ts) | `POST /api/diary/dates` 是唯一 Diary date-create command，按严格日期、local timezone、one/day、future/no-suffix 和 atomic concurrency contract 工作 | Diary identity 必须由 date command 推导，不能由 generic path/title/API 绕过 |
+| [`server/routes/posts.ts`](../../server/routes/posts.ts) | 通用 POST/PUT/PATCH/DELETE/recover 仍复用普通文档生命周期，但共享 policy 会阻止 Diary generic create、managed rename/move 和无 prior-identity proof 的 generic recovery；History Restore 仅在 Git historical content provenance 成立后恢复 exact path | Diary 允许 managed edit/delete，身份变更和旁路创建/恢复必须 server-side 拒绝 |
+| [`server/routes/folders.ts`](../../server/routes/folders.ts) | 创建文件夹、同父目录 rename、递归删除和现有 transaction 保持不变；Diary 下 nested folder create 被拒绝；不支持通用跨父目录 folder re-parent | Diary root 仍不可 rename/delete/move，Diary 不建立文件夹树 |
+| [`server/ai/tools.ts`](../../server/ai/tools.ts) | AI document mutation tools 复用共享 path/mutation policy；没有 folder mutation 工具，也没有 Diary identity 绕过入口 | generic AI 工具不得成为 Diary domain guard 的旁路 |
 
 当前 `archive` root 的保护仍由 [`shared/archiveProtocol.ts`](../../shared/archiveProtocol.ts) 等现有规则负责；本 PRD 不改变 Archive Soft-Policy 的结果：archive descendants 仍按普通用户内容处理，Archive action 仍默认写入 `archive/<filename>`。
 
-当前 D2 已将 `diary/` 纳入既有 root initialization，并由 server-authoritative root/mutation policy 阻止 generic folder/document API 绕过 Diary date identity；Diary root 仍是保留 system root。Calendar UI、Editor integration 和 D3.0 compatibility gate 仍未开始。
+当前 D2 已将 `diary/` 纳入既有 root initialization，并由 server-authoritative root/mutation policy 阻止 generic folder/document/recovery API 绕过 Diary date identity；History Restore 只有在 Git historical content provenance 成立后才能恢复缺失的 managed path。Diary root 仍是保留 system root。Calendar UI、Editor integration 和 D3.0 compatibility gate 仍未开始。
 
 ### 3.5 文档与现有生命周期契约
 
