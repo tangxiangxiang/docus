@@ -5,7 +5,7 @@
 - D3.0: `REVIEW-CLOSED`
 - Gate result: `PASS`
 - Independent D3.0 review: closed (`P0 = 0`, `P1 = 0`, `P2 = 0`)
-- D3.1: `COMPLETE / REVIEW-READY` (adapter implementation is recorded separately; independent review pending)
+- D3.1: `REVIEW-CLOSED` (adapter implementation and early-year Date bridge follow-up are recorded separately; independent review closed with `P0 = 0`, `P1 = 0`, `P2 = 0`)
 - Validation date: 2026-08-24 (Asia/Shanghai)
 - Baseline commit: `71e53445e6e6c14d23ec7b58a198450be8a7628f`
 - Final validation commit SHA (D3.0): `106e9ac601c4949a692dd4b11401786602d1a33c`
@@ -181,7 +181,7 @@ The isolated probe and browser fixture are retained as low-coupling D3.0 regress
 - no blocker-level runtime exception was reproduced;
 - Docus core versions were not downgraded.
 
-D3.0 is `REVIEW-CLOSED`; the separate D3.1 adapter implementation is `COMPLETE / REVIEW-READY` pending independent review. This report remains the D3.0 compatibility evidence and does not authorize D3.2 Calendar surface, Vault integration, editor integration, or Diary create/open lifecycle.
+D3.0 is `REVIEW-CLOSED`; the separate D3.1 adapter implementation is `REVIEW-CLOSED` after independent review (`P0 = 0`, `P1 = 0`, `P2 = 0`). This report remains the D3.0 compatibility evidence and does not authorize D3.2 Calendar surface, Vault integration, editor integration, or Diary create/open lifecycle.
 
 ## P0 / P1 / P2
 
