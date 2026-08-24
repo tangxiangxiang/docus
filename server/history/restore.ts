@@ -151,7 +151,12 @@ export async function restoreHistoricalDocument(input: {
           destinationExists: true,
         })
       } else {
-        validateDocumentMutation({ operation: 'recover', destinationPath: logicalPath })
+        // historicalRaw was read from the resolved Git ref above. That is
+        // the server-side prior-content proof for this create-only restore.
+        // Generic /api/recover has no equivalent proof and is fail-closed for
+        // Diary paths, so keep this mutation kind distinct from generic
+        // recovery.
+        validateDocumentMutation({ operation: 'history-restore', destinationPath: logicalPath })
       }
       const databaseSnapshot = snapshotDocumentMetadataMutation(input.db, [logicalPath])
       let committed = false

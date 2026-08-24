@@ -947,6 +947,20 @@ describeHistoryIntegration('POST /api/history/restore', () => {
     expect(getDocumentMetadata(metadataDb, 'folder/note')?.id).toBe('missing-target-id')
   }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
+  it('restores a missing managed Diary only with Git-backed prior-content provenance', async () => {
+    const date = '2000-04-04'
+    const logicalFile = `diary/${date}.md`
+    await write(logicalFile, '# historical Diary\n')
+    const historical = await call('POST', '/commits', { paths: [logicalFile], message: 'diary history' })
+    const ref = (await historical.json() as { sha: string }).sha
+    await fs.unlink(path.join(root, logicalFile))
+
+    const response = await call('POST', '/restore', { path: logicalFile, ref })
+
+    expect(response.status).toBe(200)
+    expect(await read(logicalFile)).toBe('# historical Diary\n')
+  }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
+
   it('returns 409 without replacing a create-only incumbent', async () => {
     await write('folder/note.md', 'historical\n')
     const historical = await call('POST', '/commits', { paths: ['folder/note.md'], message: 'old' })

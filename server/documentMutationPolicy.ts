@@ -4,6 +4,10 @@ import { isProtectedRoot } from '../shared/archiveProtocol.js'
 export type DocumentMutation =
   | { operation: 'create'; destinationPath: string }
   | { operation: 'recover'; destinationPath: string }
+  // Used only after History Restore has read the requested path from the
+  // selected Git ref.  This is deliberately distinct from generic recovery:
+  // a managed-looking Diary path is not, by itself, proof of a prior identity.
+  | { operation: 'history-restore'; destinationPath: string }
   | { operation: 'write'; destinationPath: string; destinationExists: boolean }
   | { operation: 'delete'; sourcePath: string }
   | { operation: 'rename'; sourcePath: string; destinationPath: string }
@@ -38,6 +42,7 @@ function isDiaryDescendant(path: string): boolean {
 export function validateDocumentMutation(mutation: DocumentMutation): void {
   const protectedPath = mutation.operation === 'create'
     || mutation.operation === 'recover'
+    || mutation.operation === 'history-restore'
     || mutation.operation === 'write'
     ? mutation.destinationPath
     : mutation.operation === 'delete'
@@ -56,10 +61,14 @@ export function validateDocumentMutation(mutation: DocumentMutation): void {
     rejectMutation('Diary documents must be created through the Diary date command')
   }
 
-  if (mutation.operation === 'recover'
+  if (mutation.operation === 'recover' && isDiaryPath(mutation.destinationPath)) {
+    rejectMutation('Diary recovery requires a verified prior identity; use History Restore')
+  }
+
+  if (mutation.operation === 'history-restore'
     && isDiaryPath(mutation.destinationPath)
     && !isManagedDiaryPath(mutation.destinationPath)) {
-    rejectMutation('Diary recovery requires an existing managed date identity')
+    rejectMutation('History Restore requires an existing managed date identity')
   }
 
   if (mutation.operation === 'write'

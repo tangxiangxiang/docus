@@ -189,18 +189,16 @@ describe('Diary REST mutation contract', () => {
     await expect(fs.stat(path.join(vault, 'inbox', 'moved-in.md'))).resolves.toBeTruthy()
   })
 
-  it('recovers a deleted managed Diary at the same exact identity', async () => {
-    const date = '2000-04-04'
-    const created = await call('POST', '/api/diary/dates', { date, timeZone: TIME_ZONE })
-    expect(created.status).toBe(201)
-    expect((await call('DELETE', `/api/posts/diary/${date}`)).status).toBe(200)
+  it('fails closed for generic recovery even when a missing Diary path looks managed', async () => {
+    const date = '2999-12-31'
 
-    const recovered = await call('PUT', `/api/recover/diary/${date}`, { raw: '# recovered\n' })
+    const recovered = await call('PUT', `/api/recover/diary/${date}`, { raw: '# bypass\n' })
 
-    expect(recovered.status).toBe(200)
-    expect(await fs.readFile(path.join(vault, 'diary', `${date}.md`), 'utf8')).toBe('# recovered\n')
-    expect((await fs.readdir(path.join(vault, 'diary'))).filter(name => name.endsWith('.md')))
-      .toEqual([`${date}.md`])
+    expect(recovered.status).toBe(422)
+    expect(await recovered.json()).toMatchObject({
+      error: expect.stringContaining('verified prior identity'),
+    })
+    await expect(fs.stat(path.join(vault, 'diary', `${date}.md`))).rejects.toThrow()
   })
 
   it('preserves invalid external Diary files and generic listing visibility', async () => {

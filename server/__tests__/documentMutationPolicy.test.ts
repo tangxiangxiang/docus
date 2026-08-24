@@ -25,13 +25,16 @@ describe('server document mutation policy', () => {
     blocked({ operation: 'rename', sourcePath: 'notes/a', destinationPath: 'archive' }, /protected root/)
   })
 
-  it('requires the Diary date command for generic Diary creation', () => {
+  it('requires the Diary date command or trusted history provenance for Diary creation', () => {
     blocked({ operation: 'create', destinationPath: 'diary/foo' }, /date command/)
     blocked({ operation: 'create', destinationPath: 'diary/2026-08-24' }, /date command/)
     blocked({ operation: 'write', destinationPath: 'diary/2026-08-24', destinationExists: false }, /date command/)
     allowed({ operation: 'write', destinationPath: 'diary/2026-08-24', destinationExists: true })
-    allowed({ operation: 'recover', destinationPath: 'diary/2026-08-24' })
-    blocked({ operation: 'recover', destinationPath: 'diary/recovered' }, /managed date identity/)
+    allowed({ operation: 'recover', destinationPath: 'inbox/recovered' })
+    blocked({ operation: 'recover', destinationPath: 'diary/2026-08-24' }, /verified prior identity/)
+    blocked({ operation: 'recover', destinationPath: 'diary/recovered' }, /verified prior identity/)
+    allowed({ operation: 'history-restore', destinationPath: 'diary/2026-08-24' })
+    blocked({ operation: 'history-restore', destinationPath: 'diary/recovered' }, /managed date identity/)
   })
 
   it('allows managed Diary content writes/deletes but blocks identity changes', () => {
