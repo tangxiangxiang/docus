@@ -1,11 +1,11 @@
 # Diary Calendar PRD
 
-状态：`REVIEW-CLOSED`（VCalendar `3.1.2` exact-stack gate = `PASS / REVIEW-CLOSED`；D3.0 post-closure compatibility regression follow-up = `FIXED / REVIEW-READY`；D3.2 Calendar-first surface 与 D4 editor/lifecycle integration 已完成实现并分别 `REVIEW-CLOSED`、`COMPLETE / REVIEW-READY`；完整 Diary feature 尚未最终关闭）
+状态：`REVIEW-CLOSED`（VCalendar `3.1.2` exact-stack gate = `PASS / REVIEW-CLOSED`；D3.0 post-closure compatibility regression follow-up = `REVIEW-CLOSED`；D3.2 Calendar-first surface、D4 editor/lifecycle integration 已完成实现并分别 `REVIEW-CLOSED`；D5 = `NOT STARTED`；完整 Diary feature 尚未最终关闭）
 
 PRD review status：`P0 = 0`、`P1 = 0`、`P2 = 0`。PRD contract 与 D3.0 compatibility evidence 已分开记录；D3.0 gate result 为 `PASS`，D3.0 closure 已完成。
 
-当前实施状态：`D0 = REVIEW-CLOSED`；`D1 = REVIEW-CLOSED`（implementation commit：`d0a5d4e82e930445bd9e549e27d39e8c18b30819`；独立 review：P0 = 0、P1 = 0、P2 = 0）；`D2 = REVIEW-CLOSED`（implementation commit：`bb32349247914061e6ad71989538c995028faeea`；generic recovery provenance follow-up：`acaf548c048c2948de726208ea4d2a1c1c9b3be3`；ordinary-content → `diary/*` destination regression follow-up：`e971440ef5da8df16e9604d2bd4244f31da8e8e9`；独立复审最终 P0 = 0、P1 = 0、P2 = 0）；`D3.0 = REVIEW-CLOSED`（Implementation commit：`106e9ac601c4949a692dd4b11401786602d1a33c`；exact candidate：`v-calendar@3.1.2`；gate result：`PASS`；独立 review：P0 = 0、P1 = 0、P2 = 0；证据见 [`diary-vcalendar-compatibility-report.md`](./diary-vcalendar-compatibility-report.md)）；`VCalendar runtime compatibility gate = PASS / REVIEW-CLOSED`；`D3.1 = REVIEW-CLOSED`（implementation commit：`931828da31166d68cb7897343c695a761bf6fc80`；year 0000–0099 Date bridge follow-up：`67d7858edcd0969b81ff2f6969e029a969526be9`；adapter contract validation PASS；独立 review：P0 = 0、P1 = 0、P2 = 0）；`D3.2 = REVIEW-CLOSED`（implementation commit：`8edeff251e7957f52fd88ae6971f403ebcf353f6`；destination namespace blocker follow-up：`e971440ef5da8df16e9604d2bd4244f31da8e8e9`；self-review P0 = 0、P1 = 0、P2 = 0；independent review PASSED，P0 = 0、P1 = 0、P2 = 0）；`D4 = COMPLETE / REVIEW-READY`（implementation commit：`43b41199a188f0c530a20f7ddf739f998e4bb979`；compatibility workaround follow-up：`ed47c94`；code/runtime review PASS；docs closure review pending）；`D5 = BLOCKED`。GitHub status queried; no checks available。D2 server contract 仍 REVIEW-CLOSED；D3.1 adapter、D3.2 Calendar-first surface 与 D4 Vault lifecycle integration 已按各自阶段完成，完整 Diary feature 尚未最终关闭。
-当前实施状态：`D0 = REVIEW-CLOSED`；`D1 = REVIEW-CLOSED`（implementation commit：`d0a5d4e82e930445bd9e549e27d39e8c18b30819`；独立 review：P0 = 0、P1 = 0、P2 = 0）；`D2 = REVIEW-CLOSED`（implementation commit：`bb32349247914061e6ad71989538c995028faeea`；generic recovery provenance follow-up：`acaf548c048c2948de726208ea4d2a1c1c9b3be3`；ordinary-content → `diary/*` destination regression follow-up：`e971440ef5da8df16e9604d2bd4244f31da8e8e9`；独立复审最终 P0 = 0、P1 = 0、P2 = 0）；`D3.0 = REVIEW-CLOSED`（Implementation commit：`106e9ac601c4949a692dd4b11401786602d1a33c`；exact candidate：`v-calendar@3.1.2`；gate result：`PASS`；独立 review：P0 = 0、P1 = 0、P2 = 0；证据见 [`diary-vcalendar-compatibility-report.md`](./diary-vcalendar-compatibility-report.md)）；`D3.0 post-closure compatibility regression follow-up = FIXED / REVIEW-READY`（fix commit：`ed47c94`；task-scoped P0 = 0、P1 = 0、P2 = 0；current-fact docs follow-up recorded；independent re-review pending）；`VCalendar runtime compatibility gate = PASS / REVIEW-CLOSED`；`D3.1 = REVIEW-CLOSED`（implementation commit：`931828da31166d68cb7897343c695a761bf6fc80`；year 0000–0099 Date bridge follow-up：`67d7858edcd0969b81ff2f6969e029a969526be9`；adapter contract validation PASS；独立 review：P0 = 0、P1 = 0、P2 = 0）；`D3.2 = REVIEW-CLOSED`（implementation commit：`8edeff251e7957f52fd88ae6971f403ebcf353f6`；destination namespace blocker follow-up：`e971440ef5da8df16e9604d2bd4244f31da8e8e9`；self-review P0 = 0、P1 = 0、P2 = 0；independent review PASSED，P0 = 0、P1 = 0、P2 = 0）；`D4 = COMPLETE / REVIEW-READY`（implementation commit：`43b41199a188f0c530a20f7ddf739f998e4bb979`；compatibility workaround follow-up：`ed47c94`；code/runtime review PASS；docs closure review pending）；`D5 = BLOCKED`。GitHub status queried; no checks available。D2 server contract 仍 REVIEW-CLOSED；D3.1 adapter、D3.2 Calendar-first surface 与 D4 Vault lifecycle integration 已按各自阶段完成，完整 Diary feature 尚未最终关闭。
+当前实施状态：`D0 = REVIEW-CLOSED`；`D1 = REVIEW-CLOSED`（implementation commit：`d0a5d4e82e930445bd9e549e27d39e8c18b30819`；独立 review：P0 = 0、P1 = 0、P2 = 0）；`D2 = REVIEW-CLOSED`（implementation commit：`bb32349247914061e6ad71989538c995028faeea`；generic recovery provenance follow-up：`acaf548c048c2948de726208ea4d2a1c1c9b3be3`；ordinary-content → `diary/*` destination regression follow-up：`e971440ef5da8df16e9604d2bd4244f31da8e8e9`；独立复审最终 P0 = 0、P1 = 0、P2 = 0）；`D3.0 = REVIEW-CLOSED`（Implementation commit：`106e9ac601c4949a692dd4b11401786602d1a33c`；exact candidate：`v-calendar@3.1.2`；gate result：`PASS`；独立 review：P0 = 0、P1 = 0、P2 = 0；证据见 [`diary-vcalendar-compatibility-report.md`](./diary-vcalendar-compatibility-report.md)）；`D3.0 post-closure compatibility regression follow-up = REVIEW-CLOSED`（fix commit：`ed47c94`；independent review：P0 = 0、P1 = 0、P2 = 0）；`VCalendar runtime compatibility gate = PASS / REVIEW-CLOSED`；`D3.1 = REVIEW-CLOSED`（implementation commit：`931828da31166d68cb7897343c695a761bf6fc80`；year 0000–0099 Date bridge follow-up：`67d7858edcd0969b81ff2f6969e029a969526be9`；adapter contract validation PASS；独立 review：P0 = 0、P1 = 0、P2 = 0）；`D3.2 = REVIEW-CLOSED`（implementation commit：`8edeff251e7957f52fd88ae6971f403ebcf353f6`；destination namespace blocker follow-up：`e971440ef5da8df16e9604d2bd4244f31da8e8e9`；self-review P0 = 0、P1 = 0、P2 = 0；independent review PASSED，P0 = 0、P1 = 0、P2 = 0）；`D4 = REVIEW-CLOSED`（implementation commit：`43b41199a188f0c530a20f7ddf739f998e4bb979`；compatibility workaround follow-up：`ed47c94`；code/runtime/docs review：P0 = 0、P1 = 0、P2 = 0）；`D5 = NOT STARTED`。GitHub status queried; no checks available。D2 server contract 仍 REVIEW-CLOSED；D3.1 adapter、D3.2 Calendar-first surface 与 D4 Vault lifecycle integration 已完成并独立 closure，D5 尚未开始。
+当前实施状态：`D0 = REVIEW-CLOSED`；`D1 = REVIEW-CLOSED`（implementation commit：`d0a5d4e82e930445bd9e549e27d39e8c18b30819`；独立 review：P0 = 0、P1 = 0、P2 = 0）；`D2 = REVIEW-CLOSED`（implementation commit：`bb32349247914061e6ad71989538c995028faeea`；generic recovery provenance follow-up：`acaf548c048c2948de726208ea4d2a1c1c9b3be3`；ordinary-content → `diary/*` destination regression follow-up：`e971440ef5da8df16e9604d2bd4244f31da8e8e9`；独立复审最终 P0 = 0、P1 = 0、P2 = 0）；`D3.0 = REVIEW-CLOSED`（Implementation commit：`106e9ac601c4949a692dd4b11401786602d1a33c`；exact candidate：`v-calendar@3.1.2`；gate result：`PASS`；独立 review：P0 = 0、P1 = 0、P2 = 0；证据见 [`diary-vcalendar-compatibility-report.md`](./diary-vcalendar-compatibility-report.md)）；`D3.0 post-closure compatibility regression follow-up = REVIEW-CLOSED`（fix commit：`ed47c94`；independent re-review：P0 = 0、P1 = 0、P2 = 0）；`VCalendar runtime compatibility gate = PASS / REVIEW-CLOSED`；`D3.1 = REVIEW-CLOSED`（implementation commit：`931828da31166d68cb7897343c695a761bf6fc80`；year 0000–0099 Date bridge follow-up：`67d7858edcd0969b81ff2f6969e029a969526be9`；adapter contract validation PASS；独立 review：P0 = 0、P1 = 0、P2 = 0）；`D3.2 = REVIEW-CLOSED`（implementation commit：`8edeff251e7957f52fd88ae6971f403ebcf353f6`；destination namespace blocker follow-up：`e971440ef5da8df16e9604d2bd4244f31da8e8e9`；self-review P0 = 0、P1 = 0、P2 = 0；independent review PASSED，P0 = 0、P1 = 0、P2 = 0）；`D4 = REVIEW-CLOSED`（implementation commit：`43b41199a188f0c530a20f7ddf739f998e4bb979`；compatibility workaround follow-up：`ed47c94`；code/runtime/docs review：P0 = 0、P1 = 0、P2 = 0）；`D5 = NOT STARTED`。GitHub status queried; no checks available。D2 server contract 仍 REVIEW-CLOSED；D3.1 adapter、D3.2 Calendar-first surface 与 D4 Vault lifecycle integration 已完成并独立 closure，D5 尚未开始。
 
 日期：2026-08-24
 范围：Diary 产品模型、存储协议、日历交互、编辑器复用与实施边界
@@ -64,7 +64,7 @@ Diary 的产品限制是日期领域规则，不是新的文件系统权限模�
 
 ### 3.1 当前已存在的 Diary 能力
 
-初始审计时仓库没有 Diary domain、日期协议、Calendar 页面或 Diary API；D1/D2 已建立 shared Diary domain 与 server mutation/date-create contract，D3.0 已完成并 REVIEW-CLOSED 的隔离 Calendar compatibility gate，D3.1 已新增并验证纯 presentation adapter，D3.2 Calendar-first production surface 已实现并 REVIEW-CLOSED。当前仍需区分已完成的 domain/server/compatibility/adapter/surface 能力与尚未开始的 editor/lifecycle 能力：
+初始审计时仓库没有 Diary domain、日期协议、Calendar 页面或 Diary API；D1/D2 已建立 shared Diary domain 与 server mutation/date-create contract，D3.0 已完成并 REVIEW-CLOSED 的隔离 Calendar compatibility gate，D3.1 已新增并验证纯 presentation adapter，D3.2 Calendar-first production surface 与 D4 editor/lifecycle integration 均已实现并 REVIEW-CLOSED。当前仍需区分已完成的 domain/server/compatibility/adapter/surface/lifecycle 能力与尚未开始的 D5 release work：
 
 审计确认：`diary` 是独立 scope，`ledger` 也是独立 scope；ledger 不属于 Diary 或 note，本次不改变其语义。
 
@@ -118,7 +118,7 @@ Diary 的产品限制是日期领域规则，不是新的文件系统权限模�
 
 当前 `archive` root 的保护仍由 [`shared/archiveProtocol.ts`](../../shared/archiveProtocol.ts) 等现有规则负责；本 PRD 不改变 Archive Soft-Policy 的结果：archive descendants 仍按普通用户内容处理，Archive action 仍默认写入 `archive/<filename>`。
 
-当前 D2 已将 `diary/` 纳入既有 root initialization，并由 server-authoritative root/mutation policy 阻止 generic folder/document/recovery API 绕过 Diary date identity；History Restore 只有在 Git historical content provenance 成立后才能恢复缺失的 managed path。Diary root 仍是保留 system root。D3.0 compatibility gate 已通过并 REVIEW-CLOSED；D3.1 adapter 与 D3.2 Calendar UI surface 已完成并独立 closure；D3.2 = REVIEW-CLOSED；D4 editor/lifecycle integration 已实现为 `COMPLETE / REVIEW-READY`，等待独立复审。
+当前 D2 已将 `diary/` 纳入既有 root initialization，并由 server-authoritative root/mutation policy 阻止 generic folder/document/recovery API 绕过 Diary date identity；History Restore 只有在 Git historical content provenance 成立后才能恢复缺失的 managed path。Diary root 仍是保留 system root。D3.0 compatibility gate 已通过并 REVIEW-CLOSED；D3.1 adapter 与 D3.2 Calendar UI surface 已完成并独立 closure；D3.2 = REVIEW-CLOSED；D4 editor/lifecycle integration 已实现并独立复审关闭为 `REVIEW-CLOSED`；D5 = `NOT STARTED`。
 
 ### 3.5 文档与现有生命周期契约
 
@@ -506,7 +506,7 @@ request 概念字段：
 
 ### 9.1 ADR 决策
 
-**Decision：VCalendar 是 MVP 的 preferred candidate；`v-calendar@3.1.2` 的 D3.0 mandatory exact-stack compatibility gate 已通过且 REVIEW-CLOSED；D3.0 post-closure compatibility regression 已通过 presentation ownership workaround 修复并进入 `FIXED / REVIEW-READY`；D3.1 presentation adapter 与 D3.2 production surface 均已 REVIEW-CLOSED；D4 lifecycle integration 已 COMPLETE / REVIEW-READY，等待独立复审。**
+**Decision：VCalendar 是 MVP 的 preferred candidate；`v-calendar@3.1.2` 的 D3.0 mandatory exact-stack compatibility gate 已通过且 REVIEW-CLOSED；D3.0 post-closure compatibility regression 已通过 presentation ownership workaround 修复并 REVIEW-CLOSED；D3.1 presentation adapter、D3.2 production surface 与 D4 lifecycle integration 均已 REVIEW-CLOSED；D5 = NOT STARTED。**
 
 Diary 的数据模型是 Date → Diary exists?，不是带 start/end/duration/resize/recurrence 的 Event。VCalendar 的 date-centric attributes 更贴合某天是否存在内容的状态表达，也更自然地为未来 Mood day-cell rendering 留出空间。
 
@@ -602,7 +602,7 @@ Fallback 评估顺序只能作为后续 ADR 的候选顺序，不在本 PRD 预�
 
 官方 repository 或 issue tracker 中关于 Vue 3.5、`day-content`、`dayIndex`、DatePicker 或 range 的报告，应先记录为 `Known Compatibility Risk` 并由 spike 复现。历史 D3.0 exact Calendar/day-content probe 未复现 upstream 报告；但 D4 production integration 后续在 click-triggered synchronous parent unmount 下复现了同类 `dayIndex` failure。该证据确认 compatibility risk class，而不武断声明与 upstream issue 具有完全相同的内部 root cause。
 
-当前 VCalendar runtime compatibility gate 状态：`PASS / REVIEW-CLOSED`（`v-calendar@3.1.2`）。D3.0 compatibility report 已记录 exact stack、registry resolution、spike matrix、browser/timezone evidence 与 known risk；D3.0 独立 review：P0 = 0、P1 = 0、P2 = 0。D4 browser closure 后发现的 synchronous-unmount compatibility regression 已由 `ed47c94` 修复：Diary scope 内保持 Calendar mounted、workspace tab 出现时只切换 visibility；follow-up = `FIXED / REVIEW-READY`，不改变 `openDiaryDate`、tab/router/editor lifecycle、server/shared contract 或 dependency versions。GitHub status queried; no checks available；不宣称 CI PASS。
+当前 VCalendar runtime compatibility gate 状态：`PASS / REVIEW-CLOSED`（`v-calendar@3.1.2`）。D3.0 compatibility report 已记录 exact stack、registry resolution、spike matrix、browser/timezone evidence 与 known risk；D3.0 独立 review：P0 = 0、P1 = 0、P2 = 0。D4 browser closure 后发现的 synchronous-unmount compatibility regression 已由 `ed47c94` 修复：Diary scope 内保持 Calendar mounted、workspace tab 出现时只切换 visibility；follow-up = `REVIEW-CLOSED`，独立复审 P0 = 0、P1 = 0、P2 = 0；不改变 `openDiaryDate`、tab/router/editor lifecycle、server/shared contract 或 dependency versions。GitHub status queried; no checks available；不宣称 CI PASS。
 
 ### 9.4 Compatibility validation matrix
 
@@ -700,7 +700,7 @@ D2 已保持 `REVIEW-CLOSED`。本次 independent review 发现的 ordinary-cont
 
 ### D3 — Calendar surface（gated）
 
-D3 已从 compatibility spike 开始并完成 D3.0；D3.0 closure 已完成，D3.1 presentation adapter 与 D3.2 Calendar-first surface 也已完成实现并独立 closure；D3.2 = REVIEW-CLOSED，D4 editor/lifecycle integration = COMPLETE / REVIEW-READY：
+D3 已从 compatibility spike 开始并完成 D3.0；D3.0 closure 已完成，D3.1 presentation adapter、D3.2 Calendar-first surface 与 D4 editor/lifecycle integration 也已完成实现并独立 closure；D3.2 = REVIEW-CLOSED，D4 = REVIEW-CLOSED，D5 = NOT STARTED：
 
 - **D3.0 — VCalendar Compatibility Gate**：已按实际 `package.json`/lockfile 解析 exact Docus stack，pin `v-calendar@3.1.2` 与 `@popperjs/core@2.11.8`，完成 isolated spike；未使用无版本 `npm install v-calendar`；结果 `PASS / REVIEW-CLOSED`；Implementation commit 为 `106e9ac601c4949a692dd4b11401786602d1a33c`。
 - **D3.1 — Calendar adapter integration**：已使用 approved exact candidate 建立 `DiaryCalendar` presentation adapter；implementation commit 为 `931828da31166d68cb7897343c695a761bf6fc80`，follow-up commit `67d7858edcd0969b81ff2f6969e029a969526be9` 修复 year 0000–0099 local Date bridge 并补齐 round-trip boundary tests；adapter contract validation PASS；independent review P0 = 0、P1 = 0、P2 = 0；当前为 `REVIEW-CLOSED`。
@@ -714,7 +714,7 @@ D3 已从 compatibility spike 开始并完成 D3.0；D3.0 closure 已完成，D3
 - missing future 不创建、不打开不存在的 route；existing future 仍可打开、编辑、保存和删除；exact-path mutation lock 与 in-flight deduplication 防止重复创建/重复 tab。
 - D1 date contract、D2 date-create semantics、D3.2 props/emits、VCalendar/Popper、History/Recovery/Draft pipeline 与普通 note/archive/ledger lifecycle 未改变。
 - focused D4/Diary/Vault regression 241 tests、History integration 173 tests、Recovery integration 193 tests、full typecheck、production build 和 diff check PASS；Recovery 首次沙箱运行曾遇到 `tsx` IPC `listen EPERM`，提升权限重跑后全量 PASS。
-- D4 task-scoped self-review：P0 = 0、P1 = 0、P2 = 0；D3.0 compatibility follow-up task-scoped P0 = 0、P1 = 0、P2 = 0；`ed47c94` 后 real D4 browser lifecycle 5/5 PASS，pageerror = 0；代码与 runtime evidence 已通过独立复审；current-fact docs follow-up 已记录；D4 = `COMPLETE / REVIEW-READY`，等待最终 closure review。
+- D4 implementation 与 compatibility follow-up independent review：P0 = 0、P1 = 0、P2 = 0；`ed47c94` 后 real D4 browser lifecycle 5/5 PASS，pageerror = 0；代码、runtime 与 docs evidence 已通过独立复审；D4 = `REVIEW-CLOSED`。
 
 ### D5 — Responsive、可访问性与 release gate
 
@@ -750,7 +750,7 @@ D3 已从 compatibility spike 开始并完成 D3.0；D3.0 closure 已完成，D3
 
 ### 12.3 VCalendar Compatibility Gate tests（D3.0 execution evidence）
 
-以下 checkbox 是 D3.0 gate evidence；D3.2 implementation 已另行记录为 `REVIEW-CLOSED`，D4 lifecycle integration 已实现并等待独立复审：
+以下 checkbox 是 D3.0 gate evidence；D3.2 implementation 已另行记录为 `REVIEW-CLOSED`，D4 lifecycle integration 已实现并独立复审关闭为 `REVIEW-CLOSED`：
 
 - [x] VCalendar Vue 3 candidate version/tag 在安装前已明确解析并记录依据。
 - [x] 未执行无版本的 `npm install v-calendar`。
@@ -829,7 +829,7 @@ D3 已从 compatibility spike 开始并完成 D3.0；D3.0 closure 已完成，D3
 - [x] VCalendar candidate 已在 D3 entry 通过 exact-stack compatibility gate；D3.0 = `REVIEW-CLOSED`，Gate = `PASS`；independent review P0 = 0、P1 = 0、P2 = 0。
 - [x] D3.1 production presentation adapter、VCalendar isolation、local DiaryDate adapter（含 year 0000–0099 round-trip）、marker/navigation/accessibility contract 和 component tests 已实现并验证；Implementation commit、early-year follow-up 与独立 review P0 = 0、P1 = 0、P2 = 0 已记录；D3.1 = `REVIEW-CLOSED`。
 - [x] D3.2 monthly Diary surface、FileTree relationship、mobile/accessibility presentation states 已实现并验证；destination namespace follow-up 已收口，independent review PASSED，P0 = 0、P1 = 0、P2 = 0；D3.2 = `REVIEW-CLOSED`。
-- [x] D4 single `openDiaryDate`、D2 date-create reuse、existing Vault editor/tab/route/save/delete/History/Recovery/Draft integration、marker refresh 和 duplicate-click protection 已实现；implementation commit `43b41199a188f0c530a20f7ddf739f998e4bb979`；`ed47c94` 修复 D4 browser closure 发现的 VCalendar synchronous-unmount compatibility regression；task-scoped self-review P0 = 0、P1 = 0、P2 = 0；D4 = `COMPLETE / REVIEW-READY`。
+- [x] D4 single `openDiaryDate`、D2 date-create reuse、existing Vault editor/tab/route/save/delete/History/Recovery/Draft integration、marker refresh 和 duplicate-click protection 已实现并独立复审关闭；implementation commit `43b41199a188f0c530a20f7ddf739f998e4bb979`；`ed47c94` 修复 D4 browser closure 发现的 VCalendar synchronous-unmount compatibility regression；P0 = 0、P1 = 0、P2 = 0；D4 = `REVIEW-CLOSED`。
 
 ## 15. 评审结论
 
@@ -845,4 +845,4 @@ Diary 在当前 Docus 架构中产品与架构上可行，最小正确路径是�
 8. VCalendar 只负责绘制日期状态；未来 Mood 可从 `24 ●` 演进到 `24 😊`，但不改变 Diary filename identity。
 9. VCalendar 只有在当前 Docus exact Vue/Vite/TypeScript stack 的 compatibility gate 通过后，才能从 preferred candidate 进入 D3 implementation dependency；失败时必须走 Calendar ADR，不得降级 Docus core stack 迁就它。
 
-本文件完成的是设计、审计、compatibility gate contract 以及 D3.1/D3.2/D4 implementation status mirror；D2 ordinary-content → `diary/*` destination regression follow-up 已由 `e971440ef5da8df16e9604d2bd4244f31da8e8e9` 收口且 D2 仍 `REVIEW-CLOSED`；D3.0 runtime compatibility gate 已 `PASS / REVIEW-CLOSED`，D3.1 与 D3.2 均为 `REVIEW-CLOSED`，D4 = `COMPLETE / REVIEW-READY`（implementation commit `43b41199a188f0c530a20f7ddf739f998e4bb979`，等待独立复审），D5 = `BLOCKED`。这不代表完整 Diary feature 已最终 REVIEW-CLOSED；GitHub status queried; no checks available。
+本文件完成的是设计、审计、compatibility gate contract 以及 D3.1/D3.2/D4 implementation status mirror；D2 ordinary-content → `diary/*` destination regression follow-up 已由 `e971440ef5da8df16e9604d2bd4244f31da8e8e9` 收口且 D2 仍 `REVIEW-CLOSED`；D3.0 runtime compatibility gate 已 `PASS / REVIEW-CLOSED`，D3.0 compatibility follow-up、D3.1、D3.2 与 D4 均为 `REVIEW-CLOSED`，D5 = `NOT STARTED`。这不代表完整 Diary feature 已最终 REVIEW-CLOSED；GitHub status queried; no checks available。

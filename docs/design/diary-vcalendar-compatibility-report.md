@@ -6,7 +6,7 @@
 - Gate result: `PASS`
 - Independent D3.0 review: closed (`P0 = 0`, `P1 = 0`, `P2 = 0`)
 - D3.1: `REVIEW-CLOSED` (adapter implementation and early-year Date bridge follow-up are recorded separately; independent review closed with `P0 = 0`, `P1 = 0`, `P2 = 0`)
-- Post-closure D3.0 compatibility regression follow-up: `FIXED / REVIEW-READY` (fix commit: `ed47c94`; independent re-review pending)
+- Post-closure D3.0 compatibility regression follow-up: `REVIEW-CLOSED` (fix commit: `ed47c94`; independent review closed with `P0 = 0`, `P1 = 0`, `P2 = 0`)
 - Validation date: 2026-08-24 (Asia/Shanghai)
 - Baseline commit: `71e53445e6e6c14d23ec7b58a198450be8a7628f`
 - Final validation commit SHA (D3.0): `106e9ac601c4949a692dd4b11401786602d1a33c`
@@ -208,10 +208,10 @@ The production workaround is confined to `src/views/VaultView.vue`:
 
 Fix commit: `ed47c94` (`fix(diary): keep calendar mounted across document open`). The focused Diary/Vault lane passed 72/72 tests; History integration passed 173/173; Recovery integration passed 193/193 after the repository's permitted elevated rerun; full typecheck, production build, and `git diff --check` passed. The temporary A–J diagnosis harness was removed; the real D4 browser test remains as the long-term regression. No `DiaryCalendar.vue`, `useDiaryDateCommand.ts`, tab/router lifecycle, server/shared code, package/lockfile, VCalendar version, Popper version, fork, or `node_modules` file changed.
 
-This follow-up does not change the historical result: D3.0 remains `REVIEW-CLOSED / PASS`. The post-closure compatibility regression is `FIXED / REVIEW-READY` with task-scoped `P0 = 0`, `P1 = 0`, `P2 = 0`; the docs-only current-fact correction is now recorded, while final independent re-review remains pending. GitHub status queried; no checks available, so CI PASS is not claimed.
+This follow-up does not change the historical result: D3.0 remains `REVIEW-CLOSED / PASS`. The post-closure compatibility regression is now `REVIEW-CLOSED` after independent review (`P0 = 0`, `P1 = 0`, `P2 = 0`); the docs-only current-fact correction and `ed47c94` mitigation remain recorded. GitHub status queried; no checks available, so CI PASS is not claimed.
 
 ## P0 / P1 / P2
 
 Independent D3.0 closure review: `P0 = 0`, `P1 = 0`, `P2 = 0`.
 
-The prior documentation P2 is closed: the baseline commit, D3.0 validation commit, exact candidate, Gate result, and both upstream risk assessments are self-contained in this report. The historical D3.0 probe did not reproduce the upstream reports; the later D4 production integration did reproduce the same `dayIndex` failure class, which is recorded in the post-closure follow-up above and mitigated by `ed47c94`. The upstream reports and the 2023 candidate maintenance date remain non-blocking Known Compatibility Risks under the current scope. Docs-only follow-up self-review: `P0 = 0`, `P1 = 0`, `P2 = 0`; final independent re-review remains pending.
+The prior documentation P2 is closed: the baseline commit, D3.0 validation commit, exact candidate, Gate result, and both upstream risk assessments are self-contained in this report. The historical D3.0 probe did not reproduce the upstream reports; the later D4 production integration did reproduce the same `dayIndex` failure class, which is recorded in the post-closure follow-up above and mitigated by `ed47c94`. The upstream reports and the 2023 candidate maintenance date remain non-blocking Known Compatibility Risks under the current scope. Compatibility follow-up independent review: `P0 = 0`, `P1 = 0`, `P2 = 0`; review is closed.
