@@ -524,14 +524,16 @@ describe('VaultView D3.2 Diary surface wiring', () => {
     expect(source).toContain("v-if=\"activePanel === 'files'\"")
   })
 
-  it('keeps D3.2 free of date-create, editor, tab, and route lifecycle', () => {
+  it('routes D3.2 date intent to the D4 lifecycle owner', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
     const branch = source.match(
       /v-if="isDiaryCalendarMode"[\s\S]*?<DiaryCalendarSurface[\s\S]*?\/>/,
     )?.[0] ?? ''
 
-    expect(branch).not.toMatch(/openDiaryDate|createPost|openPost|router\.|\/api\/diary\/dates|activePath|activeScope\.value\s*=/)
-    expect(source).not.toContain('openDiaryDate')
-    expect(source).not.toContain('/api/diary/dates')
+    expect(branch).toContain('@date-selected="openDiaryDate"')
+    expect(source).toContain('const { openDiaryDate } = useDiaryDateCommand({')
+    expect(source).toContain("createDiaryDate,")
+    expect(source).not.toContain("createPost({ path: 'diary")
+    expect(source).not.toContain("documentLifecycle.createFile({ path: 'diary")
   })
 })

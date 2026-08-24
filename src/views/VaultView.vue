@@ -41,7 +41,7 @@ import { useWorkingTreeDiffs } from '../composables/vault/useWorkingTreeDiffs'
 import type { StatusEntry } from '../lib/history-api'
 import { useScopeFilter } from '../composables/vault/useScopeFilter'
 import { getLinkIndex, refreshLinkIndex, useLinkIndexSubscription } from '../composables/vault/useLinkIndex'
-import { getPost, type DocumentMetadata, type PostSummary } from '../lib/api'
+import { createDiaryDate, getPost, type DocumentMetadata, type PostSummary } from '../lib/api'
 import { formatHistoryDate } from '../lib/history-date'
 import { isSlugSegment } from '../lib/slug'
 import { resolveWikiTarget } from '../../shared/linkResolve'
@@ -57,6 +57,8 @@ import { createVaultFileChanges } from '../composables/vault/context/fileChanges
 import { useDocumentLifecycle } from '../composables/vault/useDocumentLifecycle'
 import type { DocumentLifecycle } from '../composables/vault/useDocumentLifecycle'
 import { applyMetadataToPostSummary } from './metadataPostSummary'
+import { useDiaryDateCommand } from '../composables/diary/useDiaryDateCommand'
+import { localCivilToday } from '../components/diary/diaryCalendarAdapter'
 import FileTree from '../components/vault/FileTree.vue'
 import DiaryCalendarSurface from '../components/diary/DiaryCalendarSurface.vue'
 import TagPanel from '../components/vault/TagPanel.vue'
@@ -1262,6 +1264,22 @@ async function openPost(path: string, options: { refresh?: boolean } = {}): Prom
   await openEditorPost(path, options)
 }
 
+const { openDiaryDate } = useDiaryDateCommand({
+  getPost,
+  createDiaryDate,
+  openPost,
+  refresh,
+  fileChanges,
+  mutationLock: historyMutationLock,
+  getToday: localCivilToday,
+  onFuture: () => toast.info(t('diary.future_missing')),
+  onBusy: () => toast.info(t('diary.open_busy')),
+  onError: (error) => toast.error(t('diary.open_failed', {
+    error: error.message || t('common.unknown_error'),
+  })),
+  onRefreshError: () => toast.info(t('diary.refresh_failed')),
+})
+
 async function selectWorkspaceTab(id: string, focusViewer = true): Promise<void> {
   if (recoveryTabs.tabs.value.some((recovery) => recovery.tabId === id)) {
     historyComparisons.deactivate()
@@ -2050,6 +2068,7 @@ watch(isReadMode, async (reading) => {
           :tree="tree"
           :loading="treeLoading"
           :error="treeError"
+          @date-selected="openDiaryDate"
         />
       </div>
 
