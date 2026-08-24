@@ -3,16 +3,18 @@
 
 ## 1. Status
 
-- **Status:** REVIEW-READY。本文件只定义 Diary 的实施顺序、文件边界、测试、证据和 review gate；本次不实现 Diary。
+- **Status:** D0 REVIEW-CLOSED。本文件只定义 Diary 的实施顺序、文件边界、测试、证据和 review gate；本次不实现 Diary。
 - **Planning baseline:** f342e7ad85e30b8bfb9073ac22f668dae154a7d0 (docs(diary): add vcalendar compatibility gate).
 - **Product source:** [diary-prd.md](./diary-prd.md)。PRD 是产品契约的唯一 source of truth；本文件不能重新定义产品行为。
 - **VCalendar status:** preferred candidate / pending D3.0 exact-stack compatibility gate；本文件不把它写成已批准的 runtime dependency。
-- **Current task boundary:** 只创建本文件。没有修改 production code、tests、package.json、package-lock.json，未安装 VCalendar，未执行 D1、D2 或 D3.0。
+- **D1 status:** NOT STARTED。D0 closure 只开放 D1 的入口，不代表 D1 已开始。
+- **VCalendar runtime gate:** PENDING。D3.0 尚未安装 candidate、尚未执行 compatibility spike，也没有 runtime/build/test PASS 证据。
+- **Current task boundary:** 原始 D0 只创建本文件；本次 closure sync 仅同步 `diary-prd.md` 与本文件的 review 状态。没有修改 production code、tests、package.json、package-lock.json，未安装 VCalendar，未执行 D1、D2 或 D3.0。
 - **Self-review result:** P0 = 0、P1 = 0、P2 = 0，表示本 Implementation Plan 的施工 contract 已补齐，不表示任何 Diary runtime 阶段已经通过。
 
 ### Planning-state note
 
-任务交接信息将 PRD 称为 REVIEW-CLOSED，但在本次仓库审计时，docs/design/diary-prd.md 的状态行仍是 REVIEW-READY。本文件不擅自改写 PRD，也不把文字交接当成 closure evidence。D1 的真实入口必须重新确认 PRD 的独立 review closure；在该证据出现前，D1 保持 blocked。这是显式 gate，不是对 Diary 产品契约的修改。
+PRD 与本 Implementation Plan 已完成独立 review closure 的状态同步：PRD = REVIEW-CLOSED，D0 = REVIEW-CLOSED。D1 仍为 NOT STARTED；VCalendar runtime compatibility gate 仍为 PENDING。该 closure sync 不代表 Diary 已实现，也不把 VCalendar 写成已批准的 runtime dependency。
 
 ## 2. Source of Truth
 
@@ -187,7 +189,7 @@ flowchart LR
 
 ### Non-goals
 
-- 不改 PRD 状态或 PRD 产品决定。
+- 不改 PRD 产品决定；原始 D0 不负责 PRD closure，后续 closure sync 只同步已完成 review 的状态文字。
 - 不新增 production code、tests、dependency 或 lockfile。
 - 不安装 VCalendar，不运行 D3.0 spike，不开始 D1。
 
@@ -209,7 +211,7 @@ flowchart LR
 ### Expected Files to Modify
 
 - 无 production/test/dependency 文件。
-- 仅新增 docs/design/diary-implementation-plan.md。
+- 原始 plan commit 仅新增 docs/design/diary-implementation-plan.md；closure sync 只修改 docs/design/diary-prd.md 与本文件的状态文字。
 
 ### New Files
 
@@ -227,7 +229,7 @@ flowchart LR
 ### Contracts / Invariants
 
 - 本文件是施工计划，不是 implementation result。
-- D0 完成只表示 plan review-ready。
+- 原始 D0 plan 创建完成时为 review-ready；独立 review 与 closure sync 完成后，D0 状态为 REVIEW-CLOSED。
 - D1-D5 均必须保持 NOT STARTED 或 BLOCKED，直到对应阶段真实实施。
 - 任何未验证的 VCalendar、browser、typecheck 或 build 结果不能标成 PASS。
 
@@ -277,15 +279,15 @@ D0 完成报告必须包含：
 - PRD source link、D1-D5 scope、D3.0 gate、tests、STOP conditions、commit boundaries 和 closure flow 全部写明。
 - 当前任务没有 production/test/dependency/lockfile diff。
 - git diff --check PASS。
-- 本阶段状态为 REVIEW-READY，不是 REVIEW-CLOSED。
+- 本阶段状态为 D0 REVIEW-CLOSED；D1 仍为 NOT STARTED。
 
 ### Suggested Commit
 
-docs(diary): add implementation plan
+docs(diary): close PRD and implementation plan
 
 ### Review Status
 
-REVIEW-READY，等待独立 IP review；本次不宣称 REVIEW-CLOSED。
+REVIEW-CLOSED；本次 closure sync 不包含 Diary implementation、VCalendar 安装或 D3.0 compatibility spike。
 
 ## 8. D1 — Diary Domain Protocol
 
@@ -1458,14 +1460,15 @@ D3.0 还必须报告 candidate version/tag、resolved peerDependencies、exact D
 
 建议的最小 commit sequence：
 
-1. docs(diary): add implementation plan — 当前 D0，仅本文件。
-2. feat(diary): establish diary domain protocol — D1。
-3. feat(diary): enforce diary server lifecycle — D2。
-4. chore(diary): validate calendar compatibility — D3.0，只有 explicit candidate/gate evidence；FAIL 时改为 ADR/evidence commit。
-5. feat(diary): add diary calendar adapter — D3.1。
-6. feat(diary): add monthly diary navigation — D3.2。
-7. feat(diary): integrate diary dates with vault lifecycle — D4。
-8. chore(diary): close responsive release and documentation gate — D5。
+1. docs(diary): add implementation plan — 原始 D0，仅新增本文件。
+2. docs(diary): close PRD and implementation plan — D0 closure sync；D1 仍为 NOT STARTED。
+3. feat(diary): establish diary domain protocol — D1。
+4. feat(diary): enforce diary server lifecycle — D2。
+5. chore(diary): validate calendar compatibility — D3.0，只有 explicit candidate/gate evidence；FAIL 时改为 ADR/evidence commit。
+6. feat(diary): add diary calendar adapter — D3.1。
+7. feat(diary): add monthly diary navigation — D3.2。
+8. feat(diary): integrate diary dates with vault lifecycle — D4。
+9. chore(diary): close responsive release and documentation gate — D5。
 
 可以因真实 diff 合并小 commit，但不能把 D1 domain、D2 server、D3 Calendar、D4 editor 全塞进一个不可 review 的大 commit。每个 commit 都要有对应 phase evidence，且 phase review 未 closed 不得进入下一阶段。D3.0 gate commit 与正式 Calendar implementation 必须保持不同 review boundary。
 
@@ -1473,7 +1476,7 @@ D3.0 还必须报告 candidate version/tag、resolved peerDependencies、exact D
 
 | Phase | Purpose | Status | Gate |
 | --- | --- | --- | --- |
-| D0 | PRD + Implementation Plan | REVIEW-READY | independent IP review；PRD closure status must be independently confirmed |
+| D0 | PRD + Implementation Plan | REVIEW-CLOSED | independent IP review 已通过；PRD closure status 已同步 |
 | D1 | Diary domain protocol | NOT STARTED | D0 REVIEW-CLOSED + PRD REVIEW-CLOSED |
 | D2 | Root / server / mutation | NOT STARTED | D1 REVIEW-CLOSED |
 | D3.0 | VCalendar compatibility | NOT STARTED | D2 REVIEW-CLOSED |
@@ -1482,13 +1485,13 @@ D3.0 还必须报告 candidate version/tag、resolved peerDependencies、exact D
 | D4 | Vault lifecycle integration | BLOCKED | D3.2 REVIEW-CLOSED |
 | D5 | Responsive / release / closure | BLOCKED | D4 REVIEW-CLOSED |
 
-本任务完成时，只有 D0 为 REVIEW-READY；其余阶段没有 implementation result。D0 不得写成 REVIEW-CLOSED，除非另有独立 review action。
+本次 closure sync 完成时，D0 为 REVIEW-CLOSED；D1-D5 均没有 implementation result。D1 为 NOT STARTED，D3.0 VCalendar runtime compatibility gate 为 PENDING。
 
 ## 22. Final Closure Criteria
 
 Diary 只有在以下条件全部满足、每阶段都独立 review closed 后，才能标记 COMPLETE / REVIEW-CLOSED：
 
-- [ ] D0 Implementation Plan review closed。
+- [x] D0 Implementation Plan review closed。
 - [ ] D1 pure Diary domain、strict date validation、classification 和 root contract closed。
 - [ ] D2 seed、date create、one/day/no suffix、future、edit/delete、rename/move guards、generic/AI/folder bypass guards closed。
 - [ ] D3.0 exact-stack VCalendar gate PASS，或有不影响 MVP/future Mood 的 documented CONDITIONAL PASS。
@@ -1508,4 +1511,4 @@ Diary 只有在以下条件全部满足、每阶段都独立 review closed 后�
 - [ ] typecheck/build/relevant tests/integration/browser gates have explicit PASS or baseline-limited evidence。
 - [ ] GitHub CI status is reported only if actually queried。
 
-本 Implementation Plan 当前只完成 D0 文档施工边界，最终状态是 REVIEW-READY。它不表示 Diary 已实现，也不表示 VCalendar runtime compatibility 已验证或依赖已经加入仓库。
+本 Implementation Plan 当前只完成 D0 文档施工边界，最终状态是 D0 REVIEW-CLOSED。D1 仍为 NOT STARTED，VCalendar runtime compatibility gate 仍为 PENDING；这不表示 Diary 已实现，也不表示 VCalendar runtime compatibility 已验证或依赖已经加入仓库。

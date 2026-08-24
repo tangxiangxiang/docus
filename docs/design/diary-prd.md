@@ -1,8 +1,10 @@
 # Diary Calendar PRD
 
-状态：`REVIEW-READY`（VCalendar preferred candidate；D3 exact-stack compatibility gate pending；仅完成 PRD、仓库现状审计与技术可行性确认，未验证 runtime compatibility）
+状态：`REVIEW-CLOSED`（VCalendar preferred candidate；D3 exact-stack compatibility gate pending；仅完成 PRD、仓库现状审计与技术可行性确认，未验证 runtime compatibility）
 
 PRD review status：`P0 = 0`、`P1 = 0`、`P2 = 0`。这表示 compatibility gate contract 已补齐，不表示 VCalendar runtime compatibility 已通过。
+
+当前实施状态：`D1 = NOT STARTED`；`VCalendar runtime compatibility gate = PENDING`。PRD closure 不代表 Diary 已开始实现，也不代表 VCalendar 已安装或通过 exact-stack 验证。
 
 日期：2026-08-24
 范围：Diary 产品模型、存储协议、日历交互、编辑器复用与实施边界
@@ -598,7 +600,7 @@ Fallback 评估顺序只能作为后续 ADR 的候选顺序，不在本 PRD 预�
 
 官方 repository 或 issue tracker 中关于 Vue 3.5、`day-content`、`dayIndex`、DatePicker 或 range 的报告，应先记录为 `Known Compatibility Risk` 并由 spike 复现；外部 issue report 本身不等于 Docus 已确认 incompatible。
 
-当前 D0 状态：`PENDING`。尚未安装 candidate、尚未执行 compatibility spike，因此不能写成 VCalendar compatibility verified 或 gate PASS。
+当前 VCalendar runtime compatibility gate 状态：`PENDING`。尚未安装 candidate、尚未执行 compatibility spike，因此不能写成 VCalendar compatibility verified 或 gate PASS。
 
 ### 9.4 Compatibility validation matrix
 
