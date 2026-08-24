@@ -712,7 +712,7 @@ D3 已从 compatibility spike 开始并完成 D3.0；D3.0 closure 已完成，D3
 - existing exact Diary 通过现有 `openPost()` 打开；missing today/past 只复用 D2 `POST /api/diary/dates`，创建后通过 generic `fileChanges`、`refresh()` 和既有 route/tab/editor lifecycle 完成打开与 marker projection 更新。
 - missing future 不创建、不打开不存在的 route；existing future 仍可打开、编辑、保存和删除；exact-path mutation lock 与 in-flight deduplication 防止重复创建/重复 tab。
 - D1 date contract、D2 date-create semantics、D3.2 props/emits、VCalendar/Popper、History/Recovery/Draft pipeline 与普通 note/archive/ledger lifecycle 未改变。
-- focused D4/Diary/Vault regression 241 tests、History integration 173 tests、full typecheck、production build 和 diff check PASS；Recovery crash-child lane 有 35 个当前环境 `tsx` IPC `listen EPERM`，其余 158 个 recovery tests PASS，记录为 baseline-limited。
+- focused D4/Diary/Vault regression 241 tests、History integration 173 tests、Recovery integration 193 tests、full typecheck、production build 和 diff check PASS；Recovery 首次沙箱运行曾遇到 `tsx` IPC `listen EPERM`，提升权限重跑后全量 PASS。
 - D4 task-scoped self-review：P0 = 0、P1 = 0、P2 = 0；D4 = `COMPLETE / REVIEW-READY`，等待 independent review。
 
 ### D5 — Responsive、可访问性与 release gate
