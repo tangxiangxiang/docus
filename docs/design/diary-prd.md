@@ -4,7 +4,7 @@
 
 PRD review status：`P0 = 0`、`P1 = 0`、`P2 = 0`。这表示 compatibility gate contract 已补齐，不表示 VCalendar runtime compatibility 已通过。
 
-当前实施状态：`D1 = REVIEW-CLOSED`（implementation commit：`d0a5d4e82e930445bd9e549e27d39e8c18b30819`；独立 review：P0 = 0、P1 = 0、P2 = 0）；`D2 = NOT STARTED`；`VCalendar runtime compatibility gate = PENDING`。D1 closure 只表示 domain protocol 已完成并通过独立 review，不代表 D2、Diary 全部实现或 VCalendar 已安装/通过 exact-stack 验证。
+当前实施状态：`D1 = REVIEW-CLOSED`（implementation commit：`d0a5d4e82e930445bd9e549e27d39e8c18b30819`；独立 review：P0 = 0、P1 = 0、P2 = 0）；`D2 = COMPLETE / REVIEW-READY`（implementation commit：`bb32349247914061e6ad71989538c995028faeea`；独立 review pending）；`VCalendar runtime compatibility gate = BLOCKED / PENDING`。D2 server contract 已实现，但不代表 D2 已独立 review closed、Diary Calendar 已实现或 VCalendar 已安装/通过 exact-stack 验证。
 
 日期：2026-08-24
 范围：Diary 产品模型、存储协议、日历交互、编辑器复用与实施边界
@@ -116,7 +116,7 @@ Diary 的产品限制是日期领域规则，不是新的文件系统权限模�
 
 当前 `archive` root 的保护仍由 [`shared/archiveProtocol.ts`](../../shared/archiveProtocol.ts) 等现有规则负责；本 PRD 不改变 Archive Soft-Policy 的结果：archive descendants 仍按普通用户内容处理，Archive action 仍默认写入 `archive/<filename>`。
 
-一个重要的现状差异：当前仓库还没有 `diary/` root，`server/routes/folders.ts` 的 generic `POST /api/folders` 也尚未拥有“禁止创建保留 root 名称”的 Diary gate。因此“用户不能创建 diary root”是本 PRD 的目标 invariant，不是当前已实现事实；D2 必须在 seed、shared/root contract、server 和 UI 四层一起收口。
+当前 D2 已将 `diary/` 纳入既有 root initialization，并由 server-authoritative root/mutation policy 阻止 generic folder/document API 绕过 Diary date identity；Diary root 仍是保留 system root。Calendar UI、Editor integration 和 D3.0 compatibility gate 仍未开始。
 
 ### 3.5 文档与现有生命周期契约
 
