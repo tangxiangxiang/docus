@@ -30,6 +30,7 @@ import {
 } from '../paths.js'
 import * as git from './git.js'
 import { ensureRepoWithinVaultMutation } from './repo.js'
+import { validateDocumentMutation } from '../documentMutationPolicy.js'
 
 export class HistoryRestoreNotFoundError extends Error {
   constructor(message: string) {
@@ -143,6 +144,15 @@ export async function restoreHistoricalDocument(input: {
         )
       }
       const before = await currentSnapshot(target)
+      if (before) {
+        validateDocumentMutation({
+          operation: 'write',
+          destinationPath: logicalPath,
+          destinationExists: true,
+        })
+      } else {
+        validateDocumentMutation({ operation: 'recover', destinationPath: logicalPath })
+      }
       const databaseSnapshot = snapshotDocumentMetadataMutation(input.db, [logicalPath])
       let committed = false
       let created = false
@@ -327,7 +337,10 @@ export async function restoreHistoricalDocument(input: {
             { cause: error },
           )
         }
-        if (error instanceof Error && /symbolic links|path changed while accessing|path segment|path root/i.test(error.message)) {
+        if (error instanceof Error && (
+          /symbolic links|path changed while accessing|path segment|path root/i.test(error.message)
+          || (error as NodeJS.ErrnoException).code === 'EPERM'
+        )) {
           throw new HistoryRestoreConflictError(
             `document path moved before restore completed: ${logicalPath}`,
             'HISTORY_PATH_MOVED',

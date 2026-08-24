@@ -649,6 +649,49 @@ describe('AI mutations with the reserved structure-lock spelling as a path', () 
   }, 2000)
 })
 
+describe('AI Diary mutation contract', () => {
+  let contentDir: string
+  beforeEach(() => { contentDir = makeTempContentDir(); setContentDir(contentDir); __resetLinkIndexForTesting() })
+  afterEach(() => { setContentDir(ORIGINAL_CONTENT_DIR); __resetLinkIndexForTesting(); fs.rmSync(path.dirname(contentDir), { recursive: true, force: true }) })
+
+  it('blocks generic Diary creation and identity changes while allowing edit/delete', async () => {
+    fs.mkdirSync(path.join(contentDir, 'diary'), { recursive: true })
+    writeFile('diary/2000-05-01.md', '# 2000-05-01\n')
+    saveDocumentMetadata(db, { path: 'diary/2000-05-01', title: '2000-05-01' })
+    writeFile('inbox/source.md', '# source\n')
+    saveDocumentMetadata(db, { path: 'inbox/source', title: 'source' })
+
+    const create = await executeToolCall('create_file', {
+      path: 'diary/generic', content: '# generic\n',
+    }, ctx)
+    const writeMissing = await executeToolCall('write_file', {
+      path: 'diary/missing', content: '# missing\n',
+    }, ctx)
+    const renameOut = await executeToolCall('rename_file', {
+      path: 'diary/2000-05-01', new_path: 'inbox/diary-note', update_references: false,
+    }, ctx)
+    const renameIn = await executeToolCall('rename_file', {
+      path: 'inbox/source', new_path: 'diary/2000-05-02', update_references: false,
+    }, ctx)
+    const write = await executeToolCall('write_file', {
+      path: 'diary/2000-05-01', content: '# edited\n',
+    }, ctx)
+    const deleted = await executeToolCall('delete_file', { path: 'diary/2000-05-01' }, ctx)
+
+    expect(create.isError).toBe(true)
+    expect(create.content).toMatch(/date command/)
+    expect(writeMissing.isError).toBe(true)
+    expect(renameOut.isError).toBe(true)
+    expect(renameOut.content).toMatch(/cannot change identity/)
+    expect(renameIn.isError).toBe(true)
+    expect(renameIn.content).toMatch(/cannot change identity/)
+    expect(write.isError).toBe(false)
+    expect(deleted.isError).toBe(false)
+    expect(fs.existsSync(path.join(contentDir, 'diary', 'generic.md'))).toBe(false)
+    expect(fs.existsSync(path.join(contentDir, 'diary', 'missing.md'))).toBe(false)
+  })
+})
+
 describe('TOOL_DEFINITIONS', () => {
   it('has tools with names matching the dispatch table', () => {
     expect(TOOL_DEFINITIONS).toHaveLength(8)

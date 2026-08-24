@@ -1,7 +1,7 @@
-// Lazy-seed the three vault root folders under the content root.
+// Lazy-seed the four vault root folders under the content root.
 //
 // The vault protocol (shared/archiveProtocol.ts) treats
-// `inbox`, `literature`, and `archive` as reserved top-level roots —
+// `inbox`, `literature`, `archive`, and `diary` as reserved top-level roots —
 // they must exist for the tree, scope filter, and rename/delete
 // guards to behave correctly. With a fresh content directory
 // (typical on the first `docker compose up` against an empty named
@@ -15,7 +15,7 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 
-const INITIAL_FOLDERS = ['inbox', 'literature', 'archive'] as const
+const INITIAL_FOLDERS = ['inbox', 'literature', 'archive', 'diary'] as const
 
 export async function ensureInitialFolders(rootDir: string): Promise<void> {
   for (const name of INITIAL_FOLDERS) {

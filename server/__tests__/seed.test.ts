@@ -15,10 +15,10 @@ afterEach(async () => {
 })
 
 describe('ensureInitialFolders', () => {
-  it('creates inbox / literature / archive under an empty content dir', async () => {
+  it('creates inbox / literature / archive / diary under an empty content dir', async () => {
     await ensureInitialFolders(tmpDir)
     const entries = await fs.readdir(tmpDir)
-    expect(entries.sort()).toEqual(['archive', 'inbox', 'literature'])
+    expect(entries.sort()).toEqual(['archive', 'diary', 'inbox', 'literature'])
   })
 
   it('is idempotent — running twice does not error or delete files', async () => {
@@ -53,6 +53,19 @@ describe('ensureInitialFolders', () => {
     // should not crash the server. EEXIST becomes a warning.
     await ensureInitialFolders(tmpDir)
     const entries = await fs.readdir(tmpDir)
-    expect(entries).toEqual(expect.arrayContaining(['literature', 'archive']))
+    expect(entries).toEqual(expect.arrayContaining(['literature', 'archive', 'diary']))
+  })
+
+  it('surfaces a diary file conflict without overwriting it', async () => {
+    const diaryFile = path.join(tmpDir, 'diary')
+    await fs.writeFile(diaryFile, 'keep this file', 'utf8')
+
+    await ensureInitialFolders(tmpDir)
+
+    await expect(fs.readFile(diaryFile, 'utf8')).resolves.toBe('keep this file')
+    await expect(fs.stat(path.join(tmpDir, 'diary', 'unexpected'))).rejects.toThrow()
+    await expect(fs.stat(path.join(tmpDir, 'inbox'))).resolves.toBeTruthy()
+    await expect(fs.stat(path.join(tmpDir, 'literature'))).resolves.toBeTruthy()
+    await expect(fs.stat(path.join(tmpDir, 'archive'))).resolves.toBeTruthy()
   })
 })

@@ -190,6 +190,8 @@ postRoutes.put('/api/posts/*', async (c) => {
   const splat = c.req.path.replace(/^\/api\/posts\//, '')
   let abs: string
   try { abs = filePathFor(splat) } catch (e: any) { return bad(c, e.message) }
+  try { validateDocumentMutation({ operation: 'write', destinationPath: splat, destinationExists: true }) }
+  catch (error) { return bad(c, (error as Error).message, 422) }
   const body = await c.req.json().catch(() => null) as {
     raw?: unknown
     baseRaw?: unknown
@@ -323,6 +325,8 @@ postRoutes.put('/api/posts/*', async (c) => {
 postRoutes.put('/api/recover/*', async (c) => {
   const documentPath = c.req.path.replace(/^\/api\/recover\//, '')
   if (!isValidPathSyntax(documentPath)) return bad(c, 'invalid path')
+  try { validateDocumentMutation({ operation: 'recover', destinationPath: documentPath }) }
+  catch (error) { return bad(c, (error as Error).message, 422) }
   const body = await c.req.json().catch(() => null) as { raw?: unknown } | null
   if (!body || typeof body.raw !== 'string') return bad(c, 'raw required')
   const requestedRaw = body.raw
@@ -676,6 +680,8 @@ postRoutes.delete('/api/posts/*', async (c) => {
   const splat = c.req.path.replace(/^\/api\/posts\//, '')
   let abs: string
   try { abs = filePathFor(splat) } catch (e: any) { return bad(c, e.message) }
+  try { validateDocumentMutation({ operation: 'delete', sourcePath: splat }) }
+  catch (error) { return bad(c, (error as Error).message, 422) }
   // Deleting a file changes tree membership: structure lock first.
   return withVaultStructureLock(() => withDocumentWriteLock(splat, async () => {
   if (!await exists(abs)) return bad(c, 'not found', 404)

@@ -6,6 +6,7 @@ dotenv.config({ override: true })
 import type { Plugin } from 'vite'
 import app from './index.ts'
 import { CONTENT_DIR } from './paths.ts'
+import { ensureInitialFolders } from './seed.ts'
 import { getDb } from './db.ts'
 import { loadAuthConfig } from './auth/config.ts'
 import { initializeAuthRuntime } from './auth/runtime.ts'
@@ -24,6 +25,10 @@ export function serverPlugin(): Plugin {
     async configureServer(server) {
       const writerOwnership = await acquireVaultWriterOwnership(CONTENT_DIR)
       try {
+        // Keep dev startup on the same root initialization contract as
+        // production. Seed is idempotent and runs before auth, recovery,
+        // and metadata scans can observe the vault.
+        await ensureInitialFolders(CONTENT_DIR)
         // Reconcile operations interrupted by a previous crash BEFORE any
         // /api request is served (see server/crashRecovery.ts). Never throws.
         const authOrigin = process.env.DOCUS_PUBLIC_ORIGIN ?? 'http://localhost:5173'

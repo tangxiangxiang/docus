@@ -59,7 +59,7 @@ app.get('*', async (c) => {
 // Lifetime ownership is acquired before any startup mutation or listener.
 const writerOwnership = await acquireVaultWriterOwnership(CONTENT_DIR)
 try {
-  // Seed the three vault root folders (inbox / literature / archive)
+  // Seed the four vault root folders (inbox / literature / archive / diary)
   // before the HTTP server starts accepting requests. Idempotent — existing
   // folders and files are left alone; only missing roots are created.
   // See server/seed.ts for the rationale.

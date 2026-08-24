@@ -312,6 +312,11 @@ function executeUpdateMetadata(input: {
   expected_updated_at?: unknown
 }, db: DatabaseT): ToolResult {
   if (typeof input.path !== 'string' || !input.path) return err('update_metadata: `path` is required')
+  try {
+    validateDocumentMutation({ operation: 'write', destinationPath: input.path, destinationExists: true })
+  } catch (e) {
+    return err(`update_metadata: ${(e as Error).message}`)
+  }
   const current = getDocumentMetadata(db, input.path)
   if (!current) return err(`update_metadata: document does not exist: ${input.path}`)
   if (input.title !== undefined && (typeof input.title !== 'string' || !input.title.trim() || input.title.trim().length > 200)) {
@@ -548,6 +553,11 @@ async function executePatchFile(input: {
   }
   if (input.old_string === input.new_string) {
     return err('patch_file: `old_string` and `new_string` are identical; no change made')
+  }
+  try {
+    validateDocumentMutation({ operation: 'write', destinationPath: input.path, destinationExists: true })
+  } catch (e) {
+    return err(`patch_file: ${(e as Error).message}`)
   }
   const replaceAll = input.replace_all === true
 

@@ -67,6 +67,7 @@ import { rewriteDocumentReferences } from '../renameReferences.js'
 import { listSubtreePaths } from '../tree.js'
 import { bad, ensureMetadata, exists, metadataDb, recordCommittedMetadata } from './shared.js'
 import { nextMetadataBatchUpdatedAt } from '../metadataVersion.js'
+import { validateFolderMutation } from '../documentMutationPolicy.js'
 
 const folderRoutes = new Hono()
 
@@ -225,6 +226,8 @@ folderRoutes.post('/api/folders', async (c) => {
   if (!isValidPathSyntax(body.path)) {
     return bad(c, 'invalid path syntax')
   }
+  try { validateFolderMutation({ operation: 'create', path: body.path }) }
+  catch (error) { return bad(c, (error as Error).message, 422) }
   let abs: string
   try { abs = folderPathFor(body.path) } catch (e: any) { return bad(c, e.message) }
   // Creating a folder changes tree membership: structure lock first.
@@ -248,6 +251,8 @@ folderRoutes.patch('/api/folders/*', async (c) => {
   const body = await c.req.json().catch(() => null) as { newPath?: string; updateReferences?: boolean } | null
   if (!body || typeof body.newPath !== 'string') return bad(c, 'newPath required')
   const newPath = body.newPath
+  try { validateFolderMutation({ operation: 'rename', sourcePath: srcPath, destinationPath: newPath }) }
+  catch (error) { return bad(c, (error as Error).message, 422) }
   // Validate: newPath parent must match srcPath parent, only last segment differs.
   const srcParent = path.dirname(srcPath)
   const newParent = path.dirname(body.newPath)
@@ -1060,6 +1065,8 @@ folderRoutes.patch('/api/folders/*', async (c) => {
 folderRoutes.delete('/api/folders/*', async (c) => {
   const splat = c.req.path.replace(/^\/api\/folders\//, '')
   const folderP = splat
+  try { validateFolderMutation({ operation: 'delete', path: folderP }) }
+  catch (error) { return bad(c, (error as Error).message, 422) }
   if (!canModify(folderP)) return bad(c, 'protected folders cannot be deleted', 422)
   let abs: string
   try { abs = folderPathFor(folderP) } catch (e: any) { return bad(c, e.message) }

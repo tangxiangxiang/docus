@@ -29,6 +29,7 @@ import {
   restoreHistoricalDocument,
 } from './restore.js'
 import { FolderMovePathOwnedError } from '../folderMoveJournalOwnership.js'
+import { DocumentMutationPolicyError } from '../documentMutationPolicy.js'
 import {
   isManagedHistoryPath,
   isValidCommitSha,
@@ -550,6 +551,9 @@ history.post('/restore', async (c) => {
     }
     if (e instanceof HistoryRestoreNotFoundError) {
       return bad(c, msg, 404)
+    }
+    if (e instanceof DocumentMutationPolicyError) {
+      return bad(c, msg, 422, e.code)
     }
     return bad(c, msg, 500, stableErrorCode(e))
   }
