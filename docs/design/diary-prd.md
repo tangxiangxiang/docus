@@ -4,7 +4,7 @@
 
 PRD review status：`P0 = 0`、`P1 = 0`、`P2 = 0`。PRD contract 与 D3.0 compatibility evidence 已分开记录；D3.0 gate result 为 `PASS`，D3.0 closure 已完成。
 
-当前实施状态：`D0 = REVIEW-CLOSED`；`D1 = REVIEW-CLOSED`（implementation commit：`d0a5d4e82e930445bd9e549e27d39e8c18b30819`；独立 review：P0 = 0、P1 = 0、P2 = 0）；`D2 = REVIEW-CLOSED`（implementation commit：`bb32349247914061e6ad71989538c995028faeea`；generic recovery provenance follow-up：`acaf548c048c2948de726208ea4d2a1c1c9b3be3`；独立复审最终 P0 = 0、P1 = 0、P2 = 0）；`D3.0 = REVIEW-CLOSED`（Implementation commit：`106e9ac601c4949a692dd4b11401786602d1a33c`；exact candidate：`v-calendar@3.1.2`；gate result：`PASS`；独立 review：P0 = 0、P1 = 0、P2 = 0；证据见 [`diary-vcalendar-compatibility-report.md`](./diary-vcalendar-compatibility-report.md)）；`VCalendar runtime compatibility gate = PASS / REVIEW-CLOSED`；`D3.1 = COMPLETE / REVIEW-READY`（implementation commit：`931828da31166d68cb7897343c695a761bf6fc80`；adapter contract validation PASS；独立 review pending）；`D3.2 = BLOCKED`；`D4 = BLOCKED`；`D5 = BLOCKED`。GitHub CI = `NOT VERIFIED`。D2 server contract 已实现并完成独立复审；D3.1 只提供 presentation adapter，不代表 Calendar-first Diary surface、Vault integration 或完整 Diary lifecycle 已实现。
+当前实施状态：`D0 = REVIEW-CLOSED`；`D1 = REVIEW-CLOSED`（implementation commit：`d0a5d4e82e930445bd9e549e27d39e8c18b30819`；独立 review：P0 = 0、P1 = 0、P2 = 0）；`D2 = REVIEW-CLOSED`（implementation commit：`bb32349247914061e6ad71989538c995028faeea`；generic recovery provenance follow-up：`acaf548c048c2948de726208ea4d2a1c1c9b3be3`；独立复审最终 P0 = 0、P1 = 0、P2 = 0）；`D3.0 = REVIEW-CLOSED`（Implementation commit：`106e9ac601c4949a692dd4b11401786602d1a33c`；exact candidate：`v-calendar@3.1.2`；gate result：`PASS`；独立 review：P0 = 0、P1 = 0、P2 = 0；证据见 [`diary-vcalendar-compatibility-report.md`](./diary-vcalendar-compatibility-report.md)）；`VCalendar runtime compatibility gate = PASS / REVIEW-CLOSED`；`D3.1 = COMPLETE / REVIEW-READY`（implementation commit：`931828da31166d68cb7897343c695a761bf6fc80`；year 0000–0099 Date bridge follow-up：`67d7858edcd0969b81ff2f6969e029a969526be9`；adapter contract validation PASS；独立 review pending）；`D3.2 = BLOCKED`；`D4 = BLOCKED`；`D5 = BLOCKED`。GitHub CI = `NOT VERIFIED`。D2 server contract 已实现并完成独立复审；D3.1 只提供 presentation adapter，不代表 Calendar-first Diary surface、Vault integration 或完整 Diary lifecycle 已实现。
 
 日期：2026-08-24
 范围：Diary 产品模型、存储协议、日历交互、编辑器复用与实施边界
@@ -700,7 +700,7 @@ Diary 的用户文案应解释“按日期进入文档”，而不是制造第�
 D3 已从 compatibility spike 开始并完成 D3.0；D3.0 closure 已完成，D3.1 presentation adapter 也已完成，但完整 Calendar surface integration 仍未开始：
 
 - **D3.0 — VCalendar Compatibility Gate**：已按实际 `package.json`/lockfile 解析 exact Docus stack，pin `v-calendar@3.1.2` 与 `@popperjs/core@2.11.8`，完成 isolated spike；未使用无版本 `npm install v-calendar`；结果 `PASS / REVIEW-CLOSED`；Implementation commit 为 `106e9ac601c4949a692dd4b11401786602d1a33c`。
-- **D3.1 — Calendar adapter integration**：已使用 approved exact candidate 建立 `DiaryCalendar` presentation adapter；implementation commit 为 `931828da31166d68cb7897343c695a761bf6fc80`，adapter contract validation PASS，当前为 `COMPLETE / REVIEW-READY`，独立 review pending。
+- **D3.1 — Calendar adapter integration**：已使用 approved exact candidate 建立 `DiaryCalendar` presentation adapter；implementation commit 为 `931828da31166d68cb7897343c695a761bf6fc80`，follow-up commit `67d7858edcd0969b81ff2f6969e029a969526be9` 修复 year 0000–0099 local Date bridge 并补齐 round-trip boundary tests；adapter contract validation PASS，当前为 `COMPLETE / REVIEW-READY`，独立 review pending。
 - **D3.2 — Monthly Diary surface**：加载有效 Diary dates，使用 attributes/dot，接 Today、month navigation、day click；保留 local date normalization，不把 Diary 映射为 event card，也不引入 event scheduling 能力。
 
 ### D4 — Vault editor/lifecycle integration
@@ -819,7 +819,7 @@ D3 已从 compatibility spike 开始并完成 D3.0；D3.0 closure 已完成，D3
 - [x] 已列出实施阶段、测试矩阵、风险与 open questions。
 - [x] D3.0 已使用显式 exact candidate，完成 compatibility spike、typecheck、build、Vitest/jsdom、browser 和 timezone evidence；未执行无版本 `npm install v-calendar`。
 - [x] VCalendar candidate 已在 D3 entry 通过 exact-stack compatibility gate；D3.0 = `REVIEW-CLOSED`，Gate = `PASS`；independent review P0 = 0、P1 = 0、P2 = 0。
-- [x] D3.1 production presentation adapter、VCalendar isolation、local DiaryDate adapter、marker/navigation/accessibility contract 和 component tests 已实现并验证；D3.1 = `COMPLETE / REVIEW-READY`，独立 review pending。
+- [x] D3.1 production presentation adapter、VCalendar isolation、local DiaryDate adapter（含 year 0000–0099 round-trip）、marker/navigation/accessibility contract 和 component tests 已实现并验证；D3.1 = `COMPLETE / REVIEW-READY`，独立 review pending。
 - [ ] D3.2 monthly Diary surface、FileTree relationship、Vault/Editor lifecycle integration 已实现并验证。
 
 ## 15. 评审结论
