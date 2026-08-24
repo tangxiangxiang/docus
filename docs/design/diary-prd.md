@@ -1,6 +1,6 @@
 # Diary Calendar PRD
 
-状态：`REVIEW-READY`（仅完成 PRD、仓库现状审计与技术可行性确认；尚未实现）
+状态：`REVIEW-READY`（VCalendar/Mood 架构修订；需独立 review；仅完成 PRD、仓库现状审计与技术可行性确认）
 
 日期：2026-08-24
 范围：Diary 产品模型、存储协议、日历交互、编辑器复用与实施边界
@@ -21,7 +21,7 @@ Diary 不是另一套编辑器，也不是把笔记改造成传统的日记列�
 | Docus logical path | `diary/YYYY-MM-DD`，不带 `.md` |
 | 磁盘物理路径 | `CONTENT_DIR/diary/YYYY-MM-DD.md` |
 | 编辑器 URL | `/vault/diary/YYYY-MM-DD` |
-| 日历标记 | 每个有效日期一个 all-day marker/event，不把拖拽或调整大小作为操作入口 |
+| 日历标记 | 每个有效日期一个 VCalendar attribute/dot；Diary 不是 event calendar |
 
 `diary/` 根目录是 Docus 保留的固定功能根目录；它不能被用户重命名、删除、移动或 re-parent。根目录下的有效内容是日期文档，而不是任意文件夹树。
 
@@ -32,7 +32,7 @@ Diary 的产品限制是日期领域规则，不是新的文件系统权限模�
 ### 2.1 目标
 
 - 在 `diary` scope 提供 Calendar-first 的日期导航。
-- 桌面端使用 Month Grid；小屏使用 Month Agenda 或等价的 agenda 视图。
+- 桌面端和移动端都使用月视图；通过外层布局和紧凑日期单元格适配屏幕宽度。
 - 用低干扰的点/标记表示已有 Diary 日期。
 - 点击今天、过去日期或已有未来日期时，复用现有编辑器打开逻辑。
 - 今天或过去日期没有文档时，可以创建当天/补记文档。
@@ -46,7 +46,8 @@ Diary 的产品限制是日期领域规则，不是新的文件系统权限模�
 
 - 不实现独立的 `DiaryEditor`、`DiarySave`、Diary history 或 Diary recovery。
 - 不引入数据库日记记录、UUID diary entity 或第二套文档身份系统。
-- 不实现重复日记、周期日记、提醒、情绪/天气字段、日历事件编辑、拖拽改期或 resize。
+- 不实现重复日记、周期日记、提醒、情绪/天气字段、日历 event 编辑、拖拽改期或 resize。
+- 不实现 mood picker、emoji picker、MoodKey enum、情绪统计、趋势、AI sentiment 或 mood heatmap；只在 domain model 中预留未来扩展 seam。
 - 不实现 `diary/year/month` 或任意嵌套 Diary 文件夹。
 - 不把 Markdown 文件扩展名暴露到 Docus logical path 或 URL。
 - 不改变 `note` scope；`note` 仍只包含 `inbox`、`literature`、`archive`，`diary` 继续是独立 scope。
@@ -60,13 +61,17 @@ Diary 的产品限制是日期领域规则，不是新的文件系统权限模�
 
 仓库目前没有 Diary domain、日期协议、Calendar 页面或 Diary API。当前只有 scope 和导航层面的预留：
 
+审计确认：`diary` 是独立 scope，`ledger` 也是独立 scope；ledger 不属于 Diary 或 note，本次不改变其语义。
+
 | 位置 | 当前事实 | 对本 PRD 的影响 |
 | --- | --- | --- |
 | [`shared/scopeProtocol.ts`](../../shared/scopeProtocol.ts) | `diary` scope 已映射到 `['diary']`；`note` 仍映射到 `['inbox', 'literature', 'archive']` | 不需要改变 scopeProtocol；后续只增加 Diary domain 规则 |
 | [`src/components/NavBar.vue`](../../src/components/NavBar.vue) | 已有 diary scope chip | 复用现有 scope 入口，不新建平行导航体系 |
 | [`src/components/vault/icons.ts`](../../src/components/vault/icons.ts) | 已有 diary icon | 可复用现有视觉系统 |
+| [`src/components/vault/FileTree.vue`](../../src/components/vault/FileTree.vue) | 当前 tree 通过 shared root protocol 保护已有系统 roots；root drop 与 folder re-parent 也有 defensive guard | Diary Calendar 不替换 FileTree；后续 Diary 规则需在 UI 入口与 server/domain guard 一致执行 |
 | `src/components/`、`src/views/`、`src/composables/` | 没有 Diary Calendar 或 Diary editor | 后续只新增 Calendar 视图/组件，不复制编辑器生命周期 |
 | `src/content/` | 当前没有 `diary/` 根目录 | 启动 seed 需要补充固定根目录，并同时修正 dev/prod 一致性 |
+| `package.json` | 当前没有 `v-calendar`、`@popperjs/core` 或 Schedule-X 依赖 | 本阶段不安装依赖；实现时按锁定的官方 VCalendar 文档处理 |
 
 ### 3.2 路径与文件身份
 
@@ -100,11 +105,14 @@ Diary 的产品限制是日期领域规则，不是新的文件系统权限模�
 | [`server/prod.ts`](../../server/prod.ts) | 生产启动会调用 `ensureInitialFolders(CONTENT_DIR)` | 生产根目录初始化可复用 |
 | [`server/vite-plugin.ts`](../../server/vite-plugin.ts) | 当前 Vite dev 启动没有调用同一个 seed helper | 后续必须补齐 dev/prod 一致性，避免开发环境缺少 `diary/` |
 | [`server/documentMutationPolicy.ts`](../../server/documentMutationPolicy.ts) | 目前只按 exact protected root 保护 `inbox`、`literature`、`archive`；archive descendants 已是普通内容 | 后续扩展 root contract 时只增加 `diary` 根保护，不恢复 archive subtree gate |
+| [`shared/archiveProtocol.ts`](../../shared/archiveProtocol.ts) | 当前 `PROTECTED_ROOTS` 仍只有 `inbox`、`literature`、`archive`；`isInArchive()` 不再代表 readonly；`canMove()` 是 root-policy predicate，不是实体 move capability | Diary root contract 后续应作为独立领域/root 约束加入；不改变 archive soft-policy，也不把 ledger 加入 note scope |
 | [`server/routes/posts.ts`](../../server/routes/posts.ts) | 通用 POST 可按合法 path 创建文件；PUT 编辑；PATCH 支持文件 rename/move；DELETE 有生命周期安全 | Diary 需要在通用入口增加 domain guard，避免 generic create/rename/move 绕过日期规则；编辑/删除仍复用既有流程 |
 | [`server/routes/folders.ts`](../../server/routes/folders.ts) | 创建文件夹、同父目录 rename、递归删除；不支持通用跨父目录 folder re-parent | Diary 下不允许创建子目录；root 仍不可 rename/delete/move |
 | [`server/ai/tools.ts`](../../server/ai/tools.ts) | AI 有 read/list/create/write/patch/delete/rename file 工具，没有 folder mutation 工具 | generic AI 工具必须遵守 Diary domain guard，不能成为旁路 |
 
 当前 `archive` root 的保护仍由 [`shared/archiveProtocol.ts`](../../shared/archiveProtocol.ts) 等现有规则负责；本 PRD 不改变 Archive Soft-Policy 的结果：archive descendants 仍按普通用户内容处理，Archive action 仍默认写入 `archive/<filename>`。
+
+一个重要的现状差异：当前仓库还没有 `diary/` root，`server/routes/folders.ts` 的 generic `POST /api/folders` 也尚未拥有“禁止创建保留 root 名称”的 Diary gate。因此“用户不能创建 diary root”是本 PRD 的目标 invariant，不是当前已实现事实；D2 必须在 seed、shared/root contract、server 和 UI 四层一起收口。
 
 ### 3.5 文档与现有生命周期契约
 
@@ -133,7 +141,22 @@ Diary 应作为这些架构的一个领域入口，而不是创建第二套持�
 
 禁止 generic New File/New Folder 是为了保证 `diary/` 下不会重新出现不满足日期协议的内容；这不是 filesystem readonly，也不影响通过 Calendar 创建日期文档。
 
-### 4.2 有效 Diary 日期文档
+### 4.2 Diary Day domain model
+
+Calendar 展示的不是 Event，而是日期状态。Docus domain 应保持一个不依赖 UI library 的概念模型：
+
+| Domain field | MVP | Future-compatible |
+| --- | --- | --- |
+| `date: DiaryDate` | YES | YES |
+| `hasDiary: boolean` | YES | YES |
+| `mood?: MoodKey` | NO | reserved only |
+| `moodAsset?` | NO | reserved only |
+| `summary?` | NO | reserved only |
+| `wordCount?` | NO | reserved only |
+
+可用概念类型表示为 `DiaryDay = { date: DiaryDate, hasDiary: boolean, mood?: MoodKey }`。这不是当前实现接口；它用于说明 domain 与 Calendar adapter 的边界。MVP 只计算 `date` 和 `hasDiary`，未来字段不能扩大当前实现范围。
+
+### 4.3 有效 Diary 日期文档
 
 有效 managed Diary document 的 path 必须严格满足：
 
@@ -150,7 +173,7 @@ Diary 应作为这些架构的一个领域入口，而不是创建第二套持�
 
 日期是文档身份；Markdown title、frontmatter title、summary、tags 等元数据可以编辑，但不能改变该文档对应的日期 path。
 
-### 4.3 有效文档的能力矩阵
+### 4.4 有效文档的能力矩阵
 
 | Operation | `diary/YYYY-MM-DD` |
 | --- | --- |
@@ -167,7 +190,7 @@ Diary 应作为这些架构的一个领域入口，而不是创建第二套持�
 
 这里的 rename/move 禁止是 Diary 的日期身份约束，不是 archive-style subtree readonly。Diary 文档仍可读、写、删，仍是普通 Markdown 文档，且必须保留现有 editor/history/recovery 安全边界。
 
-### 4.4 无效或外部遗留内容
+### 4.5 无效或外部遗留内容
 
 如果在实现前或实现后，磁盘上已有 `diary/` 下不满足日期 schema 的文件，例如 `diary/legacy.md` 或 `diary/2026/08/24.md`：
 
@@ -179,6 +202,48 @@ Diary 应作为这些架构的一个领域入口，而不是创建第二套持�
 - 是否在 Diary UI 显示低噪音的“未归档 schema 内容”计数/入口，列为实现阶段的产品选择；不做 modal 或阻断式迁移。
 
 这使 schema 迁移具有可逆性，也避免为了得到干净日历而破坏用户已有文件。
+
+### 4.6 Future Enhancements：Mood Diary
+
+未来可让一个日期同时表达“是否写过 Diary”和“当天是什么心情”，形成 date-centric 的 monthly emotional timeline：
+
+```text
+DiaryDate
+  └── Diary Document
+        └── Metadata
+              └── MoodKey
+```
+
+例如：
+
+```text
+2026-08-24
+  path: diary/2026-08-24
+  hasDiary: true
+  mood: happy
+```
+
+未来日历单元格可以从：
+
+```text
+24 ●
+```
+
+升级为：
+
+```text
+24 😊
+```
+
+但 Mood identity 与 Diary identity 必须分离：
+
+- Diary identity 永远来自 `DiaryDate` 和 `diary/YYYY-MM-DD`。
+- 禁止把 mood 写入 filename，例如 `diary/2026-08-24-happy.md`。
+- storage value 推荐使用稳定的 `MoodKey`，例如 `happy`、`calm`、`sad`、`angry`、`tired`，不要把 emoji 本身作为业务身份。
+- UI 可以将 `happy` 映射为 `😊`，未来也可以换成 SVG、主题图标、自定义表情或多语言文案，而无需迁移 Diary path。
+- Mood storage location 暂不定案；实现时优先复用 Docus 现有 metadata architecture，不建立独立 Mood DB。
+
+Mood picker、emoji selection、custom mood、统计、趋势、sentiment AI 和 heatmap 都不属于当前 MVP，也不进入 D1–D5 的实现验收。
 
 ## 5. 日期状态与创建规则
 
@@ -222,35 +287,92 @@ Diary 创建必须是 create-only：
 
 ### 6.1 视图选择
 
-选用 Schedule-X 的 Vue 集成，桌面端 Month Grid、小屏 Month Agenda：
+Diary 选择 VCalendar 作为 MVP 的 Calendar presentation library。Diary 不是 Event Calendar，Calendar 只需要表达：
 
-- Desktop：按月展示，日期格显示一个低干扰 dot/marker。
-- Mobile/small viewport：使用 agenda 视图，显示有内容的日期，保留日期点击和空日期导航入口。
-- Schedule-X 官方文档说明 Month Grid 适合 large view、Month Agenda 适合 small view，并存在约 700px 的响应式断点；因此不能只配置 Month Grid 后再期待它自动成为可用的手机列表。
-- MVP 不需要 event drag/drop、resize、recurrence 或 event editor；日历 event 只是 Diary 文档存在性的展示模型。
+- month navigation
+- day cells
+- day click
+- today state
+- existing Diary indicator
+- optional future custom day rendering
 
-推荐初版同时配置 Month Grid 和 Month Agenda，使用官方的 responsive view 配置。若首期必须压缩范围，桌面 Month Grid 可以先实现，但必须把 Month Agenda 作为 Phase 1.1 的明确交付，而不是永久忽略移动端。
+桌面端和移动端都使用 VCalendar 的 monthly view：
 
-### 6.2 点标记与数据来源
+- Desktop：按月展示，日期格显示一个轻量 `●`。
+- Mobile：仍是月视图，通过外层宽度、`expanded`/单列布局、紧凑日期 cell 和 touch target 适配，不人为引入第二种 agenda 视图。
+- MVP 不需要 time slots、duration、recurrence、drag scheduling、resize 或 event card。
 
-Calendar 的 source of truth 仍是 Docus posts/tree 数据，而不是 Schedule-X 自己的存储：
+VCalendar v3 官方文档说明内置 `$screens` 响应式 helper 已移除；后续应由 Docus 外层 CSS/media query 或已有 screen utility 决定 `expanded`、rows/columns 和容器宽度。当前不新增 responsive plugin 依赖。日期 cell 的最小触控区域由 Docus UI contract 负责，目标为至少 44×44 CSS px；如果实际布局无法满足，应优先收缩装饰而不是把点击区域做小。
+
+### 6.2 Domain、view model 与 Calendar adapter
+
+Calendar library 只能存在于 presentation adapter 层：
+
+```text
+Diary domain
+  └── DiaryDate / DiaryDay
+        └── Diary Calendar view model
+              └── DiaryCalendar.vue
+                    └── VCalendar
+```
+
+建议的 `DiaryCalendar.vue` 职责：
+
+- 接收 `DiaryDay[]`、当前本地日期和 locale/display settings。
+- 将 `DiaryDay` 映射为 VCalendar `attributes`。
+- 用 `dot` 表示 `hasDiary: true`，用独立的 today presentation 表示今天。
+- 负责 month navigation、today control、VCalendar `dayclick` 适配和 `date-selected` emit。
+- 允许未来通过 `day-content` 或当时官方等价 slot 增加 Mood/summary 内容。
+
+它不负责：
+
+- create Diary
+- save/delete Diary
+- filesystem、metadata、history、recovery
+- Editor tabs、route 或 active document
+- future 判断或权限判断
+
+它只向上层发出经过本地日期 adapter 处理的 `date-selected(DiaryDate)`。Calendar library 是可替换的 presentation infrastructure；未来换成 Docus 自研 Calendar 不应修改 Diary filename protocol、DiaryDate、open/create workflow、server invariant 或 Editor lifecycle。
+
+### 6.3 Attributes、dots 与数据来源
+
+Calendar 的 source of truth 仍是 Docus posts/tree 数据，而不是 VCalendar 自己的存储：
 
 1. 通过现有 `listPosts()`/tree refresh 获得所有 logical paths。
-2. 过滤严格合法的 `diary/YYYY-MM-DD`。
-3. 为每个有效日期建立一个 all-day marker event，event id 建议为 `diary:${date}`。
-4. 使用 `Temporal.PlainDate` 表达 event 日期；不把 Diary 事件转换成带时间戳的 UTC event。
-5. 通过 `monthGridEvent`、`monthAgendaDateDots` 或对应的官方 custom slot 渲染 dot/日期内容。
-6. 禁用 event DND/resize；点击 event、date cell、agenda date 都调用同一个 `openDiaryDate()`。
+2. 过滤严格合法的 `diary/YYYY-MM-DD`，构造 `Set<DiaryDate>`。
+3. 生成 `DiaryDay[]`；MVP 只填充 `date` 与 `hasDiary`。
+4. `DiaryCalendar.vue` 将每个 `hasDiary` 日期映射为一个 VCalendar attribute：`dates` 指向对应的本地 calendar date，`dot` 使用轻量颜色/样式，`customData` 保存 `DiaryDay` 供 adapter 事件和未来 slot 使用。
+5. today highlight 是独立的 presentation attribute，不改变 `hasDiary` 语义。
+6. MVP 优先使用 VCalendar 原生 `dot`/attribute，不直接重写整个 day cell；未来 Mood 才评估 `day-content` custom rendering。
 
-Schedule-X calendar instance 不是 Vue reactive state；官方 Vue 文档明确建议不要把 instance 放入 Vue `ref`。后续实现应保留普通 calendar instance，并用 `@schedule-x/events-service` 的 `set/add/update/remove` 更新 events。现有 `fileChanges`、`refresh()` 和 tab lifecycle 仍是 Docus 内部状态同步入口，不新增第二套 event bus。
+MVP 的视觉语义是：
 
-### 6.3 Today 与日期导航
+```text
+没有 Diary：24
+有 Diary： 24 ●
+未来 Mood：24 😊（仅架构预留，不在 MVP）
+```
 
-- Today 控件将当前本地 `Temporal.PlainDate` 传给 Schedule-X calendar controls 的 `setDate()`。
+不显示 `[Diary]` event card，也不把一个 Diary 映射成 all-day event。VCalendar 官方 attributes 支持 `dot`、`highlight`、`content`、`customData`、`dates` 和 `order`，足以表达当前的日期状态。
+
+当 Docus refresh 或 `fileChanges` 反映有效 Diary 文档创建/删除后，只需重新计算 `DiaryDay[]`/attributes。Calendar adapter 不拥有第二份 Diary state，也不新增 event bus。
+
+### 6.4 Date adapter、Today 与日期导航
+
+- Diary domain 继续推荐 `Temporal.PlainDate` 或严格的 `DiaryDate` abstraction；VCalendar 的 `CalendarDay`/attribute API 当前使用 JavaScript `Date`、string 或 number，因此必须存在显式 Calendar date → DiaryDate adapter。
+- adapter 从 VCalendar 回调的本地 calendar fields 生成 `YYYY-MM-DD`，再进行 DiaryDate validation；禁止通过 `Date.toISOString()` 或 UTC serialization 转换。
+- Today 控件使用本地 civil date，调用 VCalendar instance 的 `move(localDate)`/`focusDate(localDate)` 或等价的当前官方 API；它只移动/聚焦日历，不创建文档。
 - URL 只有用户打开文档后才进入现有 `/vault/diary/YYYY-MM-DD` editor route；单纯浏览月份不应制造文档或改写 active document。
-- 点击已有日期的 marker 与点击该日期 cell 结果一致。
-- 点击没有文档的 today/past 日期才触发 domain create；浏览日历、切换月份、`onRangeUpdate` 不触发 create。
-- `onRangeUpdate` 可作为未来 server range API 的接缝，但 MVP 不需要单独的 `/api/diary/range`，避免维护第二个列表数据源。
+- VCalendar 的 `dayclick`、dot/attribute 所在日期和 day-content 未来自定义区域最终都归一到同一个 `date-selected(DiaryDate)`。
+- 点击没有文档的 today/past 日期才触发 domain create；浏览月份、点击导航箭头或切换页面不触发 create。
+- VCalendar 的 `did-move`/`update:pages` 只用于视图状态或可选的性能优化；MVP 不需要单独的 `/api/diary/range`。
+
+### 6.5 Locale、navigation 与 accessibility
+
+- 使用 VCalendar 的 `locale`、`first-day-of-week` 和 `masks` 与 Docus 当前 locale 设置对齐；不要在 domain 中存储展示语言。
+- month navigation 使用 VCalendar 原生 header/navigation；Today 是 Docus 提供的明确 action，可放在 Calendar footer 或外部 toolbar。
+- 保留 VCalendar 的 day focus/keyboard navigation，并确保 `●` 不承担唯一语义：day cell 应有“YYYY 年 M 月 D 日，已写日记/无日记”的可访问名称。
+- Calendar wrapper 应提供稳定宽度；mobile 端使用单月、单列、expanded 的布局策略，避免横向滚动和过小的触控目标。
 
 ## 7. 编辑器与生命周期集成
 
@@ -307,7 +429,7 @@ sequenceDiagram
     Bus-->>Cal: recompute valid date markers
 ```
 
-日历 event 更新必须服从 fileChanges/refresh 的真实结果；不能在 create API 请求发出后就乐观地永久添加 marker，也不能绕过 history/recovery。
+日历 attributes 更新必须服从 fileChanges/refresh 的真实结果；不能在 create API 请求发出后就乐观地永久添加 marker，也不能绕过 history/recovery。
 
 ## 8. Proposed domain protocol 与 API
 
@@ -373,38 +495,67 @@ request 概念字段：
 
 如果后续要让 AI “写今天日记”，应新增一个复用同一 Diary domain service 的高层命令，而不是放宽 generic `create_file`。
 
-## 9. Schedule-X 技术可行性确认
+## 9. Calendar Library Evaluation
 
-本审计已核对 Schedule-X 官方文档和官方仓库：
+### 9.1 ADR 决策
 
-- Vue wrapper 可以使用 `ScheduleXCalendar`、`createCalendar`、`createViewMonthGrid` 和 `createViewMonthAgenda`，并要求 calendar 容器有明确宽高：[`Vue integration`](https://schedule-x.dev/docs/frameworks/vue)。
-- `selectedDate`、`onClickDate`、`onClickAgendaDate`、`onRangeUpdate`、`onSelectedDateUpdate` 和 responsive callback 均有官方配置入口：[`Calendar configuration`](https://schedule-x.dev/docs/calendar/configuration)。
-- Month Grid 与 Month Agenda 的大小视图限制和响应式行为有明确文档；本方案采用两者组合：[`Calendar views`](https://schedule-x.dev/docs/calendar/views)。
-- all-day event 支持 `Temporal.PlainDate`；Month Grid/Agenda 也支持 custom slots，可用于 dot marker：[`Events`](https://schedule-x.dev/docs/calendar/events)。
-- event 数据可以通过 `@schedule-x/events-service` 的 `set/add/update/remove` 更新；这适合接现有 refresh/fileChanges，而无需把 calendar instance 做成 Vue ref：[`Events Service`](https://schedule-x.dev/docs/calendar/plugins/events-service)。
-- Today/日期跳转可通过 `@schedule-x/calendar-controls` 的 `setDate()` 等 API 完成：[`Calendar Controls`](https://schedule-x.dev/docs/calendar/plugins/calendar-controls)。
-- Schedule-X v4 将 drag-and-drop/resize 的高级能力拆到 premium；Diary 不需要事件拖拽或 resize，因此 MVP 不依赖 premium：[`Schedule-X v4`](https://schedule-x.dev/blog/schedule-x-v4)。官方开源仓库为 MIT：[`schedule-x/schedule-x`](https://github.com/schedule-x/schedule-x)。
+**Decision：MVP 使用 VCalendar。**
 
-### 9.1 计划中的依赖
+Diary 的数据模型是 Date → Diary exists?，不是带 start/end/duration/resize/recurrence 的 Event。VCalendar 的 date-centric attributes 更贴合某天是否存在内容的状态表达，也更自然地为未来 Mood day-cell rendering 留出空间。
 
-实现阶段再按当时锁定的官方文档和 package manager resolution 增加依赖，不在本 PRD 阶段安装或锁死版本。预计核心包为：
+| Library | Fit | Trade-off | Decision |
+| --- | --- | --- | --- |
+| VCalendar | Date attributes、dots、customData、day-content 和月视图直接对应 DiaryDay | VCalendar 使用 JavaScript Date/string；需要本地日期 adapter，响应式布局由外层负责 | Selected for MVP |
+| Schedule-X | 技术上可实现 Calendar 导航 | Event scheduling abstraction 超出 MVP；不需要 time slots、duration、drag、recurrence；未来 Mood 更需要 date-cell rendering | Rejected / not selected for MVP |
+| FullCalendar | 成熟的日历与事件生态 | 同样偏 event-centric，产品表面积和事件语义超过 Diary 需要 | Not selected |
+| Custom Docus Calendar | 可完全控制 EMMO/Mood cell、视觉和交互 | 当前没有必要承担自研 Calendar 的实现与可访问性成本 | Future possibility |
 
-- `@schedule-x/vue`
-- `@schedule-x/calendar`
-- `@schedule-x/theme-default`
-- `@schedule-x/events-service`
-- `@schedule-x/calendar-controls`
-- `temporal-polyfill`
+Schedule-X 不是技术不可行，而是当前 Diary MVP 的 abstraction 偏重。若 Diary 将来演化成 Daily Planner 或 full Event Calendar，再重新评估 Schedule-X 等 event-oriented library。
 
-官方 Vue 文档还提示某些 npm peer-dependency 组合可能需要 `@preact/signals` 与 `preact`；实施时以实际 lockfile 和官方安装说明为准，不在设计阶段手工猜版本。
+### 9.2 当前官方 VCalendar 能力核对
 
-### 9.2 风险与缓解
+本审计以当前官方文档为准，不锁死易过期的 package version：
+
+- Vue compatibility：官方安装页要求 Vue.js 3.2+；当前仓库使用 Vue 3，版本方向兼容。
+- Package requirements：官方安装页列出 v-calendar 与 @popperjs/core，并要求显式导入 v-calendar/style.css；实现阶段再按 lockfile 安装，不在本阶段变更依赖。
+- Calendar API：VCalendar 支持 monthly view、attributes、locale、timezone、initial-page、rows、columns、expanded 和 trim-weeks 等 props。
+- Date click：dayclick 事件提供 CalendarDay 与鼠标事件；adapter 从 CalendarDay 的本地 fields 生成并校验 DiaryDate。
+- Attributes：attribute 可使用 dates、dot、highlight、content、customData 和 order，正好覆盖 Diary existence marker 与未来 day-state 扩展。
+- Custom rendering：day-content slot 可接收 day、该日 attributes 和 locale；MVP 不依赖它，未来 Mood/summary 才评估使用。
+- Navigation：原生 header、prev/next buttons、move、moveBy、focusDate、did-move 和 update:pages 足以支持 month navigation 与 Today。
+- Locale：locale、first-day-of-week 和 masks 可对齐 Docus locale；不把 locale 复制进 Diary domain。
+- Timezone：官方默认使用 browser local timezone；Diary 仍必须以 local date/DiaryDate 为身份，不能使用 UTC serialization。
+- License：官方项目页面标注 MIT；实现时不引入 premium 功能或额外的事件调度层。
+
+参考官方资料：[Installation](https://vcalendar.io/getting-started/installation.html)、[Calendar API](https://vcalendar.io/calendar/api.html)、[Attributes](https://vcalendar.io/calendar/attributes)、[Navigation](https://vcalendar.io/calendar/navigation)、[Locales](https://vcalendar.io/i18n/locales.html)、[Layouts](https://vcalendar.io/calendar/layouts) 和 [VCalendar homepage](https://vcalendar.io/)。
+
+### 9.3 Responsive 决策
+
+VCalendar 的 monthly view 在 desktop 和 mobile 保持同一产品模型，不新增 Month Agenda：
+
+- Desktop：单月 monthly view，日期 cell 有足够留白显示日期和 `●`。
+- Mobile：单列、`expanded` 容器、紧凑 cell；由 Docus CSS/media query 控制宽度和 typography。
+- VCalendar v3 已移除内置 `$screens` helper；当前 PRD 不新增 `vue-screen-utils`，除非实现时已有 Docus layout utility 无法满足需要。
+- 目标 touch target 至少 44×44 CSS px；通过实际设备检查 cell、prev/next、Today 和 date click。
+- 禁止横向滚动和依赖 hover 才可见的 Diary indicator。
+
+### 9.4 计划中的依赖
+
+实现阶段按官方当前安装说明和仓库 package manager resolution 增加依赖，不在本 PRD 阶段安装或锁死版本。预计核心依赖为：
+
+- `v-calendar`
+- `@popperjs/core`
+
+样式需要显式导入 `v-calendar/style.css`。VCalendar import 只能出现在 Calendar adapter/presentation 层；Diary domain、server、API、path protocol 和 domain tests 不得 import VCalendar。
+
+### 9.5 风险与缓解
 
 | 风险 | 影响 | 缓解 |
 | --- | --- | --- |
-| Temporal polyfill 的 bundle/SSR/TS typing | 日历初始化或构建兼容性 | D3 先做最小组件 smoke test；保留 date-only 边界测试 |
-| Calendar instance 非 reactive | events 不刷新或重复初始化 | instance 只创建一次；用 events service 同步 |
-| Month Grid 在小屏不可用 | mobile UX 退化 | 同时配置 Month Agenda，不依赖单一视图压缩 |
+| VCalendar 使用 JavaScript Date/string | 可能发生 UTC 或本地日界线偏移 | 明确 Calendar date → local fields → DiaryDate adapter；禁止 `toISOString()` |
+| v3 没有内置 `$screens` | mobile layout 不能靠 library 自动完成 | Docus CSS/media query、expanded 和 touch target contract；实现阶段做真实 viewport 检查 |
+| attributes 与 fileChanges 不同步 | dot 状态过期 | 以 `listPosts()`/tree refresh/fileChanges 重新生成 DiaryDay[]，不维护第二份事实源 |
+| day-content 过早自定义 | MVP 复杂度和可访问性风险 | MVP 使用原生 dot；Mood 再引入 slot adapter |
 | 全量 `listPosts()` 规模增长 | 月份切换与首屏成本 | MVP 复用现有 source；以真实数据量为依据再引入 range API |
 | 外部 invalid diary files | 日历与文件树不一致 | 严格过滤、保留原文件、非阻断诊断 |
 | generic API/AI 绕过 | 日期身份和 one/day 被破坏 | server/shared domain guard 覆盖所有 mutation entry points |
@@ -418,7 +569,7 @@ Diary 的用户文案应解释“按日期进入文档”，而不是制造第�
 - 空日期或 missing today/past：可使用简短的“创建这一天的日记”文案。
 - missing future：不弹确认；可使用一次性的轻量说明“未来日期尚未创建”。
 - invalid unmanaged content：如果提供提示，应是低噪音诊断，不得阻塞打开、编辑或清理。
-- 日历日期单元格、marker、Today、Month Agenda row 都必须有可访问名称；dot 不能是唯一语义来源。
+- 日历日期单元格、dot、Today、prev/next controls 都必须有可访问名称；dot 不能是唯一语义来源。
 - 不为每次打开日期、保存或删除发送 advisory toast；成功/错误反馈沿用现有 Vault lifecycle。
 
 后续实现文档应在用户指南中说明：
@@ -434,7 +585,7 @@ Diary 的用户文案应解释“按日期进入文档”，而不是制造第�
 
 ### D0 — PRD、审计与评审（本阶段）
 
-- 完成仓库现状审计与 Schedule-X 官方能力确认。
+- 完成仓库现状审计与 VCalendar 官方能力确认。
 - 固化路径、日期、root、创建、future、invalid-file 和 editor reuse 契约。
 - 不改生产代码、不改测试、不安装依赖。
 
@@ -454,9 +605,9 @@ Diary 的用户文案应解释“按日期进入文档”，而不是制造第�
 
 ### D3 — Calendar surface
 
-- 按官方 Schedule-X Vue 集成接入 Month Grid + Month Agenda。
-- 加载有效 Diary dates，渲染 marker/dot，接 Today、date click、event click。
-- 用 events service 更新 event；不启用 drag/drop/resize/premium。
+- 接入 VCalendar monthly view，并将 library 隔离在 DiaryCalendar adapter。
+- 加载有效 Diary dates，使用 attributes/dot，接 Today、month navigation、day click。
+- 保留 local date normalization；不把 Diary 映射为 event card，也不引入 event scheduling 能力。
 
 ### D4 — Vault editor/lifecycle integration
 
@@ -466,7 +617,7 @@ Diary 的用户文案应解释“按日期进入文档”，而不是制造第�
 
 ### D5 — Responsive、可访问性与 release gate
 
-- 验证桌面 Month Grid、小屏 Month Agenda、键盘/屏幕阅读器、Today 和空日期。
+- 验证桌面/移动端 monthly view、紧凑 cell、touch target、键盘/屏幕阅读器、Today 和空日期。
 - 处理 invalid unmanaged content 的低噪音诊断（若评审选定）。
 - 执行 typecheck、build、定向 unit/integration/E2E、path/auth/history/recovery 回归。
 - 更新用户指南、架构文档、CHANGELOG；发布前检查 Archive、note scope 与普通 Markdown lifecycle 未回归。
@@ -501,11 +652,16 @@ Diary 的用户文案应解释“按日期进入文档”，而不是制造第�
 - 点击 existing/today/past/future 四种状态进入正确 state machine。
 - future missing 不发 create request。
 - Today 使用本地 civil date，不使用 UTC slice。
-- marker/date/agenda click 均打开同一 logical path。
+- marker/day click 均打开同一 logical path。
 - Calendar 复用现有 `openPost`，不会创建 DiaryEditor 或平行 tab/save state。
 - create/delete/refresh/fileChanges 会增删 marker，且当前 tab/route/selection 正确。
-- desktop Month Grid 与小屏 Month Agenda 可用；event DND/resize 不会改变文档 path。
-- 日期 cell/marker/agenda row 可通过键盘和辅助技术理解。
+- desktop/mobile monthly view 可用；日期 cell、dot、Today、prev/next 可通过键盘和辅助技术理解。
+- Calendar library selected = VCalendar；Schedule-X not used in MVP。
+- Diary domain 与 server/domain tests 不 import VCalendar；VCalendar 只存在于 Calendar wrapper/adapter。
+- `hasDiary` 映射为轻量 date indicator，不渲染 event cards。
+- `dayclick` 经过 local date adapter 后 emit validated `DiaryDate`。
+- date conversion 不经过 UTC ISO serialization。
+- future Mood rendering 可以在不改变 Diary identity 的情况下加入；Mood 不在 MVP 实现。
 
 ### 12.4 回归 tests
 
@@ -517,12 +673,13 @@ Diary 的用户文案应解释“按日期进入文档”，而不是制造第�
 
 这些是需要评审确认的实现选择，不是当前实现阻塞：
 
-1. **Month Agenda 是否进入第一版？** 推荐与 Month Grid 同时进入 MVP，因为官方视图限制意味着只做 Month Grid 会让小屏体验不完整。若必须缩短首期，可以把 Agenda 放到 Phase 1.1，但要在排期中明确。
+1. **VCalendar 的 responsive layout 需要多少外层逻辑？** 推荐 MVP 只保留 monthly view，用 Docus CSS/media query、expanded、单列布局和至少 44×44 CSS px touch target 适配移动端；不引入 Month Agenda 或额外 screen plugin。若真实设备验证发现不足，再单独评审 responsive utility。
 2. **invalid unmanaged content 如何提示？** 推荐在 Diary scope 提供低噪音计数/跳转入口，不弹 modal、不自动迁移；若产品更重视简洁，首期只保留文件树可见性和文档说明。
 3. **Calendar 与文件树关系？** 推荐 Calendar 作为 diary scope 的主导航，同时保留现有 FileTree 作为内容清理和 invalid 文件可见入口；不建议以日历替换通用树。
 4. **future 判定由谁提供 timezone？** 推荐客户端提交浏览器 IANA timezone，server 只负责一致性校验；替代方案是固定 server timezone，优点是实现简单，缺点是跨时区用户会看到错误的“今天/未来”。
 5. **新日期初始 Markdown？** 推荐沿用现有 `POST /api/posts` 的 `# YYYY-MM-DD\n` 行为，避免新增 template engine；替代方案是空文档，优点是更安静，缺点是与当前 create semantics 不一致。
 6. **是否首期增加 range API？** 推荐不增加，先复用 `listPosts()` 并按严格 Diary path 过滤；只有数据规模证明全量 posts 不足时再新增 range endpoint。
+7. **Future Mood 的 storage location？** 推荐未来优先复用 Docus 现有 metadata architecture；frontmatter 可作为兼容方案，但不建立独立 Mood DB。本问题不阻塞当前 MVP。
 
 ## 14. 完成定义
 
@@ -534,14 +691,17 @@ Diary 的用户文案应解释“按日期进入文档”，而不是制造第�
 - [x] 已定义 `diary/` root、valid managed date、invalid unmanaged content 三类边界。
 - [x] 已定义 one/day、no suffix、today/past/future 和 local date 规则。
 - [x] 已定义 Calendar 与现有 editor/history/recovery 的复用边界。
-- [x] 已核实 Schedule-X Vue、Month Grid/Agenda、events service、calendar controls 与 premium 边界。
+- [x] 已核实 VCalendar 官方 Vue compatibility、monthly API、dayclick、attributes/dots/customData、day-content、locale、navigation、responsive 限制与 MIT 许可。
+- [x] 已明确 Schedule-X 仅作为 rejected/not selected for MVP 记录，没有残留其 implementation API 或 event model。
+- [x] 已定义 Diary domain 与 VCalendar 解耦，VCalendar 只存在于 DiaryCalendar adapter。
+- [x] 已预留 DiaryDay 的 future Mood 字段与 day-cell rendering seam，但没有把 Mood 放入 MVP。
 - [x] 已定义 generic API、folder API、AI 工具不能绕过 Diary domain guard。
 - [x] 已列出实施阶段、测试矩阵、风险与 open questions。
 - [ ] 生产代码、测试、依赖和 lockfile 已实现并验证（不属于本阶段）。
 
 ## 15. 评审结论
 
-Diary 在当前 Docus 架构中技术可行，最小正确路径是“新增日期领域规则 + 复用现有 Markdown lifecycle + Calendar 作为导航 UI”。关键不可妥协的边界是：
+Diary 在当前 Docus 架构中技术可行，最小正确路径是“新增日期领域规则 + 复用现有 Markdown lifecycle + VCalendar adapter 作为可替换的导航 UI”。关键不可妥协的边界是：
 
 1. `diary/` root 固定保留，但不把整个 subtree 做成 filesystem readonly。
 2. 日期文档的 logical path 是 `diary/YYYY-MM-DD`，physical file 才是 `.md`。
@@ -550,5 +710,6 @@ Diary 在当前 Docus 架构中技术可行，最小正确路径是“新增日�
 5. one/day 使用固定 path 和 create-only 原子语义，不使用 collision suffix。
 6. 所有入口（UI、server、AI）共享同一个 domain contract。
 7. Archive、note scope、filesystem/auth/history/recovery 和现有 Vault lifecycle 不因 Diary 设计被放宽或重写。
+8. VCalendar 只负责绘制日期状态；未来 Mood 可从 `24 ●` 演进到 `24 😊`，但不改变 Diary filename identity。
 
-本文件完成的是设计与审计，不代表 Diary 已经实现，也不代表 Schedule-X 依赖已经加入仓库。
+本文件完成的是设计与审计，不代表 Diary 已经实现，也不代表 VCalendar 依赖已经加入仓库。
