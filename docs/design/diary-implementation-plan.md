@@ -9,12 +9,12 @@
 - **VCalendar status:** preferred candidate / pending D3.0 exact-stack compatibility gate；本文件不把它写成已批准的 runtime dependency。
 - **D1 status:** REVIEW-CLOSED。implementation commit 为 `d0a5d4e82e930445bd9e549e27d39e8c18b30819`；独立 review 结果为 P0 = 0、P1 = 0、P2 = 0。
 - **VCalendar runtime gate:** PENDING。D3.0 尚未安装 candidate、尚未执行 compatibility spike，也没有 runtime/build/test PASS 证据。
-- **Current phase boundary:** D2 server/root/mutation contract 已实现并完成本地验证，当前为 COMPLETE / REVIEW-READY；本次没有开始 D3.0 或后续 Diary implementation，未安装 VCalendar。
+- **Current phase boundary:** D2 server/root/mutation contract 已实现并完成本地验证；generic recovery provenance follow-up 已由 `acaf548c048c2948de726208ea4d2a1c1c9b3be3`（`fix(diary): close generic recovery provenance gap`）收口，D2 仍为 COMPLETE / REVIEW-READY，等待独立复审；本次没有开始 D3.0 或后续 Diary implementation，未安装 VCalendar。
 - **Self-review result:** P0 = 0、P1 = 0、P2 = 0，表示本 Implementation Plan 的施工 contract 已补齐，不表示任何 Diary runtime 阶段已经通过。
 
 ### Planning-state note
 
-PRD 与本 Implementation Plan 已完成独立 review closure 的状态同步：PRD = REVIEW-CLOSED，D0 = REVIEW-CLOSED，D1 = REVIEW-CLOSED。D2 已实现并处于 COMPLETE / REVIEW-READY，等待独立 review；D3.0 仍为 BLOCKED / PENDING，VCalendar runtime compatibility gate 仍为 PENDING。该状态同步不代表 Diary 全部实现，也不把 VCalendar 写成已批准的 runtime dependency。
+PRD 与本 Implementation Plan 已完成独立 review closure 的状态同步：PRD = REVIEW-CLOSED，D0 = REVIEW-CLOSED，D1 = REVIEW-CLOSED。D2 已实现并处于 COMPLETE / REVIEW-READY；generic recovery provenance P1 follow-up 已完成，等待独立复审；D3.0 仍为 BLOCKED / PENDING，VCalendar runtime compatibility gate 仍为 PENDING。该状态同步不代表 Diary 全部实现，也不把 VCalendar 写成已批准的 runtime dependency。
 
 ## 2. Source of Truth
 
@@ -556,7 +556,7 @@ REVIEW-CLOSED。实现 commit：`d0a5d4e82e930445bd9e549e27d39e8c18b30819`。独
 | invalid date/path | reject/no file |
 | concurrent same-date create | one physical file; loser rereads exact path |
 | managed edit | allowed through ordinary save path |
-| managed delete | allowed through ordinary delete/history/recovery path |
+| managed delete | allowed through ordinary delete；generic Diary recovery 需要 prior-identity proof，History Restore 缺失目标必须先有 Git historical content provenance |
 | managed rename/move/re-parent | reject server-side |
 | generic create under diary | reject unless it is the approved date command |
 | folder create under diary | reject; no nested Diary folder model |
@@ -568,7 +568,7 @@ REVIEW-CLOSED。实现 commit：`d0a5d4e82e930445bd9e549e27d39e8c18b30819`。独
 至少覆盖：
 
 - server/__tests__/seed.test.ts：diary seed、idempotence、file conflict、no overwrite、dev/prod helper contract。
-- server/__tests__/diary-routes.test.ts：today/past/future/invalid/existing/concurrent/no suffix。
+- server/__tests__/diary-routes.test.ts：today/past/future/invalid/existing/concurrent/no suffix；managed-looking generic recovery fail-closed。
 - server/__tests__/post.test.ts 或独立 route test：managed edit/delete allowed；rename/move-in/move-out/within-diary rejected；generic create rejected。
 - server/routes/folders.test.ts：folder create under diary rejected；protected root guard；现有 same-parent rename/delete 和 durable folder transaction regression。
 - server/__tests__/documentMutationPolicy.test.ts：REST/AI shared Diary policy。
@@ -616,7 +616,7 @@ git diff --check
 
 - 需要新 database schema、Diary entity 或改变 document identity。
 - 并发 create 只能靠 suffix 或非 create-only overwrite 才能实现。
-- generic API、AI tool 或 recovery path 需要不同于共享 policy 的特殊 bypass。
+- generic API、AI tool 或没有可靠 provenance 的 recovery path 需要不同于共享 policy 的特殊 bypass。
 - 需要修改 server/routes/folders.ts transaction/journal architecture 才能满足 Diary。
 - 需要全局修改 tree scanning 来隐藏 invalid external content。
 - auth/path/filesystem safety 必须放宽。
@@ -636,18 +636,18 @@ feat(diary): enforce diary server lifecycle
 
 ### Review Status
 
-COMPLETE / REVIEW-READY；实现 commit 为 `bb32349247914061e6ad71989538c995028faeea`。D2 独立 review 尚未关闭；D2 review 未关闭时 D3.0 必须 blocked。
+COMPLETE / REVIEW-READY；实现 commit 为 `bb32349247914061e6ad71989538c995028faeea`，generic recovery provenance follow-up commit 为 `acaf548c048c2948de726208ea4d2a1c1c9b3be3`。D2 独立 review 尚未关闭；D2 review 未关闭时 D3.0 必须 blocked。
 
 ### Implementation Evidence
 
 - `ensureInitialFolders()` 统一 seed `inbox`、`literature`、`archive`、`diary`；dev/prod 复用同一 helper，保留 writer ownership、auth、crash recovery、metadata 初始化顺序。
 - `POST /api/diary/dates` 只接受严格 `date + timeZone`，按 local civil date 判定 today/past/future；exact path、existing resolve、create-only、并发 no-suffix contract 已实现。
-- managed Diary edit/delete 继续走普通 posts lifecycle；rename、move-in、move-out、within-Diary identity mutation、generic create、nested folder create 和 AI bypass 均由 server policy 阻断。已删除 managed identity 的 recovery/历史恢复只允许回到 exact managed path；任意 unmanaged Diary path 仍拒绝创建。
+- managed Diary edit/delete 继续走普通 posts lifecycle；rename、move-in、move-out、within-Diary identity mutation、generic create、nested folder create 和 AI bypass 均由 server policy 阻断。generic `/api/recover/*` 对 Diary 缺失目标 fail-closed，即使 path 看起来是 managed date 也不能作为 prior identity proof；History Restore 只有在 server 从指定 Git ref 读到 historical content 后，才允许恢复 exact managed path。任意 unmanaged Diary path 仍拒绝创建。
 - invalid/unmanaged external files 保持 generic tree visibility；Archive Soft-Policy、scope、auth/path/filesystem/atomic/history/recovery 安全边界未放宽。
 - 未安装 VCalendar，未新增 dependency、Calendar UI、Editor integration 或 Diary database/entity。
 - `npm run typecheck` PASS；`npm run build` PASS（提升权限运行，只有既有 Rolldown annotation/large-chunk warnings）；D2 focused lane 的 282/283 测试通过，单独 auth lane 9/9 PASS。并行 auth lane 的 1 个共享 `src/content` `ENOENT` 为环境/测试隔离限制。
-- `npm run test:history-integration`：5 files / 172 tests PASS；`npm run test:recovery-integration`：188/193 PASS，5 个既有 atomic symlink 场景因 Windows `EPERM` 为 BASELINE-LIMITED。
-- GitHub CI 未查询；D2 独立 review 尚未执行。
+- `npm run test:history-integration`：5 files / 172 tests PASS；本 follow-up 的 `server/__tests__/history-routes.test.ts` Git-backed restore lane：70 tests PASS；`npm run test:recovery-integration`：188/193 PASS，5 个既有 atomic symlink 场景因 Windows `EPERM` 为 BASELINE-LIMITED。
+- 本 follow-up focused recovery/policy lane：`server/__tests__/documentMutationPolicy.test.ts` + `server/__tests__/diary-routes.test.ts` 为 2 files / 17 tests PASS；`server/__tests__/post.test.ts` 为 16 tests PASS。GitHub CI 未查询；D2 独立 review 尚未关闭。
 
 ## 10. D3.0 — VCalendar Compatibility Gate
 
