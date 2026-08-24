@@ -3,18 +3,18 @@
 
 ## 1. Status
 
-- **Status:** D0 REVIEW-CLOSED；D1 REVIEW-CLOSED；D2 REVIEW-CLOSED。本文件继续定义 Diary 的阶段边界、测试、证据和 review gate；D3.0 尚未开始。
+- **Status:** D0 REVIEW-CLOSED；D1 REVIEW-CLOSED；D2 REVIEW-CLOSED；D3.0 COMPLETE / REVIEW-READY。本文件继续定义 Diary 的阶段边界、测试、证据和 review gate；D3.1 仍 blocked。
 - **Planning baseline:** f342e7ad85e30b8bfb9073ac22f668dae154a7d0 (docs(diary): add vcalendar compatibility gate).
 - **Product source:** [diary-prd.md](./diary-prd.md)。PRD 是产品契约的唯一 source of truth；本文件不能重新定义产品行为。
-- **VCalendar status:** preferred candidate / pending D3.0 exact-stack compatibility gate；本文件不把它写成已批准的 runtime dependency。
+- **VCalendar status:** `v-calendar@3.1.2` exact candidate；D3.0 gate `PASS`，等待独立 review closure 后才可进入 D3.1。
 - **D1 status:** REVIEW-CLOSED。implementation commit 为 `d0a5d4e82e930445bd9e549e27d39e8c18b30819`；独立 review 结果为 P0 = 0、P1 = 0、P2 = 0。
-- **VCalendar runtime gate:** PENDING。D3.0 尚未安装 candidate、尚未执行 compatibility spike，也没有 runtime/build/test PASS 证据。
-- **Current phase boundary:** D2 server/root/mutation contract 已实现并完成独立复审；generic recovery provenance follow-up 已由 `acaf548c048c2948de726208ea4d2a1c1c9b3be3`（`fix(diary): close generic recovery provenance gap`）收口，D2 = REVIEW-CLOSED；本次没有开始 D3.0 或后续 Diary implementation，未安装 VCalendar。
+- **VCalendar runtime gate:** `PASS`。D3.0 已安装并验证 exact candidate；evidence 见 [`diary-vcalendar-compatibility-report.md`](./diary-vcalendar-compatibility-report.md)。
+- **Current phase boundary:** D2 server/root/mutation contract 已实现并完成独立复审；generic recovery provenance follow-up 已由 `acaf548c048c2948de726208ea4d2a1c1c9b3be3`（`fix(diary): close generic recovery provenance gap`）收口，D2 = REVIEW-CLOSED；D3.0 compatibility gate 已完成，但没有开始 D3.1 或后续 Diary implementation。
 - **Self-review result:** P0 = 0、P1 = 0、P2 = 0，表示本 Implementation Plan 的施工 contract 已补齐，不表示任何 Diary runtime 阶段已经通过。
 
 ### Planning-state note
 
-PRD 与本 Implementation Plan 已完成独立 review closure 的状态同步：PRD = REVIEW-CLOSED，D0 = REVIEW-CLOSED，D1 = REVIEW-CLOSED，D2 = REVIEW-CLOSED。generic recovery provenance P1 follow-up 已完成并通过独立复审；D3.0 = NOT STARTED，VCalendar runtime compatibility gate 仍为 PENDING。该状态同步不代表 Diary 全部实现，也不把 VCalendar 写成已批准的 runtime dependency。
+PRD 与本 Implementation Plan 的阶段状态为：PRD = REVIEW-CLOSED，D0 = REVIEW-CLOSED，D1 = REVIEW-CLOSED，D2 = REVIEW-CLOSED，D3.0 = COMPLETE / REVIEW-READY，VCalendar runtime compatibility gate = PASS。D3.0 独立 review 尚未 closure，D3.1 仍 BLOCKED；该状态不代表 Diary Calendar、Vault integration 或完整 Diary lifecycle 已实现。
 
 ## 2. Source of Truth
 
@@ -120,7 +120,7 @@ Implementation Plan 不复制 PRD 全文，只重复后续实现必须持续引�
 
 ### Exact-stack audit snapshot
 
-本次只记录审计时的 baseline，D3.0 必须重新从当时的 package.json 与 lockfile resolve，不能沿用这段文字当作未来 pin：
+此表保留 D0 审计时的 baseline；D3.0 已另外从当前 package.json 与 lockfile 完成 exact resolution，实际结果见第 10 节 execution evidence：
 
 | Package | package.json direction | lockfile snapshot |
 | --- | --- | --- |
@@ -132,7 +132,7 @@ Implementation Plan 不复制 PRD 全文，只重复后续实现必须持续引�
 | Vitest | ^4.1.8 | 4.1.8 |
 | jsdom | ^29.1.1 | 29.1.1 |
 
-当前没有 VCalendar dependency；此表不代表 VCalendar 已在这个 stack 上通过 runtime/build/test 验证。
+D0 审计时没有 VCalendar dependency；D3.0 已显式 pin `v-calendar@3.1.2` 与 `@popperjs/core@2.11.8`，并完成 runtime/build/test 验证。
 
 ## 6. Phase Dependency
 
@@ -610,7 +610,7 @@ git diff --check
 - auth/path/security regression；
 - typecheck、focused、history、recovery 命令结果；
 - worktree 和 commit SHA；
-- D3.0 remains NOT STARTED；VCalendar 未安装且 compatibility spike 未执行。
+- D2 closure evidence 当时记录 D3.0 remains NOT STARTED；当前 D3.0 状态见第 10 节与最终 Status Matrix。
 
 ### STOP Conditions
 
@@ -636,7 +636,7 @@ feat(diary): enforce diary server lifecycle
 
 ### Review Status
 
-REVIEW-CLOSED；实现 commit 为 `bb32349247914061e6ad71989538c995028faeea`，generic recovery provenance follow-up commit 为 `acaf548c048c2948de726208ea4d2a1c1c9b3be3`。独立复审确认代码 P0 = 0、P1 = 0；当前事实文档同步后 P2 = 0。D3.0 仍保持 NOT STARTED，等待后续明确启动。
+REVIEW-CLOSED；实现 commit 为 `bb32349247914061e6ad71989538c995028faeea`，generic recovery provenance follow-up commit 为 `acaf548c048c2948de726208ea4d2a1c1c9b3be3`。独立复审确认代码 P0 = 0、P1 = 0；当前事实文档同步后 P2 = 0。D2 closure 时 D3.0 为 NOT STARTED；随后 D3.0 已按第 10 节完成并处于 COMPLETE / REVIEW-READY。
 
 ### Implementation Evidence
 
@@ -644,7 +644,7 @@ REVIEW-CLOSED；实现 commit 为 `bb32349247914061e6ad71989538c995028faeea`，g
 - `POST /api/diary/dates` 只接受严格 `date + timeZone`，按 local civil date 判定 today/past/future；exact path、existing resolve、create-only、并发 no-suffix contract 已实现。
 - managed Diary edit/delete 继续走普通 posts lifecycle；rename、move-in、move-out、within-Diary identity mutation、generic create、nested folder create 和 AI bypass 均由 server policy 阻断。generic `/api/recover/*` 对 Diary 缺失目标 fail-closed，即使 path 看起来是 managed date 也不能作为 prior identity proof；History Restore 只有在 server 从指定 Git ref 读到 historical content 后，才允许恢复 exact managed path。任意 unmanaged Diary path 仍拒绝创建。
 - invalid/unmanaged external files 保持 generic tree visibility；Archive Soft-Policy、scope、auth/path/filesystem/atomic/history/recovery 安全边界未放宽。
-- 未安装 VCalendar，未新增 dependency、Calendar UI、Editor integration 或 Diary database/entity。
+- D2 closure 时未安装 VCalendar，未新增 dependency、Calendar UI、Editor integration 或 Diary database/entity；D3.0 后续仅新增了 exact candidate 与隔离 compatibility evidence，仍未开始 Calendar UI/Editor integration。
 - `npm run typecheck` PASS；`npm run build` PASS（提升权限运行，只有既有 Rolldown annotation/large-chunk warnings）；D2 focused lane 的 282/283 测试通过，单独 auth lane 9/9 PASS。并行 auth lane 的 1 个共享 `src/content` `ENOENT` 为环境/测试隔离限制。
 - `npm run test:history-integration`：5 files / 172 tests PASS；本 follow-up 的 `server/__tests__/history-routes.test.ts` Git-backed restore lane：70 tests PASS；`npm run test:recovery-integration`：188/193 PASS，5 个既有 atomic symlink 场景因 Windows `EPERM` 为 BASELINE-LIMITED。
 - 本 follow-up focused recovery/policy lane：`server/__tests__/documentMutationPolicy.test.ts` + `server/__tests__/diary-routes.test.ts` 为 2 files / 17 tests PASS；`server/__tests__/post.test.ts` 为 16 tests PASS。GitHub CI 未查询；D2 独立复审已完成，P0 = 0、P1 = 0、P2 = 0。
@@ -763,15 +763,14 @@ D3.0 不测试 Diary create API、History、Recovery、Mood 和 full Calendar pr
 
 ### Validation Commands
 
-以下命令是 D3.0 未来 gate，不是当前 docs-only task 的执行结果：
+以下命令是本次 D3.0 gate 的执行证据：
 
 ~~~powershell
-# candidate resolution must precede this; never omit the explicit version
-npm install v-calendar@<verified-candidate>
+npm install --save-exact v-calendar@3.1.2 @popperjs/core@2.11.8
 npm run typecheck
 npm run build
-npm exec vitest run <compatibility-test-file>
-npm run test:e2e -- <compatibility-browser-spec>
+npm exec vitest run src/components/diary/__tests__/VCalendarCompatibility.test.ts shared/__tests__/diaryProtocol.test.ts shared/__tests__/archiveProtocol.test.ts server/__tests__/documentMutationPolicy.test.ts server/__tests__/diary-routes.test.ts
+node node_modules/@playwright/test/cli.js test e2e/vcalendar-compatibility.spec.ts --config=playwright.vcalendar.config.ts
 git diff --check
 ~~~
 
@@ -791,6 +790,19 @@ D3.0 报告必须包含：
 8. PASS / CONDITIONAL PASS / FAIL 结论。
 9. exact limitation/workaround/future impact（如 conditional）。
 10. D3.1 是否解锁；CI 是否实际查询。
+
+### Execution Evidence
+
+D3.0 执行结果记录在 [`diary-vcalendar-compatibility-report.md`](./diary-vcalendar-compatibility-report.md)：
+
+- Baseline HEAD：`71e53445e6e6c14d23ec7b58a198450be8a7628f`。
+- Candidate：`v-calendar@3.1.2`；peer `vue@^3.2.0`、`@popperjs/core@^2.0.0`；retained Popper：`2.11.8`。
+- Exact stack：Node `22.21.1`、npm `10.9.0`、Vue `3.5.35`、Vite `8.0.16`、TypeScript `6.0.3`、plugin-vue `6.0.7`、vue-tsc `3.3.3`、Vitest `4.1.8`、jsdom `29.1.1`、@vue/test-utils `2.4.10`。
+- Spike：real Calendar mount、month navigation、attributes/dot/customData、reactive update、dayclick/local DiaryDate、day-content、locale、first-day-of-week、masks、light/dark、narrow/mobile、unmount/remount 和 UTC+14/UTC-12/DST timezone contexts 全部 PASS。
+- `npm run typecheck` PASS；elevated `npm run build` PASS；dedicated `node node_modules/vite/bin/vite.js build --config vite.vcalendar.config.ts` PASS（71 modules，candidate CSS/ESM resolved）；focused lane 5 files / 58 tests PASS；focused Chromium smoke 1/1 PASS；pageerror/console.error 为空。
+- 初次 unprivileged Vite/Vitest/Playwright 启动的 Windows `spawn EPERM` 仅标 `BASELINE-LIMITED`，提升权限重跑后 feature evidence PASS；GitHub CI 未查询。
+- Gate：`PASS`；D3.0 = `COMPLETE / REVIEW-READY`；task-scoped self-review P0/P1/P2 = `0/0/0`。
+- Upstream Vue 3.5/dayIndex issue #1498 与 candidate maintenance date 作为 non-blocking Known Compatibility Risk 记录；未在 exact Calendar/day-content spike 中复现。
 
 ### STOP Conditions
 
@@ -817,7 +829,7 @@ D3.0 报告必须包含：
 
 ### Review Status
 
-初始 NOT STARTED；执行后 COMPLETE / REVIEW-READY；独立 review 后 REVIEW-CLOSED。只有 closure 后 D3.1 才能从 blocked 变为可实施。
+COMPLETE / REVIEW-READY；Gate = PASS；独立 review 后 REVIEW-CLOSED。只有 closure 后 D3.1 才能从 blocked 变为可实施。
 
 ## 11. D3.1 — DiaryCalendar Adapter
 
@@ -1499,13 +1511,13 @@ D3.0 还必须报告 candidate version/tag、resolved peerDependencies、exact D
 | D0 | PRD + Implementation Plan | REVIEW-CLOSED | independent IP review 已通过；PRD closure status 已同步 |
 | D1 | Diary domain protocol | REVIEW-CLOSED | implementation commit `d0a5d4e82e930445bd9e549e27d39e8c18b30819`；independent review P0/P1/P2 = 0 |
 | D2 | Root / server / mutation | REVIEW-CLOSED | D1 REVIEW-CLOSED；独立复审 P0/P1/P2 = 0 |
-| D3.0 | VCalendar compatibility | NOT STARTED | D2 REVIEW-CLOSED |
+| D3.0 | VCalendar compatibility | COMPLETE / REVIEW-READY | Gate PASS；evidence report 已记录；等待独立 review closure |
 | D3.1 | DiaryCalendar adapter | BLOCKED | D3.0 PASS/approved CONDITIONAL + REVIEW-CLOSED |
 | D3.2 | Monthly Diary surface | BLOCKED | D3.1 REVIEW-CLOSED |
 | D4 | Vault lifecycle integration | BLOCKED | D3.2 REVIEW-CLOSED |
 | D5 | Responsive / release / closure | BLOCKED | D4 REVIEW-CLOSED |
 
-当前状态为：D0 REVIEW-CLOSED；D1 REVIEW-CLOSED；D2 REVIEW-CLOSED；D3.0 NOT STARTED；D3.1、D3.2、D4、D5 均 BLOCKED。VCalendar runtime compatibility 仍为 PENDING，尚未验证。
+当前状态为：D0 REVIEW-CLOSED；D1 REVIEW-CLOSED；D2 REVIEW-CLOSED；D3.0 COMPLETE / REVIEW-READY；D3.1、D3.2、D4、D5 均 BLOCKED。VCalendar runtime compatibility gate = PASS；D3.0 独立 review 尚未 closure。
 
 ## 22. Final Closure Criteria
 
@@ -1514,7 +1526,7 @@ Diary 只有在以下条件全部满足、每阶段都独立 review closed 后�
 - [x] D0 Implementation Plan review closed。
 - [x] D1 pure Diary domain、strict date validation、classification 和 root contract closed；implementation commit 和独立 review evidence 已记录。
 - [x] D2 seed、date create、one/day/no suffix、future、edit/delete、rename/move guards、generic/AI/folder bypass guards closed；generic recovery provenance follow-up 已独立复审关闭。
-- [ ] D3.0 exact-stack VCalendar gate PASS，或有不影响 MVP/future Mood 的 documented CONDITIONAL PASS。
+- [x] D3.0 exact-stack VCalendar gate PASS；custom `day-content` seam、typecheck/build、Vitest/jsdom、browser/timezone evidence 已记录；独立 review closure pending。
 - [ ] D3.1 adapter tests、VCalendar presentation isolation 和 custom rendering seam closed。
 - [ ] D3.2 monthly Calendar-first diary surface、FileTree relationship、mobile/accessibility states closed。
 - [ ] D4 single openDiaryDate、existing editor/tabs/route、fileChanges、History、Recovery、draft and selection integration closed。
@@ -1531,4 +1543,4 @@ Diary 只有在以下条件全部满足、每阶段都独立 review closed 后�
 - [ ] typecheck/build/relevant tests/integration/browser gates have explicit PASS or baseline-limited evidence。
 - [ ] GitHub CI status is reported only if actually queried。
 
-本 Implementation Plan 当前完成 D0、D1、D2 closure；D2 状态为 REVIEW-CLOSED。D3.0 = NOT STARTED，runtime compatibility gate 仍为 PENDING，未安装 VCalendar；这不表示 Diary Calendar 或完整 Diary lifecycle 已实现。
+本 Implementation Plan 当前完成 D0、D1、D2 closure，并完成 D3.0 compatibility gate：D3.0 = COMPLETE / REVIEW-READY，Gate = PASS；D3.0 独立 review 尚未 closure，D3.1 仍 BLOCKED。这不表示 Diary Calendar、Vault integration 或完整 Diary lifecycle 已实现。
