@@ -3,10 +3,14 @@
 ## Status
 
 D6.2 = REVIEW-CLOSED
-D6.2.1 = REVIEW-READY pending independent review
+D6.2.1 = REVIEW-CLOSED
 D6.3 = NOT STARTED
 
-Independent review is required for D6.2.1. This is a post-closure presentation follow-up; it does not reopen D6.2 or start D6.3.
+Independent Review = PASS
+P0 = 0
+P1 = 0
+P2 = 0
+This is a post-closure presentation follow-up; it does not reopen D6.2 or start D6.3.
 
 Self-review for this follow-up: P0 = 0, P1 = 0, P2 = 0.
 
@@ -144,7 +148,9 @@ Documentation history is informational and separate from the production chain. E
 ## Handoff
 
 D6.2 remains REVIEW-CLOSED.
-D6.2.1 = REVIEW-READY pending independent review.
+D6.2.1 = REVIEW-CLOSED.
+D6.2.1 Independent Review = PASS.
+D6.2.1 P0/P1/P2 = 0/0/0.
 D6.3 = NOT STARTED.
 
 No Reader Dialog, Editor Dialog, modal, focus trap, D6.3 command, or D6.3 implementation was started.
