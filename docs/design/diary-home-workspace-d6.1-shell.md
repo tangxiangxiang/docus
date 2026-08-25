@@ -4,13 +4,18 @@
 
 ```text
 D6.0 = REVIEW-CLOSED
-D6.1 = REVIEW-READY
+D6.1 = REVIEW-CLOSED
 D6.2 = NOT STARTED
 D6.3 = NOT STARTED
+
+Independent review = PASS
+P0 = 0
+P1 = 0
+P2 = 0
 ```
 
-This document records the D6.1 implementation evidence. It is ready for
-independent review; it does not close D6.1 and it does not start D6.2 or D6.3.
+This document records the D6.1 implementation evidence and closure. D6.2 and
+D6.3 remain unopened.
 
 ## 2. Starting HEAD and implementation commit
 
@@ -464,7 +469,7 @@ No STOP condition was triggered:
 
 ```text
 D6.0 = REVIEW-CLOSED
-D6.1 = REVIEW-READY
+D6.1 = REVIEW-CLOSED
 D6.2 = NOT STARTED
 D6.3 = NOT STARTED
 
@@ -473,6 +478,5 @@ P1 = 0
 P2 = 0
 ```
 
-The D6.1 Diary presentation owner and shell are ready for independent review.
-The task stops here; no D6.2, D6.3, Reader Dialog, Editor Dialog, or D7 work
-has started.
+The D6.1 Diary presentation owner and shell passed independent review and are
+closed. No D6.2, D6.3, Reader Dialog, Editor Dialog, or D7 work has started.
