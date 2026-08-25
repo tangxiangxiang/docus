@@ -1034,6 +1034,23 @@ main.container.auth-page-shell {
   }
 }
 
+/* On phone-sized Calendar-first surfaces, the side panel is not a second
+   product surface: it only steals the width needed by the seven-column
+   calendar. Hide the active side-panel implementation and its splitter only
+   while the Diary Calendar is the empty-workspace surface. The grid override
+   is intentionally scoped to the same mode, so opening a document or leaving
+   Diary restores the ordinary Vault layout. */
+@media (max-width: 420px) {
+  .vault.diary-calendar-mode {
+    grid-template-columns: 40px minmax(0, 1fr) !important;
+  }
+
+  .vault.diary-calendar-mode > :is(.file-tree, .tag-panel, .history-panel, .recovery-center),
+  .vault.diary-calendar-mode > .splitter:not(.splitter-toc) {
+    display: none !important;
+  }
+}
+
 /* Activity Bar */
 .activity-bar {
   background: var(--vs-bg-3);

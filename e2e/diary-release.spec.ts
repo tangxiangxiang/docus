@@ -75,12 +75,22 @@ test('Diary Calendar remains usable across the D5 responsive matrix', async ({ p
       const today = document.querySelector<HTMLElement>('[data-testid="diary-calendar-today"]')
       const previous = document.querySelector<HTMLElement>('.vc-prev')
       const next = document.querySelector<HTMLElement>('.vc-next')
-      const day = document.querySelector<HTMLElement>('[data-diary-day-content]')
       const rect = (element: HTMLElement | null) => {
         if (!element) return null
         const box = element.getBoundingClientRect()
         return { width: box.width, height: box.height, right: box.right }
       }
+      const visibleDayRects = [...document.querySelectorAll<HTMLElement>('[data-diary-day-content]')]
+        .map((element) => {
+          const box = element.getBoundingClientRect()
+          const style = getComputedStyle(element)
+          return {
+            width: box.width,
+            height: box.height,
+            visible: style.display !== 'none' && style.visibility !== 'hidden' && box.width > 0 && box.height > 0,
+          }
+        })
+        .filter((day) => day.visible)
       return {
         viewport: window.innerWidth,
         scrollWidth: document.documentElement.scrollWidth,
@@ -89,10 +99,11 @@ test('Diary Calendar remains usable across the D5 responsive matrix', async ({ p
         today: rect(today),
         previous: rect(previous),
         next: rect(next),
-        day: rect(day),
+        minDayWidth: Math.min(...visibleDayRects.map((day) => day.width)),
+        minDayHeight: Math.min(...visibleDayRects.map((day) => day.height)),
+        dayCount: visibleDayRects.length,
       }
     })
-
     expect(metrics.scrollWidth, `${viewport.name} horizontal overflow`).toBeLessThanOrEqual(metrics.viewport + 1)
     expect(metrics.calendar?.right, `${viewport.name} calendar overflow`).toBeLessThanOrEqual(metrics.viewport + 1)
     expect(metrics.host?.right, `${viewport.name} host overflow`).toBeLessThanOrEqual(metrics.viewport + 1)
@@ -102,9 +113,23 @@ test('Diary Calendar remains usable across the D5 responsive matrix', async ({ p
     expect(metrics.previous?.height, `${viewport.name} previous target`).toBeGreaterThanOrEqual(40)
     expect(metrics.next?.width, `${viewport.name} next target`).toBeGreaterThanOrEqual(40)
     expect(metrics.next?.height, `${viewport.name} next target`).toBeGreaterThanOrEqual(40)
-    expect(metrics.day?.width, `${viewport.name} date target`).toBeGreaterThan(0)
-    expect(metrics.day?.height, `${viewport.name} date target`).toBeGreaterThanOrEqual(40)
+    expect(metrics.dayCount, `${viewport.name} visible date count`).toBeGreaterThan(0)
+    expect(metrics.minDayWidth, `${viewport.name} minimum date target width`).toBeGreaterThanOrEqual(40)
+    expect(metrics.minDayHeight, `${viewport.name} minimum date target height`).toBeGreaterThanOrEqual(40)
+
+    if (viewport.width <= 420) {
+      await expect(page.locator('.file-tree')).toBeHidden()
+    } else {
+      await expect(page.locator('.file-tree')).toBeVisible()
+    }
   }
+
+  await page.locator('.scope-chip').filter({ hasText: 'note' }).click()
+  await expect(page.getByTestId('diary-calendar-surface')).toHaveCount(0)
+  await expect(page.locator('.file-tree')).toBeVisible()
+  await page.locator('.scope-chip').filter({ hasText: 'diary' }).click()
+  await expect(page.getByTestId('diary-calendar-surface')).toBeVisible()
+  await expect(page.locator('.file-tree')).toBeHidden()
 })
 
 test('Diary Calendar keyboard flow does not strand focus in the hidden surface', async ({ page, request }) => {

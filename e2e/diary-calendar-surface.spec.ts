@@ -100,7 +100,10 @@ test('Diary scope shows the Calendar-first surface and month navigation', async 
 
   await page.setViewportSize({ width: 375, height: 812 })
   await expect(surface).toBeVisible()
-  await expect(page.locator('.file-tree')).toBeVisible()
+  // Phone-sized Diary Calendar-first mode gives the seven-column surface the
+  // full primary width; the side panel is restored when leaving Diary or
+  // opening a document.
+  await expect(page.locator('.file-tree')).toBeHidden()
   await expect.poll(async () => page.evaluate(() => (
     document.documentElement.scrollWidth <= window.innerWidth + 1
   ))).toBe(true)

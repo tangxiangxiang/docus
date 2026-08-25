@@ -99,7 +99,7 @@ const days = computed<DiaryCalendarDay[]>(() => projectDiaryDaysFromTree(props.t
 
 @media (max-width: 420px) {
   .diary-calendar-surface-inner {
-    padding: 8px 4px 16px;
+    padding: 0 0 16px;
   }
 }
 </style>

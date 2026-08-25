@@ -267,12 +267,17 @@ function goToToday(): void {
 
 @media (max-width: 420px) {
   .diary-calendar {
-    padding: 8px 4px;
+    padding: 0;
+    border: 0;
   }
 
   .diary-calendar-host :deep(.vc-weeks) {
-    padding-left: 2px;
-    padding-right: 2px;
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .diary-calendar-host :deep(.vc-container) {
+    border: 0;
   }
 }
 </style>
