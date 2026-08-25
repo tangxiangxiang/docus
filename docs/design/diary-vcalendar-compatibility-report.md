@@ -214,7 +214,7 @@ This follow-up does not change the historical result: D3.0 remains `REVIEW-CLOSE
 
 D5 continues to use the approved `v-calendar@3.1.2` candidate and the `ed47c94` keep-mounted presentation workaround; no candidate, dependency, or compatibility architecture changed. The combined Diary/VCalendar browser release command passed 8/8, including the D5 responsive matrix at 1280, 768, 375, and 320 widths, keyboard/focus and ARIA checks, hidden-but-attached Calendar restoration, marker create/delete, repeated Diary lifecycle, and the existing VCalendar compatibility smoke. Diagnostic browser runs reported no page errors.
 
-D5 is currently `COMPLETE / REVIEW-READY`, with independent review pending. This is release evidence for the existing compatibility decision, not a new VCalendar gate result and not a claim that GitHub CI passed; GitHub status remains unverified.
+D5 base implementation/test commit is `adfd010e914c6572f33eceb5a5ea778ef0014c39`; the responsive P1 fix is `05906f90b59d9e2fe30a26dee6cd6c5eee46b6c7`; the responsive docs follow-up is `f64c4acd79e31dd63bc91f571cb6b8727ae3c046`. Final independent re-review passed with `P0 = 0`, `P1 = 0`, `P2 = 0`; therefore D5 is `REVIEW-CLOSED`. This is closure evidence for the existing compatibility decision, not a new VCalendar gate result and not a claim that GitHub CI passed; GitHub status queried; no checks available.
 
 ## P0 / P1 / P2
 
