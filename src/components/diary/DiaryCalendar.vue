@@ -11,8 +11,6 @@ import {
   diaryCalendarMonthFromPage,
   diaryDateFromCalendarDay,
   hasDiaryCalendarAttribute,
-  localCalendarDateForDiaryDate,
-  localCivilToday,
   normalizeDiaryDays,
   type DiaryCalendarDay,
   type DiaryCalendarMonth,
@@ -24,12 +22,6 @@ type CalendarDayLike = {
   day: number
   label?: string
   ariaLabel?: string
-}
-
-type CalendarInstance = {
-  move: (target: Date) => Promise<boolean>
-  movePrev: () => Promise<boolean>
-  moveNext: () => Promise<boolean>
 }
 
 const props = withDefaults(defineProps<{
@@ -47,7 +39,6 @@ const emit = defineEmits<{
   'month-change': [month: DiaryCalendarMonth]
 }>()
 
-const calendarRef = ref<CalendarInstance | null>(null)
 const lastMonthKey = ref<string | null>(null)
 const currentMonth = ref<DiaryCalendarMonth | null>(null)
 const { locale, t } = useI18n()
@@ -85,13 +76,6 @@ function dayAriaLabel(day: CalendarDayLike, attributes: unknown): string {
     : base
 }
 
-function goToToday(): void {
-  const today = localCivilToday()
-  if (!today) return
-
-  void calendarRef.value?.move(localCalendarDateForDiaryDate(today))
-  emit('date-selected', today)
-}
 </script>
 
 <template>
@@ -106,18 +90,7 @@ function goToToday(): void {
     :aria-busy="props.loading || undefined"
   >
     <div class="diary-calendar-host">
-      <button
-        type="button"
-        class="diary-calendar-today"
-        data-testid="diary-calendar-today"
-        :aria-label="t('diary.calendar.today')"
-        @click="goToToday"
-      >
-        {{ t('diary.calendar.today') }}
-      </button>
-
       <Calendar
-        ref="calendarRef"
         view="monthly"
         borderless
         transparent
@@ -192,27 +165,6 @@ function goToToday(): void {
   min-height: 0;
 }
 
-.diary-calendar-today {
-  position: absolute;
-  top: 7px;
-  right: 16px;
-  z-index: 3;
-  min-width: 44px;
-  min-height: 44px;
-  padding: 4px 10px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  background: var(--bg-soft);
-  color: var(--text);
-  font: inherit;
-  cursor: pointer;
-}
-
-.diary-calendar-today:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
 .diary-calendar-status {
   position: absolute;
   top: 52px;
@@ -260,7 +212,7 @@ function goToToday(): void {
   height: 44px;
   margin-top: 0;
   padding-left: 16px;
-  padding-right: 90px;
+  padding-right: 16px;
 }
 
 /* VCalendar renders its arrow header in an absolute wrapper above the pane
@@ -274,7 +226,7 @@ function goToToday(): void {
   position: relative;
   display: block;
   padding-left: 16px;
-  padding-right: 90px;
+  padding-right: 16px;
 }
 
 .diary-calendar-host :deep(.vc-pane-header-wrapper .vc-prev),
@@ -288,11 +240,11 @@ function goToToday(): void {
 }
 
 .diary-calendar-host :deep(.vc-pane-header-wrapper .vc-next) {
-  right: 90px;
+  right: 16px;
 }
 
 .diary-calendar-host :deep(.vc-title-wrapper) {
-  max-width: calc(100% - 180px);
+  max-width: calc(100% - 96px);
   justify-self: center;
   min-width: 0;
 }
@@ -361,21 +313,13 @@ function goToToday(): void {
 }
 
 @media (max-width: 420px) {
-  .diary-calendar-today {
-    top: 4px;
-    right: 8px;
-    min-width: 44px;
-    min-height: 44px;
-    padding: 4px 7px;
-  }
-
   .diary-calendar-host :deep(.vc-header) {
     padding-left: 4px;
-    padding-right: 72px;
+    padding-right: 4px;
   }
 
   .diary-calendar-host :deep(.vc-title-wrapper) {
-    max-width: calc(100% - 144px);
+    max-width: calc(100% - 72px);
   }
 
   .diary-calendar-host :deep(.vc-pane > .vc-header) {
@@ -387,7 +331,7 @@ function goToToday(): void {
   }
 
   .diary-calendar-host :deep(.vc-pane-header-wrapper .vc-next) {
-    right: 72px;
+    right: 4px;
   }
 
   .diary-calendar-host :deep(.vc-week) {

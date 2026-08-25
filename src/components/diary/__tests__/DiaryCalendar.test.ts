@@ -235,25 +235,10 @@ describe('DiaryCalendar presentation adapter', () => {
     expect(wrapper.emitted('month-change')?.at(-1)?.[0]).toEqual({ year: 2026, month: 8 })
   })
 
-  it('uses browser-local civil Today, navigates to its month, and emits one date intent', async () => {
-    vi.useFakeTimers()
-    vi.setSystemTime(new Date(2026, 7, 24, 23, 59, 30))
-    const wrapper = mountCalendar([], { initialMonth: { year: 2025, month: 1 } })
-    await flushPromises()
-
-    await wrapper.get('[data-testid="diary-calendar-today"]').trigger('click')
-    await flushPromises()
-
-    expect(wrapper.get('[data-testid="diary-calendar"]').attributes('data-month')).toBe('2026-08')
-    expect(wrapper.emitted('date-selected')).toEqual([['2026-08-24']])
-  })
-
   it('provides accessible navigation labels, loading/error presentation, and locale/theme integration', async () => {
     const wrapper = mountCalendar([day('2026-08-24')], { loading: true, error: 'Projection unavailable' })
     await flushPromises()
 
-    expect(wrapper.get('[data-testid="diary-calendar-today"]').attributes('type')).toBe('button')
-    expect(wrapper.get('[data-testid="diary-calendar-today"]').attributes('aria-label')).toBe('Today')
     expect(wrapper.get('.vc-prev').attributes('type')).toBe('button')
     expect(wrapper.get('.vc-prev').text()).toContain('Previous month')
     expect(wrapper.get('.vc-next').attributes('type')).toBe('button')
@@ -268,7 +253,6 @@ describe('DiaryCalendar presentation adapter', () => {
     useTheme().set('dark')
     await flushPromises()
     expect(wrapper.get('[data-testid="diary-calendar"]').attributes('data-locale')).toBe('zh-CN')
-    expect(wrapper.get('[data-testid="diary-calendar-today"]').text()).toBe('今天')
     expect(wrapper.find('.vc-dark').exists()).toBe(true)
   })
 
@@ -298,7 +282,6 @@ describe('DiaryCalendar presentation adapter', () => {
     await flushPromises()
 
     await wrapper.get('[data-date="2026-08-24"]').trigger('click')
-    await wrapper.get('[data-testid="diary-calendar-today"]').trigger('click')
     await wrapper.get('.vc-next').trigger('click')
     await wrapper.get('.vc-prev').trigger('click')
     await flushPromises()

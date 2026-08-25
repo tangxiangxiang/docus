@@ -100,7 +100,6 @@ describe('DiaryCalendarSurface', () => {
     expect(wrapper.find('.diary-calendar-surface-header').exists()).toBe(false)
     expect(wrapper.find('.diary-calendar-toolbar').exists()).toBe(false)
     expect(wrapper.get('[data-testid="diary-calendar-surface"]').attributes('role')).toBe('region')
-    expect(wrapper.get('[data-testid="diary-calendar-today"]').text()).toBe('Today')
     expect(dayCell(wrapper, '2026-08-24').findAll('.vc-dot')).toHaveLength(1)
     expect(dayCell(wrapper, '2026-08-25').findAll('.vc-dot')).toHaveLength(1)
     expect(dayCell(wrapper, '2026-08-26').findAll('.vc-dot')).toHaveLength(0)

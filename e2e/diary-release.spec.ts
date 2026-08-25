@@ -89,7 +89,6 @@ test('Diary Calendar remains usable across the D5 responsive matrix', async ({ p
       const surface = document.querySelector<HTMLElement>('[data-testid="diary-calendar-surface"]')
       const host = document.querySelector<HTMLElement>('.diary-calendar-host')
       const vcContainer = document.querySelector<HTMLElement>('.diary-calendar-host .vc-container')
-      const today = document.querySelector<HTMLElement>('[data-testid="diary-calendar-today"]')
       const title = document.querySelector<HTMLElement>('.vc-title')
       const previous = document.querySelector<HTMLElement>('.vc-prev')
       const next = document.querySelector<HTMLElement>('.vc-next')
@@ -116,7 +115,6 @@ test('Diary Calendar remains usable across the D5 responsive matrix', async ({ p
         calendar: rect(calendar),
         host: rect(host),
         vcContainer: rect(vcContainer),
-        today: rect(today),
         title: rect(title),
         previous: rect(previous),
         next: rect(next),
@@ -142,8 +140,6 @@ test('Diary Calendar remains usable across the D5 responsive matrix', async ({ p
       - ((metrics.surface?.right ?? 0) - (metrics.surface?.width ?? 0) / 2)
     expect(Math.abs(titleOffset), `${viewport.name} month title alignment`)
       .toBeLessThanOrEqual((metrics.surface?.width ?? 0) * 0.1)
-    expect(metrics.today?.width, `${viewport.name} Today target`).toBeGreaterThanOrEqual(40)
-    expect(metrics.today?.height, `${viewport.name} Today target`).toBeGreaterThanOrEqual(40)
     expect(metrics.previous?.width, `${viewport.name} previous target`).toBeGreaterThanOrEqual(40)
     expect(metrics.previous?.height, `${viewport.name} previous target`).toBeGreaterThanOrEqual(40)
     expect(metrics.next?.width, `${viewport.name} next target`).toBeGreaterThanOrEqual(40)
@@ -154,7 +150,6 @@ test('Diary Calendar remains usable across the D5 responsive matrix', async ({ p
 
     await expect(page.locator('.diary-calendar-surface-header')).toHaveCount(0)
     await expect(page.locator('.diary-calendar-toolbar')).toHaveCount(0)
-    await expect(page.getByTestId('diary-calendar-today')).toBeVisible()
     await expect(page.locator('.vc-title')).toBeVisible()
     await expect(page.locator('.file-tree')).toBeHidden()
     await expect(page.locator('.right-rail-slot')).toBeHidden()
@@ -252,18 +247,16 @@ test('Diary Calendar keyboard flow does not strand focus in the hidden surface',
     await openDiaryScope(page)
     const calendar = page.getByTestId('diary-calendar')
     const surface = page.getByTestId('diary-calendar-surface')
-    const today = page.getByTestId('diary-calendar-today')
     const previous = page.locator('.vc-prev')
     const next = page.locator('.vc-next')
     const dateButton = surface.locator(`[data-diary-day-content][data-date="${date}"]`)
 
     await expect(page.getByTestId('diary-calendar')).toBeVisible()
-    await expect(today).toHaveAccessibleName('Today')
     await expect(previous).toHaveAccessibleName('Previous month')
     await expect(next).toHaveAccessibleName('Next month')
     await expect(dateButton).toHaveAccessibleName(/Diary exists/i)
 
-    await today.focus()
+    await dateButton.focus()
     await page.keyboard.press('Enter')
     const tab = page.locator(`[role="tab"][data-tab-id="${diaryPath(date)}"]`)
     await expect(tab).toBeVisible({ timeout: 15_000 })
