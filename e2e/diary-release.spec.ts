@@ -165,6 +165,88 @@ test('Diary Calendar remains usable across the D5 responsive matrix', async ({ p
   await expect(page.locator('.file-tree')).toBeHidden()
 })
 
+test('Diary Calendar navigation exposes keyboard-only focus indicators', async ({ page }) => {
+  const pageErrors: string[] = []
+  const consoleErrors: string[] = []
+  page.on('pageerror', (error) => pageErrors.push(error.stack ?? error.message))
+  page.on('console', (message) => {
+    if (message.type() === 'error') consoleErrors.push(message.text())
+  })
+
+  await openDiaryScope(page)
+  const previous = page.locator('.vc-pane-header-wrapper .vc-prev')
+  const next = page.locator('.vc-pane-header-wrapper .vc-next')
+  const title = page.locator('.vc-title:visible').first()
+
+  async function focusPreviousWithKeyboard(): Promise<void> {
+    await page.locator('.vault').focus()
+    for (let attempt = 0; attempt < 32; attempt += 1) {
+      await page.keyboard.press('Tab')
+      if (await previous.evaluate((element) => element === document.activeElement)) return
+    }
+    throw new Error('Prev did not receive focus through keyboard Tab navigation')
+  }
+
+  async function assertKeyboardFocus(control: typeof previous): Promise<void> {
+    const before = await control.boundingBox()
+    await expect(control).toBeFocused()
+    const style = await control.evaluate((element) => {
+      const computed = getComputedStyle(element)
+      const rect = element.getBoundingClientRect()
+      return {
+        outlineStyle: computed.outlineStyle,
+        outlineWidth: computed.outlineWidth,
+        outlineColor: computed.outlineColor,
+        outlineOffset: computed.outlineOffset,
+        backgroundColor: computed.backgroundColor,
+        rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+      }
+    })
+
+    expect(style.outlineStyle).toBe('solid')
+    expect(style.outlineWidth).toBe('2px')
+    expect(style.outlineOffset).toBe('2px')
+    expect(style.outlineColor).not.toMatch(/transparent|rgba?\(0,\s*0,\s*0(?:,\s*0)?\)/i)
+    expect(style.backgroundColor).toMatch(/rgba?\(0,\s*0,\s*0(?:,\s*0)?\)/i)
+    expect(style.rect.width).toBe(44)
+    expect(style.rect.height).toBe(44)
+    expect(style.rect.x - 2).toBeGreaterThanOrEqual(0)
+    expect(style.rect.y - 2).toBeGreaterThanOrEqual(0)
+    expect(style.rect.x + style.rect.width + 2).toBeLessThanOrEqual(style.viewport.width)
+    expect(style.rect.y + style.rect.height + 2).toBeLessThanOrEqual(style.viewport.height)
+    expect(before).not.toBeNull()
+    expect(style.rect.width).toBe(before?.width)
+    expect(style.rect.height).toBe(before?.height)
+    expect(style.rect.x).toBe(before?.x)
+    expect(style.rect.y).toBe(before?.y)
+  }
+
+  for (const theme of ['light', 'dark'] as const) {
+    if (theme === 'dark') {
+      await page.getByRole('button', { name: /Theme: Light|主题：浅色/ }).click()
+      await expect(page.locator('.vc-container.vc-dark')).toBeVisible()
+    }
+
+    for (const viewport of [
+      { width: 1280, height: 800 },
+      { width: 375, height: 812 },
+    ]) {
+      await page.setViewportSize(viewport)
+      await expect(title).toHaveText('2026-08')
+      await focusPreviousWithKeyboard()
+      await assertKeyboardFocus(previous)
+
+      await page.keyboard.press('Tab')
+      await assertKeyboardFocus(next)
+    }
+  }
+
+  await expect(page.getByRole('button', { name: '今天', exact: true })).toHaveCount(0)
+  expect(pageErrors).toEqual([])
+  expect(consoleErrors).toEqual([])
+})
+
 test('Diary Home does not give hidden document tabs keyboard ownership', async ({ page, request }) => {
   const date = localCivilDate()
   const diary = diaryPath(date)
