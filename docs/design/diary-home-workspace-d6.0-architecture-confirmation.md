@@ -3,11 +3,11 @@
 ## 1. Status
 
 ```text
-Evidence status: D6.0 = REVIEW-READY
-Independent review: pending
+Evidence status: D6.0 = REVIEW-CLOSED
+Independent review: PASS
 D6.1: NOT STARTED
 Production implementation: not started by this evidence task
-P0/P1/P2 self-review: 0/0/0
+P0/P1/P2: 0/0/0
 ```
 
 This document records current-code architecture evidence for D6.0. It does not implement `DiaryWorkspace`, a Dialog, a new route, or any D6.1 behavior.
@@ -733,7 +733,7 @@ This phase did not run typecheck, build, Vitest, or Playwright. No historical te
 Current production code confirms that D6 can be implemented through a presentation-only seam without copying document lifecycle ownership:
 
 ```text
-D6.0 = REVIEW-READY
+D6.0 = REVIEW-CLOSED
 D6.1 = NOT STARTED
 ```
 
@@ -745,7 +745,7 @@ backing tab exists
 Calendar Home must be hidden
 ```
 
-D6.1 may decouple Calendar visibility from tab count, but must preserve the Diary-scope keep-mounted lifetime, existing date command, existing tab/document identity, route ownership, save/dirty state, Reader/Editor reuse, History, Recovery, Draft, and Browser Back boundaries. This evidence is ready for independent review. No D6.1 implementation has started.
+D6.1 may decouple Calendar visibility from tab count, but must preserve the Diary-scope keep-mounted lifetime, existing date command, existing tab/document identity, route ownership, save/dirty state, Reader/Editor reuse, History, Recovery, Draft, and Browser Back boundaries. Independent review passed with P0/P1/P2 = 0/0/0. No D6.1 implementation has started.
 
 This follow-up also closes the two review evidence gaps: existing History
 Comparison, Working Tree Diff, and Recovery presentation has precedence over
