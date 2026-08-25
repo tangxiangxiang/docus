@@ -9,7 +9,9 @@ D6.3 = NOT STARTED
 Independent review is required for D6.2.1. This is a post-closure presentation follow-up; it does not reopen D6.2 or start D6.3.
 
 Starting HEAD: c2d9e6a8310af10597e421fcb89661e4dd53db4e
-Production commit: b24a02bf1bf2d33f16a38388d65f4746e90703fc
+Production commits:
+- b24a02bf1bf2d33f16a38388d65f4746e90703fc — full-bleed Calendar Home layout
+- 85b7a4d6d477dace90bc4738488543db16044fb9 — centered month header follow-up
 
 ## Scope
 
@@ -58,12 +60,13 @@ The combined Playwright run completed 10/10 PASS:
 - e2e/diary-release.spec.ts: 6/6 PASS.
 - e2e/vcalendar-compatibility.spec.ts: 1/1 PASS.
 
-The responsive geometry test exercised 1280x800, 768x1024, 375x812, and 320x700. At every viewport it measured surface, Calendar, host, and vc-container rectangles and passed these non-brittle thresholds:
+The responsive geometry test exercised 1280x800, 768x1024, 375x812, and 320x700. At every viewport it measured surface, Calendar, host, vc-container, and month-title rectangles and passed these non-brittle thresholds:
 
 - host width >= 95% of surface width.
 - vc-container width >= 95% of host width.
 - host height >= 90% of surface height.
 - vc-container height >= 90% of host height.
+- month title stayed within 10% of the surface center.
 - document horizontal scroll width did not exceed the viewport.
 
 The same test confirmed at every viewport that the old surface header and toolbar are absent, Today and the month title are visible, prev/next and day targets are usable, and FileTree/RightRail/StatusBar remain hidden only under the existing Diary Home presentation policy.
@@ -96,9 +99,10 @@ Existing History/Diff/Recovery precedence, hidden-workspace keyboard contract, p
 
 ### Production rollback
 
-Revert only:
+Revert the D6.2.1 production commits:
 
-b24a02bf1bf2d33f16a38388d65f4746e90703fc — style(diary): make calendar home full bleed
+- b24a02bf1bf2d33f16a38388d65f4746e90703fc — style(diary): make calendar home full bleed
+- 85b7a4d6d477dace90bc4738488543db16044fb9 — fix(diary): align calendar month header
 
 This restores the closed D6.2 Calendar Home presentation. It does not require reverting D6.2, D6.1, Diary data, routes, tabs, server state, or dependencies.
 
