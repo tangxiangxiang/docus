@@ -1,6 +1,6 @@
 # Diary Calendar PRD
 
-状态：`REVIEW-CLOSED`（PRD 本身已关闭；VCalendar `3.1.2` exact-stack gate = `PASS / REVIEW-CLOSED`；D3.0 post-closure compatibility regression follow-up = `REVIEW-CLOSED`；D3.2 Calendar-first surface、D4 editor/lifecycle integration 已完成实现并分别 `REVIEW-CLOSED`；D5 = `COMPLETE / REVIEW-READY`，implementation/test commit 为 `adfd010e914c6572f33eceb5a5ea778ef0014c39`，independent review pending；完整 Diary feature 尚未最终关闭）
+状态：`REVIEW-CLOSED`（PRD 本身已关闭；VCalendar `3.1.2` exact-stack gate = `PASS / REVIEW-CLOSED`；D3.0 post-closure compatibility regression follow-up = `REVIEW-CLOSED`；D3.2 Calendar-first surface、D4 editor/lifecycle integration 已完成实现并分别 `REVIEW-CLOSED`；D5 = `COMPLETE / REVIEW-READY`，base implementation/test commit 为 `adfd010e914c6572f33eceb5a5ea778ef0014c39`，320/375px responsive P1 follow-up 为 `05906f9`，independent re-review pending；完整 Diary feature 尚未最终关闭）
 
 PRD review status：`P0 = 0`、`P1 = 0`、`P2 = 0`。PRD contract 与 D3.0 compatibility evidence 已分开记录；D3.0 gate result 为 `PASS`，D3.0 closure 已完成。
 
@@ -731,6 +731,8 @@ D5 release evidence 已在 implementation/test commit `adfd010e914c6572f33eceb5a
 - README、中文 README、Vault/user guide、storage/document-lifecycle/security architecture docs 与 CHANGELOG 已同步；未修改 Diary domain、server contract、D4 lifecycle command、package/lockfile 或依赖。GitHub status 未验证，不能宣称 CI PASS。
 
 D5 task-scoped self-review：`P0 = 0`、`P1 = 0`、`P2 = 0`；当前为 `COMPLETE / REVIEW-READY`，等待 independent review。该状态不等于完整 Diary feature 已 `REVIEW-CLOSED`。
+
+D5 responsive follow-up（implementation/test commit：`05906f9`）已收口 independent review 发现的唯一 P1：320/375px 日期按钮横向 touch target 过窄。`max-width: 420px` 的 Diary Calendar-first mode 隐藏 Diary 模式 FileTree/左 splitter，保留 `40px ActivityBar + Calendar` 主区域；打开 Diary 文档或切换到 note 后恢复普通 Vault/FileTree layout，768/1280 不隐藏 FileTree。真实 Chromium 最小日期按钮为：1280 `71.703125 × 44`、768 `47.671875 × 44`、375 `47.84375 × 44`、320 `40 × 44`；Today `69.109375 × 44`；Previous/Next `40 × 40`；四档均无横向溢出。D5 browser 合并 lane 8/8 PASS，focused Vitest 13 files / 178 tests PASS，client/full typecheck、build、diff check PASS；follow-up self-review P0/P1/P2 = 0/0/0，D5 仍 `COMPLETE / REVIEW-READY`，等待 independent re-review。
 
 ## 12. 测试与验收标准（后续实现必须满足）
 
