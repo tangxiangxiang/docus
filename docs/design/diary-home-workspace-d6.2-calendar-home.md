@@ -2,7 +2,9 @@
 
 ## Status
 
-D6.2 = REVIEW-READY pending independent review.
+D6.2 = REVIEW-CLOSED.
+Independent review = PASS.
+P0 = 0 / P1 = 0 / P2 = 0.
 
 Starting HEAD: f53b7b3ae724e1d5564cb56379accdbf5b9222e1
 Production commit: bcbbdf0b2bfabdaecc5ae0af189f777d5d032e95
@@ -82,6 +84,6 @@ Documentation rollback does not roll back runtime behavior.
 
 ## Phase gate and handoff
 
-The evidence follow-up closes the previously identified evidence P1 and rollback-wording P2 without changing production. D6.2 remains REVIEW-READY until independent review; it is not REVIEW-CLOSED in this commit.
+The evidence follow-up closed the previously identified evidence P1 and rollback-wording P2 without changing production. Independent review passed with P0/P1/P2 = 0/0/0.
 
 D6.3 = NOT STARTED. No Reader Dialog, Editor Dialog, or D6.3 implementation was started.
