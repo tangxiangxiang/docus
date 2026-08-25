@@ -189,7 +189,7 @@ function goToToday(): void {
 }
 
 .diary-calendar-today {
-  min-height: 36px;
+  min-height: 44px;
   padding: 5px 11px;
   border: 1px solid var(--border);
   border-radius: 5px;
@@ -236,6 +236,11 @@ function goToToday(): void {
   background: transparent;
   color: inherit;
   font: inherit;
+}
+
+.diary-calendar-host :deep(.vc-arrow) {
+  min-width: 40px;
+  min-height: 40px;
 }
 
 .diary-calendar-host :deep(.vc-day-content:hover) {

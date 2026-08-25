@@ -542,7 +542,7 @@ describe('VaultView D3.2 Diary surface wiring', () => {
   it('keeps the Calendar mounted while the workspace tab controls visibility', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
     const editorSurface = source.match(
-      /<div\n        v-if="!isReadMode"[\s\S]*?class="content"/,
+      /<div\s+v-if="!isReadMode"[\s\S]*?class="content"/,
     )?.[0]
 
     expect(source).toContain('v-if="isDiaryCalendarMounted"')
