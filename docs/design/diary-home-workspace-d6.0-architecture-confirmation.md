@@ -15,13 +15,13 @@ This document records current-code architecture evidence for D6.0. It does not i
 ## 2. Starting HEAD and scope
 
 ```text
-Starting HEAD: aed89279d5abb275e8cfa6800e89e1c2223bc113
-Commit: aed8927 docs(diary): close D6 design review
+Starting HEAD: 6674f44494d2a5c661e52b47968531e080c304fe
+Commit: Merge branch 'main' of https://github.com/tangxiangxiang/docus
 Branch: main
 Worktree at start: clean
 ```
 
-The repository was audited at the real current `HEAD`; `main` and `github/main` pointed to the same commit. This phase is architecture confirmation only. No production code, tests, E2E files, package files, lockfiles, or dependencies were changed.
+The repository was audited at the real current `HEAD`; `main` and `github/main` pointed to the same merge commit. This is an independent-review follow-up to the original D6.0 evidence, not a D6.1 implementation. No production code, tests, E2E files, package files, lockfiles, or dependencies were changed.
 
 ## 3. Files inspected
 
@@ -71,12 +71,15 @@ The repository was audited at the real current `HEAD`; `main` and `github/main` 
 - `src/components/vault/monacoModels.ts`
 - `src/components/vault/monacoModelRegistry.ts`
 - `src/composables/vault/useHistory.ts`
+- `src/composables/vault/useHistoryComparisons.ts`
 - `src/composables/vault/useHistoryRestore.ts`
 - `src/composables/vault/useHistoryTimeline.ts`
+- `src/composables/vault/useWorkingTreeDiffs.ts`
 - `src/composables/vault/draft-recovery/useUnsavedDraftRecovery.ts`
 - `src/composables/vault/draft-recovery/useDraftRecoveryTabs.ts`
 - `src/composables/vault/draft-recovery/useUnsavedDraftPersistence.ts`
 - `src/components/vault/HistoryComparisonPane.vue`
+- `src/components/vault/WorkingTreeDiffPane.vue`
 - `src/components/vault/DraftRecoveryPane.vue`
 - `src/components/vault/DraftRecoveryCenter.vue`
 
@@ -285,6 +288,66 @@ Document/tab close → existing closeTab + dirty/draft policy
 History/Recovery   → existing Vault workflow
 ```
 
+### 4.11 Workspace surface categories and current precedence
+
+Current `VaultView` evidence shows that `naturalWorkspaceTabs` is broader than
+ordinary document tabs. It contains:
+
+- document tabs from `useTabWorkspace()`;
+- History Comparison entries from `useHistoryComparisons()`;
+- Working Tree Diff entries from `useWorkingTreeDiffs()`; and
+- Recovery tabs from `useDraftRecoveryTabs()`.
+
+The existing active-workspace signals are also distinct:
+
+```text
+activeWorkspaceTabId:
+  activeDraftRecovery?.tabId
+  ?? activeHistoryComparison?.tabId
+  ?? activeWorkingTreeDiff?.tabId
+  ?? activePath
+
+metadataContext:
+  recovery
+  > history
+  > diff
+  > document
+```
+
+The workflow entry points preserve the same authority boundary in practice:
+opening a History Comparison deactivates Recovery and Working Tree Diff;
+opening a Working Tree Diff deactivates Recovery and History Comparison; and
+opening a Recovery view deactivates the other comparison/diff surfaces where
+the existing workflow performs that transition. The corresponding panes are
+rendered from their existing active signals, and the workspace tab model
+continues to expose them as first-class workspace entries.
+
+D6 must therefore not treat `workspaceTabs.length === 0` as equivalent to
+"no document is active" or "Diary Home is ineligible". The D6 architecture
+contract is:
+
+```text
+activeScope !== diary
+  → ordinary Vault presentation
+
+activeScope === diary
+  + active History Comparison, Working Tree Diff, or Recovery
+  → existing non-document workspace presentation has precedence
+  → Diary Home/Reader/Editor is suspended or hidden
+
+activeScope === diary
+  + no active non-document workspace surface
+  → Diary presentation is eligible
+  → HOME / READER / EDITOR may own the Diary presentation slot
+```
+
+This is a precedence contract, not a request for D6.0 to add a computed
+property. History Comparison, Working Tree Diff, and Recovery remain owned by
+their existing workflows. DiaryWorkspace may observe their active state and
+derive eligibility, but may not activate, select, close, restore, or duplicate
+any of them. An active special surface must never be co-primary with a visible
+Diary Home, Reader Dialog, or Editor Dialog.
+
 ## 5. D5 → D6 presentation migration seam
 
 The minimum D6.1 seam is a presentation-only state boundary at the Diary/VaultView integration point:
@@ -294,14 +357,24 @@ activeScope === 'diary'
     ↓
 Diary presentation host is mounted
 
-presentationMode === HOME
+diaryPresentationEligible
+    = activeScope === 'diary'
+    AND no active History Comparison
+    AND no active Working Tree Diff
+    AND no active Recovery
+
+diaryPresentationEligible && presentationMode === HOME
     → Calendar visible
 
-presentationMode === READER
+diaryPresentationEligible && presentationMode === READER
     → Calendar hidden but mounted, Reader presentation visible
 
-presentationMode === EDITOR
+diaryPresentationEligible && presentationMode === EDITOR
     → Calendar hidden but mounted, Editor presentation visible
+
+activeScope === 'diary' && !diaryPresentationEligible
+    → Calendar remains mounted but hidden
+    → existing History / Diff / Recovery surface is primary
 ```
 
 The future presentation owner may be a `DiaryWorkspace` component/composable introduced by D6.1, but D6.0 does not create it. Its allowed state is limited to:
@@ -318,10 +391,16 @@ The key migration is:
 
 ```text
 D5: Calendar visible iff activeScope === diary && workspaceTabs.length === 0
-D6: Calendar visible iff activeScope === diary && presentationMode === HOME
+D6: Calendar visible iff diaryPresentationEligible && presentationMode === HOME
 ```
 
-The `workspaceTabs.length` predicate must be removed from Calendar Home visibility in D6.1, while `workspaceTabs` remains the existing source for tab-strip/document state. The Calendar must remain `v-if`-mounted for Diary scope and use visibility control compatible with the `ed47c94` workaround.
+The `workspaceTabs.length` predicate must be removed from Calendar Home
+visibility in D6.1, while `workspaceTabs` remains the existing source for
+tab-strip/document/special-workspace state. The Calendar must remain
+`v-if`-mounted for Diary scope and use visibility control compatible with the
+`ed47c94` workaround. A non-document workspace surface winning precedence
+does not unmount the Calendar; it only makes the Calendar hidden while the
+Diary scope remains active.
 
 ## 6. Proposed ownership boundary
 
@@ -357,6 +436,21 @@ Presentation close leaves the backing tab, `activePath`, raw bytes, draft state,
 | Back to `/vault` | Empty `pathMatch`; current `useRouteSync` is a no-op, so active tab may remain | Close/reconcile Diary presentation from route/scope result; preserve tab unless existing lifecycle closes it | No `router.replace('/vault')` on Dialog close; no invented route semantics |
 | Scope and route temporarily disagree | Scope filter is local UI state; route/tab state is existing Vault state | Presentation observes both; Diary presentation is only active when Diary scope and valid backing state permit it | No scope owner takeover by Dialog |
 
+## 7.1 Non-document workspace precedence matrix
+
+| Event | Current owner/result | D6 presentation result | Forbidden action |
+| --- | --- | --- | --- |
+| History Comparison becomes active | Existing History comparison workflow owns `activeHistoryComparison`; its entry path deactivates Recovery and Working Tree Diff | Diary presentation suspends/exits; Calendar stays mounted but hidden while Diary scope remains active | DiaryWorkspace closing/selecting/restoring the comparison, changing route, or changing `activePath` |
+| Working Tree Diff becomes active | Existing diff workflow owns `activeWorkingTreeDiff`; its entry path deactivates Recovery and History Comparison | Diary presentation suspends/exits; Calendar stays mounted but hidden while Diary scope remains active | DiaryWorkspace closing the diff or mutating document state |
+| Recovery becomes active | Existing Recovery tab workflow owns `activeDraftRecovery`; Recovery is the highest `activeWorkspaceTabId`/metadata presentation signal | Diary presentation suspends/exits; Calendar stays mounted but hidden while Diary scope remains active | DiaryWorkspace discarding, restoring, selecting, or duplicating Recovery state |
+| Non-document surface closes/deactivates | Its existing owner clears the active comparison/diff/recovery signal | DiaryWorkspace re-evaluates `diaryPresentationEligible`; D6.0 does not promise automatic resume of the previous Reader/Editor mode | Automatic mode restoration without a D6.1/D6.5 policy |
+
+An active History Comparison, Working Tree Diff, or Recovery surface cannot
+coexist visibly as a co-primary surface with Diary Home, Reader Dialog, or
+Editor Dialog. This precedence is resolved in D6.0; only future entry/resume
+UX between a Diary Dialog and these workflows remains deferred to the
+implementation phase assigned in the plan.
+
 ## 8. Scope switching reconciliation matrix
 
 | Transition | Current owner/result | D6 presentation expectation |
@@ -390,12 +484,36 @@ useEditorTabs → useTabWorkspace
     └─ document load / save / draft lifecycle
 
 D6.1 insertion seam:
-existing document-ready/backing-state result
-    ▼
-DiaryWorkspace presentation transition to READER or EDITOR
+Promise<DiaryDateCommandResult>
+    ├─ status: 'opened' | 'created'
+    │    → consume result.date and result.path
+    │    → DiaryWorkspace may transition to READER or EDITOR
+    └─ status: 'future' | 'invalid' | 'busy' | 'error'
+         → no Dialog transition and no inferred backing identity
 ```
 
-The insertion happens after the existing date command has established or reused document identity. `openDiaryDate()` remains the sole public date command.
+`src/composables/diary/useDiaryDateCommand.ts` defines the existing result as:
+
+```ts
+type DiaryDateCommandResult =
+  | { status: 'opened' | 'created'; date: DiaryDate; path: string }
+  | { status: 'future' | 'invalid' | 'busy' | 'error'; date?: DiaryDate; path?: string; error?: Error }
+```
+
+The command awaits `openPost()` both for an existing date and after an
+allowed create/refresh path, and only then returns `opened` or `created`.
+That makes the existing Promise result the valid presentation handoff seam.
+Future, invalid, busy, and error results do not open Reader or Editor, do not
+create a presentation backing identity, and do not use `activePath` to guess
+whether a date command succeeded. Existing command feedback and owners remain
+responsible for those outcomes.
+
+The insertion therefore consumes the existing `DiaryDateCommandResult` after
+the command has established or reused document identity. `openDiaryDate()`
+remains the sole public date command. D6 does not require a callback, event
+bus, parallel create/open command, or public API change. In particular,
+`activePath` changes from Browser Back, FileTree, Command Palette, Recovery,
+History, or ordinary document navigation are not Diary Dialog-open intent.
 
 ### 9.2 State ownership diagram
 
@@ -416,8 +534,15 @@ Diary presentation layer
        ▼
 Calendar / Reader / Editor presentation
 
-Calendar day intent → openDiaryDate → existing document lifecycle
-Calendar does not call server/router/tab APIs directly.
+Calendar day intent → openDiaryDate → Promise<DiaryDateCommandResult>
+  opened/created → existing document lifecycle is ready → presentation may transition
+  future/invalid/busy/error → no Diary Dialog transition
+
+Route / tab / History / Diff / Recovery state
+  → DiaryWorkspace eligibility/reconciliation observer
+
+Calendar does not call server/router/tab APIs directly, and activePath alone
+does not open a Diary Dialog.
 ```
 
 Dependencies point from presentation to existing state consumption. Presentation does not mutate router or persistence to simulate its own state.
@@ -431,6 +556,10 @@ Dependencies point from presentation to existing state consumption. Presentation
 | Escape | No route change | No tab change | Same presentation close policy |
 | Dialog Header Back | No route change | No tab change | Same presentation close policy |
 | Browser Back | Vue Router owns transition | `useRouteSync` reconciles non-empty path; `/vault` null path is current no-op | Presentation observes final route/scope/tab state |
+| History Comparison becomes active | Existing History workflow owns the comparison and its workspace entry | Existing comparison is primary; Diary presentation suspends/exits; Calendar remains mounted but hidden in Diary scope | DiaryWorkspace does not close or deactivate History |
+| Working Tree Diff becomes active | Existing diff workflow owns the diff and its workspace entry | Existing diff is primary; Diary presentation suspends/exits; Calendar remains mounted but hidden in Diary scope | DiaryWorkspace does not close or mutate the diff |
+| Recovery becomes active | Existing Recovery workflow owns the Recovery tab and state | Recovery is primary; Diary presentation suspends/exits; Calendar remains mounted but hidden in Diary scope | DiaryWorkspace does not restore, discard, or select Recovery |
+| Non-document surface closes/deactivates | Existing owner clears its active signal | DiaryWorkspace re-evaluates eligibility; no automatic Reader/Editor resume is promised by D6.0 | Implicit resume policy without D6.1/D6.5 definition |
 | Scope switch | No route navigation | Tabs/activePath unchanged | Close Diary presentation when leaving Diary |
 | Refresh | Existing Vault route and persisted-tab restoration run | Existing `useEditorTabs` restores tabs and active path; Dialog state is not URL-backed | Do not restore Dialog in D6 MVP |
 | Reopen same date | Exact `getPost` then existing `openPost` | Existing tab reused | Presentation can reopen Reader for same identity |
@@ -445,8 +574,9 @@ Dependencies point from presentation to existing state consumption. Presentation
 | Router | Vue Router | `src/router/index.ts` | Existing Router | Observe route result | New Diary route, popstate interception |
 | Diary scope | Scope singleton + NavBar | `useScopeFilter.ts`, `NavBar.vue` | Existing scope owner | Observe `activeScope` | Dialog-owned scope switching |
 | Calendar mount | VaultView Diary scope | `VaultView.vue` `isDiaryCalendarMounted` | Existing mount seam | Preserve `v-if` scope lifetime | Synchronous unmount on date click |
-| Calendar visibility | VaultView D5 predicate | `isDiaryCalendarMode` | D6 presentation mode | Decouple from tab count | Reuse `workspaceTabs.length === 0` as sole rule |
-| Date command | `useDiaryDateCommand` | `useDiaryDateCommand.ts` | Existing command | Add post-command presentation handoff | Parallel create/open command |
+| Calendar visibility | VaultView D5 predicate | `isDiaryCalendarMode` | D6 presentation eligibility + mode | Decouple from tab count while yielding to special surfaces | `presentationMode` without non-document precedence |
+| Non-document workspace precedence | VaultView + existing active comparison/diff/recovery signals | `naturalWorkspaceTabs`, `activeWorkspaceTabId`, `metadataContext` | Existing History/Diff/Recovery owners remain authoritative | DiaryWorkspace observes and derives eligibility | DiaryWorkspace override, close, duplicate, or co-primary rendering |
+| Date command | `useDiaryDateCommand` | `useDiaryDateCommand.ts` | Existing command result consumed by presentation | Consume awaited `DiaryDateCommandResult` for `opened/created` | Public API change, callback/event API, parallel create/open command |
 | Document identity | Diary protocol + API | `shared/diaryProtocol.ts`, API | Existing domain/lifecycle | Consume identity | New Diary entity or suffix |
 | Tabs | `useTabWorkspace` | `useEditorTabs.ts`, `useTabWorkspace.ts` | Existing tab workspace | Reuse backing tab | Second tab store or Dialog tab |
 | Active path | `useTabWorkspace` | `activePath` ref | Existing tab workspace | Observe | Dialog mutation on close |
@@ -456,8 +586,9 @@ Dependencies point from presentation to existing state consumption. Presentation
 | Save | `useDocumentSave` | `editor-tabs/useDocumentSave.ts` | Existing save owner | Invoke existing commands | Dialog save pipeline |
 | Dirty state | Tab revisions/save status | `Tab`, `useDocumentSave`, close guard | Existing document lifecycle | Preserve while Dialog closes | Dirty confirmation on presentation close |
 | Draft | Draft persistence/recovery | `draft-recovery/*`, VaultView | Existing draft owner | Reuse state | Dialog-local draft store |
-| History | Vault-scoped history/comparison/restore | `useHistory*`, VaultView | Existing History workflow | Keep separate/rehost only with phase evidence | Diary History clone |
-| Recovery | Draft recovery coordinator | `useUnsavedDraftRecovery`, VaultView | Existing Recovery workflow | Reconcile backing identity | Dialog-owned Recovery lifecycle |
+| History Comparison | Vault-scoped history/comparison/restore | `useHistoryComparisons.ts`, VaultView | Existing History workflow has precedence | Diary observes active state and yields | Diary History clone or forced deactivation |
+| Working Tree Diff | Vault-scoped diff workflow | `useWorkingTreeDiffs.ts`, VaultView | Existing Diff workflow has precedence | Diary observes active state and yields | Diary Diff clone or forced deactivation |
+| Recovery | Draft recovery coordinator | `useUnsavedDraftRecovery`, `useDraftRecoveryTabs.ts`, VaultView | Existing Recovery workflow has precedence | Diary observes active state and yields | Dialog-owned Recovery lifecycle or forced discard |
 | File changes | Vault file-change bus | `context/fileChanges.ts` | Existing bus | Observe/publish only through existing owners | New Diary bus |
 | Reader rendering | `ReadingPane` + `RenderedMarkdown` | `ReadingPane.vue`, `RenderedMarkdown.vue` | Reuse existing Reader | One active Reader/TOC owner | Second Markdown pipeline |
 | Dialog visibility | Not implemented | No current Diary Dialog | Future DiaryWorkspace | Presentation-only mode | Route/tab/document ownership |
@@ -474,18 +605,21 @@ These are not ownerless unknowns. Each is assigned to the phase that must produc
 | With a backing tab, is the ordinary tab strip hidden, mounted, or unchanged in Home? | Deferred; current code shows the strip whenever workspace tabs exist | D6.1 product/presentation decision |
 | How does Reader Dialog reuse the active document without duplicate TOC/Reader ownership? | Reuse seam confirmed; one-instance host strategy required | D6.3 Reader adapter |
 | How does Editor Dialog avoid duplicate Monaco editor instances? | Risk confirmed; registry reuse alone is insufficient | D6.4 Editor adapter/lifecycle spike |
-| How are History and Recovery presented while a Diary Dialog is open? | Existing workflows remain owners; Dialog integration policy deferred | D6.5 lifecycle regression |
+| When History Comparison, Working Tree Diff, or Recovery is active, does Diary presentation yield? | Resolved in D6.0: yes; the active non-document workspace surface has precedence, while Calendar remains mounted but hidden in Diary scope | Existing workflow owners; D6.1 eligibility seam |
+| How does a user deliberately enter History or Recovery UX from a Diary Dialog? | Deferred; entry/resume interaction remains an implementation-phase decision and must use existing workflow owners | D6.5 lifecycle regression |
 | What happens when Browser Back changes to a different active document? | Router/tab flow confirmed; presentation reconciliation deferred | D6.5 lifecycle regression |
 | What happens when backing tab is closed externally? | Existing tab close changes identity; Dialog exit condition deferred | D6.5 lifecycle regression |
 | What does refresh do when route backs a document but Home is presented? | D6 MVP does not restore Dialog; existing route/tab restoration remains owner | D6.0 non-goal; D6.5 regression |
 | How do focus trap and hidden Calendar satisfy accessibility? | Keep-mounted requirement confirmed; focus/inert implementation deferred | D6.6 accessibility |
 | `/vault` Browser Back leaves `activePath` potentially unchanged because `pathMatch` is empty | Current fact recorded; no route/tab mutation is authorized by D6.0 | D6.5 must define presentation-only reconciliation |
+| Does an active Diary document automatically open a Diary Dialog? | No. Document activation is existing lifecycle state; Dialog opening requires explicit Calendar date intent and a successful `opened`/`created` command result | D6.1 presentation command integration |
 
 ## 13. Risks and mitigations
 
 | Risk | Evidence/mitigation | Stop signal |
 | --- | --- | --- |
 | Calendar Home remains coupled to tab count | D6.1 replaces the visibility predicate with presentation mode while preserving mount ownership | D6.1 requires document/tab mutation to show Home |
+| Diary Home overlaps History/Diff/Recovery | `diaryPresentationEligible` requires Diary scope and no active non-document workspace surface; existing surface wins and Calendar stays mounted-but-hidden | Calendar, Reader, or Editor is visibly co-primary with an active comparison, diff, or Recovery surface |
 | VCalendar `dayIndex` regression returns | Preserve `v-if` mount by Diary scope and hidden-but-mounted behavior from `ed47c94` | Any synchronous unmount workaround or new page error |
 | Dialog becomes a second document system | Ownership matrix forbids second tab, raw, save, draft, History, Recovery, or route state | New Diary-specific lifecycle appears |
 | Duplicate Monaco instances | `acquireMarkdownModel` reuse does not make two EditorPane instances safe | D6.4 cannot guarantee one editor instance per path |
@@ -493,6 +627,7 @@ These are not ownerless unknowns. Each is assigned to the phase that must produc
 | Dirty content is discarded on Dialog close | Presentation close leaves tab/raw/revision/draft intact | `closeTab`, discard, or dirty confirmation from Dialog close |
 | Reader TOC state conflicts | Existing `ReadingPane` is keyed to one active path and publishes Vault-scoped TOC | Multiple active Reader instances publish competing TOC state |
 | History/Recovery gets copied into Diary | Existing Vault workflows remain authoritative | Diary-specific History/Recovery/Draft store |
+| `activePath` is mistaken for Diary presentation intent | Only an explicit Calendar date intent may consume an awaited `DiaryDateCommandResult`; unrelated active-path changes do not open Dialogs | A watcher auto-opens a Diary Dialog for Browser Back, FileTree, Recovery, History, or ordinary navigation |
 | Scope and route disagree | Presentation observes both and exits when Diary scope is no longer active | Dialog takes ownership of scope or router |
 
 ## 14. D6.1 readiness gate
@@ -503,8 +638,14 @@ The current code evidence supports a presentation-only D6.1 seam. The following 
 - [x] Diary scope ownership confirmed;
 - [x] Calendar mounted ownership confirmed;
 - [x] Calendar visibility ownership and `workspaceTabs.length` coupling identified;
+- [x] History Comparison precedence confirmed;
+- [x] Working Tree Diff precedence confirmed;
+- [x] Recovery precedence confirmed;
+- [x] Diary presentation eligibility defined as Diary scope plus no active non-document workspace surface;
+- [x] Calendar remains mounted while Diary scope is active even when a special surface wins;
+- [x] D6.1 can decouple tab count without allowing Calendar/Reader/Editor and a special surface to render co-primary;
 - [x] D6 presentation decoupling seam identified;
-- [x] `openDiaryDate()` single ownership confirmed;
+- [x] `openDiaryDate()` single ownership and `DiaryDateCommandResult` handoff confirmed;
 - [x] `openPost()` and tab lifecycle confirmed;
 - [x] Browser Back ownership confirmed;
 - [x] Dialog Close presentation-only feasibility confirmed;
@@ -529,6 +670,8 @@ VaultView / future DiaryWorkspace presentation boundary
     ├─ derive Calendar visibility from presentation mode
     ├─ preserve Calendar mount by Diary scope
     ├─ consume active tab/raw/path through VaultContext
+    ├─ consume only successful `DiaryDateCommandResult` for date-intent transitions
+    ├─ derive eligibility from active History/Diff/Recovery state
     └─ reconcile route/scope/tab changes without owning them
 ```
 
@@ -538,9 +681,11 @@ Forbidden D6.1 seams:
 - `router.back()`, `router.replace('/vault')`, or `popstate` interception for Dialog close;
 - `closeTab()` or dirty discard from presentation close;
 - second tab store, raw copy, save pipeline, draft store, History, Recovery, or Markdown renderer;
+- co-primary Diary presentation while History Comparison, Working Tree Diff, or Recovery is active;
 - second Monaco model/editor lifecycle for the same document;
 - changes to D1/D2 domain contracts, server Diary API, or `openDiaryDate()` ownership;
 - removal or timing-based replacement of the `ed47c94` keep-mounted workaround.
+- treating `activePath` changes as automatic Diary Dialog-open intent;
 
 ## 15. STOP conditions checked
 
@@ -559,13 +704,16 @@ popstate interception required                  NO
 Dialog close must call closeTab                 NO
 Presentation must own raw/dirty/save            NO
 D6.1 cannot use presentation-only seam           NO, seam identified
+History/Diff/Recovery ownership change required  NO
+Diary presentation cannot yield precedence       NO, eligibility contract identified
+Dialog opening must be inferred from activePath  NO; explicit command result is available
 ```
 
 The `/vault` empty-`pathMatch` behavior is recorded as a current-code reconciliation fact, not hidden or promoted into a new router contract. It has a named D6.5 owner and does not authorize a D6.0 code change.
 
 ## 16. Evidence commands and limitations
 
-Static evidence commands used:
+Static evidence commands used for the original evidence and this follow-up:
 
 ```text
 git status --short --branch
@@ -574,6 +722,7 @@ git log -5 --oneline --decorate
 git show ed47c94 -- src/views/VaultView.vue
 rg --files src server shared
 rg -n "openDiaryDate|openPost|isDiaryCalendarMounted|isDiaryCalendarMode|workspaceTabs|activeScope|useRouteSync|..."
+rg -n "activeHistoryComparison|activeWorkingTreeDiff|activeDraftRecovery|naturalWorkspaceTabs|activeWorkspaceTabId|metadataContext"
 ```
 
 This phase did not run typecheck, build, Vitest, or Playwright. No historical test result is re-labelled as a new D6.0 run. GitHub status was not queried during this task.
@@ -596,3 +745,9 @@ Calendar Home must be hidden
 ```
 
 D6.1 may decouple Calendar visibility from tab count, but must preserve the Diary-scope keep-mounted lifetime, existing date command, existing tab/document identity, route ownership, save/dirty state, Reader/Editor reuse, History, Recovery, Draft, and Browser Back boundaries. This evidence is ready for independent review. No D6.1 implementation has started.
+
+This follow-up also closes the two review evidence gaps: existing History
+Comparison, Working Tree Diff, and Recovery presentation has precedence over
+Diary presentation without changing those owners, and D6.1 can consume the
+existing awaited `DiaryDateCommandResult` rather than changing
+`openDiaryDate()` or inferring date intent from `activePath`.
