@@ -162,6 +162,7 @@ are removed. Mermaid runs with `securityLevel: 'strict'`. Sanitization reduces
 document-content risk; it does not replace authentication or deployment access
 control.
 
-Server routes validate vault-relative paths and archive rules. Writes use compare
-bases, locks, atomic replacement, and durable recovery. These mechanisms protect
-integrity; they do not stop an authorized host user from editing files directly.
+Server routes validate vault-relative paths, archive rules, and the Diary date
+identity contract. Writes use compare bases, locks, atomic replacement, and
+durable recovery. These mechanisms protect integrity; they do not stop an
+authorized host user from editing files directly.

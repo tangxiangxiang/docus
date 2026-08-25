@@ -2,6 +2,13 @@
 
 All notable changes to Docus are documented in this file.
 
+## Diary Calendar MVP — 2026-08-25
+
+- Added a Calendar-first `diary/` scope with one managed Markdown entry per local calendar date.
+- Today and past missing dates can be created through the date command; missing future dates remain unopened, while existing future entries can still be edited.
+- Diary entries reuse the existing editor, History, Recovery, and delete lifecycle; managed date identities and the reserved `diary` root remain protected from rename/move operations.
+- Completed responsive, keyboard/focus, mobile, compatibility, and release regression validation without changing the approved VCalendar candidate or core Docus stack.
+
 ## Archive workflow — 2026-08-24
 
 - Relaxed `archive/` from a protected content subtree to a recommended organizational area.

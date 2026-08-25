@@ -1,4 +1,4 @@
-# Vault and Archive Protocol
+# Vault, Diary, and Archive Protocol
 
 ## Vault Layout
 
@@ -8,13 +8,14 @@ Docus requires portable, URL-safe logical paths: every folder and file-name segm
 
 ## Protected Roots
 
-The three top-level folders are part of the product protocol:
+The four top-level folders are part of the product protocol:
 
 - `inbox/` for new and unfinished notes.
 - `literature/` for source-oriented reading notes.
 - `archive/` for settled notes.
+- `diary/` for one date-addressed Diary document per local calendar date.
 
-The roots themselves cannot be renamed, deleted, or moved. Missing roots are created automatically by the production server; source-development users must create them before the first dev run.
+The roots themselves cannot be renamed, deleted, or moved. Missing roots are created by the shared startup seed without overwriting a conflicting file.
 
 ## Archive Rules
 
@@ -28,6 +29,16 @@ The roots themselves cannot be renamed, deleted, or moved. Missing roots are cre
 - The built-in Archive action remains a convenience workflow and defaults to `archive/<filename>`, with its existing collision suffix handling.
 
 The UI and server protect only the reserved root names. Filesystem confinement, path validation, authentication, lifecycle coordination, history, and recovery guarantees are unchanged.
+
+## Diary Rules
+
+`diary/` is a reserved Calendar-first scope, not a second editor or a general folder tree:
+
+- A managed Diary entry uses the logical path `diary/YYYY-MM-DD` and the physical file `diary/YYYY-MM-DD.md`.
+- One valid local calendar date maps to exactly one Diary document. The date command owns creation for Today and past dates; a missing future date is not created.
+- Existing future dates can be opened and edited. Managed Diary documents can be deleted through the normal lifecycle, but their identity cannot be renamed or moved.
+- Generic file/folder creation under `diary/` is rejected so arbitrary content cannot become a managed Diary identity. Existing unmanaged or invalid files remain visible to FileTree, but Calendar ignores them.
+- Diary entries continue to use the ordinary editor, History, Recovery, and save/delete lifecycle. Diary does not change the vault's authentication or filesystem-confinement rules.
 
 ## File Operations
 

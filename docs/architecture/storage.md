@@ -4,7 +4,7 @@ Docus deliberately separates human-owned Markdown, application metadata, browser
 
 ## Vault files
 
-The default vault is `src/content/`; `VAULT_DIR` can point the server elsewhere. It contains the required top-level roots `inbox/`, `literature/`, and `archive/` plus a small amount of Docus-managed repository metadata.
+The default vault is `src/content/`; `VAULT_DIR` can point the server elsewhere. It contains the required top-level roots `inbox/`, `literature/`, `archive/`, and `diary/` plus a small amount of Docus-managed repository metadata.
 
 Vault paths are validated before use. Folder and file path segments use lowercase ASCII kebab-case; display titles may use any language.
 

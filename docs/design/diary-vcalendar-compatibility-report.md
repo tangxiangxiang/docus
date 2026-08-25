@@ -210,6 +210,12 @@ Fix commit: `ed47c94` (`fix(diary): keep calendar mounted across document open`)
 
 This follow-up does not change the historical result: D3.0 remains `REVIEW-CLOSED / PASS`. The post-closure compatibility regression is now `REVIEW-CLOSED` after independent review (`P0 = 0`, `P1 = 0`, `P2 = 0`); the docs-only current-fact correction and `ed47c94` mitigation remain recorded. GitHub status queried; no checks available, so CI PASS is not claimed.
 
+## D5 Release Compatibility Evidence
+
+D5 continues to use the approved `v-calendar@3.1.2` candidate and the `ed47c94` keep-mounted presentation workaround; no candidate, dependency, or compatibility architecture changed. The combined Diary/VCalendar browser release command passed 8/8, including the D5 responsive matrix at 1280, 768, 375, and 320 widths, keyboard/focus and ARIA checks, hidden-but-attached Calendar restoration, marker create/delete, repeated Diary lifecycle, and the existing VCalendar compatibility smoke. Diagnostic browser runs reported no page errors.
+
+D5 is currently `COMPLETE / REVIEW-READY`, with independent review pending. This is release evidence for the existing compatibility decision, not a new VCalendar gate result and not a claim that GitHub CI passed; GitHub status remains unverified.
+
 ## P0 / P1 / P2
 
 Independent D3.0 closure review: `P0 = 0`, `P1 = 0`, `P2 = 0`.

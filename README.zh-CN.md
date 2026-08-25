@@ -9,6 +9,7 @@ Docus 是一个可自托管的 Markdown 知识工作区，用于写作、整理�
 ## 主要能力
 
 - **文件式 Markdown 笔记库**：在 `inbox`、`literature` 和 `archive` 中保留可独立读取的 `.md` 文件。
+- **Calendar-first Diary**：按本地日历日期打开每天唯一的 Markdown 日记，同时复用现有编辑器、History、Recovery 和删除生命周期。
 - **专注的编辑与阅读体验**：Monaco 编辑器、安全过滤的 Markdown、任务列表、脚注、Mermaid、Markmap 与 Wiki 链接。
 - **可靠保存**：自动保存、比较基线冲突检测、原子写入、生命周期锁与启动时崩溃恢复。
 - **草稿恢复**：使用浏览器 IndexedDB 保存有容量上限的未保存缓冲区。
@@ -24,13 +25,13 @@ Docus 是一个可自托管的 Markdown 知识工作区，用于写作、整理�
 
 ```bash
 npm ci
-mkdir -p src/content/inbox src/content/literature src/content/archive
+mkdir -p src/content/inbox src/content/literature src/content/archive src/content/diary
 npm run dev
 ```
 
 打开 Vite 输出的地址，通常为 `http://localhost:5173`。
 
-源码开发模式要求先创建三个笔记库根目录；生产服务会自动补齐缺失的初始根目录。详细说明见[安装](docs/getting-started/installation.md)和[快速开始](docs/getting-started/quick-start.md)。
+启动流程会创建或校验四个初始根目录（`inbox`、`literature`、`archive` 和 `diary`），不会覆盖同名冲突文件。详细说明见[安装](docs/getting-started/installation.md)和[快速开始](docs/getting-started/quick-start.md)。
 
 ## 身份认证
 
@@ -61,10 +62,13 @@ flowchart LR
 src/content/
 ├── inbox/       活跃笔记与新材料
 ├── literature/  阅读与来源笔记
-└── archive/     建议用于存放不再活跃的内容
+├── archive/     建议用于存放不再活跃的内容
+└── diary/       每个本地日历日期对应一篇日记
 ```
 
-三个根目录由 Docus 保留，不能重命名、删除或移动。`archive/` 是建议性归档区域，其中的内容遵循与普通 Docus 内容相同的文件和文件夹操作能力：文件可以正常新建、编辑、重命名、删除和移动；文件夹可以正常新建、重命名和删除。Docus 当前尚不提供通用的文件夹跨目录移动 / re-parent 能力。内置“归档”操作仍会默认将内容移到 `archive/<filename>`。详见[笔记库与归档协议](docs/user-guide/vault.md)。
+四个根目录由 Docus 保留，不能重命名、删除或移动。`diary/` 是 Calendar-first Diary scope：受管日记使用不带扩展名的逻辑路径 `diary/YYYY-MM-DD`，一个日期对应一个 Markdown 文件；Today/过去日期可以创建缺失日记，未来缺失日期不会创建。现有日记继续复用编辑器、History、Recovery 和删除生命周期，但其身份不能重命名或移动。详见[笔记库、Diary 与归档协议](docs/user-guide/vault.md)。
+
+`archive/` 是建议性归档区域，其中的内容遵循与普通 Docus 内容相同的文件和文件夹操作能力：文件可以正常新建、编辑、重命名、删除和移动；文件夹可以正常新建、重命名和删除。Docus 当前尚不提供通用的文件夹跨目录移动 / re-parent 能力。内置“归档”操作仍会默认将内容移到 `archive/<filename>`。
 
 ## 生产部署
 

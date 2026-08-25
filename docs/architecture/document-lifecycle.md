@@ -34,6 +34,18 @@ The shared archive protocol is enforced on both client and server:
 
 The server remains authoritative even if a client bypasses the interface. Filesystem confinement, authentication, history, recovery, and lifecycle safety remain independent of archive membership.
 
+## Diary workflow
+
+`diary/` is a reserved root with a date identity contract:
+
+- the root itself cannot be renamed, deleted, or re-parented;
+- managed documents use the exact logical path `diary/YYYY-MM-DD` and physical path `diary/YYYY-MM-DD.md`;
+- Today and past missing dates use the server-owned date command; missing future dates are not created;
+- managed entries reuse the ordinary editor, save, History, Recovery, and delete lifecycle, while identity-changing rename/move operations and generic creation under `diary/` are rejected;
+- unmanaged or invalid content already present under `diary/` remains ordinary FileTree-visible content and is excluded from the Calendar projection.
+
+The date identity and future-date rules are server-authoritative. They do not alter authentication, path confinement, atomic writes, or the ordinary lifecycle used by other vault documents.
+
 ## Failure behavior
 
 Lifecycle code fails closed when ownership, source identity, or the current disk state is ambiguous. Startup recovery runs before the server begins accepting normal requests. See [Crash Recovery](crash-recovery.md).

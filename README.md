@@ -9,6 +9,7 @@ Docus is a self-hosted Markdown knowledge workspace for writing, organizing, ver
 ## Highlights
 
 - **File-based Markdown vault** — keep readable `.md` files under `inbox`, `literature`, and `archive`.
+- **Calendar-first Diary** — open one Markdown diary entry per local calendar date while keeping the normal editor, History, Recovery, and delete lifecycle.
 - **Focused editor and reader** — Monaco editing, sanitized Markdown rendering, task lists, footnotes, Mermaid, Markmap, and Wiki links.
 - **Resilient saves** — autosave, compare-and-swap conflict detection, atomic writes, lifecycle locks, and startup crash recovery.
 - **Draft recovery** — bounded unsaved-buffer recovery in browser IndexedDB.
@@ -24,13 +25,13 @@ Requirements: Node.js 22 or 24, npm, and Git.
 
 ```bash
 npm ci
-mkdir -p src/content/inbox src/content/literature src/content/archive
+mkdir -p src/content/inbox src/content/literature src/content/archive src/content/diary
 npm run dev
 ```
 
 Open the URL printed by Vite, normally `http://localhost:5173`.
 
-The source development path requires the three vault roots to exist. The production server creates missing initial roots automatically. See [Installation](docs/getting-started/installation.md) and [Quick Start](docs/getting-started/quick-start.md) for details.
+The startup path creates or verifies the four initial roots (`inbox`, `literature`, `archive`, and `diary`) without overwriting a conflicting file. See [Installation](docs/getting-started/installation.md) and [Quick Start](docs/getting-started/quick-start.md) for details.
 
 ## Authentication
 
@@ -61,10 +62,13 @@ The default vault is `src/content/`. Set `VAULT_DIR` for another location.
 src/content/
 ├── inbox/       active notes and new material
 ├── literature/  reading and source notes
-└── archive/     recommended area for inactive notes
+├── archive/     recommended area for inactive notes
+└── diary/       one date-addressed entry per local calendar date
 ```
 
-The three roots are reserved by Docus and cannot be renamed, deleted, or moved. `archive/` is a recommended organizational area whose descendants follow the same file and folder capabilities as ordinary Docus content: files can be created, edited, renamed, deleted, and moved normally; folders can be created, renamed, and deleted normally. General folder re-parenting is not currently a Docus capability. The built-in Archive action is a convenience workflow that defaults to `archive/<filename>`. See [Vault and Archive Protocol](docs/user-guide/vault.md).
+The four roots are reserved by Docus and cannot be renamed, deleted, or moved. `diary/` is the Calendar-first Diary scope: managed entries use the extensionless logical path `diary/YYYY-MM-DD`, one date maps to one Markdown file, and the Today/past date command can create missing entries while a missing future date remains unopened. Existing Diary entries use the normal editor, History, Recovery, and delete lifecycle; their identity cannot be renamed or moved. See [Vault, Diary, and Archive Protocol](docs/user-guide/vault.md).
+
+`archive/` is a recommended organizational area whose descendants follow the same file and folder capabilities as ordinary Docus content: files can be created, edited, renamed, deleted, and moved normally; folders can be created, renamed, and deleted normally. General folder re-parenting is not currently a Docus capability. The built-in Archive action is a convenience workflow that defaults to `archive/<filename>`.
 
 ## Production Deployment
 
