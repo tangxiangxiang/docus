@@ -97,7 +97,7 @@ function dayAriaLabel(day: CalendarDayLike, attributes: unknown): string {
         :initial-page="initialPage"
         :attributes="calendarAttributes"
         :locale="calendarLocale"
-        :masks="{ title: 'MMMM YYYY' }"
+            :masks="{ title: 'YYYY-MM' }"
         :is-dark="isDark"
         @dayclick="onDayClick"
         @update:pages="onCalendarPagesUpdate"
@@ -161,6 +161,8 @@ function dayAriaLabel(day: CalendarDayLike, attributes: unknown): string {
   flex: 1 1 auto;
   width: 100%;
   height: 100%;
+  padding-top: 8px;
+  box-sizing: border-box;
   min-width: 0;
   min-height: 0;
 }
@@ -225,6 +227,7 @@ function dayAriaLabel(day: CalendarDayLike, attributes: unknown): string {
 .diary-calendar-host :deep(.vc-pane-header-wrapper .vc-header) {
   position: relative;
   display: block;
+  height: 44px;
   padding-left: 16px;
   padding-right: 16px;
 }
@@ -233,6 +236,19 @@ function dayAriaLabel(day: CalendarDayLike, attributes: unknown): string {
 .diary-calendar-host :deep(.vc-pane-header-wrapper .vc-next) {
   position: absolute;
   top: 7px;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  max-width: 44px;
+  min-height: 44px;
+  max-height: 44px;
+  box-sizing: border-box;
+  display: flex;
+  flex: 0 0 44px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  transform: none;
 }
 
 .diary-calendar-host :deep(.vc-pane-header-wrapper .vc-prev) {
@@ -241,6 +257,23 @@ function dayAriaLabel(day: CalendarDayLike, attributes: unknown): string {
 
 .diary-calendar-host :deep(.vc-pane-header-wrapper .vc-next) {
   right: 16px;
+}
+
+.diary-calendar-host :deep(.vc-pane-header-wrapper .vc-prev:hover),
+.diary-calendar-host :deep(.vc-pane-header-wrapper .vc-next:hover) {
+  background: transparent;
+}
+
+.diary-calendar-host :deep(.vc-pane-header-wrapper .vc-prev:focus),
+.diary-calendar-host :deep(.vc-pane-header-wrapper .vc-next:focus),
+.diary-calendar-host :deep(.vc-pane-header-wrapper .vc-prev:focus-visible),
+.diary-calendar-host :deep(.vc-pane-header-wrapper .vc-next:focus-visible),
+.diary-calendar-host :deep(.vc-pane-header-wrapper .vc-prev:active),
+.diary-calendar-host :deep(.vc-pane-header-wrapper .vc-next:active) {
+  background: transparent;
+  border: 0;
+  outline: none;
+  box-shadow: none;
 }
 
 .diary-calendar-host :deep(.vc-title-wrapper) {
@@ -298,6 +331,44 @@ function dayAriaLabel(day: CalendarDayLike, attributes: unknown): string {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+@media (min-width: 769px) {
+  .diary-calendar-host :deep(.vc-pane-header-wrapper) {
+    inset: 0;
+    height: 100%;
+  }
+
+  .diary-calendar-host :deep(.vc-pane-header-wrapper .vc-header) {
+    height: 100%;
+    padding: 0;
+  }
+
+  .diary-calendar-host :deep(.vc-pane-header-wrapper .vc-prev),
+  .diary-calendar-host :deep(.vc-pane-header-wrapper .vc-next) {
+    /* Keep month paging attached to the centered month title. */
+    top: 16px;
+    transform: translateY(-50%);
+  }
+
+  .diary-calendar-host :deep(.vc-pane-header-wrapper .vc-prev) {
+    left: auto;
+    right: calc(50% + 40px);
+  }
+
+  .diary-calendar-host :deep(.vc-pane-header-wrapper .vc-next) {
+    left: calc(50% + 40px);
+    right: auto;
+  }
+
+  .diary-calendar-host :deep(.vc-title-wrapper) {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: max-content;
+    max-width: calc(100% - 128px);
+  }
 }
 
 .diary-calendar-visually-hidden {

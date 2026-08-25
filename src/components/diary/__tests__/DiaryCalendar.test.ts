@@ -147,7 +147,7 @@ describe('DiaryCalendar presentation adapter', () => {
     await flushPromises()
 
     expect(wrapper.find('.vc-monthly').exists()).toBe(true)
-    expect(wrapper.get('.vc-title').text()).toContain('August 2026')
+    expect(wrapper.get('.vc-title').text()).toContain('2026-08')
     expect(wrapper.get('[data-testid="diary-calendar"]').attributes('data-month')).toBe('2026-08')
     expect(wrapper.emitted('month-change')).toEqual([[{ year: 2026, month: 8 }]])
   })
