@@ -266,14 +266,18 @@ function dayAriaLabel(day: CalendarDayLike, attributes: unknown): string {
 
 .diary-calendar-host :deep(.vc-pane-header-wrapper .vc-prev:focus),
 .diary-calendar-host :deep(.vc-pane-header-wrapper .vc-next:focus),
-.diary-calendar-host :deep(.vc-pane-header-wrapper .vc-prev:focus-visible),
-.diary-calendar-host :deep(.vc-pane-header-wrapper .vc-next:focus-visible),
 .diary-calendar-host :deep(.vc-pane-header-wrapper .vc-prev:active),
 .diary-calendar-host :deep(.vc-pane-header-wrapper .vc-next:active) {
   background: transparent;
   border: 0;
   outline: none;
   box-shadow: none;
+}
+
+.diary-calendar-host :deep(.vc-pane-header-wrapper .vc-prev:focus-visible),
+.diary-calendar-host :deep(.vc-pane-header-wrapper .vc-next:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .diary-calendar-host :deep(.vc-title-wrapper) {
