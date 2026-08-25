@@ -3900,6 +3900,13 @@ main.container.auth-page-shell {
   grid-template-rows: minmax(0, 1fr);
 }
 
+/* Diary Home can be primary while backing document tabs remain mounted for
+   the existing lifecycle. Collapse the hidden tab row without treating the
+   workspace as document-empty or mutating its tabs. */
+.editor-area.is-diary-home {
+  grid-template-rows: minmax(0, 1fr);
+}
+
 /* Tabs */
 .tabs {
   display: flex;

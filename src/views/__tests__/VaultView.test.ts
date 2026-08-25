@@ -263,7 +263,7 @@ describe('VaultView editor tab wiring', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
     const shortcutHandler = source.match(/function onVaultKeydown[\s\S]*?\n}/)?.[0]
 
-    expect(source).toContain('v-show="!isDiaryCalendarMode && !activeHistoryComparison && !activeWorkingTreeDiff && !activeDraftRecovery"')
+    expect(source).toContain('v-show="!isDiaryPresentationPrimary && !activeHistoryComparison && !activeWorkingTreeDiff && !activeDraftRecovery"')
     expect(source).toContain('<HistoryComparisonPane')
     expect(source).toContain(':comparison="activeHistoryComparison"')
     expect(source).toContain('const historyComparisons = useHistoryComparisons({')
@@ -515,9 +515,15 @@ describe('VaultView D3.2 Diary surface wiring', () => {
     expect(source).toContain("import DiaryCalendarSurface from '../components/diary/DiaryCalendarSurface.vue'")
     expect(source).toContain("const isDiaryScope = computed(() => activeScope.value === 'diary')")
     expect(source).toContain('const isDiaryCalendarMounted = computed(() => isDiaryScope.value)')
-    expect(source).toContain('const isDiaryCalendarMode = computed(() => isDiaryScope.value && workspaceTabs.value.length === 0)')
+    expect(source).toContain('const diaryWorkspacePresentation = useDiaryWorkspacePresentation({')
+    expect(source).toContain('const isDiaryPresentationPrimary = computed(() => (')
+    expect(source).toContain('isD5DocumentFallbackActive')
+    expect(source).toContain(':eligible="diaryPresentationEligible"')
+    expect(source).toContain(':visible="isDiaryPresentationPrimary"')
     expect(branch).toBeDefined()
-    expect(branch).toContain('v-show="isDiaryCalendarMode"')
+    expect(source).toContain('<DiaryWorkspace')
+    expect(branch).toContain(':mode="presentationMode"')
+    expect(branch).toContain('<template #home>')
     expect(branch).toContain(':tree="tree"')
     expect(branch).toContain(':loading="treeLoading"')
     expect(branch).toContain(':error="treeError"')
@@ -532,23 +538,27 @@ describe('VaultView D3.2 Diary surface wiring', () => {
       /v-if="isDiaryCalendarMounted"[\s\S]*?<DiaryCalendarSurface[\s\S]*?\/>/,
     )?.[0] ?? ''
 
-    expect(branch).toContain('@date-selected="openDiaryDate"')
+    expect(branch).toContain('@date-selected="onDiaryDateSelected"')
     expect(source).toContain('const { openDiaryDate } = useDiaryDateCommand({')
+    expect(source).toContain('diaryWorkspacePresentation.recordDateCommandResult(result)')
     expect(source).toContain("createDiaryDate,")
     expect(source).not.toContain("createPost({ path: 'diary")
     expect(source).not.toContain("documentLifecycle.createFile({ path: 'diary")
   })
 
-  it('keeps the Calendar mounted while the workspace tab controls visibility', () => {
+  it('keeps the Calendar mounted while presentation state controls visibility', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
     const editorSurface = source.match(
       /<div\s+v-if="!isReadMode"[\s\S]*?class="content"/,
     )?.[0]
 
     expect(source).toContain('v-if="isDiaryCalendarMounted"')
-    expect(source).toContain('v-show="isDiaryCalendarMode"')
+    expect(source).toContain('const isDiaryCalendarMounted = computed(() => isDiaryScope.value)')
+    expect(source).toContain('isHome: isDiaryCalendarMode')
+    expect(source).toContain("'is-diary-home': isDiaryCalendarMode")
     expect(editorSurface).toBeDefined()
-    expect(editorSurface).toContain('v-show="!isDiaryCalendarMode && !activeHistoryComparison && !activeWorkingTreeDiff && !activeDraftRecovery"')
+    expect(editorSurface).toContain('v-show="!isDiaryPresentationPrimary && !activeHistoryComparison && !activeWorkingTreeDiff && !activeDraftRecovery"')
+    expect(source).toContain('v-show="!isDiaryPresentationPrimary"')
     expect(source).not.toContain('v-else-if="!isReadMode"')
   })
 })

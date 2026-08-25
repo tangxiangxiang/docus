@@ -57,9 +57,12 @@ import { createVaultFileChanges } from '../composables/vault/context/fileChanges
 import { useDocumentLifecycle } from '../composables/vault/useDocumentLifecycle'
 import type { DocumentLifecycle } from '../composables/vault/useDocumentLifecycle'
 import { applyMetadataToPostSummary } from './metadataPostSummary'
-import { useDiaryDateCommand } from '../composables/diary/useDiaryDateCommand'
+import { useDiaryDateCommand, type DiaryDateCommandResult } from '../composables/diary/useDiaryDateCommand'
+import { useDiaryWorkspacePresentation } from '../composables/diary/useDiaryWorkspacePresentation'
 import { localCivilToday } from '../components/diary/diaryCalendarAdapter'
+import type { DiaryDate } from '../../shared/diaryProtocol'
 import FileTree from '../components/vault/FileTree.vue'
+import DiaryWorkspace from '../components/diary/DiaryWorkspace.vue'
 import DiaryCalendarSurface from '../components/diary/DiaryCalendarSurface.vue'
 import TagPanel from '../components/vault/TagPanel.vue'
 import TagManagementPanel from '../components/vault/TagManagementPanel.vue'
@@ -1589,12 +1592,33 @@ async function showExternalDiff() {
 // filters `topLevel` off the same `activeScope` ref.
 const { activeScope } = useScopeFilter()
 const isDiaryScope = computed(() => activeScope.value === 'diary')
+const documentPaths = computed(() => tabs.value.map((tab) => tab.path))
+const diaryWorkspacePresentation = useDiaryWorkspacePresentation({
+  isDiaryScope,
+  activeHistoryComparison,
+  activeWorkingTreeDiff,
+  activeDraftRecovery,
+  documentPaths,
+})
+const {
+  presentationMode,
+  diaryPresentationEligible,
+  isD5DocumentFallbackActive,
+  isHome: isDiaryCalendarMode,
+} = diaryWorkspacePresentation
 // Keep the VCalendar subtree mounted for the whole Diary scope. v-calendar
 // 3.1.2 can throw while a day-click is still unwinding if the resulting tab
-// transition synchronously unmounts its Calendar. Visibility still follows
-// the empty-workspace presentation mode below.
+// transition synchronously unmounts its Calendar. D6.1 moves visibility to
+// the Diary presentation owner while preserving this scope-only mount rule.
 const isDiaryCalendarMounted = computed(() => isDiaryScope.value)
-const isDiaryCalendarMode = computed(() => isDiaryScope.value && workspaceTabs.value.length === 0)
+const isDiaryPresentationPrimary = computed(() => (
+  diaryPresentationEligible.value && !isD5DocumentFallbackActive.value
+))
+
+async function onDiaryDateSelected(date: DiaryDate): Promise<void> {
+  const result: DiaryDateCommandResult = await openDiaryDate(date)
+  diaryWorkspacePresentation.recordDateCommandResult(result)
+}
 
 /* ---------- Tag filter ---------- */
 const selectedTag = ref<string | null>(null)
@@ -2046,10 +2070,11 @@ watch(isReadMode, async (reading) => {
 
     <section
       class="editor-area"
-      :class="{ 'is-read': isReadMode, 'is-empty': workspaceTabs.length === 0 }"
+      :class="{ 'is-read': isReadMode, 'is-empty': workspaceTabs.length === 0, 'is-diary-home': isDiaryCalendarMode }"
     >
       <EditorTabs
         v-if="workspaceTabs.length > 0"
+        v-show="!isDiaryPresentationPrimary"
         ref="editorTabsRef"
         :tabs="workspaceTabs"
         :active-path="activeWorkspaceTabId"
@@ -2061,27 +2086,29 @@ watch(isReadMode, async (reading) => {
         @reorder="reorderWorkspaceTabs"
       />
 
-      <!-- D3.2 Calendar-first surface: it occupies the empty primary
-           workspace only. Existing document, diff, and recovery tabs stay
-           untouched when the user changes scope. Date clicks remain surface
-           intents; D4 owns any open/create lifecycle. -->
-      <div
+      <!-- D6.1 Diary presentation shell: Home owns visibility while the
+           backing document/tab remains in the existing Vault lifecycle. -->
+      <DiaryWorkspace
         v-if="isDiaryCalendarMounted"
-        v-show="isDiaryCalendarMode"
+        :eligible="diaryPresentationEligible"
+        :mode="presentationMode"
+        :visible="isDiaryPresentationPrimary"
         class="content diary-calendar-content"
       >
-        <DiaryCalendarSurface
-          :tree="tree"
-          :loading="treeLoading"
-          :error="treeError"
-          @date-selected="openDiaryDate"
-        />
-      </div>
+        <template #home>
+          <DiaryCalendarSurface
+            :tree="tree"
+            :loading="treeLoading"
+            :error="treeError"
+            @date-selected="onDiaryDateSelected"
+          />
+        </template>
+      </DiaryWorkspace>
 
       <!-- Edit mode: single Monaco editor surface. -->
       <div
         v-if="!isReadMode"
-        v-show="!isDiaryCalendarMode && !activeHistoryComparison && !activeWorkingTreeDiff && !activeDraftRecovery"
+        v-show="!isDiaryPresentationPrimary && !activeHistoryComparison && !activeWorkingTreeDiff && !activeDraftRecovery"
         class="content"
       >
         <div
@@ -2119,7 +2146,7 @@ watch(isReadMode, async (reading) => {
            navigation still works while reading. -->
       <div
         v-if="isReadMode && !activeHistoryComparison && !activeWorkingTreeDiff && !activeDraftRecovery"
-        v-show="!isDiaryCalendarMode"
+        v-show="!isDiaryPresentationPrimary"
         class="content reading-content"
       >
         <!-- Only the active tab is mounted. Mounting one ReadingPane
