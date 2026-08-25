@@ -487,7 +487,8 @@ D6.1 insertion seam:
 Promise<DiaryDateCommandResult>
     ├─ status: 'opened' | 'created'
     │    → consume result.date and result.path
-    │    → DiaryWorkspace may transition to READER or EDITOR
+    │    → transition to READER presentation
+    │    → explicit Reader Edit action may transition to EDITOR
     └─ status: 'future' | 'invalid' | 'busy' | 'error'
          → no Dialog transition and no inferred backing identity
 ```
@@ -601,7 +602,7 @@ These are not ownerless unknowns. Each is assigned to the phase that must produc
 
 | Question | Status | Owner / target phase |
 | --- | --- | --- |
-| How is Calendar Home decoupled from `workspaceTabs.length`? | Resolved as D6.1 seam: `presentationMode === HOME`; exact implementation deferred | D6.1 shell |
+| How is Calendar Home decoupled from `workspaceTabs.length`? | Resolved as D6.1 seam: `diaryPresentationEligible && presentationMode === HOME`; exact implementation deferred | D6.1 shell |
 | With a backing tab, is the ordinary tab strip hidden, mounted, or unchanged in Home? | Deferred; current code shows the strip whenever workspace tabs exist | D6.1 product/presentation decision |
 | How does Reader Dialog reuse the active document without duplicate TOC/Reader ownership? | Reuse seam confirmed; one-instance host strategy required | D6.3 Reader adapter |
 | How does Editor Dialog avoid duplicate Monaco editor instances? | Risk confirmed; registry reuse alone is insufficient | D6.4 Editor adapter/lifecycle spike |
