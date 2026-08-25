@@ -87,15 +87,22 @@ Recent Diaries 不属于 D6 MVP，不在本计划中实现，也不自动启动 
 
 实现 D6.0 时必须以当前 main 的真实实现为准，重新确认以下 seam：
 
-| Existing seam | Current responsibility | D6 boundary |
-| --- | --- | --- |
-| `DiaryCalendar.vue` | VCalendar adapter、month navigation、Today、attributes、local civil date、day click | 继续只负责 Calendar presentation 和 `DiaryDate` intent，不拥有 document lifecycle |
-| `DiaryCalendarSurface.vue` | Diary tree projection、empty/loading/error presentation、Calendar composition | 可被 Diary Home 复用或迁移，但不直接调用 API、router、`openPost()` 或 mutation |
-| `VaultView.vue` | scope、Vault shell、Calendar mounted/visibility、route、tabs、History/Recovery、existing editor ownership | D6 必须缩小 presentation coupling，而不能复制其 document ownership；保留 keep-mounted seam |
-| `useDiaryDateCommand.ts` | 日期校验、exact path、existing open、today/past create、future-missing guard、busy/error feedback | 继续是唯一 `openDiaryDate()` command owner；Dialog 不绕过它 |
-| `useEditorTabs` / `useTabWorkspace` | tab identity、load、active document、save/close、route sync、persistence | Editor Dialog 只消费并呈现现有 workspace state |
-| Reading/Markdown seam | 现有 Markdown rendering、links、TOC 和 reading behavior | Reader Dialog 使用现有 renderer，不复制 parser 或 link pipeline |
-| `EditorPane` / Monaco seam | Markdown editing、model、shortcuts、dirty changes、save integration | Editor Dialog 使用现有 Editor surface，不创建 Diary-specific editor |
+| Existing seam | Current owner / responsibility | D6 allowed responsibility | D6 forbidden responsibility |
+| --- | --- | --- | --- |
+| `src/router/index.ts` | 工作区 route records；当前只有 `/vault` 与 `/vault/:pathMatch(.*)*`（另有 auth/dev routes） | 继续承载 Vault route identity | 新增 `/diary`、Diary-specific route lifecycle 或 Dialog URL state |
+| `useScopeFilter` + `shared/scopeProtocol.ts` | module-level `activeScope`、scope persistence 和 `diary` / `note` / `ledger` root mapping | Diary Home 读取 `diary` scope 作为 presentation boundary | 把 scope 变成 route identity、document identity 或第二套 navigation lifecycle |
+| `VaultView.vue` | 组装 Vault shell；读取 active scope；计算 `isDiaryCalendarMounted` / `isDiaryCalendarMode`；连接 `openDiaryDate()` 的 callbacks；渲染 FileTree、tabs、EditorPane、ReadingPane、History 和 Recovery | 承载或连接 Diary-only presentation host；保留当前 scope、mounted/visibility 和 existing lifecycle wiring | 拷贝 document identity、save、tab、History/Recovery 或 server mutation authority |
+| `DiaryCalendar.vue` | VCalendar adapter、month navigation、Today、attributes、local civil date、day click；只 emit `DiaryDate` intent | 继续负责 Calendar rendering 和日期 intent | API、router mutation、document create/open/save、tab identity、History 或 Recovery |
+| `DiaryCalendarSurface.vue` | 从 tree props 做 Diary projection；组合 Calendar；呈现 loading/empty/error；转发 date/month events | 作为 Diary Home 的 Calendar composition seam | 直接调用 API、router、`openPost()`、create/save/mutation 或绕过 `openDiaryDate()` |
+| `useDiaryDateCommand.ts` | 唯一 `openDiaryDate()` command；负责解析日期、exact path、existing open、today/past create、future guard、busy/error feedback；通过 callbacks 委托 Vault lifecycle | 继续作为所有 Diary date intent 的 command owner | `openDiaryReaderDate()`、`openDiaryEditorDate()`、公开 `ensureDiary()` 或平行 create/open path |
+| `useEditorTabs.ts` | Vault-facing coordinator；组合 tab workspace、document save、tab persistence、shortcuts、external file changes 和 draft persistence，并暴露现有 workspace API | Dialog adapter 消费其既有 state/commands | 第二个 Diary tab coordinator、第二套 save/shortcut/draft lifecycle |
+| `editor-tabs/useTabWorkspace.ts` | 真实 tab/active-document state owner：tabs、`activePath`、`activeTab`、open/restore/load、select/reorder/close；通过 `navigateTo()` 调用 router | Reader/Editor 复用同一 tab/document state | Dialog 自己创建 tab、复制 model 或改写 route identity |
+| `editor-tabs/useRouteSync.ts` | 将当前 Vault route 的 `pathMatch` 解析为 logical path，并在 route 变化时调用现有 `openPost()` | 保持 document/tab route synchronization | 用 URL 驱动 Reader/Editor/Dialog 或 Diary create lifecycle |
+| `editor-tabs/useDocumentSave.ts` | save/autosave、dirty、external conflict、save state、draft scheduling，以及 History/restore 所需的 document barriers | Editor Dialog 继续委托现有 save/dirty/restore seam | Dialog-local raw source、save pipeline、dirty confirmation 或 draft store |
+| `useDocumentLifecycle.ts` | 文件/文件夹 create、rename、delete mutation；mutation barriers/locks、引用更新、open-document path migration/removal、draft transaction 协作和 refresh；不拥有 primary tab load/save | Dialog 通过既有 lifecycle 处理 document mutation | Diary-specific mutation API、绕过 auth/path/lock/draft/recovery 或把它当作 tab owner |
+| `ReadingPane.vue` / `RenderedMarkdown.vue` | active document 的 Markdown rendering、link resolution、TOC/scroll presentation | Reader Dialog 复用同一 reading seam | 第二套 parser、link handling、TOC 或 document loading pipeline |
+| `EditorPane.vue` / Monaco | 现有编辑 surface、model、keyboard/editor interaction；内容变化向上交给 `useEditorTabs` / `useDocumentSave` | Editor Dialog 作为 presentation adapter 承载同一 Editor surface | `DiaryEditor`、第二个 Monaco/model、save/history/recovery/shortcut pipeline |
+| History / Recovery / Draft seams（由 `VaultView` 组装的现有 composables/stores） | History comparisons/restore、Recovery views/operations、draft persistence 和 file-change coordination | Dialog 展示或触发现有 workflow | Dialog-owned History、Recovery、Draft Store 或 mutation state |
 
 D6.0 必须确认实际文件和调用关系没有偏离上表。表中的文件名是审计 seam，不是预先批准的大范围修改清单。
 
@@ -179,6 +186,8 @@ same logical path + same tab/document identity
 
 ### 4.4 Calendar mounted lifecycle boundary
 
+当前 main 的真实 seam 是：`VaultView` 在 `activeScope === 'diary'` 时令 `isDiaryCalendarMounted` 为 true，并令 `isDiaryCalendarMode` 仅在 Diary scope 且没有 workspace tab 时为 true；模板使用 `v-if="isDiaryCalendarMounted"` 保持 Calendar subtree 在 Diary scope 内 mounted，再用 `v-show="isDiaryCalendarMode"` 控制可见性。D6 必须在这个真实 ownership 上演进，而不是重新发明 route 或 Calendar lifecycle。
+
 Calendar 的 mounted ownership 是 D6 的硬约束：
 
 - Diary Dialog 打开时可以隐藏 Calendar，但不能因同步 click 触发 parent unmount；
@@ -198,20 +207,39 @@ Calendar 的 mounted ownership 是 D6 的硬约束：
 
 ## URL and Routing Strategy
 
-D6 MVP 不改变现有 Vault router contract。Diary Home 继续作为现有 Vault scope/presentation 的一部分呈现；D6 不新增：
+D6 MVP 不改变当前 Vault router contract。当前 router 没有独立 `/diary` route；工作区由 `/vault` 与 `/vault/:pathMatch(.*)*` 承载。Diary 是 `useScopeFilter()` 提供的 active scope，由 `VaultView` 在这个 Vault workspace 内呈现 Diary Home / Calendar-first mode。
+
+真实的 presentation 关系是：
+
+```text
+Vault Router
+    ↓
+VaultView
+    ↓
+active Diary scope
+    ↓
+Diary Home presentation
+    ↓
+Reader / Editor Dialog presentation
+```
+
+这意味着 Vault route identity、Diary scope、Diary Workspace presentation state 和 document/tab route synchronization 必须保持分层：
+
+- route identity 继续由 `src/router/index.ts` 的 Vault routes 定义；
+- Diary scope 继续由 `useScopeFilter` / `shared/scopeProtocol.ts` 定义；
+- Dialog visible state、selected date 和 Reader/Editor mode 只属于未来 Diary Workspace presentation host；
+- document logical path、active tab 和 route synchronization 继续由 `useTabWorkspace`、`useRouteSync` 及 `useEditorTabs` 的现有 document lifecycle 负责。
+
+Dialog 状态属于 `DiaryWorkspace` presentation state，不属于 router state。D6 不创建：
 
 - `/diary`；
 - `/diary/:date`；
 - `/diary/:date/edit`；
 - 新的 Diary route lifecycle；
+- URL-owned Reader / Editor / Dialog state；
 - 由 URL 直接触发的第二套 create/open/editor command。
 
-现有 Vue Router 继续拥有：
-
-- `/vault`；
-- `/vault/:pathMatch(.*)*`。
-
-现有 route/pathMatch 到 document/tab 的同步与 reconciliation、`openPost()`、tab persistence 和 `useTabWorkspace()`/existing workspace lifecycle 仍按 D4/Vault contract 工作。Dialog 的打开、关闭和 Reader/Editor mode 不会被编码成新的 Diary URL。
+这样可以避免 router state、Dialog state 和 document lifecycle 三者耦合。现有 `openPost()`、tab persistence、`useRouteSync`、`useTabWorkspace` 和 `useEditorTabs` 仍按 D4/Vault contract 工作；route/pathMatch 到 document/tab 的 reconciliation 继续由 existing document lifecycle 负责。Dialog visibility 不是新的 route identity，Dialog 的打开、关闭和 Reader/Editor mode 不会被编码成新的 Diary URL；Dialog close 也不能擅自改写 document route 或绕过 tab lifecycle。
 
 如果未来需要 Diary entry deep-link、可分享 Reader URL 或刷新后恢复 Dialog，必须先建立独立 ADR，明确 URL、auth、dirty state、future-missing 和 History/Recovery 的交互；不能在 D6 MVP 中隐式加入。
 
@@ -324,14 +352,23 @@ Dialog state 不得泄漏成 document mutation state。特别是，Dialog 不能
 
 目标：确认从 `DiaryCalendarSurface` 到 Diary Workspace presentation host 的最小演进路径。
 
-必须确认：
+当前 main 审计已确认的事实必须写入 D6.0 evidence：`diary` 是 Vault scope 而不是独立 route；`useTabWorkspace` 位于 `src/composables/vault/editor-tabs/useTabWorkspace.ts` 并由 `useEditorTabs` 组合；`useRouteSync` 负责 route `pathMatch` 到 `openPost()` 的同步；`useDocumentSave` 负责保存/dirty/draft 相关 seam；`useDocumentLifecycle` 负责文件/文件夹 mutation 与 mutation/draft 协作；`VaultView` 连接 Diary scope、Calendar mounted/visibility、date command、Editor、Reader、History 和 Recovery。
 
-- 当前 Calendar、Vault shell、`openDiaryDate()`、tab workspace、Reader 和 Editor 的实际 ownership；
-- Dialog state 应由哪一个现有 presentation seam 承担；
-- Calendar hidden-but-mounted 的 DOM/accessibility 策略；
-- Reader 和 Editor 是否能在不复制 renderer/editor lifecycle 的情况下被 adapter 化；
-- note、archive、ledger 的 existing layout 如何保持 untouched；
-- D6 fallback 如何保留 D5 Calendar-first surface。
+D6.0 关闭前必须逐项确认：
+
+- [ ] 当前 router contract 已被准确记录，且明确没有 Diary-specific route；
+- [ ] Diary 是 Vault scope，不是独立 route；
+- [ ] `openDiaryDate()` ownership 已确认，所有日期入口仍汇入同一 command；
+- [ ] Calendar keep-mounted lifecycle 和 hidden-but-mounted accessibility 策略已确认；
+- [ ] `useEditorTabs`、`useTabWorkspace`、`useRouteSync`、`useDocumentSave`、`useDocumentLifecycle` 的 owner 边界已确认；
+- [ ] Editor adapter boundary 已确认，且不复制 EditorPane/Monaco/save/dirty lifecycle；
+- [ ] Reader renderer boundary 已确认，且不复制 Markdown/link/TOC/loading pipeline；
+- [ ] History、Recovery、Draft 和 fileChanges 的现有 owner 已确认；
+- [ ] Dialog state 与 route state 已解耦；
+- [ ] 不存在第二套 Diary document lifecycle、tab store 或 public date command；
+- [ ] 文档中不存在虚构或已不存在的 composable/component owner；
+- [ ] note、archive、ledger 的 existing layout 和 scope contract 保持 untouched；
+- [ ] D6.1 可以在不复制 lifecycle 的情况下开始。
 
 输出：architecture decision record 或等价 implementation-plan evidence，明确 allowed seams、forbidden seams、rollback seam 和 unresolved questions。
 
