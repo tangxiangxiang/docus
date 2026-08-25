@@ -8,11 +8,13 @@ D6.3 = NOT STARTED
 
 Independent review is required for D6.2.1. This is a post-closure presentation follow-up; it does not reopen D6.2 or start D6.3.
 
-Validation baseline (final production HEAD): e91a3bd6278b2c4ab61f132ea239db268108f2b0
+Validation baseline (final production HEAD): 93c3db04b67dc37ec8e08fedf3dc86345ee389e6
 Production commits:
 - b24a02bf1bf2d33f16a38388d65f4746e90703fc — full-bleed Calendar Home layout
 - 85b7a4d6d477dace90bc4738488543db16044fb9 — centered month header follow-up
 - f7721a4ba2c8622e2e6b5a7b908e8593efc80d5d — remove Calendar Home Today button
+- 8ae81fd21854bc2caf0ba950c8e9c30dddc3fcef — refine Calendar navigation controls
+- 93c3db04b67dc37ec8e08fedf3dc86345ee389e6 — restore keyboard navigation focus ring
 
 Documentation history:
 - 8adb683 — initial D6.2.1 full-bleed evidence
@@ -78,6 +80,10 @@ The responsive geometry test exercised 1280x800, 768x1024, 375x812, and 320x700.
 
 The same test confirmed at every viewport that the old surface header, toolbar, and Today button are absent, the month title is visible and centered, prev/next and day targets are usable, and FileTree/RightRail/StatusBar remain hidden only under the existing Diary Home presentation policy.
 
+## Navigation focus accessibility
+
+Prev/Next retain the minimal transparent default, hover, and mouse-active presentation. Keyboard focus uses a 2px `:focus-visible` outline with `var(--accent)` and 2px offset, preserving the 44px target without layout shift. The focus ring is intentionally separate from `:focus`/`:active` suppression and remains available in light and dark themes.
+
 ## Calendar/browser regressions
 
 - Previous/next month: PASS.
@@ -98,10 +104,10 @@ Nothing else is superseded: DiaryDate and local-civil-date semantics, month navi
 
 ## Focused validation
 
-- Focused Vitest: 5 files, 62/62 tests PASS on validation baseline e91a3bd.
-- Playwright: 10/10 tests PASS on validation baseline e91a3bd.
-- npm run typecheck:client: PASS.
-- npm run build: PASS. Existing non-blocking Vite annotation/chunk warnings remain.
+- Focused Vitest: 2 files, 19/19 tests PASS on final production baseline 93c3db0.
+- Prior full Playwright geometry/regression evidence remains 10/10 PASS on baseline e91a3bd; this focus-only follow-up does not alter layout or browser behavior.
+- npm run typecheck:client: PASS on final production baseline 93c3db0.
+- npm run build: PASS on final production baseline 93c3db0. Existing non-blocking Vite annotation/chunk warnings remain.
 - git diff --check: PASS.
 - Worktree after validation: clean before this documentation edit.
 - Dependencies and lockfiles: unchanged.
@@ -117,6 +123,8 @@ If the D6.2.1 production polish must be rolled back, revert production commits n
 - f7721a4ba2c8622e2e6b5a7b908e8593efc80d5d — style(diary): remove calendar today button
 - 85b7a4d6d477dace90bc4738488543db16044fb9 — fix(diary): align calendar month header
 - b24a02bf1bf2d33f16a38388d65f4746e90703fc — style(diary): make calendar home full bleed
+- 8ae81fd21854bc2caf0ba950c8e9c30dddc3fcef — style(diary): refine calendar navigation controls
+- 93c3db04b67dc37ec8e08fedf3dc86345ee389e6 — fix(diary): restore calendar navigation focus
 
 This restores the closed D6.2 Calendar Home presentation. It does not require reverting D6.2, D6.1, Diary data, routes, tabs, server state, or dependencies.
 
