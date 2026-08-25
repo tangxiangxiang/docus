@@ -105,7 +105,7 @@ function goToToday(): void {
     :aria-label="t('diary.calendar.label')"
     :aria-busy="props.loading || undefined"
   >
-    <div class="diary-calendar-toolbar" :aria-label="t('diary.calendar.navigation')">
+    <div class="diary-calendar-host">
       <button
         type="button"
         class="diary-calendar-today"
@@ -115,19 +115,12 @@ function goToToday(): void {
       >
         {{ t('diary.calendar.today') }}
       </button>
-    </div>
 
-    <div v-if="props.loading" class="diary-calendar-status" data-testid="diary-calendar-loading" role="status" aria-live="polite">
-      {{ t('diary.calendar.loading') }}
-    </div>
-    <div v-if="props.error" class="diary-calendar-status diary-calendar-error" data-testid="diary-calendar-error" role="alert">
-      {{ props.error }}
-    </div>
-
-    <div class="diary-calendar-host">
       <Calendar
         ref="calendarRef"
         view="monthly"
+        borderless
+        transparent
         :initial-page="initialPage"
         :attributes="calendarAttributes"
         :locale="calendarLocale"
@@ -164,36 +157,52 @@ function goToToday(): void {
           </button>
         </template>
       </Calendar>
+
+      <div v-if="props.loading" class="diary-calendar-status" data-testid="diary-calendar-loading" role="status" aria-live="polite">
+        {{ t('diary.calendar.loading') }}
+      </div>
+      <div v-if="props.error" class="diary-calendar-status diary-calendar-error" data-testid="diary-calendar-error" role="alert">
+        {{ props.error }}
+      </div>
     </div>
   </section>
 </template>
 
 <style scoped>
 .diary-calendar {
+  flex: 1 1 auto;
   width: 100%;
+  height: 100%;
   max-width: none;
   min-width: 0;
+  min-height: 0;
   box-sizing: border-box;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
+  display: flex;
+  flex-direction: column;
   background: transparent;
   color: var(--text);
 }
 
-.diary-calendar-toolbar {
-  display: flex;
-  justify-content: flex-end;
+.diary-calendar-host {
+  position: relative;
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
   min-width: 0;
-  margin-bottom: 4px;
+  min-height: 0;
 }
 
 .diary-calendar-today {
+  position: absolute;
+  top: 7px;
+  right: 16px;
+  z-index: 3;
+  min-width: 44px;
   min-height: 44px;
-  padding: 5px 11px;
+  padding: 4px 10px;
   border: 1px solid var(--border);
   border-radius: 5px;
-  background: transparent;
+  background: var(--bg-soft);
   color: var(--text);
   font: inherit;
   cursor: pointer;
@@ -205,31 +214,111 @@ function goToToday(): void {
 }
 
 .diary-calendar-status {
-  margin: 4px 0 8px;
+  position: absolute;
+  top: 52px;
+  left: 16px;
+  z-index: 2;
   color: var(--text-muted);
   font-size: 0.875rem;
+  pointer-events: none;
 }
 
 .diary-calendar-error {
   color: var(--vs-danger, #d73a49);
 }
 
-.diary-calendar-host {
-  min-width: 0;
-  width: 100%;
-}
-
 .diary-calendar-host :deep(.vc-container),
+.diary-calendar-host :deep(.vc-pane-container),
+.diary-calendar-host :deep(.vc-pane-layout),
 .diary-calendar-host :deep(.vc-pane),
 .diary-calendar-host :deep(.vc-weeks) {
+  display: flex;
+  flex: 1 1 auto;
   width: 100%;
+  height: 100%;
   min-width: 0;
+  min-height: 0;
+}
+
+.diary-calendar-host :deep(.vc-container) {
+  align-items: stretch;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+.diary-calendar-host :deep(.vc-pane-container),
+.diary-calendar-host :deep(.vc-pane-layout),
+.diary-calendar-host :deep(.vc-pane),
+.diary-calendar-host :deep(.vc-weeks) {
+  flex-direction: column;
+}
+
+.diary-calendar-host :deep(.vc-header) {
+  grid-template-columns: auto minmax(0, 1fr) auto !important;
+  height: 44px;
+  margin-top: 0;
+  padding-left: 16px;
+  padding-right: 90px;
+}
+
+/* VCalendar renders its arrow header in an absolute wrapper above the pane
+   layout. Full-height flex sizing makes that stacking relationship explicit
+   so the official prev/next controls remain interactive. */
+.diary-calendar-host :deep(.vc-pane-header-wrapper) {
+  z-index: 2;
+}
+
+.diary-calendar-host :deep(.vc-pane-header-wrapper .vc-header) {
+  position: relative;
+  display: block;
+  padding-left: 16px;
+  padding-right: 90px;
+}
+
+.diary-calendar-host :deep(.vc-pane-header-wrapper .vc-prev),
+.diary-calendar-host :deep(.vc-pane-header-wrapper .vc-next) {
+  position: absolute;
+  top: 7px;
+}
+
+.diary-calendar-host :deep(.vc-pane-header-wrapper .vc-prev) {
+  left: 16px;
+}
+
+.diary-calendar-host :deep(.vc-pane-header-wrapper .vc-next) {
+  right: 90px;
+}
+
+.diary-calendar-host :deep(.vc-title-wrapper) {
+  justify-self: center;
+  min-width: 0;
+}
+
+.diary-calendar-host :deep(.vc-title) {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.diary-calendar-host :deep(.vc-weekdays) {
+  flex: 0 0 auto;
+}
+
+.diary-calendar-host :deep(.vc-week) {
+  flex: 1 1 0;
+  min-height: 44px;
+}
+
+.diary-calendar-host :deep(.vc-day) {
+  min-height: 0;
 }
 
 .diary-calendar-host :deep(.vc-day-content) {
+  height: 100%;
+  min-height: 44px;
   width: 100%;
-  min-height: clamp(44px, 6vw, 72px);
-  height: clamp(44px, 6vw, 72px);
   box-sizing: border-box;
   padding: 0;
   border: 0;
@@ -266,8 +355,30 @@ function goToToday(): void {
 }
 
 @media (max-width: 420px) {
-  .diary-calendar {
-    padding: 0;
+  .diary-calendar-today {
+    top: 4px;
+    right: 8px;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 4px 7px;
+  }
+
+  .diary-calendar-host :deep(.vc-header) {
+    padding-left: 4px;
+    padding-right: 72px;
+  }
+
+  .diary-calendar-host :deep(.vc-pane-header-wrapper .vc-prev) {
+    left: 4px;
+  }
+
+  .diary-calendar-host :deep(.vc-pane-header-wrapper .vc-next) {
+    right: 72px;
+  }
+
+  .diary-calendar-host :deep(.vc-week) {
+    flex: 0 0 auto;
+    min-height: 44px;
   }
 
   .diary-calendar-host :deep(.vc-day-content) {
@@ -280,8 +391,9 @@ function goToToday(): void {
     padding-right: 0;
   }
 
-  .diary-calendar-host :deep(.vc-container) {
-    border: 0;
+  .diary-calendar-surface-empty,
+  .diary-calendar-status {
+    left: 8px;
   }
 }
 </style>

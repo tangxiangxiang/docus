@@ -97,7 +97,10 @@ describe('DiaryCalendarSurface', () => {
     const wrapper = mountSurface(treeWith('2026-08-24', '2026-08-25', 'legacy'))
     await flushPromises()
 
-    expect(wrapper.get('[data-testid="diary-calendar-surface"] h2').text()).toBe('Diary')
+    expect(wrapper.find('.diary-calendar-surface-header').exists()).toBe(false)
+    expect(wrapper.find('.diary-calendar-toolbar').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="diary-calendar-surface"]').attributes('role')).toBe('region')
+    expect(wrapper.get('[data-testid="diary-calendar-today"]').text()).toBe('Today')
     expect(dayCell(wrapper, '2026-08-24').findAll('.vc-dot')).toHaveLength(1)
     expect(dayCell(wrapper, '2026-08-25').findAll('.vc-dot')).toHaveLength(1)
     expect(dayCell(wrapper, '2026-08-26').findAll('.vc-dot')).toHaveLength(0)

@@ -34,75 +34,51 @@ const days = computed<DiaryCalendarDay[]>(() => projectDiaryDaysFromTree(props.t
     :aria-label="t('diary.surface.label')"
     :aria-busy="props.loading || undefined"
   >
-    <div class="diary-calendar-surface-inner">
-      <header class="diary-calendar-surface-header">
-        <h2>{{ t('diary.surface.title') }}</h2>
-      </header>
+    <p
+      v-if="!props.loading && !props.error && days.length === 0"
+      class="diary-calendar-surface-empty"
+      data-testid="diary-calendar-surface-empty"
+      role="status"
+      aria-live="polite"
+    >
+      {{ t('diary.surface.empty') }}
+    </p>
 
-      <p
-        v-if="!props.loading && !props.error && days.length === 0"
-        class="diary-calendar-surface-empty"
-        data-testid="diary-calendar-surface-empty"
-        role="status"
-        aria-live="polite"
-      >
-        {{ t('diary.surface.empty') }}
-      </p>
-
-      <DiaryCalendar
-        :days="days"
-        :loading="props.loading"
-        :error="props.error"
-        :initial-month="props.initialMonth"
-        @date-selected="emit('date-selected', $event)"
-        @month-change="emit('month-change', $event)"
-      />
-    </div>
+    <DiaryCalendar
+      :days="days"
+      :loading="props.loading"
+      :error="props.error"
+      :initial-month="props.initialMonth"
+      @date-selected="emit('date-selected', $event)"
+      @month-change="emit('month-change', $event)"
+    />
   </section>
 </template>
 
 <style scoped>
 .diary-calendar-surface {
   flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
   min-width: 0;
   min-height: 0;
-  overflow: auto;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   box-sizing: border-box;
   background: var(--vs-bg-1, var(--bg, #fff));
   color: var(--vs-text-1, var(--text, #1f1f1f));
 }
 
-.diary-calendar-surface-inner {
-  width: min(100%, 96rem);
-  min-width: 0;
-  box-sizing: border-box;
-  margin: 0 auto;
-  padding: clamp(16px, 4vw, 48px);
-}
-
-.diary-calendar-surface-header {
-  margin-bottom: 12px;
-}
-
-.diary-calendar-surface-header h2 {
-  margin: 0;
-  color: inherit;
-  font-size: 0.875rem;
-  font-weight: 650;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  opacity: 0.72;
-}
-
 .diary-calendar-surface-empty {
-  margin: 0 0 8px;
+  position: absolute;
+  top: 52px;
+  left: 16px;
+  z-index: 2;
+  margin: 0;
   color: var(--vs-text-2, var(--text-muted, #6b6b6b));
   font-size: 0.875rem;
-}
-
-@media (max-width: 420px) {
-  .diary-calendar-surface-inner {
-    padding: 0 0 16px;
-  }
+  pointer-events: none;
 }
 </style>

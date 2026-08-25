@@ -86,7 +86,9 @@ test('Diary Calendar remains usable across the D5 responsive matrix', async ({ p
     await expect(page.getByTestId('diary-calendar')).toBeVisible()
     const metrics = await page.evaluate(() => {
       const calendar = document.querySelector<HTMLElement>('[data-testid="diary-calendar"]')
+      const surface = document.querySelector<HTMLElement>('[data-testid="diary-calendar-surface"]')
       const host = document.querySelector<HTMLElement>('.diary-calendar-host')
+      const vcContainer = document.querySelector<HTMLElement>('.diary-calendar-host .vc-container')
       const today = document.querySelector<HTMLElement>('[data-testid="diary-calendar-today"]')
       const previous = document.querySelector<HTMLElement>('.vc-prev')
       const next = document.querySelector<HTMLElement>('.vc-next')
@@ -109,8 +111,10 @@ test('Diary Calendar remains usable across the D5 responsive matrix', async ({ p
       return {
         viewport: window.innerWidth,
         scrollWidth: document.documentElement.scrollWidth,
+        surface: rect(surface),
         calendar: rect(calendar),
         host: rect(host),
+        vcContainer: rect(vcContainer),
         today: rect(today),
         previous: rect(previous),
         next: rect(next),
@@ -120,8 +124,18 @@ test('Diary Calendar remains usable across the D5 responsive matrix', async ({ p
       }
     })
     expect(metrics.scrollWidth, `${viewport.name} horizontal overflow`).toBeLessThanOrEqual(metrics.viewport + 1)
+    expect(metrics.surface?.width, `${viewport.name} surface width`).toBeGreaterThan(0)
+    expect(metrics.surface?.height, `${viewport.name} surface height`).toBeGreaterThan(0)
     expect(metrics.calendar?.right, `${viewport.name} calendar overflow`).toBeLessThanOrEqual(metrics.viewport + 1)
     expect(metrics.host?.right, `${viewport.name} host overflow`).toBeLessThanOrEqual(metrics.viewport + 1)
+    expect(metrics.host?.width, `${viewport.name} host fills surface width`)
+      .toBeGreaterThanOrEqual((metrics.surface?.width ?? 0) * 0.95)
+    expect(metrics.vcContainer?.width, `${viewport.name} VCalendar fills host width`)
+      .toBeGreaterThanOrEqual((metrics.host?.width ?? 0) * 0.95)
+    expect(metrics.host?.height, `${viewport.name} host fills surface height`)
+      .toBeGreaterThanOrEqual((metrics.surface?.height ?? 0) * 0.9)
+    expect(metrics.vcContainer?.height, `${viewport.name} VCalendar fills host height`)
+      .toBeGreaterThanOrEqual((metrics.host?.height ?? 0) * 0.9)
     expect(metrics.today?.width, `${viewport.name} Today target`).toBeGreaterThanOrEqual(40)
     expect(metrics.today?.height, `${viewport.name} Today target`).toBeGreaterThanOrEqual(40)
     expect(metrics.previous?.width, `${viewport.name} previous target`).toBeGreaterThanOrEqual(40)
@@ -132,6 +146,10 @@ test('Diary Calendar remains usable across the D5 responsive matrix', async ({ p
     expect(metrics.minDayWidth, `${viewport.name} minimum date target width`).toBeGreaterThanOrEqual(40)
     expect(metrics.minDayHeight, `${viewport.name} minimum date target height`).toBeGreaterThanOrEqual(40)
 
+    await expect(page.locator('.diary-calendar-surface-header')).toHaveCount(0)
+    await expect(page.locator('.diary-calendar-toolbar')).toHaveCount(0)
+    await expect(page.getByTestId('diary-calendar-today')).toBeVisible()
+    await expect(page.locator('.vc-title')).toBeVisible()
     await expect(page.locator('.file-tree')).toBeHidden()
     await expect(page.locator('.right-rail-slot')).toBeHidden()
     await expect(page.locator('.status-bar-row')).toBeHidden()
