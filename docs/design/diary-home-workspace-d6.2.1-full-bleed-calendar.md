@@ -8,6 +8,8 @@ D6.3 = NOT STARTED
 
 Independent review is required for D6.2.1. This is a post-closure presentation follow-up; it does not reopen D6.2 or start D6.3.
 
+Self-review for this follow-up: P0 = 0, P1 = 0, P2 = 0.
+
 Validation baseline (final production HEAD): 93c3db04b67dc37ec8e08fedf3dc86345ee389e6
 Production commits:
 - b24a02bf1bf2d33f16a38388d65f4746e90703fc — full-bleed Calendar Home layout
@@ -17,10 +19,12 @@ Production commits:
 - 93c3db04b67dc37ec8e08fedf3dc86345ee389e6 — restore keyboard navigation focus ring
 
 Documentation history:
-- 8adb683 — initial D6.2.1 full-bleed evidence
-- 5dee0d8 — calendar header follow-up evidence
-- e91a3bd — Today affordance removal evidence
-- this docs-only follow-up — final-head validation and review corrections
+- 8adb683ecfea97fb4759148aa3d19bef130d5f2f — initial D6.2.1 full-bleed evidence
+- 5dee0d8a18d9345437ae73a055667643ac588d35 — calendar header follow-up evidence
+- e91a3bd6278b2c4ab61f132ea239db268108f2b0 — Today affordance removal evidence
+- a085bf94a2e4ae012f4d6848c9a2d56dc0d711cf — align D6.2.1 final evidence
+- 6cf32ffc6dd632f4503fb2678e97b4d0451ed8aa — refresh D6.2.1 final evidence
+- this docs-only follow-up — final-head browser validation and rollback/history corrections
 
 ## Scope
 
@@ -63,10 +67,10 @@ Empty, loading, and error messages are compact overlays and do not reserve a per
 
 ## Actual browser geometry evidence
 
-The combined Playwright run completed 10/10 PASS:
+The earlier 10/10 Playwright run on `e91a3bd6278b2c4ab61f132ea239db268108f2b0` remains historical evidence. On the final production baseline `93c3db04b67dc37ec8e08fedf3dc86345ee389e6`, with only the test-only follow-up `894d57a` added, the combined browser run completed 11/11 PASS:
 
 - e2e/diary-calendar-surface.spec.ts: 3/3 PASS.
-- e2e/diary-release.spec.ts: 6/6 PASS.
+- e2e/diary-release.spec.ts: 7/7 PASS, including the keyboard focus test.
 - e2e/vcalendar-compatibility.spec.ts: 1/1 PASS.
 
 The responsive geometry test exercised 1280x800, 768x1024, 375x812, and 320x700. At every viewport it measured surface, Calendar, host, vc-container, and month-title rectangles and passed these non-brittle thresholds:
@@ -83,6 +87,8 @@ The same test confirmed at every viewport that the old surface header, toolbar, 
 ## Navigation focus accessibility
 
 Prev/Next retain the minimal transparent default, hover, and mouse-active presentation. Keyboard focus uses a 2px `:focus-visible` outline with `var(--accent)` and 2px offset, preserving the 44px target without layout shift. The focus ring is intentionally separate from `:focus`/`:active` suppression and remains available in light and dark themes.
+
+The final-head browser test `Diary Calendar navigation exposes keyboard-only focus indicators` drives actual `page.keyboard.press('Tab')` navigation rather than mouse focus. It covers 1280x800 and 375x812 in both light and dark themes. Prev and Next each received focus with computed `outline-style: solid`, `outline-width: 2px`, `outline-offset: 2px`, and a non-transparent resolved accent color. Their browser bounding boxes stayed 44x44 before and after focus, and the 2px outline offset remained inside the viewport with no clipping or layout shift. The test passed 1/1 on production baseline `93c3db04`.
 
 ## Calendar/browser regressions
 
@@ -104,8 +110,9 @@ Nothing else is superseded: DiaryDate and local-civil-date semantics, month navi
 
 ## Focused validation
 
-- Focused Vitest: 2 files, 19/19 tests PASS on final production baseline 93c3db0.
-- Prior full Playwright geometry/regression evidence remains 10/10 PASS on baseline e91a3bd; this focus-only follow-up does not alter layout or browser behavior.
+- Focused Vitest: 3 files, 24/24 tests PASS on final production baseline 93c3db0.
+- Final production-head Playwright: 11/11 tests PASS on production baseline 93c3db0; the new focus assertion is in test-only commit 894d57a and does not change production behavior.
+- Prior full Playwright geometry/regression evidence remains 10/10 PASS on baseline e91a3bd as historical evidence.
 - npm run typecheck:client: PASS on final production baseline 93c3db0.
 - npm run build: PASS on final production baseline 93c3db0. Existing non-blocking Vite annotation/chunk warnings remain.
 - git diff --check: PASS.
@@ -120,17 +127,19 @@ Existing History/Diff/Recovery precedence, hidden-workspace keyboard contract, p
 
 If the D6.2.1 production polish must be rolled back, revert production commits newest to oldest:
 
-- f7721a4ba2c8622e2e6b5a7b908e8593efc80d5d — style(diary): remove calendar today button
-- 85b7a4d6d477dace90bc4738488543db16044fb9 — fix(diary): align calendar month header
-- b24a02bf1bf2d33f16a38388d65f4746e90703fc — style(diary): make calendar home full bleed
-- 8ae81fd21854bc2caf0ba950c8e9c30dddc3fcef — style(diary): refine calendar navigation controls
-- 93c3db04b67dc37ec8e08fedf3dc86345ee389e6 — fix(diary): restore calendar navigation focus
+1. 93c3db04b67dc37ec8e08fedf3dc86345ee389e6 — fix(diary): restore calendar navigation focus
+2. 8ae81fd21854bc2caf0ba950c8e9c30dddc3fcef — style(diary): refine calendar navigation controls
+3. f7721a4ba2c8622e2e6b5a7b908e8593efc80d5d — style(diary): remove calendar today button
+4. 85b7a4d6d477dace90bc4738488543db16044fb9 — fix(diary): align calendar month header
+5. b24a02bf1bf2d33f16a38388d65f4746e90703fc — style(diary): make calendar home full bleed
 
 This restores the closed D6.2 Calendar Home presentation. It does not require reverting D6.2, D6.1, Diary data, routes, tabs, server state, or dependencies.
 
+Production rollback is runtime-only. The test-only commit `894d57a` and all documentation commits are excluded from this production rollback chain.
+
 ### Documentation rollback
 
-The documentation rollback is separate from the production chain. Revert this follow-up documentation commit first, then e91a3bd, 5dee0d8, and 8adb683 only if the documentation history itself must be restored. Documentation commits are never part of the production runtime rollback order.
+Documentation history is informational and separate from the production chain. Exact Git-history restoration is not part of the D6.2.1 production rollback contract. If the evidence history itself must be restored, use the documented Git history independently; documentation commits are never part of the production runtime rollback order.
 
 ## Handoff
 
