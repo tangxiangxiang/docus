@@ -4,6 +4,10 @@ import type { DiaryDateCommandResult } from './useDiaryDateCommand'
 
 export type DiaryPresentationMode = 'home' | 'reader' | 'editor'
 export type DiaryPresentationFocusOrigin = 'calendar' | 'reader' | 'editor'
+export interface DiaryPresentationFocusTarget {
+  kind: 'calendar-date'
+  date: DiaryDate
+}
 
 export interface DiaryWorkspacePresentationOptions {
   isDiaryScope: Readonly<Ref<boolean>>
@@ -25,7 +29,22 @@ export function useDiaryWorkspacePresentation(options: DiaryWorkspacePresentatio
   const selectedDiaryDate = ref<DiaryDate | null>(null)
   const backingPath = ref<string | null>(null)
   const focusOrigin = ref<DiaryPresentationFocusOrigin | null>(null)
+  const focusReturnTarget = ref<DiaryPresentationFocusTarget | null>(null)
   const d5DocumentFallbackActive = ref(false)
+  let dateIntentEpoch = 0
+
+  function invalidatePendingDateIntent(): void {
+    dateIntentEpoch += 1
+  }
+
+  function beginDateIntent(): number {
+    invalidatePendingDateIntent()
+    return dateIntentEpoch
+  }
+
+  function isDateIntentCurrent(intent: number): boolean {
+    return intent === dateIntentEpoch
+  }
 
   const diaryPresentationEligible = computed(() => (
     options.isDiaryScope.value
@@ -53,14 +72,17 @@ export function useDiaryWorkspacePresentation(options: DiaryWorkspacePresentatio
   ))
 
   function reset(): void {
+    invalidatePendingDateIntent()
     presentationMode.value = 'home'
     selectedDiaryDate.value = null
     backingPath.value = null
     focusOrigin.value = null
+    focusReturnTarget.value = null
     d5DocumentFallbackActive.value = false
   }
 
   function closePresentation(): void {
+    invalidatePendingDateIntent()
     // Presentation-only close deliberately keeps the backing reference. The
     // document/tab/route lifecycle is not touched here; the reference is
     // useful for future focus restoration when a real Dialog exists.
@@ -79,6 +101,10 @@ export function useDiaryWorkspacePresentation(options: DiaryWorkspacePresentatio
     selectedDiaryDate.value = result.date
     backingPath.value = result.path
     focusOrigin.value = 'calendar'
+    focusReturnTarget.value = {
+      kind: 'calendar-date',
+      date: result.date,
+    }
     // D6.1 deliberately keeps the D5 fallback visible. D6.3 will consume
     // this successful command result to request the Reader presentation.
     presentationMode.value = 'home'
@@ -90,6 +116,10 @@ export function useDiaryWorkspacePresentation(options: DiaryWorkspacePresentatio
     selectedDiaryDate.value = date
     backingPath.value = path
     focusOrigin.value = 'calendar'
+    focusReturnTarget.value = {
+      kind: 'calendar-date',
+      date,
+    }
     d5DocumentFallbackActive.value = false
     presentationMode.value = 'reader'
   }
@@ -105,10 +135,16 @@ export function useDiaryWorkspacePresentation(options: DiaryWorkspacePresentatio
   // safe default is HOME, so deactivating History/Diff/Recovery never
   // unexpectedly reopens a future Reader/Editor state.
   watch(
-    [options.isDiaryScope, diaryPresentationEligible],
-    ([inDiaryScope, eligible]) => {
-      if (!inDiaryScope || !eligible) reset()
+    [
+      options.isDiaryScope,
+      options.activeHistoryComparison,
+      options.activeWorkingTreeDiff,
+      options.activeDraftRecovery,
+    ],
+    ([inDiaryScope, historyComparison, workingTreeDiff, draftRecovery]) => {
+      if (!inDiaryScope || historyComparison || workingTreeDiff || draftRecovery) reset()
     },
+    { flush: 'sync' },
   )
 
   return {
@@ -116,11 +152,14 @@ export function useDiaryWorkspacePresentation(options: DiaryWorkspacePresentatio
     selectedDiaryDate,
     backingPath,
     focusOrigin,
+    focusReturnTarget,
     diaryPresentationEligible,
     isD5DocumentFallbackActive,
     isHome,
     isReader,
     isEditor,
+    beginDateIntent,
+    isDateIntentCurrent,
     recordDateCommandResult,
     requestReader,
     requestEditor,

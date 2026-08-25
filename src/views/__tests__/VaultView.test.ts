@@ -270,7 +270,7 @@ describe('VaultView editor tab wiring', () => {
     expect(source).toContain("meta && event.key.toLowerCase() === 's'")
     expect(source).toContain('void closeWorkspaceTab(activeId)')
     expect(shortcutHandler).toBeDefined()
-    expect(shortcutHandler?.match(/onEditorKeydown\(event\)/g)).toHaveLength(1)
+    expect(shortcutHandler?.match(/onEditorKeydown\(event\)/g)).toHaveLength(2)
     expect(shortcutHandler).toContain('if (!readOnlyTab)')
     expect(source).not.toContain('snapshots.value.push(activeTab')
   })
@@ -447,6 +447,19 @@ describe('VaultView editor tab wiring', () => {
     expect(shortcut).toContain('void selectWorkspaceTab(nextTab.id)')
   })
 
+  it('gates hidden document shortcuts while Diary Home is primary', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+    const shortcut = source.match(/function onVaultKeydown[\s\S]*?\n}/)?.[0]
+
+    expect(shortcut).toBeDefined()
+    expect(shortcut).toContain('if (isDiaryPresentationPrimary.value)')
+    expect(shortcut).toContain("key === 'w' || event.key === 'Tab' || key === 's' || key === 'e'")
+    expect(shortcut).toContain('event.preventDefault()')
+    expect(shortcut).toContain("if (meta && key === 'b')")
+    expect(shortcut).toContain('onEditorKeydown(event)')
+    expect(source).toContain('hidden tabs are not the keyboard-active workspace')
+  })
+
   it('warns when a family move settles without persisting the latest edit', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
     const handler = source.match(
@@ -541,6 +554,10 @@ describe('VaultView D3.2 Diary surface wiring', () => {
     expect(branch).toContain('@date-selected="onDiaryDateSelected"')
     expect(source).toContain('const { openDiaryDate } = useDiaryDateCommand({')
     expect(source).toContain('diaryWorkspacePresentation.recordDateCommandResult(result)')
+    expect(source).toContain('const intent = diaryWorkspacePresentation.beginDateIntent()')
+    expect(source).toContain('diaryWorkspacePresentation.isDateIntentCurrent(intent)')
+    expect(source).toContain('!isDiaryScope.value')
+    expect(source).toContain('!diaryPresentationEligible.value')
     expect(source).toContain("createDiaryDate,")
     expect(source).not.toContain("createPost({ path: 'diary")
     expect(source).not.toContain("documentLifecycle.createFile({ path: 'diary")

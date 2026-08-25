@@ -37,6 +37,21 @@ async function seedExistingDiary(request: APIRequestContext, date: string): Prom
   expect(saved.status(), await saved.text()).toBe(200)
 }
 
+async function seedOrdinaryNote(request: APIRequestContext, path: string): Promise<void> {
+  const removed = await request.delete(`/api/posts/${path}`)
+  expect([200, 404]).toContain(removed.status())
+  const created = await request.post('/api/posts', {
+    data: { path, title: 'D6 hidden shortcut note' },
+  })
+  expect([200, 201]).toContain(created.status())
+  const initial = await request.get(`/api/posts/${path}`)
+  expect(initial.status()).toBe(200)
+  const saved = await request.put(`/api/posts/${path}`, {
+    data: { raw: '# Hidden shortcut note\n', baseRaw: (await initial.json()).raw },
+  })
+  expect(saved.status(), await saved.text()).toBe(200)
+}
+
 async function openDiaryScope(page: Page): Promise<void> {
   await page.goto('/vault')
   await expect(page.locator('.file-tree')).toBeVisible()
@@ -130,6 +145,55 @@ test('Diary Calendar remains usable across the D5 responsive matrix', async ({ p
   await page.locator('.scope-chip').filter({ hasText: 'diary' }).click()
   await expect(page.getByTestId('diary-calendar-surface')).toBeVisible()
   await expect(page.locator('.file-tree')).toBeHidden()
+})
+
+test('Diary Home does not give hidden document tabs keyboard ownership', async ({ page, request }) => {
+  const date = localCivilDate()
+  const diary = diaryPath(date)
+  const note = 'inbox/d6-hidden-shortcut-note'
+  const state = diagnostics(page)
+
+  try {
+    await seedExistingDiary(request, date)
+    await seedOrdinaryNote(request, note)
+    await openDiaryScope(page)
+
+    await page.locator(`[data-diary-day-content][data-date="${date}"]`).click()
+    await expect(page.locator(`[role="tab"][data-tab-id="${diary}"]`)).toBeVisible({ timeout: 15_000 })
+
+    await page.locator('.scope-chip').filter({ hasText: 'note' }).click()
+    await expect(page.locator('.file-tree')).toBeVisible()
+    const noteRow = page.locator(`[data-tree-key="file:${note}"]`)
+    const inboxRow = page.locator('[data-tree-key="folder:inbox"]')
+    if (await noteRow.count() === 0 && await inboxRow.count() > 0) await inboxRow.click()
+    await expect(noteRow).toBeVisible()
+    await noteRow.click()
+    await expect(page).toHaveURL(new RegExp(`/vault/${note.replace('/', '\\/')}(?:[?#]|$)`))
+
+    await page.locator('.scope-chip').filter({ hasText: 'diary' }).click()
+    await expect(page.getByTestId('diary-calendar')).toBeVisible()
+    await expect(page.locator('.tabs')).toBeHidden()
+    await expect(page.locator(`[role="tab"][data-tab-id="${diary}"]`)).toHaveCount(1)
+    await expect(page.locator(`[role="tab"][data-tab-id="${note}"]`)).toHaveCount(1)
+
+    const routeBefore = new URL(page.url()).pathname
+    const activeTabBefore = await page.locator('[role="tab"][data-tab-id][aria-selected="true"]').getAttribute('data-tab-id')
+    await page.locator('.vault').focus()
+    await page.keyboard.press('Control+w')
+    await page.keyboard.press('Control+Tab')
+
+    expect(new URL(page.url()).pathname).toBe(routeBefore)
+    expect(await page.locator('[role="tab"][data-tab-id][aria-selected="true"]').getAttribute('data-tab-id')).toBe(activeTabBefore)
+    expect(await page.locator(`[role="tab"][data-tab-id="${diary}"]`).count()).toBe(1)
+    expect(await page.locator(`[role="tab"][data-tab-id="${note}"]`).count()).toBe(1)
+  } finally {
+    await deleteDiaryDate(request, date)
+    const removed = await request.delete(`/api/posts/${note}`)
+    expect([200, 404]).toContain(removed.status())
+  }
+
+  expect(state.pageErrors).toEqual([])
+  expect(state.consoleErrors).toEqual([])
 })
 
 test('Diary Calendar keyboard flow does not strand focus in the hidden surface', async ({ page, request }) => {

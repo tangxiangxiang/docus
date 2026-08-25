@@ -1403,10 +1403,26 @@ async function revealWorkspaceTabInTree(path: string): Promise<void> {
 }
 
 function onVaultKeydown(event: KeyboardEvent): void {
+  const meta = event.metaKey || event.ctrlKey
+  if (isDiaryPresentationPrimary.value) {
+    const key = event.key.toLowerCase()
+    // Diary Home may keep document tabs mounted for lifecycle continuity, but
+    // those hidden tabs are not the keyboard-active workspace. Keep global
+    // panel shortcuts available while suppressing document save/close/cycle
+    // and view-mode shortcuts.
+    if (meta && (key === 'w' || event.key === 'Tab' || key === 's' || key === 'e')) {
+      event.preventDefault()
+      return
+    }
+    if (meta && key === 'b') {
+      onEditorKeydown(event)
+    }
+    return
+  }
+
   const readOnlyTab = activeDraftRecovery.value
     ?? activeHistoryComparison.value
     ?? activeWorkingTreeDiff.value
-  const meta = event.metaKey || event.ctrlKey
   const activeId = activeWorkspaceTabId.value
   if (meta && event.key.toLowerCase() === 'w' && activeId) {
     event.preventDefault()
@@ -1616,7 +1632,13 @@ const isDiaryPresentationPrimary = computed(() => (
 ))
 
 async function onDiaryDateSelected(date: DiaryDate): Promise<void> {
+  const intent = diaryWorkspacePresentation.beginDateIntent()
   const result: DiaryDateCommandResult = await openDiaryDate(date)
+  if (
+    !diaryWorkspacePresentation.isDateIntentCurrent(intent)
+    || !isDiaryScope.value
+    || !diaryPresentationEligible.value
+  ) return
   diaryWorkspacePresentation.recordDateCommandResult(result)
 }
 
