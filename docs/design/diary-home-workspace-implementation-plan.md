@@ -4,8 +4,8 @@
 
 - D0–D5：`REVIEW-CLOSED`
 - Diary Calendar MVP：`COMPLETE / REVIEW-CLOSED`
-- D6 PRD：`REVIEW-READY`
-- D6 Implementation Plan：`REVIEW-READY`
+- D6 PRD：`REVIEW-CLOSED`（independent review PASS；P0/P1/P2 = 0/0/0）
+- D6 Implementation Plan：`REVIEW-CLOSED`（independent review PASS；P0/P1/P2 = 0/0/0）
 - D6 implementation：`NOT STARTED`
 
 本文件是 D6 Diary Home Workspace 的施工计划，不是实现结果。每个阶段都必须在独立 review 通过后，才能进入下一阶段；本文件本身不会启动 D6 implementation。
@@ -835,13 +835,13 @@ Release 前必须保留：
 ```text
 D0–D5                 REVIEW-CLOSED
 Diary Calendar MVP    COMPLETE / REVIEW-CLOSED
-D6 PRD                REVIEW-READY
-D6 Implementation Plan REVIEW-READY
+D6 PRD                REVIEW-CLOSED / independent review PASS
+D6 Implementation Plan REVIEW-CLOSED / independent review PASS
 D6 implementation     NOT STARTED
 Future Mood/Task/etc. NOT STARTED / non-MVP
 ```
 
-本计划不把 D6 标成 `REVIEW-CLOSED`，不代表 D6 implementation 已开始，也不创建 D7。下一步只能是对本计划进行独立 review；review 通过后，才可以单独启动 D6.0 Architecture Confirmation。
+本计划的 D6 design 已完成独立 review 并关闭。该 closure 不代表 D6 implementation 已开始，也不创建 D7；D6 implementation 仍为 `NOT STARTED`。下一步如获明确授权，才可单独启动 D6.0 Architecture Confirmation，不能自动进入 D6.1。
 
 ## 14. Docs-only boundary for this commit
 

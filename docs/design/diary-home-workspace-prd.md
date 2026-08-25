@@ -1,6 +1,6 @@
 # D6 — Diary Home Workspace PRD
 
-状态：`D6 = NOT STARTED`；本 PRD 为 `REVIEW-READY`，等待独立 review。
+状态：`D6 = NOT STARTED`；本 PRD 为 `REVIEW-CLOSED`，独立 review 已通过（P0/P1/P2 = 0/0/0）。
 
 已有 Diary Calendar MVP 的状态保持不变：`D0`–`D5` 全部 `REVIEW-CLOSED`，Diary Calendar MVP 为 `COMPLETE / REVIEW-CLOSED`。本文件只提出新的 D6 产品形态，不重开、不修改 D0–D5 closure。
 
@@ -525,9 +525,9 @@ D6 不需要数据迁移、文件重命名或 route identity migration。实现�
 ```text
 D0–D5                 REVIEW-CLOSED
 Diary Calendar MVP    COMPLETE / REVIEW-CLOSED
-D6 PRD                REVIEW-READY / pending independent review
+D6 PRD                REVIEW-CLOSED / independent review PASS
 D6 implementation     NOT STARTED
 Future Mood/Task/etc. NOT STARTED / non-MVP
 ```
 
-本 PRD 不修改已有 Diary Calendar MVP closure；D6 Implementation Plan 继续作为独立的施工计划维护。
+本 PRD 不修改已有 Diary Calendar MVP closure；D6 Implementation Plan 继续作为独立的施工计划维护。D6 design closure 不会自动启动 D6 implementation 或 D6.1。
