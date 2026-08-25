@@ -8,10 +8,17 @@ D6.3 = NOT STARTED
 
 Independent review is required for D6.2.1. This is a post-closure presentation follow-up; it does not reopen D6.2 or start D6.3.
 
-Starting HEAD: c2d9e6a8310af10597e421fcb89661e4dd53db4e
+Validation baseline (final production HEAD): e91a3bd6278b2c4ab61f132ea239db268108f2b0
 Production commits:
 - b24a02bf1bf2d33f16a38388d65f4746e90703fc — full-bleed Calendar Home layout
 - 85b7a4d6d477dace90bc4738488543db16044fb9 — centered month header follow-up
+- f7721a4ba2c8622e2e6b5a7b908e8593efc80d5d — remove Calendar Home Today button
+
+Documentation history:
+- 8adb683 — initial D6.2.1 full-bleed evidence
+- 5dee0d8 — calendar header follow-up evidence
+- e91a3bd — Today affordance removal evidence
+- this docs-only follow-up — final-head validation and review corrections
 
 ## Scope
 
@@ -83,13 +90,20 @@ The same test confirmed at every viewport that the old surface header, toolbar, 
 
 Light/dark and en-US/zh-CN behavior passed in the exact-stack VCalendar browser compatibility test and in the focused Diary Calendar integration tests. Month titles and weekday layout remained usable after locale/theme toggles.
 
+## Superseding product decision
+
+D6.2 is REVIEW-CLOSED and originally preserved the Calendar Home Today affordance. D6.2.1 records a later explicit product decision to remove that Calendar Home control and keep the header minimal: Prev / month title / Next. This intentionally supersedes only the D6.2 Today-affordance requirement.
+
+Nothing else is superseded: DiaryDate and local-civil-date semantics, month navigation, dayclick, markers, locale/theme behavior, the VCalendar candidate, Calendar mount strategy, openDiaryDate/date-command ownership, D5 fallback behavior, special-surface precedence, route/tab/document lifecycle, panel state, and keyboard ownership remain unchanged. Removing goToToday from the Calendar Home UI does not remove local civil date support; the Calendar still operates on strict DiaryDate/local-civil-date values, without a Today shortcut.
+
 ## Focused validation
 
-- Focused Vitest: 5 files, 63/63 tests PASS.
+- Focused Vitest: 5 files, 62/62 tests PASS on validation baseline e91a3bd.
+- Playwright: 10/10 tests PASS on validation baseline e91a3bd.
 - npm run typecheck:client: PASS.
 - npm run build: PASS. Existing non-blocking Vite annotation/chunk warnings remain.
 - git diff --check: PASS.
-- Worktree after validation: clean.
+- Worktree after validation: clean before this documentation edit.
 - Dependencies and lockfiles: unchanged.
 
 Existing History/Diff/Recovery precedence, hidden-workspace keyboard contract, panel-state preservation, ordinary note/archive/ledger layout boundary, local civil Date semantics, Diary markers, and openDiaryDate contract remain unchanged.
@@ -98,16 +112,17 @@ Existing History/Diff/Recovery precedence, hidden-workspace keyboard contract, p
 
 ### Production rollback
 
-Revert the D6.2.1 production commits:
+If the D6.2.1 production polish must be rolled back, revert production commits newest to oldest:
 
-- b24a02bf1bf2d33f16a38388d65f4746e90703fc — style(diary): make calendar home full bleed
+- f7721a4ba2c8622e2e6b5a7b908e8593efc80d5d — style(diary): remove calendar today button
 - 85b7a4d6d477dace90bc4738488543db16044fb9 — fix(diary): align calendar month header
+- b24a02bf1bf2d33f16a38388d65f4746e90703fc — style(diary): make calendar home full bleed
 
 This restores the closed D6.2 Calendar Home presentation. It does not require reverting D6.2, D6.1, Diary data, routes, tabs, server state, or dependencies.
 
 ### Documentation rollback
 
-The separate D6.2.1 evidence commit can be reverted independently if the evidence/history needs to return to its pre-follow-up state. Documentation rollback is not part of the production runtime rollback chain.
+The documentation rollback is separate from the production chain. Revert this follow-up documentation commit first, then e91a3bd, 5dee0d8, and 8adb683 only if the documentation history itself must be restored. Documentation commits are never part of the production runtime rollback order.
 
 ## Handoff
 
