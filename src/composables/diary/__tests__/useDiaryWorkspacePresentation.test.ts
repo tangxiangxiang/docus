@@ -57,6 +57,9 @@ async function adoptCurrentIntent(
     || !state.presentation.diaryPresentationEligible.value
   ) return
   state.presentation.recordDateCommandResult(result)
+  if (result.status === 'opened' || result.status === 'created') {
+    state.presentation.requestReader(result.date, result.path)
+  }
 }
 
 function opened(dateValue: string): DiaryDateCommandResult {
@@ -126,6 +129,62 @@ describe('useDiaryWorkspacePresentation', () => {
       kind: 'calendar-date',
       date: date('2026-08-24'),
     })
+  })
+
+  it.each(['opened', 'created'] as const)('transitions a successful %s command result to Reader without changing its backing reference', async (status) => {
+    const state = setup()
+    state.isDiaryScope.value = true
+    await nextTick()
+
+    state.presentation.recordDateCommandResult({
+      status,
+      date: date('2026-08-24'),
+      path: 'diary/2026-08-24',
+    })
+    state.documentPaths.value = ['diary/2026-08-24']
+    state.presentation.requestReader(date('2026-08-24'), 'diary/2026-08-24')
+
+    expect(state.presentation.presentationMode.value).toBe('reader')
+    expect(state.presentation.isReader.value).toBe(true)
+    expect(state.presentation.isD5DocumentFallbackActive.value).toBe(false)
+    expect(state.presentation.selectedDiaryDate.value).toBe('2026-08-24')
+    expect(state.presentation.backingPath.value).toBe('diary/2026-08-24')
+  })
+
+  it('falls back to the existing D5 document surface without closing the backing tab', async () => {
+    const state = setup()
+    state.isDiaryScope.value = true
+    await nextTick()
+
+    state.presentation.recordDateCommandResult({
+      status: 'opened',
+      date: date('2026-08-24'),
+      path: 'diary/2026-08-24',
+    })
+    state.documentPaths.value = ['diary/2026-08-24']
+    state.presentation.requestReader(date('2026-08-24'), 'diary/2026-08-24')
+    state.presentation.requestD5DocumentFallback()
+
+    expect(state.presentation.presentationMode.value).toBe('home')
+    expect(state.presentation.isD5DocumentFallbackActive.value).toBe(true)
+    expect(state.presentation.isHome.value).toBe(false)
+    expect(state.presentation.backingPath.value).toBe('diary/2026-08-24')
+    expect(state.documentPaths.value).toEqual(['diary/2026-08-24'])
+  })
+
+  it('resets Reader presentation when its backing tab is closed externally', async () => {
+    const state = setup()
+    state.isDiaryScope.value = true
+    await nextTick()
+
+    state.presentation.requestReader(date('2026-08-24'), 'diary/2026-08-24')
+    state.documentPaths.value = ['diary/2026-08-24']
+    state.documentPaths.value = []
+    await nextTick()
+
+    expect(state.presentation.presentationMode.value).toBe('home')
+    expect(state.presentation.selectedDiaryDate.value).toBeNull()
+    expect(state.presentation.backingPath.value).toBeNull()
   })
 
   it('keeps the existing D5 document fallback only while the backing tab exists', async () => {

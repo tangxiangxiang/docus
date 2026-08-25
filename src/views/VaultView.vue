@@ -65,6 +65,7 @@ import { handleDiaryHomeKeydown } from './diaryHomeKeyboard'
 import FileTree from '../components/vault/FileTree.vue'
 import DiaryWorkspace from '../components/diary/DiaryWorkspace.vue'
 import DiaryCalendarSurface from '../components/diary/DiaryCalendarSurface.vue'
+import DiaryReaderDialog from '../components/diary/DiaryReaderDialog.vue'
 import TagPanel from '../components/vault/TagPanel.vue'
 import TagManagementPanel from '../components/vault/TagManagementPanel.vue'
 import ReadingPane from '../components/vault/ReadingPane.vue'
@@ -211,6 +212,8 @@ const vaultRef = shallowRef<HTMLElement | null>(null)
 const paletteRef = ref<InstanceType<typeof CommandPalette> | null>(null)
 const editorTabsRef = ref<InstanceType<typeof EditorTabs> | null>(null)
 const fileTreeRef = ref<InstanceType<typeof FileTree> | null>(null)
+const diaryCalendarSurfaceRef = ref<{ focusDate: (date: DiaryDate) => boolean } | null>(null)
+const diaryReaderDialogRef = ref<InstanceType<typeof DiaryReaderDialog> | null>(null)
 const comparisonPaneRef = ref<InstanceType<typeof HistoryComparisonPane> | null>(null)
 const workingTreeDiffPaneRef = ref<InstanceType<typeof WorkingTreeDiffPane> | null>(null)
 const recoveryPaneRef = ref<InstanceType<typeof DraftRecoveryPane> | null>(null)
@@ -1616,6 +1619,10 @@ const {
   presentationMode,
   diaryPresentationEligible,
   isD5DocumentFallbackActive,
+  isReader: isDiaryReader,
+  selectedDiaryDate,
+  backingPath,
+  focusReturnTarget,
   isHome: isDiaryCalendarMode,
 } = diaryWorkspacePresentation
 // Keep the VCalendar subtree mounted for the whole Diary scope. v-calendar
@@ -1626,6 +1633,29 @@ const isDiaryCalendarMounted = computed(() => isDiaryScope.value)
 const isDiaryPresentationPrimary = computed(() => (
   diaryPresentationEligible.value && !isD5DocumentFallbackActive.value
 ))
+const diaryReaderTab = computed(() => (
+  backingPath.value
+    ? tabs.value.find((tab) => tab.path === backingPath.value) ?? null
+    : null
+))
+const diaryReaderRaw = computed(() => diaryReaderTab.value?.raw ?? '')
+const diaryReaderLoading = computed(() => diaryReaderTab.value?.loading ?? false)
+const diaryReaderError = computed(() => diaryReaderTab.value?.loadError ?? null)
+
+async function closeDiaryPresentation(): Promise<void> {
+  const target = focusReturnTarget.value
+  diaryWorkspacePresentation.closePresentation()
+  await nextTick()
+  const restored = target?.kind === 'calendar-date'
+    ? diaryCalendarSurfaceRef.value?.focusDate(target.date) ?? false
+    : false
+  if (!restored) vaultRef.value?.focus()
+}
+
+function editDiaryReader(): void {
+  diaryWorkspacePresentation.requestD5DocumentFallback()
+  viewModeApi?.set('edit')
+}
 
 async function onDiaryDateSelected(date: DiaryDate): Promise<void> {
   const intent = diaryWorkspacePresentation.beginDateIntent()
@@ -1636,6 +1666,12 @@ async function onDiaryDateSelected(date: DiaryDate): Promise<void> {
     || !diaryPresentationEligible.value
   ) return
   diaryWorkspacePresentation.recordDateCommandResult(result)
+  if (result.status !== 'opened' && result.status !== 'created') return
+  diaryWorkspacePresentation.requestReader(result.date, result.path)
+  await nextTick()
+  if (diaryWorkspacePresentation.isDateIntentCurrent(intent)) {
+    diaryReaderDialogRef.value?.focusInitial()
+  }
 }
 
 /* ---------- Tag filter ---------- */
@@ -1981,7 +2017,7 @@ watch(isReadMode, async (reading) => {
   <div
     ref="vaultRef"
     class="vault"
-    :class="{ 'is-read': isReadMode, 'right-rail-open': rightRailVisible, 'diary-calendar-mode': isDiaryCalendarMode }"
+    :class="{ 'is-read': isReadMode, 'right-rail-open': rightRailVisible, 'diary-calendar-mode': isDiaryCalendarMode, 'diary-reader-mode': isDiaryReader }"
     tabindex="0"
     :style="vaultStyle"
     @keydown="onVaultKeydown"
@@ -2088,7 +2124,7 @@ watch(isReadMode, async (reading) => {
 
     <section
       class="editor-area"
-      :class="{ 'is-read': isReadMode, 'is-empty': workspaceTabs.length === 0, 'is-diary-home': isDiaryCalendarMode }"
+      :class="{ 'is-read': isReadMode, 'is-empty': workspaceTabs.length === 0, 'is-diary-home': isDiaryCalendarMode, 'is-diary-reader': isDiaryReader }"
     >
       <EditorTabs
         v-if="workspaceTabs.length > 0"
@@ -2115,10 +2151,25 @@ watch(isReadMode, async (reading) => {
       >
         <template #home>
           <DiaryCalendarSurface
+            ref="diaryCalendarSurfaceRef"
             :tree="tree"
             :loading="treeLoading"
             :error="treeError"
             @date-selected="onDiaryDateSelected"
+          />
+        </template>
+        <template #reader>
+          <DiaryReaderDialog
+            v-if="selectedDiaryDate && backingPath"
+            ref="diaryReaderDialogRef"
+            :date="selectedDiaryDate"
+            :path="backingPath"
+            :raw="diaryReaderRaw"
+            :loading="diaryReaderLoading"
+            :error="diaryReaderError"
+            :resolver="wikiResolver"
+            @close="closeDiaryPresentation"
+            @edit="editDiaryReader"
           />
         </template>
       </DiaryWorkspace>
@@ -2163,7 +2214,7 @@ watch(isReadMode, async (reading) => {
            panel, tabs, and status bar above/below stay untouched so
            navigation still works while reading. -->
       <div
-        v-if="isReadMode && !activeHistoryComparison && !activeWorkingTreeDiff && !activeDraftRecovery"
+        v-if="isReadMode && !isDiaryPresentationPrimary && !activeHistoryComparison && !activeWorkingTreeDiff && !activeDraftRecovery"
         v-show="!isDiaryPresentationPrimary"
         class="content reading-content"
       >

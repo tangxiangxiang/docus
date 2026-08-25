@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import type { TreeNode } from '../../lib/api'
 import type { DiaryDate } from '../../../shared/diaryProtocol'
 import { useI18n } from '../../composables/useI18n'
@@ -24,6 +24,13 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const days = computed<DiaryCalendarDay[]>(() => projectDiaryDaysFromTree(props.tree))
+const calendarRef = ref<InstanceType<typeof DiaryCalendar> | null>(null)
+
+function focusDate(date: DiaryDate): boolean {
+  return calendarRef.value?.focusDate(date) ?? false
+}
+
+defineExpose({ focusDate })
 </script>
 
 <template>
@@ -45,6 +52,7 @@ const days = computed<DiaryCalendarDay[]>(() => projectDiaryDaysFromTree(props.t
     </p>
 
     <DiaryCalendar
+      ref="calendarRef"
       :days="days"
       :loading="props.loading"
       :error="props.error"

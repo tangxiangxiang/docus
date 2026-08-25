@@ -420,6 +420,27 @@ hr {
   .auth-card { padding: 22px 18px; }
 }
 
+/* D6.3 Reader presentation. The Reader owns the primary editor-area surface
+   while the existing tab/document state remains mounted and authoritative.
+   These rules hide ordinary Vault chrome without mutating its layout state;
+   closing the presentation removes this class and restores the prior view. */
+.vault.diary-reader-mode {
+  grid-template-columns: 40px minmax(0, 1fr) !important;
+}
+
+.vault.diary-reader-mode > :is(.file-tree, .tag-panel, .history-panel, .recovery-center),
+.vault.diary-reader-mode > .splitter,
+.vault.diary-reader-mode > .right-rail-slot,
+.vault.diary-reader-mode > .status-bar-row {
+  display: none !important;
+}
+
+.vault.diary-reader-mode .editor-area {
+  grid-column: 2;
+  grid-template-rows: minmax(0, 1fr);
+  min-width: 0;
+}
+
 /* NavBar (frosted glass) — token-driven so light/dark follow data-theme.
    Uses --bg-soft (a slightly lighter wash than the page background) so
    the blur has something visible to pick up.  The old hardcoded

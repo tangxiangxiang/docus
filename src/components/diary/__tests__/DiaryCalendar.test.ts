@@ -235,6 +235,23 @@ describe('DiaryCalendar presentation adapter', () => {
     expect(wrapper.emitted('month-change')?.at(-1)?.[0]).toEqual({ year: 2026, month: 8 })
   })
 
+  it('exposes semantic date focus for presentation close restoration', async () => {
+    const wrapper = mount(DiaryCalendar, {
+      attachTo: document.body,
+      props: {
+        days: [day('2026-08-24')],
+        initialMonth: { year: 2026, month: 8 },
+      },
+    })
+    await flushPromises()
+
+    const target = wrapper.get('[data-diary-day-content][data-date="2026-08-24"]').element
+    const focusDate = (wrapper.vm as unknown as { focusDate: (value: DiaryDate) => boolean }).focusDate
+
+    expect(focusDate(date('2026-08-24'))).toBe(true)
+    expect(document.activeElement).toBe(target)
+  })
+
   it('provides accessible navigation labels, loading/error presentation, and locale/theme integration', async () => {
     const wrapper = mountCalendar([day('2026-08-24')], { loading: true, error: 'Projection unavailable' })
     await flushPromises()

@@ -75,4 +75,8 @@ const isHomeVisible = computed(() => (
   flex-direction: column;
   overflow: hidden;
 }
+
+.diary-workspace-reader {
+  position: relative;
+}
 </style>

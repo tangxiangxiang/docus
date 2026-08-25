@@ -41,6 +41,7 @@ const emit = defineEmits<{
 
 const lastMonthKey = ref<string | null>(null)
 const currentMonth = ref<DiaryCalendarMonth | null>(null)
+const calendarRoot = ref<HTMLElement | null>(null)
 const { locale, t } = useI18n()
 const { theme } = useTheme()
 
@@ -76,10 +77,22 @@ function dayAriaLabel(day: CalendarDayLike, attributes: unknown): string {
     : base
 }
 
+function focusDate(date: DiaryDate): boolean {
+  const target = calendarRoot.value?.querySelector<HTMLElement>(
+    `[data-diary-day-content][data-date="${date}"]`,
+  )
+  if (!target) return false
+  target.focus()
+  return document.activeElement === target
+}
+
+defineExpose({ focusDate })
+
 </script>
 
 <template>
   <section
+    ref="calendarRoot"
     class="diary-calendar"
     data-testid="diary-calendar"
     :data-locale="calendarLocale"

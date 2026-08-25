@@ -124,6 +124,16 @@ export function useDiaryWorkspacePresentation(options: DiaryWorkspacePresentatio
     presentationMode.value = 'reader'
   }
 
+  function requestD5DocumentFallback(): void {
+    if (!diaryPresentationEligible.value || !backingPath.value) return
+    // D6.3 keeps Edit as a narrow bridge to the existing D5 document/editor
+    // surface. This changes presentation only; the backing tab, route, raw,
+    // and dirty/save lifecycle remain owned by Vault.
+    focusOrigin.value = 'reader'
+    presentationMode.value = 'home'
+    d5DocumentFallbackActive.value = true
+  }
+
   function requestEditor(): void {
     if (!diaryPresentationEligible.value || !backingPath.value) return
     d5DocumentFallbackActive.value = false
@@ -147,6 +157,18 @@ export function useDiaryWorkspacePresentation(options: DiaryWorkspacePresentatio
     { flush: 'sync' },
   )
 
+  watch(
+    [options.documentPaths, backingPath],
+    ([paths, backing]) => {
+      if (
+        backing
+        && !paths.includes(backing)
+        && (presentationMode.value === 'reader' || presentationMode.value === 'editor')
+      ) reset()
+    },
+    { flush: 'sync' },
+  )
+
   return {
     presentationMode,
     selectedDiaryDate,
@@ -162,6 +184,7 @@ export function useDiaryWorkspacePresentation(options: DiaryWorkspacePresentatio
     isDateIntentCurrent,
     recordDateCommandResult,
     requestReader,
+    requestD5DocumentFallback,
     requestEditor,
     closePresentation,
     reset,
