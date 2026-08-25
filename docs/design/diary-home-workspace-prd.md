@@ -72,6 +72,32 @@ D6 借鉴 calendar-diary 类产品的日期入口和月历主页，但不复制�
 
 Diary 不新增本地数据库日记 entity，不建立 App-specific storage，也不把 Calendar 变成 event/task 系统。
 
+### 3.3 Vault route、Diary scope 与 workspace presentation
+
+D6 必须沿用当前 Vault 的 routing contract。当前工作区由 `/vault` 与 `/vault/:pathMatch(.*)*` 承载；router 中没有独立的 `/diary` route。Diary 是由现有 scope filter 选择的 `diary` scope，并由 `VaultView` 在这个 scope 下呈现 Diary Calendar/Home，而不是新的 route identity。
+
+D6 的层次关系是：
+
+```text
+Vault route identity
+        ↓
+VaultView
+        ↓
+active Diary scope
+        ↓
+Diary Home presentation
+        ↓
+Reader / Editor Dialog presentation
+```
+
+Diary scope、Diary Home presentation、document/tab identity 和 document route synchronization 不是同一个状态：
+
+- scope 决定当前 Vault 内容过滤和 Diary presentation mode；
+- Diary Home / Dialog 只属于 presentation state，不是新的 route identity；
+- 已打开文档的 logical path、tab identity、active document 和 `/vault/<logical-path>` 同步继续由现有 Vault document lifecycle 负责。
+
+D6 不新增 `/diary`、`/diary/:date` 或 `/diary/:date/edit`，也不把 Reader、Editor、Dialog visibility 或 Diary create/open lifecycle 编码进 URL。未来若需要 Diary deep-link，必须另行完成 route/auth/dirty-state ADR。
+
 ## 4. User journey
 
 ### 4.1 进入 Diary
@@ -191,7 +217,7 @@ Editor Dialog 是现有 Docus Editor 的 Dialog presentation adapter。
 
 - 现有 `EditorPane`/Monaco editor；
 - `useEditorTabs`、`useTabWorkspace` 和现有 tab identity；
-- `useDocumentLifecycle` 的保存、删除、重命名和 selection 协作；
+- `useDocumentLifecycle` 的文件/文件夹 mutation、mutation barrier、引用更新、open-document path migration 和 draft 协作；保存、dirty state 和自动保存继续由现有 `useEditorTabs` / `useDocumentSave` seam 负责；
 - `fileChanges`、refresh、History、Recovery 和 draft persistence；
 - 现有 shortcut、dirty state、冲突处理和保存反馈。
 
@@ -426,11 +452,13 @@ D6 不需要数据迁移、文件重命名或 route identity migration。实现�
 
 实现前必须再次核对现有 seam，包括但不限于：
 
+- `src/router/index.ts` 的 Vault route contract；
+- `src/composables/vault/useScopeFilter.ts` 与 `shared/scopeProtocol.ts` 的 Diary scope ownership；
 - `src/components/diary/DiaryCalendar.vue` 与 `DiaryCalendarSurface.vue`；
 - `src/views/VaultView.vue` 的 Diary scope、Calendar mounted/visibility 和 existing tab/editor ownership；
 - `src/composables/diary/useDiaryDateCommand.ts`；
-- `src/composables/vault/useEditorTabs.ts`、`useTabWorkspace.ts`、`useDocumentLifecycle.ts`；
-- `src/components/vault/ReadingPane.vue`、`EditorPane.vue` 和 `EditorTabs.vue`；
+- `src/composables/vault/useEditorTabs.ts`、`editor-tabs/useTabWorkspace.ts`、`editor-tabs/useRouteSync.ts`、`editor-tabs/useDocumentSave.ts` 和 `useDocumentLifecycle.ts`；
+- `src/components/vault/ReadingPane.vue`、`RenderedMarkdown.vue`、`EditorPane.vue` 和 `EditorTabs.vue`；
 - `shared/diaryProtocol.ts`、`server/routes/diary.ts` 与现有 mutation/auth/path boundaries。
 
 最终状态：
