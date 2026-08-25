@@ -990,13 +990,35 @@ main.container.auth-page-shell {
   --accent-bg: var(--vs-accent-bg);
 }
 
-/* Diary Calendar mode keeps both the Diary FileTree and the calendar
-   reachable on compact screens. The normal Vault layout reserves a usable
-   280px minimum for the right rail; at tablet and phone widths that would
-   consume the editor column before the calendar gets any space. This scoped
-   rule only applies while the empty Diary workspace is showing the
-   presentation surface; document tabs and their existing Vault layout are
-   unchanged. */
+/* D6.2 Diary Home is a primary presentation surface. Collapse document
+   chrome visually while Home is primary, without changing any of the
+   underlying panel/tab state. The scope-only v-if remains the Calendar's
+   mount boundary; this class only controls presentation. */
+.vault.diary-calendar-mode {
+  grid-template-columns: 40px minmax(0, 1fr) !important;
+}
+
+.vault.diary-calendar-mode > :is(.file-tree, .tag-panel, .history-panel, .recovery-center),
+.vault.diary-calendar-mode > .splitter,
+.vault.diary-calendar-mode > .right-rail-slot,
+.vault.diary-calendar-mode > .status-bar-row {
+  display: none !important;
+}
+
+.vault.diary-calendar-mode .editor-area {
+  grid-column: 2;
+  min-width: 0;
+}
+
+.vault.diary-calendar-mode .diary-calendar-content,
+.vault.diary-calendar-mode .diary-workspace-shell,
+.vault.diary-calendar-mode .diary-workspace-home {
+  width: 100%;
+  max-width: none;
+}
+
+/* On compact screens the same Home policy keeps the ActivityBar and Calendar
+   usable without allowing hidden document columns to reserve space. */
 @media (max-width: 900px) {
   .navbar.is-vault.diary-calendar-mode .navbar-inner {
     gap: 8px;
@@ -1025,12 +1047,7 @@ main.container.auth-page-shell {
   }
 
   .vault.diary-calendar-mode {
-    grid-template-columns: 40px minmax(150px, 40vw) 1px minmax(0, 1fr) !important;
-  }
-
-  .vault.diary-calendar-mode .splitter-toc,
-  .vault.diary-calendar-mode .right-rail-slot {
-    display: none !important;
+    grid-template-columns: 40px minmax(0, 1fr) !important;
   }
 }
 
@@ -1043,11 +1060,6 @@ main.container.auth-page-shell {
 @media (max-width: 420px) {
   .vault.diary-calendar-mode {
     grid-template-columns: 40px minmax(0, 1fr) !important;
-  }
-
-  .vault.diary-calendar-mode > :is(.file-tree, .tag-panel, .history-panel, .recovery-center),
-  .vault.diary-calendar-mode > .splitter:not(.splitter-toc) {
-    display: none !important;
   }
 }
 

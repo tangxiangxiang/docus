@@ -54,9 +54,9 @@ async function seedOrdinaryNote(request: APIRequestContext, path: string): Promi
 
 async function openDiaryScope(page: Page): Promise<void> {
   await page.goto('/vault')
-  await expect(page.locator('.file-tree')).toBeVisible()
   const surface = page.getByTestId('diary-calendar-surface')
   if (await surface.count() === 0) {
+    await page.locator('.scope-chip').filter({ hasText: 'note' }).click()
     await page.locator('.scope-chip').filter({ hasText: 'diary' }).click()
   }
   await expect(surface).toBeVisible()
@@ -132,11 +132,10 @@ test('Diary Calendar remains usable across the D5 responsive matrix', async ({ p
     expect(metrics.minDayWidth, `${viewport.name} minimum date target width`).toBeGreaterThanOrEqual(40)
     expect(metrics.minDayHeight, `${viewport.name} minimum date target height`).toBeGreaterThanOrEqual(40)
 
-    if (viewport.width <= 420) {
-      await expect(page.locator('.file-tree')).toBeHidden()
-    } else {
-      await expect(page.locator('.file-tree')).toBeVisible()
-    }
+    await expect(page.locator('.file-tree')).toBeHidden()
+    await expect(page.locator('.right-rail-slot')).toBeHidden()
+    await expect(page.locator('.status-bar-row')).toBeHidden()
+    await expect(page.locator('.diary-calendar-content')).toBeVisible()
   }
 
   await page.locator('.scope-chip').filter({ hasText: 'note' }).click()

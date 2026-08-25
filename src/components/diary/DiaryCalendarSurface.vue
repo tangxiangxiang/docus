@@ -73,11 +73,11 @@ const days = computed<DiaryCalendarDay[]>(() => projectDiaryDaysFromTree(props.t
 }
 
 .diary-calendar-surface-inner {
-  width: min(100%, 52rem);
+  width: min(100%, 96rem);
   min-width: 0;
   box-sizing: border-box;
   margin: 0 auto;
-  padding: clamp(12px, 3vw, 28px);
+  padding: clamp(16px, 4vw, 48px);
 }
 
 .diary-calendar-surface-header {
@@ -87,8 +87,11 @@ const days = computed<DiaryCalendarDay[]>(() => projectDiaryDaysFromTree(props.t
 .diary-calendar-surface-header h2 {
   margin: 0;
   color: inherit;
-  font-size: clamp(1rem, 2vw, 1.25rem);
+  font-size: 0.875rem;
   font-weight: 650;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  opacity: 0.72;
 }
 
 .diary-calendar-surface-empty {

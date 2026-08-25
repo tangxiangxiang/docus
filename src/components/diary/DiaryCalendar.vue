@@ -171,13 +171,13 @@ function goToToday(): void {
 <style scoped>
 .diary-calendar {
   width: 100%;
-  max-width: 48rem;
+  max-width: none;
   min-width: 0;
   box-sizing: border-box;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--text);
 }
 
@@ -228,8 +228,8 @@ function goToToday(): void {
 
 .diary-calendar-host :deep(.vc-day-content) {
   width: 100%;
-  min-height: 44px;
-  height: 44px;
+  min-height: clamp(44px, 6vw, 72px);
+  height: clamp(44px, 6vw, 72px);
   box-sizing: border-box;
   padding: 0;
   border: 0;
@@ -268,7 +268,11 @@ function goToToday(): void {
 @media (max-width: 420px) {
   .diary-calendar {
     padding: 0;
-    border: 0;
+  }
+
+  .diary-calendar-host :deep(.vc-day-content) {
+    min-height: 44px;
+    height: 44px;
   }
 
   .diary-calendar-host :deep(.vc-weeks) {

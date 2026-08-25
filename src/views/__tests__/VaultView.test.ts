@@ -642,4 +642,18 @@ describe('VaultView D3.2 Diary surface wiring', () => {
     expect(source).toContain('v-show="!isDiaryPresentationPrimary"')
     expect(source).not.toContain('v-else-if="!isReadMode"')
   })
+
+  it('promotes Diary Home to a presentation-only primary surface', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+    const styles = readFileSync(fileURLToPath(new URL('../../style.css', import.meta.url)), 'utf8')
+
+    expect(source).toContain("'diary-calendar-mode': isDiaryCalendarMode")
+    expect(source).toContain('v-if="isDiaryCalendarMounted"')
+    expect(source).toContain('v-show="!isDiaryPresentationPrimary"')
+    expect(styles).toContain('.vault.diary-calendar-mode')
+    expect(styles).toContain('.vault.diary-calendar-mode > :is(.file-tree, .tag-panel, .history-panel, .recovery-center)')
+    expect(styles).toContain('.vault.diary-calendar-mode > .right-rail-slot')
+    expect(styles).toContain('.vault.diary-calendar-mode > .status-bar-row')
+    expect(styles).toContain('.vault.diary-calendar-mode .diary-calendar-content')
+  })
 })
