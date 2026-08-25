@@ -21,6 +21,10 @@ Starting HEAD:
 Implementation commit:
 95f48d314c0721a73256fd2f0b390b75a25f13bb
 feat(diary): add D6 workspace shell
+
+Independent review follow-up commit:
+72468e824c02167d86afb0226719ab361be9f958
+fix(diary): guard stale intents and hidden shortcuts
 ```
 
 The implementation was created from a clean `main` worktree. No intervening
@@ -179,9 +183,10 @@ DiaryCalendar
 ```
 
 `onDiaryDateSelected()` records the result only after `openDiaryDate()`
-resolves. The public command API and its ownership are unchanged. There is no
-`openDiaryReaderDate()`, `openDiaryEditorDate()`, direct Calendar API call, or
-activePath-driven open path.
+resolves and its local intent token is still current. The public command API
+and its ownership are unchanged. There is no `openDiaryReaderDate()`,
+`openDiaryEditorDate()`, direct Calendar API call, or activePath-driven open
+path.
 
 ## 12. Scope reconciliation
 
@@ -223,13 +228,80 @@ navigation from the shell, or `activePath -> Dialog` watcher.
 
 ## 14. Focus seam
 
-D6.1 records a typed focus origin (`calendar`, `reader`, or `editor`) and keeps
-the Calendar/slot boundary stable for future focus restoration. It does not
-implement a modal focus trap or complete Dialog accessibility policy; that is a
-later D6 Dialog phase. Hidden Home/tab surfaces use `display: none` through
-`v-show`, so their controls are not keyboard reachable while hidden.
+D6.1 records both a typed focus origin (`calendar`, `reader`, or `editor`) and
+a semantic return target. A successful date intent records:
 
-## 15. VCalendar and browser evidence
+```text
+focusReturnTarget = {
+  kind: 'calendar-date',
+  date: selectedDiaryDate,
+}
+```
+
+The target is a `DiaryDate`, not an `HTMLElement`. A future Dialog close can
+ask the Calendar adapter to resolve the current day button for that date after
+month navigation or a Calendar rerender. The presentation owner preserves the
+semantic target through a presentation-only close, clears it on scope/special
+surface reset, and never stores a persistent DOM reference. Failed or stale
+date intents cannot overwrite it.
+
+D6.1 does not implement a modal focus trap or complete Dialog accessibility
+policy; that is a later D6 Dialog phase. Hidden Home/tab surfaces use
+`display: none` through `v-show`, so their controls are not keyboard reachable
+while hidden.
+
+## 15. Independent review follow-up
+
+The D6.1 independent review identified two P1 boundaries and one P2 seam. The
+follow-up remains inside the D6.1 presentation integration and does not change
+the Diary date command, document lifecycle, Router, or special-surface owners.
+
+### Async date-intent concurrency policy
+
+`useDiaryWorkspacePresentation()` owns a monotonic date-intent epoch. Every new
+Calendar date intent receives a new token. Leaving Diary scope, activating
+History Comparison, Working Tree Diff, or Recovery, and presentation reset
+invalidate pending tokens. `VaultView` adopts a resolved
+`DiaryDateCommandResult` only when its token is still current and Diary
+presentation is still eligible.
+
+This enforces latest-valid-intent-wins:
+
+- a success after scope exit is ignored;
+- a success after special-surface takeover is ignored;
+- an older intent cannot overwrite a newer intent;
+- an older failure cannot reset a newer successful intent.
+
+Presentation invalidation does not roll back an already completed document
+lifecycle. A stale command may still have completed `openPost()`, reused or
+created a backing tab, and changed the existing route. D6.1 only suppresses
+stale presentation adoption; it does not call `closeTab()`, `router.back()`,
+route restore, or Diary deletion.
+
+### Hidden workspace keyboard policy
+
+When Diary Home is primary, hidden document tabs remain lifecycle-active but
+are not the keyboard-active workspace UI. The Vault-level handler therefore
+prevents Cmd/Ctrl+W, Cmd/Ctrl+Tab, Cmd/Ctrl+S, and Cmd/Ctrl+E from reaching the
+hidden document/tab/editor lifecycle. It does not close a hidden tab, cycle
+hidden tabs, trigger dirty confirmation, or toggle the hidden editor view.
+
+Cmd/Ctrl+B remains available as the existing global Files-panel shortcut.
+When D5 fallback or an ordinary note/Vault presentation is primary, the
+existing document shortcut branches remain unchanged. History, Diff, and
+Recovery retain their existing read-only shortcut precedence because the Diary
+Home gate applies only when `isDiaryPresentationPrimary` is true.
+
+### Follow-up tests
+
+The follow-up adds controlled presentation tests for scope invalidation,
+special-surface invalidation, out-of-order two-date intents, and an old failure
+returning after a newer success. VaultView characterization tests cover the
+hidden shortcut gate and the current-token adoption seam. Browser regression
+coverage continues to monitor the kept-mounted Calendar and VCalendar
+`dayIndex` runtime boundary.
+
+## 16. VCalendar and browser evidence
 
 The existing Calendar adapter, projection, local-civil-date behavior, and
 VCalendar version were not changed. The real browser regression completed:
@@ -239,7 +311,7 @@ npm exec playwright test \
   e2e/diary-calendar-surface.spec.ts \
   e2e/diary-release.spec.ts
 
-7 passed
+8 passed
 pageerror = 0
 unexpected console error = 0
 expected console diagnostic = one exact future-document GET 404
@@ -247,7 +319,8 @@ expected console diagnostic = one exact future-document GET 404
 
 Covered behavior includes Diary Home/month navigation, existing Diary date
 open, future missing no-op, managed tab close, keyboard focus, marker update,
-and five repeated opens. The responsive matrix passed at:
+and five repeated opens, plus Diary Home hidden-tab shortcut isolation. The
+responsive matrix passed at:
 
 ```text
 1280 x 800
@@ -260,7 +333,7 @@ The matrix reported no horizontal overflow and retained usable Calendar
 controls/touch targets. The existing VCalendar keep-mounted behavior remained
 attached through date-open fallback.
 
-## 16. Test evidence
+## 17. Test evidence
 
 New D6.1 focused tests:
 
@@ -271,7 +344,7 @@ npm exec vitest run \
   src/views/__tests__/VaultView.test.ts
 
 3 test files passed
-45 tests passed
+50 tests passed
 ```
 
 Diary/Vault regression set:
@@ -283,15 +356,16 @@ npm exec vitest run \
   src/views/__tests__/VaultView.test.ts
 
 8 test files passed
-91 tests passed
+97 tests passed
 ```
 
 These tests cover initial HOME, scope exit, History/Diff/Recovery precedence,
-successful and failed date results, backing-tab fallback, presentation-only
-close, shell slot visibility, Calendar wiring, projection, adapter, and the
-existing Diary command contract.
+successful and failed date results, stale scope/special-surface results,
+out-of-order date intents, stale failures, semantic focus targets,
+backing-tab fallback, presentation-only close, shell slot visibility, Calendar
+wiring, projection, adapter, and the existing Diary command contract.
 
-## 17. Typecheck and build
+## 18. Typecheck and build
 
 ```text
 npm run typecheck       PASS
@@ -303,7 +377,7 @@ The build emitted the repository's existing Rolldown warning about a VueUse
 `#__PURE__` annotation and existing large-chunk warnings. These did not fail
 the build and did not originate from the D6.1 shell.
 
-## 18. Known limitations and D6.2/D6.3 handoff
+## 19. Known limitations and D6.2/D6.3 handoff
 
 D6.1 intentionally does not include:
 
@@ -319,7 +393,7 @@ D6.3 owns the successful-command-result -> Reader transition. D6.4 owns the
 Editor adapter and Monaco duplication gate. The temporary D5 fallback is the
 rollback-safe bridge until those phases are independently implemented.
 
-## 19. Rollback seam
+## 20. Rollback seam
 
 The D6.1 presentation integration can be rolled back by reverting
 `95f48d314c0721a73256fd2f0b390b75a25f13bb`. This restores the D5
@@ -327,7 +401,7 @@ The D6.1 presentation integration can be rolled back by reverting
 Diary files, tabs, routes, document identity, server contracts, History, or
 Recovery state. No data migration or dependency change is involved.
 
-## 20. STOP conditions checked
+## 21. STOP conditions checked
 
 No STOP condition was triggered:
 
@@ -343,7 +417,7 @@ No STOP condition was triggered:
 - no D7 Mood/Emoji integration;
 - no production mutation or save pipeline in the presentation owner.
 
-## 21. Conclusion
+## 22. Conclusion
 
 ```text
 D6.0 = REVIEW-CLOSED
