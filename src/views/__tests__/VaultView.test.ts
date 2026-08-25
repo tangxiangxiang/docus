@@ -1,7 +1,26 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { applyMetadataToPostSummary } from '../metadataPostSummary'
+import { handleDiaryHomeKeydown } from '../diaryHomeKeyboard'
+
+function keyboardEvent(
+  key: string,
+  options: { ctrlKey?: boolean; metaKey?: boolean } = {},
+): KeyboardEvent {
+  let prevented = false
+  return {
+    key,
+    ctrlKey: options.ctrlKey ?? false,
+    metaKey: options.metaKey ?? false,
+    get defaultPrevented() {
+      return prevented
+    },
+    preventDefault() {
+      prevented = true
+    },
+  } as unknown as KeyboardEvent
+}
 
 describe('VaultView editor tab wiring', () => {
   it('settles PDF images before preparing the export snapshot', () => {
@@ -270,7 +289,7 @@ describe('VaultView editor tab wiring', () => {
     expect(source).toContain("meta && event.key.toLowerCase() === 's'")
     expect(source).toContain('void closeWorkspaceTab(activeId)')
     expect(shortcutHandler).toBeDefined()
-    expect(shortcutHandler?.match(/onEditorKeydown\(event\)/g)).toHaveLength(2)
+    expect(shortcutHandler?.match(/onEditorKeydown\(event\)/g)).toHaveLength(1)
     expect(shortcutHandler).toContain('if (!readOnlyTab)')
     expect(source).not.toContain('snapshots.value.push(activeTab')
   })
@@ -453,11 +472,56 @@ describe('VaultView editor tab wiring', () => {
 
     expect(shortcut).toBeDefined()
     expect(shortcut).toContain('if (isDiaryPresentationPrimary.value)')
-    expect(shortcut).toContain("key === 'w' || event.key === 'Tab' || key === 's' || key === 'e'")
-    expect(shortcut).toContain('event.preventDefault()')
-    expect(shortcut).toContain("if (meta && key === 'b')")
-    expect(shortcut).toContain('onEditorKeydown(event)')
-    expect(source).toContain('hidden tabs are not the keyboard-active workspace')
+    expect(shortcut).toContain('handleDiaryHomeKeydown(event, {')
+    expect(shortcut).toContain('activeWorkspaceTabId: activeWorkspaceTabId.value')
+    expect(shortcut).toContain('workspaceTabCount: workspaceTabs.value.length')
+    expect(source).toContain('hidden tabs only own shortcuts when a corresponding workspace target')
+  })
+
+  it('claims Diary Home W/Tab only when a hidden workspace target exists', () => {
+    const onEditorKeydown = vi.fn()
+    const state = { activeWorkspaceTabId: 'diary/2026-08-24', workspaceTabCount: 2 }
+
+    const closeEvent = keyboardEvent('w', { ctrlKey: true })
+    handleDiaryHomeKeydown(closeEvent, state, onEditorKeydown)
+    expect(closeEvent.defaultPrevented).toBe(true)
+
+    const cycleEvent = keyboardEvent('Tab', { ctrlKey: true })
+    handleDiaryHomeKeydown(cycleEvent, state, onEditorKeydown)
+    expect(cycleEvent.defaultPrevented).toBe(true)
+    expect(state).toEqual({ activeWorkspaceTabId: 'diary/2026-08-24', workspaceTabCount: 2 })
+    expect(onEditorKeydown).not.toHaveBeenCalled()
+  })
+
+  it('does not claim browser W/Tab when Diary Home has no workspace target', () => {
+    const onEditorKeydown = vi.fn()
+    const state = { activeWorkspaceTabId: null, workspaceTabCount: 0 }
+
+    const closeEvent = keyboardEvent('w', { ctrlKey: true })
+    handleDiaryHomeKeydown(closeEvent, state, onEditorKeydown)
+    expect(closeEvent.defaultPrevented).toBe(false)
+
+    const cycleEvent = keyboardEvent('Tab', { ctrlKey: true })
+    handleDiaryHomeKeydown(cycleEvent, state, onEditorKeydown)
+    expect(cycleEvent.defaultPrevented).toBe(false)
+    expect(state).toEqual({ activeWorkspaceTabId: null, workspaceTabCount: 0 })
+    expect(onEditorKeydown).not.toHaveBeenCalled()
+  })
+
+  it('keeps Diary Home S/E suppression and B forwarding unchanged', () => {
+    const onEditorKeydown = vi.fn()
+    const state = { activeWorkspaceTabId: null, workspaceTabCount: 0 }
+
+    for (const key of ['s', 'e']) {
+      const event = keyboardEvent(key, { metaKey: true })
+      handleDiaryHomeKeydown(event, state, onEditorKeydown)
+      expect(event.defaultPrevented).toBe(true)
+    }
+
+    const filesEvent = keyboardEvent('b', { metaKey: true })
+    handleDiaryHomeKeydown(filesEvent, state, onEditorKeydown)
+    expect(filesEvent.defaultPrevented).toBe(false)
+    expect(onEditorKeydown).toHaveBeenCalledOnce()
   })
 
   it('warns when a family move settles without persisting the latest edit', () => {

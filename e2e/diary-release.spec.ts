@@ -196,6 +196,30 @@ test('Diary Home does not give hidden document tabs keyboard ownership', async (
   expect(state.consoleErrors).toEqual([])
 })
 
+test('Diary Home does not claim W or Tab when no workspace target exists', async ({ page }) => {
+  const state = diagnostics(page)
+  await openDiaryScope(page)
+  await expect(page.locator('.tabs')).toHaveCount(0)
+
+  const result = await page.locator('.vault').evaluate((element) => {
+    const dispatch = (key: string) => {
+      const event = new KeyboardEvent('keydown', {
+        key,
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      })
+      element.dispatchEvent(event)
+      return event.defaultPrevented
+    }
+    return { close: dispatch('w'), cycle: dispatch('Tab') }
+  })
+
+  expect(result).toEqual({ close: false, cycle: false })
+  expect(state.pageErrors).toEqual([])
+  expect(state.consoleErrors).toEqual([])
+})
+
 test('Diary Calendar keyboard flow does not strand focus in the hidden surface', async ({ page, request }) => {
   const date = localCivilDate()
   await seedExistingDiary(request, date)

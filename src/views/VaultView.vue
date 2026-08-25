@@ -61,6 +61,7 @@ import { useDiaryDateCommand, type DiaryDateCommandResult } from '../composables
 import { useDiaryWorkspacePresentation } from '../composables/diary/useDiaryWorkspacePresentation'
 import { localCivilToday } from '../components/diary/diaryCalendarAdapter'
 import type { DiaryDate } from '../../shared/diaryProtocol'
+import { handleDiaryHomeKeydown } from './diaryHomeKeyboard'
 import FileTree from '../components/vault/FileTree.vue'
 import DiaryWorkspace from '../components/diary/DiaryWorkspace.vue'
 import DiaryCalendarSurface from '../components/diary/DiaryCalendarSurface.vue'
@@ -1403,23 +1404,18 @@ async function revealWorkspaceTabInTree(path: string): Promise<void> {
 }
 
 function onVaultKeydown(event: KeyboardEvent): void {
-  const meta = event.metaKey || event.ctrlKey
   if (isDiaryPresentationPrimary.value) {
-    const key = event.key.toLowerCase()
     // Diary Home may keep document tabs mounted for lifecycle continuity, but
-    // those hidden tabs are not the keyboard-active workspace. Keep global
-    // panel shortcuts available while suppressing document save/close/cycle
-    // and view-mode shortcuts.
-    if (meta && (key === 'w' || event.key === 'Tab' || key === 's' || key === 'e')) {
-      event.preventDefault()
-      return
-    }
-    if (meta && key === 'b') {
-      onEditorKeydown(event)
-    }
+    // hidden tabs only own shortcuts when a corresponding workspace target
+    // exists. With no target, leave browser-native W/Tab behavior alone.
+    handleDiaryHomeKeydown(event, {
+      activeWorkspaceTabId: activeWorkspaceTabId.value,
+      workspaceTabCount: workspaceTabs.value.length,
+    }, onEditorKeydown)
     return
   }
 
+  const meta = event.metaKey || event.ctrlKey
   const readOnlyTab = activeDraftRecovery.value
     ?? activeHistoryComparison.value
     ?? activeWorkingTreeDiff.value
