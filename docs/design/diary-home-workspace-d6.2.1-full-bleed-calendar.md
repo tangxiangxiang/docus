@@ -15,7 +15,7 @@ Production commits:
 
 ## Scope
 
-The Calendar Home was simplified into a full-bleed workspace surface. The visible Diary page heading and standalone Today toolbar were removed. Today remains a button inside the Calendar host's navigation band. The surface-inner centered/max-width wrapper and outer Calendar card treatment were removed.
+The Calendar Home was simplified into a full-bleed workspace surface. The visible Diary page heading, standalone Today toolbar, and Today button were removed. The surface-inner centered/max-width wrapper and outer Calendar card treatment were removed.
 
 No Diary command, routing, tab, document, scope, save, dirty, server, shared, VCalendar dependency, or lifecycle ownership changed.
 
@@ -23,14 +23,14 @@ No Diary command, routing, tab, document, scope, save, dirty, server, shared, VC
 
 - diary-calendar-surface-header and the visual Diary heading: removed.
 - diary-calendar-toolbar: removed.
-- Today: preserved as data-testid=diary-calendar-today, button, accessible label, and keyboard target.
-- goToToday() semantics: unchanged; it moves to localCivilToday() and emits date-selected(today).
+- Today button: removed from the Calendar Home header per the post-closure visual follow-up.
+- The Calendar header now contains only VCalendar's month title and Prev/Next controls.
 - Prev/Next and month-change: still owned by VCalendar.
 - Surface role=region and aria-label: preserved.
 - loading role=status, error role=alert, and empty role=status/aria-live: preserved.
 - Calendar mount predicate: unchanged and remains isDiaryScope.
 
-Today is positioned inside diary-calendar-host in the same visual header band as VCalendar's month navigation. The current VCalendar 3.1.2 DOM was inspected: its root arrow header is .vc-pane-header-wrapper, its month title is .vc-pane .vc-header, and its grid is .vc-weeks/.vc-week. The implementation uses those rendered classes only for presentation sizing and stacking; it does not patch node_modules or reimplement month state.
+The current VCalendar 3.1.2 DOM was inspected: its root arrow header is .vc-pane-header-wrapper, its month title is .vc-pane .vc-header, and its grid is .vc-weeks/.vc-week. The implementation uses those rendered classes only for presentation sizing and stacking; it does not patch node_modules or reimplement month state.
 
 ## Full-size layout
 
@@ -69,11 +69,10 @@ The responsive geometry test exercised 1280x800, 768x1024, 375x812, and 320x700.
 - month title stayed within 10% of the surface center.
 - document horizontal scroll width did not exceed the viewport.
 
-The same test confirmed at every viewport that the old surface header and toolbar are absent, Today and the month title are visible, prev/next and day targets are usable, and FileTree/RightRail/StatusBar remain hidden only under the existing Diary Home presentation policy.
+The same test confirmed at every viewport that the old surface header, toolbar, and Today button are absent, the month title is visible and centered, prev/next and day targets are usable, and FileTree/RightRail/StatusBar remain hidden only under the existing Diary Home presentation policy.
 
 ## Calendar/browser regressions
 
-- Today browser flow: PASS through the existing Diary Home keyboard/date flow; Today remains usable and enters the existing date intent path.
 - Previous/next month: PASS.
 - Existing Diary date click and D5 document fallback: PASS; Calendar becomes hidden while remaining attached, and returns after the backing tab closes.
 - Missing future date: PASS browser-visible no-op.
