@@ -75,6 +75,12 @@ D6 不包含：
 - 数据迁移、文件重命名、route identity migration 或新的 D7 phase；
 - 在本计划阶段修改任何 production code、tests、package、lockfile 或 dependency。
 
+### Future Consideration: Recent Diaries
+
+未来 Diary Home 可以在 Calendar 之外提供轻量的 Recent Diaries 列表，用于快速回到最近访问或最近编辑的 Markdown Diary。它必须继续读取现有 document/tree/history 语义，不应成为新的 Diary storage 或 identity system。
+
+Recent Diaries 不属于 D6 MVP，不在本计划中实现，也不自动启动 Task、Mood、Timeline 或 Statistics 等其它产品方向；任何后续扩展都需要单独的产品/架构 review。
+
 ## 4. Architecture
 
 ### 4.1 Current D5 seams to preserve
@@ -94,6 +100,26 @@ D6 不包含：
 D6.0 必须确认实际文件和调用关系没有偏离上表。表中的文件名是审计 seam，不是预先批准的大范围修改清单。
 
 ### 4.2 Target presentation architecture
+
+目标组件关系：
+
+```text
+DiaryWorkspace
+        │
+        ├── Calendar Surface
+        │
+        └── Dialog Controller
+                │
+                ├── Reader Dialog
+                │       │
+                │       └── Existing Markdown Renderer
+                │
+                └── Editor Dialog
+                        │
+                        └── Existing Editor
+```
+
+其中 `Dialog Controller` 只负责 presentation：Dialog visibility、selected DiaryDate、Reader/Editor mode、focus handoff 和 close policy。它不是 document engine，不拥有 document identity、raw content、save、History 或 Recovery。
 
 目标架构分为四层：
 
@@ -170,6 +196,69 @@ Calendar 的 mounted ownership 是 D6 的硬约束：
 - close Dialog 不等于 close tab，不等于 delete document，不等于 history commit，也不等于 recovery mutation；
 - Markdown 文件仍是唯一 source of truth。
 
+## URL and Routing Strategy
+
+D6 MVP 不改变现有 Diary router contract。Diary Home 继续使用现有 `/diary` 入口；如果应用 shell 对现有 Vault route 有前缀或内部映射，D6 只沿用当前实现，不在本 phase 改写 route identity。
+
+Dialog 状态属于 `DiaryWorkspace` presentation state，不属于 router state。D6 不创建：
+
+- `/diary/:date`；
+- 新的 Diary route lifecycle；
+- 由 URL 直接触发的第二套 create/open/editor command。
+
+这样可以避免 router state、Dialog state 和 document lifecycle 三者耦合。现有 `openPost()`、tab persistence 和既有 document route sync 仍按 D4/Vault contract 工作，但 Dialog 的打开、关闭和 Reader/Editor mode 不会被编码成新的 Diary URL。
+
+如果未来需要 Diary entry deep-link、可分享 Reader URL 或刷新后恢复 Dialog，必须先建立独立 ADR，明确 URL、auth、dirty state、future-missing 和 History/Recovery 的交互；不能在 D6 MVP 中隐式加入。
+
+## Dialog and Tab Identity Boundary
+
+D6 Dialog 不是新的 document tab，也不是新的 editor session。Dialog 是临时 presentation layer：
+
+- document identity 继续由 existing Docus document lifecycle 拥有；
+- Reader Dialog 与 Editor Dialog 始终指向同一个 logical path 和同一个 backing document/tab state；
+- Calendar click 是 date intent，必须进入唯一 `openDiaryDate()`；Dialog Controller 不因 click 额外分配第二个 tab；
+- 已有 D4 open path 如需创建或复用 backing tab，仍由 existing lifecycle 完成，不能被 Dialog 自己重新实现；
+- Reader → Editor 只改变 presentation mode，不新建 document、tab、Monaco model 或 save session；
+- close Dialog 不自动 close tab，也不丢弃 dirty state。
+
+禁止出现以下架构：
+
+```text
+Calendar click → new Diary tab → Dialog-owned editor session
+```
+
+正确边界是：
+
+```text
+Calendar click
+    ↓
+openDiaryDate()
+    ↓
+existing document/tab lifecycle
+    ↓
+DiaryWorkspace presentation
+    ├── Reader Dialog
+    └── Editor Dialog → Existing Editor
+```
+
+## Dialog State Ownership Boundary
+
+`DiaryWorkspace`/Dialog Controller 只拥有 presentation state：
+
+- Dialog visibility；
+- selected `DiaryDate` 或其已解析的 presentation context；
+- Reader/Editor presentation mode；
+- focus origin、focus restoration 和 close/back intent。
+
+Existing document lifecycle 继续拥有：
+
+- document identity 和 logical path；
+- editor state、raw content 和 model；
+- save、dirty state、close confirmation；
+- History、Recovery、draft、fileChanges 和 mutation coordination。
+
+Dialog state 不得泄漏成 document mutation state。特别是，Dialog 不能自己保存 raw、自己维护 tab list、自己创建 document、自己恢复 History/Recovery，或在关闭时绕过 existing lifecycle 的 confirmation。
+
 ## 5. Phase breakdown
 
 每个 phase 的状态只有在该 phase 的 evidence、task-scoped review 和独立 review 都完成后才能标为 `REVIEW-CLOSED`。下一个 phase 不得在前一个 phase 仍为 `REVIEW-READY` 时开始。
@@ -193,7 +282,7 @@ Gate：如果需要新 route、第二个 tab store、Diary-specific editor、ser
 
 ### D6.1 — Diary Workspace Shell
 
-目标：建立 Diary-only 的 workspace presentation shell，不改变 document lifecycle。
+目标：建立 Diary-only 的 workspace presentation shell，并首先建立清晰的 ownership boundary；不改变 document lifecycle。
 
 职责范围：
 
@@ -211,9 +300,9 @@ Gate：如果需要新 route、第二个 tab store、Diary-specific editor、ser
 - 通过卸载 Calendar 规避生命周期问题；
 - 修改普通 note/archive/ledger 的 layout。
 
-Gate：Diary Home 可显示，D5 Calendar 行为保持，Calendar mounted strategy 未回归，普通 Vault surface 无变化。
+Gate：Diary Home 可显示，D5 Calendar 行为保持，Calendar mounted strategy 未回归，普通 Vault surface 无变化；D6.1 的 shell ownership 不拥有 document lifecycle。
 
-### D6.2 — Calendar Home migration
+### D6.2 — Calendar Home Migration
 
 目标：将 D5 Calendar surface 提升为 Diary Home primary surface。
 
@@ -234,7 +323,7 @@ Gate：Diary Home 可显示，D5 Calendar 行为保持，Calendar mounted strate
 
 Gate：Calendar Home 在 desktop/tablet/mobile 均可用，日期 intent 仍只 emit 到统一 command，VCalendar compatibility evidence 继续 PASS。
 
-### D6.3 — Reader Dialog adapter
+### D6.3 — Reader Dialog Adapter
 
 目标：为已有 Diary document 提供大面积 Reader Dialog presentation。
 
@@ -256,7 +345,7 @@ Gate：Calendar Home 在 desktop/tablet/mobile 均可用，日期 intent 仍只 
 
 Gate：Reader Dialog 可用且无 duplicate renderer/lifecycle；Editor 尚未接入时仍可安全回退到 D5 surface。
 
-### D6.4 — Editor Dialog adapter
+### D6.4 — Editor Dialog Adapter
 
 这是 D6 最高风险阶段。
 
@@ -553,10 +642,11 @@ Release 前必须保留：
 | R3 | Calendar mounted lifecycle regression | High | 保留 `ed47c94` keep-mounted + `v-show`；用真实 browser click/open/close evidence | `dayIndex` pageerror 或必须同步卸载 Calendar |
 | R4 | Mobile usability regression | High | 继承 D5 320/375/768/1280 matrix、touch target、no-overflow 和 Dialog fullscreen gate | 只能靠 scroll/scale 或降低 D5 threshold |
 | R5 | Diary-only presentation 泄漏到 Vault | Medium | scope-local host/CSS/focus；note/archive/ledger regression | 普通 Vault layout、FileTree 或 scope 行为变化 |
-| R6 | Reader/Editor close 丢失修改 | High | 委托 existing dirty confirmation、save-in-flight、draft/recovery | presentation adapter 自己丢 raw 或 bypass confirmation |
-| R7 | Dialog 与 VCalendar focus/visibility 互相干扰 | High | keep-mounted + accessible hidden strategy；focus restore evidence | hidden Calendar 可聚焦或重新出现 pageerror |
-| R8 | D6 演变成独立 Diary App | Medium | Markdown/Vault source of truth；不新增 database/entity/storage | 需要 Diary-specific persistence 或 identity |
-| R9 | 以 feature flag/临时状态掩盖 lifecycle bug | Medium | D6.0 先定 ownership，phase gate 必须有可重复 evidence | 只能依赖 scheduler timing 或 local workaround |
+| R6 | Dialog state ownership | Medium | `DiaryWorkspace` 只拥有 Dialog visibility、selected DiaryDate、Reader/Editor presentation mode；existing document lifecycle 拥有 document identity、editor state、save、History、Recovery | Dialog 自己保存 raw、维护 tab、创建 document 或把 presentation state 变成 lifecycle mutation |
+| R7 | Reader/Editor close 丢失修改 | High | 委托 existing dirty confirmation、save-in-flight、draft/recovery | presentation adapter 自己丢 raw 或 bypass confirmation |
+| R8 | Dialog 与 VCalendar focus/visibility 互相干扰 | High | keep-mounted + accessible hidden strategy；focus restore evidence | hidden Calendar 可聚焦或重新出现 pageerror |
+| R9 | D6 演变成独立 Diary App | Medium | Markdown/Vault source of truth；不新增 database/entity/storage | 需要 Diary-specific persistence 或 identity |
+| R10 | 以 feature flag/临时状态掩盖 lifecycle bug | Medium | D6.0 先定 ownership，phase gate 必须有可重复 evidence | 只能依赖 scheduler timing 或 local workaround |
 
 ## 11. Rollback strategy
 
