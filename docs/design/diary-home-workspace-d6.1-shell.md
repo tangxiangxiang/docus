@@ -25,6 +25,10 @@ feat(diary): add D6 workspace shell
 Independent review follow-up commit:
 72468e824c02167d86afb0226719ab361be9f958
 fix(diary): guard stale intents and hidden shortcuts
+
+Browser shortcut boundary follow-up commit:
+d753bb0fddb3833ba377412faadb93f58ef491b6
+fix(diary): preserve browser shortcut boundaries
 ```
 
 The implementation was created from a clean `main` worktree. No intervening
@@ -256,6 +260,11 @@ The D6.1 independent review identified two P1 boundaries and one P2 seam. The
 follow-up remains inside the D6.1 presentation integration and does not change
 the Diary date command, document lifecycle, Router, or special-surface owners.
 
+A subsequent independent re-review identified two P2 evidence boundaries:
+browser shortcut ownership when no workspace target exists, and an incomplete
+rollback chain. This follow-up closes both without changing the presentation
+epoch, date-command API, or any lifecycle owner.
+
 ### Async date-intent concurrency policy
 
 `useDiaryWorkspacePresentation()` owns a monotonic date-intent epoch. Every new
@@ -281,10 +290,19 @@ route restore, or Diary deletion.
 ### Hidden workspace keyboard policy
 
 When Diary Home is primary, hidden document tabs remain lifecycle-active but
-are not the keyboard-active workspace UI. The Vault-level handler therefore
-prevents Cmd/Ctrl+W, Cmd/Ctrl+Tab, Cmd/Ctrl+S, and Cmd/Ctrl+E from reaching the
-hidden document/tab/editor lifecycle. It does not close a hidden tab, cycle
-hidden tabs, trigger dirty confirmation, or toggle the hidden editor view.
+are not the keyboard-active workspace UI. The Vault-level handler only claims
+Cmd/Ctrl+W when `activeWorkspaceTabId` exists and only claims Cmd/Ctrl+Tab when
+`workspaceTabs.length > 0`. When Diary Home has no corresponding workspace
+target, the handler returns without `preventDefault()` and without falling
+through to the hidden document shortcut pipeline. With a target, W/Tab are
+prevented but do not close or cycle hidden tabs. Cmd/Ctrl+S and Cmd/Ctrl+E
+remain suppressed in Diary Home so they cannot reach the hidden
+document/editor lifecycle.
+
+The handler therefore does not close a hidden tab, cycle hidden tabs, trigger
+dirty confirmation, or toggle the hidden editor view. This preserves the
+existing Vault ownership prerequisites instead of making Diary Home an
+unconditional browser-shortcut owner.
 
 Cmd/Ctrl+B remains available as the existing global Files-panel shortcut.
 When D5 fallback or an ordinary note/Vault presentation is primary, the
@@ -296,10 +314,12 @@ Home gate applies only when `isDiaryPresentationPrimary` is true.
 
 The follow-up adds controlled presentation tests for scope invalidation,
 special-surface invalidation, out-of-order two-date intents, and an old failure
-returning after a newer success. VaultView characterization tests cover the
-hidden shortcut gate and the current-token adoption seam. Browser regression
-coverage continues to monitor the kept-mounted Calendar and VCalendar
-`dayIndex` runtime boundary.
+returning after a newer success. The browser shortcut follow-up adds
+behavior-oriented checks for W/Tab with and without a workspace target, and
+retains S/E suppression plus B forwarding. VaultView characterization tests
+cover the hidden shortcut gate and the current-token adoption seam. Browser
+regression coverage continues to monitor the kept-mounted Calendar and
+VCalendar `dayIndex` runtime boundary.
 
 ## 16. VCalendar and browser evidence
 
@@ -311,7 +331,7 @@ npm exec playwright test \
   e2e/diary-calendar-surface.spec.ts \
   e2e/diary-release.spec.ts
 
-8 passed
+9 passed
 pageerror = 0
 unexpected console error = 0
 expected console diagnostic = one exact future-document GET 404
@@ -319,8 +339,8 @@ expected console diagnostic = one exact future-document GET 404
 
 Covered behavior includes Diary Home/month navigation, existing Diary date
 open, future missing no-op, managed tab close, keyboard focus, marker update,
-and five repeated opens, plus Diary Home hidden-tab shortcut isolation. The
-responsive matrix passed at:
+and five repeated opens, plus Diary Home hidden-tab shortcut isolation with
+and without a workspace target. The responsive matrix passed at:
 
 ```text
 1280 x 800
@@ -344,7 +364,7 @@ npm exec vitest run \
   src/views/__tests__/VaultView.test.ts
 
 3 test files passed
-50 tests passed
+53 tests passed
 ```
 
 Diary/Vault regression set:
@@ -356,7 +376,7 @@ npm exec vitest run \
   src/views/__tests__/VaultView.test.ts
 
 8 test files passed
-97 tests passed
+100 tests passed
 ```
 
 These tests cover initial HOME, scope exit, History/Diff/Recovery precedence,
@@ -395,11 +415,34 @@ rollback-safe bridge until those phases are independently implemented.
 
 ## 20. Rollback seam
 
-The D6.1 presentation integration can be rolled back by reverting
-`95f48d314c0721a73256fd2f0b390b75a25f13bb`. This restores the D5
-`workspaceTabs.length === 0` Calendar visibility predicate without migrating
-Diary files, tabs, routes, document identity, server contracts, History, or
-Recovery state. No data migration or dependency change is involved.
+### Production rollback
+
+The D6.1 runtime changes must be reverted in reverse chronological/dependency
+order. The current production rollback chain is:
+
+```text
+1. d753bb0fddb3833ba377412faadb93f58ef491b6
+   fix(diary): preserve browser shortcut boundaries
+2. 72468e824c02167d86afb0226719ab361be9f958
+   fix(diary): guard stale intents and hidden shortcuts
+3. 95f48d314c0721a73256fd2f0b390b75a25f13bb
+   feat(diary): add D6 workspace shell
+```
+
+Reverting this production chain restores the D5
+`workspaceTabs.length === 0` Calendar visibility predicate. It does not
+require Diary file migration, tab migration, route migration, document
+identity changes, server rollback, History/Recovery changes, database cleanup,
+or any other data migration.
+
+### Documentation rollback
+
+The runtime rollback is separate from documentation history. If exact
+pre-D6.1 branch history is ever required, documentation commits such as
+`360802f860d9d0c6e421ceb5d3fbc105d0b015d6` and
+`9ee88431f117c4c06734e428a3e33902504b1a99`, plus any later D6.1 evidence
+commit, are reverted separately. Runtime rollback does not imply documentation
+rollback.
 
 ## 21. STOP conditions checked
 
