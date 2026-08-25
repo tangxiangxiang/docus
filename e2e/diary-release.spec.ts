@@ -90,6 +90,7 @@ test('Diary Calendar remains usable across the D5 responsive matrix', async ({ p
       const host = document.querySelector<HTMLElement>('.diary-calendar-host')
       const vcContainer = document.querySelector<HTMLElement>('.diary-calendar-host .vc-container')
       const today = document.querySelector<HTMLElement>('[data-testid="diary-calendar-today"]')
+      const title = document.querySelector<HTMLElement>('.vc-title')
       const previous = document.querySelector<HTMLElement>('.vc-prev')
       const next = document.querySelector<HTMLElement>('.vc-next')
       const rect = (element: HTMLElement | null) => {
@@ -116,6 +117,7 @@ test('Diary Calendar remains usable across the D5 responsive matrix', async ({ p
         host: rect(host),
         vcContainer: rect(vcContainer),
         today: rect(today),
+        title: rect(title),
         previous: rect(previous),
         next: rect(next),
         minDayWidth: Math.min(...visibleDayRects.map((day) => day.width)),
@@ -136,6 +138,10 @@ test('Diary Calendar remains usable across the D5 responsive matrix', async ({ p
       .toBeGreaterThanOrEqual((metrics.surface?.height ?? 0) * 0.9)
     expect(metrics.vcContainer?.height, `${viewport.name} VCalendar fills host height`)
       .toBeGreaterThanOrEqual((metrics.host?.height ?? 0) * 0.9)
+    const titleOffset = (metrics.title?.right ?? 0) - (metrics.title?.width ?? 0) / 2
+      - ((metrics.surface?.right ?? 0) - (metrics.surface?.width ?? 0) / 2)
+    expect(Math.abs(titleOffset), `${viewport.name} month title alignment`)
+      .toBeLessThanOrEqual((metrics.surface?.width ?? 0) * 0.1)
     expect(metrics.today?.width, `${viewport.name} Today target`).toBeGreaterThanOrEqual(40)
     expect(metrics.today?.height, `${viewport.name} Today target`).toBeGreaterThanOrEqual(40)
     expect(metrics.previous?.width, `${viewport.name} previous target`).toBeGreaterThanOrEqual(40)

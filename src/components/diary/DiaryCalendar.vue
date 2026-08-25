@@ -256,7 +256,7 @@ function goToToday(): void {
 }
 
 .diary-calendar-host :deep(.vc-header) {
-  grid-template-columns: auto minmax(0, 1fr) auto !important;
+  grid-template-columns: [prev] auto [title] minmax(0, 1fr) [next] auto !important;
   height: 44px;
   margin-top: 0;
   padding-left: 16px;
@@ -292,6 +292,7 @@ function goToToday(): void {
 }
 
 .diary-calendar-host :deep(.vc-title-wrapper) {
+  max-width: calc(100% - 180px);
   justify-self: center;
   min-width: 0;
 }
@@ -300,6 +301,11 @@ function goToToday(): void {
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.diary-calendar-host :deep(.vc-pane > .vc-header) {
+  position: relative;
+  padding-right: 16px;
 }
 
 .diary-calendar-host :deep(.vc-weekdays) {
@@ -366,6 +372,14 @@ function goToToday(): void {
   .diary-calendar-host :deep(.vc-header) {
     padding-left: 4px;
     padding-right: 72px;
+  }
+
+  .diary-calendar-host :deep(.vc-title-wrapper) {
+    max-width: calc(100% - 144px);
+  }
+
+  .diary-calendar-host :deep(.vc-pane > .vc-header) {
+    padding-right: 4px;
   }
 
   .diary-calendar-host :deep(.vc-pane-header-wrapper .vc-prev) {
