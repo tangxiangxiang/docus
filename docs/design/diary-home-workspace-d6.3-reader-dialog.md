@@ -1,12 +1,23 @@
-# D6.3 Reader Dialog Adapter Evidence
+# D6.3 Reader Dialog Adapter Evidence — SUPERSEDED
 
 ## Status
+
+**SUPERSEDED BEFORE REVIEW CLOSURE**
+
+Superseded by: **D6.3 — Native Vault Document Workspace**.
+
+Product direction changed after the Reader Dialog implementation received an
+independent review PASS, but before D6.3 was marked `REVIEW-CLOSED`. The review
+result and implementation SHAs below remain accurate historical evidence for
+the superseded implementation. They do not transfer to the replacement and do
+not make the new D6.3 implementation review-closed or independently reviewed.
 
 - D6.0 = REVIEW-CLOSED
 - D6.1 = REVIEW-CLOSED
 - D6.2 = REVIEW-CLOSED
 - D6.2.1 = REVIEW-CLOSED
-- D6.3 = REVIEW-READY
+- D6.3 Reader Dialog implementation = SUPERSEDED BEFORE REVIEW CLOSURE
+- D6.3 Native Vault Document Workspace replacement = IN PROGRESS
 - D6.4 = NOT STARTED
 
 Initial implementation commit: `d270ee5756c0f742e92955f06fa308fd6f77bc4a`

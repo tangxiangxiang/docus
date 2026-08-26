@@ -1,533 +1,267 @@
 # D6 — Diary Home Workspace PRD
 
-状态：`D6 = NOT STARTED`；本 PRD 为 `REVIEW-CLOSED`，独立 review 已通过（P0/P1/P2 = 0/0/0）。
+状态：`REVIEW-CLOSED`（产品 contract）；D6.3 在 closure 前发生产品方向替换，当前 replacement implementation 为 `IN PROGRESS`。
 
-已有 Diary Calendar MVP 的状态保持不变：`D0`–`D5` 全部 `REVIEW-CLOSED`，Diary Calendar MVP 为 `COMPLETE / REVIEW-CLOSED`。本文件只提出新的 D6 产品形态，不重开、不修改 D0–D5 closure。
+已有状态保持不变：D0–D5、D6.0、D6.1、D6.2、D6.2.1 均为 `REVIEW-CLOSED`。D6.4 为 `NOT STARTED`。
 
-日期：2026-08-25（Asia/Shanghai）
+日期：2026-08-26（Asia/Shanghai）
 
-## 1. Overview
+## 1. Superseding product decision
 
-D5 已经把 Diary Calendar 做成可用的 Calendar-first surface。D6 不再继续堆叠 Calendar 功能，而是重新定义 Diary 在 Docus 中的产品形态：
+旧 D6.3 的 Diary Reader Dialog / future Editor Dialog 方向，在 D6.3 review closure 前被产品决定替换。旧实现和独立 review PASS 只作为历史 evidence 保留，不再是 canonical D6 product contract。
 
-> Diary 不是独立日记 App，而是 Docus 中以日期为入口的 Markdown knowledge workspace。
+新的原则是：
 
-核心模型：
-
-```text
-Diary Home
-    │ select date
-    ▼
-Diary Reader Dialog
-    │ edit
-    ▼
-Diary Editor Dialog
-    │ close
-    ▼
-Diary Home
-```
-
-Calendar 是入口，Markdown 文档是内容和知识的 source of truth。D6 只定义产品与生命周期边界，不包含实现代码或 D6 Implementation Plan。
-
-## 2. Motivation
-
-当前 D5 的 Diary 仍然表现为嵌入 Vault 的 Calendar surface：
-
-- Calendar 可用，但 Diary 的视觉权重和独立心智仍然不足；
-- 用户进入 Diary 后仍容易把它理解成普通 Vault document page；
-- 日期是 Diary 的真正入口，却没有成为完整 workspace 的中心；
-- 直接把普通 editor surface 暴露出来，会让 Diary 与 note scope 的产品差异不够清楚。
-
-D6 解决的是 presentation 和 workspace model 问题，不改变 Diary 的数据、路径、权限或文档生命周期 contract。
-
-## 3. Product vision
-
-### 3.1 定位
-
-Diary 是：
-
-> A calendar-first interface for Markdown-based daily records.
-
-用户心智应当是：
+> Calendar does navigation. Vault does documents.
 
 ```text
-今天发生了什么？
-        │
+Diary Calendar Home
+        │ select date
         ▼
-点击今天
-        │
+existing openDiaryDate()
         ▼
-打开今天的 Markdown
+existing openPost() / tab lifecycle
+        ▼
+Native Vault Document
+        ├─ READ: existing ReadingPane
+        └─ EDIT: existing EditorPane / Monaco
 ```
 
-### 3.2 Docus 差异化
+Calendar 是 Diary 的日期导航首页。日期成功打开后，用户回到 Docus 原生 Vault 文档工作区，不进入 Diary 专用 Reader/Editor Dialog。
 
-D6 借鉴 calendar-diary 类产品的日期入口和月历主页，但不复制独立日记 App 模型。Diary 继续使用 Docus 已有的：
+## 2. Product position
 
-- Markdown 文件和 Vault；
-- History 与 Recovery；
-- 现有 Editor、保存和 draft 生命周期；
-- AI 与知识图谱边界；
-- auth、filesystem confinement 和 document identity 安全机制。
+Diary 是 Docus 中以日期为入口的 Markdown knowledge workspace，不是独立日记 App：
 
-Diary 不新增本地数据库日记 entity，不建立 App-specific storage，也不把 Calendar 变成 event/task 系统。
+- Markdown 文件和 Vault 仍是 source of truth；
+- `DiaryDate` 与 `diary/YYYY-MM-DD` 仍是 identity contract；
+- Calendar 负责日期浏览、存在标记和 date intent；
+- 原生 Vault 负责 tabs、active document、Reader、Editor、save、dirty、History、Recovery、route 和 shortcuts；
+- 不新增 Diary database、Reader engine、Editor、save pipeline 或 route。
 
-### 3.3 Vault route、Diary scope 与 workspace presentation
+## 3. Router, scope and presentation layers
 
-D6 必须沿用当前 Vault 的 routing contract。当前工作区由 `/vault` 与 `/vault/:pathMatch(.*)*` 承载；router 中没有独立的 `/diary` route。Diary 是由现有 scope filter 选择的 `diary` scope，并由 `VaultView` 在这个 scope 下呈现 Diary Calendar/Home，而不是新的 route identity。
-
-D6 的层次关系是：
+D6 沿用 `/vault` 与 `/vault/:pathMatch(.*)*`。不新增 `/diary`、Reader route 或 Editor route。
 
 ```text
-Vault route identity
-        ↓
-VaultView
-        ↓
-active Diary scope
-        ↓
-Diary Home presentation
-        ↓
-Reader / Editor Dialog presentation
+Router layer
+  owns /vault/<path> and browser history
+
+Document lifecycle layer
+  owns tabs, activePath, raw, save, dirty, History, Recovery
+
+Diary date command layer
+  owns openDiaryDate(date)
+
+Diary presentation layer
+  owns HOME / DOCUMENT, selected date/path and Calendar focus return
+
+Calendar layer
+  owns month navigation, date markers and date-selected emit
 ```
 
-Diary scope、Diary Home presentation、document/tab identity 和 document route synchronization 不是同一个状态：
+Diary 是 Vault scope，不是 router identity。READ / EDIT 继续由 existing `VaultViewModeKey` / global `viewMode` 拥有；Diary presentation 不保存 Reader/Editor mode。
 
-- scope 决定当前 Vault 内容过滤和 Diary presentation mode；
-- Diary Home / Dialog 只属于 presentation state，不是新的 route identity；
-- 已打开文档的 logical path、tab identity、active document 和 `/vault/<logical-path>` 同步继续由现有 Vault document lifecycle 负责。
+## 4. User journeys
 
-D6 不新增 `/diary`、`/diary/:date` 或 `/diary/:date/edit`，也不把 Reader、Editor、Dialog visibility 或 Diary create/open lifecycle 编码进 URL。未来若需要 Diary deep-link，必须另行完成 route/auth/dirty-state ADR。
+### 4.1 Enter Diary
 
-## 4. User journey
+进入 `diary` scope 默认显示 full-bleed Calendar Home。Calendar 保持当前 D6.2.1 视觉和 VCalendar compatibility contract。
 
-### 4.1 进入 Diary
+### 4.2 Open a date
 
-用户进入 `diary` scope 后默认看到 `Diary Home`，而不是普通文档页。Calendar 是主内容，FileTree 可以隐藏或弱化，但不改变 note、archive、ledger 的普通 Vault 布局。
+点击已有日期，或成功创建今天/过去的缺失日期：
 
-### 4.2 打开已有日期
+1. 只调用 existing `openDiaryDate(date)`；
+2. command 继续调用 existing `openPost()`；
+3. existing tab/document lifecycle 完成并使 exact path active；
+4. Diary presentation 记录 selected date/backing path，进入 `DOCUMENT`；
+5. global view mode 切为 `READ`；
+6. ordinary Vault `ReadingPane`、`EditorTabs`、FileTree、RightRail 和 StatusBar 按既有规则显示。
 
-用户点击已有 Diary 日期：
+不允许额外 `getPost`、fetch、create、`openPost()` 或第二份 raw。
 
-1. 日期通过唯一的 `openDiaryDate(date)` command 进入现有 Diary date lifecycle；
-2. 系统解析同一个 canonical logical path；
-3. 已有文档以 Reader Dialog 打开；
-4. Reader 中的 Edit action 切换到同一文档的 Editor Dialog。
+### 4.3 Missing future and errors
 
-### 4.3 打开今天或过去的缺失日期
+缺失 future 仍不创建；invalid、busy、failed 也不能进入 `DOCUMENT`。用户停留在 Calendar Home。已经存在的 future Diary 仍可通过既有 command 打开。
 
-今天或过去日期缺失时，继续使用 D2/D4 已验证的 date-create contract 创建唯一的 `diary/YYYY-MM-DD`，然后打开该文档的 Dialog。D6 不新增第二条 create path。
+### 4.4 Read and edit
 
-### 4.4 选择缺失的未来日期
+成功日期点击总是进入 existing READ。用户通过现有 view toggle 或快捷键进入 existing EDIT。Editor 使用同一个 active tab、Monaco model、save/dirty/draft/History/Recovery lifecycle。
 
-缺失的未来日期仍然不能创建。用户停留在 Diary Home，并收到现有的非破坏性反馈。已经存在的未来 Diary 仍可打开、编辑和删除；D6 不改变这一规则。
+### 4.5 Return to Calendar
 
-### 4.5 关闭 Dialog
+Native Diary document 的 FileTree compact context 提供“返回日历”。这个动作只把 Diary presentation 切回 `HOME`：
 
-关闭 Reader 或 Editor Dialog 后回到 Diary Home：
+- route 不变；
+- `activePath` 不变；
+- backing tab 不关闭；
+- dirty/raw/model 不丢失；
+- 不触发 discard confirmation；
+- exact-path FileTree constraint 清除；
+- Calendar 恢复同一月份和 semantic date focus。
 
-- 不删除文件；
-- 不删除 document identity；
-- 不自动关闭对应 editor tab；
-- 保留 backing document/tab 和未保存修改；
-- 不把 presentation close 当作 tab/document close；
-- 再次选择同一天时复用同一个 logical path 和现有 tab/lifecycle 状态。
+再次选择同一天时，existing `openPost()` 复用同一 tab/document identity；未保存 raw 不能因重开而被额外 fetch 覆盖。
 
-Dialog 是 presentation state，不是第二套 document workspace。
+## 5. Calendar Home
 
-## 5. Diary Home
+Calendar Home 继续保持 D6.2.1 frozen visual contract：
 
-Diary Home 是 Diary scope 的默认 workspace surface。
+- full-bleed/full-height；
+- `YYYY-MM` title；
+- Prev/Next；
+- Today action absent；
+- 44×44 navigation targets 与 focus-visible ring；
+- Diary marker、locale、theme 和 responsive spacing 不变。
 
-它不是：
+`isDiaryCalendarMounted = isDiaryScope` 是硬约束。进入 Native Document 时 Calendar hidden but mounted；不得同步 unmount，避免重新引入 `v-calendar@3.1.2` 的 `dayIndex` regression。
 
-- 普通 Vault document page；
-- 400px 的小 Calendar card；
-- 需要 FileTree 才能理解或操作的文件列表；
-- 独立日记 App 的数据库主页。
+## 6. Native Vault Document
 
-它应该提供：
+Native Diary document 不是 Diary-specific surface。它必须使用：
 
-- 足够大的月历主区域；
-- 清晰的月份标题和前后月份导航；
-- Today 定位；
-- 已存在 Diary 日期的非颜色唯一标记；
-- 可访问的 loading、empty 和 error 状态；
-- 从日期直接进入 Reader Dialog 的单一入口。
+- existing `EditorTabs`；
+- exactly one existing Vault `ReadingPane` in READ；
+- existing `EditorPane` / Monaco in EDIT；
+- existing view-mode toggle；
+- existing FileTree、RightRail 和 StatusBar behavior；
+- existing route/tab/save/dirty/draft/History/Recovery/external-change lifecycle。
 
-Diary Home 可以保留少量 scope-level navigation，但不让普通文件树、右栏或第三方 widget chrome 重新夺回主视觉权重。
+禁止新增 Diary Reader header、close X、Edit button、Reader Dialog、Editor Dialog、第二个 ReadingPane、第二 Monaco 或第二套 persistence。
 
-## 6. Calendar workspace
+## 7. FileTree exact-path context
 
-### 6.1 视觉方向
+Native Diary document 时，FileTree 使用 generic `exactPathFilter` presentation constraint。FileTree 不理解 DiaryDate、Calendar 或 Diary filename contract。
 
-Calendar 由嵌入式 widget 提升为 Diary workspace 的 primary surface：
-
-- 使用全屏或接近全屏的可用主区域；
-- 弱化无意义的 card/container border；
-- 强化月份层级和日期可读性；
-- 保留 Docus theme、locale 和 dark/light appearance；
-- 不把 Diary 日期渲染成事件卡片。
-
-### 6.2 功能范围
-
-D6 继续使用现有 VCalendar adapter 和已验证的 `v-calendar@3.1.2`，支持：
-
-- 月视图；
-- 上个月、下个月；
-- Today 定位；
-- 日期点击；
-- 已存在 Diary 日期的 dot/attribute 标记；
-- 与本地 civil date 一致的日期显示。
-
-D6 不增加周视图、日视图、时间轴、拖拽改期、event scheduling 或 range selection。
-
-### 6.3 Calendar 生命周期
-
-`ed47c94` 建立的 keep-mounted + `v-show` presentation workaround 继续是 D6 的兼容性约束。打开 Dialog 时 Calendar 可以被隐藏，但不能因为同步 click/unmount 重新引入已关闭的 VCalendar `dayIndex` regression。隐藏状态必须同时满足可访问性要求，不能让不可见 Calendar 继续接受键盘焦点。
-
-## 7. Diary Reader Dialog
-
-Reader Dialog 是日期文档的阅读入口，不是普通小弹窗。
-
-### 7.1 Presentation
-
-- 使用 fullscreen 或 large overlay，目标是覆盖约 90%–100% viewport；
-- 视觉上接近 Notion popup page、Linear detail view 或 Apple Calendar detail，而不是后台管理 modal；
-- 背景 workspace 保持上下文但不能抢夺焦点；
-- 关闭后回到同一个 Diary Home 月份和用户之前的 focus 位置。
-
-### 7.2 内容
-
-Header 至少包含：
-
-- Diary 日期；
-- Dialog Header Back/关闭 Dialog；
-- Edit action。
-
-正文复用现有 Markdown renderer/ReadingPane seam。D6 不创建 `DiaryReader`、第二套 Markdown parser 或新的 link/wiki rendering pipeline。
-
-### 7.3 Reader 到 Editor
-
-Edit action 只改变同一个 document identity 的 presentation mode。它不能重新创建文件、重新分配 tab identity 或绕过现有 save/history/recovery 生命周期。
-
-## 8. Diary Editor Dialog
-
-Editor Dialog 是现有 Docus Editor 的 Dialog presentation adapter。
-
-必须复用：
-
-- 现有 `EditorPane`/Monaco editor；
-- `useEditorTabs`、`useTabWorkspace` 和现有 tab identity；
-- `useDocumentLifecycle` 的文件/文件夹 mutation、mutation barrier、引用更新、open-document path migration 和 draft 协作；保存、dirty state 和自动保存继续由现有 `useEditorTabs` / `useDocumentSave` seam 负责；
-- `fileChanges`、refresh、History、Recovery 和 draft persistence；
-- 现有 shortcut、dirty state、冲突处理和保存反馈。
-
-明确禁止：
-
-- `DiaryEditor`；
-- 第二套 Markdown parser；
-- 第二套 save pipeline；
-- 第二套 History/Recovery；
-- 第二套 shortcut 或 mutation lock；
-- 以 Dialog 为理由创建 parallel route/tab/editor architecture。
-
-Editor Dialog 可以隐藏普通 Vault 的部分外围 chrome，但不能改变 editor 的数据所有权。Dialog close 只隐藏 presentation，保留 backing tab、active document 和 dirty state，不触发 dirty-document confirmation。只有 existing lifecycle 真正关闭 tab/document 时，才沿用既有 dirty/unsaved contract；不得静默丢弃用户修改。
-
-## 9. Lifecycle model
-
-### 9.1 单一 command ownership
-
-`openDiaryDate(date)` 继续是 Calendar、Today、日期标记和未来其它日期入口共用的唯一 command。Calendar、Reader Dialog 和 Editor Dialog 都不直接拥有 server create/open API。
-
-当前 D4 链路：
+若 filter 为 `diary/2026-08-25`，渲染结果只能是：
 
 ```text
-openDiaryDate(date)
-  ├─ resolve exact Diary path
-  ├─ open existing document
-  └─ create missing today/past, then openPost()
+diary
+└── 2026-08-25
 ```
 
-D6 的目标链路：
+只保留 exact file 和 tree rendering 所需 ancestors；不得 fuzzy match。若 exact path 暂时不存在，显示 empty filtered tree，不回退完整 Diary tree。
 
-```text
-openDiaryDate(date)
-  ├─ ensure the existing D2 Diary contract
-  ├─ reuse existing document identity/tab
-  └─ hand presentation to Diary Reader Dialog
-       └─ Edit → existing Editor lifecycle in Dialog
-```
+Exact filter 比普通 text/tag search 优先。用户原有 `filesFilter` 必须保持原值；exact context 内不能因旧 query 隐藏当前 Diary，返回 Calendar 后原 query 仍在。
 
-如果后续实现需要名为 `ensureDiary()` 的内部步骤，它只能是上述 command 的内部 orchestration，不得成为新的公开 create entry point，也不得绕过 server authority、future guard、exact-path lock 或 create-only semantics。
+FileTree 可显示轻量 selected-date context 和“返回日历”，但不得新增 full-width Diary document chrome。普通 note/archive/ledger 的 FileTree、search、expanded、keyboard、currentPath 行为不变。
 
-### 9.2 Identity and tab rules
-
-- `DiaryDate` 仍是日期 identity；logical path 仍是 `diary/YYYY-MM-DD`；physical path 仍由既有 global mapping 产生 `.md`；
-- 一天最多一个 Diary，不使用 collision suffix；
-- Dialog open/close 不创建第二个 document identity；
-- Dialog close 不等于 `closeTab()`；
-- Dialog close 不改变 `activePath`，也不要求 route 离开 backing document；
-- 已打开的 Diary tab 可以作为 Dialog 的 owner/ backing state，但不能迫使用户看到普通 Vault document page；
-- note、archive、ledger 的 tab 和 layout 行为不因 D6 改变。
-
-## 10. State machine
-
-### 10.1 Product states
+## 8. State machine
 
 ```text
 DiaryHome
-    │ select date
-    ▼
-DiaryReaderDialog
-    │ edit
-    ▼
-DiaryEditorDialog
-    │ close
-    ▼
-DiaryHome
+  │ explicit Calendar date intent
+  ▼
+DateIntentPending
+  ├─ opened|created + activePath === path ──► NativeDocument(READ)
+  ├─ missing future ─────────────────────────► DiaryHome + feedback
+  └─ invalid|busy|error|stale ───────────────► DiaryHome
+
+NativeDocument
+  ├─ existing view toggle ──────────────────► READ ⇄ EDIT
+  ├─ Calendar Home action ──────────────────► DiaryHome
+  ├─ activePath mismatch ───────────────────► DiaryHome
+  ├─ backing tab removed ───────────────────► DiaryHome
+  └─ special surface active ────────────────► DiaryHome
 ```
 
-### 10.2 Transitional states
+`activePath` 只能 passive close stale `DOCUMENT`，不能自动打开。`DOCUMENT` 的唯一 opening signal 是 explicit Calendar intent 的 successful result。
 
-`select date` 后允许存在短暂的 loading、create、error 或 future-missing feedback，但这些是 command transition/substate，不是第二套 Diary lifecycle：
+## 9. Browser history boundary
 
-```text
-DiaryHome
-  └─ date intent pending
-       ├─ existing → DiaryReaderDialog
-       ├─ today/past missing → exact create → DiaryReaderDialog
-       ├─ future missing → DiaryHome + feedback
-       └─ error → DiaryHome + recoverable error
-```
-
-### 10.3 Close semantics
-
-- Reader close：回到 `DiaryHome`，恢复 Calendar 上下文和 focus；
-- Editor Dialog close：只关闭 presentation，回到 `DiaryHome`，保留 backing tab/document 和 dirty state；
-- Document/Tab close：仍由 existing lifecycle 处理，只有这条路径才走既有 dirty/unsaved confirmation；
-- close 不删除 document identity，不清空 History/Recovery，不绕过 tab persistence；
-- Dialog Header Back、Escape 和显式 Close 归一到同一个 presentation close policy；Browser Back 不属于该 policy，由 existing router/history lifecycle 处理。
-
-## Browser History Boundary
-
-D6 Dialog presentation state 不拥有 browser history，也不等同于 router state。必须把以下两类动作分开：
-
-D6 不新增 `/diary`、`/diary/:date` 或 `/diary/:date/edit` route。现有 `/vault` 与 `/vault/:pathMatch(.*)*` 继续是 Vault router 的 ownership boundary。
-
-Dialog-local presentation actions：
-
-- Explicit Close；
-- Escape；
-- Dialog Header Back。
-
-它们统一进入 `DiaryWorkspace` 的 presentation close policy：隐藏 Reader/Editor Dialog、回到 Diary Home，并恢复合适的 focus context。它们不得主动调用 `router.back()`、`router.replace('/vault')`、`closeTab()`，不得改变 `activePath`，也不得触发 dirty discard confirmation。
-
-Browser Back 不等同于 Dialog Close，继续由现有 Vue Router 和 Vault document lifecycle 拥有：
+Browser Back 继续属于 Vue Router 与 existing route/tab lifecycle：
 
 ```text
 Browser Back
-    ↓
-Vue Router history transition
-    ↓
-current Vault route changes
-    ↓
-existing route/pathMatch sync and tab/document reconciliation
-    ↓
-DiaryWorkspace observes the resulting state and reconciles presentation
+  -> router history transition
+  -> useRouteSync / existing openPost reconciliation
+  -> activePath result
+  -> Diary presentation observes mismatch
+  -> HOME
 ```
 
-DiaryWorkspace 不能拦截或劫持 `popstate`，不能 `preventDefault` browser Back，不能为 Dialog 创建 fake history entry，不能把 Dialog state 写入 URL，也不能用 router navigation 模拟 Dialog Close。现有 `/vault` 与 `/vault/:pathMatch(.*)*` router ownership、route sync、`openPost()` 和 `useTabWorkspace()`/existing tab lifecycle 保持不变。
+禁止拦截 `popstate`、fake history、Dialog URL、`router.back()` as close 或 `router.replace('/vault')`。
 
-一个有意接受的 D6 MVP 状态是：当 backing document 为 `diary/2026-08-25` 时，route 可以仍为 `/vault/diary/2026-08-25`，backing tab 和 `activePath` 也仍指向该文档，而视觉上已经显示 Diary Home。这是 presentation state 与 document route state 分层的结果，不是要求通过 `router.replace('/vault')` 修正的 bug。
+“返回日历”是 presentation-only action，不是 Browser Back。它允许 route 仍表示 backing document，而 UI 已显示 Calendar Home。Refresh 不承诺恢复 presentation-only `DOCUMENT`; restoration 继续由 existing route/document lifecycle 决定。未来 deep-link presentation 需要独立 ADR。
 
-因此 D6 允许：
+## 10. Reconciliation and precedence
+
+History Comparison、Working Tree Diff 和 Recovery 拥有高于 Diary presentation 的 visible-surface precedence。它们激活时：
+
+- Diary presentation reset HOME；
+- exact filter 清除；
+- Calendar 在 Diary scope 仍 mounted；
+- special surface 退出后不自动重开 Native Diary document。
+
+Scope exit、backing tab close 或 activePath mismatch 同样 passive reset HOME，不关闭其它 tab、不改变 route。
+
+## 11. Dirty state invariant
 
 ```text
-Route represents backing document
-while
-Diary Home is currently presented
+Calendar -> Native READ -> existing EDIT -> dirty
+         -> Return to Calendar
 ```
 
-refresh 时，Dialog state 因为不写入 URL，不承诺恢复 Reader 或 Editor Dialog；refresh 后的 document restoration 继续由现有 Vault route/document lifecycle 决定。未来若需要 Dialog restoration、Reader deep-link、Editor deep-link 或 shareable Diary URL，必须另立 ADR。
+结果必须是 Calendar Home + backing tab/model/raw/dirty state 保留，且无 discard confirmation。只有 existing tab/document close 才使用既有 dirty confirmation、save-in-flight、draft/recovery contract。
 
-三层 ownership 必须保持：
+## 12. Responsive and accessibility
 
-| Layer | Owner | Responsibility |
-| --- | --- | --- |
-| Router state | existing Vue Router | `/vault`、`/vault/<path>` 和 browser history |
-| Document lifecycle | existing Vault tabs/editor lifecycle | `tabs`、`activePath`、document model、save、dirty、History、Recovery 和 route reconciliation |
-| DiaryWorkspace presentation | D6 presentation layer | Home、Dialog visibility、Reader/Editor mode 和 focus context |
+验证 1280×800、768×1024、375×812、320×700：
 
-第三层只能观察并 reconcile 前两层产生的最终状态，不能驱动 router 来模拟自身 presentation state。
+- Calendar visual 不变且无 horizontal overflow；
+- Native Vault FileTree/current-date context 可用；
+- existing ReadingPane 与 Editor smoke 可用；
+- compact Calendar Home action 可通过 keyboard 激活；
+- Calendar hidden 时不获取 focus；返回 Home 后 semantic date focus 可恢复；
+- light/dark、zh/en 可读；
+- Native Document 使用 ordinary Vault shortcut policy（Cmd/Ctrl+E、Cmd/Ctrl+S、Cmd/Ctrl+W）。
 
-## 11. Relationship with Vault and scopes
+## 13. Domain and security boundaries
 
-Diary Home 不依赖 FileTree 才能作为主入口。Diary 模式下 FileTree 可以隐藏或弱化，但它仍然是既有内容、invalid/unmanaged Diary 内容和清理操作的辅助入口，不能被当作新的 Diary data store。
+D1/D2/D4 contract 全部不变：one-date-one-Diary、strict `DiaryDate`、local civil date、exact path、future guard、server authority、mutation policy、auth、filesystem confinement、atomic write、lock、History/Recovery 都不能由本 presentation replacement 绕过。
 
-范围边界保持不变：
+不修改 server、shared Diary protocol、router、VCalendar version 或 dependencies。
 
-| Scope | Contract |
-| --- | --- |
-| `diary` | Diary Home + date-oriented Markdown workspace |
-| `note` | `inbox`、`literature`、`archive` 的现有 Vault 行为 |
-| `ledger` | 现有 ledger 语义 |
-
-禁止全局隐藏 FileTree、重做 Vault grid、修改 Archive Soft-Policy 或把 Diary 加入 `note` scope。
-
-## 12. Responsive behavior
-
-### 12.1 Calendar Home
-
-D6 继承 D5 已验证的 Calendar-first responsive contract：
-
-- 320px 和 375px 日期 touch target 不低于既有 gate；
-- 不引入横向滚动来换取日期宽度；
-- Activity Bar、Calendar 主区域和必要的 scope navigation 在窄屏保持可用；
-- Diary Home 下 FileTree 可隐藏/折叠，但离开 Diary 或打开普通 note 后恢复普通 Vault 行为；
-- 768px 与 desktop 不因手机策略而意外隐藏或破坏普通 FileTree。
-
-### 12.2 Dialog
-
-- Desktop Reader/Editor Dialog 使用大面积 overlay；
-- Mobile Reader/Editor Dialog 使用接近 fullscreen 的布局，并处理 safe-area inset；
-- Dialog 内 editor 不缩放到不可用尺寸；
-- 背景 Calendar 不横向溢出，隐藏时不进入 accessibility tree；
-- dialog close 后 Calendar Home 恢复，不要求刷新页面或重新加载 Diary scope。
-
-## 13. Accessibility
-
-D6 必须继承并扩展 D5 已验证的 keyboard、ARIA 和 focus safety contract，但不宣称完整 WCAG certification。
-
-最低要求：
-
-- Reader/Editor Dialog 有稳定的 accessible name 和 `dialog`/modal 语义；
-- 打开后 focus 进入 Dialog，关闭后 focus 返回触发日期或 Today 控件；
-- 背景 Diary Home 在 Dialog 打开期间不可通过键盘误操作；
-- Escape、显式 Close、Dialog Header Back 都有一致且可预测的 presentation close 行为；Browser Back 则按 router/history transition 处理；
-- 日期、Today、previous、next 和 Edit 均可用键盘操作；
-- Diary-exists 不能只依靠颜色，保留文本/ARIA 语义；
-- loading、create、future-missing、error 状态以 live region 或等价方式传达；
-- Editor 的已有快捷键、dirty confirmation 和焦点管理不被 Dialog adapter 截断；
-- reduced-motion 用户不会被强制播放不必要的过渡。
-
-## 14. Data and security boundaries
-
-D6 不改变 D1/D2/D4 已关闭的 domain/server contract：
-
-- `DiaryDate`、`diary/YYYY-MM-DD` logical path、`.md` physical mapping 和 one-day-one-diary 不变；
-- 不把日期转换为 UTC timestamp，也不通过 `toISOString()` 推导本地 Diary 日期；
-- 缺失 future 仍不可创建，existing future 仍可编辑；
-- server date API、document mutation policy、AI mutation guard 和 auth boundary 继续是 authoritative；
-- Dialog 不能绕过 path normalization、absolute path rejection、root escape protection、symlink/junction confinement、auth、CSRF/origin、atomic write、lock、History 或 Recovery；
-- Markdown 文件仍是 source of truth，不新增数据库日记 entity 或外部同步身份；
-- Dialog close 不能被解释为删除、archive、history commit 或 recovery mutation。
-
-## 15. Future frontmatter extension
-
-D6 可以在产品文档中保留未来 metadata seam，例如：
-
-```yaml
----
-mood:
-weather:
-energy:
-tags:
----
-```
-
-这些字段不是 D6 MVP contract。D6 不实现 Mood、weather、energy、habit 或统计 UI，也不改变当前 Diary filename identity。未来 metadata 必须继续存储在 Markdown/frontmatter 语义内，并经过单独 phase 的 domain、migration 和 security review。
-
-## 16. Non-goals
+## 14. Non-goals
 
 D6 不包含：
 
-- Mood tracking、emotion statistics 或 sentiment analysis；
-- Task management、habit tracker 或 reminders；
-- Calendar events、时间段、周视图、日视图、timeline 或 agenda；
-- Photo diary、attachments-first diary 或独立媒体存储；
-- Timeline、year review、year view、summary、AI summary 或统计 dashboard；
-- Diary-specific tags system；
-- 独立 Diary database、UUID entity 或 local-only persistence；
-- 新的 Diary Reader/Editor、save/history/recovery/shortcut pipeline；
-- Calendar library replacement、VCalendar upgrade 或 Schedule-X/FullCalendar 引入；
-- 全局 Vault layout redesign；
-- Archive、note、ledger、filesystem、auth 或既有 D0–D5 contract 的重新定义。
+- Diary Reader/Editor Dialog；
+- Diary-specific Reader、Editor、Monaco、save、dirty、History、Recovery、shortcut 或 route；
+- Mood/task/event/timeline/year-review/AI summary；
+- 新 metadata contract、database 或 sync identity；
+- Calendar visual redesign、Today 恢复、VCalendar upgrade；
+- 全局 Vault layout redesign。
 
-## 17. Migration from D5
-
-| 维度 | D5 baseline | D6 target |
-| --- | --- | --- |
-| Diary entry | Calendar-first surface embedded in Vault | Diary Home workspace |
-| Calendar role | Primary content of an empty Vault area | Primary workspace surface |
-| Date open | `openDiaryDate()` → existing `openPost()`/editor tab | `openDiaryDate()` → existing date contract → Reader Dialog |
-| Edit | Existing editor surface | Existing editor lifecycle presented in Editor Dialog |
-| Document identity | `diary/YYYY-MM-DD` | unchanged |
-| History/Recovery | existing Vault lifecycle | unchanged |
-| VCalendar | approved `v-calendar@3.1.2` adapter | unchanged |
-| Mobile | D5 touch-target and no-overflow evidence | reused; no regression allowed |
-
-D6 不需要数据迁移、文件重命名或 route identity migration。实现阶段应保留 D5 presentation fallback：如果 Dialog/Editor integration 发现生命周期或兼容性回归，可以回退到 D5 Calendar-first surface，而不回退任何 Diary 文件或 server contract。
-
-## 18. Risks
-
-| ID | Risk | Mitigation / product boundary |
-| --- | --- | --- |
-| R1 | Editor lifecycle duplication | 只使用现有 Editor、tab、save、History 和 Recovery；禁止 `DiaryEditor`。 |
-| R2 | Dialog state 与 tab/route lifecycle 冲突 | `openDiaryDate()` 保持单一 command ownership；Dialog close 是 presentation-only，不改变 route、`activePath` 或 tab identity；Browser Back 仍由 router/history 和 existing lifecycle 处理。 |
-| R3 | Calendar mounted lifecycle regression | 保留 `ed47c94` keep-mounted + `v-show` workaround；任何 ownership 变化都必须通过真实 click/open/close browser evidence。 |
-| R4 | 320/375 mobile usability 回归 | 复用 D5 touch-target、no-overflow、keyboard 和 focus evidence；D6 不用小 modal 替代 fullscreen dialog。 |
-| R5 | Diary 演变成独立 App | Markdown/Vault/History/Recovery/AI 继续是系统 source of truth；不新增 diary database 或 app-specific storage。 |
-| R6 | Reader/Editor presentation close 造成数据丢失 | Dialog close 保留 backing tab、dirty state、draft 和 Recovery，不触发 discard；只有 existing tab/document close 才复用既有 dirty confirmation。 |
-| R7 | Dialog 与 browser history ownership 冲突 | Dialog Header Back、Escape、Explicit Close 只走 presentation close policy；Browser Back 保持 router-owned，DiaryWorkspace 只 reconcile resulting route/document state。 |
-
-## 19. Acceptance criteria
-
-以下是 D6 实现与 release review 的目标 criteria，不是本 docs-only PRD 的已完成 evidence：
-
-- [ ] Diary Home 的默认入口是 Calendar-first workspace，而不是普通 document page。
-- [ ] Calendar 是 Diary Home 的 primary surface，不再表现为小型第三方 widget card。
-- [ ] 日期是唯一的 Diary content entry point；月视图、月份导航、Today、日期点击和已有日期标记保留。
-- [ ] Reader 使用 fullscreen/large Dialog，并复用现有 Markdown renderer。
-- [ ] Editor 使用现有 Editor lifecycle 的 Dialog presentation adapter。
-- [ ] 不存在 `DiaryEditor` 或第二套 Markdown/save/History/Recovery/shortcut pipeline。
-- [ ] `openDiaryDate()` 仍是唯一日期 command；任何 `ensureDiary()` 只能是内部步骤，不能成为旁路 API。
-- [ ] one day one Diary、exact identity、future missing guard、local civil date semantics 和 path mapping 不变。
-- [ ] Dialog close 不删除 document identity、不关闭 tab、不改变 route/`activePath`、不触发 dirty discard，并返回 Diary Home。
-- [ ] Dialog Header Back、Escape、Explicit Close 统一为 presentation close；Browser Back 保持 existing Router/history ownership。
-- [ ] Browser Back 不被拦截，不创建 Dialog history entry，不调用 `router.back()` 或 `router.replace('/vault')` 模拟 Dialog Close。
-- [ ] backing route 可以保留文档 URL，而 Diary Home 作为当前 presentation；两者暂时不一致是有意的 D6 MVP 行为。
-- [ ] refresh 不承诺恢复 Dialog；Reader/Editor deep-link 需要独立 ADR。
-- [ ] History、Recovery、draft、auth、filesystem/path safety 和 AI mutation guard 不变。
-- [ ] VCalendar `3.1.2`、现有 adapter 与 `ed47c94` workaround 不变。
-- [ ] 320/375 touch target、no horizontal overflow、keyboard、ARIA 和 hidden Calendar focus safety 不回归。
-- [ ] Diary-only FileTree 隐藏/弱化行为可恢复；note、archive、ledger 的 Vault layout 不变。
-- [ ] Markdown remains the source of truth；没有独立 diary database/entity/storage。
-- [ ] Mood、Task、Photo、Timeline、Summary、Year view、Statistics 等 non-goals 没有被偷偷纳入。
-- [ ] D6 通过独立 review 后才允许进入下一阶段；本 PRD 不自动启动 D6 implementation。
-
-## 20. Implementation boundary and status
-
-本文件只定义 D6 产品契约。D6 Implementation Plan 独立维护，不能用 PRD 代替施工计划，也不能由本文件授权直接修改 Editor 或 Vault architecture。
-
-实现前必须再次核对现有 seam，包括但不限于：
-
-- `src/router/index.ts` 的 Vault route contract；
-- `src/composables/vault/useScopeFilter.ts` 与 `shared/scopeProtocol.ts` 的 Diary scope ownership；
-- `src/components/diary/DiaryCalendar.vue` 与 `DiaryCalendarSurface.vue`；
-- `src/views/VaultView.vue` 的 Diary scope、Calendar mounted/visibility 和 existing tab/editor ownership；
-- `src/composables/diary/useDiaryDateCommand.ts`；
-- `src/composables/vault/useEditorTabs.ts`、`editor-tabs/useTabWorkspace.ts`、`editor-tabs/useRouteSync.ts`、`editor-tabs/useDocumentSave.ts` 和 `useDocumentLifecycle.ts`；
-- `src/components/vault/ReadingPane.vue`、`RenderedMarkdown.vue`、`EditorPane.vue` 和 `EditorTabs.vue`；
-- `shared/diaryProtocol.ts`、`server/routes/diary.ts` 与现有 mutation/auth/path boundaries。
-
-最终状态：
+## 15. Phase status
 
 ```text
-D0–D5                 REVIEW-CLOSED
-Diary Calendar MVP    COMPLETE / REVIEW-CLOSED
-D6 PRD                REVIEW-CLOSED / independent review PASS
-D6 implementation     NOT STARTED
-Future Mood/Task/etc. NOT STARTED / non-MVP
+D6.0   REVIEW-CLOSED
+D6.1   REVIEW-CLOSED
+D6.2   REVIEW-CLOSED
+D6.2.1 REVIEW-CLOSED
+D6.3   IN PROGRESS — Native Document Workspace replacement
+D6.4   NOT STARTED — Native Editor Lifecycle Verification
+D6.5   BLOCKED
+D6.6   BLOCKED
+D6.7   BLOCKED
 ```
 
-本 PRD 不修改已有 Diary Calendar MVP closure；D6 Implementation Plan 继续作为独立的施工计划维护。D6 design closure 不会自动启动 D6 implementation 或 D6.1。
+旧 D6.3 Reader Dialog implementation 为 `SUPERSEDED BEFORE REVIEW CLOSURE`。新的 D6.3 只有在 production/tests/evidence 完成后才能进入 `REVIEW-READY`，且必须重新 independent review。
+
+## 16. Acceptance criteria
+
+- [ ] Calendar date success opens existing native Vault READ surface.
+- [ ] No DiaryReaderDialog or Diary Editor Dialog runtime remains.
+- [ ] ReadingPane instance count is exactly one.
+- [ ] Existing view toggle enters same-tab EditorPane/Monaco.
+- [ ] FileTree exact filter renders only current Diary plus ancestors.
+- [ ] User `filesFilter` is preserved.
+- [ ] Calendar Home action is presentation-only and preserves tab/route/activePath/dirty.
+- [ ] Same-date reopen reuses tab and preserves unsaved raw.
+- [ ] activePath mismatch, backing close, scope exit and special surfaces reset HOME without auto-open.
+- [ ] Calendar remains mounted throughout Diary scope.
+- [ ] Browser Back remains router-owned.
+- [ ] note/archive/ledger, RightRail, StatusBar and EditorTabs retain native behavior.
+- [ ] focused tests, browser matrix, typecheck and build pass with no `dayIndex`/pageerror.
+- [ ] D6.3 independent review P0/P1/P2 = 0/0/0 before REVIEW-CLOSED.
