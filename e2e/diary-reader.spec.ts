@@ -182,6 +182,103 @@ test('Calendar opens the native Vault reader with an exact FileTree context and 
   expect(state.consoleErrors).toEqual([])
 })
 
+test('mobile native Diary documents fill the viewport when the side panel is closed', async ({ page, request }) => {
+  const date = localCivilDate()
+  const other = shiftCivilDate(date, -1)
+  const path = diaryPath(date)
+  const otherPath = diaryPath(other)
+  const state = diagnostics(page)
+
+  try {
+    await seedExistingDiary(request, date, '# Mobile Native Diary\n\nThe document stays usable without the side panel.\n')
+    await seedExistingDiary(request, other, '# Other Mobile Diary\n')
+    await openDiaryScope(page)
+    await clickDiaryDate(page, date)
+    await assertNativeReader(page, date)
+
+    const filesButton = page.getByRole('button', { name: /Explorer|文件资源管理器/i })
+    await expect(filesButton).toHaveAttribute('aria-pressed', 'true')
+
+    await page.setViewportSize({ width: 375, height: 812 })
+    const openMetrics = await page.evaluate(() => {
+      const root = document.querySelector<HTMLElement>('.vault')
+      const activityBar = document.querySelector<HTMLElement>('.activity-bar')
+      const fileTree = document.querySelector<HTMLElement>('.file-tree')
+      const editorArea = document.querySelector<HTMLElement>('.editor-area')
+      return {
+        rootClass: root?.className ?? '',
+        fileTreeWidth: fileTree?.getBoundingClientRect().width ?? 0,
+        activityBarWidth: activityBar?.getBoundingClientRect().width ?? 0,
+        editorLeft: editorArea?.getBoundingClientRect().left ?? 0,
+        editorRight: editorArea?.getBoundingClientRect().right ?? 0,
+        editorWidth: editorArea?.getBoundingClientRect().width ?? 0,
+        viewportWidth: window.innerWidth,
+        scrollWidth: document.documentElement.scrollWidth,
+      }
+    })
+    expect(openMetrics.rootClass).toMatch(/side-panel-open/)
+    expect(openMetrics.fileTreeWidth).toBeGreaterThan(100)
+    expect(openMetrics.editorWidth).toBeGreaterThan(0)
+    expect(openMetrics.editorLeft).toBeGreaterThanOrEqual(openMetrics.activityBarWidth - 1)
+    expect(openMetrics.scrollWidth).toBeLessThanOrEqual(openMetrics.viewportWidth + 1)
+
+    await filesButton.click()
+    await expect(filesButton).toHaveAttribute('aria-pressed', 'false')
+    await expect(page.locator('.vault')).not.toHaveClass(/side-panel-open/)
+    await expect(page.locator('.file-tree')).toBeHidden()
+    await expect(page.locator('.reading-pane')).toBeVisible()
+
+    for (const viewport of [
+      { width: 375, height: 812 },
+      { width: 320, height: 700 },
+    ]) {
+      await page.setViewportSize(viewport)
+      const closedMetrics = await page.evaluate(() => {
+        const activityBar = document.querySelector<HTMLElement>('.activity-bar')
+        const editorArea = document.querySelector<HTMLElement>('.editor-area')
+        const editor = editorArea?.getBoundingClientRect()
+        const activity = activityBar?.getBoundingClientRect()
+        return {
+          editorLeft: editor?.left ?? 0,
+          editorRight: editor?.right ?? 0,
+          editorWidth: editor?.width ?? 0,
+          activityRight: activity?.right ?? 0,
+          viewportWidth: window.innerWidth,
+          scrollWidth: document.documentElement.scrollWidth,
+        }
+      })
+      expect(closedMetrics.editorLeft, `${viewport.width}px editor starts after Activity Bar`)
+        .toBeGreaterThanOrEqual(closedMetrics.activityRight - 1)
+      expect(closedMetrics.editorRight, `${viewport.width}px editor reaches viewport edge`)
+        .toBeGreaterThanOrEqual(closedMetrics.viewportWidth - 1)
+      expect(closedMetrics.editorWidth, `${viewport.width}px editor uses remaining width`)
+        .toBeGreaterThanOrEqual(closedMetrics.viewportWidth - closedMetrics.activityRight - 2)
+      expect(closedMetrics.scrollWidth, `${viewport.width}px horizontal overflow`)
+        .toBeLessThanOrEqual(closedMetrics.viewportWidth + 1)
+      await expect(page.locator('.reading-pane')).toBeVisible()
+    }
+
+    await page.setViewportSize({ width: 375, height: 812 })
+    await page.getByTestId('view-toggle').click()
+    await expect(page.getByRole('textbox', { name: 'Editor content' })).toBeVisible()
+    await page.getByTestId('view-toggle').click()
+    await expect(page.locator('.reading-pane')).toBeVisible()
+
+    await filesButton.click()
+    await expect(filesButton).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.locator('.file-tree')).toBeVisible()
+    await expect(page.getByTestId('file-tree-exact-context')).toContainText(date)
+    await expect(page.locator(`[data-tree-key="file:${path}"]`)).toHaveCount(1)
+    await expect(page.locator(`[data-tree-key="file:${otherPath}"]`)).toHaveCount(0)
+  } finally {
+    await deleteDiaryDate(request, date)
+    await deleteDiaryDate(request, other)
+  }
+
+  expect(state.pageErrors).toEqual([])
+  expect(state.consoleErrors).toEqual([])
+})
+
 test('created and existing future Diaries enter native READ while missing future stays Home', async ({ page, request }) => {
   const today = localCivilDate()
   const past = shiftCivilDate(today, -1)

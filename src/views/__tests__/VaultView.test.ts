@@ -686,4 +686,18 @@ describe('VaultView D3.2 Diary surface wiring', () => {
     expect(styles).toContain('.vault.diary-calendar-mode .diary-calendar-content')
     expect(styles).not.toContain('.vault.diary-reader-mode')
   })
+
+  it('mirrors the existing side-panel state for mobile native Diary documents', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+    const styles = readFileSync(fileURLToPath(new URL('../../style.css', import.meta.url)), 'utf8')
+
+    // The root class binding is the characterization seam for both runtime
+    // states: the existing layout owner supplies true while a panel is open
+    // and false when activePanel is null. CSS then selects the matching
+    // mobile grid without introducing another panel store.
+    expect(source).toContain("'side-panel-open': sidePanelOpen")
+    expect(styles).toContain('.vault.diary-native-document-mode.side-panel-open')
+    expect(styles).toContain('.vault.diary-native-document-mode:not(.side-panel-open)')
+    expect(styles).not.toMatch(/\.vault\.diary-native-document-mode\s*\{\s*\n\s*grid-template-columns: 40px minmax\(136px, 42vw\)/)
+  })
 })

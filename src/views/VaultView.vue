@@ -2008,7 +2008,7 @@ watch(isReadMode, async (reading) => {
   <div
     ref="vaultRef"
     class="vault"
-    :class="{ 'is-read': isReadMode, 'right-rail-open': rightRailVisible, 'diary-calendar-mode': isDiaryCalendarMode, 'diary-native-document-mode': isDiaryDocumentMode }"
+    :class="{ 'is-read': isReadMode, 'right-rail-open': rightRailVisible, 'side-panel-open': sidePanelOpen, 'diary-calendar-mode': isDiaryCalendarMode, 'diary-native-document-mode': isDiaryDocumentMode }"
     tabindex="0"
     :style="vaultStyle"
     @keydown="onVaultKeydown"
