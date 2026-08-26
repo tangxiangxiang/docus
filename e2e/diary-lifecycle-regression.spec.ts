@@ -324,6 +324,36 @@ test('tab close and reopen use existing fallback and stable document identity', 
   expect(state.consoleErrors).toEqual([])
 })
 
+test('closing a non-active tab preserves Diary DOCUMENT and its exact context', async ({ page, request }) => {
+  const date = localCivilDate()
+  const path = diaryPath(date)
+  const note = `inbox/d65-non-active-${RUN_ID}`
+  const state = diagnostics(page)
+  try {
+    await seedDiary(request, date, `# Non-active close ${RUN_ID}\n`)
+    await seedNote(request, note, `# Non-active note ${RUN_ID}\n`)
+    await openDiaryHome(page)
+    await clickDiaryDate(page, date)
+    await assertNativeDiary(page, date)
+
+    await openNote(page, note)
+    await selectScope(page, 'diary')
+    await clickDiaryDate(page, date)
+    await assertNativeDiary(page, date)
+
+    // The note tab is non-active while the Diary document remains active.
+    await page.locator(`[role="tab"][data-tab-id="${note}"] .tab-close`).click()
+    await expect(page.locator(`[role="tab"][data-tab-id="${note}"]`)).toHaveCount(0)
+    await assertNativeDiary(page, date)
+    await expect(page.getByTestId('file-tree-exact-context')).toContainText(date)
+  } finally {
+    await deletePost(request, path)
+    await deletePost(request, note)
+  }
+  expect(state.pageErrors).toEqual([])
+  expect(state.consoleErrors).toEqual([])
+})
+
 test('clean refresh restores unique tabs but not Diary DOCUMENT presentation', async ({ page, request }) => {
   const today = localCivilDate()
   const dates = [today, shiftCivilDate(today, -1)]
