@@ -2,7 +2,7 @@
 
 状态：`REVIEW-CLOSED`（原始 D6 产品 contract baseline）；2026-08-26 Native Document Workspace superseding amendment = `REVIEW-CLOSED`，Independent Review = `PASS`（P0/P1/P2 = 0/0/0）。
 
-已有状态保持不变：D0–D5、D6.0、D6.1、D6.2、D6.2.1、D6.3、D6.4 均为 `REVIEW-CLOSED`。D6.4 Independent Review = `PASS`（P0/P1/P2 = 0/0/0）。D6.5 为 `NOT STARTED`。
+已有状态保持不变：D0–D5、D6.0、D6.1、D6.2、D6.2.1、D6.3、D6.4 均为 `REVIEW-CLOSED`。D6.4 Independent Review = `PASS`（P0/P1/P2 = 0/0/0）。D6.5 为 `REVIEW-READY`，Independent Review = `PENDING`。
 
 状态分层：原始 D6 产品 contract baseline = `REVIEW-CLOSED`；Native Document Workspace superseding amendment = `REVIEW-CLOSED`；Independent Review = `PASS`（P0/P1/P2 = 0/0/0）；D6.3 replacement implementation = `REVIEW-CLOSED`。
 
@@ -244,7 +244,7 @@ D6.2   REVIEW-CLOSED
 D6.2.1 REVIEW-CLOSED
 D6.3   REVIEW-CLOSED — Native Document Workspace replacement
 D6.4   REVIEW-CLOSED — Native Editor Lifecycle Verification
-D6.5   NOT STARTED
+D6.5   REVIEW-READY — Lifecycle Regression; Independent Review PENDING
 D6.6   BLOCKED
 D6.7   BLOCKED
 ```
@@ -267,3 +267,4 @@ D6.7   BLOCKED
 - [x] note/archive/ledger, RightRail, StatusBar and EditorTabs retain native behavior.
 - [x] focused tests, browser matrix, typecheck and build pass with no `dayIndex`/pageerror.
 - [x] D6.3 independent review P0/P1/P2 = 0/0/0; Independent Review = PASS.
+- [x] D6.5 lifecycle regression evidence recorded for scope/tab/route/close/reopen/refresh/deep-link/browser-history boundaries; Independent Review remains PENDING.

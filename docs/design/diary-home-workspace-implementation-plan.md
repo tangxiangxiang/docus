@@ -2,7 +2,7 @@
 
 状态：`REVIEW-CLOSED`（原始 D6 design baseline）；Native Document Workspace superseding design amendment = `REVIEW-CLOSED`，Independent Review = `PASS`（P0/P1/P2 = 0/0/0）。D6.4 closure review = `PASS`（P0/P1/P2 = 0/0/0）。
 
-基线：D6.0–D6.4 `REVIEW-CLOSED`。旧 D6.3 Reader Dialog implementation 在 closure 前被产品决定替代；D6.5 当前为 `NOT STARTED`。
+基线：D6.0–D6.4 `REVIEW-CLOSED`。旧 D6.3 Reader Dialog implementation 在 closure 前被产品决定替代；D6.5 当前为 `REVIEW-READY`，其生命周期回归 evidence 已记录，Independent Review 仍为 `PENDING`。
 
 这里的 `REVIEW-CLOSED` 同时覆盖原始 D6 implementation-plan baseline 与已通过独立复审的 2026-08-26 Native Workspace superseding amendment。
 
@@ -175,11 +175,25 @@ presentation/VaultView unit tests, 17/17 D6.2/D6.3 regression tests, 2/2
 existing generic long-flow tests, client/full typecheck and build PASS. No
 production code, generic lifecycle owner, route, server/shared contract or
 dependency changed. No Editor adapter or new lifecycle is allowed. Independent
-review passed with P0/P1/P2 = 0/0/0. D6.5 is not started.
+review passed with P0/P1/P2 = 0/0/0. At D6.4 closure D6.5 was not started; the subsequent D6.5 evidence is recorded below.
 
 ### D6.5 — Lifecycle Regression
 
-Status: `NOT STARTED`. Verify broader scope/tab/route/close/reopen regressions.
+Status: `REVIEW-READY`; implementation/test evidence complete; Independent Review = `PENDING`; task-scoped self-review P0/P1/P2 = `0/0/0`.
+
+Evidence: [D6.5 Lifecycle Regression](diary-home-workspace-d6.5-lifecycle-regression.md).
+
+Starting HEAD: `6d0aa02b1632c7572bd877a8cc43f65794f54bb8`.
+
+Test commit: `06ffb2e` (`test(diary): verify D6.5 lifecycle regressions`).
+
+The dedicated Chromium suite passes 6/6 scenarios covering scope exit and
+re-entry, manual multi-tab selection, tab close/fallback/reopen, clean refresh,
+direct Diary deep links and real Browser Back/Forward. The presentation and
+generic tab/document unit set passes 163/163 tests; existing Diary/VCalendar/D4
+browser regressions pass 23/23. Client/full typecheck, build and diff checks
+pass. Only the two test files and the linked evidence/docs are changed; no
+production, server/shared, route, dependency or D6.6 code is included.
 
 ### D6.6 — Responsive / Accessibility
 
@@ -274,7 +288,8 @@ Docs rollback is informational-only; it is not an asserted exact history chain.
 
 At D6.3 closure, `D6.4 = NOT STARTED`; the subsequent D6.4 verification and
 independent review are recorded in the evidence linked above. D6.4 is now
-`REVIEW-CLOSED` with P0/P1/P2 = 0/0/0. D6.5 remains `NOT STARTED`.
+`REVIEW-CLOSED` with P0/P1/P2 = 0/0/0. At that closure point D6.5 was
+`NOT STARTED`; D6.5 is now `REVIEW-READY` with its own evidence linked above.
 
 ## 14. D6.4 exit criteria
 
@@ -298,5 +313,6 @@ READ/EDIT transition. A new browser assertion for `Cmd+E` is intentionally
 deferred to D6.6 keyboard/accessibility coverage.
 
 These criteria passed: `D6.4 = REVIEW-CLOSED`, Independent Review = `PASS`,
-and P0/P1/P2 = 0/0/0. D6.5 = `NOT STARTED`; do not begin D6.5 in this
-closure sync.
+and P0/P1/P2 = 0/0/0. At D6.4 closure D6.5 was `NOT STARTED`; the current
+D6.5 lifecycle evidence is tracked in its own section and remains pending
+independent review.
