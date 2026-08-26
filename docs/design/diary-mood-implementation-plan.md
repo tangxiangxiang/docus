@@ -32,7 +32,7 @@ PRD：[`diary-mood-prd.md`](./diary-mood-prd.md)，已 `REVIEW-CLOSED`
 
 - 一日最多一个 mood，支持 set/change/clear；无值为 absent/null。
 - 固定 24 项，stable ID 与 SVG 映射继承 closed PRD，不得改 catalog。
-- Picker 固定 **4 columns × 6 rows**、row-major，不得转置为 6 × 4。
+- Picker 固定 **4 columns × 6 rows**、row-major，不得转置为 6 × 4；desktop/tablet/mobile 均保持该方向与顺序。
 - 文档只持久化 stable ID，例如 `mood: happy`；绝不持久化 SVG 路径或中文文件名。
 - `DiaryDate ↔ diary/YYYY-MM-DD.md` 不变；Mood 不可产生 orphan record。
 - Calendar 负责导航，Vault 负责文档；D6 的 Native Workspace、route、tab、raw、save、dirty、History、Recovery ownership 全部保持。
@@ -89,7 +89,7 @@ missing today/past 必须先走 `openDiaryDate()`/既有 Diary create authority�
 
 ### Calendar
 
-Mood 只作为摘要 marker，不改变 day button/date-click semantic，不制造第二 navigation owner。若提供 Calendar picker entry，必须避免嵌套 interactive button；优先由合法 slot/外部轻量 action 承载。
+Mood 只作为摘要 marker，不改变 day button/date-click semantic，不制造第二 navigation owner。Calendar picker entry 是必需能力，不是可选项；它必须由合法的非嵌套 interactive structure（例如 date button 与 sibling mood action）承载。date button 继续拥有日期导航，mood action 只打开 picker，不调用 `openDiaryDate()`，不改变 route/tab/activePath；marker 本身保持非交互。若现有 VCalendar slot 无法安全提供该结构，D7.3 必须 STOP 并进入 architecture review。
 
 ### Reactive state
 
@@ -101,7 +101,26 @@ D7.0 必须用证据覆盖 clean/dirty body 与 mood set/change/clear、body sav
 
 如果当前 History/Recovery 只保存 Markdown body 而不保存 SQLite metadata，不能直接实现 D7；必须先做 architecture/product decision。未知字段和 unrelated metadata 必须保留。
 
-## 9. Phase Plan
+## 9. Ownership Matrix
+
+| Concern | Existing owner | D7 extension | Forbidden duplicate |
+| --- | --- | --- | --- |
+| DiaryDate validation / creation | `shared/diaryProtocol.ts`; `server/routes/diary.ts`; `useDiaryDateCommand` | Reuse for mood target and missing-date guards | Mood-specific date parser/create route |
+| Document open / route / tab / activePath | `useRouteSync.ts`, `useTabWorkspace.ts`, `useEditorTabs.ts` | Observe identity only | Mood-driven navigation, tab store, route |
+| Body raw / save / dirty / draft | `useDocumentSave.ts`, `useDocumentLifecycle.ts`, `metadataDraftStore.ts` | Keep body lifecycle unchanged | Mood raw rewrite, second save/dirty/draft owner |
+| Metadata read/write | `server/documentMetadata.ts`, `server/routes/metadata.ts`, `src/lib/api.ts` | Add mood only after D7.0 proves schema/CAS semantics | Sidecar, frontmatter rewrite, second metadata API |
+| Mood registry | New D7 single registry (D7.1) | Exactly 24 IDs/assets/positions | Per-view catalogs or asset-path persistence |
+| Mood command / month read | New D7 command/query seam using existing metadata authority | Validate canonical ID, set/change/clear, bulk month read | Picker-owned fetch/write or per-cell N+1 |
+| History / Recovery / conflict | `VaultView.vue` and existing history/recovery composables | Prove mood preservation/restoration before implementation | Mood-specific history/recovery pipeline |
+| Calendar marker / picker entry | `DiaryCalendar.vue`, `DiaryCalendarSurface.vue` | Marker summary plus required sibling picker action | Nested buttons or second date-navigation owner |
+| Native picker | Existing Native Vault READ/EDIT context (`ReadingPane.vue`, `EditorPane.vue`) | One shared 4×6 picker presentation | MoodReader/MoodEditor/Dialog or duplicate state |
+| FileTree / ordinary Vault | `FileTree.vue` and existing tree policy | No Mood UI for ordinary notes | Diary logic hardcoded into generic tree contract |
+
+## 10. Picker Interaction Contract
+
+The picker uses a `radiogroup` containing 24 `radio` options in the frozen 4-column × 6-row row-major order. This matches the single-select nullable domain: arrow-key navigation moves within the grid, selection is announced by `aria-checked`, and a separate labelled **Clear mood** button represents the absent value. Options have stable zh/en accessible names, visible focus, and a non-color selected cue. The picker is the only mood mutation UI; Calendar markers remain non-interactive summaries.
+
+## 11. Phase Plan
 
 | Phase | Scope | Status before implementation |
 | --- | --- | --- |
@@ -115,7 +134,57 @@ D7.0 必须用证据覆盖 clean/dirty body 与 mood set/change/clear、body sav
 
 Each phase independently follows `NOT STARTED → IN PROGRESS → REVIEW-READY → Independent Review → REVIEW-CLOSED`; no phase may begin before its predecessor is closed.
 
-## 10. Test Matrix (Plan Only)
+## 12. Phase Exit Criteria
+
+### D7.1 — Registry and Metadata Foundation
+
+- [ ] exactly 24 registry items, unique stable IDs/assets/row-column positions
+- [ ] stable row-major order and stable ID-only persistence
+- [ ] set/change/clear, unknown-value preservation, unrelated metadata preservation
+- [ ] no orphan mood for missing Diary; missing future rejected; existing future allowed
+- [ ] dirty body/raw/state untouched; CAS semantics proven; bulk read avoids N+1
+- [ ] ordinary Note contract unchanged
+
+### D7.2 — Native Diary Context and Picker
+
+- [ ] Native Diary only; ordinary Note has no Mood UI
+- [ ] READ/EDIT share one mood state and exactly one picker
+- [ ] 24 items, 4×6 canonical order/assets, selected and clear states
+- [ ] keyboard, focus-visible, accessible names, zh/en usable
+- [ ] dirty body preserved; route, activePath, tab identity unchanged
+- [ ] no Reader/Editor/Dialog lifecycle introduced
+
+### D7.3 — Calendar Integration
+
+- [ ] required Calendar picker entry with legal non-nested interactive DOM
+- [ ] month bulk load with no per-cell N+1
+- [ ] Diary existence and mood markers preserved; marker non-interactive
+- [ ] date button remains navigation owner; mood action does not navigate
+- [ ] existing missing today/past creation and missing-future guards reused
+- [ ] keep-mounted Calendar and VCalendar `dayIndex` compatibility invariants preserved
+
+### D7.4 — Lifecycle and Conflict Regression
+
+- [ ] clean and dirty body with mood set/change/clear
+- [ ] body save ordering, History Comparison/Restore, baseline/divergent Recovery
+- [ ] external body/metadata conflict, unknown mood, delete/recreate, same-date reopen
+- [ ] scope exit/re-entry, tab close/select, refresh, deep link, Back/Forward
+- [ ] identity, raw, dirty, metadata, and Calendar continuity proven
+
+### D7.5 — Responsive and Accessibility Validation
+
+- [ ] 1280×800, 768×1024, 375×812, 320×700 all retain 4 columns × 6 rows
+- [ ] keyboard, touch, focus-visible, selected non-color cue, and clear action
+- [ ] zh/en and light/dark behavior; no horizontal page overflow
+
+### D7.6 — Release and Closure
+
+- [ ] full D7 plus existing D6 Diary and ordinary Vault regression passes
+- [ ] evidence is complete and no unresolved P0/P1/P2 remains
+- [ ] Independent Review is PASS before closure sync
+- [ ] closure is a separate docs-only lifecycle commit
+
+## 13. Test Matrix (Plan Only)
 
 - Unit: registry count/IDs/assets/positions/order; mood validation; unknown and unrelated metadata preservation.
 - Component: exact 4×6 DOM/order, selected/clear/focus/accessibility, ordinary Note exclusion.
@@ -123,23 +192,23 @@ Each phase independently follows `NOT STARTED → IN PROGRESS → REVIEW-READY �
 - E2E: Calendar marker/navigation, Native READ/EDIT picker, set/change/clear, save/History/Restore/Recovery/conflict, refresh/back/tab behavior, responsive and a11y matrix.
 - Existing D6 Diary suites and ordinary Inbox/Literature/Archive/Ledger smoke remain regression gates.
 
-## 11. Responsive and Accessibility Contract
+## 14. Responsive and Accessibility Contract
 
 All target viewports retain 4 columns × 6 rows; at 320px padding/icon sizing may be reduced only while touch targets remain usable. Every option is a real keyboard-focusable activator with accessible zh/en name, selected state not conveyed by color alone, visible focus, and clear action. Do not claim certification in advance.
 
-## 12. Security and Ordinary Vault Boundary
+## 15. Security and Ordinary Vault Boundary
 
 Server validation must use existing path/domain normalization and DiaryDate authority; never rely on client `startsWith('diary/')`. Reject traversal, absolute, encoded, non-Diary and arbitrary paths as appropriate. Generic ordinary-note semantics and metadata remain unchanged.
 
-## 13. STOP Conditions
+## 16. STOP Conditions
 
 Stop and request review if implementation needs a second metadata/document lifecycle, raw rewrite that can overwrite dirty content, a new database/sidecar/parser without approval, orphan mood records, future-guard bypass, new Diary route, Reader/Editor/Dialog workspace, FileTree Diary hardcoding, N+1 month reads, 6×4 layout, changed catalog, SVG-path persistence, or History/Recovery semantics that cannot restore mood safely.
 
-## 14. Rollback
+## 17. Rollback
 
 Each D7.x is independently revertible. D7.0 evidence-only changes revert as docs. D7.1 schema/API changes require migration/backward-read and unknown-value preservation; rollback must not delete newer mood values or unrelated metadata. UI phases can be reverted independently while existing Diary navigation/document lifecycle remains intact.
 
-## 15. D7.0 Readiness Gate
+## 18. D7.0 Readiness Gate
 
 - [ ] source/read/write metadata owner proven
 - [ ] identity and CAS proven
@@ -150,7 +219,7 @@ Each D7.x is independently revertible. D7.0 evidence-only changes revert as docs
 - [ ] storage decision recorded without second source of truth
 - [ ] no closed-PRD conflict
 
-## 16. Final Lifecycle State
+## 19. Final Lifecycle State
 
 ```text
 D6                         = REVIEW-CLOSED
