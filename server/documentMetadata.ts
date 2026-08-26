@@ -875,6 +875,44 @@ export function getDocumentMetadataById(db: DatabaseT, id: string): DocumentMeta
   return row ? hydrate(db, row) : null
 }
 
+/**
+ * Return the stable identity encoded by the delete quarantine for `path`.
+ * A tombstone is only an identity proof when it was produced by the existing
+ * document lifecycle (`@deleted/<document-id>` plus the original path); an
+ * arbitrary path match is deliberately not sufficient for historical
+ * rehydration.
+ */
+export function getDocumentTombstoneIdentity(
+  db: DatabaseT,
+  path: string,
+): string | null {
+  const hasIdentityTombstones = db.prepare(`
+    SELECT 1 FROM sqlite_master
+    WHERE type = 'table' AND name = 'history_metadata_document_tombstones'
+  `).get()
+  if (hasIdentityTombstones) {
+    const row = db.prepare(`
+      SELECT document_id
+      FROM history_metadata_document_tombstones
+      WHERE original_path = ?
+      ORDER BY deleted_at DESC, document_id DESC
+      LIMIT 1
+    `).get(path) as { document_id: string } | undefined
+    if (row?.document_id) return row.document_id
+  }
+  const rows = db.prepare(`
+    SELECT path
+    FROM metadata_migrations
+    WHERE original_path = ? AND path LIKE '@deleted/%'
+    ORDER BY updated_at DESC, path DESC
+  `).all(path) as Array<{ path: string }>
+  for (const row of rows) {
+    const identity = row.path.slice('@deleted/'.length)
+    if (identity.length > 0) return identity
+  }
+  return null
+}
+
 export function listDocumentMetadata(db: DatabaseT): DocumentMetadata[] {
   const rows = db.prepare(
     'SELECT id, path, title, summary, created_at, updated_at FROM documents ORDER BY path',
@@ -882,30 +920,36 @@ export function listDocumentMetadata(db: DatabaseT): DocumentMetadata[] {
   return rows.map((row) => hydrate(db, row))
 }
 
-/** Create/import a metadata row. Existing-row ordinary updates use patchDocumentMetadata. */
-export function createDocumentMetadata(db: DatabaseT, input: SaveDocumentMetadata): DocumentMetadata {
+/** Create/import a metadata row inside an already-open SQLite transaction. */
+export function createDocumentMetadataWithinTransaction(
+  db: DatabaseT,
+  input: SaveDocumentMetadata,
+  now = Date.now(),
+): DocumentMetadata {
   const path = input.path.trim()
   const title = input.title.trim()
   assertMetadataPathTitle(path, title)
 
-  const tx = db.transaction(() => {
-    if (db.prepare('SELECT 1 FROM documents WHERE path = ?').get(path)) {
-      throw new DocumentMetadataError('METADATA_ALREADY_EXISTS', `metadata already exists: ${path}`)
-    }
-    const now = Date.now()
-    const id = input.id ?? randomUUID()
-    const createdAt = safeTimestamp(Math.trunc(input.createdAt ?? now), 'metadata createdAt')
-    const updatedAt = safeTimestamp(Math.trunc(input.updatedAt ?? now), 'metadata updatedAt')
-    const tags = normalizeTags(input.tags ?? [])
-    db.prepare(`
-      INSERT INTO documents (id, path, title, summary, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(id, path, title, input.summary?.trim() ?? '', createdAt, updatedAt)
-    insertOrGetTags(db, tags)
-    replaceDocumentTags(db, id, tags)
+  if (db.prepare('SELECT 1 FROM documents WHERE path = ?').get(path)) {
+    throw new DocumentMetadataError('METADATA_ALREADY_EXISTS', `metadata already exists: ${path}`)
+  }
+  const id = input.id ?? randomUUID()
+  const createdAt = safeTimestamp(Math.trunc(input.createdAt ?? now), 'metadata createdAt')
+  const updatedAt = safeTimestamp(Math.trunc(input.updatedAt ?? now), 'metadata updatedAt')
+  const tags = normalizeTags(input.tags ?? [])
+  db.prepare(`
+    INSERT INTO documents (id, path, title, summary, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(id, path, title, input.summary?.trim() ?? '', createdAt, updatedAt)
+  insertOrGetTags(db, tags)
+  replaceDocumentTags(db, id, tags)
 
-    return getDocumentMetadata(db, path)!
-  })
+  return getDocumentMetadata(db, path)!
+}
+
+/** Create/import a metadata row. Existing-row ordinary updates use patchDocumentMetadata. */
+export function createDocumentMetadata(db: DatabaseT, input: SaveDocumentMetadata): DocumentMetadata {
+  const tx = db.transaction(() => createDocumentMetadataWithinTransaction(db, input))
   return tx.immediate()
 }
 
@@ -1027,6 +1071,50 @@ export function patchDocumentMetadata(db: DatabaseT, input: PatchDocumentMetadat
   return tx.immediate()
 }
 
+/**
+ * Apply a trusted historical generic metadata image to the current live
+ * metadata owner. This is intentionally a semantic field restore rather than
+ * a row/snapshot replacement: `updatedAt` is a fresh current version and the
+ * stable document identity/path are checked under the same BEGIN IMMEDIATE
+ * transaction as the field update.
+ */
+export function restoreDocumentMetadataFieldsCAS(
+  db: DatabaseT,
+  input: {
+    path: string
+    documentId: string
+    generationId: string
+    expectedUpdatedAt: number
+    title: string
+    summary: string
+    tags: string[]
+  },
+  now = Date.now(),
+): DocumentMetadata {
+  const tx = db.transaction(() => {
+    const current = getDocumentMetadata(db, input.path)
+    if (!current
+      || current.id !== input.documentId
+      || input.generationId !== input.documentId
+      || current.updatedAt !== input.expectedUpdatedAt) {
+      throw new DocumentMetadataError(
+        'METADATA_VERSION_CONFLICT',
+        `metadata identity or version is stale: ${input.path}`,
+      )
+    }
+    return patchDocumentMetadataWithinTransaction(db, {
+      path: input.path,
+      expectedUpdatedAt: input.expectedUpdatedAt,
+      changes: [
+        { field: 'title', value: input.title },
+        { field: 'summary', value: input.summary },
+        { field: 'tags', values: input.tags },
+      ],
+    }, now)
+  })
+  return tx.immediate()
+}
+
 /** Read/import an absent row without rebuilding an existing row's associations. */
 export function observeDocumentMetadata(
   db: DatabaseT,
@@ -1136,6 +1224,33 @@ function quarantineMigrationAtPath(
   `).run(tombstone, timestamp, path)
 }
 
+/**
+ * Preserve the stable identity of a deleted live document for the history
+ * metadata bridge. This is provenance only; the documents/tags tables remain
+ * the sole live metadata owner. The table is introduced by the history
+ * metadata migration, so older test databases can continue using the legacy
+ * migration quarantine fallback below.
+ */
+function recordHistoryMetadataTombstone(
+  db: DatabaseT,
+  documentId: string,
+  originalPath: string,
+  deletedAt = Date.now(),
+): void {
+  const table = db.prepare(`
+    SELECT 1 FROM sqlite_master
+    WHERE type = 'table' AND name = 'history_metadata_document_tombstones'
+  `).get()
+  if (!table) return
+  db.prepare(`
+    INSERT INTO history_metadata_document_tombstones (document_id, original_path, deleted_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(document_id) DO UPDATE SET
+      original_path = excluded.original_path,
+      deleted_at = excluded.deleted_at
+  `).run(documentId, originalPath, deletedAt)
+}
+
 /** Atomically isolate a stale destination generation and move the source identity. */
 export function moveDocumentMetadataReplacingDestination(
   db: DatabaseT,
@@ -1146,6 +1261,7 @@ export function moveDocumentMetadataReplacingDestination(
     const source = db.prepare('SELECT id, updated_at FROM documents WHERE path = ?').get(fromPath) as { id: string; updated_at: number } | undefined
     if (!source) return false
     const destination = db.prepare('SELECT id FROM documents WHERE path = ?').get(toPath) as { id: string } | undefined
+    if (destination) recordHistoryMetadataTombstone(db, destination.id, toPath)
     quarantineMigrationAtPath(db, toPath, destination?.id)
     if (destination) db.prepare('DELETE FROM documents WHERE id = ?').run(destination.id)
     const timestamp = nextMetadataUpdatedAt(source.updated_at, Date.now())
@@ -1159,6 +1275,7 @@ export function moveDocumentMetadataReplacingDestination(
 export function deleteDocumentMetadata(db: DatabaseT, path: string): boolean {
   return db.transaction(() => {
     const document = db.prepare('SELECT id FROM documents WHERE path = ?').get(path) as { id: string } | undefined
+    if (document) recordHistoryMetadataTombstone(db, document.id, path)
     quarantineMigrationAtPath(db, path, document?.id)
     const result = document
       ? db.prepare('DELETE FROM documents WHERE id = ?').run(document.id)
@@ -1361,6 +1478,7 @@ export function deleteDocumentMetadataPrefix(
       'SELECT id, path FROM documents WHERE path = ? OR path LIKE ?',
     ).all(prefix, `${prefix}/%`) as Array<{ id: string; path: string }>
     for (const document of documents) {
+      recordHistoryMetadataTombstone(db, document.id, document.path, transactionTimestamp)
       quarantineMigrationAtPath(
         db,
         document.path,
