@@ -1,8 +1,8 @@
 # D6 — Diary Home Workspace Implementation Plan
 
-状态：`REVIEW-CLOSED`（原始 D6 design baseline）；Native Document Workspace superseding design amendment = `REVIEW-CLOSED`，Independent Review = `PASS`（P0/P1/P2 = 0/0/0）。
+状态：`REVIEW-CLOSED`（原始 D6 design baseline）；Native Document Workspace superseding design amendment = `REVIEW-CLOSED`，Independent Review = `PASS`（P0/P1/P2 = 0/0/0）。D6.4 closure review = `PASS`（P0/P1/P2 = 0/0/0）。
 
-基线：D6.0–D6.2.1 `REVIEW-CLOSED`。旧 D6.3 Reader Dialog implementation 在 closure 前被产品决定替代；D6.4 当前为 `REVIEW-READY`。
+基线：D6.0–D6.4 `REVIEW-CLOSED`。旧 D6.3 Reader Dialog implementation 在 closure 前被产品决定替代；D6.5 当前为 `NOT STARTED`。
 
 这里的 `REVIEW-CLOSED` 同时覆盖原始 D6 implementation-plan baseline 与已通过独立复审的 2026-08-26 Native Workspace superseding amendment。
 
@@ -161,7 +161,7 @@ Deliverables:
 
 ### D6.4 — Native Editor Lifecycle Verification
 
-Status: `REVIEW-READY`.
+Status: `REVIEW-CLOSED`.
 
 Evidence: [D6.4 Native Editor Lifecycle Verification](diary-home-workspace-d6.4-native-editor-lifecycle.md).
 
@@ -174,12 +174,12 @@ Restore/baseline Recovery/divergent Recovery/external changes -> Calendar Home
 presentation/VaultView unit tests, 17/17 D6.2/D6.3 regression tests, 2/2
 existing generic long-flow tests, client/full typecheck and build PASS. No
 production code, generic lifecycle owner, route, server/shared contract or
-dependency changed. No Editor adapter or new lifecycle is allowed. D6.5
-remains blocked pending independent review of this evidence.
+dependency changed. No Editor adapter or new lifecycle is allowed. Independent
+review passed with P0/P1/P2 = 0/0/0. D6.5 is not started.
 
 ### D6.5 — Lifecycle Regression
 
-Status: `BLOCKED` by D6.4. Verify broader scope/tab/route/close/reopen regressions.
+Status: `NOT STARTED`. Verify broader scope/tab/route/close/reopen regressions.
 
 ### D6.6 — Responsive / Accessibility
 
@@ -272,9 +272,9 @@ Docs rollback is informational-only; it is not an asserted exact history chain.
 - [x] server/shared/router/dependencies unchanged.
 - [x] task self-review P0/P1/P2 = 0/0/0.
 
-At D6.3 closure, `D6.4 = NOT STARTED`; the subsequent D6.4 verification is
-recorded in the evidence linked above. D6.4 remains `REVIEW-READY` pending
-independent review.
+At D6.3 closure, `D6.4 = NOT STARTED`; the subsequent D6.4 verification and
+independent review are recorded in the evidence linked above. D6.4 is now
+`REVIEW-CLOSED` with P0/P1/P2 = 0/0/0. D6.5 remains `NOT STARTED`.
 
 ## 14. D6.4 exit criteria
 
@@ -297,5 +297,6 @@ The D6.4 browser evidence uses the existing `view-toggle` control for the
 READ/EDIT transition. A new browser assertion for `Cmd+E` is intentionally
 deferred to D6.6 keyboard/accessibility coverage.
 
-After these pass: `D6.4 = REVIEW-READY`, `D6.5 = BLOCKED`, and await
-independent review. Do not begin D6.5 in this evidence phase.
+These criteria passed: `D6.4 = REVIEW-CLOSED`, Independent Review = `PASS`,
+and P0/P1/P2 = 0/0/0. D6.5 = `NOT STARTED`; do not begin D6.5 in this
+closure sync.

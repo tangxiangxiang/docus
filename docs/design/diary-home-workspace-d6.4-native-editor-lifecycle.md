@@ -3,10 +3,11 @@
 ## Status
 
 - D6.0–D6.3 = `REVIEW-CLOSED`.
-- D6.4 = `REVIEW-READY` — Native Editor Lifecycle Verification.
-- D6.5 = `BLOCKED`; D6.6 and D6.7 remain `BLOCKED`.
+- D6.4 = `REVIEW-CLOSED` — Native Editor Lifecycle Verification.
+- Independent Review = `PASS` (P0 = 0, P1 = 0, P2 = 0).
+- D6.5 = `NOT STARTED`; D6.6 and D6.7 remain `BLOCKED`.
 - Task-scoped follow-up self-review: P0 = 0, P1 = 0, P2 = 0.
-- Independent review is not claimed by this document; it remains pending.
+- Independent review passed with no remaining P0/P1/P2 findings.
 - This phase changed tests and evidence only. Production code is unchanged.
 
 The canonical D6 direction remains:
@@ -436,13 +437,13 @@ D6.1   = REVIEW-CLOSED
 D6.2   = REVIEW-CLOSED
 D6.2.1 = REVIEW-CLOSED
 D6.3   = REVIEW-CLOSED
-D6.4   = REVIEW-READY
-D6.5   = BLOCKED
+D6.4   = REVIEW-CLOSED
+D6.5   = NOT STARTED
 D6.6   = BLOCKED
 D6.7   = BLOCKED
 
 Task-scoped self-review: P0 = 0, P1 = 0, P2 = 0
-Independent Review: pending; not claimed here
+Independent Review: PASS (P0 = 0, P1 = 0, P2 = 0)
 ```
 
-This evidence is ready for independent review. Stop here; do not begin D6.5.
+Independent review is complete. Stop here; do not begin D6.5.
