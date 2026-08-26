@@ -2,7 +2,8 @@
 
 状态：**BLOCKED**
 
-Independent Review：`PENDING`
+Independent Review：`PASS on the BLOCKED determination`
+Review result：`P0 = 0 / P1 = 1 / P2 = 0`
 
 Self-review：`P0 = 0 / P1 = 1 / P2 = 0`
 
@@ -487,11 +488,14 @@ D6                         = REVIEW-CLOSED
 D7 PRD                     = REVIEW-CLOSED
 D7 Implementation Plan     = REVIEW-CLOSED (scope unchanged)
 D7.0                      = BLOCKED
-D7.0 Independent Review    = PENDING
+D7.0 Independent Review    = PASS on the BLOCKED determination (P0/P1/P2 = 0/1/0)
+D7 Plan Amendment          = `diary-mood-implementation-plan-amendment-d7.0-history-metadata.md`
+D7 Plan Amendment status   = REVIEW-READY (Independent Review = PENDING)
+D7.0A                     = NOT STARTED
 D7 Implementation         = NOT STARTED
 D7.1                      = NOT STARTED
 ```
 
 本轮没有实现 Mood，也没有开始 D7.1。下一步必须先完成 Implementation Plan
-amendment / generic History metadata decision，并经 review 后再重新判断 D7.0；不得
-把 blocker 静默推入 D7.4。
+amendment / generic History metadata decision；Amendment review 通过并完成 D7.0A
+后，再重新判断 D7.0。不得把 blocker 静默推入 D7.4。

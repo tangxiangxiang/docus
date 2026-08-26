@@ -59,6 +59,17 @@ Recovery 也只持久化 body draft。因此 SQLite 仍是 candidate，D7.0 当�
 `BLOCKED`，并需要在 D7.1 前完成 generic History metadata decision 与
 Implementation Plan amendment。D7.1–D7.6 的既有 scope 未静默改变。
 
+### D7.0 blocker-resolution amendment
+
+D7.0 的 generic History metadata revision 缺口由独立 Amendment 承载：
+
+[`diary-mood-implementation-plan-amendment-d7.0-history-metadata.md`](./diary-mood-implementation-plan-amendment-d7.0-history-metadata.md)
+
+Amendment 当前为 `REVIEW-READY`、Independent Review `PENDING`；它定义
+`D7.0A — Generic History Metadata Revision Foundation`，但不实现 D7.0A。
+`D7.0A = NOT STARTED`。D7.0 继续 `BLOCKED`，SQLite 继续
+`CANDIDATE / NOT SELECTED`，D7.1 继续 `NOT STARTED`。
+
 ## 4. Recommended Storage Direction
 
 **Candidate：扩展现有 SQLite-owned `DocumentMetadata`。** 这是当前推荐方向，因为它已有稳定 document identity、server authority、metadata patch seam、version token、rename/delete transaction 和前端 metadata API。
@@ -135,6 +146,7 @@ The picker uses a `radiogroup` containing 24 `radio` options in the frozen 4-col
 | Phase | Scope | Status before implementation |
 | --- | --- | --- |
 | D7.0 | Storage/metadata owner verification and evidence | BLOCKED |
+| D7.0A | Generic History Metadata Revision Foundation (D7.0 blocker remediation) | NOT STARTED |
 | D7.1 | Registry, schema/validation, existing owner integration, set/change/clear, bulk read seam | NOT STARTED |
 | D7.2 | Native Diary context and 4×6 picker; preserve dirty body | NOT STARTED |
 | D7.3 | Calendar month markers/entry and missing-date guards; no N+1 | NOT STARTED |
@@ -241,6 +253,9 @@ D7 Implementation Plan    = REVIEW-CLOSED
 D7 Implementation Plan IR  = PASS (P0/P1/P2 = 0/0/0)
 D7.0                      = BLOCKED
 D7.0 Evidence              = `diary-mood-d7.0-storage-metadata-verification.md`
+D7.0 Independent Review    = PASS on the BLOCKED determination (P0/P1/P2 = 0/1/0)
+D7 Plan Amendment          = REVIEW-READY (Independent Review = PENDING)
+D7.0A                     = NOT STARTED
 D7 Implementation          = NOT STARTED
 ```
 
