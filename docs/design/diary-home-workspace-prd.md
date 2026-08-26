@@ -2,7 +2,7 @@
 
 状态：`REVIEW-CLOSED`（原始 D6 产品 contract baseline）；2026-08-26 Native Document Workspace superseding amendment = `REVIEW-CLOSED`，Independent Review = `PASS`（P0/P1/P2 = 0/0/0）。
 
-已有状态保持不变：D0–D5、D6.0、D6.1、D6.2、D6.2.1 均为 `REVIEW-CLOSED`。D6.4 为 `NOT STARTED`。
+已有状态保持不变：D0–D5、D6.0、D6.1、D6.2、D6.2.1 均为 `REVIEW-CLOSED`。D6.4 为 `REVIEW-READY`。
 
 状态分层：原始 D6 产品 contract baseline = `REVIEW-CLOSED`；Native Document Workspace superseding amendment = `REVIEW-CLOSED`；Independent Review = `PASS`（P0/P1/P2 = 0/0/0）；D6.3 replacement implementation = `REVIEW-CLOSED`。
 
@@ -243,7 +243,7 @@ D6.1   REVIEW-CLOSED
 D6.2   REVIEW-CLOSED
 D6.2.1 REVIEW-CLOSED
 D6.3   REVIEW-CLOSED — Native Document Workspace replacement
-D6.4   NOT STARTED — Native Editor Lifecycle Verification
+D6.4   REVIEW-READY — Native Editor Lifecycle Verification
 D6.5   BLOCKED
 D6.6   BLOCKED
 D6.7   BLOCKED

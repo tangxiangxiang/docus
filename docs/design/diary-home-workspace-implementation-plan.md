@@ -2,7 +2,7 @@
 
 状态：`REVIEW-CLOSED`（原始 D6 design baseline）；Native Document Workspace superseding design amendment = `REVIEW-CLOSED`，Independent Review = `PASS`（P0/P1/P2 = 0/0/0）。
 
-基线：D6.0–D6.2.1 `REVIEW-CLOSED`。旧 D6.3 Reader Dialog implementation 在 closure 前被产品决定替代；D6.4 `NOT STARTED`。
+基线：D6.0–D6.2.1 `REVIEW-CLOSED`。旧 D6.3 Reader Dialog implementation 在 closure 前被产品决定替代；D6.4 当前为 `REVIEW-READY`。
 
 这里的 `REVIEW-CLOSED` 同时覆盖原始 D6 implementation-plan baseline 与已通过独立复审的 2026-08-26 Native Workspace superseding amendment。
 
@@ -161,9 +161,20 @@ Deliverables:
 
 ### D6.4 — Native Editor Lifecycle Verification
 
-Status: `NOT STARTED`.
+Status: `REVIEW-READY`.
 
-Future goal: verify the same Diary backing tab through native READ -> existing EDIT -> save/dirty/history/recovery/external changes -> Calendar Home -> reopen. No Editor adapter or new lifecycle is allowed. D6.3 may prove only the minimum native Edit and dirty-preservation seam; it must not execute D6.4 verification.
+Evidence: [D6.4 Native Editor Lifecycle Verification](diary-home-workspace-d6.4-native-editor-lifecycle.md).
+
+Starting HEAD: `e550c1873d77ddfd95b96d87cff935130b09c662`.
+
+The focused browser evidence verifies the same Diary backing tab through
+native READ -> existing EDIT -> save/dirty/history/recovery/external changes
+-> Calendar Home -> same-date reopen. It records 4/4 dedicated Chromium
+tests, 60/60 focused presentation/VaultView unit tests, 17/17 D6.2/D6.3
+regression tests, client/full typecheck and build PASS. No production code,
+generic lifecycle owner, route, server/shared contract or dependency changed.
+No Editor adapter or new lifecycle is allowed. D6.5 remains blocked pending
+independent review of this evidence.
 
 ### D6.5 — Lifecycle Regression
 
@@ -260,4 +271,24 @@ Docs rollback is informational-only; it is not an asserted exact history chain.
 - [x] server/shared/router/dependencies unchanged.
 - [x] task self-review P0/P1/P2 = 0/0/0.
 
-After these pass: `D6.3 = REVIEW-CLOSED`, `D6.4 = NOT STARTED`, then STOP. Do not begin D6.4 in the closure sync.
+At D6.3 closure, `D6.4 = NOT STARTED`; the subsequent D6.4 verification is
+recorded in the evidence linked above. D6.4 remains `REVIEW-READY` pending
+independent review.
+
+## 14. D6.4 exit criteria
+
+- [x] Calendar date command reaches the existing native READ surface.
+- [x] Existing READ -> EDIT toggle reaches the same native EditorPane/Monaco path.
+- [x] Same backing tab, route, activePath, document identity and dirty raw survive Calendar Home.
+- [x] Existing save and dirty confirmation behavior is verified separately from presentation Home.
+- [x] Existing draft Recovery is adopted by the native tab and saved through the existing owner.
+- [x] History Comparison yields presentation without mutating the live document.
+- [x] External CAS conflict and existing Keep Local resolution remain native.
+- [x] No duplicate Diary Editor, Monaco, raw, save, dirty, draft, History or Recovery pipeline exists.
+- [x] Calendar remains mounted and no D3.0 `dayIndex`/pageerror regression was introduced.
+- [x] Focused unit, browser regression, typecheck, build and diff checks pass.
+- [x] No production code, generic lifecycle, route, server/shared contract or dependency changed.
+- [x] Task-scoped self-review P0/P1/P2 = 0/0/0.
+
+After these pass: `D6.4 = REVIEW-READY`, `D6.5 = BLOCKED`, and await
+independent review. Do not begin D6.5 in this evidence phase.
