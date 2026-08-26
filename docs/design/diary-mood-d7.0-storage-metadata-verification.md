@@ -1,15 +1,20 @@
 # D7.0 — Storage / Metadata Ownership Verification
 
-状态：**BLOCKED**
+状态（D7.0 Revalidation）：**REVIEW-READY**
 
-Independent Review：`PASS on the BLOCKED determination`
-Review result：`P0 = 0 / P1 = 1 / P2 = 0`
+Independent Review（本次 revalidation）：`PENDING`
+Self-review（本次 revalidation）：`P0 = 0 / P1 = 0 / P2 = 0`
 
-Self-review：`P0 = 0 / P1 = 1 / P2 = 0`
+历史 D7.0 gate：`BLOCKED`
+历史 Independent Review：`PASS on the BLOCKED determination`
+历史 Review result：`P0 = 0 / P1 = 1 / P2 = 0`
 
-日期：2026-08-26（Asia/Shanghai）
+日期：2026-08-27（Asia/Shanghai）
 
-## 1. Starting HEAD
+本文件第 1–23 节保留原始 D7.0 blocker、characterization 和 review 记录；第 24 节
+记录 D7.0A 完成后的当前 revalidation 结果。当前状态更新不改写历史结论。
+
+## 1. Starting HEAD（原始 D7.0 gate）
 
 本阶段开始时：
 
@@ -481,7 +486,7 @@ production fix required to prove this phase
 
 任一关键 gate 失败即按 closed Plan 将 D7.0 标记为 `BLOCKED`。
 
-## 23. Final lifecycle state
+## 23. Historical final lifecycle state（原始 D7.0 gate）
 
 ```text
 D6                         = REVIEW-CLOSED
@@ -496,6 +501,333 @@ D7 Implementation         = NOT STARTED
 D7.1                      = NOT STARTED
 ```
 
-本轮没有实现 Mood，也没有开始 D7.1。下一步必须先完成 Implementation Plan
-amendment / generic History metadata decision；Amendment review 通过并完成 D7.0A
-后，再重新判断 D7.0。不得把 blocker 静默推入 D7.4。
+原始 D7.0 gate 没有实现 Mood，也没有开始 D7.1；当时下一步是完成
+Implementation Plan amendment / generic History metadata decision。该历史 blocker
+随后由已关闭的 Amendment 与 D7.0A foundation 承载，不得把原始 blocker 静默推入 D7.4。
+
+## 24. D7.0 Revalidation after D7.0A
+
+### 24.1 Revalidation scope and starting point
+
+本次 revalidation 基于当前真实 production code、已关闭的 D7.0A foundation 以及
+closed Amendment，目标是重新判断 SQLite-owned `DocumentMetadata` 能否作为 D7 Mood
+的 storage direction。没有实现 Mood field、Mood registry、API、picker、Calendar
+marker、frontmatter writer 或 D7.1；没有修改 production code、tests、dependencies，
+也没有开始 D7.1。
+
+```text
+Starting HEAD:
+e4fbff0d08e9efbe0e5b13bf76ccce9399a53968
+docs(diary): close D7.0A history metadata review
+
+Current branch: main
+Worktree at start: clean
+```
+
+本次读取的 canonical design/evidence 文档为 `diary-mood-prd.md`、
+`diary-mood-implementation-plan.md`、`diary-mood-d7.0-storage-metadata-verification.md`、
+`diary-mood-implementation-plan-amendment-d7.0-history-metadata.md` 和
+`diary-mood-d7.0a-history-metadata-foundation.md`。代码取证覆盖
+`server/documentMetadata.ts`、`server/metadataVersion.ts`、
+`server/history/metadataRevisions.ts`、`server/history/restore.ts`、migration 0009、
+Diary routes/command、`server/tree.ts`、`src/lib/api.ts`、`useTabWorkspace` 与 draft
+recovery owner。
+
+原始 `696ccf...` gate 的 BLOCKED evidence、`03507ac...` characterization 和原始
+`P0/P1/P2 = 0/1/0` review 结论仍保留在前面章节；本节只记录 blocker 关闭后的
+revalidation facts。
+
+### 24.2 Live metadata owner and identity
+
+当前 `server/documentMetadata.ts` 的 live `DocumentMetadata` owner 仍是 SQLite
+`documents` / `document_tags`，字段为：
+
+```text
+id, path, title, summary, tags, createdAt, updatedAt
+```
+
+`documents.id` 是稳定 identity，`path` 是可移动的当前位置；rename/move 保留 id，
+delete/recreate 由现有 document lifecycle 产生新的 generation。metadata HTTP owner
+仍是 `/api/metadata/documents/:id` 与 `/api/metadata/documents/*`，客户端仍通过
+`getDocumentMetadataById()` / `updateDocumentMetadata()` 消费它。
+
+`server/migrations/0009_history_metadata_revisions.sql` 明确把 history tables 与
+`documents` / `document_tags` 分开：history tables 是 revision-bound evidence 与
+durable operation journal，不是第二个 live metadata source of truth。
+
+结论：SQLite 仍是唯一现有 live metadata owner；D7.0A 没有创建第二 owner，也没有
+把 history snapshot 误当成当前 metadata。
+
+### 24.3 D7.0A covered History Restore result
+
+D7.0A 已在现有 History Restore owner 内建立 generic title/summary/tags snapshot：
+
+```text
+schemaVersion: 1
+fields: { title, summary, tags }
+```
+
+当前 `resolveHistoryMetadataRevision()` 和 restore path 的事实为：
+
+- covered revision 必须证明 capture 已 committed、document id/generation 一致、
+  payload digest/schema 有效，并以 `bodySha` 绑定选定的 Git body；
+- body restore 与 covered metadata apply 通过既有 identity、path safety、lock、restore
+  journal、rollback 与 SQLite transaction boundary 协调；metadata apply 本身在
+  `BEGIN IMMEDIATE` 内完成，不把 filesystem 与 SQLite 误称为一个 ACID transaction；
+- `applyCoveredHistoricalMetadata()` 使用专用 CAS restore seam，即使 title/summary/
+  tags 语义值与当前值相同，也会通过 `nextMetadataUpdatedAt()` 生成新的 metadata
+  version；普通 metadata PATCH 的 equal-value no-op 语义没有改变；
+- covered restore 成功返回 `metadataMode = restored`，stable id 保持不变；
+- capture 缺失、path 未被 capture、或其它没有可信 snapshot 的 revision 仍走
+  legacy body-only 分支，保留当前 durable metadata，返回明确的
+  `metadataMode = unavailable`，不从历史 raw/frontmatter 推断 metadata；
+- unknown field、unsupported/newer schema、digest/body mismatch、identity mismatch
+  在 body mutation 前 fail closed；不会产生 body 与 metadata 混合的“成功”结果。
+
+这解决了原始 D7.0 blocker：covered generic History Restore 现在可以在同一 live
+SQLite owner 中恢复已覆盖的 metadata，而不是只恢复 body 后继续冒充完整 revision
+restore。
+
+### 24.4 History Comparison and Recovery boundary
+
+History Comparison 仍然是 D6 既有 body-only owner：Git raw、text diff、dirty state，
+不虚构 SQLite metadata diff。它不会宣称 mood metadata comparison。
+
+Recovery 仍然是 body-only：当前 `UnsavedDraft`、`DraftConflictRecord`、
+`DraftBufferSnapshot` 与 IndexedDB draft records 都只承载正文、baseline、mtime、
+path 和 stable document id，不承载 metadata snapshot。这个边界现在是明确的兼容
+策略，而不是未决 blocker：
+
+```text
+body Recovery
+→ 恢复正文 dirty state
+→ 保留当前 durable SQLite metadata（包括未来的 mood）
+→ 不把 body draft 当作 metadata revision
+```
+
+因此 Recovery 不会让 mood 从 stale raw 或 draft 中漂移；未来若要支持 metadata
+recovery，必须扩展 generic owner 并重新审计，不得建立 Mood-specific recovery store。
+
+### 24.5 CAS, dirty body, and lifecycle revalidation
+
+- 当前 `updatedAt` 仍是同一 metadata version token；未来 mood set/change/clear 必须
+  在这个 owner 内使用明确的 `expectedUpdatedAt`，不能新增版本源；
+- body `raw/originalRaw`、`savePost(raw, baseRaw)` 与 draft persistence 仍由现有
+  tab/document save owner 持有；metadata PATCH/covered restore 不写回 Markdown bytes，
+  不复制 Monaco raw，也不清除 body dirty state；
+- body CAS conflict 与 metadata CAS conflict 仍是两条独立通道；任何未来 mood
+  mutation 都必须沿用同一 document identity、lock 与 transaction seam；
+- Diary create 仍只由 `parseDiaryDate()`、`diaryLogicalPathForDate()`、
+  `POST /api/diary/dates` 与现有 `openDiaryDate()` / `openPost()` 链路拥有；future
+  Diary 不创建，existing path 不产生第二文件；
+- delete/recreate 不继承旧 generation 的 mood。History rehydrate 只有在既有 tombstone
+  与 stable identity proof 成立时才允许，不能按 path 猜 identity。
+
+### 24.6 Pre-Mood v1 and future Mood schema policy
+
+这是本次 revalidation 的关键 schema decision。
+
+当前 v1 的 pre-Mood provenance 是确定的，而不是从 frontmatter 或当前 row 猜测：
+
+1. `HISTORY_METADATA_SCHEMA_VERSION = 1` 的 canonical payload 只有
+   `title`、`summary`、`tags`；
+2. migration 0009 和已关闭 D7.0A scope 明确只建立 generic metadata foundation，
+   D7.1 Mood 尚未进入 `DocumentMetadata` 或 v1 payload；
+3. 当前 live `DocumentMetadata` 也没有 `mood`；
+4. 因此在 D7.1 引入 Mood 前产生的 v1 capture 可以被严格标记为 pre-Mood v1。
+
+但 v1 **没有显式保存 `mood: absent/null`**。为遵守已关闭 Amendment 的
+“不能由缺失字段推断清空”规则，不能把“pre-Mood”偷换成“历史 mood 一定是 null”，
+也不能把 v1 body/title/tags 与当前 mood 拼成 mixed revision。最终采用以下安全策略：
+
+```text
+v1 pre-Mood revision after Mood exists
+→ legacy-compatible body-only restore
+→ preserve current durable SQLite metadata, including current mood
+→ return explicit metadata-unavailable limitation
+
+v2 Mood-aware revision
+→ exact payload includes mood: string | null
+→ body + title/summary/tags + mood restore in one generic metadata transaction
+```
+
+D7.1 若引入 Mood，必须同时把 Mood-aware capture schema 升级为 v2，并保证 Mood
+启用后不会继续写新的 v1 capture。v1/v2 不能混用字段，也不能通过“当前没有 mood”
+补齐历史 v1。只有 v2 的显式 `mood` 值（包括显式 `null`）可以参与完整 Mood-aware
+restore。
+
+未来 v2 的兼容规则：
+
+- known field + unknown mood **value**（仍为合法 opaque string）必须原样保存、读取和
+  restore；旧 registry 不认识该 ID 时不得清空；
+- unknown field 或 unsupported newer schema 必须在任何 body mutation 前 fail closed；
+- 不允许生成“历史 v1 body/metadata + 当前 mood”或其它 mixed revision success；
+- frontmatter 中的 `mood` 仍不是 controlled source，不能为 v1/v2 补 metadata，也不能
+  覆盖 SQLite owner。
+
+该策略同时满足 pre-Mood provenance、legacy safety 和未来 schema evolution；它不是
+通过拒绝 year/date、改变 D1/D2 contract 或新建 Mood history pipeline 来绕过问题。
+
+### 24.7 Metadata draft and frontmatter decision
+
+当前 `metadataDraftStore` 仍是 session-only 的 title/summary/tags form draft，不接入
+body Recovery。D7 Mood 的推荐实现方向保持为显式 set/change/clear command，直接进入
+同一个 SQLite metadata CAS owner；不创建 Mood-specific persistent draft，除非未来
+另有已审计的 generic metadata draft contract。
+
+frontmatter 仍只是兼容 raw/custom view，不是 controlled Mood read/write owner。SQLite
+selected direction 不要求把 stable Mood ID 写入 Markdown，也不要求从 raw frontmatter
+反向导入 Mood。
+
+### 24.8 Calendar month bulk-read and reactive ownership
+
+当前 `useTabWorkspace.refresh()` 通过一次 `listPosts()` bulk response 获取全 Vault
+`PostSummary[]`，而不是为 35–42 个 Calendar cells 发起逐项 metadata GET。当前 response
+尚未包含 mood，但接入 D7 时应在同一 `PostSummary` / query owner 内为严格合法
+`diary/YYYY-MM-DD` 增加可选 `mood`（必要时带 stable document id），由现有 workspace
+reactive collection 派生 Calendar month map。
+
+这保留：
+
+- 单一 bulk read / invalidation seam，不新增 Diary-specific metadata route；
+- 一个 reactive owner，不让 Calendar picker 自己持有第二份 cache；
+- ordinary note 与 Archive/Inbox/Literature/Ledger 语义不变；
+- D7.1/D7.3 可在同一 owner 内优化为按日期范围的单次 SQL，而不改变 ownership。
+
+本次没有实现 `mood` 字段或改变 `PostSummary`，所以这只是通过 gate 的 future seam，不是
+production implementation evidence。
+
+### 24.9 Revalidation tests actually run
+
+本次实际运行的 focused evidence：
+
+```text
+npm exec vitest run \
+  server/__tests__/documentMetadata.test.ts \
+  server/__tests__/metadata-api.test.ts \
+  server/__tests__/history-metadata-revisions.test.ts
+→ 3 files / 66 tests passed
+
+npm run test:history-integration
+→ 5 files / 174 tests passed
+
+npm run test:recovery-integration
+→ 5 files / 193 tests passed
+
+npm exec vitest run \
+  server/__tests__/diary-routes.test.ts \
+  server/__tests__/documentFileLifecycle.test.ts \
+  src/composables/diary/__tests__/useDiaryDateCommand.test.ts \
+  shared/__tests__/diaryProtocol.test.ts \
+  src/composables/vault/__tests__/useHistoryRestore.test.ts \
+  src/composables/vault/__tests__/useHistoryComparisons.test.ts
+→ 6 files / 91 tests passed
+```
+
+Recovery integration 的第一次无提升权限调用只遇到子进程 IPC pipe 的环境性
+`listen EPERM`；按仓库既有环境约定，以同一命令提升权限重跑后 5 files / 193 tests
+全部通过。没有发生 feature assertion failure。
+
+本次没有修改 TypeScript/client/test code，因此没有把 `typecheck`、`build` 或 browser
+suite 的历史结果冒充为本次新运行结果；D7.0A 文档中已有的历史 typecheck/build 记录
+仍作为历史证据保留。
+
+### 24.10 Current exit matrix
+
+| Gate | Current result | Evidence |
+| --- | --- | --- |
+| SQLite live metadata owner identified | PASS | `DocumentMetadata` / `documents` / `document_tags` traced |
+| Stable identity, path, generation | PASS | rename/delete/recreate owner and lifecycle tests |
+| Covered generic History metadata restore | PASS | D7.0A schema v1, body binding, identity, CAS and journal evidence |
+| Legacy/pre-coverage restore policy | PASS | body-only, current metadata preserved, explicit unavailable result |
+| History Comparison boundary | PASS | remains body-only; no false metadata claim |
+| Recovery boundary | PASS | body-only recovery preserves durable metadata |
+| Metadata CAS for future Mood | PASS / implementation pending | same `updatedAt` owner and explicit token required |
+| Dirty body isolation | PASS | metadata paths do not write body/draft state |
+| Pre-Mood v1 policy | PASS | deterministic provenance plus explicit legacy body-only policy |
+| Future v2 Mood schema policy | PASS / implementation pending | explicit `mood: string \| null`; unknown value opaque; unknown schema fail closed |
+| No mixed historical/current revision | PASS | v1 never combines with current Mood; v2 restores atomically |
+| Delete/recreate/generation boundary | PASS / Mood implementation pending | existing identity proof and Diary lifecycle authority |
+| Diary date authority and future guard | PASS | existing command/route tests |
+| Calendar month bulk-read seam | PASS / future seam | one `listPosts()` bulk owner; no per-cell GET |
+| Reactive single-owner direction | PASS / future seam | `useTabWorkspace.posts` / refresh owner |
+| Frontmatter as controlled Mood source | PASS | explicitly rejected; SQLite remains owner |
+| No second metadata/history/recovery owner | PASS | D7.0A tables are revision evidence only |
+| Selected Storage Direction | **PASS — SQLite-owned `DocumentMetadata`** | all blocker gates revalidated |
+
+所有当前 gate 均通过；尚未实现的内容是 D7.1 production work，不是 D7.0 storage
+ownership blocker。
+
+### 24.11 Current lifecycle and D7.1 readiness
+
+```text
+D6                         = REVIEW-CLOSED
+D7 PRD                     = REVIEW-CLOSED
+D7 Implementation Plan     = REVIEW-CLOSED
+D7 Plan Amendment          = REVIEW-CLOSED
+D7.0A                     = REVIEW-CLOSED
+D7.0                      = REVIEW-READY
+D7.0 Independent Review    = PENDING
+D7.0 self-review           = P0/P1/P2 = 0/0/0
+Selected storage           = SQLite-owned DocumentMetadata
+D7.1                      = NOT STARTED
+D7 Mood production         = NOT STARTED
+```
+
+D7.1 readiness gate：
+
+```text
+[x] live SQLite metadata owner and stable identity confirmed
+[x] D7.0A covered History Restore confirmed
+[x] legacy/pre-coverage body-only limitation explicit
+[x] History Comparison remains body-only
+[x] Recovery preserves durable metadata
+[x] CAS/version and dirty-body boundaries confirmed
+[x] pre-Mood v1 policy is deterministic and non-mixed
+[x] future Mood-aware schema/version rule identified
+[x] unknown mood value and unknown field behavior separated
+[x] Diary date/create/future authority unchanged
+[x] single bulk-read/reactive seam identified
+[x] no second metadata/history/recovery owner required
+[x] frontmatter is not controlled Mood source
+[x] no D6/D1/D2 contract changed
+[x] no D7.1 code written
+```
+
+### 24.12 STOP conditions checked
+
+本次没有触发 STOP condition：
+
+```text
+no new Diary route
+no second tab/document store
+no second metadata/history/recovery owner
+no Mood-specific History or Recovery pipeline
+no frontmatter source-of-truth switch
+no D1/D2 contract change
+no server Diary API change
+no dependency change
+no mixed revision success
+no unsupported schema accepted after body mutation
+no D7.1 implementation
+```
+
+D7.0A 已经解决 generic History metadata foundation；本次 revalidation 也已把
+pre-Mood v1、future Mood schema、CAS、Recovery、bulk-read 与 no-mixed-revision policy
+固定下来。因此原始 P1 blocker 已关闭，D7.0 可以交付 Independent Revalidation Review，
+但本文件不自行把 D7.0 标记为 `REVIEW-CLOSED`。
+
+### 24.13 Conclusion
+
+```text
+D7.0 Revalidation                 = REVIEW-READY
+Independent Revalidation Review   = PENDING
+Self-review                       = P0/P1/P2 = 0/0/0
+Selected Storage Direction        = SQLite-owned DocumentMetadata
+D7.1                             = NOT STARTED
+```
+
+SQLite 现在可以作为 D7.1 的 selected storage direction：它沿用当前 live metadata
+owner、stable identity、CAS、transaction、History Restore foundation、body-only
+Recovery boundary 和单一 bulk-read seam。后续只能在 D7.1 implementation phase 内按
+本节 schema policy 接入 Mood；在 Independent Revalidation Review 之前不得开始 D7.1。
