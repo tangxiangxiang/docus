@@ -28,18 +28,22 @@ Starting HEAD before the D6.5 test work:
 6d0aa02b1632c7572bd877a8cc43f65794f54bb8
 ```
 
-The focused test commit is:
+The focused test commits are:
 
 ```text
 06ffb2e test(diary): verify D6.5 lifecycle regressions
+a34d622 test(diary): cover non-active tab lifecycle
 ```
 
-The test commit contains only:
+The test commits contain only:
 
 ```text
 e2e/diary-lifecycle-regression.spec.ts
 src/composables/diary/__tests__/useDiaryWorkspacePresentation.test.ts
 ```
+
+The second test commit adds only the non-active-tab case to the same E2E
+suite.
 
 No production code was changed.
 
@@ -69,13 +73,14 @@ Command:
 npm run test:e2e -- e2e/diary-lifecycle-regression.spec.ts
 ```
 
-Result: **6/6 Chromium tests passed**.
+Result: **7/7 Chromium tests passed**.
 
 | Scenario | Verified result |
 | --- | --- |
 | Scope exit and re-entry | A successfully opened Diary remains in the existing tab/route when leaving Diary scope. Re-entry returns to Calendar `HOME`; three additional scope cycles do not auto-reopen the document, and an explicit date click reopens it. |
 | Manual multi-tab selection | Two Diary tabs and one ordinary note can be selected manually. Manual selection changes the native route/tab only; it does not synthesize Calendar intent or retarget Diary exact context. The user FileTree filter remains intact. |
 | Tab close, fallback and reopen | Closing the Diary tab uses the existing fallback to the ordinary note. Reopening through Calendar creates one tab with the same server metadata identity. Closing the remaining tabs returns to `/vault` and Diary re-entry is `HOME`. |
+| Non-active tab close | Closing an ordinary non-active tab while a Diary document is active preserves native Diary `DOCUMENT`, route, active tab and exact FileTree context. |
 | Clean refresh | Three unique tabs are restored by the existing persistence path after refresh, while Diary presentation stays `HOME`. An explicit Calendar click then re-enters native READ without adding a duplicate tab. |
 | Direct Diary deep link | `/vault/diary/YYYY-MM-DD` is handled by the existing route/tab lifecycle and keeps Diary presentation at `HOME` until an explicit Calendar date click. |
 | Browser Back/Forward | Real `page.goBack()` and `page.goForward()` reconcile the existing routes and active tabs. Diary presentation remains `HOME`; `history.length` is unchanged, proving no fake presentation history entry was added. |
@@ -169,6 +174,7 @@ D6.6 implementation    NO
 - [x] Diary scope exit/re-entry does not close or auto-reopen the backing tab.
 - [x] Manual tab selection cannot synthesize Calendar intent or retarget exact
       Diary context.
+- [x] Non-active tab close preserves active Diary `DOCUMENT` and exact context.
 - [x] Backing-tab close follows existing fallback and a later explicit reopen
       preserves document identity.
 - [x] Clean refresh restores unique tabs without restoring Diary `DOCUMENT`

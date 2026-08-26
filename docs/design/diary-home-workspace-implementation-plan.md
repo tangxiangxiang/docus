@@ -185,11 +185,12 @@ Evidence: [D6.5 Lifecycle Regression](diary-home-workspace-d6.5-lifecycle-regres
 
 Starting HEAD: `6d0aa02b1632c7572bd877a8cc43f65794f54bb8`.
 
-Test commit: `06ffb2e` (`test(diary): verify D6.5 lifecycle regressions`).
+Test commits: `06ffb2e` (`test(diary): verify D6.5 lifecycle regressions`) and
+`a34d622` (`test(diary): cover non-active tab lifecycle`).
 
-The dedicated Chromium suite passes 6/6 scenarios covering scope exit and
+The dedicated Chromium suite passes 7/7 scenarios covering scope exit and
 re-entry, manual multi-tab selection, tab close/fallback/reopen, clean refresh,
-direct Diary deep links and real Browser Back/Forward. The presentation and
+non-active tab close, direct Diary deep links and real Browser Back/Forward. The presentation and
 generic tab/document unit set passes 163/163 tests; existing Diary/VCalendar/D4
 browser regressions pass 23/23. Client/full typecheck, build and diff checks
 pass. Only the two test files and the linked evidence/docs are changed; no
