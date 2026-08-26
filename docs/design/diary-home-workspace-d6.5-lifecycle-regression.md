@@ -1,8 +1,8 @@
 # D6.5 — Lifecycle Regression Evidence
 
-状态：`REVIEW-READY`
+状态：`REVIEW-CLOSED`
 
-Independent Review：`PENDING`
+Independent Review：`PASS`
 
 Task-scoped self-review：`P0 = 0`，`P1 = 0`，`P2 = 0`
 
@@ -196,13 +196,12 @@ D6.2 = REVIEW-CLOSED
 D6.2.1 = REVIEW-CLOSED
 D6.3 = REVIEW-CLOSED
 D6.4 = REVIEW-CLOSED
-D6.5 = REVIEW-READY
-D6.6 = BLOCKED
+D6.5 = REVIEW-CLOSED
+D6.6 = NOT STARTED
 D6.7 = BLOCKED
 ```
 
-D6.5 has reproducible lifecycle regression evidence and is ready for
-independent review. `Independent Review` remains `PENDING` until that review
-is performed. This evidence does not start D6.6.
+D6.5 has reproducible lifecycle regression evidence and has passed independent
+review with `P0/P1/P2 = 0/0/0`. This evidence does not start D6.6.
 
 GitHub status: `GitHub status not queried`.

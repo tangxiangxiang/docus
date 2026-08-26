@@ -2,7 +2,7 @@
 
 状态：`REVIEW-CLOSED`（原始 D6 design baseline）；Native Document Workspace superseding design amendment = `REVIEW-CLOSED`，Independent Review = `PASS`（P0/P1/P2 = 0/0/0）。D6.4 closure review = `PASS`（P0/P1/P2 = 0/0/0）。
 
-基线：D6.0–D6.4 `REVIEW-CLOSED`。旧 D6.3 Reader Dialog implementation 在 closure 前被产品决定替代；D6.5 当前为 `REVIEW-READY`，其生命周期回归 evidence 已记录，Independent Review 仍为 `PENDING`。
+基线：D6.0–D6.5 `REVIEW-CLOSED`。旧 D6.3 Reader Dialog implementation 在 closure 前被产品决定替代；D6.5 生命周期回归 evidence 已记录并通过独立复审，P0/P1/P2 = `0/0/0`。D6.6 当前为 `NOT STARTED`。
 
 这里的 `REVIEW-CLOSED` 同时覆盖原始 D6 implementation-plan baseline 与已通过独立复审的 2026-08-26 Native Workspace superseding amendment。
 
@@ -179,7 +179,7 @@ review passed with P0/P1/P2 = 0/0/0. At D6.4 closure D6.5 was not started; the s
 
 ### D6.5 — Lifecycle Regression
 
-Status: `REVIEW-READY`; implementation/test evidence complete; Independent Review = `PENDING`; task-scoped self-review P0/P1/P2 = `0/0/0`.
+Status: `REVIEW-CLOSED`; implementation/test evidence complete; Independent Review = `PASS`; P0/P1/P2 = `0/0/0`.
 
 Evidence: [D6.5 Lifecycle Regression](diary-home-workspace-d6.5-lifecycle-regression.md).
 
@@ -198,7 +198,7 @@ production, server/shared, route, dependency or D6.6 code is included.
 
 ### D6.6 — Responsive / Accessibility
 
-Status: `BLOCKED`. Validate Calendar Home + Native Vault Diary context + exact FileTree + native read/edit keyboard/a11y. Dialog focus trap/modal/fullscreen requirements are superseded.
+Status: `NOT STARTED`. Validate Calendar Home + Native Vault Diary context + exact FileTree + native read/edit keyboard/a11y. Dialog focus trap/modal/fullscreen requirements are superseded.
 
 ### D6.7 — Release Closure
 
@@ -290,7 +290,7 @@ Docs rollback is informational-only; it is not an asserted exact history chain.
 At D6.3 closure, `D6.4 = NOT STARTED`; the subsequent D6.4 verification and
 independent review are recorded in the evidence linked above. D6.4 is now
 `REVIEW-CLOSED` with P0/P1/P2 = 0/0/0. At that closure point D6.5 was
-`NOT STARTED`; D6.5 is now `REVIEW-READY` with its own evidence linked above.
+`NOT STARTED`; D6.5 is now `REVIEW-CLOSED` with its own evidence linked above.
 
 ## 14. D6.4 exit criteria
 
@@ -315,5 +315,5 @@ deferred to D6.6 keyboard/accessibility coverage.
 
 These criteria passed: `D6.4 = REVIEW-CLOSED`, Independent Review = `PASS`,
 and P0/P1/P2 = 0/0/0. At D6.4 closure D6.5 was `NOT STARTED`; the current
-D6.5 lifecycle evidence is tracked in its own section and remains pending
-independent review.
+D6.5 lifecycle evidence is tracked in its own section and has passed
+independent review with P0/P1/P2 = 0/0/0.
