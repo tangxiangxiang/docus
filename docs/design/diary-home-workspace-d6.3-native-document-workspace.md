@@ -4,6 +4,7 @@
 
 - D6.3 = `REVIEW-READY`
 - D6.4 = `NOT STARTED`
+- Native Workspace superseding amendment = `REVIEW-READY`; independent review pending
 - Task-scoped self-review: P0 = 0, P1 = 0, P2 = 0
 - Independent review: pending
 - Canonical direction: Calendar does navigation; Vault does documents.
@@ -17,6 +18,9 @@ review PASS does not apply to this replacement.
 - Starting HEAD: `82c555b8dc13be22de0863c8105cc0b83cd289d1`
 - Design amendment: `edfbcf07c04ad2a2063900efc489d1bef01b981b`
 - Native workspace production/tests: `592a1d5181edc84d1d66392f2c87fe8a2d4a23eb`
+- D6.3 mobile follow-up starting HEAD: `0c54379df9f9600234a59ffc1945f0e2f27c63d7`
+- Mobile collapsed side-panel production follow-up: `032b6ea0cde34ac7834bde45efdb70516c25fcf3`
+- Final production validation baseline: `032b6ea0cde34ac7834bde45efdb70516c25fcf3`
 - Evidence commit: the commit containing this document
 
 Historical superseded D6.3 commits remain in history:
@@ -155,13 +159,52 @@ not mutated and returns automatically at wider widths or outside this context.
 Calendar visuals remain frozen: full-bleed/full-height, `YYYY-MM`, Prev/Next,
 Today absent, 44x44 navigation targets, focus-visible ring, markers and spacing.
 
-## Test evidence
+## Mobile collapsed side-panel follow-up
 
-Focused Vitest, run on the final production tree:
+The original phone-width native-document selector always forced the four-column
+mobile grid, even when the existing `useVaultLayout().sidePanelOpen` state was
+false. That left the hidden side-panel and splitter tracks in the grid and
+could constrain the native document to a narrow content column.
+
+The follow-up adds only a `side-panel-open` class derived from the existing
+`sidePanelOpen` ref on the Vault root. At `max-width: 600px` the two states are:
 
 ```text
-8 test files PASS
-124 tests PASS
+side-panel-open:
+40px ActivityBar + minmax(136px, 42vw) FileTree + 1px splitter + remaining document
+
+not side-panel-open:
+40px ActivityBar + remaining document
+```
+
+No second panel state, persistence change, forced Files selection, right-rail
+state mutation or FileTree/Calendar semantics changed. The phone-only
+right-rail rule remains visual suppression only, as in the original D6.3
+replacement.
+
+The final production-tree browser follow-up covered:
+
+- 375x812 and 320x700 with Files open and with Files closed;
+- closed-sidebar READ geometry starting after the 40px Activity Bar and
+  reaching the viewport edge, with no phantom sidebar gap or horizontal
+  overflow;
+- native EDIT smoke while the side panel was closed;
+- reopening Files through the existing ActivityBar action;
+- exact selected Diary context restored, with the other seeded Diary absent;
+- page errors = 0, unexpected console errors = 0, `dayIndex` errors = 0.
+
+The existing FileTree filter-preservation tests remain part of the focused
+regression run; this follow-up does not change the `filesFilter` model or exact
+path matching.
+
+## Test evidence
+
+The preceding native-workspace replacement recorded 8 test files / 124 tests.
+This mobile follow-up rerun on the final production tree was:
+
+```text
+4 test files PASS
+80 tests PASS
 ```
 
 Coverage includes HOME/DOCUMENT ownership, successful-command + exact active
@@ -176,7 +219,7 @@ e2e/diary-reader.spec.ts
 e2e/diary-calendar-surface.spec.ts
 e2e/diary-release.spec.ts
 
-16 / 16 PASS
+17 / 17 PASS
 ```
 
 Browser evidence proves:
@@ -187,6 +230,9 @@ Browser evidence proves:
 - ordinary ReadingPane count is one and no DiaryReaderDialog exists;
 - existing view toggle enters the same tab/editor, and unsaved raw survives
   Calendar HOME plus same-date reopen;
+- mobile native document mode fills the remaining viewport when the existing
+  Files panel is closed at 375x812 and 320x700, and the panel reopens with the
+  exact Diary context;
 - Calendar Home action preserves route, activePath and tab and restores focus;
 - real `page.goBack()` passively reconciles to HOME;
 - ordinary note, archive and ledger retain native Vault behavior;
@@ -215,7 +261,8 @@ GitHub status was not queried. No CI PASS is claimed.
 Runtime rollback to D6.2.1, newest to oldest:
 
 ```text
-592a1d5181edc84d1d66392f2c87fe8a2d4a23eb
+032b6ea0cde34ac7834bde45efdb70516c25fcf3
+-> 592a1d5181edc84d1d66392f2c87fe8a2d4a23eb
 -> fa85f431d274e36fccbeaa0446ed63cf0d017a36
 -> d270ee5756c0f742e92955f06fa308fd6f77bc4a
 -> ce3e08c514f50304d9b73f066191a22d5739c179

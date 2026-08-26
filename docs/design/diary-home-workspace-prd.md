@@ -1,8 +1,10 @@
 # D6 — Diary Home Workspace PRD
 
-状态：`REVIEW-CLOSED`（产品 contract）；D6.3 Native Document Workspace replacement implementation 为 `REVIEW-READY`，等待新的 independent review。
+状态：`REVIEW-CLOSED`（原始 D6 产品 contract baseline）；2026-08-26 Native Document Workspace superseding amendment 为 `REVIEW-READY`，等待新的 independent review。
 
 已有状态保持不变：D0–D5、D6.0、D6.1、D6.2、D6.2.1 均为 `REVIEW-CLOSED`。D6.4 为 `NOT STARTED`。
+
+状态分层：原始 D6 产品 contract baseline = `REVIEW-CLOSED`；Native Document Workspace superseding amendment = `REVIEW-READY`；independent review = `PENDING`；D6.3 replacement implementation = `REVIEW-READY`。
 
 日期：2026-08-26（Asia/Shanghai）
 

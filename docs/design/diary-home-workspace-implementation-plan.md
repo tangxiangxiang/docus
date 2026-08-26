@@ -1,8 +1,10 @@
 # D6 — Diary Home Workspace Implementation Plan
 
-状态：`REVIEW-CLOSED` design amendment；D6.3 Native Document Workspace replacement 为 `REVIEW-READY`。
+状态：`REVIEW-CLOSED`（原始 D6 design baseline）；Native Document Workspace superseding design amendment 为 `REVIEW-READY`，等待 independent review。
 
 基线：D6.0–D6.2.1 `REVIEW-CLOSED`。旧 D6.3 Reader Dialog implementation 在 closure 前被产品决定替代；D6.4 `NOT STARTED`。
+
+这里的 `REVIEW-CLOSED` 仅指原始 D6 implementation-plan baseline，不表示 2026-08-26 Native Workspace superseding amendment 已关闭。
 
 日期：2026-08-26（Asia/Shanghai）
 
