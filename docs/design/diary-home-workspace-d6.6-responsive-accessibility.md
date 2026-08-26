@@ -96,20 +96,26 @@ The browser suite verified:
 - Native READ ⇄ EDIT uses existing Cmd/Ctrl+E, and existing Cmd/Ctrl+S saves through
   the current document owner; Home suppresses W/S/E/Tab where the workspace owns no
   document target, while B retains the existing sidebar behavior;
+- Native DOCUMENT Cmd/Ctrl+W was directly verified: the active Diary tab closes through
+  the existing workspace policy, an ordinary Note fallback becomes selected, the route
+  changes to that Note and the fallback workspace tab receives focus;
+- dirty Native EDIT Cmd/Ctrl+W was directly verified to show the existing confirmation;
+  cancel leaves the Diary tab present and dirty;
 - the exact FileTree action is a real keyboard-activatable control, and exact-path
   context does not overwrite the user's `filesFilter`;
 - English and Chinese labels were exercised. The English case also toggled Calendar
   and Native READ through the existing light → dark theme control; the existing
   D6.2.1 release suite continues to cover light/dark Calendar focus behavior.
 
-The existing D6.5 regression suite remains the evidence for real Native document
-Cmd/Ctrl+W/tab-close dirty policy; D6.6 does not change that owner.
+The D6.5 regression suite remains evidence for button-driven tab-close lifecycle and
+fallback logic. D6.6 adds the direct browser evidence for keyboard close focus and
+dirty-close cancellation; both continue to use the existing Vault owner.
 
 ## 5. Lifecycle and repetition evidence
 
-The dedicated suite passed 7/7 tests, including ten mixed mouse/keyboard
+The dedicated suite passed 8/8 tests, including ten mixed mouse/keyboard
 Calendar → Native READ → Calendar cycles at 375×812 and 320×700. The combined Diary
-browser command passed 37/37 tests: the 7 D6.6 tests plus the existing 30 Diary
+browser command passed 38/38 tests: the 8 D6.6 tests plus the existing 30 Diary
 Calendar, Native Workspace, lifecycle, compatibility and release regressions.
 
 The combined run retained coverage for Calendar click, native Reader/Editor reuse,
@@ -136,8 +142,8 @@ Result：6 files passed，104 tests passed。
 
 Additional validation results：
 
-- D6.6 dedicated Chromium suite：7/7 PASS；
-- combined Diary Chromium regressions：37/37 PASS；
+- D6.6 dedicated Chromium suite：8/8 PASS；
+- combined Diary Chromium regressions：38/38 PASS；
 - `npm run typecheck:client`：PASS；
 - `npm run typecheck`：PASS；
 - `npm run build`：PASS；
@@ -184,6 +190,8 @@ events (`date-selected`, `month-change`) are unchanged. No Diary Dialog, modal,
 | Focus-visible indicators | PASS |
 | Hidden Calendar focus isolation | PASS |
 | Native E/S/W/Tab/B shortcut boundary | PASS |
+| Native DOCUMENT Cmd/Ctrl+W fallback focus | PASS |
+| Dirty Cmd/Ctrl+W confirmation and cancel | PASS |
 | English/Chinese labels | PASS |
 | Light/dark theme evidence | PASS |
 | Repeated lifecycle cycles | PASS |

@@ -207,11 +207,11 @@ Starting HEAD: `ced273aefd941f0f568e5c22b66e482762718f4c`.
 Test commit: `dbb765977d04f3afae35584e8a91c8abbf651196`; keyboard accessibility fix
 commit: `feafa20d93b423901a52d851e846c9f10da4f794`.
 
-The dedicated Chromium suite passes 7/7 scenarios across Calendar Home, Native
+The dedicated Chromium suite passes 8/8 scenarios across Calendar Home, Native
 READ/EDIT, exact FileTree context, keyboard focus/shortcuts, English/Chinese labels,
 light/dark behavior and repeated Calendar/document cycles. Calendar layout also
 passes the 601/600 and 421/420 breakpoint smoke. The combined Diary browser
-regressions pass 37/37; focused unit tests pass 104/104 across 6 files; client/full
+regressions pass 38/38; focused unit tests pass 104/104 across 6 files; client/full
 typecheck and build pass. No `dayIndex`, pageerror or console error was observed.
 The evidence records the two minimal keyboard fixes and confirms no router, server,
 shared, dependency or D6.7 change. D6.7 remains `BLOCKED`.
