@@ -199,8 +199,9 @@ events (`date-selected`, `month-change`) are unchanged. No Diary Dialog, modal,
 | Focused tests/typecheck/build | PASS |
 | No D6.7 implementation | PASS |
 
-No D6.6 STOP condition was triggered. D6.6 is `REVIEW-CLOSED` after independent review;
-it is not marked `REVIEW-CLOSED` by this implementation/evidence commit.
+No D6.6 STOP condition was triggered. The implementation/evidence commit stopped at
+`REVIEW-READY`; after Independent Review PASS, this closure sync marks D6.6
+`REVIEW-CLOSED`.
 
 ## 9. Phase status
 
