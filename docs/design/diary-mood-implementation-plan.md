@@ -1,7 +1,8 @@
 # D7 — Mood Diary Implementation Plan
 
-状态：**REVIEW-READY**
-Independent Review：PENDING
+状态：**REVIEW-CLOSED**
+Independent Review：PASS
+P0/P1/P2：0/0/0
 Starting HEAD：`a071a5f090f5a576d3dcd90e7750bb9d9f79a888`
 PRD：[`diary-mood-prd.md`](./diary-mood-prd.md)，已 `REVIEW-CLOSED`
 
@@ -226,10 +227,10 @@ Each D7.x is independently revertible. D7.0 evidence-only changes revert as docs
 ```text
 D6                         = REVIEW-CLOSED
 D7 PRD                     = REVIEW-CLOSED
-D7 Implementation Plan    = REVIEW-READY
-D7 Implementation Plan IR  = PENDING
+D7 Implementation Plan    = REVIEW-CLOSED
+D7 Implementation Plan IR  = PASS (P0/P1/P2 = 0/0/0)
 D7.0                      = NOT STARTED
 D7 Implementation          = NOT STARTED
 ```
 
-本轮为 docs-only architecture plan；未创建 D7.0、未实现 picker、未修改 production/test/dependency，等待 independent review。
+本轮为 docs-only closure sync；未创建 D7.0、未实现 picker、未修改 production/test/dependency。D7.0 仍为 `NOT STARTED`。
