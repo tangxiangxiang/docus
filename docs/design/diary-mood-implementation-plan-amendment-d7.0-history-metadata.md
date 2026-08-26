@@ -162,14 +162,16 @@ owner capability，则必须 STOP 并单独提出 PRD amendment。
 | Operation | Input | Body | Generic metadata | Owner |
 | --- | --- | --- | --- | --- |
 | History Comparison | explicit Git revision | compare historical raw and current/other raw | no metadata diff UI in D7 MVP | existing History Comparison |
-| History Restore | explicit resolved Git revision | restore selected body revision | restore the matching generic snapshot, or fail closed if it cannot be proven | existing History Restore extended generically by D7.0A |
+| History Restore (snapshot-covered) | explicit resolved Git revision with a trusted snapshot | restore selected body revision | restore the matching generic snapshot; this is the full revision-consistent path | existing History Restore extended generically by D7.0A |
+| History Restore (legacy pre-coverage) | explicit resolved Git revision without a trusted snapshot | preserve existing body-only restore semantics | preserve current durable metadata and return an explicit metadata-unavailable result; never claim metadata was restored | existing History Restore with an explicit legacy branch |
 | Draft Recovery | unsaved local browser draft | recover unsaved body | preserve current durable metadata; do not infer or roll it back | existing draft-recovery + document-save owners |
 
 因此：
 
 ```text
-History Restore = historical body revision + generic metadata revision
-Draft Recovery  = unsaved body recovery + current durable metadata preserved
+History Restore (snapshot-covered) = historical body + matching generic metadata revision
+History Restore (legacy)           = historical body only + current durable metadata preserved
+Draft Recovery                     = unsaved body recovery + current durable metadata preserved
 ```
 
 不得把两者合并成一个 Mood revision model，也不得通过 Mood-specific draft store
@@ -285,7 +287,12 @@ payload 必须是受控 generic metadata envelope，而不是只保存 `mood`：
 - D7.0A 至少覆盖现有 `title`、`summary`、`tags`；
 - 未来 `mood` 和其它受控字段通过同一 envelope 自然加入；
 - `schemaVersion` 与 canonical digest 必须随 snapshot 保存；
-- old client 不得因为不认识新 controlled field 就在 restore/write 时删除它；
+- 对“已知 controlled field 的未知 value”（例如当前 registry 尚未列出的
+  `mood` ID），supported decoder 必须按 opaque value 保留并原样 restore；old client
+  不得因为不认识该 value 就清空或改写它；
+- 对 unknown controlled field 或 unsupported/newer `schemaVersion`，decoder 不得
+  只恢复自己认识的字段再拼接当前 live 值；历史 payload 可以继续 durable 保存，但
+  Restore 必须在任何 body mutation 前 fail closed；
 - arbitrary custom frontmatter field 不自动变成 controlled field，也不由本方案
   承诺任意保留；
 - SVG path、asset filename 或 emoji 中文文件名永远不是 metadata value。
@@ -386,14 +393,37 @@ D7.0A 的 generic Restore 必须以 immutable resolved commit SHA 查找历史 s
 4. historical generic payload schema validation；
 5. missing-snapshot/backward-compatibility policy validation。
 
-只有所有 preflight 成功后，才可进入 existing atomic body restore + generic metadata
-restore transaction。成功结果必须满足：
+只有所有 preflight 成功后，snapshot-covered revision 才可进入 existing atomic
+body restore + generic metadata restore transaction。该路径的成功结果必须满足：
 
 ```text
 selected Git revision body
 +
 the generic metadata snapshot bound to that same revision/generation
 ```
+
+Restore preflight 必须先按 coverage/schema 分支：
+
+```text
+trusted snapshot + supported schema
+  → exact body + generic metadata restore
+
+no trusted snapshot because the revision predates metadata-history coverage
+  → existing body-only restore
+  → preserve current durable SQLite metadata
+  → return explicit legacy / metadata-unavailable result
+
+snapshot exists but schema is unsupported/newer, or contains an unknown field
+  → fail closed before body mutation
+  → retain the historical payload for later compatible readers
+  → never mix known historical fields with current live fields
+```
+
+Legacy body-only success is deliberately not a generic metadata-aware success. The result
+contract must expose the legacy limitation (for example, a stable metadata-unavailable
+status/reason) so callers and UI cannot claim that metadata was restored. No new History
+UI is required for this boundary; an existing-style result, message, or toast is enough
+if it carries the explicit limitation.
 
 History Comparison 仍不显示 metadata diff；它只把选定 revision 交给 existing
 Restore owner。Restore API/UI 可增加“metadata snapshot unavailable/conflict”等
@@ -443,27 +473,41 @@ body replace 失败时同样必须 rollback metadata。若外部 mutation 使 ro
 - 新的 metadata revision write 必须继续使用现有 CAS/lock owner，不得增加第二个
   version source。
 
-## 16. Backward compatibility and missing snapshots
+## 16. Backward compatibility and metadata-history coverage boundary
 
-默认策略固定为 **fail closed**：
+“没有 trusted snapshot”与“有 snapshot 但 schema 不受支持”是两个不同的状态，必须
+由不同的 policy 处理。metadata-history coverage 以 **History commit 已完成可信
+generic snapshot capture 的 revision** 为边界，而不是以 Diary/Mood 是否已经上线
+为边界。
 
 ```text
-revision has trusted generic metadata snapshot
-  → restore body + metadata
+snapshot-covered revision
+  → validate supported schema and identity binding
+  → restore body + matching generic metadata snapshot
+  → report full revision-consistent restore
 
-revision has no trusted snapshot
-  → fail before filesystem mutation
-  → report explicit metadata-snapshot-unavailable limitation
-  → do not silently preserve current metadata
-  → do not infer from raw frontmatter
+legacy pre-coverage revision with no trusted snapshot
+  → preserve existing ordinary History body-only Restore
+  → preserve current durable SQLite metadata
+  → return explicit legacy / metadata-unavailable result
+  → do not infer metadata from raw frontmatter
+  → do not claim metadata was restored
+
+revision has a snapshot but its schema is unsupported/newer
+  → fail closed before filesystem mutation
+  → preserve the historical payload for later compatible tooling
+  → do not restore a partial known-field/current-field mixture
 ```
 
-这样旧 commit 不会被静默宣称为完整 metadata restore，也不会让用户误以为当前
-mood 属于历史 revision。History Comparison 的 body diff 仍可读取旧 raw；缺少
-snapshot 的 Restore 只能明确失败，而不是执行半个 Restore。
+因此，D7.0A 不得因为 legacy snapshot 缺失而让现有普通 Note History Restore 退化为
+不可用；legacy body-only restore 不是 generic metadata-aware restore，也不是隐式的
+“metadata 保持不变所以算成功”。它必须有稳定、可审计的 metadata-unavailable
+limitation。History Comparison 仍可读取所有旧 raw；只有 unsupported snapshot
+schema 才在 Restore preflight 中明确拒绝。
 
-如果后续产品要允许某一类 legacy body-only restore，必须另行记录 generic policy、
-用户可见 limitation 和一致性边界；D7.0A 不把它作为隐式 fallback。
+Legacy branch 仍禁止从 raw frontmatter 猜测 title、summary、tags 或未来 mood，也
+不要求新增 History UI；实现可复用现有 error/result surface，但必须让调用方知道
+metadata snapshot 不可用。
 
 ## 17. Pre-Mood historical revisions
 
@@ -472,7 +516,11 @@ snapshot 的 Restore 只能明确失败，而不是执行半个 Restore。
 - 只有 generic snapshot 明确保存了 controlled `mood` absent/null，Restore 才能把
   mood 恢复为 absent；
 - 只有 raw frontmatter 没有 `mood`，不能证明 SQLite controlled mood 当时为空；
-- 没有可信 snapshot 时按上一节 fail closed；禁止猜测 happy、保留当前值或静默清空；
+- 没有可信 snapshot 且 revision 属于 pre-coverage legacy branch 时，遵循既有
+  body-only Restore，保留当前 durable metadata，并返回 metadata-unavailable；禁止
+  猜测 happy、把当前值冒充历史值或静默清空；
+- 如果 snapshot 存在但 schema 不受支持，按“unsupported snapshot schema”分支在
+  body mutation 前 fail closed；不得把它降级成 legacy branch；
 - D7.1 引入 mood 前，D7.0A 只实现 generic foundation，不添加 mood field 或
   backfill 假设。
 
@@ -480,12 +528,19 @@ snapshot 的 Restore 只能明确失败，而不是执行半个 Restore。
 
 generic payload 必须带 versioned controlled-field envelope：
 
-- decoder 能识别当前字段，并保留未知的未来 controlled field/value；
-- writer 使用 read-modify-write 或等价的 opaque preservation，不能因旧客户端
-  不认识字段而在 Restore 时删除它；
+- **Known field + unknown value**：字段 key/schema 是当前 decoder 支持的，但 value
+  不在当前 registry（例如 future-new `mood` ID）。必须将 value 作为 opaque data
+  保留并原样 restore；writer 使用 read-modify-write 或等价的 opaque preservation，
+  old client 不得清空、规范化成别的 value 或删除它；
+- **Unknown field or unsupported/newer schema**：snapshot 含当前 decoder 不认识的
+  controlled field，或 `schemaVersion` 高于当前支持范围。历史 payload/bytes 可以
+  原样 durable 保留，但当前 decoder 必须在任何 body mutation 前 fail closed；不得
+  只恢复已知 fields 再保留当前 live field，也不得删除 unknown field。这样不会
+  产生 mixed historical/current metadata revision；
 - arbitrary custom frontmatter 仍与 controlled metadata 分离；不把其内容自动
   导入历史表；
-- schema migration 必须能读取旧 envelope，并保留无法理解但格式合法的字段；
+- supported schema migration 必须能读取兼容的旧 envelope；对于暂时无法理解的
+  新 envelope，migration 只能保留 opaque payload，不能宣称已经完成 Restore；
 - 不允许通过 asset path、emoji filename 或 UI label 作为稳定 metadata identity。
 
 ## 19. D7.0A scope
@@ -500,8 +555,8 @@ D7.0A 是 generic foundation production phase，范围固定为：
 6. existing History Restore generic metadata restore integration；
 7. capture/restore journal、crash reconciliation 和 compensation；
 8. stable document identity、tombstone 和 delete/recreate generation semantics；
-9. revisions without snapshots 与 pre-Mood revision policy；
-10. unknown controlled field preservation；
+9. metadata-history coverage boundary 与 legacy body-only restore result semantics；
+10. supported/unsupported snapshot schema policy 与 known-field unknown-value preservation；
 11. title、summary、tags 的 unit/integration/route characterization；
 12. existing History Comparison body-only 与 Recovery body-only regression proof。
 
@@ -545,6 +600,15 @@ evidence。
 - [ ] stale external metadata cannot be silently overwritten;
 - [ ] delete/recreate generation isolation is proven;
 - [ ] revision-without-snapshot policy is explicit and tested;
+- [ ] metadata-history coverage boundary is explicit and tested;
+- [ ] legacy pre-coverage ordinary Note body-only History Restore remains usable;
+- [ ] legacy restore preserves current durable SQLite metadata;
+- [ ] legacy restore exposes an explicit metadata-unavailable limitation;
+- [ ] legacy restore never infers metadata from historical frontmatter or claims metadata restore;
+- [ ] snapshot-covered revision restores body and matching generic metadata exactly;
+- [ ] unsupported/newer snapshot schema fails before body mutation;
+- [ ] known-field unknown-value snapshots round-trip opaquely;
+- [ ] no mixed historical/current metadata revision can report success;
 - [ ] pre-Mood revision behavior is explicit and tested;
 - [ ] History Comparison remains body-only;
 - [ ] Recovery remains body-only and preserves current durable metadata;
@@ -565,8 +629,8 @@ evidence。
 | --- | --- |
 | Unit | canonical generic payload, schema version, digest, unknown-field round-trip, identity/generation validation |
 | SQLite integration | snapshot capture, same-DB journal, current/live separation, fresh `updatedAt`, CAS conflict, idempotent finalize/restore |
-| History route | commit capture bound to immutable SHA; multi-file capture; missing snapshot error; ref/tree mismatch; crash/retry reconciliation |
-| Restore integration | body + title/summary/tags restore; create-only/tombstone path; delete/recreate conflict; body rollback; metadata rollback; external mutation conflict |
+| History route | commit capture bound to immutable SHA; multi-file capture; legacy coverage result; unsupported schema error; ref/tree mismatch; crash/retry reconciliation |
+| Restore integration | snapshot-covered body + title/summary/tags restore; legacy body-only restore with current metadata preserved; unsupported schema preflight rejection; known-field unknown-value restore; create-only/tombstone path; delete/recreate conflict; body rollback; metadata rollback; external mutation conflict |
 | Existing regression | History Comparison body-only, baseline/divergent Recovery body-only, ordinary Note History, existing D6 Diary lifecycle |
 | Failure injection | Git failure, SQLite prepare/finalize failure, process boundary, repository change, rollback conflict; no false success and no partial silent mutation |
 
@@ -582,7 +646,7 @@ Revalidation 至少重新确认：
 4. current CAS/updatedAt 与 restore 后新版本方向；
 5. dirty body 与 metadata write/restore 的隔离；
 6. delete/recreate identity/generation；
-7. revisions without snapshot、pre-Mood absence、unknown controlled fields；
+7. legacy no-snapshot coverage、unsupported snapshot schema、pre-Mood absence、known-field unknown values；
 8. Calendar month bulk-read seam 与 D7.1 storage direction；
 9. no second source of truth、no sidecar、no PRD/D6 contract drift。
 
@@ -642,8 +706,12 @@ product review：
 12. 只能从不可信 frontmatter 猜 historical metadata；
 13. 需要修改 closed PRD product semantics；
 14. D7.0A 无法限制为 generic metadata capability；
-15. old client/unknown controlled fields 无法安全保留；
-16. legacy revision 的缺失 snapshot 只能靠静默 fallback 解释。
+15. known-field unknown values 无法被 opaque 保留/restore，或 unknown field / unsupported
+    schema 无法在 body mutation 前 fail closed；
+16. Restore 只能通过 historical known fields + current live fields 的 mixed revision
+    取得“成功”；
+17. legacy pre-coverage revision 无法继续 ordinary Note body-only Restore，或无法
+    返回明确的 metadata-unavailable limitation；
 
 ## 27. Rollback and operational safety
 
