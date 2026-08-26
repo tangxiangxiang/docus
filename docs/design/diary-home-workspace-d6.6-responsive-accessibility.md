@@ -1,9 +1,9 @@
 # D6.6 — Responsive / Accessibility Evidence
 
-状态：`REVIEW-READY`
-Independent Review：`PENDING`
+状态：`REVIEW-CLOSED`
+Independent Review：`PASS (P0 = 0 / P1 = 0 / P2 = 0)`
 Task self-review：`P0 = 0 / P1 = 0 / P2 = 0`
-D6.7：`BLOCKED`，本阶段未开始 D6.7。
+D6.7：`NOT STARTED`，本阶段未开始 D6.7。
 
 日期：2026-08-26（Asia/Shanghai）
 
@@ -199,7 +199,7 @@ events (`date-selected`, `month-change`) are unchanged. No Diary Dialog, modal,
 | Focused tests/typecheck/build | PASS |
 | No D6.7 implementation | PASS |
 
-No D6.6 STOP condition was triggered. D6.6 is `REVIEW-READY` for independent review;
+No D6.6 STOP condition was triggered. D6.6 is `REVIEW-CLOSED` after independent review;
 it is not marked `REVIEW-CLOSED` by this implementation/evidence commit.
 
 ## 9. Phase status
@@ -212,9 +212,9 @@ D6.2.1 = REVIEW-CLOSED
 D6.3   = REVIEW-CLOSED
 D6.4   = REVIEW-CLOSED
 D6.5   = REVIEW-CLOSED
-D6.6   = REVIEW-READY
-D6.7   = BLOCKED
+D6.6   = REVIEW-CLOSED
+D6.7   = NOT STARTED
 ```
 
-Independent Review remains `PENDING`; task self-review is `P0/P1/P2 = 0/0/0`.
+Independent Review = `PASS`; P0/P1/P2 = `0/0/0`.
 GitHub status was not queried for this task.

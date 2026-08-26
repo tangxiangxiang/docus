@@ -2,7 +2,7 @@
 
 状态：`REVIEW-CLOSED`（原始 D6 design baseline）；Native Document Workspace superseding design amendment = `REVIEW-CLOSED`，Independent Review = `PASS`（P0/P1/P2 = 0/0/0）。D6.4 closure review = `PASS`（P0/P1/P2 = 0/0/0）。
 
-基线：D6.0–D6.5 `REVIEW-CLOSED`。旧 D6.3 Reader Dialog implementation 在 closure 前被产品决定替代；D6.5 生命周期回归 evidence 已记录并通过独立复审，P0/P1/P2 = `0/0/0`。D6.6 当前为 `REVIEW-READY`，responsive/accessibility evidence 已记录，Independent Review = `PENDING`，task self-review P0/P1/P2 = `0/0/0`。
+基线：D6.0–D6.5 `REVIEW-CLOSED`。旧 D6.3 Reader Dialog implementation 在 closure 前被产品决定替代；D6.5 生命周期回归 evidence 已记录并通过独立复审，P0/P1/P2 = `0/0/0`。D6.6 已完成 responsive/accessibility evidence 并通过独立复审，当前为 `REVIEW-CLOSED`，Independent Review = `PASS`，P0/P1/P2 = `0/0/0`。D6.7 为 `NOT STARTED`。
 
 这里的 `REVIEW-CLOSED` 同时覆盖原始 D6 implementation-plan baseline 与已通过独立复审的 2026-08-26 Native Workspace superseding amendment。
 
@@ -198,7 +198,7 @@ production, server/shared, route, dependency or D6.6 code is included.
 
 ### D6.6 — Responsive / Accessibility
 
-Status: `REVIEW-READY`; Independent Review = `PENDING`; task self-review P0/P1/P2 = `0/0/0`.
+Status: `REVIEW-CLOSED`; Independent Review = `PASS`; P0/P1/P2 = `0/0/0`.
 
 Evidence: [D6.6 Responsive / Accessibility](diary-home-workspace-d6.6-responsive-accessibility.md).
 
@@ -214,11 +214,11 @@ passes the 601/600 and 421/420 breakpoint smoke. The combined Diary browser
 regressions pass 38/38; focused unit tests pass 104/104 across 6 files; client/full
 typecheck and build pass. No `dayIndex`, pageerror or console error was observed.
 The evidence records the two minimal keyboard fixes and confirms no router, server,
-shared, dependency or D6.7 change. D6.7 remains `BLOCKED`.
+shared, dependency or D6.7 change. D6.7 is `NOT STARTED`.
 
 ### D6.7 — Release Closure
 
-Status: `BLOCKED`. Consolidate evidence and independent review.
+Status: `NOT STARTED`. D6.7 has not started.
 
 ## 10. Testing strategy
 
@@ -248,7 +248,8 @@ Status: `BLOCKED`. Consolidate evidence and independent review.
 
 D6.6 adds the responsive/accessibility evidence document and dedicated browser suite;
 its Dialog/modal/focus-trap requirements remain superseded by the Native Workspace
-architecture. Independent Review is pending; this phase is not `REVIEW-CLOSED`.
+architecture. Independent Review passed with P0/P1/P2 = 0/0/0; D6.6 is
+`REVIEW-CLOSED`. D6.7 remains `NOT STARTED`.
 
 ### Validation commands
 
