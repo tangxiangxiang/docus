@@ -7,8 +7,8 @@ import {
   getDocumentMetadata,
   getDocumentMetadataById,
   getDocumentTombstoneIdentity,
-  patchDocumentMetadataWithinTransaction,
   restoreDocumentMetadataFieldsCAS,
+  restoreDocumentMetadataFieldsCASWithinTransaction,
   type DocumentMetadata,
 } from '../documentMetadata.js'
 import { normalizeAndDedupeTags, TagNormalizationError } from '../../shared/tagNormalization.js'
@@ -429,7 +429,14 @@ async function verifyCommitBinding(
   }
 }
 
-/** Bind prepared live metadata images to the immutable commit/tree/body proof. */
+/**
+ * Bind prepared live metadata images to the immutable commit/tree/body proof.
+ *
+ * The Git object exists at this point, but HEAD has not been updated yet.
+ * Keep the durable capture journal in `prepared` until the caller confirms
+ * that update-ref published the object; this is what lets reconciliation
+ * distinguish a reachable post-crash commit from an unpublished one.
+ */
 export async function finalizeHistoryMetadataCapture(input: {
   db: DatabaseT
   repoRoot: string
@@ -450,6 +457,9 @@ export async function finalizeHistoryMetadataCapture(input: {
   }
   if (operation.state !== 'prepared') {
     throw new HistoryMetadataError('HISTORY_METADATA_CAPTURE_FAILED', `capture journal is not finalizable from ${operation.state}`)
+  }
+  if (operation.commit_sha !== null && operation.commit_sha !== input.commitSha) {
+    throw new HistoryMetadataError('HISTORY_METADATA_CAPTURE_FAILED', 'capture journal is bound to a different commit')
   }
   if (operation.expected_parent_sha !== input.parentSha) {
     throw new HistoryMetadataError('HISTORY_METADATA_CAPTURE_FAILED', 'capture parent changed before Git binding')
@@ -485,20 +495,67 @@ export async function finalizeHistoryMetadataCapture(input: {
       throw new HistoryMetadataError('HISTORY_METADATA_CAPTURE_FAILED', 'capture journal was concurrently rebound')
     }
     if (current.state !== 'prepared') throw new HistoryMetadataError('HISTORY_METADATA_CAPTURE_FAILED', 'capture journal is no longer prepared')
-    const operationUpdate = input.db.prepare(`
+    input.db.prepare(`
       UPDATE history_metadata_operations
-      SET state = 'committed', commit_sha = ?, tree_sha = ?, updated_at = ?,
+      SET commit_sha = ?, tree_sha = ?, updated_at = ?,
           error_code = NULL, error_message = NULL
       WHERE operation_id = ? AND kind = 'capture' AND state = 'prepared'
-    `).run(input.commitSha, input.treeSha, now, input.operationId)
-    if (operationUpdate.changes !== 1) throw new HistoryMetadataError('HISTORY_METADATA_CAPTURE_FAILED', 'capture journal finalize lost its state race')
-    const revisionUpdate = input.db.prepare(`
+        AND (commit_sha IS NULL OR commit_sha = ?)
+    `).run(input.commitSha, input.treeSha, now, input.operationId, input.commitSha)
+    input.db.prepare(`
       UPDATE history_metadata_revisions
       SET commit_sha = ?, parent_sha = ?, tree_sha = ?
       WHERE operation_id = ? AND commit_sha IS NULL
     `).run(input.commitSha, input.parentSha, input.treeSha, input.operationId)
-    if (revisionUpdate.changes !== revisions.length) {
+    const bound = input.db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM history_metadata_revisions
+      WHERE operation_id = ? AND commit_sha = ? AND tree_sha = ?
+        AND (parent_sha = ? OR (parent_sha IS NULL AND ? IS NULL))
+    `).get(input.operationId, input.commitSha, input.treeSha, input.parentSha, input.parentSha) as { count: number }
+    if (bound.count !== revisions.length) {
       throw new HistoryMetadataError('HISTORY_METADATA_CAPTURE_FAILED', 'not all metadata revisions were bound to the commit')
+    }
+  })
+  tx.immediate()
+}
+
+/** Mark a SHA-bound capture published only after update-ref succeeds. */
+export function markHistoryMetadataCaptureCommitted(input: {
+  db: DatabaseT
+  operationId: string
+  commitSha: string
+}): void {
+  const tx = input.db.transaction(() => {
+    const operation = input.db.prepare(`
+      SELECT state, commit_sha
+      FROM history_metadata_operations
+      WHERE operation_id = ? AND kind = 'capture'
+    `).get(input.operationId) as { state: string; commit_sha: string | null } | undefined
+    if (!operation) throw new HistoryMetadataError('HISTORY_METADATA_CAPTURE_FAILED', 'capture journal was not found')
+    if (operation.state === 'committed') {
+      if (operation.commit_sha === input.commitSha) return
+      throw new HistoryMetadataError('HISTORY_METADATA_CAPTURE_FAILED', 'capture journal is bound to a different commit')
+    }
+    if (operation.state !== 'prepared' || operation.commit_sha !== input.commitSha) {
+      throw new HistoryMetadataError('HISTORY_METADATA_CAPTURE_FAILED', 'capture journal is not ready to be committed')
+    }
+    const revisions = input.db.prepare(`
+      SELECT COUNT(*) AS total,
+             SUM(CASE WHEN commit_sha = ? THEN 1 ELSE 0 END) AS bound
+      FROM history_metadata_revisions
+      WHERE operation_id = ?
+    `).get(input.commitSha, input.operationId) as { total: number; bound: number }
+    if (revisions.total === 0 || revisions.bound !== revisions.total) {
+      throw new HistoryMetadataError('HISTORY_METADATA_CAPTURE_FAILED', 'capture journal has incomplete SHA-bound revision rows')
+    }
+    const update = input.db.prepare(`
+      UPDATE history_metadata_operations
+      SET state = 'committed', error_code = NULL, error_message = NULL, updated_at = ?
+      WHERE operation_id = ? AND kind = 'capture' AND state = 'prepared' AND commit_sha = ?
+    `).run(Date.now(), input.operationId, input.commitSha)
+    if (update.changes !== 1) {
+      throw new HistoryMetadataError('HISTORY_METADATA_CAPTURE_FAILED', 'capture journal publication mark lost its state race')
     }
   })
   tx.immediate()
@@ -540,37 +597,154 @@ export function withdrawHistoryMetadataCapture(
   `).run(Date.now(), vaultId, commitSha)
 }
 
-/** Reconcile capture journals without guessing an unbound Git object. */
+type CaptureProofOperation = {
+  operation_id: string
+  state: string
+  expected_parent_sha: string | null
+  commit_sha: string | null
+  tree_sha: string | null
+}
+
+function markHistoryMetadataCaptureAmbiguous(
+  db: DatabaseT,
+  operationId: string,
+  error: unknown,
+): void {
+  const code = error instanceof HistoryMetadataError
+    ? error.code
+    : 'HISTORY_METADATA_JOURNAL_AMBIGUOUS'
+  const message = error instanceof Error ? error.message : String(error)
+  db.prepare(`
+    UPDATE history_metadata_operations
+    SET state = 'ambiguous', error_code = ?, error_message = ?, updated_at = ?
+    WHERE operation_id = ? AND kind = 'capture'
+      AND state IN ('prepared', 'committed')
+  `).run(code, message.slice(0, 2000), Date.now(), operationId)
+}
+
+async function verifyBoundCaptureProof(
+  db: DatabaseT,
+  repoRoot: string,
+  operation: CaptureProofOperation,
+): Promise<void> {
+  if (!operation.commit_sha || !operation.tree_sha) {
+    throw new HistoryMetadataError(
+      'HISTORY_METADATA_JOURNAL_AMBIGUOUS',
+      `capture journal has incomplete Git binding: ${operation.operation_id}`,
+    )
+  }
+  await verifyCommitBinding(
+    repoRoot,
+    operation.commit_sha,
+    operation.expected_parent_sha,
+    operation.tree_sha,
+  )
+  const revisions = db.prepare(`
+    SELECT commit_sha, parent_sha, tree_sha, path_at_revision, body_sha
+    FROM history_metadata_revisions
+    WHERE operation_id = ?
+    ORDER BY path_at_revision
+  `).all(operation.operation_id) as Array<{
+    commit_sha: string | null
+    parent_sha: string | null
+    tree_sha: string | null
+    path_at_revision: string
+    body_sha: string | null
+  }>
+  if (revisions.length === 0) {
+    throw new HistoryMetadataError(
+      'HISTORY_METADATA_JOURNAL_AMBIGUOUS',
+      `capture journal has no revision proof: ${operation.operation_id}`,
+    )
+  }
+  for (const revision of revisions) {
+    if (revision.commit_sha !== operation.commit_sha
+      || revision.tree_sha !== operation.tree_sha
+      || revision.parent_sha !== operation.expected_parent_sha) {
+      throw new HistoryMetadataError(
+        'HISTORY_METADATA_JOURNAL_AMBIGUOUS',
+        `capture revision binding is inconsistent: ${revision.path_at_revision}`,
+      )
+    }
+    const raw = await git.rawAt(repoRoot, operation.commit_sha, revision.path_at_revision)
+    if (hashRaw(raw) !== revision.body_sha) {
+      throw new HistoryMetadataError(
+        'HISTORY_METADATA_BODY_MISMATCH',
+        `Git body does not match capture proof: ${revision.path_at_revision}`,
+      )
+    }
+  }
+}
+
+/**
+ * Reconcile capture journals without guessing an unbound Git object.
+ *
+ * A bound `prepared` operation is recoverable in both directions: a reachable
+ * commit proves that update-ref won before the process stopped, while an
+ * unchanged expected parent proves that publication never happened. Only a
+ * repository state that cannot establish either fact remains ambiguous.
+ */
 export async function reconcileHistoryMetadataCaptures(
   db: DatabaseT,
   repoRoot: string,
 ): Promise<void> {
   const operations = db.prepare(`
-    SELECT operation_id, state, commit_sha
+    SELECT operation_id, state, expected_parent_sha, commit_sha, tree_sha
     FROM history_metadata_operations
     WHERE kind = 'capture' AND state IN ('prepared', 'committed', 'ambiguous')
     ORDER BY created_at, operation_id
-  `).all() as Array<{ operation_id: string; state: string; commit_sha: string | null }>
+  `).all() as CaptureProofOperation[]
   const ambiguous: string[] = []
   for (const operation of operations) {
     if (operation.state === 'prepared') {
-      abortHistoryMetadataCapture(db, operation.operation_id, new HistoryMetadataError(
-        'HISTORY_METADATA_CAPTURE_FAILED',
-        'prepared capture had no durable commit binding after process recovery',
-      ))
+      if (!operation.commit_sha) {
+        abortHistoryMetadataCapture(db, operation.operation_id, new HistoryMetadataError(
+          'HISTORY_METADATA_CAPTURE_FAILED',
+          'prepared capture had no durable commit binding after process recovery',
+        ))
+        continue
+      }
+      try {
+        if (await git.isCommitReachable(repoRoot, operation.commit_sha)) {
+          await verifyBoundCaptureProof(db, repoRoot, operation)
+          markHistoryMetadataCaptureCommitted({
+            db,
+            operationId: operation.operation_id,
+            commitSha: operation.commit_sha,
+          })
+          continue
+        }
+        const currentHead = await git.currentHead(repoRoot)
+        if (currentHead === operation.expected_parent_sha) {
+          abortHistoryMetadataCapture(db, operation.operation_id, new HistoryMetadataError(
+            'HISTORY_METADATA_CAPTURE_FAILED',
+            'bound metadata capture was not published to Git',
+          ))
+          continue
+        }
+        throw new HistoryMetadataError(
+          'HISTORY_METADATA_JOURNAL_AMBIGUOUS',
+          `bound metadata capture publication cannot be proven: ${operation.operation_id}`,
+        )
+      } catch (error) {
+        markHistoryMetadataCaptureAmbiguous(db, operation.operation_id, error)
+        ambiguous.push(operation.operation_id)
+      }
       continue
     }
     if (operation.state === 'ambiguous') {
       ambiguous.push(operation.operation_id)
       continue
     }
-    if (!operation.commit_sha || !await git.isCommitReachable(repoRoot, operation.commit_sha)) {
-      db.prepare(`
-        UPDATE history_metadata_operations
-        SET state = 'ambiguous', error_code = 'HISTORY_METADATA_JOURNAL_AMBIGUOUS',
-            error_message = 'committed metadata capture is not reachable from Git', updated_at = ?
-        WHERE operation_id = ? AND kind = 'capture' AND state = 'committed'
-      `).run(Date.now(), operation.operation_id)
+    try {
+      if (!operation.commit_sha || !await git.isCommitReachable(repoRoot, operation.commit_sha)) {
+        throw new HistoryMetadataError(
+          'HISTORY_METADATA_JOURNAL_AMBIGUOUS',
+          `committed metadata capture is not reachable from Git: ${operation.operation_id}`,
+        )
+      }
+    } catch (error) {
+      markHistoryMetadataCaptureAmbiguous(db, operation.operation_id, error)
       ambiguous.push(operation.operation_id)
     }
   }
@@ -846,14 +1020,14 @@ export function applyCoveredHistoricalMetadata(input: {
         )
       }
       try {
-        restored = patchDocumentMetadataWithinTransaction(input.db, {
+        restored = restoreDocumentMetadataFieldsCASWithinTransaction(input.db, {
           path: input.path,
+          documentId: input.documentId,
+          generationId: input.generationId,
           expectedUpdatedAt: input.expectedUpdatedAt,
-          changes: [
-            { field: 'title', value: values.title },
-            { field: 'summary', value: values.summary },
-            { field: 'tags', values: values.tags },
-          ],
+          title: values.title,
+          summary: values.summary,
+          tags: values.tags,
         }, input.now)
       } catch (error) {
         if (error instanceof Error && !(error instanceof HistoryMetadataError)) {
@@ -874,9 +1048,8 @@ export function applyCoveredHistoricalMetadata(input: {
     return restored
   })
 
-  // `restoreDocumentMetadataFieldsCAS` is normally a transaction wrapper.
-  // It must not be nested inside this journal transaction, so perform the
-  // same semantic update inline when a current row exists.
+  // `restoreDocumentMetadataFieldsCASWithinTransaction` keeps the metadata
+  // field apply and restore journal transition in one BEGIN IMMEDIATE.
   try {
     return tx.immediate()
   } catch (error) {

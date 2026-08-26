@@ -722,7 +722,12 @@ export async function isCommitReachable(repoRoot: string, commitSha: string): Pr
   const head = await readCurrentHead(repoRoot)
   if (!head) return false
   const result = await run(repoRoot, ['merge-base', '--is-ancestor', commitSha, head])
-  return result.status === 0
+  if (result.status === 0) return true
+  // `merge-base --is-ancestor` uses status 1 for a valid, unrelated commit.
+  // Any other status means Git could not prove reachability and must not be
+  // collapsed into the safe "not published" branch during reconciliation.
+  if (result.status === 1) return false
+  throw new Error(`git reachability proof failed: ${result.stderr.trim() || result.stdout.trim()}`)
 }
 
 async function absoluteGitDir(repoRoot: string): Promise<string> {
@@ -1344,6 +1349,14 @@ export async function addAndCommit(
       treeSha: string
       paths: readonly string[]
     }) => void | Promise<void>
+    /** Production seam used to publish the durable metadata journal only
+     * after update-ref has successfully advanced HEAD. */
+    afterRefUpdated?: (context: {
+      commitSha: string
+      parentSha: string | null
+      treeSha: string
+      paths: readonly string[]
+    }) => void | Promise<void>
     /** Test-only fault injection for the commit-tree failure boundary. */
     beforeCommitTreeForTesting?: () => Promise<void>
     beforeStageForTesting?: () => Promise<void>
@@ -1484,6 +1497,12 @@ export async function addAndCommit(
   const expectedHead = headBefore.status === 0 ? headBefore.stdout.trim() : '0'.repeat(40)
   const updateHead = await run(repoRoot, ['update-ref', 'HEAD', commitSha, expectedHead])
   if (updateHead.status !== 0) throw new Error('repository changed before commit')
+  await options.afterRefUpdated?.({
+    commitSha,
+    parentSha: headBefore.status === 0 ? headBefore.stdout.trim() : null,
+    treeSha,
+    paths: [...paths],
+  })
 
   // Query the immutable commit we created, never the mutable HEAD ref.
   const show = await run(repoRoot, ['show', '--name-only', '--pretty=', commitSha])

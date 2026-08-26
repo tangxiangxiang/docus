@@ -1071,6 +1071,16 @@ export function patchDocumentMetadata(db: DatabaseT, input: PatchDocumentMetadat
   return tx.immediate()
 }
 
+export type RestoreDocumentMetadataFieldsCASInput = {
+  path: string
+  documentId: string
+  generationId: string
+  expectedUpdatedAt: number
+  title: string
+  summary: string
+  tags: string[]
+}
+
 /**
  * Apply a trusted historical generic metadata image to the current live
  * metadata owner. This is intentionally a semantic field restore rather than
@@ -1078,40 +1088,61 @@ export function patchDocumentMetadata(db: DatabaseT, input: PatchDocumentMetadat
  * stable document identity/path are checked under the same BEGIN IMMEDIATE
  * transaction as the field update.
  */
-export function restoreDocumentMetadataFieldsCAS(
+export function restoreDocumentMetadataFieldsCASWithinTransaction(
   db: DatabaseT,
-  input: {
-    path: string
-    documentId: string
-    generationId: string
-    expectedUpdatedAt: number
-    title: string
-    summary: string
-    tags: string[]
-  },
+  input: RestoreDocumentMetadataFieldsCASInput,
   now = Date.now(),
 ): DocumentMetadata {
-  const tx = db.transaction(() => {
-    const current = getDocumentMetadata(db, input.path)
-    if (!current
-      || current.id !== input.documentId
-      || input.generationId !== input.documentId
-      || current.updatedAt !== input.expectedUpdatedAt) {
-      throw new DocumentMetadataError(
-        'METADATA_VERSION_CONFLICT',
-        `metadata identity or version is stale: ${input.path}`,
-      )
+  const path = input.path.trim()
+  const current = getDocumentMetadata(db, path)
+  if (!current
+    || current.id !== input.documentId
+    || input.generationId !== input.documentId
+    || current.updatedAt !== input.expectedUpdatedAt) {
+    throw new DocumentMetadataError(
+      'METADATA_VERSION_CONFLICT',
+      `metadata identity or version is stale: ${path}`,
+    )
+  }
+  // Historical restore is a real current-version event even when the
+  // restored field values happen to equal the current live values. Keep
+  // ordinary PATCH no-op semantics unchanged; this dedicated seam must
+  // still mint a fresh CAS version because the body revision changed.
+  const title = input.title.trim()
+  const summary = input.summary.trim()
+  if (!title || title.length > 200) {
+    throw new DocumentMetadataError('INVALID_METADATA_CHANGE', 'title must be a non-empty string of at most 200 characters')
+  }
+  if (summary.length > 2000) {
+    throw new DocumentMetadataError('INVALID_METADATA_CHANGE', 'summary must be a string of at most 2000 characters')
+  }
+  const tags = normalizeTags(input.tags)
+  const tagsChanged = !sameIdentitySet(
+    currentTagIdentities(db, current.id),
+    tags.map((tag) => tag.normalizedName),
+  )
+  let updatedAt: number
+  try {
+    updatedAt = nextMetadataUpdatedAt(current.updatedAt, now)
+  } catch (error) {
+    if (error instanceof MetadataVersionError) {
+      throw new DocumentMetadataError('METADATA_VERSION_OVERFLOW', error.message)
     }
-    return patchDocumentMetadataWithinTransaction(db, {
-      path: input.path,
-      expectedUpdatedAt: input.expectedUpdatedAt,
-      changes: [
-        { field: 'title', value: input.title },
-        { field: 'summary', value: input.summary },
-        { field: 'tags', values: input.tags },
-      ],
-    }, now)
-  })
+    throw error
+  }
+  db.prepare(`
+    UPDATE documents SET title = ?, summary = ?, updated_at = ? WHERE id = ?
+  `).run(title, summary, updatedAt, current.id)
+  if (tagsChanged) applyDocumentTagsSetDiff(db, current.id, tags)
+  return getDocumentMetadata(db, path)!
+}
+
+export function restoreDocumentMetadataFieldsCAS(
+  db: DatabaseT,
+  input: RestoreDocumentMetadataFieldsCASInput,
+  now = Date.now(),
+): DocumentMetadata {
+  const tx = db.transaction(() => restoreDocumentMetadataFieldsCASWithinTransaction(db, input, now))
   return tx.immediate()
 }
 

@@ -25,6 +25,7 @@ import {
   HistoryMetadataError,
   decodeHistoricalMetadataPayload,
   encodeHistoricalMetadataPayload,
+  finalizeHistoryMetadataCapture,
   metadataImage,
   prepareHistoryMetadataCapture,
   prepareHistoryMetadataRestore,
@@ -286,6 +287,41 @@ describeHistoryIntegration('D7.0A generic history metadata revisions', () => {
       tags: ['one'],
     })
     expect(getDocumentMetadata(metadataDb, 'note')!.updatedAt).toBeGreaterThan(beforeRestore.updatedAt)
+  }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
+
+  it('mints a fresh metadata version when covered restore values are unchanged', async () => {
+    await write('same-values.md', 'body one\n')
+    saveDocumentMetadata(metadataDb, {
+      id: 'same-values-id',
+      path: 'same-values',
+      title: 'Same title',
+      summary: 'Same summary',
+      tags: ['same'],
+      updatedAt: 100,
+    })
+    const historical = await commit(['same-values.md'], 'same-values seed')
+
+    await write('same-values.md', 'body two\n')
+    await commit(['same-values.md'], 'same-values current')
+    const beforeRestore = getDocumentMetadata(metadataDb, 'same-values')!
+
+    const response = await call('POST', '/restore', { path: 'same-values.md', ref: historical.sha })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      metadataMode: 'restored',
+      metadataRestored: true,
+    })
+    expect(await read('same-values.md')).toBe('body one\n')
+
+    const afterRestore = getDocumentMetadata(metadataDb, 'same-values')!
+    expect(afterRestore).toMatchObject({
+      id: 'same-values-id',
+      path: 'same-values',
+      title: 'Same title',
+      summary: 'Same summary',
+      tags: ['same'],
+    })
+    expect(afterRestore.updatedAt).toBeGreaterThan(beforeRestore.updatedAt)
   }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
   it('rehydrates a covered deleted generation only from its matching tombstone', async () => {
@@ -605,7 +641,7 @@ describeHistoryIntegration('D7.0A generic history metadata revisions', () => {
     `).get(prepared.operationId) as { state: string }).state).toBe('aborted')
   }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
-  it('marks a finalized but unpublished capture ambiguous after update-ref failure', async () => {
+  it('aborts a bound capture when update-ref never publishes it', async () => {
     await write('ambiguous.md', 'body\n')
     saveDocumentMetadata(metadataDb, { id: 'ambiguous-id', path: 'ambiguous', title: 'Ambiguous' })
     const expected = { 'ambiguous.md': createHash('sha256').update('body\n').digest('hex') }
@@ -620,7 +656,6 @@ describeHistoryIntegration('D7.0A generic history metadata revisions', () => {
     await expect(historyGit.addAndCommit(root, ['ambiguous.md'], 'ambiguous update', {
       expected,
       afterCommitObjectCreatedBeforeRefUpdate: async ({ commitSha, parentSha, treeSha }) => {
-        const { finalizeHistoryMetadataCapture } = await import('../history/metadataRevisions.js')
         await finalizeHistoryMetadataCapture({
           db: metadataDb,
           repoRoot: root,
@@ -636,7 +671,127 @@ describeHistoryIntegration('D7.0A generic history metadata revisions', () => {
     })).rejects.toThrow(/simulated update-ref failure/)
 
     expect((metadataDb.prepare(`SELECT state, commit_sha FROM history_metadata_operations WHERE operation_id = ?`)
-      .get(prepared.operationId) as { state: string; commit_sha: string }).state).toBe('committed')
+      .get(prepared.operationId) as { state: string; commit_sha: string }).state).toBe('prepared')
+    await expect(reconcileHistoryMetadataCaptures(metadataDb, root)).resolves.toBeUndefined()
+    expect((metadataDb.prepare(`SELECT state FROM history_metadata_operations WHERE operation_id = ?`)
+      .get(prepared.operationId) as { state: string }).state).toBe('aborted')
+  }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
+
+  it('reconciles a reachable bound capture after publication before the committed mark', async () => {
+    await write('reachable-after-crash.md', 'body\n')
+    saveDocumentMetadata(metadataDb, {
+      id: 'reachable-after-crash-id',
+      path: 'reachable-after-crash',
+      title: 'Reachable',
+    })
+    const expected = { 'reachable-after-crash.md': createHash('sha256').update('body\n').digest('hex') }
+    const prepared = prepareHistoryMetadataCapture({
+      db: metadataDb,
+      vaultId: await historyGit.ensureDocusVaultId(root),
+      expectedParentSha: await historyGit.currentHead(root),
+      paths: ['reachable-after-crash.md'],
+      expectedHashes: expected,
+    })
+
+    const result = await historyGit.addAndCommit(root, ['reachable-after-crash.md'], 'published before mark', {
+      expected,
+      afterCommitObjectCreatedBeforeRefUpdate: async ({ commitSha, parentSha, treeSha }) => {
+        await finalizeHistoryMetadataCapture({
+          db: metadataDb,
+          repoRoot: root,
+          operationId: prepared.operationId,
+          commitSha,
+          parentSha,
+          treeSha,
+        })
+      },
+      // No afterRefUpdated callback simulates a process stopping immediately
+      // after update-ref and before SQLite can mark the capture committed.
+    })
+
+    expect(result.sha).toMatch(/^[0-9a-f]{40}$/)
+    expect((metadataDb.prepare(`SELECT state, commit_sha FROM history_metadata_operations WHERE operation_id = ?`)
+      .get(prepared.operationId) as { state: string; commit_sha: string }).state).toBe('prepared')
+    await expect(reconcileHistoryMetadataCaptures(metadataDb, root)).resolves.toBeUndefined()
+    expect((metadataDb.prepare(`SELECT state FROM history_metadata_operations WHERE operation_id = ?`)
+      .get(prepared.operationId) as { state: string }).state).toBe('committed')
+  }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
+
+  it('recovers the route after a known update-ref failure and allows the next commit', async () => {
+    let failBeforeUpdate = true
+    __setHistoryMutationHooksForTesting({
+      beforeUpdateRefForTesting: async () => {
+        if (failBeforeUpdate) {
+          failBeforeUpdate = false
+          throw new Error('simulated update-ref failure')
+        }
+      },
+    })
+    await write('retry-after-ref-failure.md', 'first\n')
+    saveDocumentMetadata(metadataDb, {
+      id: 'retry-after-ref-failure-id',
+      path: 'retry-after-ref-failure',
+      title: 'Retry',
+    })
+
+    const failed = await call('POST', '/commits', {
+      paths: ['retry-after-ref-failure.md'],
+      message: 'known update-ref failure',
+    })
+    expect(failed.status).toBe(500)
+    const failedOperation = metadataDb.prepare(`
+      SELECT state, commit_sha FROM history_metadata_operations
+      WHERE kind = 'capture' ORDER BY created_at DESC LIMIT 1
+    `).get() as { state: string; commit_sha: string }
+    expect(failedOperation.state).toBe('aborted')
+    expect(failedOperation.commit_sha).toMatch(/^[0-9a-f]{40}$/)
+    await expect(reconcileHistoryMetadataCaptures(metadataDb, root)).resolves.toBeUndefined()
+
+    await write('retry-after-ref-failure.md', 'second\n')
+    const retried = await call('POST', '/commits', {
+      paths: ['retry-after-ref-failure.md'],
+      message: 'retry after update-ref failure',
+    })
+    expect(retried.status).toBe(201)
+    const states = metadataDb.prepare(`
+      SELECT state FROM history_metadata_operations
+      WHERE kind = 'capture' ORDER BY created_at
+    `).all() as Array<{ state: string }>
+    expect(states.map((row) => row.state)).toEqual(['aborted', 'committed'])
+  }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
+
+  it('keeps a truly unprovable bound capture ambiguous', async () => {
+    await write('unprovable.md', 'bound body\n')
+    saveDocumentMetadata(metadataDb, { id: 'unprovable-id', path: 'unprovable', title: 'Unprovable' })
+    const expected = { 'unprovable.md': createHash('sha256').update('bound body\n').digest('hex') }
+    const prepared = prepareHistoryMetadataCapture({
+      db: metadataDb,
+      vaultId: await historyGit.ensureDocusVaultId(root),
+      expectedParentSha: await historyGit.currentHead(root),
+      paths: ['unprovable.md'],
+      expectedHashes: expected,
+    })
+
+    await expect(historyGit.addAndCommit(root, ['unprovable.md'], 'unpublished bound object', {
+      expected,
+      afterCommitObjectCreatedBeforeRefUpdate: async ({ commitSha, parentSha, treeSha }) => {
+        await finalizeHistoryMetadataCapture({
+          db: metadataDb,
+          repoRoot: root,
+          operationId: prepared.operationId,
+          commitSha,
+          parentSha,
+          treeSha,
+        })
+      },
+      beforeUpdateRefForTesting: async () => {
+        throw new Error('simulated publication interruption')
+      },
+    })).rejects.toThrow(/simulated publication interruption/)
+
+    await write('unrelated.md', 'unrelated\n')
+    await historyGit.addAndCommit(root, ['unrelated.md'], 'unrelated published commit')
+
     await expect(reconcileHistoryMetadataCaptures(metadataDb, root))
       .rejects.toMatchObject({ code: 'HISTORY_METADATA_JOURNAL_AMBIGUOUS' })
     expect((metadataDb.prepare(`SELECT state FROM history_metadata_operations WHERE operation_id = ?`)

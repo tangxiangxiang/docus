@@ -29,6 +29,7 @@ import {
   abortHistoryMetadataCapture,
   finalizeHistoryMetadataCapture,
   logicalHistoryPath,
+  markHistoryMetadataCaptureCommitted,
   prepareHistoryMetadataCapture,
   reconcileHistoryMetadata,
   withdrawHistoryMetadataCapture,
@@ -78,6 +79,8 @@ export type HistoryMutationKind =
 
 export type HistoryMutationHooks = {
   beforeMutation?: (kind: HistoryMutationKind) => void | Promise<void>
+  /** Test-only fault injection immediately before update-ref. */
+  beforeUpdateRefForTesting?: () => void | Promise<void>
   beforeRestoreCommit?: () => void | Promise<void>
   afterRestorePrepare?: () => void | Promise<void>
   afterRestoreCommit?: () => void | Promise<void>
@@ -386,6 +389,7 @@ history.post('/commits', async (c) => {
         const vaultId = await git.ensureDocusVaultId(repoRoot())
         const expectedParentSha = await git.currentHead(repoRoot())
         let capture: ReturnType<typeof prepareHistoryMetadataCapture> | null = null
+        let refPublished = false
         try {
           capture = prepareHistoryMetadataCapture({
             db: metadataDb(),
@@ -406,10 +410,24 @@ history.post('/commits', async (c) => {
                 treeSha,
               })
             },
+            afterRefUpdated: async ({ commitSha }) => {
+              // Set this before the database mark. If the process/database
+              // fails after Git publication, reconciliation must prove the
+              // reachable bound SHA rather than aborting it as unpublished.
+              refPublished = true
+              markHistoryMetadataCaptureCommitted({
+                db: metadataDb(),
+                operationId: capture!.operationId,
+                commitSha,
+              })
+            },
+            beforeUpdateRefForTesting: async () => {
+              await historyMutationHooks?.beforeUpdateRefForTesting?.()
+            },
           })
           return c.json(r, 201)
         } catch (error) {
-          if (capture) {
+          if (capture && !refPublished) {
             try { abortHistoryMetadataCapture(metadataDb(), capture.operationId, error) } catch { /* reconcile on the next history operation */ }
           }
           throw error
