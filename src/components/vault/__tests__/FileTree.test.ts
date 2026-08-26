@@ -440,4 +440,24 @@ describe('Diary FileTree presentation boundary', () => {
     expect(wrapper.find('.search-input').exists()).toBe(true)
     expect((wrapper.get('.search-input').element as HTMLInputElement).value).toBe('redis')
   })
+
+  it('does not consume keyboard activation from the exact-context action', () => {
+    useScopeFilter().activeScope.value = 'diary'
+    const wrapper = mount(FileTree, {
+      props: {
+        tree: DIARY_TREE,
+        currentPath: 'diary/2026-08-25',
+        exactPathFilter: 'diary/2026-08-25',
+        exactPathFilterActionLabel: '返回日历',
+      },
+      attachTo: document.body,
+    })
+
+    const action = wrapper.get('[data-testid="file-tree-exact-context-action"]').element
+    const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+    action.dispatchEvent(event)
+
+    expect(event.defaultPrevented).toBe(false)
+    wrapper.unmount()
+  })
 })

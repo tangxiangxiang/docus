@@ -1,0 +1,753 @@
+import { expect, test, type APIRequestContext, type Page } from './fixtures/auth'
+import {
+  appendEditorText,
+  clearDraftDatabase,
+  gotoVaultReady,
+} from './helpers/edit-program'
+
+const TEST_TIME_ZONE = 'Asia/Shanghai'
+const RUN_ID = String(Date.now())
+
+type Viewport = { name: string; width: number; height: number }
+
+const CALENDAR_VIEWPORTS: Viewport[] = [
+  { name: 'desktop', width: 1280, height: 800 },
+  { name: 'tablet', width: 768, height: 1024 },
+  { name: 'mobile', width: 375, height: 812 },
+  { name: 'narrow', width: 320, height: 700 },
+]
+
+const CALENDAR_BREAKPOINT_VIEWPORTS: Viewport[] = [
+  { name: 'right-rail-visible-boundary', width: 601, height: 812 },
+  { name: 'right-rail-hidden-boundary', width: 600, height: 812 },
+  { name: 'compact-title-boundary', width: 421, height: 812 },
+  { name: 'compact-title-active', width: 420, height: 812 },
+]
+
+const DOCUMENT_VIEWPORTS: Viewport[] = [
+  ...CALENDAR_VIEWPORTS,
+]
+
+function localCivilDate(): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: TEST_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date())
+  const year = parts.find((part) => part.type === 'year')?.value
+  const month = parts.find((part) => part.type === 'month')?.value
+  const day = parts.find((part) => part.type === 'day')?.value
+  if (!year || !month || !day) throw new Error('unable to resolve the E2E local civil date')
+  return `${year}-${month}-${day}`
+}
+
+function diaryPath(date: string): string {
+  return `diary/${date}`
+}
+
+async function deletePost(request: APIRequestContext, path: string): Promise<void> {
+  const response = await request.delete(`/api/posts/${path}`)
+  expect([200, 404]).toContain(response.status())
+}
+
+async function seedDiary(
+  request: APIRequestContext,
+  date: string,
+  raw: string,
+): Promise<{ documentId: string; raw: string }> {
+  const path = diaryPath(date)
+  await deletePost(request, path)
+  const created = await request.post('/api/diary/dates', {
+    data: { date, timeZone: TEST_TIME_ZONE },
+  })
+  expect(created.status(), await created.text()).toBe(201)
+
+  const initialResponse = await request.get(`/api/posts/${path}`)
+  expect(initialResponse.status()).toBe(200)
+  const initial = await initialResponse.json() as { raw: string }
+  const saved = await request.put(`/api/posts/${path}`, {
+    data: { raw, baseRaw: initial.raw },
+  })
+  expect(saved.status(), await saved.text()).toBe(200)
+
+  const detailResponse = await request.get(`/api/posts/${path}`)
+  expect(detailResponse.status()).toBe(200)
+  const detail = await detailResponse.json() as { raw: string; metadata?: { id?: string } }
+  expect(detail.metadata?.id).toEqual(expect.any(String))
+  return { documentId: detail.metadata!.id!, raw: detail.raw }
+}
+
+async function seedNote(request: APIRequestContext, path: string): Promise<void> {
+  await deletePost(request, path)
+  const created = await request.post('/api/posts', {
+    data: { path, title: path.split('/').at(-1) },
+  })
+  expect([200, 201]).toContain(created.status())
+}
+
+async function selectScope(page: Page, scope: 'note' | 'diary'): Promise<void> {
+  const chip = page.locator('.scope-chip').filter({ hasText: scope })
+  if (await chip.getAttribute('aria-pressed') !== 'true') await chip.click()
+}
+
+async function openDiaryHome(page: Page): Promise<void> {
+  await page.goto('/vault')
+  await selectScope(page, 'diary')
+  await expect(page.getByTestId('diary-calendar-surface')).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByTestId('diary-calendar')).toBeVisible()
+}
+
+async function moveToMonth(page: Page, date: string): Promise<void> {
+  const targetMonth = date.slice(0, 7)
+  const calendar = page.getByTestId('diary-calendar')
+  for (let attempt = 0; attempt < 24; attempt += 1) {
+    const currentMonth = await calendar.getAttribute('data-month')
+    if (currentMonth === targetMonth) return
+    if (!currentMonth) throw new Error('Calendar did not expose its current month')
+    await page.getByTestId(currentMonth < targetMonth ? 'diary-calendar-next' : 'diary-calendar-previous').click()
+  }
+  throw new Error(`Calendar did not reach ${targetMonth}`)
+}
+
+async function activateDiaryDate(page: Page, date: string, method: 'mouse' | 'keyboard' = 'mouse'): Promise<void> {
+  await moveToMonth(page, date)
+  const day = page.locator(`[data-diary-day-content][data-date="${date}"]`)
+  await expect(day).toBeVisible()
+  if (method === 'mouse') await day.click()
+  else {
+    await day.focus()
+    await page.keyboard.press('Enter')
+  }
+}
+
+async function ensureExplorerVisible(page: Page): Promise<void> {
+  const fileTree = page.locator('.file-tree')
+  if (!(await fileTree.isVisible())) {
+    const explorer = page.getByRole('button', { name: /Explorer|文件资源管理器/i })
+    await expect(explorer).toBeVisible()
+    if (await explorer.getAttribute('aria-pressed') !== 'true') await explorer.click()
+  }
+  await expect(fileTree).toBeVisible({ timeout: 15_000 })
+}
+
+async function assertNativeRead(page: Page, date: string): Promise<void> {
+  const path = diaryPath(date)
+  await expect(page).toHaveURL(new RegExp(`/vault/${path.replace('/', '\\/')}(?:[?#]|$)`))
+  await expect(page.getByTestId('diary-reader-dialog')).toHaveCount(0)
+  await expect(page.locator(`[role="tab"][data-tab-id="${path}"]`)).toHaveAttribute('aria-selected', 'true')
+  await expect(page.locator('.reading-pane')).toHaveCount(1)
+  await expect(page.locator('.reading-pane')).toBeVisible()
+  await ensureExplorerVisible(page)
+  await expect(page.getByTestId('file-tree-exact-context')).toContainText(date)
+  await expect(page.getByTestId('file-tree-exact-context-action')).toBeVisible()
+  await expect(page.getByTestId('diary-calendar')).toBeAttached()
+  await expect(page.getByTestId('diary-calendar')).toBeHidden()
+}
+
+async function captureDiagnostics(page: Page): Promise<{
+  pageErrors: string[]
+  consoleErrors: string[]
+}> {
+  const pageErrors: string[] = []
+  const consoleErrors: string[] = []
+  page.on('pageerror', (error) => pageErrors.push(error.stack ?? error.message))
+  page.on('console', (message) => {
+    if (message.type() === 'error') consoleErrors.push(message.text())
+  })
+  return { pageErrors, consoleErrors }
+}
+
+async function assertFocusRing(
+  locator: ReturnType<Page['locator']>,
+  options: { targetSize?: boolean; outlineOffset?: string } = {},
+): Promise<void> {
+  const style = await locator.evaluate((element) => {
+    const computed = getComputedStyle(element)
+    const rect = element.getBoundingClientRect()
+    return {
+      outlineStyle: computed.outlineStyle,
+      outlineWidth: computed.outlineWidth,
+      outlineColor: computed.outlineColor,
+      outlineOffset: computed.outlineOffset,
+      rect: { width: rect.width, height: rect.height },
+    }
+  })
+  expect(style.outlineStyle).toBe('solid')
+  expect(style.outlineWidth).toBe('2px')
+  expect(style.outlineOffset).toBe(options.outlineOffset ?? '2px')
+  expect(style.outlineColor).not.toMatch(/transparent|rgba?\(0,\s*0,\s*0(?:,\s*0)?\)/i)
+  if (options.targetSize !== false) {
+    expect(style.rect.width).toBeGreaterThanOrEqual(40)
+    expect(style.rect.height).toBeGreaterThanOrEqual(40)
+  }
+}
+
+async function focusWithKeyboard(page: Page, locator: ReturnType<Page['locator']>): Promise<void> {
+  await page.locator('.vault').focus()
+  for (let attempt = 0; attempt < 64; attempt += 1) {
+    await page.keyboard.press('Tab')
+    if (await locator.evaluate((element) => element === document.activeElement)) return
+  }
+  throw new Error('control did not receive focus through keyboard Tab navigation')
+}
+
+async function calendarMetrics(page: Page): Promise<{
+  viewportWidth: number
+  viewportHeight: number
+  scrollWidth: number
+  surface: { left: number; right: number; top: number; bottom: number; width: number; height: number } | null
+  host: { left: number; right: number; top: number; bottom: number; width: number; height: number } | null
+  container: { left: number; right: number; top: number; bottom: number; width: number; height: number } | null
+  title: { left: number; right: number; top: number; bottom: number; width: number; height: number } | null
+  previous: { left: number; right: number; top: number; bottom: number; width: number; height: number } | null
+  next: { left: number; right: number; top: number; bottom: number; width: number; height: number } | null
+  dayCount: number
+  minDayWidth: number
+  minDayHeight: number
+  maxDayBottom: number
+  titleText: string
+  titleFits: boolean
+}> {
+  return page.evaluate(() => {
+    type Box = { left: number; right: number; top: number; bottom: number; width: number; height: number }
+    const box = (element: Element | null): Box | null => {
+      if (!(element instanceof HTMLElement)) return null
+      const rect = element.getBoundingClientRect()
+      return {
+        left: rect.left,
+        right: rect.right,
+        top: rect.top,
+        bottom: rect.bottom,
+        width: rect.width,
+        height: rect.height,
+      }
+    }
+    const visible = (element: HTMLElement): boolean => {
+      const style = getComputedStyle(element)
+      const rect = element.getBoundingClientRect()
+      return style.display !== 'none'
+        && style.visibility !== 'hidden'
+        && rect.width > 0
+        && rect.height > 0
+    }
+    const days = [...document.querySelectorAll<HTMLElement>('[data-diary-day-content]')]
+      .filter(visible)
+      .map((element) => box(element))
+      .filter((value): value is Box => value !== null)
+    const titleElement = document.querySelector<HTMLElement>('.vc-title')
+    return {
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      scrollWidth: document.documentElement.scrollWidth,
+      surface: box(document.querySelector('[data-testid="diary-calendar-surface"]')),
+      host: box(document.querySelector('.diary-calendar-host')),
+      container: box(document.querySelector('.diary-calendar-host .vc-container')),
+      title: box(titleElement),
+      previous: box(document.querySelector('.vc-pane-header-wrapper .vc-prev')),
+      next: box(document.querySelector('.vc-pane-header-wrapper .vc-next')),
+      dayCount: days.length,
+      minDayWidth: days.length ? Math.min(...days.map((value) => value.width)) : 0,
+      minDayHeight: days.length ? Math.min(...days.map((value) => value.height)) : 0,
+      maxDayBottom: days.length ? Math.max(...days.map((value) => value.bottom)) : 0,
+      titleText: titleElement?.textContent?.trim() ?? '',
+      titleFits: titleElement ? titleElement.scrollWidth <= titleElement.clientWidth + 1 : false,
+    }
+  })
+}
+
+async function assertNoDocumentOverflow(page: Page): Promise<void> {
+  const metrics = await page.evaluate(() => ({
+    scrollWidth: document.documentElement.scrollWidth,
+    viewportWidth: window.innerWidth,
+  }))
+  expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.viewportWidth + 1)
+}
+
+async function documentMetrics(page: Page): Promise<{
+  viewportWidth: number
+  scrollWidth: number
+  editorAreaWidth: number
+  editorAreaLeft: number
+  editorAreaRight: number
+  activityRight: number
+  fileTreeWidth: number
+  rightRailVisible: boolean
+}> {
+  return page.evaluate(() => {
+    const rect = (selector: string) => document.querySelector<HTMLElement>(selector)?.getBoundingClientRect()
+    const editorArea = rect('.editor-area')
+    const activity = rect('.activity-bar')
+    const fileTree = rect('.file-tree')
+    const rightRail = document.querySelector<HTMLElement>('.right-rail-slot')
+    const rightRailStyle = rightRail ? getComputedStyle(rightRail) : null
+    return {
+      viewportWidth: window.innerWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+      editorAreaWidth: editorArea?.width ?? 0,
+      editorAreaLeft: editorArea?.left ?? 0,
+      editorAreaRight: editorArea?.right ?? 0,
+      activityRight: activity?.right ?? 0,
+      fileTreeWidth: fileTree?.width ?? 0,
+      rightRailVisible: Boolean(rightRail && rightRailStyle?.display !== 'none' && rightRailStyle?.visibility !== 'hidden'),
+    }
+  })
+}
+
+test.beforeEach(async ({ page }) => {
+  await page.goto('/__markdown-test?mode=reading')
+  await page.evaluate(() => localStorage.clear())
+  await clearDraftDatabase(page)
+  await gotoVaultReady(page)
+})
+
+test('Calendar Home semantics and layout pass the full responsive matrix', async ({ page, request }) => {
+  const date = localCivilDate()
+  const state = await captureDiagnostics(page)
+
+  try {
+    await seedDiary(request, date, `# D6.6 Calendar ${RUN_ID}\n`)
+    await openDiaryHome(page)
+
+    const surface = page.getByTestId('diary-calendar-surface')
+    const calendar = page.getByTestId('diary-calendar')
+    const previous = page.locator('.vc-pane-header-wrapper .vc-prev')
+    const next = page.locator('.vc-pane-header-wrapper .vc-next')
+    const dateButton = page.locator(`[data-diary-day-content][data-date="${date}"]`)
+
+    await expect(surface).toHaveAttribute('role', 'region')
+    await expect(surface).toHaveAccessibleName(/Diary calendar workspace|日记日历工作区/i)
+    await expect(calendar).toHaveAttribute('role', 'region')
+    await expect(calendar).toHaveAccessibleName(/Diary calendar|日记日历/i)
+    await expect(previous).toHaveAccessibleName(/Previous month|上个月/i)
+    await expect(next).toHaveAccessibleName(/Next month|下个月/i)
+    await expect(dateButton).toBeEnabled()
+    await expect(dateButton).toHaveAccessibleName(/Diary exists|有日记/i)
+    await expect(page.locator('.diary-calendar-surface-header')).toHaveCount(0)
+    await expect(page.locator('.diary-calendar-toolbar')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: /Today|今天/i, exact: true })).toHaveCount(0)
+
+    const nestedControlAudit = await page.evaluate(() => {
+      const cells = [...document.querySelectorAll<HTMLElement>('.vc-day')]
+        .filter((cell) => getComputedStyle(cell).display !== 'none')
+      return cells.map((cell) => ({
+        buttons: cell.querySelectorAll('button').length,
+        diaryButtons: cell.querySelectorAll('[data-diary-day-content]').length,
+      }))
+    })
+    expect(nestedControlAudit.length).toBeGreaterThan(0)
+    expect(nestedControlAudit.every((cell) => cell.buttons === 1 && cell.diaryButtons === 1)).toBe(true)
+
+    for (const viewport of [...CALENDAR_VIEWPORTS, ...CALENDAR_BREAKPOINT_VIEWPORTS]) {
+      await page.setViewportSize(viewport)
+      await expect(calendar).toBeVisible()
+      const metrics = await calendarMetrics(page)
+      expect(metrics.scrollWidth, `${viewport.name} horizontal overflow`).toBeLessThanOrEqual(viewport.width + 1)
+      expect(metrics.surface?.width, `${viewport.name} surface width`).toBeGreaterThan(0)
+      expect(metrics.surface?.height, `${viewport.name} surface height`).toBeGreaterThan(0)
+      expect(metrics.host?.right, `${viewport.name} host right edge`).toBeLessThanOrEqual(viewport.width + 1)
+      expect(metrics.container?.right, `${viewport.name} calendar right edge`).toBeLessThanOrEqual(viewport.width + 1)
+      expect(metrics.host?.width, `${viewport.name} host fills surface`).toBeGreaterThanOrEqual((metrics.surface?.width ?? 0) * 0.95)
+      expect(metrics.container?.width, `${viewport.name} VCalendar fills host`).toBeGreaterThanOrEqual((metrics.host?.width ?? 0) * 0.95)
+      expect(metrics.container?.height, `${viewport.name} VCalendar fills host height`).toBeGreaterThanOrEqual((metrics.host?.height ?? 0) * 0.85)
+      expect(metrics.dayCount, `${viewport.name} date buttons`).toBeGreaterThan(0)
+      expect(metrics.minDayWidth, `${viewport.name} day width`).toBeGreaterThanOrEqual(40)
+      expect(metrics.minDayHeight, `${viewport.name} day height`).toBeGreaterThanOrEqual(44)
+      expect(metrics.maxDayBottom, `${viewport.name} clipped week`).toBeLessThanOrEqual((metrics.host?.bottom ?? viewport.height) + 1)
+      expect(metrics.titleText, `${viewport.name} month title`).toMatch(/^\d{4}-\d{2}$/)
+      expect(metrics.titleFits, `${viewport.name} month title clipping`).toBe(true)
+      expect(metrics.previous?.width, `${viewport.name} previous target`).toBeGreaterThanOrEqual(40)
+      expect(metrics.previous?.height, `${viewport.name} previous target`).toBeGreaterThanOrEqual(40)
+      expect(metrics.next?.width, `${viewport.name} next target`).toBeGreaterThanOrEqual(40)
+      expect(metrics.next?.height, `${viewport.name} next target`).toBeGreaterThanOrEqual(40)
+      expect(metrics.previous?.right, `${viewport.name} previous/title overlap`).toBeLessThanOrEqual(metrics.title?.left ?? 0)
+      expect(metrics.next?.left, `${viewport.name} title/next overlap`).toBeGreaterThanOrEqual(metrics.title?.right ?? viewport.width)
+    }
+
+    await page.setViewportSize({ width: 320, height: 700 })
+    const before = await calendar.getAttribute('data-month')
+    await focusWithKeyboard(page, previous)
+    await assertFocusRing(previous)
+    await page.keyboard.press('Enter')
+    await expect(calendar).not.toHaveAttribute('data-month', before ?? '')
+    await focusWithKeyboard(page, next)
+    await assertFocusRing(next)
+    await page.keyboard.press('Space')
+    await expect(calendar).toHaveAttribute('data-month', before ?? '')
+
+    await page.keyboard.press('Tab')
+    await dateButton.focus()
+    await assertFocusRing(dateButton)
+    await page.keyboard.press('Enter')
+    await assertNativeRead(page, date)
+  } finally {
+    await deletePost(request, diaryPath(date))
+  }
+
+  expect(state.pageErrors).toEqual([])
+  expect(state.consoleErrors).toEqual([])
+})
+
+test('mobile Calendar-to-native keyboard journey preserves focus, shortcuts, and identity', async ({ page, request }) => {
+  const date = localCivilDate()
+  const path = diaryPath(date)
+  const state = await captureDiagnostics(page)
+
+  try {
+    const seeded = await seedDiary(request, date, `# D6.6 Keyboard ${RUN_ID}\nInitial body.\n`)
+    await openDiaryHome(page)
+    await page.setViewportSize({ width: 375, height: 812 })
+    await activateDiaryDate(page, date, 'keyboard')
+    await assertNativeRead(page, date)
+
+    const tab = page.locator(`[role="tab"][data-tab-id="${path}"]`)
+    const calendar = page.getByTestId('diary-calendar')
+    await expect(tab).toHaveCount(1)
+    await expect(calendar).toBeAttached()
+    expect(await page.evaluate(() => {
+      const calendarRoot = document.querySelector<HTMLElement>('[data-testid="diary-calendar"]')
+      const active = document.activeElement
+      const hidden = calendarRoot
+        ? getComputedStyle(calendarRoot).display === 'none' || calendarRoot.getClientRects().length === 0
+        : false
+      return { hidden, activeInside: Boolean(active && calendarRoot?.contains(active)) }
+    })).toEqual({ hidden: true, activeInside: false })
+
+    const hiddenTabStops = await page.evaluate(() => {
+      const calendarRoot = document.querySelector<HTMLElement>('[data-testid="diary-calendar"]')
+      if (!calendarRoot) return null
+      if (calendarRoot.getClientRects().length === 0) return true
+      const focusable = [...calendarRoot.querySelectorAll<HTMLElement>('button, [tabindex]')]
+      return focusable.every((element) => {
+        const style = getComputedStyle(element)
+        return style.display === 'none' || style.visibility === 'hidden' || element.tabIndex < 0
+      })
+    })
+    expect(hiddenTabStops).toBe(true)
+
+    await page.locator('.vault').focus()
+    await page.keyboard.press('ControlOrMeta+e')
+    await expect(page.getByRole('textbox', { name: 'Editor content' })).toBeVisible()
+    await expect(page.locator('.editor-pane .monaco-editor')).toHaveCount(1)
+    await expect(tab).toHaveAttribute('aria-selected', 'true')
+
+    const editorMarker = `KEYBOARD_SAVE_${RUN_ID}`
+    await appendEditorText(page, editorMarker)
+    await expect(page.locator(`[data-tab-id="${path}"][data-save-status="dirty"]`)).toBeVisible({ timeout: 15_000 })
+    await page.locator('.vault').focus()
+    await page.keyboard.press('ControlOrMeta+s')
+    await expect(page.locator(`[data-tab-id="${path}"][data-save-status="saved"]`)).toBeVisible({ timeout: 15_000 })
+    const saved = await (await request.get(`/api/posts/${path}`)).json() as { raw: string; metadata?: { id?: string } }
+    expect(saved.raw).toContain(editorMarker)
+    expect(saved.metadata?.id).toBe(seeded.documentId)
+
+    await page.keyboard.press('ControlOrMeta+e')
+    await expect(page.locator('.reading-pane')).toBeVisible()
+    await expect(page.getByRole('textbox', { name: 'Editor content' })).toHaveCount(0)
+
+    const routeBeforeReturn = new URL(page.url()).pathname
+    const contextAction = page.getByTestId('file-tree-exact-context-action')
+    await contextAction.focus()
+    await expect(contextAction).toHaveAccessibleName(/Calendar|返回日历/i)
+    await page.keyboard.press('Space')
+    await expect(page.getByTestId('diary-calendar')).toBeVisible()
+    await expect(page.getByTestId('diary-workspace-shell')).toHaveAttribute('data-presentation-mode', 'home')
+    await expect(contextAction).toHaveCount(0)
+    await expect(page).toHaveURL(new RegExp(`/vault/${path.replace('/', '\\/')}(?:[?#]|$)`))
+    expect(new URL(page.url()).pathname).toBe(routeBeforeReturn)
+    await expect(tab).toHaveCount(1)
+    await expect(tab).toHaveAttribute('aria-selected', 'true')
+    const selectedDay = page.locator(`[data-diary-day-content][data-date="${date}"]`)
+    await expect(selectedDay).toBeFocused()
+    await assertFocusRing(selectedDay)
+
+    const rawBeforeHomeShortcuts = (await (await request.get(`/api/posts/${path}`)).json() as { raw: string }).raw
+    await page.locator('.vault').focus()
+    for (const shortcut of ['ControlOrMeta+w', 'ControlOrMeta+s', 'ControlOrMeta+e', 'ControlOrMeta+Tab']) {
+      await page.keyboard.press(shortcut)
+    }
+    const explorer = page.getByRole('button', { name: /Explorer|文件资源管理器/i })
+    const explorerBefore = await explorer.getAttribute('aria-pressed')
+    await page.keyboard.press('ControlOrMeta+b')
+    await expect(page.getByTestId('diary-calendar')).toBeVisible()
+    await expect(tab).toHaveCount(1)
+    await expect(tab).toHaveAttribute('aria-selected', 'true')
+    expect(new URL(page.url()).pathname).toBe(routeBeforeReturn)
+    expect((await (await request.get(`/api/posts/${path}`)).json() as { raw: string }).raw).toBe(rawBeforeHomeShortcuts)
+    await expect(page.getByRole('textbox', { name: 'Editor content' })).toHaveCount(0)
+    expect(await explorer.getAttribute('aria-pressed')).toBe(explorerBefore === 'true' ? 'false' : 'true')
+  } finally {
+    await deletePost(request, path)
+  }
+
+  expect(state.pageErrors).toEqual([])
+  expect(state.consoleErrors).toEqual([])
+})
+
+test('native READ and EDIT remain usable across panel states, breakpoints, and resize', async ({ page, request }) => {
+  const date = localCivilDate()
+  const path = diaryPath(date)
+  const state = await captureDiagnostics(page)
+
+  try {
+    const seeded = await seedDiary(request, date, `# D6.6 Responsive Document ${RUN_ID}\n`)
+    await openDiaryHome(page)
+    await activateDiaryDate(page, date)
+    await assertNativeRead(page, date)
+    const tab = page.locator(`[role="tab"][data-tab-id="${path}"]`)
+
+    for (const viewport of DOCUMENT_VIEWPORTS) {
+      await page.setViewportSize(viewport)
+      await assertNativeRead(page, date)
+      const readMetrics = await documentMetrics(page)
+      expect(readMetrics.editorAreaWidth, `${viewport.name} READ width`).toBeGreaterThan(0)
+      expect(readMetrics.editorAreaLeft, `${viewport.name} READ starts after Activity Bar`).toBeGreaterThanOrEqual(readMetrics.activityRight - 1)
+      if (viewport.width <= 600) {
+        expect(readMetrics.editorAreaRight, `${viewport.name} READ reaches viewport`).toBeGreaterThanOrEqual(viewport.width - 1)
+        expect(readMetrics.rightRailVisible, `${viewport.name} right rail is visually hidden`).toBe(false)
+      } else {
+        expect(readMetrics.editorAreaRight, `${viewport.name} READ has usable right edge`).toBeGreaterThan(readMetrics.editorAreaLeft)
+        expect(readMetrics.rightRailVisible, `${viewport.name} right rail remains visible`).toBe(true)
+      }
+      expect(readMetrics.fileTreeWidth, `${viewport.name} exact FileTree`).toBeGreaterThan(0)
+      await assertNoDocumentOverflow(page)
+
+      const toggle = page.getByTestId('view-toggle')
+      await page.locator('.vault').focus()
+      await page.keyboard.press('ControlOrMeta+e')
+      await expect(page.getByRole('textbox', { name: 'Editor content' })).toBeVisible()
+      await expect(page.locator('.editor-pane .monaco-editor')).toHaveCount(1)
+      const editMetrics = await documentMetrics(page)
+      expect(editMetrics.editorAreaWidth, `${viewport.name} EDIT width`).toBeGreaterThan(0)
+      if (viewport.width <= 600) {
+        expect(editMetrics.editorAreaRight, `${viewport.name} EDIT reaches viewport`).toBeGreaterThanOrEqual(viewport.width - 1)
+      } else {
+        expect(editMetrics.editorAreaRight, `${viewport.name} EDIT has usable right edge`).toBeGreaterThan(editMetrics.editorAreaLeft)
+      }
+      await assertNoDocumentOverflow(page)
+      await expect(tab).toHaveAttribute('aria-selected', 'true')
+      await expect(toggle).toBeVisible()
+
+      await page.locator('.vault').focus()
+      await page.keyboard.press('ControlOrMeta+e')
+      await expect(page.locator('.reading-pane')).toBeVisible()
+      await expect(page.getByRole('textbox', { name: 'Editor content' })).toHaveCount(0)
+    }
+
+    await page.setViewportSize({ width: 375, height: 812 })
+    await assertNativeRead(page, date)
+    const filesButton = page.getByRole('button', { name: /Explorer|文件资源管理器/i })
+    await expect(filesButton).toHaveAttribute('aria-pressed', 'true')
+    await filesButton.click()
+    await expect(filesButton).toHaveAttribute('aria-pressed', 'false')
+    await expect(page.locator('.file-tree')).toBeHidden()
+    await expect(page.locator('.reading-pane')).toBeVisible()
+    for (const viewport of [
+      { width: 375, height: 812 },
+      { width: 320, height: 700 },
+    ]) {
+      await page.setViewportSize(viewport)
+      const closed = await documentMetrics(page)
+      expect(closed.editorAreaWidth, `${viewport.width}px closed-panel width`).toBeGreaterThan(0)
+      expect(closed.editorAreaLeft, `${viewport.width}px closed-panel left`).toBeGreaterThanOrEqual(closed.activityRight - 1)
+      expect(closed.editorAreaRight, `${viewport.width}px closed-panel right`).toBeGreaterThanOrEqual(viewport.width - 1)
+      expect(closed.fileTreeWidth, `${viewport.width}px no phantom FileTree`).toBe(0)
+      await assertNoDocumentOverflow(page)
+      await page.locator('.vault').focus()
+      await page.keyboard.press('ControlOrMeta+e')
+      await expect(page.getByRole('textbox', { name: 'Editor content' })).toBeVisible()
+      await assertNoDocumentOverflow(page)
+      await page.keyboard.press('ControlOrMeta+e')
+      await expect(page.locator('.reading-pane')).toBeVisible()
+    }
+
+    await page.setViewportSize({ width: 1280, height: 800 })
+    await expect(page.locator('.file-tree')).toBeHidden()
+    await expect(page.locator('.reading-pane')).toBeVisible()
+    const closedWide = await documentMetrics(page)
+    expect(closedWide.fileTreeWidth).toBe(0)
+    expect(closedWide.rightRailVisible).toBe(true)
+
+    await filesButton.click()
+    await expect(page.locator('.file-tree')).toBeVisible()
+    const routeBeforeResize = new URL(page.url()).pathname
+    const sequence = [
+      { width: 1280, height: 800 },
+      { width: 375, height: 812 },
+      { width: 320, height: 700 },
+      { width: 768, height: 1024 },
+      { width: 1280, height: 800 },
+    ]
+    for (const viewport of sequence) {
+      await page.setViewportSize(viewport)
+      await expect(tab).toHaveCount(1)
+      await expect(tab).toHaveAttribute('aria-selected', 'true')
+      await expect(page.locator('.reading-pane')).toBeVisible()
+      await expect(page.getByTestId('file-tree-exact-context')).toContainText(date)
+      await assertNoDocumentOverflow(page)
+      expect(new URL(page.url()).pathname).toBe(routeBeforeResize)
+      expect((await (await request.get(`/api/posts/${path}`)).json() as { metadata?: { id?: string } }).metadata?.id).toBe(seeded.documentId)
+    }
+  } finally {
+    await deletePost(request, path)
+  }
+
+  expect(state.pageErrors).toEqual([])
+  expect(state.consoleErrors).toEqual([])
+})
+
+test('exact FileTree context keeps keyboard semantics and the user filter across Diary presentation', async ({ page, request }) => {
+  const date = localCivilDate()
+  const diary = diaryPath(date)
+  const note = `inbox/d6-filter-${RUN_ID}`
+  const state = await captureDiagnostics(page)
+
+  try {
+    await seedDiary(request, date, `# D6.6 Exact Context ${RUN_ID}\n`)
+    await seedNote(request, note)
+    await openDiaryHome(page)
+
+    await selectScope(page, 'note')
+    await expect(page.locator('.file-tree')).toBeVisible()
+    const search = page.locator('.search-input')
+    await search.fill(RUN_ID)
+    await expect(search).toHaveValue(RUN_ID)
+
+    await selectScope(page, 'diary')
+    await expect(page.getByTestId('diary-calendar')).toBeVisible()
+    await activateDiaryDate(page, date)
+    await assertNativeRead(page, date)
+    await expect(page.getByTestId('file-tree-exact-context')).toContainText(date)
+    await expect(page.getByTestId('file-tree-exact-context-action')).toHaveAccessibleName(/Calendar|返回日历/i)
+
+    const treeItems = page.locator('.file-tree [role="treeitem"]')
+    await expect(treeItems).toHaveCount(2)
+    const fileItem = page.locator(`[data-tree-key="file:${diary}"]`)
+    await fileItem.focus()
+    await expect(fileItem).toBeFocused()
+    await page.keyboard.press('Enter')
+    await expect(page.locator(`[role="tab"][data-tab-id="${diary}"]`)).toHaveAttribute('aria-selected', 'true')
+
+    const routeBefore = new URL(page.url()).pathname
+    const action = page.getByTestId('file-tree-exact-context-action')
+    await action.focus()
+    await assertFocusRing(action, { targetSize: false, outlineOffset: '1px' })
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId('diary-calendar')).toBeVisible()
+    await expect(page.locator(`[data-diary-day-content][data-date="${date}"]`)).toBeFocused()
+    expect(new URL(page.url()).pathname).toBe(routeBefore)
+
+    await selectScope(page, 'note')
+    await expect(page.locator('.search-input')).toHaveValue(RUN_ID)
+  } finally {
+    await deletePost(request, diary)
+    await deletePost(request, note)
+  }
+
+  expect(state.pageErrors).toEqual([])
+  expect(state.consoleErrors).toEqual([])
+})
+
+test('ten mixed Calendar focus cycles remain stable without VCalendar runtime errors', async ({ page, request }) => {
+  const date = localCivilDate()
+  const path = diaryPath(date)
+  const state = await captureDiagnostics(page)
+
+  try {
+    await seedDiary(request, date, `# D6.6 Repeated Focus ${RUN_ID}\n`)
+    await openDiaryHome(page)
+    const calendar = page.getByTestId('diary-calendar')
+    const tab = page.locator(`[role="tab"][data-tab-id="${path}"]`)
+    const day = page.locator(`[data-diary-day-content][data-date="${date}"]`)
+
+    for (let cycle = 0; cycle < 10; cycle += 1) {
+      await page.setViewportSize(cycle % 2 === 0
+        ? { width: 375, height: 812 }
+        : { width: 320, height: 700 })
+      await expect(day).toBeVisible()
+      if (cycle % 2 === 0) {
+        await day.focus()
+        await page.keyboard.press('Enter')
+      } else {
+        await day.click()
+      }
+      await assertNativeRead(page, date)
+      await expect(calendar).toBeHidden()
+      expect(await page.evaluate(() => {
+        const root = document.querySelector<HTMLElement>('[data-testid="diary-calendar"]')
+        return Boolean(root && document.activeElement && root.contains(document.activeElement))
+      })).toBe(false)
+      const action = page.getByTestId('file-tree-exact-context-action')
+      await action.focus()
+      await page.keyboard.press(cycle % 2 === 0 ? 'Space' : 'Enter')
+      await expect(calendar).toBeVisible()
+      await expect(page.getByTestId('diary-workspace-shell')).toHaveAttribute('data-presentation-mode', 'home')
+      await expect(day).toBeFocused()
+      await expect(tab).toHaveCount(1)
+    }
+  } finally {
+    await deletePost(request, path)
+  }
+
+  expect(state.pageErrors).toEqual([])
+  expect(state.consoleErrors).toEqual([])
+})
+
+test.describe('English Calendar accessibility labels', () => {
+  test.use({ locale: 'en-US' })
+
+  test('exposes meaningful English names for Calendar and return controls', async ({ page, request }) => {
+    const date = localCivilDate()
+    const state = await captureDiagnostics(page)
+    try {
+      await seedDiary(request, date, `# D6.6 English ${RUN_ID}\n`)
+      await openDiaryHome(page)
+      const calendar = page.getByTestId('diary-calendar')
+      await expect(calendar).toHaveAttribute('data-locale', 'en-US')
+      await expect(calendar).toHaveAccessibleName('Diary calendar')
+      await expect(page.locator('.vc-prev')).toHaveAccessibleName('Previous month')
+      await expect(page.locator('.vc-next')).toHaveAccessibleName('Next month')
+      await expect(page.locator(`[data-diary-day-content][data-date="${date}"]`)).toHaveAccessibleName(/Diary exists/)
+
+      await expect(calendar).toHaveAttribute('data-theme', 'light')
+      await page.getByRole('button', { name: /Theme: Light/ }).click()
+      await expect(calendar).toHaveAttribute('data-theme', 'dark')
+      await expect(page.locator('.vc-container.vc-dark')).toBeVisible()
+      await activateDiaryDate(page, date)
+      await assertNativeRead(page, date)
+      await assertNoDocumentOverflow(page)
+      await expect(page.getByTestId('file-tree-exact-context-action')).toHaveAccessibleName('Calendar')
+    } finally {
+      await deletePost(request, diaryPath(date))
+    }
+    expect(state.pageErrors).toEqual([])
+    expect(state.consoleErrors).toEqual([])
+  })
+})
+
+test.describe('Chinese Calendar accessibility labels', () => {
+  test.use({ locale: 'zh-CN' })
+
+  test('exposes meaningful Chinese names for Calendar and return controls', async ({ page, request }) => {
+    const date = localCivilDate()
+    const state = await captureDiagnostics(page)
+    try {
+      await seedDiary(request, date, `# D6.6 Chinese ${RUN_ID}\n`)
+      await openDiaryHome(page)
+      const calendar = page.getByTestId('diary-calendar')
+      await expect(calendar).toHaveAttribute('data-locale', 'zh-CN')
+      await expect(calendar).toHaveAccessibleName('日记日历')
+      await expect(page.locator('.vc-prev')).toHaveAccessibleName('上个月')
+      await expect(page.locator('.vc-next')).toHaveAccessibleName('下个月')
+      await expect(page.locator(`[data-diary-day-content][data-date="${date}"]`)).toHaveAccessibleName(/有日记/)
+
+      await activateDiaryDate(page, date)
+      await assertNativeRead(page, date)
+      await expect(page.getByTestId('file-tree-exact-context-action')).toHaveAccessibleName('返回日历')
+    } finally {
+      await deletePost(request, diaryPath(date))
+    }
+    expect(state.pageErrors).toEqual([])
+    expect(state.consoleErrors).toEqual([])
+  })
+})
