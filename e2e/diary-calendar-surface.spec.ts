@@ -109,7 +109,7 @@ test('Diary scope shows the Calendar-first surface and month navigation', async 
   ))).toBe(true)
 })
 
-test('Calendar click opens an existing Diary through the real Vault route, tab, and Reader presentation', async ({ page, request }) => {
+test('Calendar click opens an existing Diary through the native Vault reading surface', async ({ page, request }) => {
   const date = localCivilDate()
   const path = diaryPath(date)
   const raw = '# Existing Diary\n\nD4 lifecycle integration evidence.\n'
@@ -136,12 +136,12 @@ test('Calendar click opens an existing Diary through the real Vault route, tab, 
     const tab = page.locator(`[role="tab"][data-tab-id="${path}"]`)
     await expect(tab).toHaveCount(1)
     await expect(tab).toHaveAttribute('aria-selected', 'true')
-    const reader = page.getByTestId('diary-reader-dialog')
-    await expect(reader).toBeVisible({ timeout: 15_000 })
-    await expect(reader).toContainText(date)
-    await expect(reader.locator('.reading-pane .article').first())
+    await expect(page.getByTestId('diary-reader-dialog')).toHaveCount(0)
+    await expect(page.locator('.reading-pane .article').first())
       .toContainText('D4 lifecycle integration evidence.', { timeout: 15_000 })
     await expect(page.locator('.reading-pane')).toHaveCount(1)
+    await expect(page.locator('.file-tree')).toBeVisible()
+    await expect(page.getByTestId('file-tree-exact-context')).toContainText(date)
 
     const calendar = page.getByTestId('diary-calendar')
     await expect(calendar).toBeAttached()
@@ -150,8 +150,7 @@ test('Calendar click opens an existing Diary through the real Vault route, tab, 
     expect(createMethods).toEqual([])
     expect((await request.get(`/api/posts/${diaryPath(`${date}-2`)}`)).status()).toBe(404)
 
-    await reader.getByTestId('diary-reader-close').click()
-    await expect(reader).toHaveCount(0)
+    await page.getByTestId('file-tree-exact-context-action').click()
     await expect(tab).toHaveCount(1)
     await expect(calendar).toBeVisible()
   } finally {

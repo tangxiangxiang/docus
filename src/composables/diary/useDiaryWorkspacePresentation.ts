@@ -2,8 +2,9 @@ import { computed, ref, watch, type Ref } from 'vue'
 import type { DiaryDate } from '../../../shared/diaryProtocol'
 import type { DiaryDateCommandResult } from './useDiaryDateCommand'
 
-export type DiaryPresentationMode = 'home' | 'reader' | 'editor'
-export type DiaryPresentationFocusOrigin = 'calendar' | 'reader' | 'editor'
+export type DiaryPresentationMode = 'home' | 'document'
+export type DiaryPresentationFocusOrigin = 'calendar' | 'document'
+
 export interface DiaryPresentationFocusTarget {
   kind: 'calendar-date'
   date: DiaryDate
@@ -19,11 +20,9 @@ export interface DiaryWorkspacePresentationOptions {
 }
 
 /**
- * Own Diary presentation state without becoming another document lifecycle.
- *
- * The backing path is only a presentation reference. Tabs, activePath, route,
- * raw content, save state, and document identity remain owned by Vault's
- * existing workspace lifecycle.
+ * Own the Calendar Home / native-document presentation handoff without
+ * becoming another document lifecycle. Tabs, activePath, route, raw content,
+ * save state, and document identity remain owned by Vault.
  */
 export function useDiaryWorkspacePresentation(options: DiaryWorkspacePresentationOptions) {
   const presentationMode = ref<DiaryPresentationMode>('home')
@@ -31,7 +30,6 @@ export function useDiaryWorkspacePresentation(options: DiaryWorkspacePresentatio
   const backingPath = ref<string | null>(null)
   const focusOrigin = ref<DiaryPresentationFocusOrigin | null>(null)
   const focusReturnTarget = ref<DiaryPresentationFocusTarget | null>(null)
-  const d5DocumentFallbackActive = ref(false)
   let dateIntentEpoch = 0
 
   function invalidatePendingDateIntent(): void {
@@ -54,22 +52,12 @@ export function useDiaryWorkspacePresentation(options: DiaryWorkspacePresentatio
     && !options.activeDraftRecovery.value
   ))
 
-  const isD5DocumentFallbackActive = computed(() => (
-    d5DocumentFallbackActive.value
-    && backingPath.value !== null
-    && options.documentPaths.value.includes(backingPath.value)
+  const isHome = computed(() => (
+    diaryPresentationEligible.value && presentationMode.value === 'home'
   ))
 
-  const isHome = computed(() => (
-    diaryPresentationEligible.value
-    && presentationMode.value === 'home'
-    && !isD5DocumentFallbackActive.value
-  ))
-  const isReader = computed(() => (
-    diaryPresentationEligible.value && presentationMode.value === 'reader'
-  ))
-  const isEditor = computed(() => (
-    diaryPresentationEligible.value && presentationMode.value === 'editor'
+  const isDocument = computed(() => (
+    diaryPresentationEligible.value && presentationMode.value === 'document'
   ))
 
   function reset(): void {
@@ -79,22 +67,19 @@ export function useDiaryWorkspacePresentation(options: DiaryWorkspacePresentatio
     backingPath.value = null
     focusOrigin.value = null
     focusReturnTarget.value = null
-    d5DocumentFallbackActive.value = false
   }
 
   function closePresentation(): void {
     invalidatePendingDateIntent()
-    // Presentation-only close deliberately keeps the backing reference. The
-    // document/tab/route lifecycle is not touched here; the reference is
-    // useful for future focus restoration when a real Dialog exists.
+    // Presentation-only close deliberately preserves the backing reference,
+    // tab, activePath, route, raw, model, and dirty state. The retained date
+    // supplies semantic Calendar focus restoration and same-date context.
     presentationMode.value = 'home'
     focusOrigin.value = 'calendar'
   }
 
   function recordDateCommandResult(result: DiaryDateCommandResult): void {
     if (result.status !== 'opened' && result.status !== 'created') {
-      // Failed, future, invalid, and busy intents must never leave a future
-      // Dialog state behind.
       reset()
       return
     }
@@ -106,17 +91,18 @@ export function useDiaryWorkspacePresentation(options: DiaryWorkspacePresentatio
       kind: 'calendar-date',
       date: result.date,
     }
-    // D6.1 deliberately keeps the D5 fallback visible. D6.3 will consume
-    // this successful command result to request the Reader presentation.
+    // Adoption stays explicit. Merely recording a result or observing an
+    // activePath must never open native Diary document presentation.
     presentationMode.value = 'home'
-    d5DocumentFallbackActive.value = true
   }
 
-  function requestReader(date: DiaryDate, path: string): void {
-    // A Reader can only be opened by an explicit, successful Calendar date
-    // intent after the existing document lifecycle has made this path active.
-    // activePath is never an opening signal.
-    if (!diaryPresentationEligible.value || options.activePath.value !== path) return
+  function requestDocument(date: DiaryDate, path: string): void {
+    if (
+      !diaryPresentationEligible.value
+      || selectedDiaryDate.value !== date
+      || backingPath.value !== path
+      || options.activePath.value !== path
+    ) return
     selectedDiaryDate.value = date
     backingPath.value = path
     focusOrigin.value = 'calendar'
@@ -124,30 +110,11 @@ export function useDiaryWorkspacePresentation(options: DiaryWorkspacePresentatio
       kind: 'calendar-date',
       date,
     }
-    d5DocumentFallbackActive.value = false
-    presentationMode.value = 'reader'
+    presentationMode.value = 'document'
   }
 
-  function requestD5DocumentFallback(): void {
-    if (!diaryPresentationEligible.value || !backingPath.value) return
-    // D6.3 keeps Edit as a narrow bridge to the existing D5 document/editor
-    // surface. This changes presentation only; the backing tab, route, raw,
-    // and dirty/save lifecycle remain owned by Vault.
-    focusOrigin.value = 'reader'
-    presentationMode.value = 'home'
-    d5DocumentFallbackActive.value = true
-  }
-
-  function requestEditor(): void {
-    if (!diaryPresentationEligible.value || !backingPath.value) return
-    d5DocumentFallbackActive.value = false
-    focusOrigin.value = 'reader'
-    presentationMode.value = 'editor'
-  }
-
-  // A special Vault surface or a scope exit suspends Diary presentation. The
-  // safe default is HOME, so deactivating History/Diff/Recovery never
-  // unexpectedly reopens a future Reader/Editor state.
+  // Special Vault surfaces and scope exit own visible-surface precedence.
+  // Returning from them stays at the safe Calendar Home state.
   watch(
     [
       options.isDiaryScope,
@@ -162,25 +129,19 @@ export function useDiaryWorkspacePresentation(options: DiaryWorkspacePresentatio
   )
 
   watch(
-    [options.documentPaths, backingPath],
-    ([paths, backing]) => {
-      if (
-        backing
-        && !paths.includes(backing)
-        && (presentationMode.value === 'reader' || presentationMode.value === 'editor')
-      ) reset()
+    [options.documentPaths, backingPath, presentationMode],
+    ([paths, backing, mode]) => {
+      if (mode === 'document' && backing && !paths.includes(backing)) reset()
     },
     { flush: 'sync' },
   )
 
-  // Active-path changes are a passive reconciliation input only. The router
-  // and existing tab lifecycle remain authoritative; if they move away from
-  // the Reader's backing document, close the stale presentation without
-  // changing activePath or trying to open a different Reader.
+  // activePath is passive reconciliation only: it may close a stale native
+  // Diary presentation, but it can never open or retarget one.
   watch(
     [options.activePath, backingPath, presentationMode],
     ([active, backing, mode]) => {
-      if (mode === 'reader' && backing !== null && active !== backing) reset()
+      if (mode === 'document' && backing !== null && active !== backing) reset()
     },
     { flush: 'sync' },
   )
@@ -192,16 +153,12 @@ export function useDiaryWorkspacePresentation(options: DiaryWorkspacePresentatio
     focusOrigin,
     focusReturnTarget,
     diaryPresentationEligible,
-    isD5DocumentFallbackActive,
     isHome,
-    isReader,
-    isEditor,
+    isDocument,
     beginDateIntent,
     isDateIntentCurrent,
     recordDateCommandResult,
-    requestReader,
-    requestD5DocumentFallback,
-    requestEditor,
+    requestDocument,
     closePresentation,
     reset,
   }

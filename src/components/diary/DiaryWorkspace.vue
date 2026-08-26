@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { computed } from 'vue'
 import type { DiaryPresentationMode } from '../../composables/diary/useDiaryWorkspacePresentation'
 
 const props = defineProps<{
@@ -7,76 +6,37 @@ const props = defineProps<{
   mode: DiaryPresentationMode
   visible: boolean
 }>()
-
-const isPresentationVisible = computed(() => props.visible)
-const isHomeVisible = computed(() => (
-  isPresentationVisible.value && props.eligible && props.mode === 'home'
-))
 </script>
 
 <template>
   <section
-    v-show="isPresentationVisible"
+    v-show="props.visible"
     class="diary-workspace-shell"
     data-testid="diary-workspace-shell"
     :data-presentation-mode="props.mode"
     :data-presentation-eligible="props.eligible ? 'true' : 'false'"
-    :aria-hidden="props.eligible ? undefined : 'true'"
+    :aria-hidden="props.visible ? undefined : 'true'"
   >
-    <!-- Home remains mounted while a future Reader/Editor slot is shown. This
-         is the D3.0 VCalendar keep-mounted boundary. -->
+    <!-- Calendar Home is the only Diary-owned surface. The scope-only parent
+         v-if keeps this subtree mounted while native Vault documents show. -->
     <div
-      v-show="isHomeVisible"
+      v-show="props.visible && props.eligible && props.mode === 'home'"
       class="diary-workspace-home"
       data-testid="diary-workspace-home"
     >
       <slot name="home" />
-    </div>
-
-    <div
-      v-if="props.mode === 'reader'"
-      class="diary-workspace-reader"
-      data-testid="diary-workspace-reader"
-    >
-      <slot name="reader" />
-    </div>
-
-    <div
-      v-if="props.mode === 'editor'"
-      class="diary-workspace-editor"
-      data-testid="diary-workspace-editor"
-    >
-      <slot name="editor" />
     </div>
   </section>
 </template>
 
 <style scoped>
 .diary-workspace-shell,
-.diary-workspace-home,
-.diary-workspace-reader,
-.diary-workspace-editor {
+.diary-workspace-home {
   min-width: 0;
   min-height: 0;
-}
-
-.diary-workspace-shell {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
   overflow: hidden;
-}
-
-.diary-workspace-home,
-.diary-workspace-reader,
-.diary-workspace-editor {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.diary-workspace-reader {
-  position: relative;
 }
 </style>

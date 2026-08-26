@@ -342,8 +342,8 @@ test('Diary Calendar keyboard flow does not strand focus in the hidden surface',
     await page.keyboard.press('Enter')
     const tab = page.locator(`[role="tab"][data-tab-id="${diaryPath(date)}"]`)
     await expect(tab).toHaveCount(1)
-    const reader = page.getByTestId('diary-reader-dialog')
-    await expect(reader).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByTestId('diary-reader-dialog')).toHaveCount(0)
+    await expect(page.locator('.reading-pane')).toHaveCount(1)
     await expect(calendar).toBeHidden()
     expect(await page.evaluate(() => {
       const active = document.activeElement
@@ -351,16 +351,15 @@ test('Diary Calendar keyboard flow does not strand focus in the hidden surface',
       return Boolean(active && hiddenCalendar?.contains(active))
     })).toBe(false)
 
-    await reader.getByTestId('diary-reader-close').click()
-    await expect(reader).toHaveCount(0)
+    await page.getByTestId('file-tree-exact-context-action').click()
     await expect(tab).toHaveCount(1)
     await expect(calendar).toBeVisible()
 
     await dateButton.focus()
     await page.keyboard.press('Space')
     await expect(tab).toHaveCount(1)
-    await expect(page.getByTestId('diary-reader-dialog')).toBeVisible({ timeout: 15_000 })
-    await page.getByTestId('diary-reader-close').click()
+    await expect(page.locator('.reading-pane')).toHaveCount(1)
+    await page.getByTestId('file-tree-exact-context-action').click()
     await expect(tab).toHaveCount(1)
     await expect(calendar).toBeVisible()
 
@@ -415,14 +414,12 @@ test('Existing Diary lifecycle remains stable across five repeated opens', async
       await page.locator(`[data-diary-day-content][data-date="${date}"]`).click()
       const tab = page.locator(`[role="tab"][data-tab-id="${path}"]`)
       await expect(tab).toHaveCount(1)
-      const reader = page.getByTestId('diary-reader-dialog')
-      await expect(reader).toBeVisible({ timeout: 15_000 })
-      await expect(reader.locator('.reading-pane article').first())
+      await expect(page.getByTestId('diary-reader-dialog')).toHaveCount(0)
+      await expect(page.locator('.reading-pane article').first())
         .toContainText('D5 release evidence.', { timeout: 15_000 })
       await expect(page.locator('.reading-pane')).toHaveCount(1)
       await expect(page.getByTestId('diary-calendar')).toBeHidden()
-      await reader.getByTestId('diary-reader-close').click()
-      await expect(reader).toHaveCount(0)
+      await page.getByTestId('file-tree-exact-context-action').click()
       await expect(tab).toHaveCount(1)
       await expect(page.getByTestId('diary-calendar')).toBeVisible()
     }

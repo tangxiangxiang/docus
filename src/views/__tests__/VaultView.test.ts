@@ -593,10 +593,10 @@ describe('VaultView D3.2 Diary surface wiring', () => {
     expect(source).toContain("const isDiaryScope = computed(() => activeScope.value === 'diary')")
     expect(source).toContain('const isDiaryCalendarMounted = computed(() => isDiaryScope.value)')
     expect(source).toContain('const diaryWorkspacePresentation = useDiaryWorkspacePresentation({')
-    expect(source).toContain('const isDiaryPresentationPrimary = computed(() => (')
-    expect(source).toContain('isD5DocumentFallbackActive')
+    expect(source).toContain('const isDiaryPresentationPrimary = computed(() => isDiaryCalendarMode.value)')
+    expect(source).toContain('isDocument: isDiaryDocumentMode')
     expect(source).toContain(':eligible="diaryPresentationEligible"')
-    expect(source).toContain(':visible="isDiaryPresentationPrimary"')
+    expect(source).toContain(':visible="isDiaryCalendarMode"')
     expect(branch).toBeDefined()
     expect(source).toContain('<DiaryWorkspace')
     expect(branch).toContain(':mode="presentationMode"')
@@ -618,7 +618,8 @@ describe('VaultView D3.2 Diary surface wiring', () => {
     expect(branch).toContain('@date-selected="onDiaryDateSelected"')
     expect(source).toContain('const { openDiaryDate } = useDiaryDateCommand({')
     expect(source).toContain('diaryWorkspacePresentation.recordDateCommandResult(result)')
-    expect(source).toContain('diaryWorkspacePresentation.requestReader(result.date, result.path)')
+    expect(source).toContain('diaryWorkspacePresentation.requestDocument(result.date, result.path)')
+    expect(source).toContain("viewModeApi?.set('read')")
     expect(source).toContain("result.status !== 'opened' && result.status !== 'created'")
     expect(source).toContain('const intent = diaryWorkspacePresentation.beginDateIntent()')
     expect(source).toContain('diaryWorkspacePresentation.isDateIntentCurrent(intent)')
@@ -629,22 +630,16 @@ describe('VaultView D3.2 Diary surface wiring', () => {
     expect(source).not.toContain("documentLifecycle.createFile({ path: 'diary")
   })
 
-  it('mounts one Reader adapter from the existing backing tab and keeps D6.4 deferred', () => {
+  it('hands successful Diary dates to the native Vault document surfaces and keeps D6.4 deferred', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
-    const readerStart = source.indexOf('<template #reader>')
-    const readerEnd = source.indexOf('</template>', readerStart)
-    const reader = readerStart >= 0 && readerEnd >= 0
-      ? source.slice(readerStart, readerEnd)
-      : undefined
 
-    expect(source).toContain("import DiaryReaderDialog from '../components/diary/DiaryReaderDialog.vue'")
-    expect(reader).toBeDefined()
-    expect(reader).toContain('<DiaryReaderDialog')
-    expect(reader).toContain(':path="backingPath"')
-    expect(reader).toContain(':raw="diaryReaderRaw"')
-    expect(reader).toContain('@close="closeDiaryPresentation"')
-    expect(reader).toContain('@edit="editDiaryReader"')
-    expect(source).toContain('tabs.value.find((tab) => tab.path === backingPath.value)')
+    expect(source).not.toContain('DiaryReaderDialog')
+    expect(source).not.toContain('<template #reader>')
+    expect(source).not.toContain('requestReader(')
+    expect(source).toContain('diaryWorkspacePresentation.requestDocument(result.date, result.path)')
+    expect(source).toContain("viewModeApi?.set('read')")
+    expect(source).toContain(':exact-path-filter="diaryExactPathFilter"')
+    expect(source).toContain('@clear-exact-path-filter="closeDiaryPresentation"')
     const presentationCall = source.match(
       /const diaryWorkspacePresentation = useDiaryWorkspacePresentation\([\s\S]*?\n\}\)/,
     )?.[0]
@@ -652,8 +647,9 @@ describe('VaultView D3.2 Diary surface wiring', () => {
     expect(presentationCall).toContain('activePath,')
     expect(source).toContain('if (activePath.value !== result.path)')
     expect(source).toContain('const isDiaryCalendarMounted = computed(() => isDiaryScope.value)')
-    expect(source).toContain('diaryReaderDialogRef.value?.focusInitial()')
     expect(source).toContain('v-if="isReadMode && !isDiaryPresentationPrimary && !activeHistoryComparison')
+    expect(source).toContain('<ReadingPane')
+    expect(source).toContain('<EditorPane')
     expect(source).not.toContain('watch(activePath')
     expect(source).not.toContain('router.back()')
     expect(source).not.toContain('closeTab()')
@@ -673,7 +669,7 @@ describe('VaultView D3.2 Diary surface wiring', () => {
     expect(editorSurface).toContain('v-show="!isDiaryPresentationPrimary && !activeHistoryComparison && !activeWorkingTreeDiff && !activeDraftRecovery"')
     expect(source).toContain('v-show="!isDiaryPresentationPrimary"')
     expect(source).not.toContain('v-else-if="!isReadMode"')
-    expect(source).toContain("'diary-reader-mode': isDiaryReader")
+    expect(source).not.toContain('diary-reader-mode')
   })
 
   it('promotes Diary Home to a presentation-only primary surface', () => {
@@ -688,6 +684,6 @@ describe('VaultView D3.2 Diary surface wiring', () => {
     expect(styles).toContain('.vault.diary-calendar-mode > .right-rail-slot')
     expect(styles).toContain('.vault.diary-calendar-mode > .status-bar-row')
     expect(styles).toContain('.vault.diary-calendar-mode .diary-calendar-content')
-    expect(styles).toContain('.vault.diary-reader-mode')
+    expect(styles).not.toContain('.vault.diary-reader-mode')
   })
 })

@@ -50,6 +50,8 @@ const DIARY_TREE: TreeNode[] = [{
     {
       kind: 'folder', name: 'diary', path: 'diary', children: [
         { kind: 'file', name: '2026-08-24', path: 'diary/2026-08-24', title: 'Diary', mtime: 0 },
+        { kind: 'file', name: '2026-08-25', path: 'diary/2026-08-25', title: 'Diary', mtime: 0 },
+        { kind: 'file', name: '2026-08-26', path: 'diary/2026-08-26', title: 'Diary', mtime: 0 },
         { kind: 'file', name: 'legacy', path: 'diary/legacy', title: 'Legacy external file', mtime: 0 },
       ],
     },
@@ -367,5 +369,75 @@ describe('Diary FileTree presentation boundary', () => {
     await rowByName(wrapper, 'diary').find('.chevron').trigger('click')
     expect(wrapper.text()).toContain('2026-08-24')
     expect(wrapper.text()).toContain('legacy')
+  })
+
+  it('applies a generic exact-path filter and keeps only required ancestors', () => {
+    useScopeFilter().activeScope.value = 'diary'
+    const wrapper = mount(FileTree, {
+      props: {
+        tree: DIARY_TREE,
+        currentPath: 'diary/2026-08-25',
+        exactPathFilter: 'diary/2026-08-25',
+        exactPathFilterLabel: '2026-08-25',
+        exactPathFilterActionLabel: '返回日历',
+      },
+    })
+
+    expect(wrapper.text()).toContain('diary')
+    expect(wrapper.text()).toContain('2026-08-25')
+    expect(wrapper.text()).not.toContain('2026-08-24')
+    expect(wrapper.text()).not.toContain('2026-08-26')
+    expect(wrapper.text()).not.toContain('legacy')
+    expect(wrapper.get('[data-testid="file-tree-exact-context"]').text()).toContain('2026-08-25')
+  })
+
+  it('does not fall back to the full tree when the exact path is missing', () => {
+    useScopeFilter().activeScope.value = 'diary'
+    const wrapper = mount(FileTree, {
+      props: {
+        tree: DIARY_TREE,
+        currentPath: null,
+        exactPathFilter: 'diary/2099-01-01',
+      },
+    })
+
+    expect(wrapper.findAll('.tree-row')).toHaveLength(0)
+    expect(wrapper.text()).not.toContain('2026-08-24')
+    expect(wrapper.text()).not.toContain('legacy')
+  })
+
+  it('preserves the user filter while exact context takes precedence', async () => {
+    useScopeFilter().activeScope.value = 'diary'
+    const Harness = defineComponent({
+      components: { FileTree },
+      setup() {
+        return {
+          tree: DIARY_TREE,
+          filesFilter: ref('redis'),
+          exactPath: ref<string | null>('diary/2026-08-25'),
+        }
+      },
+      template: `
+        <FileTree
+          v-model:filter="filesFilter"
+          :tree="tree"
+          :current-path="exactPath"
+          :exact-path-filter="exactPath"
+          exact-path-filter-action-label="返回日历"
+          @clear-exact-path-filter="exactPath = null"
+        />
+        <span data-testid="stored-filter">{{ filesFilter }}</span>
+      `,
+    })
+    const wrapper = mount(Harness)
+
+    expect(wrapper.text()).toContain('2026-08-25')
+    expect(wrapper.text()).not.toContain('2026-08-24')
+    expect(wrapper.get('[data-testid="stored-filter"]').text()).toBe('redis')
+
+    await wrapper.get('[data-testid="file-tree-exact-context-action"]').trigger('click')
+    expect(wrapper.get('[data-testid="stored-filter"]').text()).toBe('redis')
+    expect(wrapper.find('.search-input').exists()).toBe(true)
+    expect((wrapper.get('.search-input').element as HTMLInputElement).value).toBe('redis')
   })
 })

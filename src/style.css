@@ -420,27 +420,6 @@ hr {
   .auth-card { padding: 22px 18px; }
 }
 
-/* D6.3 Reader presentation. The Reader owns the primary editor-area surface
-   while the existing tab/document state remains mounted and authoritative.
-   These rules hide ordinary Vault chrome without mutating its layout state;
-   closing the presentation removes this class and restores the prior view. */
-.vault.diary-reader-mode {
-  grid-template-columns: 40px minmax(0, 1fr) !important;
-}
-
-.vault.diary-reader-mode > :is(.file-tree, .tag-panel, .history-panel, .recovery-center),
-.vault.diary-reader-mode > .splitter,
-.vault.diary-reader-mode > .right-rail-slot,
-.vault.diary-reader-mode > .status-bar-row {
-  display: none !important;
-}
-
-.vault.diary-reader-mode .editor-area {
-  grid-column: 2;
-  grid-template-rows: minmax(0, 1fr);
-  min-width: 0;
-}
-
 /* NavBar (frosted glass) — token-driven so light/dark follow data-theme.
    Uses --bg-soft (a slightly lighter wash than the page background) so
    the blur has something visible to pick up.  The old hardcoded
@@ -1081,6 +1060,22 @@ main.container.auth-page-shell {
 @media (max-width: 420px) {
   .vault.diary-calendar-mode {
     grid-template-columns: 40px minmax(0, 1fr) !important;
+  }
+}
+
+/* Native Diary documents use the ordinary Vault chrome. On phone widths the
+   persisted desktop side+right-rail tracks cannot coexist without document
+   overflow, so keep the exact-context FileTree compact and temporarily hide
+   the right rail visually. Its open/collapsed state is not mutated and is
+   restored automatically when the viewport grows or Diary context ends. */
+@media (max-width: 600px) {
+  .vault.diary-native-document-mode {
+    grid-template-columns: 40px minmax(136px, 42vw) 1px minmax(0, 1fr) !important;
+  }
+
+  .vault.diary-native-document-mode > .splitter-toc,
+  .vault.diary-native-document-mode > .right-rail-slot {
+    display: none !important;
   }
 }
 
@@ -3015,6 +3010,49 @@ main.container.auth-page-shell {
   padding: 0 12px;
   border-bottom: 1px solid var(--vs-border);
   background: var(--vs-bg-2);
+}
+.vault .file-tree header .exact-path-context {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  min-height: 36px;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 0 8px 0 12px;
+  border-bottom: 1px solid var(--vs-border);
+  background: var(--vs-bg-2);
+}
+.vault .file-tree header .exact-path-context-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--vs-text-1);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vault .file-tree header .exact-path-context-action {
+  flex: 0 0 auto;
+  min-height: 28px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--vs-text-2);
+  font: inherit;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+.vault .file-tree header .exact-path-context-action:hover {
+  border-color: var(--vs-border);
+  background: var(--vs-hover-bg);
+  color: var(--vs-text-1);
+}
+.vault .file-tree header .exact-path-context-action:focus-visible {
+  outline: 2px solid var(--vs-focus-border, var(--accent));
+  outline-offset: 1px;
 }
 .vault .file-tree header .search-icon,
 .vault .tag-panel .tag-filter-icon {

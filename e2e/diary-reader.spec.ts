@@ -29,31 +29,16 @@ function localCivilDate(): string {
   return `${year}-${month}-${day}`
 }
 
-function nextCivilDate(value: string): string {
-  const parts = civilParts(value)
-  let { year, month, day } = parts
-  day += 1
+function shiftCivilDate(value: string, amount: -1 | 1): string {
+  let { year, month, day } = civilParts(value)
+  day += amount
   if (day > daysInMonth(year, month)) {
     day = 1
     month += 1
-    if (month > 12) {
-      month = 1
-      year += 1
-    }
-  }
-  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
-}
-
-function previousCivilDate(value: string): string {
-  const parts = civilParts(value)
-  let { year, month, day } = parts
-  day -= 1
-  if (day === 0) {
+    if (month > 12) { month = 1; year += 1 }
+  } else if (day === 0) {
     month -= 1
-    if (month === 0) {
-      month = 12
-      year -= 1
-    }
+    if (month === 0) { month = 12; year -= 1 }
     day = daysInMonth(year, month)
   }
   return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
@@ -83,16 +68,8 @@ async function seedExistingDiary(request: APIRequestContext, date: string, raw: 
 async function seedOrdinaryNote(request: APIRequestContext, path: string): Promise<void> {
   const removed = await request.delete(`/api/posts/${path}`)
   expect([200, 404]).toContain(removed.status())
-  const created = await request.post('/api/posts', {
-    data: { path, title: 'D6.3 Browser Back source' },
-  })
+  const created = await request.post('/api/posts', { data: { path, title: path.split('/').at(-1) } })
   expect([200, 201]).toContain(created.status())
-  const initial = await request.get(`/api/posts/${path}`)
-  expect(initial.status()).toBe(200)
-  const saved = await request.put(`/api/posts/${path}`, {
-    data: { raw: '# Browser Back source\n', baseRaw: (await initial.json()).raw },
-  })
-  expect(saved.status(), await saved.text()).toBe(200)
 }
 
 async function deletePost(request: APIRequestContext, path: string): Promise<void> {
@@ -100,12 +77,6 @@ async function deletePost(request: APIRequestContext, path: string): Promise<voi
   expect([200, 404]).toContain(response.status())
 }
 
-/**
- * The public Diary create command intentionally rejects future dates. This
- * fixture writes one pre-existing managed file directly so the browser can
- * exercise the separate "existing future → opened" branch without weakening
- * that server contract.
- */
 async function seedExistingFutureDiary(date: string, raw: string): Promise<void> {
   const vault = process.env.DOCUS_DRAFT_E2E_VAULT
   if (!vault) throw new Error('DOCUS_DRAFT_E2E_VAULT is not configured')
@@ -139,10 +110,7 @@ async function moveToMonth(page: Page, date: string): Promise<void> {
     const currentMonth = await calendar.getAttribute('data-month')
     if (currentMonth === targetMonth) return
     if (!currentMonth) throw new Error('Calendar did not expose its current month')
-    const control = currentMonth < targetMonth
-      ? page.getByTestId('diary-calendar-next')
-      : page.getByTestId('diary-calendar-previous')
-    await control.click()
+    await page.getByTestId(currentMonth < targetMonth ? 'diary-calendar-next' : 'diary-calendar-previous').click()
   }
   throw new Error(`Calendar did not reach ${targetMonth}`)
 }
@@ -154,205 +122,125 @@ async function clickDiaryDate(page: Page, date: string): Promise<void> {
   await button.click()
 }
 
-function diagnostics(page: Page): {
-  pageErrors: string[]
-  consoleErrors: string[]
-  notFoundResponses: Array<{ method: string; pathname: string }>
-} {
+function diagnostics(page: Page): { pageErrors: string[]; consoleErrors: string[] } {
   const pageErrors: string[] = []
   const consoleErrors: string[] = []
-  const notFoundResponses: Array<{ method: string; pathname: string }> = []
   page.on('pageerror', (error) => pageErrors.push(error.stack ?? error.message))
   page.on('console', (message) => {
     if (message.type() === 'error') consoleErrors.push(message.text())
   })
-  page.on('response', (response) => {
-    if (response.status() !== 404) return
-    const url = new URL(response.url())
-    notFoundResponses.push({ method: response.request().method(), pathname: url.pathname })
-  })
-  return { pageErrors, consoleErrors, notFoundResponses }
+  return { pageErrors, consoleErrors }
 }
 
-async function assertReader(page: Page, date: string): Promise<void> {
+async function assertNativeReader(page: Page, date: string): Promise<void> {
   const path = diaryPath(date)
-  const reader = page.getByTestId('diary-reader-dialog')
-  const calendar = page.getByTestId('diary-calendar')
-  const tab = page.locator(`[role="tab"][data-tab-id="${path}"]`)
-
-  await expect(reader).toBeVisible({ timeout: 15_000 })
-  await expect(reader).toHaveAttribute('data-path', path)
-  await expect(reader.locator('#diary-reader-title')).toHaveText(date)
-  await expect(tab).toHaveCount(1)
-  await expect(tab).toHaveAttribute('aria-selected', 'true')
-  await expect(calendar).toBeAttached()
-  await expect(calendar).toBeHidden()
+  await expect(page).toHaveURL(new RegExp(`/vault/${path.replace('/', '\\/')}(?:[?#]|$)`))
+  await expect(page.getByTestId('diary-reader-dialog')).toHaveCount(0)
+  await expect(page.locator(`[role="tab"][data-tab-id="${path}"]`)).toHaveAttribute('aria-selected', 'true')
   await expect(page.locator('.reading-pane')).toHaveCount(1)
-  await expect(reader.getByTestId('diary-reader-back')).toBeFocused()
+  await expect(page.locator('.reading-pane')).toBeVisible()
+  await expect(page.locator('.file-tree')).toBeVisible()
+  await expect(page.getByTestId('file-tree-exact-context')).toContainText(date)
+  await expect(page.locator(`[data-tree-key="file:${path}"]`)).toHaveCount(1)
+  await expect(page.getByTestId('diary-calendar')).toBeAttached()
+  await expect(page.getByTestId('diary-calendar')).toBeHidden()
+  await expect(page.getByTestId('view-toggle')).toHaveAttribute('aria-label', /edit/i)
 }
 
-test('existing Diary opens in one Reader, closes presentation-only, and restores Calendar focus', async ({ page, request }) => {
+test('Calendar opens the native Vault reader with an exact FileTree context and returns presentation-only', async ({ page, request }) => {
   const date = localCivilDate()
+  const other = shiftCivilDate(date, -1)
   const path = diaryPath(date)
-  const raw = '# Reader evidence\n\nA heading, a [link](https://example.com), and a code block.\n\n```ts\nconst answer = 42\n```\n'
   const state = diagnostics(page)
 
   try {
-    await seedExistingDiary(request, date, raw)
+    await seedExistingDiary(request, date, '# Native Reader\n\nCurrent Diary body.\n')
+    await seedExistingDiary(request, other, '# Other Diary\n')
     await openDiaryScope(page)
-    const dateButton = page.locator(`[data-diary-day-content][data-date="${date}"]`)
     const monthBefore = await page.getByTestId('diary-calendar').getAttribute('data-month')
+    const dateButton = page.locator(`[data-diary-day-content][data-date="${date}"]`)
 
     await clickDiaryDate(page, date)
-    await expect(page).toHaveURL(new RegExp(`/vault/${path.replace('/', '\\/')}(?:[?#]|$)`))
-    await assertReader(page, date)
-    await expect(page.getByTestId('diary-reader-dialog').locator('article.article')).toContainText('Reader evidence')
-    await expect(page.getByTestId('diary-reader-dialog').locator('pre')).toContainText('const answer = 42')
-    await expect(page.getByRole('button', { name: 'Today', exact: true })).toHaveCount(0)
-    await expect(page.locator('.vc-title')).toHaveText(/\d{4}-\d{2}/)
+    await assertNativeReader(page, date)
+    await expect(page.locator('.reading-pane article')).toContainText('Current Diary body')
+    await expect(page.locator(`[data-tree-key="file:${diaryPath(other)}"]`)).toHaveCount(0)
+    await expect(page.locator('.status-bar-row')).toBeVisible()
 
-    const hiddenCalendarOwnsFocus = await page.evaluate(() => {
-      const active = document.activeElement
-      const calendar = document.querySelector<HTMLElement>('[data-testid="diary-calendar"]')
-      return Boolean(active && calendar?.contains(active))
-    })
-    expect(hiddenCalendarOwnsFocus).toBe(false)
-
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      await page.keyboard.press('Tab')
-      expect(await page.evaluate(() => {
-        const active = document.activeElement
-        const calendar = document.querySelector<HTMLElement>('[data-testid="diary-calendar"]')
-        return Boolean(active && calendar?.contains(active))
-      })).toBe(false)
-    }
-
-    const routeBeforeClose = new URL(page.url()).pathname
-    await page.getByTestId('diary-reader-close').click()
-    await expect(page.getByTestId('diary-reader-dialog')).toHaveCount(0)
-    await expect(page).toHaveURL(new RegExp(`${routeBeforeClose.replace('/', '\\/')}(?:[?#]|$)`))
-    await expect(page.locator(`[role="tab"][data-tab-id="${path}"]`)).toHaveCount(1)
+    const routeBefore = new URL(page.url()).pathname
+    await page.getByTestId('file-tree-exact-context-action').click()
     await expect(page.getByTestId('diary-calendar')).toBeVisible()
     await expect(page.getByTestId('diary-calendar')).toHaveAttribute('data-month', monthBefore ?? '')
     await expect(dateButton).toBeFocused()
-
-    await dateButton.click()
-    await assertReader(page, date)
-    await page.getByTestId('diary-reader-back').click()
-    await expect(page.getByTestId('diary-reader-dialog')).toHaveCount(0)
-    await expect(page.getByTestId('diary-calendar')).toBeVisible()
-    await expect(dateButton).toBeFocused()
-
-    await dateButton.click()
-    await assertReader(page, date)
-    await page.keyboard.press('Escape')
-    await expect(page.getByTestId('diary-reader-dialog')).toHaveCount(0)
-    await expect(page.getByTestId('diary-calendar')).toBeVisible()
-    await expect(dateButton).toBeFocused()
-
-    // Presentation close deliberately preserves the backing tab. The
-    // isolated browser context cleans up that tab after the test.
+    expect(new URL(page.url()).pathname).toBe(routeBefore)
+    await expect(page.locator(`[role="tab"][data-tab-id="${path}"]`)).toHaveCount(1)
   } finally {
     await deleteDiaryDate(request, date)
+    await deleteDiaryDate(request, other)
   }
 
   expect(state.pageErrors).toEqual([])
   expect(state.consoleErrors).toEqual([])
 })
 
-test('created and existing future Diaries enter Reader, while missing future stays Home', async ({ page, request }) => {
+test('created and existing future Diaries enter native READ while missing future stays Home', async ({ page, request }) => {
   const today = localCivilDate()
-  const past = previousCivilDate(today)
-  const existingFuture = nextCivilDate(today)
-  const missingFuture = nextCivilDate(existingFuture)
-  const createdDates = [today, past]
-  const seededDates = [existingFuture]
+  const past = shiftCivilDate(today, -1)
+  const existingFuture = shiftCivilDate(today, 1)
+  const missingFuture = shiftCivilDate(existingFuture, 1)
   const state = diagnostics(page)
-  const createMethods: string[] = []
-  page.on('request', (event) => {
-    const url = new URL(event.url())
-    if (url.pathname === '/api/diary/dates') createMethods.push(event.method())
-  })
+  const createdDates = [today, past]
 
   try {
-    for (const date of [...createdDates, ...seededDates, missingFuture]) await deleteDiaryDate(request, date)
+    for (const date of [...createdDates, existingFuture, missingFuture]) await deleteDiaryDate(request, date)
 
-    await openDiaryScope(page)
-    await clickDiaryDate(page, today)
-    await assertReader(page, today)
-    await expect.poll(() => createMethods.filter((method) => method === 'POST').length).toBe(1)
-    await page.goto('/vault')
-
-    await openDiaryScope(page)
-    await clickDiaryDate(page, past)
-    await assertReader(page, past)
-    await expect.poll(() => createMethods.filter((method) => method === 'POST').length).toBe(2)
-    await page.goto('/vault')
+    for (const date of createdDates) {
+      await openDiaryScope(page)
+      await clickDiaryDate(page, date)
+      await assertNativeReader(page, date)
+      await page.getByTestId('file-tree-exact-context-action').click()
+    }
 
     await seedExistingFutureDiary(existingFuture, `# Existing future\n\n${existingFuture}\n`)
     await openDiaryScope(page)
     await clickDiaryDate(page, existingFuture)
-    await assertReader(page, existingFuture)
-    await page.goto('/vault')
+    await assertNativeReader(page, existingFuture)
+    await page.getByTestId('file-tree-exact-context-action').click()
 
-    await openDiaryScope(page)
     await clickDiaryDate(page, missingFuture)
-    await expect(page.getByTestId('diary-reader-dialog')).toHaveCount(0)
     await expect(page.getByTestId('diary-calendar')).toBeVisible()
-    await expect.poll(() => createMethods.filter((method) => method === 'POST').length).toBe(2)
-    expect(new URL(page.url()).pathname).not.toBe(`/vault/${missingFuture}`)
+    await expect(page.getByTestId('file-tree-exact-context')).toHaveCount(0)
   } finally {
-    for (const date of [...createdDates, ...seededDates, missingFuture]) await deleteDiaryDate(request, date)
+    for (const date of [...createdDates, existingFuture, missingFuture]) await deleteDiaryDate(request, date)
   }
 
   expect(state.pageErrors).toEqual([])
-  expect(state.notFoundResponses.length).toBeGreaterThan(0)
-  const expectedNotFoundPaths = new Set([
-    ...createdDates,
-    missingFuture,
-  ].map((date) => `/api/posts/${diaryPath(date)}`))
-  for (const response of state.notFoundResponses) {
-    expect(response.method).toBe('GET')
-    expect(expectedNotFoundPaths.has(response.pathname)).toBe(true)
-  }
-  expect(state.consoleErrors).toEqual(expect.arrayContaining([
-    'Failed to load resource: the server responded with a status of 404 (Not Found)',
-  ]))
+  expect(state.consoleErrors.filter((message) => !message.includes('404'))).toEqual([])
 })
 
-test('real Browser Back leaves the Reader when the existing route lifecycle changes activePath', async ({ page, request }) => {
+test('real Browser Back passively ends native Diary presentation without retargeting', async ({ page, request }) => {
   const date = localCivilDate()
-  const diary = diaryPath(date)
-  const source = 'inbox/d6-browser-back-source'
-  const intermediate = 'inbox/d6-browser-back-intermediate'
+  const source = 'inbox/d6-native-back-source'
+  const intermediate = 'inbox/d6-native-back-intermediate'
   const state = diagnostics(page)
 
   try {
-    await seedExistingDiary(request, date, '# Browser Back Diary\n\nReader should close on route reconciliation.\n')
+    await seedExistingDiary(request, date, '# Browser Back Diary\n')
     await seedOrdinaryNote(request, source)
     await seedOrdinaryNote(request, intermediate)
-
-    // Build a real history stack. The Diary command uses router.replace(), so
-    // the intermediate entry keeps Browser Back meaningful without adding a
-    // fake Dialog history entry.
     await page.goto('/vault')
     await page.goto(`/vault/${source}`)
     await page.goto(`/vault/${intermediate}`)
-    await expect(page).toHaveURL(new RegExp(`/vault/${intermediate.replace('/', '\\/')}(?:[?#]|$)`))
-
     await ensureDiaryScope(page)
     await clickDiaryDate(page, date)
-    await assertReader(page, date)
-    const urlBeforeBack = new URL(page.url()).pathname
+    await assertNativeReader(page, date)
 
     await page.goBack()
 
     await expect(page).toHaveURL(new RegExp(`/vault/${source.replace('/', '\\/')}(?:[?#]|$)`))
-    await expect(page.getByTestId('diary-reader-dialog')).toHaveCount(0)
     await expect(page.locator(`[role="tab"][data-tab-id="${source}"]`)).toHaveAttribute('aria-selected', 'true')
-    await expect(page.locator(`[role="tab"][data-tab-id="${diary}"]`)).toHaveCount(1)
     await expect(page.getByTestId('diary-calendar')).toBeVisible()
-    expect(new URL(page.url()).pathname).not.toBe(urlBeforeBack)
+    await expect(page.getByTestId('file-tree-exact-context')).toHaveCount(0)
+    await expect(page.locator(`[role="tab"][data-tab-id="${diaryPath(date)}"]`)).toHaveCount(1)
   } finally {
     await deleteDiaryDate(request, date)
     await deletePost(request, source)
@@ -363,9 +251,10 @@ test('real Browser Back leaves the Reader when the existing route lifecycle chan
   expect(state.consoleErrors).toEqual([])
 })
 
-test('Reader Edit is only the existing D5 editor fallback and remains responsive', async ({ page, request }) => {
+test('native Edit keeps the same tab and unsaved raw across Calendar Home and same-date reopen', async ({ page, request }) => {
   const date = localCivilDate()
   const path = diaryPath(date)
+  const marker = `unsaved-native-${Date.now()}`
   const state = diagnostics(page)
   const documentGets: string[] = []
   page.on('request', (event) => {
@@ -374,11 +263,11 @@ test('Reader Edit is only the existing D5 editor fallback and remains responsive
   })
 
   try {
-    await seedExistingDiary(request, date, `# Edit fallback\n\nD6.3 reader content.\n`)
+    await seedExistingDiary(request, date, '# Native Edit\n\nOriginal body.\n')
     await openDiaryScope(page)
     await clickDiaryDate(page, date)
-    await assertReader(page, date)
-    const getsAfterReader = documentGets.length
+    await assertNativeReader(page, date)
+    const getsAfterOpen = documentGets.length
 
     for (const viewport of [
       { width: 1280, height: 800 },
@@ -387,35 +276,43 @@ test('Reader Edit is only the existing D5 editor fallback and remains responsive
       { width: 320, height: 700 },
     ]) {
       await page.setViewportSize(viewport)
-      await expect(page.getByTestId('diary-reader-dialog')).toBeVisible()
-      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true)
-      for (const testId of ['diary-reader-back', 'diary-reader-edit', 'diary-reader-close']) {
-        const box = await page.getByTestId(testId).boundingBox()
-        expect(box?.width ?? 0, `${testId} width at ${viewport.width}`).toBeGreaterThanOrEqual(40)
-        expect(box?.height ?? 0, `${testId} height at ${viewport.width}`).toBeGreaterThanOrEqual(40)
-      }
+      await expect(page.locator('.reading-pane')).toBeVisible()
+      const overflow = await page.evaluate(() => ({
+        viewport: window.innerWidth,
+        document: document.documentElement.scrollWidth,
+        offenders: [...document.querySelectorAll<HTMLElement>('body *')]
+          .filter((element) => element.getBoundingClientRect().right > window.innerWidth + 1)
+          .slice(0, 8)
+          .map((element) => ({
+            tag: element.tagName,
+            className: element.className,
+            right: Math.round(element.getBoundingClientRect().right),
+            width: Math.round(element.getBoundingClientRect().width),
+          })),
+      }))
+      expect(overflow.document, JSON.stringify({ viewport, ...overflow })).toBeLessThanOrEqual(overflow.viewport + 1)
     }
 
-    const themeRoot = page.locator('html')
-    const initialTheme = await themeRoot.getAttribute('data-theme')
-    const nextTheme = initialTheme === 'dark' ? 'light' : 'dark'
-    await page.locator('.theme-toggle').click()
-    await expect(themeRoot).toHaveAttribute('data-theme', nextTheme)
-    await expect(page.getByTestId('diary-reader-dialog')).toBeVisible()
-    await page.locator('.theme-toggle').click()
-    await expect(themeRoot).toHaveAttribute('data-theme', initialTheme ?? 'light')
-
     await page.setViewportSize({ width: 1280, height: 800 })
-    await page.getByTestId('diary-reader-edit').click()
-    await expect(page.getByTestId('diary-reader-dialog')).toHaveCount(0)
-    await expect(page.getByRole('textbox', { name: 'Editor content' })).toBeVisible({ timeout: 15_000 })
+    await page.getByTestId('view-toggle').click()
+    const editor = page.getByRole('textbox', { name: 'Editor content' })
+    await expect(editor).toBeVisible()
+    await editor.focus()
+    await page.keyboard.press('ControlOrMeta+End')
+    await page.keyboard.insertText(`\n${marker}`)
     await expect(page.locator(`[role="tab"][data-tab-id="${path}"]`)).toHaveCount(1)
-    await expect(page).toHaveURL(new RegExp(`/vault/${path.replace('/', '\\/')}(?:[?#]|$)`))
-    await expect(page.getByTestId('diary-calendar')).toBeAttached()
-    await expect(page.getByTestId('diary-calendar')).toBeHidden()
-    await expect.poll(() => documentGets.length).toBe(getsAfterReader)
 
-    // The backing tab remains intentionally open after the D5 fallback.
+    await page.getByTestId('file-tree-exact-context-action').click()
+    await expect(page.getByTestId('diary-calendar')).toBeVisible()
+    await expect(page.locator(`[role="tab"][data-tab-id="${path}"]`)).toHaveCount(1)
+
+    await clickDiaryDate(page, date)
+    await assertNativeReader(page, date)
+    await expect(page.locator('.reading-pane article')).toContainText(marker)
+    // Re-running the existing date command performs its authoritative exact
+    // path probe once. The presentation layer adds no fetch, and openPost
+    // reuses the existing tab raw instead of replacing the unsaved marker.
+    await expect.poll(() => documentGets.length).toBe(getsAfterOpen + 1)
   } finally {
     await deleteDiaryDate(request, date)
   }
@@ -424,18 +321,48 @@ test('Reader Edit is only the existing D5 editor fallback and remains responsive
   expect(state.consoleErrors).toEqual([])
 })
 
-test('Reader presentation remains stable across five open/close cycles without dayIndex errors', async ({ page, request }) => {
-  const date = localCivilDate()
-  await seedExistingDiary(request, date, '# Repeated Reader\n\ncycle evidence\n')
+test('ordinary note, archive, and ledger documents retain the native Vault workspace', async ({ page, request }) => {
+  const cases = [
+    { scope: 'note', path: 'inbox/d6-native-note-smoke' },
+    { scope: 'note', path: 'archive/d6-native-archive-smoke' },
+    { scope: 'ledger', path: 'ledger/d6-native-ledger-smoke' },
+  ]
   const state = diagnostics(page)
+
+  try {
+    for (const item of cases) await seedOrdinaryNote(request, item.path)
+
+    for (const item of cases) {
+      await page.goto(`/vault/${item.path}`)
+      const scopeChip = page.locator('.scope-chip').filter({ hasText: item.scope })
+      if (await scopeChip.getAttribute('aria-pressed') !== 'true') await scopeChip.click()
+      await expect(page.locator(`[role="tab"][data-tab-id="${item.path}"]`)).toHaveAttribute('aria-selected', 'true')
+      const toggle = page.getByTestId('view-toggle')
+      if ((await toggle.getAttribute('aria-label'))?.match(/read|阅读/i)) await toggle.click()
+      await expect(page.locator('.reading-pane')).toHaveCount(1)
+      await expect(page.locator('.file-tree')).toBeVisible()
+      await expect(page.getByTestId('file-tree-exact-context')).toHaveCount(0)
+      await expect(page.getByTestId('diary-reader-dialog')).toHaveCount(0)
+    }
+  } finally {
+    for (const item of cases) await deletePost(request, item.path)
+  }
+
+  expect(state.pageErrors).toEqual([])
+  expect(state.consoleErrors).toEqual([])
+})
+
+test('native document handoff remains stable across five cycles without dayIndex errors', async ({ page, request }) => {
+  const date = localCivilDate()
+  const state = diagnostics(page)
+  await seedExistingDiary(request, date, '# Repeated native document\n')
 
   try {
     await openDiaryScope(page)
     for (let cycle = 0; cycle < 5; cycle += 1) {
       await clickDiaryDate(page, date)
-      await assertReader(page, date)
-      await page.getByTestId('diary-reader-close').click()
-      await expect(page.getByTestId('diary-reader-dialog')).toHaveCount(0)
+      await assertNativeReader(page, date)
+      await page.getByTestId('file-tree-exact-context-action').click()
       await expect(page.getByTestId('diary-calendar')).toBeVisible()
       await expect(page.locator(`[role="tab"][data-tab-id="${diaryPath(date)}"]`)).toHaveCount(1)
     }

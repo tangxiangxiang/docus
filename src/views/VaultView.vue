@@ -65,7 +65,6 @@ import { handleDiaryHomeKeydown } from './diaryHomeKeyboard'
 import FileTree from '../components/vault/FileTree.vue'
 import DiaryWorkspace from '../components/diary/DiaryWorkspace.vue'
 import DiaryCalendarSurface from '../components/diary/DiaryCalendarSurface.vue'
-import DiaryReaderDialog from '../components/diary/DiaryReaderDialog.vue'
 import TagPanel from '../components/vault/TagPanel.vue'
 import TagManagementPanel from '../components/vault/TagManagementPanel.vue'
 import ReadingPane from '../components/vault/ReadingPane.vue'
@@ -213,7 +212,6 @@ const paletteRef = ref<InstanceType<typeof CommandPalette> | null>(null)
 const editorTabsRef = ref<InstanceType<typeof EditorTabs> | null>(null)
 const fileTreeRef = ref<InstanceType<typeof FileTree> | null>(null)
 const diaryCalendarSurfaceRef = ref<{ focusDate: (date: DiaryDate) => boolean } | null>(null)
-const diaryReaderDialogRef = ref<InstanceType<typeof DiaryReaderDialog> | null>(null)
 const comparisonPaneRef = ref<InstanceType<typeof HistoryComparisonPane> | null>(null)
 const workingTreeDiffPaneRef = ref<InstanceType<typeof WorkingTreeDiffPane> | null>(null)
 const recoveryPaneRef = ref<InstanceType<typeof DraftRecoveryPane> | null>(null)
@@ -1619,8 +1617,7 @@ const diaryWorkspacePresentation = useDiaryWorkspacePresentation({
 const {
   presentationMode,
   diaryPresentationEligible,
-  isD5DocumentFallbackActive,
-  isReader: isDiaryReader,
+  isDocument: isDiaryDocumentMode,
   selectedDiaryDate,
   backingPath,
   focusReturnTarget,
@@ -1631,17 +1628,10 @@ const {
 // transition synchronously unmounts its Calendar. D6.1 moves visibility to
 // the Diary presentation owner while preserving this scope-only mount rule.
 const isDiaryCalendarMounted = computed(() => isDiaryScope.value)
-const isDiaryPresentationPrimary = computed(() => (
-  diaryPresentationEligible.value && !isD5DocumentFallbackActive.value
+const isDiaryPresentationPrimary = computed(() => isDiaryCalendarMode.value)
+const diaryExactPathFilter = computed(() => (
+  isDiaryDocumentMode.value ? backingPath.value : null
 ))
-const diaryReaderTab = computed(() => (
-  backingPath.value
-    ? tabs.value.find((tab) => tab.path === backingPath.value) ?? null
-    : null
-))
-const diaryReaderRaw = computed(() => diaryReaderTab.value?.raw ?? '')
-const diaryReaderLoading = computed(() => diaryReaderTab.value?.loading ?? false)
-const diaryReaderError = computed(() => diaryReaderTab.value?.loadError ?? null)
 
 async function closeDiaryPresentation(): Promise<void> {
   const target = focusReturnTarget.value
@@ -1651,11 +1641,6 @@ async function closeDiaryPresentation(): Promise<void> {
     ? diaryCalendarSurfaceRef.value?.focusDate(target.date) ?? false
     : false
   if (!restored) vaultRef.value?.focus()
-}
-
-function editDiaryReader(): void {
-  diaryWorkspacePresentation.requestD5DocumentFallback()
-  viewModeApi?.set('edit')
 }
 
 async function onDiaryDateSelected(date: DiaryDate): Promise<void> {
@@ -1672,10 +1657,11 @@ async function onDiaryDateSelected(date: DiaryDate): Promise<void> {
     diaryWorkspacePresentation.reset()
     return
   }
-  diaryWorkspacePresentation.requestReader(result.date, result.path)
+  diaryWorkspacePresentation.requestDocument(result.date, result.path)
+  viewModeApi?.set('read')
   await nextTick()
   if (diaryWorkspacePresentation.isDateIntentCurrent(intent)) {
-    diaryReaderDialogRef.value?.focusInitial()
+    vaultRef.value?.focus()
   }
 }
 
@@ -2022,7 +2008,7 @@ watch(isReadMode, async (reading) => {
   <div
     ref="vaultRef"
     class="vault"
-    :class="{ 'is-read': isReadMode, 'right-rail-open': rightRailVisible, 'diary-calendar-mode': isDiaryCalendarMode, 'diary-reader-mode': isDiaryReader }"
+    :class="{ 'is-read': isReadMode, 'right-rail-open': rightRailVisible, 'diary-calendar-mode': isDiaryCalendarMode, 'diary-native-document-mode': isDiaryDocumentMode }"
     tabindex="0"
     :style="vaultStyle"
     @keydown="onVaultKeydown"
@@ -2074,10 +2060,14 @@ watch(isReadMode, async (reading) => {
       :tree="tree"
       :posts="posts"
       :current-path="activePath"
+      :exact-path-filter="diaryExactPathFilter"
+      :exact-path-filter-label="selectedDiaryDate"
+      :exact-path-filter-action-label="diaryExactPathFilter ? t('diary.workspace.return_calendar') : null"
       @select="openPost"
       @refresh="refresh"
       @export-pdf="exportPdfDocument"
       @open-history="openFileHistory"
+      @clear-exact-path-filter="closeDiaryPresentation"
     />
     <TagPanel
       v-else-if="activePanel === 'tags'"
@@ -2129,7 +2119,7 @@ watch(isReadMode, async (reading) => {
 
     <section
       class="editor-area"
-      :class="{ 'is-read': isReadMode, 'is-empty': workspaceTabs.length === 0, 'is-diary-home': isDiaryCalendarMode, 'is-diary-reader': isDiaryReader }"
+      :class="{ 'is-read': isReadMode, 'is-empty': workspaceTabs.length === 0, 'is-diary-home': isDiaryCalendarMode }"
     >
       <EditorTabs
         v-if="workspaceTabs.length > 0"
@@ -2145,13 +2135,14 @@ watch(isReadMode, async (reading) => {
         @reorder="reorderWorkspaceTabs"
       />
 
-      <!-- D6.1 Diary presentation shell: Home owns visibility while the
-           backing document/tab remains in the existing Vault lifecycle. -->
+      <!-- Calendar Home is the only Diary-owned surface. The subtree stays
+           mounted for the whole Diary scope while native Vault documents use
+           the ordinary editor/reader surfaces below. -->
       <DiaryWorkspace
         v-if="isDiaryCalendarMounted"
         :eligible="diaryPresentationEligible"
         :mode="presentationMode"
-        :visible="isDiaryPresentationPrimary"
+        :visible="isDiaryCalendarMode"
         class="content diary-calendar-content"
       >
         <template #home>
@@ -2161,20 +2152,6 @@ watch(isReadMode, async (reading) => {
             :loading="treeLoading"
             :error="treeError"
             @date-selected="onDiaryDateSelected"
-          />
-        </template>
-        <template #reader>
-          <DiaryReaderDialog
-            v-if="selectedDiaryDate && backingPath"
-            ref="diaryReaderDialogRef"
-            :date="selectedDiaryDate"
-            :path="backingPath"
-            :raw="diaryReaderRaw"
-            :loading="diaryReaderLoading"
-            :error="diaryReaderError"
-            :resolver="wikiResolver"
-            @close="closeDiaryPresentation"
-            @edit="editDiaryReader"
           />
         </template>
       </DiaryWorkspace>

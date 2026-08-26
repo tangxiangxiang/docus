@@ -25,8 +25,14 @@ const props = withDefaults(defineProps<{
   tree: TreeNode[]
   posts?: PostSummary[]
   currentPath: string | null
+  exactPathFilter?: string | null
+  exactPathFilterLabel?: string | null
+  exactPathFilterActionLabel?: string | null
 }>(), {
   posts: () => [],
+  exactPathFilter: null,
+  exactPathFilterLabel: null,
+  exactPathFilterActionLabel: null,
 })
 const emit = defineEmits<{
   select: [path: string]
@@ -38,6 +44,7 @@ const emit = defineEmits<{
   'archive-note': [path: string]
   'export-pdf': [path: string]
   'open-history': [path: string]
+  'clear-exact-path-filter': []
 }>()
 
 const { confirm } = useConfirm()
@@ -95,6 +102,14 @@ const topLevel = computed<TreeNode[]>(() => {
     const roots = scopeRootsFor(activeScope.value)
     children = children.filter((c) => roots.includes(c.path))
   }
+  // The exact-path constraint is a generic presentation projection. It has
+  // higher priority than the user's text/tag query but never mutates that
+  // query, so leaving the detail context restores the search verbatim.
+  if (props.exactPathFilter) {
+    return children
+      .map((child) => filterByExactPath(child, props.exactPathFilter!))
+      .filter((node): node is TreeNode => node !== null)
+  }
   // Rebuild the subtree so non-matching files are hidden while matching
   // ancestors remain visible. A matching folder keeps its complete
   // subtree. The filter runs through the shared `matchesTagQuery`
@@ -113,6 +128,14 @@ const topLevel = computed<TreeNode[]>(() => {
   }
   return children
 })
+
+function filterByExactPath(node: TreeNode, exactPath: string): TreeNode | null {
+  if (node.kind === 'file') return node.path === exactPath ? node : null
+  const children = node.children
+    .map((child) => filterByExactPath(child, exactPath))
+    .filter((child): child is TreeNode => child !== null)
+  return children.length > 0 ? { ...node, children } : null
+}
 // Post metadata is used by TreeRow for secondary file information.
 const postMetadataByPath = computed<Map<string, PostSummary>>(() =>
   new Map(props.posts.map((post) => [post.path, post])),
@@ -138,6 +161,12 @@ const duplicateTitles = computed<Set<string>>(() => {
 const contentText = defineModel<string>('filter', { default: '' })
 
 const effectiveQuery = computed(() => contentText.value.trim())
+const exactPathFilterActive = computed(() => props.exactPathFilter !== null)
+const exactPathContextLabel = computed(() => (
+  props.exactPathFilterLabel
+  ?? props.exactPathFilter?.split('/').at(-1)
+  ?? ''
+))
 // Phase 1.1 fix: every FileTree search now flows through the shared
 // query model — no separate legacy branch for plain-text queries.
 // This guarantees three things:
@@ -197,6 +226,7 @@ export interface MatchInfo {
   title?: boolean
 }
 const matchedFields = computed<Map<string, MatchInfo>>(() => {
+  if (exactPathFilterActive.value) return new Map()
   const tokens = parsedQuery.value.textTokens
   if (tokens.length === 0) return new Map()
   const m = new Map<string, MatchInfo>()
@@ -227,7 +257,7 @@ const matchedFields = computed<Map<string, MatchInfo>>(() => {
 // search-time override is layered on top via `effectiveExpanded`, and
 // disappears the moment the query clears, restoring the saved layout.
 const searchForcedExpanded = computed<Set<string> | null>(() => {
-  if (!effectiveQuery.value) return null
+  if (!effectiveQuery.value && !exactPathFilterActive.value) return null
   const set = new Set<string>()
   const walk = (n: TreeNode) => {
     if (n.kind !== 'folder') return
@@ -744,10 +774,26 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
     @keydown="onTreeKeydown"
   >
     <header>
+      <div
+        v-if="exactPathFilterActive"
+        class="exact-path-context"
+        data-testid="file-tree-exact-context"
+      >
+        <span class="exact-path-context-label" :title="props.exactPathFilter ?? undefined">
+          {{ exactPathContextLabel }}
+        </span>
+        <button
+          v-if="props.exactPathFilterActionLabel"
+          class="exact-path-context-action"
+          type="button"
+          data-testid="file-tree-exact-context-action"
+          @click="emit('clear-exact-path-filter')"
+        >{{ props.exactPathFilterActionLabel }}</button>
+      </div>
       <!-- Filters by title, filename, and directory path. Matching is
            case-insensitive and multiple tokens compose with AND.
       -->
-      <div class="search">
+      <div v-else class="search">
         <span class="search-icon" v-html="ICON_SEARCH" aria-hidden="true" />
         <input
           ref="searchInputRef"
@@ -777,7 +823,7 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
         :focused-node-key="focusedNodeKey"
         :expanded-set="effectiveExpanded"
         :matched-fields="matchedFields"
-        :search-active="Boolean(effectiveQuery)"
+        :search-active="Boolean(effectiveQuery) && !exactPathFilterActive"
         :compact="compactFileTree"
         :duplicate-titles="duplicateTitles"
         :metadata-by-path="postMetadataByPath"
@@ -794,7 +840,7 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
         @focus="setFocused"
       />
     </ul>
-    <p v-else-if="effectiveQuery" class="empty">{{ t('file_tree.no_query_match', { query: effectiveQuery }) }}</p>
+    <p v-else-if="effectiveQuery && !exactPathFilterActive" class="empty">{{ t('file_tree.no_query_match', { query: effectiveQuery }) }}</p>
     <p v-else class="empty">{{ t('file_tree.empty') }}</p>
   </aside>
 </template>
