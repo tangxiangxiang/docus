@@ -17,7 +17,7 @@ not make the new D6.3 implementation review-closed or independently reviewed.
 - D6.2 = REVIEW-CLOSED
 - D6.2.1 = REVIEW-CLOSED
 - D6.3 Reader Dialog implementation = SUPERSEDED BEFORE REVIEW CLOSURE
-- D6.3 Native Vault Document Workspace replacement = IN PROGRESS
+- D6.3 Native Vault Document Workspace replacement = REVIEW-READY
 - D6.4 = NOT STARTED
 
 Initial implementation commit: `d270ee5756c0f742e92955f06fa308fd6f77bc4a`

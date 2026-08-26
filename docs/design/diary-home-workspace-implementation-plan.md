@@ -1,6 +1,6 @@
 # D6 — Diary Home Workspace Implementation Plan
 
-状态：`REVIEW-CLOSED` design amendment；D6.3 Native Document Workspace replacement 为 `IN PROGRESS`。
+状态：`REVIEW-CLOSED` design amendment；D6.3 Native Document Workspace replacement 为 `REVIEW-READY`。
 
 基线：D6.0–D6.2.1 `REVIEW-CLOSED`。旧 D6.3 Reader Dialog implementation 在 closure 前被产品决定替代；D6.4 `NOT STARTED`。
 
@@ -145,7 +145,7 @@ Status: `REVIEW-CLOSED`. Visual contract frozen.
 
 ### D6.3 — Native Document Workspace Handoff
 
-Status: `IN PROGRESS` until new canonical evidence is complete, then `REVIEW-READY`.
+Status: `REVIEW-READY`; production/tests/canonical evidence complete, new independent review pending.
 
 Deliverables:
 
@@ -233,7 +233,7 @@ Also STOP for server/shared/dependency change, `openDiaryDate()` ownership chang
 Runtime rollback to D6.2.1 must be newest to oldest:
 
 ```text
-<NEW_NATIVE_WORKSPACE_PRODUCTION_SHA>
+592a1d5181edc84d1d66392f2c87fe8a2d4a23eb
 -> fa85f431d274e36fccbeaa0446ed63cf0d017a36
 -> d270ee5756c0f742e92955f06fa308fd6f77bc4a
 -> ce3e08c514f50304d9b73f066191a22d5739c179
@@ -243,19 +243,19 @@ Docs rollback is informational-only; it is not an asserted exact history chain.
 
 ## 13. D6.3 exit criteria
 
-- [ ] Old Reader evidence marked SUPERSEDED before closure.
-- [ ] New canonical D6.3 evidence created.
-- [ ] DiaryReaderDialog runtime absent.
-- [ ] Calendar success enters native READ through existing command/tab.
-- [ ] Exactly one existing ReadingPane; existing EditorPane/Monaco reused.
-- [ ] Generic exact-path FileTree renders only current Diary + ancestors.
-- [ ] User filter preserved.
-- [ ] Calendar return preserves route/activePath/tab/dirty and restores focus.
-- [ ] activePath mismatch cannot auto-open a Diary presentation.
-- [ ] Browser Back remains router-owned.
-- [ ] Calendar remains mounted; visual contract unchanged.
-- [ ] focused Vitest/E2E/typecheck/build/diff checks pass.
-- [ ] server/shared/router/dependencies unchanged.
-- [ ] task self-review P0/P1/P2 = 0/0/0.
+- [x] Old Reader evidence marked SUPERSEDED before closure.
+- [x] New canonical D6.3 evidence created.
+- [x] DiaryReaderDialog runtime absent.
+- [x] Calendar success enters native READ through existing command/tab.
+- [x] Exactly one existing ReadingPane; existing EditorPane/Monaco reused.
+- [x] Generic exact-path FileTree renders only current Diary + ancestors.
+- [x] User filter preserved.
+- [x] Calendar return preserves route/activePath/tab/dirty and restores focus.
+- [x] activePath mismatch cannot auto-open a Diary presentation.
+- [x] Browser Back remains router-owned.
+- [x] Calendar remains mounted; visual contract unchanged.
+- [x] focused Vitest/E2E/typecheck/build/diff checks pass.
+- [x] server/shared/router/dependencies unchanged.
+- [x] task self-review P0/P1/P2 = 0/0/0.
 
 After these pass: `D6.3 = REVIEW-READY`, `D6.4 = NOT STARTED`, then STOP for a new independent review.

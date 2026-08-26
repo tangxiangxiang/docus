@@ -1,6 +1,6 @@
 # D6 — Diary Home Workspace PRD
 
-状态：`REVIEW-CLOSED`（产品 contract）；D6.3 在 closure 前发生产品方向替换，当前 replacement implementation 为 `IN PROGRESS`。
+状态：`REVIEW-CLOSED`（产品 contract）；D6.3 Native Document Workspace replacement implementation 为 `REVIEW-READY`，等待新的 independent review。
 
 已有状态保持不变：D0–D5、D6.0、D6.1、D6.2、D6.2.1 均为 `REVIEW-CLOSED`。D6.4 为 `NOT STARTED`。
 
@@ -240,28 +240,28 @@ D6.0   REVIEW-CLOSED
 D6.1   REVIEW-CLOSED
 D6.2   REVIEW-CLOSED
 D6.2.1 REVIEW-CLOSED
-D6.3   IN PROGRESS — Native Document Workspace replacement
+D6.3   REVIEW-READY — Native Document Workspace replacement
 D6.4   NOT STARTED — Native Editor Lifecycle Verification
 D6.5   BLOCKED
 D6.6   BLOCKED
 D6.7   BLOCKED
 ```
 
-旧 D6.3 Reader Dialog implementation 为 `SUPERSEDED BEFORE REVIEW CLOSURE`。新的 D6.3 只有在 production/tests/evidence 完成后才能进入 `REVIEW-READY`，且必须重新 independent review。
+旧 D6.3 Reader Dialog implementation 为 `SUPERSEDED BEFORE REVIEW CLOSURE`。新的 D6.3 production/tests/evidence 已完成并进入 `REVIEW-READY`；旧 Reader Dialog review 不能转移，仍必须重新 independent review。
 
 ## 16. Acceptance criteria
 
-- [ ] Calendar date success opens existing native Vault READ surface.
-- [ ] No DiaryReaderDialog or Diary Editor Dialog runtime remains.
-- [ ] ReadingPane instance count is exactly one.
-- [ ] Existing view toggle enters same-tab EditorPane/Monaco.
-- [ ] FileTree exact filter renders only current Diary plus ancestors.
-- [ ] User `filesFilter` is preserved.
-- [ ] Calendar Home action is presentation-only and preserves tab/route/activePath/dirty.
-- [ ] Same-date reopen reuses tab and preserves unsaved raw.
-- [ ] activePath mismatch, backing close, scope exit and special surfaces reset HOME without auto-open.
-- [ ] Calendar remains mounted throughout Diary scope.
-- [ ] Browser Back remains router-owned.
-- [ ] note/archive/ledger, RightRail, StatusBar and EditorTabs retain native behavior.
-- [ ] focused tests, browser matrix, typecheck and build pass with no `dayIndex`/pageerror.
+- [x] Calendar date success opens existing native Vault READ surface.
+- [x] No DiaryReaderDialog or Diary Editor Dialog runtime remains.
+- [x] ReadingPane instance count is exactly one.
+- [x] Existing view toggle enters same-tab EditorPane/Monaco.
+- [x] FileTree exact filter renders only current Diary plus ancestors.
+- [x] User `filesFilter` is preserved.
+- [x] Calendar Home action is presentation-only and preserves tab/route/activePath/dirty.
+- [x] Same-date reopen reuses tab and preserves unsaved raw.
+- [x] activePath mismatch, backing close, scope exit and special surfaces reset HOME without auto-open.
+- [x] Calendar remains mounted throughout Diary scope.
+- [x] Browser Back remains router-owned.
+- [x] note/archive/ledger, RightRail, StatusBar and EditorTabs retain native behavior.
+- [x] focused tests, browser matrix, typecheck and build pass with no `dayIndex`/pageerror.
 - [ ] D6.3 independent review P0/P1/P2 = 0/0/0 before REVIEW-CLOSED.
