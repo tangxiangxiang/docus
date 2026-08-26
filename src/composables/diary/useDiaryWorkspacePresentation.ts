@@ -15,6 +15,7 @@ export interface DiaryWorkspacePresentationOptions {
   activeWorkingTreeDiff: Readonly<Ref<unknown | null>>
   activeDraftRecovery: Readonly<Ref<unknown | null>>
   documentPaths: Readonly<Ref<readonly string[]>>
+  activePath: Readonly<Ref<string | null>>
 }
 
 /**
@@ -112,7 +113,10 @@ export function useDiaryWorkspacePresentation(options: DiaryWorkspacePresentatio
   }
 
   function requestReader(date: DiaryDate, path: string): void {
-    if (!diaryPresentationEligible.value) return
+    // A Reader can only be opened by an explicit, successful Calendar date
+    // intent after the existing document lifecycle has made this path active.
+    // activePath is never an opening signal.
+    if (!diaryPresentationEligible.value || options.activePath.value !== path) return
     selectedDiaryDate.value = date
     backingPath.value = path
     focusOrigin.value = 'calendar'
@@ -165,6 +169,18 @@ export function useDiaryWorkspacePresentation(options: DiaryWorkspacePresentatio
         && !paths.includes(backing)
         && (presentationMode.value === 'reader' || presentationMode.value === 'editor')
       ) reset()
+    },
+    { flush: 'sync' },
+  )
+
+  // Active-path changes are a passive reconciliation input only. The router
+  // and existing tab lifecycle remain authoritative; if they move away from
+  // the Reader's backing document, close the stale presentation without
+  // changing activePath or trying to open a different Reader.
+  watch(
+    [options.activePath, backingPath, presentationMode],
+    ([active, backing, mode]) => {
+      if (mode === 'reader' && backing !== null && active !== backing) reset()
     },
     { flush: 'sync' },
   )

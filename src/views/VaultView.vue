@@ -1614,6 +1614,7 @@ const diaryWorkspacePresentation = useDiaryWorkspacePresentation({
   activeWorkingTreeDiff,
   activeDraftRecovery,
   documentPaths,
+  activePath,
 })
 const {
   presentationMode,
@@ -1667,6 +1668,10 @@ async function onDiaryDateSelected(date: DiaryDate): Promise<void> {
   ) return
   diaryWorkspacePresentation.recordDateCommandResult(result)
   if (result.status !== 'opened' && result.status !== 'created') return
+  if (activePath.value !== result.path) {
+    diaryWorkspacePresentation.reset()
+    return
+  }
   diaryWorkspacePresentation.requestReader(result.date, result.path)
   await nextTick()
   if (diaryWorkspacePresentation.isDateIntentCurrent(intent)) {

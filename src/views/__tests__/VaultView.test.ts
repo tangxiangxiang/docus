@@ -645,6 +645,12 @@ describe('VaultView D3.2 Diary surface wiring', () => {
     expect(reader).toContain('@close="closeDiaryPresentation"')
     expect(reader).toContain('@edit="editDiaryReader"')
     expect(source).toContain('tabs.value.find((tab) => tab.path === backingPath.value)')
+    const presentationCall = source.match(
+      /const diaryWorkspacePresentation = useDiaryWorkspacePresentation\([\s\S]*?\n\}\)/,
+    )?.[0]
+    expect(presentationCall).toBeDefined()
+    expect(presentationCall).toContain('activePath,')
+    expect(source).toContain('if (activePath.value !== result.path)')
     expect(source).toContain('const isDiaryCalendarMounted = computed(() => isDiaryScope.value)')
     expect(source).toContain('diaryReaderDialogRef.value?.focusInitial()')
     expect(source).toContain('v-if="isReadMode && !isDiaryPresentationPrimary && !activeHistoryComparison')

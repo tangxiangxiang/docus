@@ -19,12 +19,14 @@ function setup() {
   const activeWorkingTreeDiff = ref<unknown | null>(null)
   const activeDraftRecovery = ref<unknown | null>(null)
   const documentPaths = ref<string[]>([])
+  const activePath = ref<string | null>(null)
   const presentation = useDiaryWorkspacePresentation({
     isDiaryScope,
     activeHistoryComparison,
     activeWorkingTreeDiff,
     activeDraftRecovery,
     documentPaths,
+    activePath,
   })
 
   return {
@@ -33,6 +35,7 @@ function setup() {
     activeWorkingTreeDiff,
     activeDraftRecovery,
     documentPaths,
+    activePath,
     presentation,
   }
 }
@@ -56,10 +59,22 @@ async function adoptCurrentIntent(
     || !state.isDiaryScope.value
     || !state.presentation.diaryPresentationEligible.value
   ) return
+  if (result.status === 'opened' || result.status === 'created') {
+    state.activePath.value = result.path
+  }
   state.presentation.recordDateCommandResult(result)
   if (result.status === 'opened' || result.status === 'created') {
     state.presentation.requestReader(result.date, result.path)
   }
+}
+
+function requestReader(
+  state: ReturnType<typeof setup>,
+  dateValue: string,
+  path = `diary/${dateValue}`,
+): void {
+  state.activePath.value = path
+  state.presentation.requestReader(date(dateValue), path)
 }
 
 function opened(dateValue: string): DiaryDateCommandResult {
@@ -91,7 +106,7 @@ describe('useDiaryWorkspacePresentation', () => {
     state.isDiaryScope.value = true
     await nextTick()
 
-    state.presentation.requestReader(date('2026-08-24'), 'diary/2026-08-24')
+    requestReader(state, '2026-08-24')
     expect(state.presentation.presentationMode.value).toBe('reader')
 
     state[key].value = { active: true }
@@ -142,7 +157,7 @@ describe('useDiaryWorkspacePresentation', () => {
       path: 'diary/2026-08-24',
     })
     state.documentPaths.value = ['diary/2026-08-24']
-    state.presentation.requestReader(date('2026-08-24'), 'diary/2026-08-24')
+    requestReader(state, '2026-08-24')
 
     expect(state.presentation.presentationMode.value).toBe('reader')
     expect(state.presentation.isReader.value).toBe(true)
@@ -162,7 +177,7 @@ describe('useDiaryWorkspacePresentation', () => {
       path: 'diary/2026-08-24',
     })
     state.documentPaths.value = ['diary/2026-08-24']
-    state.presentation.requestReader(date('2026-08-24'), 'diary/2026-08-24')
+    requestReader(state, '2026-08-24')
     state.presentation.requestD5DocumentFallback()
 
     expect(state.presentation.presentationMode.value).toBe('home')
@@ -177,7 +192,7 @@ describe('useDiaryWorkspacePresentation', () => {
     state.isDiaryScope.value = true
     await nextTick()
 
-    state.presentation.requestReader(date('2026-08-24'), 'diary/2026-08-24')
+    requestReader(state, '2026-08-24')
     state.documentPaths.value = ['diary/2026-08-24']
     state.documentPaths.value = []
     await nextTick()
@@ -219,7 +234,7 @@ describe('useDiaryWorkspacePresentation', () => {
     const state = setup()
     state.isDiaryScope.value = true
     await nextTick()
-    state.presentation.requestReader(date('2026-08-24'), 'diary/2026-08-24')
+    requestReader(state, '2026-08-24')
 
     state.presentation.recordDateCommandResult({ status })
 
@@ -237,7 +252,7 @@ describe('useDiaryWorkspacePresentation', () => {
       date: date('2026-08-25'),
       path: 'diary/2026-08-25',
     })
-    state.presentation.requestReader(date('2026-08-25'), 'diary/2026-08-25')
+    requestReader(state, '2026-08-25')
     state.presentation.closePresentation()
 
     expect(state.presentation.presentationMode.value).toBe('home')
@@ -256,16 +271,84 @@ describe('useDiaryWorkspacePresentation', () => {
     expect(state.presentation.focusReturnTarget.value).toBeNull()
   })
 
-  it('does not use an active-path-like input as a Dialog intent', async () => {
+  it('uses activePath only to reconcile Reader, never as a Dialog intent', async () => {
     const state = setup()
     state.isDiaryScope.value = true
     await nextTick()
 
-    // The presentation owner has no activePath input. A document selection
-    // therefore cannot transition it out of HOME.
+    state.activePath.value = 'inbox/foo'
+
+    // Selecting a document outside the explicit Calendar command does not
+    // transition the presentation out of HOME.
     expect(state.presentation.presentationMode.value).toBe('home')
     expect(state.presentation.isReader.value).toBe(false)
     expect(state.presentation.isEditor.value).toBe(false)
+  })
+
+  it('closes a stale Reader when activePath leaves its backing document', async () => {
+    const state = setup()
+    state.isDiaryScope.value = true
+    state.documentPaths.value = ['diary/2026-08-25', 'inbox/foo']
+    state.activePath.value = 'diary/2026-08-25'
+    await nextTick()
+
+    state.presentation.requestReader(date('2026-08-25'), 'diary/2026-08-25')
+    expect(state.presentation.isReader.value).toBe(true)
+
+    state.activePath.value = 'inbox/foo'
+    await nextTick()
+
+    expect(state.presentation.presentationMode.value).toBe('home')
+    expect(state.presentation.isReader.value).toBe(false)
+    expect(state.presentation.selectedDiaryDate.value).toBeNull()
+    expect(state.presentation.backingPath.value).toBeNull()
+  })
+
+  it('closes an old Reader when activePath changes to another Diary tab without reopening it', async () => {
+    const state = setup()
+    state.isDiaryScope.value = true
+    state.documentPaths.value = ['diary/2026-08-25', 'diary/2026-08-24']
+    state.activePath.value = 'diary/2026-08-25'
+    await nextTick()
+
+    state.presentation.requestReader(date('2026-08-25'), 'diary/2026-08-25')
+    state.activePath.value = 'diary/2026-08-24'
+    await nextTick()
+
+    expect(state.presentation.presentationMode.value).toBe('home')
+    expect(state.presentation.isReader.value).toBe(false)
+    expect(state.presentation.selectedDiaryDate.value).toBeNull()
+    expect(state.presentation.backingPath.value).toBeNull()
+  })
+
+  it('does not reopen Reader after presentation-only close while activePath stays on the backing tab', async () => {
+    const state = setup()
+    state.isDiaryScope.value = true
+    state.documentPaths.value = ['diary/2026-08-25']
+    state.activePath.value = 'diary/2026-08-25'
+    await nextTick()
+
+    state.presentation.requestReader(date('2026-08-25'), 'diary/2026-08-25')
+    state.presentation.closePresentation()
+    await nextTick()
+
+    expect(state.presentation.presentationMode.value).toBe('home')
+    expect(state.presentation.isReader.value).toBe(false)
+    expect(state.presentation.backingPath.value).toBe('diary/2026-08-25')
+  })
+
+  it('cannot open Reader from activePath when the Calendar intent has not succeeded', async () => {
+    const state = setup()
+    state.isDiaryScope.value = true
+    state.documentPaths.value = ['diary/2026-08-25']
+    state.activePath.value = 'diary/2026-08-25'
+    await nextTick()
+
+    state.presentation.requestReader(date('2026-08-24'), 'diary/2026-08-24')
+
+    expect(state.presentation.presentationMode.value).toBe('home')
+    expect(state.presentation.isReader.value).toBe(false)
+    expect(state.presentation.backingPath.value).toBeNull()
   })
 
   it('ignores a successful intent after leaving Diary scope', async () => {

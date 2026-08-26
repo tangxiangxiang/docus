@@ -80,6 +80,26 @@ async function seedExistingDiary(request: APIRequestContext, date: string, raw: 
   expect(saved.status(), await saved.text()).toBe(200)
 }
 
+async function seedOrdinaryNote(request: APIRequestContext, path: string): Promise<void> {
+  const removed = await request.delete(`/api/posts/${path}`)
+  expect([200, 404]).toContain(removed.status())
+  const created = await request.post('/api/posts', {
+    data: { path, title: 'D6.3 Browser Back source' },
+  })
+  expect([200, 201]).toContain(created.status())
+  const initial = await request.get(`/api/posts/${path}`)
+  expect(initial.status()).toBe(200)
+  const saved = await request.put(`/api/posts/${path}`, {
+    data: { raw: '# Browser Back source\n', baseRaw: (await initial.json()).raw },
+  })
+  expect(saved.status(), await saved.text()).toBe(200)
+}
+
+async function deletePost(request: APIRequestContext, path: string): Promise<void> {
+  const response = await request.delete(`/api/posts/${path}`)
+  expect([200, 404]).toContain(response.status())
+}
+
 /**
  * The public Diary create command intentionally rejects future dates. This
  * fixture writes one pre-existing managed file directly so the browser can
@@ -104,6 +124,12 @@ async function openDiaryScope(page: Page): Promise<void> {
     await page.locator('.scope-chip').filter({ hasText: 'diary' }).click()
   }
   await expect(surface).toBeVisible({ timeout: 15_000 })
+}
+
+async function ensureDiaryScope(page: Page): Promise<void> {
+  const diaryChip = page.locator('.scope-chip').filter({ hasText: 'diary' })
+  if (await diaryChip.getAttribute('aria-pressed') !== 'true') await diaryChip.click()
+  await expect(page.getByTestId('diary-calendar-surface')).toBeVisible({ timeout: 15_000 })
 }
 
 async function moveToMonth(page: Page, date: string): Promise<void> {
@@ -292,6 +318,49 @@ test('created and existing future Diaries enter Reader, while missing future sta
   expect(state.consoleErrors).toEqual(expect.arrayContaining([
     'Failed to load resource: the server responded with a status of 404 (Not Found)',
   ]))
+})
+
+test('real Browser Back leaves the Reader when the existing route lifecycle changes activePath', async ({ page, request }) => {
+  const date = localCivilDate()
+  const diary = diaryPath(date)
+  const source = 'inbox/d6-browser-back-source'
+  const intermediate = 'inbox/d6-browser-back-intermediate'
+  const state = diagnostics(page)
+
+  try {
+    await seedExistingDiary(request, date, '# Browser Back Diary\n\nReader should close on route reconciliation.\n')
+    await seedOrdinaryNote(request, source)
+    await seedOrdinaryNote(request, intermediate)
+
+    // Build a real history stack. The Diary command uses router.replace(), so
+    // the intermediate entry keeps Browser Back meaningful without adding a
+    // fake Dialog history entry.
+    await page.goto('/vault')
+    await page.goto(`/vault/${source}`)
+    await page.goto(`/vault/${intermediate}`)
+    await expect(page).toHaveURL(new RegExp(`/vault/${intermediate.replace('/', '\\/')}(?:[?#]|$)`))
+
+    await ensureDiaryScope(page)
+    await clickDiaryDate(page, date)
+    await assertReader(page, date)
+    const urlBeforeBack = new URL(page.url()).pathname
+
+    await page.goBack()
+
+    await expect(page).toHaveURL(new RegExp(`/vault/${source.replace('/', '\\/')}(?:[?#]|$)`))
+    await expect(page.getByTestId('diary-reader-dialog')).toHaveCount(0)
+    await expect(page.locator(`[role="tab"][data-tab-id="${source}"]`)).toHaveAttribute('aria-selected', 'true')
+    await expect(page.locator(`[role="tab"][data-tab-id="${diary}"]`)).toHaveCount(1)
+    await expect(page.getByTestId('diary-calendar')).toBeVisible()
+    expect(new URL(page.url()).pathname).not.toBe(urlBeforeBack)
+  } finally {
+    await deleteDiaryDate(request, date)
+    await deletePost(request, source)
+    await deletePost(request, intermediate)
+  }
+
+  expect(state.pageErrors).toEqual([])
+  expect(state.consoleErrors).toEqual([])
 })
 
 test('Reader Edit is only the existing D5 editor fallback and remains responsive', async ({ page, request }) => {
