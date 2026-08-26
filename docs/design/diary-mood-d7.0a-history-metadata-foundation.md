@@ -14,6 +14,7 @@ Implementation commits：
 2. `f06a1756eb9c85af297c542983cac958c9641d75` — `feat(history): bind metadata snapshots to revisions`
 3. `5edd105e646ad0104cbc05f95e3ca144596d12f5` — `feat(history): restore generic metadata revisions`
 4. `081884581f6892a93afa5575f9550dfb5f720fbc` — `test(history): cover metadata revision lifecycle`
+5. `256c30c43c9a5a268abdd5fc1a317ea82109d3fa` — `fix(history): close D7.0A metadata journal findings`
 
 ## 1. Scope and lifecycle boundary
 
@@ -51,7 +52,7 @@ D7.0 revalidation 或 D7.1。
 | SQLite schema | `server/migrations/0009_history_metadata_revisions.sql` | 同一个 Docus SQLite DB；additive migration；不删除或替换 live metadata |
 | Historical codec/journal | `server/history/metadataRevisions.ts` | generic payload、coverage、capture/restore journal、reconciliation |
 | Live metadata owner | `server/documentMetadata.ts` | transaction-local create、validated historical field apply、identity tombstone provenance |
-| Git binding seam | `server/history/git.ts` | `commit-tree` 后、`update-ref` 前的正式 typed callback；test hooks 仍独立 |
+| Git binding seam | `server/history/git.ts` | `commit-tree` 后绑定 immutable proof、保持 capture `prepared`；`update-ref` 成功后才标记 `committed`；test hooks 仍独立 |
 | History routes | `server/history/routes.ts` | `/commits` capture、`/restore` result/error、`/drop` withdrawal retirement |
 | Restore owner | `server/history/restore.ts` | covered body + metadata restore；legacy body-only branch |
 | Startup reconciliation | `server/prod.ts`、`server/vite-plugin.ts` | crash recovery 后、接收请求前检查 unresolved journals |
@@ -119,7 +120,7 @@ operation 和 per-path row 共同证明：
 | no capture operation for SHA | pre-coverage/external legacy revision | existing body-only restore；current metadata preserved；返回 metadata unavailable |
 | committed capture, selected path has `legacy` row | commit captured the path while no live metadata row existed | body-only legacy policy；不从 Frontmatter 推断 |
 | committed capture, selected path has `covered` row | trusted snapshot-covered revision | validate row, payload, digest, identity and body binding；restore body + matching metadata |
-| capture operation prepared/non-committed | pending/unpublished operation | reconciliation aborts or reports ambiguous；不当作 trusted coverage |
+| capture operation prepared/non-committed | pending/unpublished operation | unbound capture aborts；SHA-bound capture 依据 reachable SHA 或 unchanged expected parent 确定性地 commit/abort，否则才 ambiguous；不当作 trusted coverage |
 | committed capture row missing/corrupt | covered evidence is incomplete | `HISTORY_METADATA_CORRUPT`/stable repair error；不降级成 legacy |
 | committed capture SHA unreachable from current Git HEAD | cross-store publication cannot be proven | `HISTORY_METADATA_JOURNAL_AMBIGUOUS`；fail closed |
 
@@ -138,8 +139,9 @@ withVaultMutation
   → existing git.addAndCommit(expected body hashes)
       → temporary index / write-tree
       → commit-tree creates immutable commit SHA
-      → finalize metadata rows and verify SHA/parent/tree/body
+      → bind metadata rows and verify SHA/parent/tree/body while capture remains prepared
       → update-ref HEAD with expected-parent CAS
+      → mark capture committed only after update-ref succeeds
       → existing index synchronization/repair
 ```
 
@@ -153,9 +155,10 @@ Vault mutation coordinator
   → Git index/filesystem boundary
 ```
 
-formal production seam 是 `afterCommitObjectCreatedBeforeRefUpdate`。它与
-`beforeCommitTreeForTesting`、`beforeUpdateRefForTesting` 等 test-only hooks 分开；
-不会把 testing hook 当成 production protocol。
+formal production seam 是 `afterCommitObjectCreatedBeforeRefUpdate` 加上
+`afterRefUpdated`：前者只绑定 immutable proof，后者只在 `update-ref` 成功后提交
+durable capture 状态。它与 `beforeCommitTreeForTesting`、`beforeUpdateRefForTesting`
+等 test-only hooks 分开；不会把 testing hook 当成 production protocol。
 
 Capture snapshot 来自 live `DocumentMetadata` row，并且一个 multi-file commit 使用
 一个 capture operation、每个 affected path 一条独立 revision row。body hash、tree
@@ -174,6 +177,12 @@ journal 还使用 `compensating`、`recovered`、`failed` 等状态。reconcilia
 reconciliation 规则是确定性的：
 
 - prepared capture 没有 durable SHA binding：abort；
+- prepared capture 已绑定 SHA 且该 SHA 从当前 HEAD reachable：验证 immutable
+  commit/tree/parent/body/revision proof 后标记 committed；
+- prepared capture 已绑定 SHA、该 SHA 不可达且当前 HEAD 仍等于 expected parent：证明
+  `update-ref` 未发布，abort；
+- prepared capture 已绑定 SHA，但既不能证明已发布也不能证明未发布：标记 ambiguous
+  并 fail closed；
 - committed capture 仍可由当前 HEAD reach：保留；
 - committed capture 不可达：标记 ambiguous 并 fail closed；
 - prepared restore：逐项比较 before/target body 与 metadata image，只在能证明完整
@@ -196,7 +205,9 @@ covered restore 先在 filesystem mutation 前完成：
 existing atomic create/replace protocol；metadata 使用现有 `documents` / tags owner
 的 transaction-local validated field apply，恢复 title/summary/tags，但不直接写回
 historical `updatedAt`、tag numeric ID 或 derived rows。成功时由 current metadata
-version owner mint 一个严格更新的 fresh `updatedAt`。
+version owner mint 一个严格更新的 fresh `updatedAt`；即使恢复后的
+title/summary/tags 与当前值语义相同，也必须产生新的 current metadata version，
+因为 body revision 已发生变化。普通 metadata PATCH 的 no-op 语义保持不变。
 
 如果 body 已替换但 metadata CAS/identity apply 失败，body 只在仍等于 target 的情况
 下 rollback；外部 bytes/identity 赢得竞争时保留外部结果并返回稳定 conflict，保留
@@ -247,7 +258,10 @@ schema v1 使用 `documents.id` 作为 stable document identity 和 generation p
 | SQLite capture preparation failure | no published Git ref；live metadata/body unchanged |
 | `commit-tree` failure | no ref publication；prepared capture 可被 reconciliation abort |
 | metadata finalization failure after commit object | no ref publication；unreachable object 不冒充 History success |
-| `update-ref` failure after durable finalize | capture remains committed but unreachable；reconciliation marks ambiguous and blocks follow-up |
+| known `update-ref` failure after durable SHA binding | capture remains `prepared` + bound；route aborts the known unpublished operation；若进程在此处中断，reconciliation uses reachability/expected-parent proof instead of permanently guessing ambiguous |
+| `update-ref` succeeded but committed mark was interrupted | capture remains `prepared` + bound；reachable immutable SHA and complete proof let reconciliation mark it `committed` |
+| bound SHA is unreachable while expected parent is unchanged | publication is proven absent；reconciliation aborts the bound capture and permits the next commit |
+| bound SHA publication cannot be proven | reconciliation marks the capture explicitly `ambiguous` and fails closed |
 | missing selected covered row | `HISTORY_METADATA_CORRUPT` before body mutation |
 | unsupported/newer schema | stable rejection before body/metadata mutation |
 | unknown controlled field | stable rejection before body mutation；不能 mixed restore |
@@ -267,8 +281,8 @@ metadata draft snapshot。现有 behavior 通过既有 integration suites 回归
 
 - `npm run test:history-integration`：5 files，174 passed；
 - `npm run test:recovery-integration`：5 files，193 passed；
-- 新 `server/__tests__/history-metadata-revisions.test.ts`：23 passed；
-- `npm run test:unit`：229 files，3451 passed，2 skipped。
+- 新 `server/__tests__/history-metadata-revisions.test.ts`：27 passed；
+- `npm run test:unit`：229 files，3455 passed，2 skipped。
 
 Recovery 与 History Comparison 不读取 `history_metadata_*` tables 作为 current state；
 D6 Diary lifecycle 也没有新增 route/tab/document owner。
@@ -277,10 +291,10 @@ D6 Diary lifecycle 也没有新增 route/tab/document owner。
 
 已执行：
 
-- `npm exec vitest run server/__tests__/history-metadata-revisions.test.ts --reporter=verbose`：PASS，23 tests；
+- `npm exec vitest run server/__tests__/history-metadata-revisions.test.ts --reporter=verbose`：PASS，27 tests；
 - `npm run test:history-integration`：PASS，174 tests；
 - `npm run test:recovery-integration`：PASS，193 tests；
-- `npm run test:unit`：PASS，3451 passed，2 skipped；
+- `npm run test:unit`：PASS，3455 passed，2 skipped；
 - `npm run typecheck`：PASS，client/server typecheck 均通过；
 - `npm run build`：PASS；构建仅有既存 Rolldown `@vueuse/core` PURE annotation 和 chunk-size warnings；
 - `git diff --check`：implementation/test changes 已通过，最终 evidence commit 前会再次执行。
@@ -303,8 +317,9 @@ GitHub status：**not queried**。
 - legacy revision 的 metadata 仍明确 unavailable，不能被误读为历史 metadata 为空；
 - schema v1 的 stable generation proof 依赖现有 `documents.id` + tombstone provenance；
   identity 不可证明时拒绝 restore；
-- unexpected process loss in a cross-store boundary can leave an explicit ambiguous
-  repair state；startup 不会猜测或自动删改用户内容；
+- unexpected process loss in a cross-store boundary is recoverable when the bound SHA is
+  reachable or the expected parent proves non-publication；only an unprovable publication
+  state can leave an explicit ambiguous repair state；startup 不会猜测或自动删改用户内容；
 - D7.0 storage decision 尚未因 D7.0A implementation 自动升级为 selected；Mood 仍未
   实现。
 
@@ -319,10 +334,11 @@ Recovery metadata schema、第二 live owner、新 History UI、frontmatter rewr
 - [x] title/summary/tags canonical payload, schema and digest
 - [x] covered / legacy / pending / corrupt / ambiguous coverage distinction
 - [x] immutable Git SHA + parent/tree/body binding
+- [x] capture remains prepared until ref publication, with deterministic reachable/unpublished/ambiguous reconciliation
 - [x] sorted document lock and existing History Git seam
 - [x] capture/restore durable journal and startup reconciliation
 - [x] snapshot-covered body + generic metadata Restore
-- [x] fresh current `updatedAt` and existing metadata CAS semantics
+- [x] fresh current `updatedAt` and existing metadata CAS semantics, including semantically unchanged covered restores
 - [x] body/metadata compensation and external conflict handling
 - [x] legacy body-only Restore with current metadata preserved and explicit limitation
 - [x] unsupported schema/unknown field fail-closed policy
