@@ -168,13 +168,14 @@ Evidence: [D6.4 Native Editor Lifecycle Verification](diary-home-workspace-d6.4-
 Starting HEAD: `e550c1873d77ddfd95b96d87cff935130b09c662`.
 
 The focused browser evidence verifies the same Diary backing tab through
-native READ -> existing EDIT -> save/dirty/history/recovery/external changes
--> Calendar Home -> same-date reopen. It records 4/4 dedicated Chromium
-tests, 60/60 focused presentation/VaultView unit tests, 17/17 D6.2/D6.3
-regression tests, client/full typecheck and build PASS. No production code,
-generic lifecycle owner, route, server/shared contract or dependency changed.
-No Editor adapter or new lifecycle is allowed. D6.5 remains blocked pending
-independent review of this evidence.
+native READ -> existing EDIT -> save/dirty/History Comparison/History
+Restore/baseline Recovery/divergent Recovery/external changes -> Calendar Home
+-> same-date reopen. It records 6/6 dedicated Chromium tests, 60/60 focused
+presentation/VaultView unit tests, 17/17 D6.2/D6.3 regression tests, 2/2
+existing generic long-flow tests, client/full typecheck and build PASS. No
+production code, generic lifecycle owner, route, server/shared contract or
+dependency changed. No Editor adapter or new lifecycle is allowed. D6.5
+remains blocked pending independent review of this evidence.
 
 ### D6.5 — Lifecycle Regression
 
@@ -281,14 +282,20 @@ independent review.
 - [x] Existing READ -> EDIT toggle reaches the same native EditorPane/Monaco path.
 - [x] Same backing tab, route, activePath, document identity and dirty raw survive Calendar Home.
 - [x] Existing save and dirty confirmation behavior is verified separately from presentation Home.
-- [x] Existing draft Recovery is adopted by the native tab and saved through the existing owner.
-- [x] History Comparison yields presentation without mutating the live document.
+- [x] Baseline-match Recovery is adopted by the native tab and saved through the existing owner.
+- [x] Divergent Recovery reaches the existing prompt/diff, explicit disk resolution, and same-identity Calendar reopen.
+- [x] History Comparison yields presentation from a dirty native Editor without mutating the live document.
+- [x] History Restore completes through the existing owner and the same document identity reopens from Calendar.
 - [x] External CAS conflict and existing Keep Local resolution remain native.
 - [x] No duplicate Diary Editor, Monaco, raw, save, dirty, draft, History or Recovery pipeline exists.
 - [x] Calendar remains mounted and no D3.0 `dayIndex`/pageerror regression was introduced.
 - [x] Focused unit, browser regression, typecheck, build and diff checks pass.
 - [x] No production code, generic lifecycle, route, server/shared contract or dependency changed.
 - [x] Task-scoped self-review P0/P1/P2 = 0/0/0.
+
+The D6.4 browser evidence uses the existing `view-toggle` control for the
+READ/EDIT transition. A new browser assertion for `Cmd+E` is intentionally
+deferred to D6.6 keyboard/accessibility coverage.
 
 After these pass: `D6.4 = REVIEW-READY`, `D6.5 = BLOCKED`, and await
 independent review. Do not begin D6.5 in this evidence phase.

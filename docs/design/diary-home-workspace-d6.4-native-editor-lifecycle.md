@@ -5,7 +5,7 @@
 - D6.0–D6.3 = `REVIEW-CLOSED`.
 - D6.4 = `REVIEW-READY` — Native Editor Lifecycle Verification.
 - D6.5 = `BLOCKED`; D6.6 and D6.7 remain `BLOCKED`.
-- Task-scoped self-review: P0 = 0, P1 = 0, P2 = 0.
+- Task-scoped follow-up self-review: P0 = 0, P1 = 0, P2 = 0.
 - Independent review is not claimed by this document; it remains pending.
 - This phase changed tests and evidence only. Production code is unchanged.
 
@@ -22,6 +22,7 @@ pipeline was introduced.
 - Starting HEAD: `e550c1873d77ddfd95b96d87cff935130b09c662`
 - Starting branch: `main`
 - Starting worktree: clean and aligned with `github/main`.
+- D6.4 evidence follow-up starting HEAD: `b5b07f183217cbf62308a56e4c9bcc581d174369`.
 - Evidence commit: the test/docs commit containing this document.
 - Runtime timezone used by the browser fixture: `Asia/Shanghai`.
 
@@ -32,7 +33,7 @@ Calendar date
   -> existing openDiaryDate()
   -> existing openPost()/tab workspace
   -> native READ / ReadingPane
-  -> existing READ <-> EDIT toggle / Cmd+E
+  -> existing READ <-> EDIT view toggle (Cmd+E remains an existing shortcut)
   -> native EditorPane / Monaco
   -> existing save, dirty, draft, History, Recovery and external-change owners
   -> presentation-only Calendar Home
@@ -205,7 +206,7 @@ Recovery or server mutation.
 The dedicated Chromium suite `e2e/diary-editor-lifecycle.spec.ts` completed:
 
 ```text
-4 tests PASS
+6 tests PASS
 ```
 
 ### Calendar -> native READ -> native EDIT -> Calendar -> reopen
@@ -237,22 +238,45 @@ native editor state remains owned by the ordinary Vault lifecycle.
 ### History Comparison precedence
 
 The History test uses the existing history surface and a scoped fake timeline
-only for deterministic browser data. It verifies that:
+only for deterministic browser data. It first creates a dirty native Diary
+Editor buffer and persists its draft through the existing draft owner. It then
+verifies that:
 
 - native Diary Editor is yielded to History Comparison;
 - Calendar remains attached and hidden while the special surface is active;
-- opening a historical comparison produces no live-document PUT;
-- the live tab remains present and its raw/metadata identity is unchanged;
+- no additional live-document PUT occurs after History becomes active;
+- the dirty marker remains on the live native tab while the comparison is open;
+- opening a historical comparison leaves the live raw/metadata identity
+  unchanged;
 - closing the comparison returns to Calendar Home;
-- reopening the same date reuses the same document identity and live raw.
+- reopening the same date reuses the same document identity and presents the
+  unsaved local raw, while the server still contains the last saved raw.
 
 History Comparison remains a Vault-owned surface; D6.4 adds no Diary history
 adapter.
 
-### Recovery continuity
+### History Restore continuity
 
-The Recovery test aborts the browser save after a native Editor change so the
-draft is persisted by the existing draft owner. After reload it verifies:
+The History Restore test uses the real temporary-vault history repository. It
+creates a real Diary revision through `POST /api/history/commits`, changes the
+same document through the real CAS-backed post endpoint, then uses the native
+History Comparison More actions menu and restore confirmation. It verifies:
+
+- the historical bytes are restored through the existing History restore owner;
+- the restored server document keeps the original metadata identity;
+- the existing document tab remains present and no second Diary document is
+  opened;
+- closing the comparison returns to Calendar Home with the backing tab intact;
+- reopening the same date through Calendar presents the restored bytes in the
+  native Reader.
+
+No History state or restore pipeline is owned by Diary presentation.
+
+### Recovery continuity (baseline and divergent)
+
+The dedicated suite covers both Recovery branches. The baseline-match test
+aborts the browser save after a native Editor change so the draft is persisted
+by the existing draft owner. After reload it verifies:
 
 - Calendar Home is initially visible;
 - startup Recovery adopts the draft into the native Diary tab without a new
@@ -261,6 +285,26 @@ draft is persisted by the existing draft owner. After reload it verifies:
 - the server baseline and document metadata id are unchanged until save;
 - reopening the same date presents the recovered local raw;
 - existing Ctrl/Cmd+S saves it and the real draft record is removed.
+
+The divergent test then verifies the separate explicit-resolution path:
+
+- a dirty native Diary Editor draft is persisted while the browser autosave is
+  deliberately aborted;
+- an external disk append creates a real disk/draft divergence before reload;
+- the existing Recovery prompt appears and `View Diff` shows both draft and
+  disk markers;
+- Calendar remains attached but is hidden while the existing Recovery pane is
+  active, and the original native Diary tab remains the document identity;
+- `Open Recovered Content` followed by `Use Disk Version` removes the draft,
+  leaves the existing tab/lifecycle in control, and leaves the exact disk
+  bytes and metadata identity on the server;
+- a fresh existing Vault lifecycle load followed by an explicit Calendar
+  reopen presents the disk winner in native Reader.
+
+The repository's existing generic `e2e/edit-program-long-flows.spec.ts` was
+also run separately (`2/2 PASS`). Its sealed Long Flow A supplies generic
+divergent-Recovery coverage; the Diary-specific test above supplies the
+Diary-scope presentation precedence, identity and Calendar-reopen bridge.
 
 No Recovery state is copied into Diary presentation.
 
@@ -281,11 +325,15 @@ The conflict path does not introduce a Diary-specific resolver.
 
 ### Browser diagnostics
 
-All four dedicated tests recorded `pageErrors = []`. The test diagnostics
+All six dedicated tests recorded `pageErrors = []`. The test diagnostics
 recorded no unexpected console errors after filtering only the deliberate
 test-induced network messages from aborted requests and the expected 409
 conflict response. The suite does not convert those expected test-hook network
 messages into a general console-clean claim.
+
+The D6.4 suite uses the existing `view-toggle` control for READ/EDIT
+transitions. It does not add a new browser assertion for `Cmd+E`; the existing
+shortcut remains deferred to the broader D6.6 keyboard/accessibility phase.
 
 ## Regression and static validation
 
@@ -315,7 +363,9 @@ npm run test:e2e -- \
 ```
 
 The existing `diary-reader.spec.ts` portion of that run was 7/7 PASS. The
-dedicated D6.4 suite was run separately and was 4/4 PASS.
+existing generic long-flow suite was run separately and was 2/2 PASS. The
+dedicated D6.4 suite was run separately and was 6/6 PASS, including the
+Diary-specific divergent Recovery and History Restore cases above.
 
 Static validation on this tree:
 
@@ -336,14 +386,15 @@ was changed to obtain a passing result.
 | --- | --- | --- |
 | Calendar date success | `openDiaryDate()` -> existing tab/route/activePath | native READ; then existing toggle may enter EDIT |
 | Calendar date failure/future missing | no adopted document | HOME; no Editor/Reader transition |
-| Native view toggle / Cmd+E | existing Vault view mode and EditorPane | same DOCUMENT state; no second model |
+| Native view toggle | existing Vault view mode and EditorPane | same DOCUMENT state; no second model; `Cmd+E` browser assertion deferred to D6.6 |
 | Editor change | `useDocumentSave()` updates raw/dirty/draft | presentation remains passive |
 | Ctrl/Cmd+S | existing save owner | dirty state clears through native lifecycle |
 | Presentation Calendar return | tab/raw/route/activePath unchanged | HOME; Calendar visible and still mounted |
 | Same-date reopen | existing path tab is reused | native READ of same document identity/local raw |
 | Tab/document close | existing dirty confirmation and disposal | presentation follows resulting state; no special close path |
-| History Comparison | existing History surface and diff tab | Diary presentation yields; Calendar remains mounted |
-| Recovery adoption | existing draft recovery and tab state | presentation does not copy or own recovery state |
+| History Comparison | existing History surface and diff tab | dirty native document remains intact; Diary presentation yields and Calendar remains mounted |
+| History Restore | existing History restore owner and document tab | historical bytes replace the same document identity; Calendar reopens the restored native Reader |
+| Recovery adoption | existing draft recovery and native tab state | baseline and divergent branches remain lifecycle-owned; presentation does not copy recovery state |
 | External conflict | existing CAS/StatusBar resolution | presentation does not intercept or resolve conflict |
 | Browser Back | Router -> `useRouteSync()` -> existing document lifecycle | observe/reconcile; no interception |
 | Scope change | existing scope owner | presentation resets; documents remain lifecycle-owned |
@@ -355,7 +406,9 @@ The following are proven and require no new architecture seam:
 - Calendar-to-native-READ command handoff;
 - native READ-to-EDIT toggle;
 - same-tab/raw/dirty continuity through Calendar Home;
-- existing save, draft, History, Recovery and external-change ownership;
+- existing save, draft, History Comparison, History Restore, Recovery and
+  external-change ownership;
+- divergent Recovery explicit resolution with same-identity Calendar reopen;
 - no duplicate Diary Editor, Monaco, raw, save or recovery pipeline;
 - Calendar keep-mounted behavior remains intact.
 
