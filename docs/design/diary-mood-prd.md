@@ -24,7 +24,7 @@ D7 MVP 的明确目标是：
 
 - 每个 `DiaryDate` 最多一个 mood；
 - 提供固定的 24 个候选图标；
-- picker 使用固定 4 × 6 网格；
+- picker 使用固定 4 列 × 6 行网格（每行 4 项，共 6 行）；
 - mood 与现有 `diary/YYYY-MM-DD.md` 日期 identity 协同；
 - 不改变既有 Diary 文件、路由、tab、编辑、保存和恢复 contract。
 
@@ -61,7 +61,7 @@ DiaryDate 2026-08-24
 2. 作为用户，我希望一天只能选择一个 mood，避免状态混乱。
 3. 作为用户，我希望以后可以修改或清空当天的 mood，因为选择可能改变。
 4. 作为用户，我希望在 Calendar 上看到某天是否有 mood，以便快速浏览。
-5. 作为用户，我希望 24 个图标整齐地显示为 4 × 6，方便快速选择。
+5. 作为用户，我希望 24 个图标整齐地显示为 4 列 × 6 行，方便快速选择。
 6. 作为用户，我希望在打开 Diary 文档后仍能看到并编辑 mood，而正文继续
    使用 Docus 原生文档体验。
 
@@ -69,7 +69,8 @@ DiaryDate 2026-08-24
 
 ### 6.1 Mood picker
 
-- 固定 24 项、单选、固定视觉顺序和 4 × 6 产品目标布局；
+- 固定 24 项、单选、固定视觉顺序和 4 列 × 6 行产品布局；每行 4 项、共 6 行，
+  不得转置为 6 列 × 4 行；
 - 当前选项有明确 selected state；
 - 提供清空/不选能力；
 - 支持 hover、keyboard focus、selected、disabled state；
@@ -100,40 +101,41 @@ mood 并进入 picker。入口可以是已有 document context/header action 或
 
 ## 7. Mood catalog contract
 
-24 个候选是固定内置集合。每项必须有稳定 ID、zh label、en label、icon token
-或 asset reference placeholder，以及 accessibility name。以下为 D7 MVP 的
-数据模型级初始目录和固定顺序；具体视觉资产可在实现前替换，但不得改变 ID
-语义或未经 review 改变顺序：
+24 个候选是仓库中已经存在的固定内置 SVG 集合。D7 MVP 冻结每项的 stable ID、
+中文 label、English label、canonical SVG asset、accessibility name 以及网格
+位置。下表按行优先顺序定义唯一的产品目录：4 列 × 6 行，每行 4 项，共 6 行。
+桌面、平板和移动端都必须保持这个方向、顺序和 asset 映射，不得转置为 6 列 ×
+4 行。任何替换 asset、改名、换语义或调整顺序都需要新的产品复审。
 
-| Grid row | Stable ID | 中文 label | English label | Icon token | Accessibility name |
-| --- | --- | --- | --- | --- | --- |
-| 1 | `happy` | 开心 | Happy | `mood-happy` | 开心 / Happy |
-| 1 | `relaxed` | 放松 | Relaxed | `mood-relaxed` | 放松 / Relaxed |
-| 1 | `grateful` | 感恩 | Grateful | `mood-grateful` | 感恩 / Grateful |
-| 1 | `excited` | 兴奋 | Excited | `mood-excited` | 兴奋 / Excited |
-| 2 | `calm` | 平静 | Calm | `mood-calm` | 平静 / Calm |
-| 2 | `focused` | 专注 | Focused | `mood-focused` | 专注 / Focused |
-| 2 | `tired` | 疲惫 | Tired | `mood-tired` | 疲惫 / Tired |
-| 2 | `anxious` | 焦虑 | Anxious | `mood-anxious` | 焦虑 / Anxious |
-| 3 | `sad` | 难过 | Sad | `mood-sad` | 难过 / Sad |
-| 3 | `angry` | 生气 | Angry | `mood-angry` | 生气 / Angry |
-| 3 | `stressed` | 压力 | Stressed | `mood-stressed` | 压力 / Stressed |
-| 3 | `bored` | 无聊 | Bored | `mood-bored` | 无聊 / Bored |
-| 4 | `content` | 满足 | Content | `mood-content` | 满足 / Content |
-| 4 | `hopeful` | 希望 | Hopeful | `mood-hopeful` | 希望 / Hopeful |
-| 4 | `lonely` | 孤独 | Lonely | `mood-lonely` | 孤独 / Lonely |
-| 4 | `confused` | 困惑 | Confused | `mood-confused` | 困惑 / Confused |
-| 5 | `surprised` | 惊喜 | Surprised | `mood-surprised` | 惊喜 / Surprised |
-| 5 | `shy` | 害羞 | Shy | `mood-shy` | 害羞 / Shy |
-| 5 | `unwell` | 生病 | Unwell | `mood-unwell` | 生病 / Unwell |
-| 5 | `low` | 低落 | Low | `mood-low` | 低落 / Low |
-| 6 | `proud` | 自豪 | Proud | `mood-proud` | 自豪 / Proud |
-| 6 | `relieved` | 释然 | Relieved | `mood-relieved` | 释然 / Relieved |
-| 6 | `uncertain` | 迷茫 | Uncertain | `mood-uncertain` | 迷茫 / Uncertain |
-| 6 | `neutral` | 普通 | Neutral | `mood-neutral` | 普通 / Neutral |
+Stable ID 是 metadata 中唯一允许持久化的 mood 值；SVG 路径只是实现阶段的
+registry 映射，不能写入 Diary 文档数据。
 
-这里的 row 是 4 项一行、共 6 行，即 4 × 6 的产品布局；实现可以根据 CSS
-网格方向表达为 6 列 × 4 行，但必须保持用户感知的 24 项固定顺序与可用性。
+| Order | Grid position | Stable ID | 中文 label | English label | Canonical SVG asset | Accessibility name |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | R1C1 | `kiss` | 亲亲 | Kiss | `public/emoji/亲亲.svg` | 亲亲 / Kiss |
+| 2 | R1C2 | `sad` | 伤心 | Sad | `public/emoji/伤心.svg` | 伤心 / Sad |
+| 3 | R1C3 | `surprised-big` | 吃惊-大 | Big surprise | `public/emoji/吃惊-大.svg` | 大幅吃惊 / Big surprise |
+| 4 | R1C4 | `surprised-small` | 吃惊-小 | Small surprise | `public/emoji/吃惊-小.svg` | 小幅吃惊 / Small surprise |
+| 5 | R2C1 | `watching` | 吃瓜 | Watching the drama | `public/emoji/吃瓜.svg` | 吃瓜 / Watching the drama |
+| 6 | R2C2 | `like` | 喜欢 | Like | `public/emoji/喜欢.svg` | 喜欢 / Like |
+| 7 | R2C3 | `laughing` | 大笑 | Laughing | `public/emoji/大笑.svg` | 大笑 / Laughing |
+| 8 | R2C4 | `disappointed` | 失落 | Disappointed | `public/emoji/失落.svg` | 失落 / Disappointed |
+| 9 | R3C1 | `afraid` | 害怕 | Afraid | `public/emoji/害怕.svg` | 害怕 / Afraid |
+| 10 | R3C2 | `shy` | 害羞 | Shy | `public/emoji/害羞.svg` | 害羞 / Shy |
+| 11 | R3C3 | `happy` | 开心 | Happy | `public/emoji/开心.svg` | 开心 / Happy |
+| 12 | R3C4 | `smiling` | 微笑 | Smiling | `public/emoji/微笑.svg` | 微笑 / Smiling |
+| 13 | R4C1 | `amazed` | 惊讶 | Amazed | `public/emoji/惊讶.svg` | 惊讶 / Amazed |
+| 14 | R4C2 | `angry` | 愤怒 | Angry | `public/emoji/愤怒.svg` | 愤怒 / Angry |
+| 15 | R4C3 | `flirty` | 放电 | Flirty | `public/emoji/放电.svg` | 放电 / Flirty |
+| 16 | R4C4 | `speechless` | 无语 | Speechless | `public/emoji/无语.svg` | 无语 / Speechless |
+| 17 | R5C1 | `dizzy` | 晕 | Dizzy | `public/emoji/晕.svg` | 晕 / Dizzy |
+| 18 | R5C2 | `indignant` | 气愤 | Indignant | `public/emoji/气愤.svg` | 气愤 / Indignant |
+| 19 | R5C3 | `frowning` | 皱眉 | Frowning | `public/emoji/皱眉.svg` | 皱眉 / Frowning |
+| 20 | R5C4 | `mysterious` | 神秘 | Mysterious | `public/emoji/神秘.svg` | 神秘 / Mysterious |
+| 21 | R6C1 | `laughing-tears` | 笑哭 | Laughing with tears | `public/emoji/笑哭.svg` | 笑哭 / Laughing with tears |
+| 22 | R6C2 | `playful` | 调皮 | Playful | `public/emoji/调皮.svg` | 调皮 / Playful |
+| 23 | R6C3 | `unwell` | 难受 | Unwell | `public/emoji/难受.svg` | 难受 / Unwell |
+| 24 | R6C4 | `devilish` | 魔鬼 | Devilish | `public/emoji/魔鬼.svg` | 魔鬼 / Devilish |
 
 ## 8. Information architecture and data contract
 
@@ -199,7 +201,7 @@ tab 或正文 dirty state。
 
 每个 mood 是真正可聚焦、可激活的交互项。键盘用户可以进入、遍历、选择和
 清空；选中态必须同时有非颜色线索。触控目标应保持可用尺寸，不能为了塞入
-4 × 6 而牺牲可操作性。
+4 列 × 6 行而牺牲可操作性。
 
 ### 9.3 Calendar marker
 
@@ -213,11 +215,12 @@ D7 实现需遵守 D6.6 已建立的响应式和可访问性交互基线；本 P
 
 目标视口为 `1280 × 800`、`768 × 1024`、`375 × 812`、`320 × 700`：
 
-- 4 × 6 是产品目标，在四类视口优先保持；
+- canonical picker 在四类视口均为 4 列 × 6 行，每行 4 项、共 6 行，并保持表中
+  的 row-major 顺序；
 - 320 宽度下允许缩小 icon、gap 和 padding，但不能使目标不可点击或 label
   不可访问；
-- 若实现发现 320 下严格 4 × 6 无法保持可用触控尺寸，必须在实现 review
-  中记录取舍，而不是静默改成无限滚动或多页；
+- 若实现发现 320 下严格 4 列 × 6 行无法同时满足可用触控尺寸，必须暂停并
+  提交产品复审，不得静默转置成 6 列 × 4 行、无限滚动或多页；
 - picker 在 light/dark、zh/en 下都应有清晰的 selected/focus/disabled state；
 - 图标不能成为唯一信息来源，屏幕阅读器名称和可见 label 需可用；
 - 不能把 disabled、selected 或 error 只表达为颜色变化。
@@ -248,8 +251,10 @@ ledger 语义不改变。
 - 删除、恢复、导入和旧版本文件的 mood 一致性需要真实 lifecycle 测试。
 - Calendar marker 与现有 Diary marker 叠加时可能造成视觉噪声，需在实现阶段
   固定视觉层级和暗色主题表现。
-- 320 视口下 4 × 6 与最小触控目标可能存在空间冲突，需以真实 browser
-  evidence 决定缩放参数。
+- 320 视口下 4 列 × 6 行与最小触控目标可能存在空间冲突，需以真实 browser
+  evidence 固定缩放参数；不能用改变方向来规避该风险。
+- 24 个现有 SVG 的语义、stable ID、label、路径和位置已经是 D7 MVP 产品
+  contract；任何替换或重排都需要产品复审。
 - 当前建议不允许无文件 mood；如果产品未来需要“先记录 mood 后建正文”，
   必须单独修改 data contract，不得在实现中隐式放开。
 - sync/import/export 的未知字段保留和跨设备冲突合并属于后续设计，不得由
@@ -260,9 +265,10 @@ ledger 语义不改变。
 ### Product contract
 
 - [ ] 每个合法 `DiaryDate` 最多一个 mood，可修改、可清空。
-- [ ] 候选集合恰好 24 项，stable ID、zh/en label、icon token 和 accessible
-      name 齐全，顺序固定。
-- [ ] picker 的产品布局为 4 × 6，不支持自定义图标、多选或排序。
+- [ ] 候选集合恰好为表中 24 个 `public/emoji/*.svg`，每项 stable ID、zh/en
+      label、canonical asset 和 accessible name 齐全，顺序固定。
+- [ ] picker 的产品布局固定为 4 列 × 6 行，不得转置为 6 列 × 4 行；不支持
+      自定义图标、多选或排序。
 - [ ] mood 绑定日期，不改变 `diary/YYYY-MM-DD.md` one-date-one-file。
 - [ ] 无 Diary 文件时不能留下孤立的 mood 记录，future guard 不被绕过。
 
@@ -280,8 +286,8 @@ ledger 语义不改变。
 - [ ] 每项可见、可聚焦、可键盘激活，并有中英文可访问名称。
 - [ ] selected、focus、disabled 和 empty state 不只依赖颜色。
 - [ ] Calendar marker 与现有 marker 协同，且不覆盖日期点击语义。
-- [ ] 1280×800、768×1024、375×812、320×700 均完成响应式验证；320 的
-      4 × 6 取舍若有变化必须有 review evidence。
+- [ ] 1280×800、768×1024、375×812、320×700 均完成响应式验证，并保持 4 列
+      × 6 行；若 320 下无法满足可用触控尺寸，必须先进行产品复审。
 
 ## 14. Phase recommendation
 
