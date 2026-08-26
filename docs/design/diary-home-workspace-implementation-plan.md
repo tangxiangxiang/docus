@@ -2,7 +2,7 @@
 
 状态：`REVIEW-CLOSED`（原始 D6 design baseline）；Native Document Workspace superseding design amendment = `REVIEW-CLOSED`，Independent Review = `PASS`（P0/P1/P2 = 0/0/0）。D6.4 closure review = `PASS`（P0/P1/P2 = 0/0/0）。
 
-基线：D6.0–D6.5 `REVIEW-CLOSED`。旧 D6.3 Reader Dialog implementation 在 closure 前被产品决定替代；D6.5 生命周期回归 evidence 已记录并通过独立复审，P0/P1/P2 = `0/0/0`。D6.6 已完成 responsive/accessibility evidence 并通过独立复审，当前为 `REVIEW-CLOSED`，Independent Review = `PASS`，P0/P1/P2 = `0/0/0`。D6.7 为 `NOT STARTED`。
+基线：D6.0–D6.6 `REVIEW-CLOSED`。旧 D6.3 Reader Dialog implementation 在 closure 前被产品决定替代；D6.5 生命周期回归与 D6.6 responsive/accessibility evidence 均已记录并通过独立复审，P0/P1/P2 = `0/0/0`。D6.7 release closure evidence 已完成，当前为 `REVIEW-READY`，Independent Review = `PENDING`，task self-review P0/P1/P2 = `0/0/0`。
 
 这里的 `REVIEW-CLOSED` 同时覆盖原始 D6 implementation-plan baseline 与已通过独立复审的 2026-08-26 Native Workspace superseding amendment。
 
@@ -214,11 +214,25 @@ passes the 601/600 and 421/420 breakpoint smoke. The combined Diary browser
 regressions pass 38/38; focused unit tests pass 104/104 across 6 files; client/full
 typecheck and build pass. No `dayIndex`, pageerror or console error was observed.
 The evidence records the two minimal keyboard fixes and confirms no router, server,
-shared, dependency or D6.7 change. D6.7 is `NOT STARTED`.
+shared, dependency or D6.7 change. At D6.6 closure, D6.7 was `NOT STARTED`.
 
 ### D6.7 — Release Closure
 
-Status: `NOT STARTED`. D6.7 has not started.
+Status: `REVIEW-READY`; Independent Review = `PENDING`; task self-review P0/P1/P2 = `0/0/0`.
+
+Evidence: [D6.7 Release Closure](diary-home-workspace-d6.7-release-closure.md).
+
+Starting HEAD: `df73e7f76bef0e1f8bcaa8f225f97f0724222ebd`.
+
+Fresh release validation passes 39/39 Chromium tests across 7 Diary/VCalendar
+files, 225/225 focused unit tests across 11 files, and 52/52 focused
+domain/server tests across 3 files. Client/full typecheck and build pass. The
+release audit confirms the closed D6.0–D6.6 lineage, superseded Reader Dialog
+history, native READ/EDIT lifecycle, History/Recovery/external conflict,
+scope/tab/route reconciliation, responsive/accessibility matrix, ordinary
+note/archive/ledger behavior, exact FileTree context and VCalendar
+keep-mounted boundary. D6.7 adds no production or test change and does not
+start a later phase.
 
 ## 10. Testing strategy
 
@@ -249,7 +263,7 @@ Status: `NOT STARTED`. D6.7 has not started.
 D6.6 adds the responsive/accessibility evidence document and dedicated browser suite;
 its Dialog/modal/focus-trap requirements remain superseded by the Native Workspace
 architecture. Independent Review passed with P0/P1/P2 = 0/0/0; D6.6 is
-`REVIEW-CLOSED`. D6.7 remains `NOT STARTED`.
+`REVIEW-CLOSED`. D6.7 is `REVIEW-READY`; Independent Review remains `PENDING`.
 
 ### Validation commands
 
