@@ -1,6 +1,8 @@
 # D7 — Mood Diary PRD
 
-状态：`REVIEW-READY`（D7 PRD；未开始实现）
+状态：`REVIEW-CLOSED`（D7 PRD；未开始实现）
+
+Independent Review：`PASS`（P0 = 0，P1 = 0，P2 = 0）
 
 日期：2026-08-26（Asia/Shanghai）
 
@@ -291,8 +293,8 @@ ledger 语义不改变。
 
 ## 14. Phase recommendation
 
-D7 PRD 当前为 `REVIEW-READY`，实现尚未开始。下一步应先独立复审本 PRD，
-再单独创建 D7 Implementation Plan。Implementation Plan 至少应先确认现有
+D7 PRD 已完成独立复审并正式关闭，实现尚未开始。下一步可单独创建
+D7 Implementation Plan。Implementation Plan 至少应先确认现有
 metadata owner、frontmatter 写入/保留能力、History/Recovery/CAS 语义和
 Calendar marker seam；在此之前不得修改 production code。
 
@@ -310,7 +312,8 @@ D7 PRD
 
 ```text
 D6   = REVIEW-CLOSED
-D7 PRD = REVIEW-READY
+D7 PRD = REVIEW-CLOSED
+D7 PRD Independent Review = PASS (0/0/0)
 D7 Implementation Plan = NOT STARTED
 D7 Implementation = NOT STARTED
 ```
