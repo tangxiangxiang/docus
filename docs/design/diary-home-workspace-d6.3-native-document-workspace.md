@@ -2,11 +2,11 @@
 
 ## Status
 
-- D6.3 = `REVIEW-READY`
+- D6.3 = `REVIEW-CLOSED`
 - D6.4 = `NOT STARTED`
-- Native Workspace superseding amendment = `REVIEW-READY`; independent review pending
+- Native Workspace superseding amendment = `REVIEW-CLOSED`
 - Task-scoped self-review: P0 = 0, P1 = 0, P2 = 0
-- Independent review: pending
+- Independent review: `PASS` (P0 = 0, P1 = 0, P2 = 0)
 - Canonical direction: Calendar does navigation; Vault does documents.
 
 The former D6.3 Reader Dialog implementation is preserved only as historical
@@ -293,7 +293,7 @@ D6.0   = REVIEW-CLOSED
 D6.1   = REVIEW-CLOSED
 D6.2   = REVIEW-CLOSED
 D6.2.1 = REVIEW-CLOSED
-D6.3   = REVIEW-READY
+D6.3   = REVIEW-CLOSED
 D6.4   = NOT STARTED
 ```
 

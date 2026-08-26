@@ -1,10 +1,10 @@
 # D6 — Diary Home Workspace PRD
 
-状态：`REVIEW-CLOSED`（原始 D6 产品 contract baseline）；2026-08-26 Native Document Workspace superseding amendment 为 `REVIEW-READY`，等待新的 independent review。
+状态：`REVIEW-CLOSED`（原始 D6 产品 contract baseline）；2026-08-26 Native Document Workspace superseding amendment = `REVIEW-CLOSED`，Independent Review = `PASS`（P0/P1/P2 = 0/0/0）。
 
 已有状态保持不变：D0–D5、D6.0、D6.1、D6.2、D6.2.1 均为 `REVIEW-CLOSED`。D6.4 为 `NOT STARTED`。
 
-状态分层：原始 D6 产品 contract baseline = `REVIEW-CLOSED`；Native Document Workspace superseding amendment = `REVIEW-READY`；independent review = `PENDING`；D6.3 replacement implementation = `REVIEW-READY`。
+状态分层：原始 D6 产品 contract baseline = `REVIEW-CLOSED`；Native Document Workspace superseding amendment = `REVIEW-CLOSED`；Independent Review = `PASS`（P0/P1/P2 = 0/0/0）；D6.3 replacement implementation = `REVIEW-CLOSED`。
 
 日期：2026-08-26（Asia/Shanghai）
 
@@ -242,14 +242,14 @@ D6.0   REVIEW-CLOSED
 D6.1   REVIEW-CLOSED
 D6.2   REVIEW-CLOSED
 D6.2.1 REVIEW-CLOSED
-D6.3   REVIEW-READY — Native Document Workspace replacement
+D6.3   REVIEW-CLOSED — Native Document Workspace replacement
 D6.4   NOT STARTED — Native Editor Lifecycle Verification
 D6.5   BLOCKED
 D6.6   BLOCKED
 D6.7   BLOCKED
 ```
 
-旧 D6.3 Reader Dialog implementation 为 `SUPERSEDED BEFORE REVIEW CLOSURE`。新的 D6.3 production/tests/evidence 已完成并进入 `REVIEW-READY`；旧 Reader Dialog review 不能转移，仍必须重新 independent review。
+旧 D6.3 Reader Dialog implementation 为 `SUPERSEDED BEFORE REVIEW CLOSURE`。新的 D6.3 production/tests/evidence 已完成并以 `REVIEW-CLOSED` 关闭；旧 Reader Dialog review 不能转移。
 
 ## 16. Acceptance criteria
 
@@ -266,4 +266,4 @@ D6.7   BLOCKED
 - [x] Browser Back remains router-owned.
 - [x] note/archive/ledger, RightRail, StatusBar and EditorTabs retain native behavior.
 - [x] focused tests, browser matrix, typecheck and build pass with no `dayIndex`/pageerror.
-- [ ] D6.3 independent review P0/P1/P2 = 0/0/0 before REVIEW-CLOSED.
+- [x] D6.3 independent review P0/P1/P2 = 0/0/0; Independent Review = PASS.

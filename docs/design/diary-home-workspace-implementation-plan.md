@@ -1,10 +1,10 @@
 # D6 — Diary Home Workspace Implementation Plan
 
-状态：`REVIEW-CLOSED`（原始 D6 design baseline）；Native Document Workspace superseding design amendment 为 `REVIEW-READY`，等待 independent review。
+状态：`REVIEW-CLOSED`（原始 D6 design baseline）；Native Document Workspace superseding design amendment = `REVIEW-CLOSED`，Independent Review = `PASS`（P0/P1/P2 = 0/0/0）。
 
 基线：D6.0–D6.2.1 `REVIEW-CLOSED`。旧 D6.3 Reader Dialog implementation 在 closure 前被产品决定替代；D6.4 `NOT STARTED`。
 
-这里的 `REVIEW-CLOSED` 仅指原始 D6 implementation-plan baseline，不表示 2026-08-26 Native Workspace superseding amendment 已关闭。
+这里的 `REVIEW-CLOSED` 同时覆盖原始 D6 implementation-plan baseline 与已通过独立复审的 2026-08-26 Native Workspace superseding amendment。
 
 日期：2026-08-26（Asia/Shanghai）
 
@@ -147,7 +147,7 @@ Status: `REVIEW-CLOSED`. Visual contract frozen.
 
 ### D6.3 — Native Document Workspace Handoff
 
-Status: `REVIEW-READY`; production/tests/canonical evidence complete, new independent review pending.
+Status: `REVIEW-CLOSED`; production/tests/canonical evidence complete, Independent Review PASS (P0/P1/P2 = 0/0/0).
 
 Deliverables:
 
@@ -260,4 +260,4 @@ Docs rollback is informational-only; it is not an asserted exact history chain.
 - [x] server/shared/router/dependencies unchanged.
 - [x] task self-review P0/P1/P2 = 0/0/0.
 
-After these pass: `D6.3 = REVIEW-READY`, `D6.4 = NOT STARTED`, then STOP for a new independent review.
+After these pass: `D6.3 = REVIEW-CLOSED`, `D6.4 = NOT STARTED`, then STOP. Do not begin D6.4 in the closure sync.
