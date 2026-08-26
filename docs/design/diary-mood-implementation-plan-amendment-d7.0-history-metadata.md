@@ -1,7 +1,7 @@
 # D7 Implementation Plan Amendment — D7.0A Generic History Metadata Revision Foundation
 
-状态：**REVIEW-READY**
-Independent Review：`PENDING`
+状态：**REVIEW-CLOSED**
+Independent Review：`PASS (0/0/0)`
 日期：2026-08-26（Asia/Shanghai）
 Starting HEAD：`b1b0fd39517862b1f1f6f1206c7410516fbdfd12`
 
@@ -15,8 +15,8 @@ phase；本文件本身不实现 D7.0A，也不实现 Mood。
 D7 Implementation Plan Amendment
 Generic History Metadata Revision / Restore Foundation
 
-Amendment                  = REVIEW-READY
-Amendment Independent Review = PENDING
+Amendment                  = REVIEW-CLOSED
+Amendment Independent Review = PASS (P0/P1/P2 = 0/0/0)
 D7.0                       = BLOCKED
 D7.0 Independent Review    = PASS on the BLOCKED determination
 D7.0A                      = NOT STARTED
@@ -25,8 +25,8 @@ D7 Mood production         = NOT STARTED
 ```
 
 D7 PRD 与原 D7 Implementation Plan 仍为 `REVIEW-CLOSED`。Amendment review
-通过后，D7.0A 仍须独立执行、复审和关闭；它不是把 D7.0 直接改成通过，也不是
-绕过 predecessor gate 进入 D7.1。
+已通过并关闭；D7.0A 仍须独立执行、复审和关闭；这不是把 D7.0 直接改成通过，
+也不是绕过 predecessor gate 进入 D7.1。
 
 ## 2. Starting HEAD and scope
 
@@ -732,8 +732,8 @@ product review：
 D6                         = REVIEW-CLOSED
 D7 PRD                     = REVIEW-CLOSED
 D7 Implementation Plan     = REVIEW-CLOSED
-D7 Plan Amendment          = REVIEW-READY
-D7 Plan Amendment IR       = PENDING
+D7 Plan Amendment          = REVIEW-CLOSED
+D7 Plan Amendment IR       = PASS (P0/P1/P2 = 0/0/0)
 D7.0                       = BLOCKED
 D7.0 Independent Review    = PASS on BLOCKED determination
 D7.0A                      = NOT STARTED
@@ -742,8 +742,9 @@ D7 Mood production         = NOT STARTED
 D7.4                       = NOT STARTED (regression-only)
 ```
 
-本 Amendment 完成后停止在 `REVIEW-READY`，等待独立 review；不得在同一提交中把
-Amendment 标记为 `REVIEW-CLOSED`，也不得把 D7.0A 标记为 `IN PROGRESS`。
+本 Amendment 的 implementation/evidence commit 停止在 `REVIEW-READY`；Independent
+Review PASS 后，本 closure sync 将 Amendment 标记为 `REVIEW-CLOSED`。本 closure
+不把 D7.0A 标记为 `IN PROGRESS`。
 
 ## 29. Files inspected and evidence commands
 
@@ -802,11 +803,12 @@ Second live owner = NO
 因此本文件达到：
 
 ```text
-READY FOR INDEPENDENT REVIEW
-Amendment = REVIEW-READY
+INDEPENDENT REVIEW PASSED
+Amendment = REVIEW-CLOSED
+Amendment Independent Review = PASS (P0/P1/P2 = 0/0/0)
 D7.0A = NOT STARTED
 D7.0 = BLOCKED
 D7.1 = NOT STARTED
 ```
 
-等待 independent review。不要开始 D7.0A、D7.1 或 Mood implementation。
+Amendment closure complete。不要开始 D7.0A、D7.1 或 Mood implementation。
