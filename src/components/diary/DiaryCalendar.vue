@@ -344,6 +344,14 @@ defineExpose({ focusDate })
   background: var(--bg-soft);
 }
 
+/* VCalendar's day-content rule removes the browser outline. The custom
+   day button is the actual keyboard target, so restore the same visible
+   focus treatment used by the month controls without changing mouse focus. */
+.diary-calendar-host :deep([data-diary-day-content]:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .diary-calendar-nav-content {
   display: inline-flex;
   align-items: center;

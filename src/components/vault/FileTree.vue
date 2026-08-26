@@ -307,6 +307,12 @@ function setFocused(path: string, kind: 'file' | 'folder', focusDom = false) {
 }
 
 function onTreeKeydown(e: KeyboardEvent) {
+  // The exact-path context action is a real button owned by the FileTree
+  // header. Let its native Enter/Space activation reach the button instead
+  // of treating the event as a treeitem command for the last focused row.
+  const eventTarget = e.target instanceof HTMLElement ? e.target : null
+  if (eventTarget?.closest('button, input, textarea, select, [contenteditable="true"]')) return
+
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') {
     e.preventDefault()
     searchInputRef.value?.focus()
