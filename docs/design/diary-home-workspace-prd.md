@@ -2,7 +2,7 @@
 
 状态：`REVIEW-CLOSED`（原始 D6 产品 contract baseline）；2026-08-26 Native Document Workspace superseding amendment = `REVIEW-CLOSED`，Independent Review = `PASS`（P0/P1/P2 = 0/0/0）。
 
-已有状态保持不变：D0–D5、D6.0、D6.1、D6.2、D6.2.1、D6.3、D6.4、D6.5 均为 `REVIEW-CLOSED`。D6.4 与 D6.5 Independent Review 均为 `PASS`（P0/P1/P2 = 0/0/0）。D6.6 为 `NOT STARTED`。
+已有状态保持不变：D0–D5、D6.0、D6.1、D6.2、D6.2.1、D6.3、D6.4、D6.5 均为 `REVIEW-CLOSED`。D6.4 与 D6.5 Independent Review 均为 `PASS`（P0/P1/P2 = 0/0/0）。D6.6 为 `REVIEW-READY`，responsive/accessibility evidence 已记录，Independent Review = `PENDING`，task self-review P0/P1/P2 = `0/0/0`。
 
 状态分层：原始 D6 产品 contract baseline = `REVIEW-CLOSED`；Native Document Workspace superseding amendment = `REVIEW-CLOSED`；Independent Review = `PASS`（P0/P1/P2 = 0/0/0）；D6.3 replacement implementation = `REVIEW-CLOSED`。
 
@@ -245,9 +245,11 @@ D6.2.1 REVIEW-CLOSED
 D6.3   REVIEW-CLOSED — Native Document Workspace replacement
 D6.4   REVIEW-CLOSED — Native Editor Lifecycle Verification
 D6.5   REVIEW-CLOSED — Lifecycle Regression; Independent Review PASS (0/0/0)
-D6.6   NOT STARTED
+D6.6   REVIEW-READY — Responsive / Accessibility evidence recorded; Independent Review = PENDING (self-review P0/P1/P2 = 0/0/0)
 D6.7   BLOCKED
 ```
+
+D6.6 evidence：[Responsive / Accessibility](diary-home-workspace-d6.6-responsive-accessibility.md)。
 
 旧 D6.3 Reader Dialog implementation 为 `SUPERSEDED BEFORE REVIEW CLOSURE`。新的 D6.3 production/tests/evidence 已完成并以 `REVIEW-CLOSED` 关闭；旧 Reader Dialog review 不能转移。
 

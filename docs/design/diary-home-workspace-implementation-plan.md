@@ -2,7 +2,7 @@
 
 状态：`REVIEW-CLOSED`（原始 D6 design baseline）；Native Document Workspace superseding design amendment = `REVIEW-CLOSED`，Independent Review = `PASS`（P0/P1/P2 = 0/0/0）。D6.4 closure review = `PASS`（P0/P1/P2 = 0/0/0）。
 
-基线：D6.0–D6.5 `REVIEW-CLOSED`。旧 D6.3 Reader Dialog implementation 在 closure 前被产品决定替代；D6.5 生命周期回归 evidence 已记录并通过独立复审，P0/P1/P2 = `0/0/0`。D6.6 当前为 `NOT STARTED`。
+基线：D6.0–D6.5 `REVIEW-CLOSED`。旧 D6.3 Reader Dialog implementation 在 closure 前被产品决定替代；D6.5 生命周期回归 evidence 已记录并通过独立复审，P0/P1/P2 = `0/0/0`。D6.6 当前为 `REVIEW-READY`，responsive/accessibility evidence 已记录，Independent Review = `PENDING`，task self-review P0/P1/P2 = `0/0/0`。
 
 这里的 `REVIEW-CLOSED` 同时覆盖原始 D6 implementation-plan baseline 与已通过独立复审的 2026-08-26 Native Workspace superseding amendment。
 
@@ -198,7 +198,23 @@ production, server/shared, route, dependency or D6.6 code is included.
 
 ### D6.6 — Responsive / Accessibility
 
-Status: `NOT STARTED`. Validate Calendar Home + Native Vault Diary context + exact FileTree + native read/edit keyboard/a11y. Dialog focus trap/modal/fullscreen requirements are superseded.
+Status: `REVIEW-READY`; Independent Review = `PENDING`; task self-review P0/P1/P2 = `0/0/0`.
+
+Evidence: [D6.6 Responsive / Accessibility](diary-home-workspace-d6.6-responsive-accessibility.md).
+
+Starting HEAD: `ced273aefd941f0f568e5c22b66e482762718f4c`.
+
+Test commit: `dbb765977d04f3afae35584e8a91c8abbf651196`; keyboard accessibility fix
+commit: `feafa20d93b423901a52d851e846c9f10da4f794`.
+
+The dedicated Chromium suite passes 7/7 scenarios across Calendar Home, Native
+READ/EDIT, exact FileTree context, keyboard focus/shortcuts, English/Chinese labels,
+light/dark behavior and repeated Calendar/document cycles. Calendar layout also
+passes the 601/600 and 421/420 breakpoint smoke. The combined Diary browser
+regressions pass 37/37; focused unit tests pass 104/104 across 6 files; client/full
+typecheck and build pass. No `dayIndex`, pageerror or console error was observed.
+The evidence records the two minimal keyboard fixes and confirms no router, server,
+shared, dependency or D6.7 change. D6.7 remains `BLOCKED`.
 
 ### D6.7 — Release Closure
 
@@ -229,6 +245,10 @@ Status: `BLOCKED`. Consolidate evidence and independent review.
 - 1280×800、768×1024、375×812、320×700 native workspace smoke/no overflow;
 - light/dark and zh/en compact context;
 - ordinary note/archive/ledger smoke.
+
+D6.6 adds the responsive/accessibility evidence document and dedicated browser suite;
+its Dialog/modal/focus-trap requirements remain superseded by the Native Workspace
+architecture. Independent Review is pending; this phase is not `REVIEW-CLOSED`.
 
 ### Validation commands
 
