@@ -131,6 +131,22 @@ async function ensureExplorerVisible(page: Page): Promise<void> {
   await expect(fileTree).toBeVisible({ timeout: 15_000 })
 }
 
+async function openNoteDocument(page: Page, path: string): Promise<void> {
+  await page.goto('/vault')
+  await selectScope(page, 'note')
+  await ensureExplorerVisible(page)
+  const row = page.locator(`[data-tree-key="file:${path}"]`)
+  if (!(await row.isVisible())) {
+    const folder = page.locator(`[data-tree-key="folder:${path.split('/')[0]}"]`)
+    await expect(folder).toBeVisible()
+    await folder.locator('.row-line').click()
+  }
+  await expect(row).toBeVisible()
+  await row.locator('.row-line').click()
+  await expect(page).toHaveURL(new RegExp(`/vault/${path.replace('/', '\\/')}(?:[?#]|$)`))
+  await expect(page.locator(`[role="tab"][data-tab-id="${path}"]`)).toHaveAttribute('aria-selected', 'true')
+}
+
 async function assertNativeRead(page: Page, date: string): Promise<void> {
   const path = diaryPath(date)
   await expect(page).toHaveURL(new RegExp(`/vault/${path.replace('/', '\\/')}(?:[?#]|$)`))
@@ -478,6 +494,67 @@ test('mobile Calendar-to-native keyboard journey preserves focus, shortcuts, and
     expect(await explorer.getAttribute('aria-pressed')).toBe(explorerBefore === 'true' ? 'false' : 'true')
   } finally {
     await deletePost(request, path)
+  }
+
+  expect(state.pageErrors).toEqual([])
+  expect(state.consoleErrors).toEqual([])
+})
+
+test('Native DOCUMENT Cmd/Ctrl+W closes through the existing focus and dirty policy', async ({ page, request }) => {
+  const date = localCivilDate()
+  const diary = diaryPath(date)
+  const note = `inbox/d66-close-focus-${RUN_ID}`
+  const state = await captureDiagnostics(page)
+
+  try {
+    await seedDiary(request, date, `# D6.6 Close Focus ${RUN_ID}\n`)
+    await seedNote(request, note)
+    await openNoteDocument(page, note)
+
+    await selectScope(page, 'diary')
+    await expect(page.getByTestId('diary-calendar')).toBeVisible()
+    await activateDiaryDate(page, date)
+    await assertNativeRead(page, date)
+
+    const diaryTab = page.locator(`[role="tab"][data-tab-id="${diary}"]`)
+    const fallbackTab = page.locator(`[role="tab"][data-tab-id="${note}"]`)
+    // Leave Diary scope before the close assertion so the fallback workspace
+    // tab remains a visible native Vault focus target. The Diary tab itself
+    // remains the active document and is closed by the same Vault shortcut.
+    await selectScope(page, 'note')
+    await expect(page.getByTestId('diary-calendar')).toHaveCount(0)
+    await page.locator('.vault').focus()
+    await page.keyboard.press('ControlOrMeta+w')
+
+    await expect(diaryTab).toHaveCount(0)
+    await expect(fallbackTab).toHaveAttribute('aria-selected', 'true')
+    await expect(page).toHaveURL(new RegExp(`/vault/${note.replace('/', '\\/')}(?:[?#]|$)`))
+    await expect(fallbackTab).toBeFocused()
+    await expect(page.locator('.confirm-dialog')).toHaveCount(0)
+
+    await selectScope(page, 'diary')
+    await expect(page.getByTestId('diary-calendar')).toBeVisible()
+    await activateDiaryDate(page, date)
+    await assertNativeRead(page, date)
+    await page.locator('.vault').focus()
+    await page.keyboard.press('ControlOrMeta+e')
+    await expect(page.getByRole('textbox', { name: 'Editor content' })).toBeVisible()
+    await appendEditorText(page, `D66_DIRTY_CLOSE_${RUN_ID}`)
+    await expect(diaryTab).toHaveAttribute('data-save-status', 'dirty')
+
+    await page.locator('.vault').focus()
+    await page.keyboard.press('ControlOrMeta+w')
+    const confirmation = page.locator('.confirm-dialog')
+    await expect(confirmation).toBeVisible()
+    await expect(diaryTab).toHaveCount(1)
+    await expect(diaryTab).toHaveAttribute('aria-selected', 'true')
+    await expect(page).toHaveURL(new RegExp(`/vault/${diary.replace('/', '\\/')}(?:[?#]|$)`))
+    await confirmation.locator('.confirm-actions .btn').first().click()
+    await expect(confirmation).toHaveCount(0)
+    await expect(diaryTab).toHaveAttribute('data-save-status', 'dirty')
+  } finally {
+    await deletePost(request, diary)
+    await deletePost(request, note)
   }
 
   expect(state.pageErrors).toEqual([])
