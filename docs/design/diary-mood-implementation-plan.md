@@ -52,6 +52,13 @@ PRD：[`diary-mood-prd.md`](./diary-mood-prd.md)，已 `REVIEW-CLOSED`
 
 任一项无法证明，D7.0 = `BLOCKED`，需要 product/architecture review；不得进入 D7.1。
 
+本次 D7.0 取证已完成并记录于
+[`diary-mood-d7.0-storage-metadata-verification.md`](./diary-mood-d7.0-storage-metadata-verification.md)。
+现有 History Restore 只恢复 Markdown/body，不恢复 SQLite metadata revision；现有
+Recovery 也只持久化 body draft。因此 SQLite 仍是 candidate，D7.0 当前为
+`BLOCKED`，并需要在 D7.1 前完成 generic History metadata decision 与
+Implementation Plan amendment。D7.1–D7.6 的既有 scope 未静默改变。
+
 ## 4. Recommended Storage Direction
 
 **Candidate：扩展现有 SQLite-owned `DocumentMetadata`。** 这是当前推荐方向，因为它已有稳定 document identity、server authority、metadata patch seam、version token、rename/delete transaction 和前端 metadata API。
@@ -127,7 +134,7 @@ The picker uses a `radiogroup` containing 24 `radio` options in the frozen 4-col
 
 | Phase | Scope | Status before implementation |
 | --- | --- | --- |
-| D7.0 | Storage/metadata owner verification and evidence | NOT STARTED |
+| D7.0 | Storage/metadata owner verification and evidence | BLOCKED |
 | D7.1 | Registry, schema/validation, existing owner integration, set/change/clear, bulk read seam | NOT STARTED |
 | D7.2 | Native Diary context and 4×6 picker; preserve dirty body | NOT STARTED |
 | D7.3 | Calendar month markers/entry and missing-date guards; no N+1 | NOT STARTED |
@@ -213,6 +220,9 @@ Each D7.x is independently revertible. D7.0 evidence-only changes revert as docs
 
 ## 18. D7.0 Readiness Gate
 
+当前 gate 未通过：History/Recovery 对 SQLite metadata revision 的语义尚未闭合，
+因此不能把 candidate 升级为 selected storage，也不能开始 D7.1。
+
 - [ ] source/read/write metadata owner proven
 - [ ] identity and CAS proven
 - [ ] draft, History, Recovery, delete, rename behavior proven
@@ -229,8 +239,11 @@ D6                         = REVIEW-CLOSED
 D7 PRD                     = REVIEW-CLOSED
 D7 Implementation Plan    = REVIEW-CLOSED
 D7 Implementation Plan IR  = PASS (P0/P1/P2 = 0/0/0)
-D7.0                      = NOT STARTED
+D7.0                      = BLOCKED
+D7.0 Evidence              = `diary-mood-d7.0-storage-metadata-verification.md`
 D7 Implementation          = NOT STARTED
 ```
 
-本轮为 docs-only closure sync；未创建 D7.0、未实现 picker、未修改 production/test/dependency。D7.0 仍为 `NOT STARTED`。
+本轮完成 D7.0 architecture evidence 与一项 test-only characterization；未实现
+picker、未修改 production/dependency。由于 History metadata revision 语义仍需
+generic owner decision，D7.0 保持 `BLOCKED`，D7.1 继续 `NOT STARTED`。
