@@ -149,6 +149,42 @@ describe('useDiaryWorkspacePresentation', () => {
     expect(state.presentation.backingPath.value).toBeNull()
   })
 
+  it('resets on scope exit without changing the backing document lifecycle', async () => {
+    const state = setup()
+    state.isDiaryScope.value = true
+    requestDocument(state, '2026-08-24')
+
+    state.isDiaryScope.value = false
+    await nextTick()
+    expect(state.presentation.presentationMode.value).toBe('home')
+    expect(state.presentation.backingPath.value).toBeNull()
+    expect(state.activePath.value).toBe('diary/2026-08-24')
+    expect(state.documentPaths.value).toEqual(['diary/2026-08-24'])
+
+    state.isDiaryScope.value = true
+    await nextTick()
+    expect(state.presentation.isHome.value).toBe(true)
+    expect(state.presentation.presentationMode.value).toBe('home')
+    expect(state.activePath.value).toBe('diary/2026-08-24')
+  })
+
+  it('does not reopen after activePath moves away and later returns', async () => {
+    const state = setup()
+    state.isDiaryScope.value = true
+    requestDocument(state, '2026-08-24')
+    state.documentPaths.value = ['diary/2026-08-24', 'diary/2026-08-25']
+
+    state.activePath.value = 'diary/2026-08-25'
+    await nextTick()
+    expect(state.presentation.presentationMode.value).toBe('home')
+    expect(state.presentation.backingPath.value).toBeNull()
+
+    state.activePath.value = 'diary/2026-08-24'
+    await nextTick()
+    expect(state.presentation.presentationMode.value).toBe('home')
+    expect(state.presentation.isDocument.value).toBe(false)
+  })
+
   it('does not retarget DOCUMENT when another Diary becomes active', async () => {
     const state = setup()
     state.isDiaryScope.value = true
@@ -170,6 +206,23 @@ describe('useDiaryWorkspacePresentation', () => {
     await nextTick()
     expect(state.presentation.presentationMode.value).toBe('home')
     expect(state.presentation.backingPath.value).toBeNull()
+  })
+
+  it('does not reopen when a removed backing tab is later restored', async () => {
+    const state = setup()
+    state.isDiaryScope.value = true
+    requestDocument(state, '2026-08-24')
+
+    state.documentPaths.value = []
+    await nextTick()
+    expect(state.presentation.presentationMode.value).toBe('home')
+    expect(state.presentation.backingPath.value).toBeNull()
+
+    state.documentPaths.value = ['diary/2026-08-24']
+    state.activePath.value = 'diary/2026-08-24'
+    await nextTick()
+    expect(state.presentation.presentationMode.value).toBe('home')
+    expect(state.presentation.isDocument.value).toBe(false)
   })
 
   it('closes presentation-only while retaining backing date/path for focus and reopen context', () => {
