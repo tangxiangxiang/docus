@@ -15,6 +15,8 @@ import {
 } from '../atomicTextWrite.js'
 import {
   ensureDocumentMetadata,
+  getDocumentMetadata,
+  getDocumentMetadataById,
   recordCommittedDocumentMutation,
   restoreDocumentMetadataMutation,
   snapshotDocumentMetadataMutation,
@@ -29,6 +31,17 @@ import {
   type SafePathResolution,
 } from '../paths.js'
 import * as git from './git.js'
+import {
+  abortHistoryMetadataRestore,
+  applyCoveredHistoricalMetadata,
+  HistoryMetadataError,
+  historicalBodySha,
+  metadataImage,
+  metadataTombstoneMatches,
+  prepareHistoryMetadataRestore,
+  reconcileHistoryMetadata,
+  resolveHistoryMetadataRevision,
+} from './metadataRevisions.js'
 import { ensureRepoWithinVaultMutation } from './repo.js'
 import { validateDocumentMutation } from '../documentMutationPolicy.js'
 
@@ -59,6 +72,9 @@ export type HistoryRestoreResult = {
   resolvedRef: string
   raw: string
   mtime: number
+  metadataMode: 'restored' | 'unavailable'
+  metadataRestored: boolean
+  metadataPreserved: boolean
 }
 
 async function currentSnapshot(target: string): Promise<StableTextSnapshot | null> {
@@ -83,6 +99,8 @@ export async function restoreHistoricalDocument(input: {
   const logicalPath = input.path.slice(0, -'.md'.length)
   return withVaultMutation(input.repoRoot, async () => {
     await ensureRepoWithinVaultMutation(input.repoRoot)
+    await reconcileHistoryMetadata(input.db, input.repoRoot)
+    const vaultId = await git.ensureDocusVaultId(input.repoRoot)
     return withVaultStructureLock(() => withDocumentWriteLock(logicalPath, async () => {
       await assertPathNotOwnedByFolderMove(input.repoRoot, input.path)
 
@@ -114,6 +132,19 @@ export async function restoreHistoricalDocument(input: {
       if (historicalRaw === null) {
         throw new HistoryRestoreNotFoundError(
           `file does not exist at ref ${input.ref}`,
+        )
+      }
+
+      const metadataRevision = resolveHistoryMetadataRevision(input.db, {
+        vaultId,
+        commitSha: resolvedRef,
+        pathAtRevision: input.path,
+      })
+      if (metadataRevision.kind === 'covered'
+        && (!metadataRevision.bodySha || historicalBodySha(historicalRaw) !== metadataRevision.bodySha)) {
+        throw new HistoryMetadataError(
+          'HISTORY_METADATA_BODY_MISMATCH',
+          `historical body does not match metadata binding: ${logicalPath}`,
         )
       }
 
@@ -158,17 +189,255 @@ export async function restoreHistoricalDocument(input: {
         // recovery.
         validateDocumentMutation({ operation: 'history-restore', destinationPath: logicalPath })
       }
+
+      const liveMetadata = getDocumentMetadata(input.db, logicalPath)
+      if (metadataRevision.kind === 'covered') {
+        // A covered revision can only restore into the same stable document
+        // generation. A missing row is legal only when the existing delete
+        // lifecycle left a matching tombstone; path equality alone is not an
+        // identity proof.
+        if (liveMetadata) {
+          if (liveMetadata.id !== metadataRevision.documentId
+            || liveMetadata.path !== logicalPath
+            || metadataRevision.generationId !== liveMetadata.id) {
+            throw new HistoryMetadataError(
+              'HISTORY_METADATA_IDENTITY_CONFLICT',
+              `current document generation does not match history: ${logicalPath}`,
+            )
+          }
+        } else if (before
+          || !metadataTombstoneMatches(input.db, logicalPath, metadataRevision.documentId)
+          || getDocumentMetadataById(input.db, metadataRevision.documentId)) {
+          throw new HistoryMetadataError(
+            'HISTORY_METADATA_IDENTITY_CONFLICT',
+            `historical document generation cannot be proven for: ${logicalPath}`,
+          )
+        }
+
+        const targetMetadata = {
+          id: metadataRevision.documentId,
+          path: logicalPath,
+          ...metadataRevision.values,
+        }
+        const journal = prepareHistoryMetadataRestore({
+          db: input.db,
+          vaultId,
+          commitSha: resolvedRef,
+          pathAtRevision: input.path,
+          documentId: metadataRevision.documentId,
+          generationId: metadataRevision.generationId,
+          beforeRaw: before?.raw ?? null,
+          beforeMetadata: metadataImage(liveMetadata),
+          targetRaw: historicalRaw,
+          targetMetadata,
+          targetDigest: metadataRevision.payloadDigest,
+        })
+        let committed = false
+        let metadataApplied = false
+        try {
+          if (before) {
+            if (before.raw !== historicalRaw) {
+              await input.beforeCommit?.()
+              await verifySafePathResolution(targetResolution)
+              await atomicReplaceTextIfUnchanged(
+                target,
+                before.raw,
+                historicalRaw,
+                { mode: before.stat.mode },
+              )
+              committed = true
+              await input.afterCommit?.()
+            }
+          } else {
+            // A covered create-only restore is allowed only after the
+            // tombstone/generation preflight above. The filesystem operation
+            // remains the existing create-only, symlink-safe protocol.
+            await input.beforeCommit?.()
+            let createResolution: SafePathResolution
+            try {
+              createResolution = await resolveSafeRelativePathDetailed(
+                input.repoRoot,
+                input.path,
+                { allowMissingFinal: true },
+              )
+              await verifySafePathResolution(createResolution)
+            } catch (error: any) {
+              if (error?.code === 'ENOENT' || /symbolic links|path segment|path root/i.test(error?.message ?? '')) {
+                throw new HistoryRestoreConflictError(
+                  `document path moved before restore: ${logicalPath}`,
+                  'HISTORY_PATH_MOVED',
+                  { cause: error },
+                )
+              }
+              throw error
+            }
+            targetResolution = createResolution
+            target = createResolution.absolute
+            const parent = path.dirname(target)
+            const parentStat = await fs.lstat(parent).catch(() => null)
+            const targetStat = await fs.lstat(target).catch((error: any) => {
+              if (error?.code === 'ENOENT') return null
+              throw error
+            })
+            if (!parentStat
+              || !parentStat.isDirectory()
+              || parentStat.isSymbolicLink()
+              || !await isPhysicallyContained(input.repoRoot, parent)
+              || targetStat !== null) {
+              throw new HistoryRestoreConflictError(
+                targetStat !== null
+                  ? `document content changed before restore: ${logicalPath}`
+                  : `document path moved before restore: ${logicalPath}`,
+                targetStat !== null ? 'HISTORY_CONTENT_CHANGED' : 'HISTORY_PATH_MOVED',
+              )
+            }
+            const prepared = await prepareAtomicTextCreate(target, historicalRaw)
+            try {
+              await input.afterPrepare?.()
+              await verifySafePathResolution(targetResolution)
+              await prepared.commit()
+              committed = true
+              await input.afterCommit?.()
+            } catch (error) {
+              let cleanupError: unknown
+              try {
+                await prepared.rollback()
+              } catch (rollbackError) {
+                cleanupError = rollbackError
+              }
+              if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+                throw new HistoryRestoreConflictError(
+                  `document content changed before restore: ${logicalPath}`,
+                  'HISTORY_CONTENT_CHANGED',
+                  { cause: cleanupError ? new AggregateError([error, cleanupError]) : error },
+                )
+              }
+              if (cleanupError) {
+                throw new HistoryRestoreConflictError(
+                  `document path moved before restore: ${logicalPath}`,
+                  'HISTORY_PATH_MOVED',
+                  { cause: new AggregateError([error, cleanupError]) },
+                )
+              }
+              throw error
+            }
+          }
+
+          const postResolution = await resolveSafeRelativePathDetailed(input.repoRoot, input.path)
+          await verifySafePathResolution(postResolution)
+          const observed = await readStableTextSnapshot(postResolution.absolute)
+          await verifySafePathResolution(postResolution)
+          if (observed.raw !== historicalRaw) {
+            throw new HistoryRestoreConflictError(
+              `document content changed before restore completed: ${logicalPath}`,
+              'HISTORY_CONTENT_CHANGED',
+            )
+          }
+
+          applyCoveredHistoricalMetadata({
+            db: input.db,
+            operationId: journal.operationId,
+            path: logicalPath,
+            documentId: metadataRevision.documentId,
+            generationId: metadataRevision.generationId,
+            expectedUpdatedAt: liveMetadata?.updatedAt ?? null,
+            allowRehydrate: !before,
+            values: metadataRevision.values,
+          })
+          metadataApplied = true
+          return {
+            path: input.path,
+            ref: input.ref,
+            resolvedRef,
+            raw: historicalRaw,
+            mtime: observed.stat.mtimeMs,
+            metadataMode: 'restored' as const,
+            metadataRestored: true,
+            metadataPreserved: false,
+          }
+        } catch (error) {
+          const rollbackFailures: unknown[] = []
+          if (committed) {
+            try {
+              const rollbackResolution = await resolveSafeRelativePathDetailed(
+                input.repoRoot,
+                input.path,
+              )
+              await verifySafePathResolution(rollbackResolution)
+              if (!before) await atomicRemoveTextIfUnchanged(rollbackResolution.absolute, historicalRaw)
+              else await atomicReplaceTextIfUnchanged(
+                rollbackResolution.absolute,
+                historicalRaw,
+                before.raw,
+                { mode: before.stat.mode },
+              )
+            } catch (rollbackError) {
+              if (!(rollbackError instanceof AtomicTextWriteConflictError)) rollbackFailures.push(rollbackError)
+            }
+          }
+          if (!metadataApplied && rollbackFailures.length === 0) {
+            try { abortHistoryMetadataRestore(input.db, journal.operationId, error) } catch (journalError) { rollbackFailures.push(journalError) }
+          }
+          if (rollbackFailures.length > 0) {
+            throw new AggregateError(
+              [error, ...rollbackFailures],
+              'History Restore failed and rollback was incomplete',
+            )
+          }
+          if (error instanceof FolderMovePathOwnedError) {
+            throw new HistoryRestoreConflictError(
+              error.message,
+              'HISTORY_PATH_MOVED',
+              { cause: error },
+            )
+          }
+          if (error instanceof AtomicTextWriteConflictError
+            || error instanceof AtomicTextWriteTargetMissingError) {
+            throw new HistoryRestoreConflictError(
+              `document content changed before restore: ${logicalPath}`,
+              'HISTORY_CONTENT_CHANGED',
+              { cause: error },
+            )
+          }
+          if (error instanceof AtomicTextWriteOwnershipError) {
+            throw new HistoryRestoreConflictError(
+              `document path moved before restore completed: ${logicalPath}`,
+              'HISTORY_PATH_MOVED',
+              { cause: error },
+            )
+          }
+          if (error instanceof AtomicTextWritePostCommitExternalMutationError) {
+            throw new HistoryRestoreConflictError(
+              `document content changed during restore and was preserved: ${logicalPath}`,
+              'HISTORY_CONTENT_CHANGED',
+              { cause: error },
+            )
+          }
+          if (error instanceof Error && (
+            /symbolic links|path changed while accessing|path segment|path root/i.test(error.message)
+            || (error as NodeJS.ErrnoException).code === 'EPERM'
+          )) {
+            throw new HistoryRestoreConflictError(
+              `document path moved before restore completed: ${logicalPath}`,
+              'HISTORY_PATH_MOVED',
+              { cause: error },
+            )
+          }
+          throw error
+        }
+      }
+
+      // Revisions without a trusted generic snapshot remain ordinary
+      // body-only restores. In particular, a missing live row is not inferred
+      // from historical Frontmatter; the current durable metadata is either
+      // preserved or remains absent.
+      const hadMetadata = liveMetadata !== null
       const databaseSnapshot = snapshotDocumentMetadataMutation(input.db, [logicalPath])
       let committed = false
       let created = false
       try {
         if (before) {
-          ensureDocumentMetadata(
-            input.db,
-            logicalPath,
-            before.raw,
-            before.stat.mtimeMs,
-          )
+          if (hadMetadata) ensureDocumentMetadata(input.db, logicalPath, before.raw, before.stat.mtimeMs)
           if (before.raw !== historicalRaw) {
             await input.beforeCommit?.()
             await verifySafePathResolution(targetResolution)
@@ -268,15 +537,20 @@ export async function restoreHistoricalDocument(input: {
             'HISTORY_CONTENT_CHANGED',
           )
         }
-        committed
-          ? recordCommittedDocumentMutation(input.db, logicalPath, observed.raw, observed.stat.mtimeMs, Date.now())
-          : ensureDocumentMetadata(input.db, logicalPath, observed.raw, observed.stat.mtimeMs)
+        if (hadMetadata) {
+          committed
+            ? recordCommittedDocumentMutation(input.db, logicalPath, observed.raw, observed.stat.mtimeMs, Date.now())
+            : ensureDocumentMetadata(input.db, logicalPath, observed.raw, observed.stat.mtimeMs)
+        }
         return {
           path: input.path,
           ref: input.ref,
           resolvedRef,
           raw: historicalRaw,
           mtime: observed.stat.mtimeMs,
+          metadataMode: 'unavailable' as const,
+          metadataRestored: false,
+          metadataPreserved: true,
         }
       } catch (error) {
         const rollbackFailures: unknown[] = []

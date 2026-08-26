@@ -28,7 +28,10 @@ interface HistoryRestoreOptions {
   acquireMutation?: (paths: readonly string[]) => (() => void) | null
   onConflict?: (request: HistoryRestoreRequest) => void
   restoreFile?: typeof historyApi.restoreFile
-  onSuccess: (request: HistoryRestoreRequest, result: { refreshFailed: boolean }) => void
+  onSuccess: (request: HistoryRestoreRequest, result: {
+    refreshFailed: boolean
+    metadataMode?: historyApi.RestoreFileResult['metadataMode']
+  }) => void
   onError: (request: HistoryRestoreRequest, error: unknown) => void
 }
 
@@ -149,7 +152,10 @@ export function useHistoryRestore(options: HistoryRestoreOptions) {
         refreshResult.status === 'rejected'
         || (refreshResult.status === 'fulfilled' && refreshResult.value === false)
       ))
-      options.onSuccess(request, { refreshFailed })
+      options.onSuccess(request, {
+        refreshFailed,
+        ...(result.metadataMode ? { metadataMode: result.metadataMode } : {}),
+      })
       return true
     } catch (cause) {
       editorBarrier?.rollback()

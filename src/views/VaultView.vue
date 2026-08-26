@@ -1128,7 +1128,9 @@ const historyRestore = useHistoryRestore({
     })
   },
   onSuccess(request, result) {
-    if (result.refreshFailed) {
+    if (result.metadataMode === 'unavailable') {
+      toast.info(t('history.restore_metadata_unavailable', { title: request.documentTitle }), 6000)
+    } else if (result.refreshFailed) {
       toast.info(t('history.restore_partial', { title: request.documentTitle }), 5000)
     } else {
       toast.success(t('history.restore_success', { title: request.documentTitle }))

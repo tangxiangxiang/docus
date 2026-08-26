@@ -510,6 +510,10 @@ const STRINGS: Strings = {
     zh: '“{title}”已恢复，但部分界面未能刷新。',
     en: '“{title}” was restored, but some views could not be refreshed.',
   },
+  'history.restore_metadata_unavailable': {
+    zh: '“{title}”正文已恢复；所选历史版本没有可用的 metadata 快照，当前 metadata 已保留。',
+    en: '“{title}” body was restored; no metadata snapshot was available for this revision, so current metadata was preserved.',
+  },
   'history.ai_disabled': { zh: '历史版本为只读，AI 编辑不可用', en: 'AI editing is unavailable for read-only history' },
   'history.changed': { zh: '{count} 个更改', en: '{count} changed' },
   'history.git_unavailable': { zh: 'Git 不可用', en: 'Git is not available' },

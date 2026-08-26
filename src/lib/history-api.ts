@@ -306,6 +306,10 @@ export interface RestoreFileResult {
   resolvedRef: string
   raw: string
   mtime: number
+  /** `unavailable` means this is an explicit legacy body-only restore. */
+  metadataMode?: 'restored' | 'unavailable'
+  metadataRestored?: boolean
+  metadataPreserved?: boolean
 }
 
 export async function restoreFile(path: string, ref: string): Promise<RestoreFileResult> {
