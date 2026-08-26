@@ -1,12 +1,13 @@
 # D7.0A — Generic History Metadata Revision Foundation
 
-状态：**REVIEW-READY**
-Independent Review：**PENDING**
+状态：**REVIEW-CLOSED**
+Independent Review：**PASS**
+P0/P1/P2：**0/0/0**
 Starting HEAD：`e38505cda16e7dcd4d5b9335e9165ded3f86547d`
 
-本文件记录 D7.0A 的 implementation/evidence 结果。它不是 closure sync；在
-Independent Review 完成前，不把 D7.0A 标记为 `REVIEW-CLOSED`，也不解除 D7.0
-blocker。
+本文件记录 D7.0A 的 implementation/evidence 结果及 Independent Review closure。
+D7.0A 已完成并正式关闭；D7.0 的 storage blocker 仍然保留，必须先完成后续
+D7.0 revalidation，不能由本阶段自动解除。
 
 Implementation commits：
 
@@ -34,8 +35,8 @@ Recovery 或 History Comparison 的 ownership。
 ```text
 D7 Plan Amendment = REVIEW-CLOSED
 D7.0              = BLOCKED
-D7.0A             = REVIEW-READY
-D7.0A IR          = PENDING
+D7.0A             = REVIEW-CLOSED
+D7.0A IR          = PASS (P0/P1/P2 = 0/0/0)
 D7.1              = NOT STARTED
 D7 Mood production = NOT STARTED
 ```
@@ -356,13 +357,14 @@ Recovery metadata schema、第二 live owner、新 History UI、frontmatter rewr
 D7.0A generic History metadata foundation 已完成实现和 evidence，停止在：
 
 ```text
-D7.0A = REVIEW-READY
-D7.0A Independent Review = PENDING
+D7.0A = REVIEW-CLOSED
+D7.0A Independent Review = PASS
+D7.0A P0/P1/P2 = 0/0/0
 D7.0   = BLOCKED
 D7.1   = NOT STARTED
 D7 Mood production = NOT STARTED
 ```
 
-下一步只能是 Independent Review；即使 D7.0A review 通过，也必须先关闭 D7.0A，
-再回到 D7.0 revalidation。不得在本 evidence commit 后自动开始 D7.0 revalidation
-或 D7.1。
+Independent Review 已通过，本 closure sync 将 D7.0A 标记为 `REVIEW-CLOSED`；仍然
+必须先回到 D7.0 做独立 revalidation。不得在本 closure commit 后自动开始 D7.0
+revalidation 或 D7.1。
