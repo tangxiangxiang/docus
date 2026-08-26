@@ -2,7 +2,7 @@
 
 状态：`REVIEW-CLOSED`（原始 D6 design baseline）；Native Document Workspace superseding design amendment = `REVIEW-CLOSED`，Independent Review = `PASS`（P0/P1/P2 = 0/0/0）。D6.4 closure review = `PASS`（P0/P1/P2 = 0/0/0）。
 
-基线：D6.0–D6.6 `REVIEW-CLOSED`。旧 D6.3 Reader Dialog implementation 在 closure 前被产品决定替代；D6.5 生命周期回归与 D6.6 responsive/accessibility evidence 均已记录并通过独立复审，P0/P1/P2 = `0/0/0`。D6.7 release closure evidence 已完成，当前为 `REVIEW-READY`，Independent Review = `PENDING`，task self-review P0/P1/P2 = `0/0/0`。
+基线：D6.0–D6.7 `REVIEW-CLOSED`。旧 D6.3 Reader Dialog implementation 在 closure 前被产品决定替代；D6.5 生命周期回归、D6.6 responsive/accessibility evidence 与 D6.7 release closure evidence 均已记录并通过独立复审，P0/P1/P2 = `0/0/0`。整个 D6 已正式关闭。
 
 这里的 `REVIEW-CLOSED` 同时覆盖原始 D6 implementation-plan baseline 与已通过独立复审的 2026-08-26 Native Workspace superseding amendment。
 
@@ -218,7 +218,7 @@ shared, dependency or D6.7 change. At D6.6 closure, D6.7 was `NOT STARTED`.
 
 ### D6.7 — Release Closure
 
-Status: `REVIEW-READY`; Independent Review = `PENDING`; task self-review P0/P1/P2 = `0/0/0`.
+Status: `REVIEW-CLOSED`; Final Independent Review = `PASS`; P0/P1/P2 = `0/0/0`.
 
 Evidence: [D6.7 Release Closure](diary-home-workspace-d6.7-release-closure.md).
 
@@ -263,7 +263,7 @@ start a later phase.
 D6.6 adds the responsive/accessibility evidence document and dedicated browser suite;
 its Dialog/modal/focus-trap requirements remain superseded by the Native Workspace
 architecture. Independent Review passed with P0/P1/P2 = 0/0/0; D6.6 is
-`REVIEW-CLOSED`. D6.7 is `REVIEW-READY`; Independent Review remains `PENDING`.
+`REVIEW-CLOSED`. D6.7 is `REVIEW-CLOSED`; Final Independent Review = `PASS` with P0/P1/P2 = `0/0/0`. Entire D6 is formally closed.
 
 ### Validation commands
 

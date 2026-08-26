@@ -2,7 +2,7 @@
 
 状态：`REVIEW-CLOSED`（原始 D6 产品 contract baseline）；2026-08-26 Native Document Workspace superseding amendment = `REVIEW-CLOSED`，Independent Review = `PASS`（P0/P1/P2 = 0/0/0）。
 
-已有状态保持不变：D0–D5、D6.0、D6.1、D6.2、D6.2.1、D6.3、D6.4、D6.5、D6.6 均为 `REVIEW-CLOSED`。D6.4、D6.5 与 D6.6 Independent Review 均为 `PASS`（P0/P1/P2 = 0/0/0）。D6.7 release closure evidence 已完成，当前为 `REVIEW-READY`，Independent Review = `PENDING`，task self-review P0/P1/P2 = `0/0/0`。
+已有状态保持不变：D0–D5、D6.0、D6.1、D6.2、D6.2.1、D6.3、D6.4、D6.5、D6.6、D6.7 均为 `REVIEW-CLOSED`。D6.4、D6.5、D6.6 与 D6.7 Independent Review 均为 `PASS`（P0/P1/P2 = 0/0/0）。整个 D6 已正式关闭。
 
 状态分层：原始 D6 产品 contract baseline = `REVIEW-CLOSED`；Native Document Workspace superseding amendment = `REVIEW-CLOSED`；Independent Review = `PASS`（P0/P1/P2 = 0/0/0）；D6.3 replacement implementation = `REVIEW-CLOSED`。
 
@@ -246,7 +246,7 @@ D6.3   REVIEW-CLOSED — Native Document Workspace replacement
 D6.4   REVIEW-CLOSED — Native Editor Lifecycle Verification
 D6.5   REVIEW-CLOSED — Lifecycle Regression; Independent Review PASS (0/0/0)
 D6.6   REVIEW-CLOSED — Responsive / Accessibility; Independent Review PASS (0/0/0)
-D6.7   REVIEW-READY — Release Closure evidence recorded; Independent Review = PENDING (self-review P0/P1/P2 = 0/0/0)
+D6.7   REVIEW-CLOSED — Release Closure; Final Independent Review PASS (P0/P1/P2 = 0/0/0)
 ```
 
 D6.6 evidence：[Responsive / Accessibility](diary-home-workspace-d6.6-responsive-accessibility.md)。
@@ -272,4 +272,4 @@ D6.7 evidence：[Release Closure](diary-home-workspace-d6.7-release-closure.md)�
 - [x] D6.3 independent review P0/P1/P2 = 0/0/0; Independent Review = PASS.
 - [x] D6.5 lifecycle regression evidence recorded for scope/tab/route/close/reopen/refresh/deep-link/browser-history boundaries; Independent Review = PASS (P0/P1/P2 = 0/0/0).
 - [x] D6.6 responsive/accessibility evidence passed independent review with P0/P1/P2 = 0/0/0.
-- [x] D6.7 fresh release evidence covers the final browser/unit/domain/type/build matrix; Independent Review remains PENDING.
+- [x] D6.7 fresh release evidence covers the final browser/unit/domain/type/build matrix; Final Independent Review = PASS (P0/P1/P2 = 0/0/0).

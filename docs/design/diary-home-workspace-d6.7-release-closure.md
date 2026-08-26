@@ -12,9 +12,9 @@ D6.4   = REVIEW-CLOSED
 D6.5   = REVIEW-CLOSED
 D6.6   = REVIEW-CLOSED
 
-D6.7   = REVIEW-READY
-Independent Review = PENDING
-Task self-review P0/P1/P2 = 0/0/0
+D6.7   = REVIEW-CLOSED
+Final Independent Review = PASS
+P0/P1/P2 = 0/0/0
 ```
 
 D6.7 is a release-closure and evidence phase. It adds no production behavior,
@@ -291,11 +291,11 @@ document lifecycle and VCalendar compatibility all passed fresh release
 validation without a production or test change.
 
 ```text
-D6.7 = REVIEW-READY
-Independent Review = PENDING
-Task self-review P0/P1/P2 = 0/0/0
+D6.7 = REVIEW-CLOSED
+Final Independent Review = PASS
+P0/P1/P2 = 0/0/0
 
-Entire D6 release = READY FOR FINAL INDEPENDENT REVIEW
+Entire D6 release = REVIEW-CLOSED
 ```
 
-Stop here. D6.7 is not REVIEW-CLOSED and no later phase has started.
+Stop here. Entire D6 is REVIEW-CLOSED and no later phase has started.
