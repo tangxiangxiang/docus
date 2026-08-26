@@ -841,6 +841,60 @@ describeHistoryIntegration('POST /api/history/restore', () => {
     expect(getDocumentMetadata(metadataDb, 'note')?.id).toBe('preserved-document-id')
   }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
+  it('characterizes existing History Restore as body-only for SQLite metadata', async () => {
+    const logicalFile = 'diary/2000-04-04.md'
+    const historicalRaw = [
+      '---',
+      'title: Historical file title',
+      'summary: Historical file summary',
+      'tags: [historical]',
+      'mood: historical-value',
+      '---',
+      '',
+      'historical body',
+      '',
+    ].join('\n')
+    await write(logicalFile, historicalRaw)
+    const historical = await call('POST', '/commits', { paths: [logicalFile], message: 'historical diary' })
+    const ref = (await historical.json() as { sha: string }).sha
+
+    const currentRaw = [
+      '---',
+      'title: Current file title',
+      'summary: Current file summary',
+      'tags: [current]',
+      'mood: current-value',
+      '---',
+      '',
+      'current body',
+      '',
+    ].join('\n')
+    await write(logicalFile, currentRaw)
+    await call('POST', '/commits', { paths: [logicalFile], message: 'current diary' })
+    saveDocumentMetadata(metadataDb, {
+      id: 'history-metadata-current',
+      path: 'diary/2000-04-04',
+      title: 'SQLite current title',
+      summary: 'SQLite current summary',
+      tags: ['sqlite-current'],
+      updatedAt: 100,
+    })
+    const before = getDocumentMetadata(metadataDb, 'diary/2000-04-04')!
+
+    const response = await call('POST', '/restore', { path: logicalFile, ref })
+
+    expect(response.status).toBe(200)
+    expect(await read(logicalFile)).toBe(historicalRaw)
+    expect(getDocumentMetadata(metadataDb, 'diary/2000-04-04')).toMatchObject({
+      id: before.id,
+      path: before.path,
+      title: 'SQLite current title',
+      summary: 'SQLite current summary',
+      tags: ['sqlite-current'],
+    })
+    expect(getDocumentMetadata(metadataDb, 'diary/2000-04-04')!.updatedAt).toBeGreaterThan(before.updatedAt)
+  }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
+
   it('returns 409 and preserves an external edit that wins the CAS', async () => {
     await write('note.md', 'historical\n')
     const historical = await call('POST', '/commits', { paths: ['note.md'], message: 'old' })
