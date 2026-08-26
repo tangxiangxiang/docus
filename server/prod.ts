@@ -18,6 +18,7 @@ import { migrateVaultMetadata } from './metadataMigration.ts'
 import { initializeTagIdentityAndHealth } from './tagIdentityMigration.ts'
 import { initializeTagUndoFoundationHealth } from './tagUndoHealth.ts'
 import { recoverInterruptedOperations } from './crashRecovery.ts'
+import { reconcileHistoryMetadata } from './history/metadataRevisions.ts'
 import {
   acquireVaultWriterOwnership,
   installVaultWriterShutdownHandlers,
@@ -84,6 +85,11 @@ try {
       console.log(`[docus] crash recovery: ${action.action} ${action.file}${action.detail ? ` (${action.detail})` : ''}`)
     }
   }
+  // Reconcile the generic History metadata journal after filesystem crash
+  // recovery and before the server accepts requests. An unresolved
+  // cross-store state fails startup closed instead of being guessed by a
+  // later History request.
+  await reconcileHistoryMetadata(getDb(), CONTENT_DIR)
   // Only scan live vault metadata after crash recovery has restored every
   // formal path. Otherwise an interrupted takeover can be misclassified
   // as an orphan during this very startup.

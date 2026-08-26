@@ -23,6 +23,16 @@ import { computeFileDiff } from './diff.js'
 import { CONTENT_DIR, readSafeRelativeFile } from '../paths.js'
 import { metadataDb } from '../routes/shared.js'
 import { withVaultMutation } from '../vaultMutation.js'
+import { withDocumentWriteLocks } from '../documentWriteLock.js'
+import {
+  HistoryMetadataError,
+  abortHistoryMetadataCapture,
+  finalizeHistoryMetadataCapture,
+  logicalHistoryPath,
+  prepareHistoryMetadataCapture,
+  reconcileHistoryMetadata,
+  withdrawHistoryMetadataCapture,
+} from './metadataRevisions.js'
 import {
   HistoryRestoreConflictError,
   HistoryRestoreNotFoundError,
@@ -113,6 +123,16 @@ const STABLE_HISTORY_ERROR_CODES = new Set([
   'HISTORY_NOT_DOCUS_VERSION',
   'HISTORY_LEGACY_DOCUS_VERSION',
   'HISTORY_RESOURCE_LIMIT',
+  'HISTORY_METADATA_CORRUPT',
+  'HISTORY_METADATA_UNKNOWN_FIELD',
+  'HISTORY_METADATA_UNSUPPORTED_SCHEMA',
+  'HISTORY_METADATA_IDENTITY_CONFLICT',
+  'HISTORY_METADATA_CONFLICT',
+  'HISTORY_METADATA_JOURNAL_AMBIGUOUS',
+  'HISTORY_METADATA_CAPTURE_FAILED',
+  'HISTORY_METADATA_REVISION_WITHDRAWN',
+  'HISTORY_METADATA_TREE_MISMATCH',
+  'HISTORY_METADATA_BODY_MISMATCH',
 ])
 
 function stableErrorCode(error: unknown): string | undefined {
@@ -361,11 +381,50 @@ history.post('/commits', async (c) => {
     return await withVaultMutation(repoRoot(), async () => {
       await ensureRepoWithinVaultMutation(repoRoot())
       await historyMutationHooks?.beforeMutation?.('create-version')
-      const r = await git.addAndCommit(repoRoot(), paths, message, { expected })
-      return c.json(r, 201)
+      await reconcileHistoryMetadata(metadataDb(), repoRoot())
+      return withDocumentWriteLocks(paths.map(logicalHistoryPath), async () => {
+        const vaultId = await git.ensureDocusVaultId(repoRoot())
+        const expectedParentSha = await git.currentHead(repoRoot())
+        let capture: ReturnType<typeof prepareHistoryMetadataCapture> | null = null
+        try {
+          capture = prepareHistoryMetadataCapture({
+            db: metadataDb(),
+            vaultId,
+            expectedParentSha,
+            paths,
+            expectedHashes: expected,
+          })
+          const r = await git.addAndCommit(repoRoot(), paths, message, {
+            expected,
+            afterCommitObjectCreatedBeforeRefUpdate: async ({ commitSha, parentSha, treeSha }) => {
+              await finalizeHistoryMetadataCapture({
+                db: metadataDb(),
+                repoRoot: repoRoot(),
+                operationId: capture!.operationId,
+                commitSha,
+                parentSha,
+                treeSha,
+              })
+            },
+          })
+          return c.json(r, 201)
+        } catch (error) {
+          if (capture) {
+            try { abortHistoryMetadataCapture(metadataDb(), capture.operationId, error) } catch { /* reconcile on the next history operation */ }
+          }
+          throw error
+        }
+      })
     })
   } catch (e: any) {
     const msg = e.message ?? 'commit failed'
+    if (e instanceof HistoryMetadataError && (
+      e.code === 'HISTORY_METADATA_CONFLICT'
+      || e.code === 'HISTORY_METADATA_JOURNAL_AMBIGUOUS'
+      || e.code === 'HISTORY_METADATA_IDENTITY_CONFLICT'
+    )) {
+      return bad(c, msg, 409, e.code)
+    }
     if (/nothing to commit|selection is stale|content changed before commit|repository changed before commit|repository operation in progress/i.test(msg)) {
       return bad(c, msg, 409, /repository operation in progress/i.test(msg)
         ? 'HISTORY_REPOSITORY_OPERATION'
@@ -468,7 +527,13 @@ history.post('/drop', async (c) => {
     return await withVaultMutation(repoRoot(), async () => {
       await ensureRepoWithinVaultMutation(repoRoot())
       await historyMutationHooks?.beforeMutation?.('withdraw')
+      await reconcileHistoryMetadata(metadataDb(), repoRoot())
       const r = await git.dropHeadCommit(repoRoot(), sha)
+      withdrawHistoryMetadataCapture(
+        metadataDb(),
+        await git.ensureDocusVaultId(repoRoot()),
+        r.droppedSha,
+      )
       return c.json(r)
     })
   } catch (e: any) {
@@ -545,6 +610,9 @@ history.post('/restore', async (c) => {
     const msg = e.message ?? 'restore failed'
     if (e instanceof HistoryRestoreConflictError) {
       return c.json({ error: msg, code: e.code }, 409)
+    }
+    if (e instanceof HistoryMetadataError) {
+      return bad(c, msg, 409, e.code)
     }
     if (e instanceof FolderMovePathOwnedError) {
       return c.json({ error: msg, code: 'HISTORY_PATH_MOVED' }, 409)

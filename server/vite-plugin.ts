@@ -14,6 +14,7 @@ import { migrateVaultMetadata } from './metadataMigration.ts'
 import { initializeTagIdentityAndHealth } from './tagIdentityMigration.ts'
 import { initializeTagUndoFoundationHealth } from './tagUndoHealth.ts'
 import { recoverInterruptedOperations } from './crashRecovery.ts'
+import { reconcileHistoryMetadata } from './history/metadataRevisions.ts'
 import {
   acquireVaultWriterOwnership,
   installVaultWriterShutdownHandlers,
@@ -44,6 +45,10 @@ export function serverPlugin(): Plugin {
             console.log(`[docus] crash recovery: ${action.action} ${action.file}${action.detail ? ` (${action.detail})` : ''}`)
           }
         }
+        // Keep development startup aligned with production: unresolved
+        // generic History metadata journals fail closed before any request
+        // can observe an unproven cross-store state.
+        await reconcileHistoryMetadata(getDb(), CONTENT_DIR)
         const report = await migrateVaultMetadata(getDb(), CONTENT_DIR)
         console.log(`[docus] metadata migration: ${JSON.stringify(report)}`)
         const tagIdentityHealth = await initializeTagIdentityAndHealth(getDb(), CONTENT_DIR, report)
