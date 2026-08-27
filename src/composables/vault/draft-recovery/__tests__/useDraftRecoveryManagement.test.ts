@@ -31,6 +31,7 @@ function post(id: string, raw: string, mtime = 1) {
     path: `notes/${id}`, raw, content: raw, frontmatter: {},
     metadata: {
       id, path: `notes/${id}`, title: id, summary: '', tags: [],
+      mood: null,
       createdAt: 1, updatedAt: 1,
     },
     size: 1, mtime,
@@ -151,6 +152,7 @@ describe('draft recovery management', () => {
         frontmatter: {},
         metadata: {
           id: value.documentId, path: value.documentPath, title: 'a', summary: '', tags: [],
+          mood: null,
           createdAt: 1, updatedAt: 1,
         },
         size: 1,
@@ -191,6 +193,7 @@ describe('draft recovery management', () => {
       frontmatter: Record<string, never>
       metadata: {
         id: string; path: string; title: string; summary: string; tags: string[]
+        mood: string | null
         createdAt: number; updatedAt: number
       }
       size: number
@@ -217,6 +220,7 @@ describe('draft recovery management', () => {
       path: 'notes/a', raw: 'disk', content: 'disk', frontmatter: {},
       metadata: {
         id: 'a', path: 'notes/a', title: 'a', summary: '', tags: [],
+        mood: null,
         createdAt: 1, updatedAt: 1,
       },
       size: 1, mtime: 1,

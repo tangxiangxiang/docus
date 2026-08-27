@@ -87,6 +87,9 @@ function postSummary(
     summary: metadata.summary,
     size: Number(stat.size),
     mtime: Number(stat.mtimeMs),
+    mood: metadata.mood,
+    documentId: metadata.id,
+    metadataUpdatedAt: metadata.updatedAt,
   }
 }
 

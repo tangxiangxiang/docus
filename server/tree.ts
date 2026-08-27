@@ -6,6 +6,7 @@ import { CONTENT_DIR } from './paths.js'
 import type { PostSummary, TreeNode } from '../src/lib/api.js'
 import type { Database as DatabaseT } from 'better-sqlite3'
 import { getDocumentMetadata } from './documentMetadata.js'
+import { classifyDiaryPath } from '../shared/diaryProtocol.js'
 
 // `PostSummary` and `TreeNode` are owned by the client (src/lib/api.ts). The
 // server is intentionally not in the type-check graph (no tsconfig include),
@@ -149,6 +150,7 @@ export async function listPostsFlat(
     const stat = await fs.stat(entry.abs)
     const fm = readFrontmatter(entry.abs)
     const metadata = metadataDb ? getDocumentMetadata(metadataDb, p) : null
+    const isManagedDiary = classifyDiaryPath(p) === 'managed'
     out.push({
       path: p,
       title: metadata?.title ?? titleFromFile(entry.abs, name, fm.firstHeading, fm.title),
@@ -164,6 +166,14 @@ export async function listPostsFlat(
       summary: metadata?.summary ?? fm.summary ?? '',
       size: stat.size,
       mtime: stat.mtimeMs,
+      ...(isManagedDiary
+        ? {
+            mood: metadata?.mood ?? null,
+            ...(metadata
+              ? { documentId: metadata.id, metadataUpdatedAt: metadata.updatedAt }
+              : {}),
+          }
+        : {}),
     })
   }
   out.sort((a, b) => naturalPathCompare(a.path, b.path))

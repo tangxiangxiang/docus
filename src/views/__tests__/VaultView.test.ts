@@ -203,6 +203,7 @@ describe('VaultView editor tab wiring', () => {
       title: 'New title',
       summary: 'New summary',
       tags: ['new'],
+      mood: null,
       createdAt: 1,
       updatedAt: 999,
     })

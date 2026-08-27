@@ -40,6 +40,7 @@ function post(id: string, path = `notes/${id}`): PostDetail {
       title: id,
       summary: '',
       tags: [],
+      mood: null,
       createdAt: 1,
       updatedAt: 1,
     },

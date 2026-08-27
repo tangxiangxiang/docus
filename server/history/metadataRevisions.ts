@@ -17,24 +17,42 @@ import {
   atomicReplaceTextIfUnchanged,
   readStableTextSnapshot,
 } from '../atomicTextWrite.js'
+import { classifyDiaryPath } from '../../shared/diaryProtocol.js'
 import {
+  normalizeLogicalContentPath,
   resolveSafeRelativePathDetailed,
   verifySafePathResolution,
 } from '../paths.js'
 import * as git from './git.js'
 
 export const HISTORY_METADATA_SCHEMA_VERSION = 1 as const
+export const HISTORY_METADATA_MOOD_SCHEMA_VERSION = 2 as const
 
-export type HistoricalMetadataValues = {
+export type HistoricalMetadataValuesV1 = {
   title: string
   summary: string
   tags: string[]
 }
 
-export type HistoricalMetadataPayload = {
-  schemaVersion: typeof HISTORY_METADATA_SCHEMA_VERSION
-  fields: HistoricalMetadataValues
+export type HistoricalMetadataValuesV2 = HistoricalMetadataValuesV1 & {
+  /** Opaque to the historical decoder; future IDs must survive old servers. */
+  mood: string | null
 }
+
+/** Kept as the v1-compatible public name for existing callers. */
+export type HistoricalMetadataValues = HistoricalMetadataValuesV1
+
+export type HistoricalMetadataPayloadV1 = {
+  schemaVersion: typeof HISTORY_METADATA_SCHEMA_VERSION
+  fields: HistoricalMetadataValuesV1
+}
+
+export type HistoricalMetadataPayloadV2 = {
+  schemaVersion: typeof HISTORY_METADATA_MOOD_SCHEMA_VERSION
+  fields: HistoricalMetadataValuesV2
+}
+
+export type HistoricalMetadataPayload = HistoricalMetadataPayloadV1 | HistoricalMetadataPayloadV2
 
 export type HistoryMetadataErrorCode =
   | 'HISTORY_METADATA_CORRUPT'
@@ -112,8 +130,31 @@ function normalizeValues(value: unknown): HistoricalMetadataValues {
   }
 }
 
+const MAX_HISTORICAL_MOOD_LENGTH = 128
+
+function normalizeHistoricalMood(value: unknown): string | null {
+  if (value === null) return null
+  if (typeof value !== 'string' || value.length === 0 || value.length > MAX_HISTORICAL_MOOD_LENGTH) {
+    throw new HistoryMetadataError('HISTORY_METADATA_CORRUPT', 'historical metadata mood is invalid')
+  }
+  return value
+}
+
+function normalizeValuesV2(value: unknown): HistoricalMetadataValuesV2 {
+  if (!isRecord(value)) {
+    throw new HistoryMetadataError('HISTORY_METADATA_CORRUPT', 'historical metadata v2 fields must be an object')
+  }
+  assertExactKeys(value, ['title', 'summary', 'tags', 'mood'], 'historical metadata v2 fields')
+  const common = normalizeValues({ title: value.title, summary: value.summary, tags: value.tags })
+  return { ...common, mood: normalizeHistoricalMood(value.mood) }
+}
+
 export function canonicalizeHistoricalMetadata(values: HistoricalMetadataValues): HistoricalMetadataValues {
   return normalizeValues(values)
+}
+
+export function canonicalizeHistoricalMetadataV2(values: HistoricalMetadataValuesV2): HistoricalMetadataValuesV2 {
+  return normalizeValuesV2(values)
 }
 
 export function encodeHistoricalMetadataPayload(
@@ -138,6 +179,27 @@ export function encodeHistoricalMetadataPayload(
   return { payload, payloadJson, payloadDigest }
 }
 
+export function encodeHistoricalMetadataPayloadV2(
+  values: HistoricalMetadataValuesV2,
+): { payload: HistoricalMetadataPayloadV2; payloadJson: string; payloadDigest: string } {
+  const fields = canonicalizeHistoricalMetadataV2(values)
+  const payload: HistoricalMetadataPayloadV2 = {
+    schemaVersion: HISTORY_METADATA_MOOD_SCHEMA_VERSION,
+    fields,
+  }
+  const payloadJson = JSON.stringify({
+    schemaVersion: payload.schemaVersion,
+    fields: {
+      title: fields.title,
+      summary: fields.summary,
+      tags: fields.tags,
+      mood: fields.mood,
+    },
+  })
+  const payloadDigest = createHash('sha256').update(payloadJson, 'utf8').digest('hex')
+  return { payload, payloadJson, payloadDigest }
+}
+
 export function decodeHistoricalMetadataPayload(
   payloadJson: string,
   payloadDigest: string,
@@ -155,29 +217,42 @@ export function decodeHistoricalMetadataPayload(
     throw new HistoryMetadataError('HISTORY_METADATA_CORRUPT', 'historical metadata payload must be an object')
   }
   assertExactKeys(parsed, ['schemaVersion', 'fields'], 'historical metadata payload')
-  if (parsed.schemaVersion !== HISTORY_METADATA_SCHEMA_VERSION) {
+  if (parsed.schemaVersion !== HISTORY_METADATA_SCHEMA_VERSION
+    && parsed.schemaVersion !== HISTORY_METADATA_MOOD_SCHEMA_VERSION) {
     throw new HistoryMetadataError(
       'HISTORY_METADATA_UNSUPPORTED_SCHEMA',
       `historical metadata schema ${String(parsed.schemaVersion)} is not supported`,
     )
   }
-  const fields = normalizeValues(parsed.fields)
-  const canonicalJson = JSON.stringify({
-    schemaVersion: HISTORY_METADATA_SCHEMA_VERSION,
-    fields: {
-      title: fields.title,
-      summary: fields.summary,
-      tags: fields.tags,
-    },
-  })
+  const fields = parsed.schemaVersion === HISTORY_METADATA_MOOD_SCHEMA_VERSION
+    ? normalizeValuesV2(parsed.fields)
+    : normalizeValues(parsed.fields)
+  const canonicalJson = parsed.schemaVersion === HISTORY_METADATA_MOOD_SCHEMA_VERSION
+    ? JSON.stringify({
+        schemaVersion: HISTORY_METADATA_MOOD_SCHEMA_VERSION,
+        fields: {
+          title: fields.title,
+          summary: fields.summary,
+          tags: fields.tags,
+          mood: (fields as HistoricalMetadataValuesV2).mood,
+        },
+      })
+    : JSON.stringify({
+        schemaVersion: HISTORY_METADATA_SCHEMA_VERSION,
+        fields: {
+          title: fields.title,
+          summary: fields.summary,
+          tags: fields.tags,
+        },
+      })
   const actualDigest = createHash('sha256').update(canonicalJson, 'utf8').digest('hex')
   if (!/^[0-9a-f]{64}$/i.test(payloadDigest) || actualDigest !== payloadDigest.toLowerCase()) {
     throw new HistoryMetadataError('HISTORY_METADATA_CORRUPT', 'historical metadata payload digest does not match')
   }
-  return {
-    schemaVersion: HISTORY_METADATA_SCHEMA_VERSION,
-    fields,
+  if (parsed.schemaVersion === HISTORY_METADATA_MOOD_SCHEMA_VERSION) {
+    return { schemaVersion: HISTORY_METADATA_MOOD_SCHEMA_VERSION, fields: fields as HistoricalMetadataValuesV2 }
   }
+  return { schemaVersion: HISTORY_METADATA_SCHEMA_VERSION, fields: fields as HistoricalMetadataValuesV1 }
 }
 
 export type HistoricalMetadataImage = {
@@ -186,6 +261,7 @@ export type HistoricalMetadataImage = {
   title: string
   summary: string
   tags: string[]
+  mood: string | null
 }
 
 export function metadataImage(metadata: DocumentMetadata | null): HistoricalMetadataImage | null {
@@ -196,6 +272,7 @@ export function metadataImage(metadata: DocumentMetadata | null): HistoricalMeta
     title: metadata.title,
     summary: metadata.summary,
     tags: [...metadata.tags],
+    mood: metadata.mood,
   }
 }
 
@@ -214,7 +291,12 @@ function parseImage(raw: string | null): HistoricalMetadataImage | null {
   if (!isRecord(parsed)) {
     throw new HistoryMetadataError('HISTORY_METADATA_CORRUPT', 'historical metadata image is invalid')
   }
-  assertExactKeys(parsed, ['id', 'path', 'title', 'summary', 'tags'], 'historical metadata image')
+  const hasMood = Object.hasOwn(parsed, 'mood')
+  assertExactKeys(
+    parsed,
+    hasMood ? ['id', 'path', 'title', 'summary', 'tags', 'mood'] : ['id', 'path', 'title', 'summary', 'tags'],
+    'historical metadata image',
+  )
   if (typeof parsed.id !== 'string'
     || !parsed.id
     || typeof parsed.path !== 'string'
@@ -231,12 +313,14 @@ function parseImage(raw: string | null): HistoricalMetadataImage | null {
     || JSON.stringify(parsed.tags) !== JSON.stringify(fields.tags)) {
     throw new HistoryMetadataError('HISTORY_METADATA_CORRUPT', 'historical metadata image is not canonical')
   }
+  const mood = hasMood ? normalizeHistoricalMood(parsed.mood) : null
   return {
     id: parsed.id,
     path: parsed.path,
     title: fields.title,
     summary: fields.summary,
     tags: fields.tags,
+    mood,
   }
 }
 
@@ -250,6 +334,13 @@ export function logicalHistoryPath(historyPath: string): string {
 
 function logicalPath(historyPath: string): string {
   return logicalHistoryPath(historyPath)
+}
+
+/** Classify only the normalized logical path; history rows conventionally
+ * carry a trailing `.md`, while the Diary domain authority is extensionless. */
+function isManagedHistoryDiaryPath(historyPath: string): boolean {
+  const logical = normalizeLogicalContentPath(logicalHistoryPath(historyPath))
+  return logical !== null && classifyDiaryPath(logical) === 'managed'
 }
 
 export function historicalBodySha(raw: string): string {
@@ -336,11 +427,18 @@ export function prepareHistoryMetadataCapture(input: {
       })
       continue
     }
-    const encoded = encodeHistoricalMetadataPayload({
-      title: metadata.title,
-      summary: metadata.summary,
-      tags: metadata.tags,
-    })
+    const encoded = isManagedHistoryDiaryPath(filePath)
+      ? encodeHistoricalMetadataPayloadV2({
+          title: metadata.title,
+          summary: metadata.summary,
+          tags: metadata.tags,
+          mood: metadata.mood,
+        })
+      : encodeHistoricalMetadataPayload({
+          title: metadata.title,
+          summary: metadata.summary,
+          tags: metadata.tags,
+        })
     items.push({
       pathAtRevision: filePath,
       documentId: metadata.id,
@@ -768,12 +866,12 @@ export type HistoryMetadataRevision = {
   payloadJson: string
   payloadDigest: string
   bodySha: string | null
-  values: HistoricalMetadataValues
+  values: HistoricalMetadataValuesV1 | HistoricalMetadataValuesV2
 } | {
   kind: 'legacy'
   commitSha: string
   pathAtRevision: string
-  reason: 'pre-coverage' | 'untracked'
+  reason: 'pre-coverage' | 'untracked' | 'pre-mood-schema'
 }
 
 /** Resolve a revision by immutable SHA; an absent capture operation means an
@@ -849,10 +947,30 @@ export function resolveHistoryMetadataRevision(
     || row.payload_json === null || row.payload_digest === null || row.tree_sha === null) {
     throw new HistoryMetadataError('HISTORY_METADATA_CORRUPT', 'covered historical metadata revision is incomplete')
   }
-  if (row.generation_id !== row.document_id || row.schema_version !== HISTORY_METADATA_SCHEMA_VERSION) {
+  if (row.generation_id !== row.document_id
+    || (row.schema_version !== HISTORY_METADATA_SCHEMA_VERSION
+      && row.schema_version !== HISTORY_METADATA_MOOD_SCHEMA_VERSION)) {
     throw new HistoryMetadataError('HISTORY_METADATA_UNSUPPORTED_SCHEMA', 'covered historical metadata generation/schema is unsupported')
   }
   const payload = decodeHistoricalMetadataPayload(row.payload_json, row.payload_digest)
+  if (payload.schemaVersion !== row.schema_version) {
+    throw new HistoryMetadataError('HISTORY_METADATA_CORRUPT', 'historical metadata row schema does not match its payload')
+  }
+  if (row.schema_version === HISTORY_METADATA_SCHEMA_VERSION && isManagedHistoryDiaryPath(row.path_at_revision)) {
+    return {
+      kind: 'legacy',
+      commitSha: row.commit_sha,
+      pathAtRevision: row.path_at_revision,
+      reason: 'pre-mood-schema',
+    }
+  }
+  if (row.schema_version === HISTORY_METADATA_MOOD_SCHEMA_VERSION
+    && !isManagedHistoryDiaryPath(row.path_at_revision)) {
+    throw new HistoryMetadataError(
+      'HISTORY_METADATA_UNSUPPORTED_SCHEMA',
+      'Mood-aware historical metadata is only supported for canonical managed Diary paths',
+    )
+  }
   return {
     kind: 'covered',
     commitSha: row.commit_sha,
@@ -982,10 +1100,16 @@ export function applyCoveredHistoricalMetadata(input: {
   generationId: string
   expectedUpdatedAt: number | null
   allowRehydrate: boolean
-  values: HistoricalMetadataValues
+  values: HistoricalMetadataValuesV1 | HistoricalMetadataValuesV2
   now?: number
 }): DocumentMetadata {
-  const values = canonicalizeHistoricalMetadata(input.values)
+  const hasMood = Object.hasOwn(input.values, 'mood')
+  const values = hasMood
+    ? canonicalizeHistoricalMetadataV2(input.values as HistoricalMetadataValuesV2)
+    : canonicalizeHistoricalMetadata(input.values as HistoricalMetadataValuesV1)
+  const mood: string | null | undefined = hasMood
+    ? (values as HistoricalMetadataValuesV2).mood
+    : undefined
   const tx = input.db.transaction(() => {
     const current = getDocumentMetadata(input.db, input.path)
     let restored: DocumentMetadata
@@ -1008,6 +1132,7 @@ export function applyCoveredHistoricalMetadata(input: {
         title: values.title,
         summary: values.summary,
         tags: values.tags,
+        ...(mood !== undefined ? { mood } : {}),
       }, input.now)
     } else {
       if (current.id !== input.documentId
@@ -1028,6 +1153,7 @@ export function applyCoveredHistoricalMetadata(input: {
           title: values.title,
           summary: values.summary,
           tags: values.tags,
+          ...(mood !== undefined ? { mood } : {}),
         }, input.now)
       } catch (error) {
         if (error instanceof Error && !(error instanceof HistoryMetadataError)) {
@@ -1145,6 +1271,7 @@ async function reconcileRestoreJournal(
           title: beforeMetadata.title,
           summary: beforeMetadata.summary,
           tags: beforeMetadata.tags,
+          mood: beforeMetadata.mood,
         })
       }
       setRestoreJournalState(db, row.operation_id, 'aborted')

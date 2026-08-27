@@ -308,6 +308,7 @@ export interface RestoreFileResult {
   mtime: number
   /** `unavailable` means this is an explicit legacy body-only restore. */
   metadataMode?: 'restored' | 'unavailable'
+  metadataReason?: 'pre-coverage' | 'untracked' | 'pre-mood-schema'
   metadataRestored?: boolean
   metadataPreserved?: boolean
 }

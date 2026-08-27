@@ -1,5 +1,6 @@
 import { authFetch } from './auth-session'
 import type { DiaryDate } from '../../shared/diaryProtocol'
+import type { MoodId } from '../../shared/diaryMood'
 
 export interface PostSummary {
   path: string            // e.g. "hello-world" or "notes/draft" or "archive/2024/old" — relative to src/content/, no implicit prefix
@@ -9,6 +10,11 @@ export interface PostSummary {
   /** Database update date formatted as YYYY-MM-DD, with file mtime fallback. */
   updated: string
   tags: string[]
+  /** Only canonical managed Diary summaries expose this field. */
+  mood?: string | null
+  /** Current SQLite metadata version, when supplied by a bulk summary. */
+  metadataUpdatedAt?: number
+  documentId?: string
   summary?: string
   size: number
   mtime: number
@@ -77,6 +83,7 @@ export interface DocumentMetadata {
   title: string
   summary: string
   tags: string[]
+  mood: string | null
   createdAt: number
   updatedAt: number
 }
@@ -85,6 +92,7 @@ export type UpdateDocumentMetadata = {
   title?: string
   summary?: string
   tags?: string[]
+  mood?: MoodId | null
   expectedUpdatedAt?: number
 }
 

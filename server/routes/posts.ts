@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import matter from 'gray-matter'
 import { Hono } from 'hono'
 import { isInArchive } from '../../shared/archiveProtocol.js'
+import { classifyDiaryPath } from '../../shared/diaryProtocol.js'
 import type { PostDetail, PostSummary, SavePostResult } from '../../src/lib/api.js'
 import {
   deleteDocumentMetadata,
@@ -45,6 +46,20 @@ import { listPostsFlat, readFrontmatter } from '../tree.js'
 import { bad, ensureMetadata, exists, metadataDb, recordCommittedMetadata } from './shared.js'
 
 const postRoutes = new Hono()
+
+function moodSummaryFields(
+  logicalPath: string,
+  metadata: { id: string; mood: string | null; updatedAt: number } | null | undefined,
+): Pick<PostSummary, 'mood' | 'documentId' | 'metadataUpdatedAt'> | Record<string, never> {
+  if (classifyDiaryPath(logicalPath) !== 'managed') return {}
+  return {
+    mood: metadata?.mood ?? null,
+    ...(metadata?.id ? { documentId: metadata.id } : {}),
+    ...(metadata?.updatedAt !== undefined
+      ? { metadataUpdatedAt: metadata.updatedAt }
+      : {}),
+  }
+}
 
 /**
  * Test-only seam for the REST rename race regressions. Both hooks fire
@@ -241,6 +256,7 @@ postRoutes.put('/api/posts/*', async (c) => {
         summary: metadata.summary,
         size: Number(stat.size),
         mtime: Number(stat.mtimeMs),
+        ...moodSummaryFields(splat, metadata),
       },
     } satisfies SavePostResult)
 
@@ -393,6 +409,7 @@ postRoutes.put('/api/recover/*', async (c) => {
       summary: metadata.summary,
       size: stat.size,
       mtime: stat.mtimeMs,
+      ...moodSummaryFields(documentPath, metadata),
     }
     return c.json({ ok: true, raw: requestedRaw, mtime: stat.mtimeMs, post })
   }))
@@ -664,6 +681,7 @@ postRoutes.patch('/api/posts/*', async (c) => {
     summary: movedMetadata?.summary ?? fm.summary ?? '',
     size: st.size,
     mtime: st.mtimeMs,
+    ...moodSummaryFields(destPath, movedMetadata),
     updatedReferences: referenceSnapshots.map((snapshot) => ({
       path: snapshot.writePath,
       raw: snapshot.updated,

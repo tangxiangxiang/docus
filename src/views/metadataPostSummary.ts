@@ -1,4 +1,5 @@
 import type { DocumentMetadata, PostSummary } from '../lib/api'
+import { classifyDiaryPath } from '../../shared/diaryProtocol'
 
 /**
  * Metadata lives in SQLite; it does not rewrite the Markdown document.
@@ -15,5 +16,12 @@ export function applyMetadataToPostSummary(
     summary: metadata.summary,
     tags: [...metadata.tags],
     updated: new Date(metadata.updatedAt).toISOString().slice(0, 10),
+    ...(classifyDiaryPath(post.path) === 'managed'
+      ? {
+          mood: metadata.mood,
+          documentId: metadata.id,
+          metadataUpdatedAt: metadata.updatedAt,
+        }
+      : {}),
   }
 }

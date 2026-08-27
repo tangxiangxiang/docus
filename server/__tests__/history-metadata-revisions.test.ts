@@ -22,15 +22,18 @@ import historyRoutes, {
 } from '../history/routes.js'
 import {
   HISTORY_METADATA_SCHEMA_VERSION,
+  HISTORY_METADATA_MOOD_SCHEMA_VERSION,
   HistoryMetadataError,
   decodeHistoricalMetadataPayload,
   encodeHistoricalMetadataPayload,
+  encodeHistoricalMetadataPayloadV2,
   finalizeHistoryMetadataCapture,
   metadataImage,
   prepareHistoryMetadataCapture,
   prepareHistoryMetadataRestore,
   reconcileHistoryMetadataCaptures,
   reconcileHistoryMetadataRestores,
+  resolveHistoryMetadataRevision,
   withdrawHistoryMetadataCapture,
 } from '../history/metadataRevisions.js'
 import { __setMetadataDbForTesting } from '../routes/shared.js'
@@ -149,13 +152,28 @@ describe('generic historical metadata payload', () => {
       .toThrow(/unsupported field/i)
 
     const newerSchema = JSON.stringify({
-      schemaVersion: HISTORY_METADATA_SCHEMA_VERSION + 1,
+      schemaVersion: HISTORY_METADATA_SCHEMA_VERSION + 2,
       fields: valid.payload.fields,
     })
     expect(() => decodeHistoricalMetadataPayload(newerSchema, digest(newerSchema)))
       .toThrowError(HistoryMetadataError)
     expect(() => decodeHistoricalMetadataPayload(newerSchema, digest(newerSchema)))
       .toThrow(/not supported/i)
+  })
+
+  it('encodes v2 Mood opaquely with deterministic field ordering', () => {
+    const first = encodeHistoricalMetadataPayloadV2({
+      title: 'Title', summary: 'Summary', tags: ['tag'], mood: 'future-mood-v3',
+    })
+    const second = encodeHistoricalMetadataPayloadV2({
+      title: 'Title', summary: 'Summary', tags: ['tag'], mood: 'future-mood-v3',
+    })
+
+    expect(first.payload.schemaVersion).toBe(HISTORY_METADATA_MOOD_SCHEMA_VERSION)
+    expect(first.payloadJson).toBe('{"schemaVersion":2,"fields":{"title":"Title","summary":"Summary","tags":["tag"],"mood":"future-mood-v3"}}')
+    expect(first.payloadJson).toBe(second.payloadJson)
+    expect(first.payloadDigest).toBe(second.payloadDigest)
+    expect(decodeHistoricalMetadataPayload(first.payloadJson, first.payloadDigest)).toEqual(first.payload)
   })
 })
 
@@ -210,20 +228,161 @@ describeHistoryIntegration('D7.0A generic history metadata revisions', () => {
     expect(operation.expected_parent_sha).toBeNull()
   }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
+  it('captures canonical managed Diary metadata as v2, including explicit null Mood', async () => {
+    const diaryPath = 'diary/2026-08-24.md'
+    await write(diaryPath, '# Diary\n')
+    const metadata = saveDocumentMetadata(metadataDb, {
+      id: 'diary-v2-id',
+      path: 'diary/2026-08-24',
+      title: 'Diary',
+      summary: '',
+      tags: [],
+      updatedAt: 100,
+    })
+    expect(metadata.mood).toBeNull()
+
+    const result = await commit([diaryPath], 'capture Diary v2')
+    const revision = metadataDb.prepare(`
+      SELECT schema_version, payload_json FROM history_metadata_revisions
+      WHERE commit_sha = ? AND path_at_revision = ?
+    `).get(result.sha, diaryPath) as { schema_version: number; payload_json: string }
+
+    expect(revision.schema_version).toBe(HISTORY_METADATA_MOOD_SCHEMA_VERSION)
+    expect(JSON.parse(revision.payload_json)).toEqual({
+      schemaVersion: 2,
+      fields: { title: 'Diary', summary: '', tags: [], mood: null },
+    })
+  }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
+
+  it('captures and restores v2 Diary Mood while preserving stable identity and minting a new version', async () => {
+    const diaryPath = 'diary/2026-08-25.md'
+    const logicalPath = 'diary/2026-08-25'
+    await write(diaryPath, 'historical body\n')
+    const initial = saveDocumentMetadata(metadataDb, {
+      id: 'diary-restore-v2-id',
+      path: logicalPath,
+      title: 'Historical title',
+      summary: 'Historical summary',
+      tags: ['historical'],
+      mood: 'future-mood-v3',
+      updatedAt: 100,
+    })
+    const historical = await commit([diaryPath], 'historical Diary v2')
+
+    await write(diaryPath, 'current body\n')
+    patchDocumentMetadata(metadataDb, {
+      path: logicalPath,
+      expectedUpdatedAt: initial.updatedAt,
+      changes: [
+        { field: 'title', value: 'Current title' },
+        { field: 'summary', value: 'Current summary' },
+        { field: 'tags', values: ['current'] },
+        { field: 'mood', value: 'sad' },
+      ],
+    })
+    await commit([diaryPath], 'current Diary v2')
+    const beforeRestore = getDocumentMetadata(metadataDb, logicalPath)!
+
+    const response = await call('POST', '/restore', { path: diaryPath, ref: historical.sha })
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      metadataMode: 'restored',
+      metadataRestored: true,
+      metadataPreserved: false,
+    })
+    expect(await read(diaryPath)).toBe('historical body\n')
+    expect(getDocumentMetadata(metadataDb, logicalPath)).toMatchObject({
+      id: 'diary-restore-v2-id',
+      title: 'Historical title',
+      summary: 'Historical summary',
+      tags: ['historical'],
+      mood: 'future-mood-v3',
+    })
+    expect(getDocumentMetadata(metadataDb, logicalPath)!.updatedAt).toBeGreaterThan(beforeRestore.updatedAt)
+  }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
+
+  it('classifies a managed v1 capture as pre-Mood body-only restore', async () => {
+    const diaryPath = 'diary/2026-08-26.md'
+    const logicalPath = 'diary/2026-08-26'
+    await write(diaryPath, 'historical body\n')
+    const initial = saveDocumentMetadata(metadataDb, {
+      id: 'diary-v1-id', path: logicalPath, title: 'Historical', summary: 'Old', tags: ['old'], mood: 'happy', updatedAt: 100,
+    })
+    const historical = await commit([diaryPath], 'capture then downgrade to v1')
+    const encoded = encodeHistoricalMetadataPayload({ title: 'Historical', summary: 'Old', tags: ['old'] })
+    metadataDb.prepare(`
+      UPDATE history_metadata_revisions
+      SET schema_version = 1, payload_json = ?, payload_digest = ?
+      WHERE commit_sha = ? AND path_at_revision = ?
+    `).run(encoded.payloadJson, encoded.payloadDigest, historical.sha, diaryPath)
+
+    await write(diaryPath, 'current body\n')
+    patchDocumentMetadata(metadataDb, {
+      path: logicalPath,
+      expectedUpdatedAt: initial.updatedAt,
+      changes: [
+        { field: 'title', value: 'Current' },
+        { field: 'summary', value: 'Keep current' },
+        { field: 'tags', values: ['current'] },
+        { field: 'mood', value: 'sad' },
+      ],
+    })
+    await commit([diaryPath], 'current after v1 capture')
+    const before = getDocumentMetadata(metadataDb, logicalPath)!
+
+    const resolved = resolveHistoryMetadataRevision(metadataDb, {
+      vaultId: await historyGit.ensureDocusVaultId(root),
+      commitSha: historical.sha,
+      pathAtRevision: diaryPath,
+    })
+    expect(resolved).toMatchObject({ kind: 'legacy', reason: 'pre-mood-schema' })
+
+    const response = await call('POST', '/restore', { path: diaryPath, ref: historical.sha })
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      metadataMode: 'unavailable',
+      metadataReason: 'pre-mood-schema',
+      metadataRestored: false,
+      metadataPreserved: true,
+    })
+    expect(await read(diaryPath)).toBe('historical body\n')
+    expect(getDocumentMetadata(metadataDb, logicalPath)).toMatchObject({
+      id: before.id,
+      title: before.title,
+      summary: before.summary,
+      tags: before.tags,
+      mood: before.mood,
+    })
+  }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
+
   it('captures every selected document in one multi-file revision operation', async () => {
     await write('a.md', 'a\n')
     await write('b.md', 'b\n')
+    await write('diary/2026-08-27.md', 'diary\n')
     saveDocumentMetadata(metadataDb, { id: 'a-id', path: 'a', title: 'A' })
     saveDocumentMetadata(metadataDb, { id: 'b-id', path: 'b', title: 'B' })
+    saveDocumentMetadata(metadataDb, {
+      id: 'multi-diary-id',
+      path: 'diary/2026-08-27',
+      title: 'Diary',
+      mood: 'playful',
+    })
 
-    const result = await commit(['b.md', 'a.md'], 'multi-file capture')
+    const result = await commit(['b.md', 'diary/2026-08-27.md', 'a.md'], 'multi-file capture')
     const rows = metadataDb.prepare(`
-      SELECT operation_id, commit_sha, path_at_revision
+      SELECT operation_id, commit_sha, path_at_revision, schema_version
       FROM history_metadata_revisions
       WHERE commit_sha = ? ORDER BY path_at_revision
-    `).all(result.sha) as Array<{ operation_id: string; commit_sha: string; path_at_revision: string }>
+    `).all(result.sha) as Array<{ operation_id: string; commit_sha: string; path_at_revision: string; schema_version: number }>
 
-    expect(rows.map((row) => row.path_at_revision)).toEqual(['a.md', 'b.md'])
+    expect(rows.map((row) => row.path_at_revision)).toEqual(['a.md', 'b.md', 'diary/2026-08-27.md'])
+    expect(rows.map((row) => row.schema_version)).toEqual([
+      HISTORY_METADATA_SCHEMA_VERSION,
+      HISTORY_METADATA_SCHEMA_VERSION,
+      HISTORY_METADATA_MOOD_SCHEMA_VERSION,
+    ])
     expect(new Set(rows.map((row) => row.operation_id)).size).toBe(1)
   }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
@@ -414,7 +573,7 @@ describeHistoryIntegration('D7.0A generic history metadata revisions', () => {
     await commit(['future.md'], 'current capture')
 
     const futurePayload = JSON.stringify({
-      schemaVersion: HISTORY_METADATA_SCHEMA_VERSION + 1,
+      schemaVersion: HISTORY_METADATA_SCHEMA_VERSION + 2,
       fields: { title: 'One', summary: '', tags: ['one'] },
     })
     metadataDb.prepare(`

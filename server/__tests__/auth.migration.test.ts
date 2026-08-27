@@ -81,13 +81,16 @@ describe('authentication migration', () => {
         frontmatter_backup TEXT NOT NULL DEFAULT '',
         cleaned_hash TEXT NOT NULL DEFAULT ''
       );
+      INSERT INTO documents (id, path, title, summary, created_at, updated_at)
+      VALUES ('legacy-document', 'inbox/legacy', 'Legacy', 'Existing row', 10, 20);
     `)
 
     applyMigrations(db)
 
-    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(9)
+    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(10)
     expect(db.prepare("SELECT value FROM settings WHERE key = 'theme'").get()).toEqual({ value: 'dark' })
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'users'").get()).toEqual({ name: 'users' })
+    expect(db.prepare('SELECT mood FROM documents WHERE id = ?').get('legacy-document')).toEqual({ mood: null })
   })
 
   it('is safe to apply repeatedly through the migration runner', () => {
@@ -97,7 +100,7 @@ describe('authentication migration', () => {
     applyMigrations(db)
     const after = db.prepare('SELECT COUNT(*) AS count FROM sqlite_master WHERE type = \'table\'').get() as { count: number }
     expect(after.count).toBe(before.count)
-    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(9)
+    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(10)
   })
 
   it('enforces singleton, uniqueness, value, and foreign-key constraints', () => {

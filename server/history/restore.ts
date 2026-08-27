@@ -73,6 +73,7 @@ export type HistoryRestoreResult = {
   raw: string
   mtime: number
   metadataMode: 'restored' | 'unavailable'
+  metadataReason?: 'pre-coverage' | 'untracked' | 'pre-mood-schema'
   metadataRestored: boolean
   metadataPreserved: boolean
 }
@@ -214,11 +215,23 @@ export async function restoreHistoricalDocument(input: {
           )
         }
 
-        const targetMetadata = {
-          id: metadataRevision.documentId,
-          path: logicalPath,
-          ...metadataRevision.values,
-        }
+        const targetMetadata = 'mood' in metadataRevision.values
+          ? {
+              id: metadataRevision.documentId,
+              path: logicalPath,
+              title: metadataRevision.values.title,
+              summary: metadataRevision.values.summary,
+              tags: metadataRevision.values.tags,
+              mood: metadataRevision.values.mood,
+            }
+          : {
+              id: metadataRevision.documentId,
+              path: logicalPath,
+              title: metadataRevision.values.title,
+              summary: metadataRevision.values.summary,
+              tags: metadataRevision.values.tags,
+              mood: liveMetadata?.mood ?? null,
+            }
         const journal = prepareHistoryMetadataRestore({
           db: input.db,
           vaultId,
@@ -549,6 +562,7 @@ export async function restoreHistoricalDocument(input: {
           raw: historicalRaw,
           mtime: observed.stat.mtimeMs,
           metadataMode: 'unavailable' as const,
+          metadataReason: metadataRevision.reason,
           metadataRestored: false,
           metadataPreserved: true,
         }

@@ -6,6 +6,11 @@ import {
   TagNormalizationError,
   type NormalizedTag,
 } from '../shared/tagNormalization.js'
+import {
+  classifyDiaryPath,
+} from '../shared/diaryProtocol.js'
+import { isMoodId, type MoodId } from '../shared/diaryMood.js'
+import { normalizeLogicalContentPath } from './paths.js'
 import { MetadataVersionError, nextMetadataBatchUpdatedAt, nextMetadataUpdatedAt } from './metadataVersion.js'
 
 export interface DocumentMetadata {
@@ -14,6 +19,8 @@ export interface DocumentMetadata {
   title: string
   summary: string
   tags: string[]
+  /** Live metadata may preserve a future opaque ID; null means unset. */
+  mood: string | null
   createdAt: number
   updatedAt: number
 }
@@ -24,6 +31,8 @@ export interface SaveDocumentMetadata {
   title: string
   summary?: string
   tags?: string[]
+  /** Full writers may carry an opaque stored value for fixtures/recovery. */
+  mood?: string | null
   createdAt?: number
   updatedAt?: number
 }
@@ -32,6 +41,7 @@ export type DocumentMetadataChange =
   | { field: 'title'; value: string }
   | { field: 'summary'; value: string }
   | { field: 'tags'; values: string[] }
+  | { field: 'mood'; value: MoodId | null }
 
 export interface PatchDocumentMetadata {
   path: string
@@ -44,6 +54,7 @@ export type DocumentMetadataErrorCode =
   | 'METADATA_ALREADY_EXISTS'
   | 'METADATA_VERSION_CONFLICT'
   | 'INVALID_METADATA_CHANGE'
+  | 'INVALID_MOOD'
   | 'INVALID_TAG'
   | 'TAG_LIMIT_EXCEEDED'
   | 'METADATA_VERSION_OVERFLOW'
@@ -704,6 +715,7 @@ type DocumentRow = {
   path: string
   title: string
   summary: string
+  mood: string | null
   created_at: number
   updated_at: number
 }
@@ -732,6 +744,32 @@ function safeTimestamp(value: number, label: string): number {
     throw new DocumentMetadataError('INVALID_METADATA_CHANGE', `${label} must be a non-negative safe integer`)
   }
   return value
+}
+
+const MAX_STORED_MOOD_LENGTH = 128
+
+/**
+ * Validate a value already crossing a generic metadata/recovery boundary.
+ * Unlike an explicit user Mood write, this deliberately does not consult the
+ * current registry: a future Mood ID must survive an older server intact.
+ */
+function normalizeStoredMood(value: unknown): string | null {
+  if (value === undefined || value === null) return null
+  if (typeof value !== 'string' || value.length === 0 || value.length > MAX_STORED_MOOD_LENGTH) {
+    throw new DocumentMetadataError('INVALID_MOOD', 'stored mood must be null or a non-empty string of at most 128 characters')
+  }
+  return value
+}
+
+function assertCanonicalMood(value: unknown): asserts value is MoodId | null {
+  if (value !== null && !isMoodId(value)) {
+    throw new DocumentMetadataError('INVALID_MOOD', 'mood must be one of the canonical Mood IDs or null')
+  }
+}
+
+function isMoodMutationPath(path: string): boolean {
+  const logicalPath = normalizeLogicalContentPath(path)
+  return logicalPath !== null && classifyDiaryPath(logicalPath) === 'managed'
 }
 
 function insertOrGetTags(db: DatabaseT, tags: readonly NormalizedTag[]): void {
@@ -848,6 +886,7 @@ function hydrate(db: DatabaseT, row: DocumentRow): DocumentMetadata {
     title: row.title,
     summary: row.summary,
     tags: tags.map((item) => item.name),
+    mood: row.mood ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -855,7 +894,7 @@ function hydrate(db: DatabaseT, row: DocumentRow): DocumentMetadata {
 
 export function getDocumentMetadata(db: DatabaseT, path: string): DocumentMetadata | null {
   const row = db.prepare(
-    'SELECT id, path, title, summary, created_at, updated_at FROM documents WHERE path = ?',
+    'SELECT id, path, title, summary, mood, created_at, updated_at FROM documents WHERE path = ?',
   ).get(path) as DocumentRow | undefined
   return row ? hydrate(db, row) : null
 }
@@ -870,7 +909,7 @@ export function getDocumentMetadata(db: DatabaseT, path: string): DocumentMetada
  *  alongside the path. */
 export function getDocumentMetadataById(db: DatabaseT, id: string): DocumentMetadata | null {
   const row = db.prepare(
-    'SELECT id, path, title, summary, created_at, updated_at FROM documents WHERE id = ?',
+    'SELECT id, path, title, summary, mood, created_at, updated_at FROM documents WHERE id = ?',
   ).get(id) as DocumentRow | undefined
   return row ? hydrate(db, row) : null
 }
@@ -915,7 +954,7 @@ export function getDocumentTombstoneIdentity(
 
 export function listDocumentMetadata(db: DatabaseT): DocumentMetadata[] {
   const rows = db.prepare(
-    'SELECT id, path, title, summary, created_at, updated_at FROM documents ORDER BY path',
+    'SELECT id, path, title, summary, mood, created_at, updated_at FROM documents ORDER BY path',
   ).all() as DocumentRow[]
   return rows.map((row) => hydrate(db, row))
 }
@@ -937,10 +976,11 @@ export function createDocumentMetadataWithinTransaction(
   const createdAt = safeTimestamp(Math.trunc(input.createdAt ?? now), 'metadata createdAt')
   const updatedAt = safeTimestamp(Math.trunc(input.updatedAt ?? now), 'metadata updatedAt')
   const tags = normalizeTags(input.tags ?? [])
+  const mood = normalizeStoredMood(input.mood)
   db.prepare(`
-    INSERT INTO documents (id, path, title, summary, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(id, path, title, input.summary?.trim() ?? '', createdAt, updatedAt)
+    INSERT INTO documents (id, path, title, summary, mood, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(id, path, title, input.summary?.trim() ?? '', mood, createdAt, updatedAt)
   insertOrGetTags(db, tags)
   replaceDocumentTags(db, id, tags)
 
@@ -968,14 +1008,16 @@ export function saveDocumentMetadata(db: DatabaseT, input: SaveDocumentMetadata)
     const createdAt = safeTimestamp(Math.trunc(input.createdAt ?? existing?.createdAt ?? now), 'metadata createdAt')
     const updatedAt = safeTimestamp(Math.trunc(input.updatedAt ?? now), 'metadata updatedAt')
     const tags = normalizeTags(input.tags ?? existing?.tags ?? [])
+    const mood = normalizeStoredMood(input.mood === undefined ? existing?.mood : input.mood)
     db.prepare(`
-      INSERT INTO documents (id, path, title, summary, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO documents (id, path, title, summary, mood, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(path) DO UPDATE SET
         title = excluded.title,
         summary = excluded.summary,
+        mood = excluded.mood,
         updated_at = excluded.updated_at
-    `).run(id, path, title, input.summary?.trim() ?? existing?.summary ?? '', createdAt, updatedAt)
+    `).run(id, path, title, input.summary?.trim() ?? existing?.summary ?? '', mood, createdAt, updatedAt)
     insertOrGetTags(db, tags)
     replaceDocumentTags(db, id, tags)
     return getDocumentMetadata(db, path)!
@@ -992,7 +1034,7 @@ function assertPatchChanges(changes: readonly DocumentMetadataChange[]): void {
     if (!change || typeof change !== 'object' || !('field' in change)) {
       throw new DocumentMetadataError('INVALID_METADATA_CHANGE', 'invalid metadata field change')
     }
-    if (change.field !== 'title' && change.field !== 'summary' && change.field !== 'tags') {
+    if (change.field !== 'title' && change.field !== 'summary' && change.field !== 'tags' && change.field !== 'mood') {
       throw new DocumentMetadataError('INVALID_METADATA_CHANGE', 'unknown metadata field')
     }
     if (seen.has(change.field)) {
@@ -1011,20 +1053,28 @@ export function patchDocumentMetadataWithinTransaction(
   if (!path) throw new DocumentMetadataError('INVALID_METADATA_CHANGE', 'metadata path is required')
   assertPatchChanges(input.changes)
   const tagChange = input.changes.find((change): change is Extract<DocumentMetadataChange, { field: 'tags' }> => change.field === 'tags')
+  const moodChange = input.changes.find((change): change is Extract<DocumentMetadataChange, { field: 'mood' }> => change.field === 'mood')
   let normalizedTags: NormalizedTag[] | null = null
   if (tagChange) normalizedTags = normalizeTags(tagChange.values)
-  if (tagChange && (!Number.isSafeInteger(input.expectedUpdatedAt) || input.expectedUpdatedAt! < 0)) {
-    throw new DocumentMetadataError('INVALID_METADATA_CHANGE', 'expectedUpdatedAt is required for explicit tag changes')
+  if (moodChange) {
+    if (!isMoodMutationPath(path)) {
+      throw new DocumentMetadataError('INVALID_MOOD', 'mood is only available for canonical managed Diary dates')
+    }
+    assertCanonicalMood(moodChange.value)
+  }
+  if ((tagChange || moodChange) && (!Number.isSafeInteger(input.expectedUpdatedAt) || input.expectedUpdatedAt! < 0)) {
+    throw new DocumentMetadataError('INVALID_METADATA_CHANGE', 'expectedUpdatedAt is required for explicit tags or mood changes')
   }
 
   const current = getDocumentMetadata(db, path)
   if (!current) throw new DocumentMetadataError('METADATA_NOT_FOUND', `metadata does not exist: ${path}`)
-  if (tagChange && input.expectedUpdatedAt !== current.updatedAt) {
+  if ((tagChange || moodChange) && input.expectedUpdatedAt !== current.updatedAt) {
     throw new DocumentMetadataError('METADATA_VERSION_CONFLICT', 'metadata version is stale')
   }
 
   let nextTitle = current.title
   let nextSummary = current.summary
+  let nextMood = current.mood
   for (const change of input.changes) {
     if (change.field === 'title') {
       if (typeof change.value !== 'string' || !change.value.trim() || change.value.length > 200) {
@@ -1036,6 +1086,10 @@ export function patchDocumentMetadataWithinTransaction(
         throw new DocumentMetadataError('INVALID_METADATA_CHANGE', 'summary must be a string of at most 2000 characters')
       }
       nextSummary = change.value.trim()
+    } else if (change.field === 'mood') {
+      // The canonical value was validated before reading the live row. Keep
+      // null as the explicit clear operation and never normalize IDs here.
+      nextMood = change.value
     } else {
       // The normalized tag set is kept separately so an explicit request
       // can be compared by identity before associations are rewritten.
@@ -1046,7 +1100,8 @@ export function patchDocumentMetadataWithinTransaction(
   const summaryChanged = nextSummary !== current.summary
   const tagsChanged = normalizedTags !== null
     && !sameIdentitySet(currentTagIdentities(db, current.id), normalizedTags.map((tag) => tag.normalizedName))
-  if (!titleChanged && !summaryChanged && !tagsChanged) return current
+  const moodChanged = moodChange !== undefined && nextMood !== current.mood
+  if (!titleChanged && !summaryChanged && !tagsChanged && !moodChanged) return current
 
   let updatedAt: number
   try {
@@ -1058,8 +1113,8 @@ export function patchDocumentMetadataWithinTransaction(
     throw error
   }
   db.prepare(`
-    UPDATE documents SET title = ?, summary = ?, updated_at = ? WHERE id = ?
-  `).run(nextTitle, nextSummary, updatedAt, current.id)
+    UPDATE documents SET title = ?, summary = ?, mood = ?, updated_at = ? WHERE id = ?
+  `).run(nextTitle, nextSummary, nextMood, updatedAt, current.id)
   if (tagsChanged && normalizedTags) {
     applyDocumentTagsSetDiff(db, current.id, normalizedTags)
   }
@@ -1079,6 +1134,8 @@ export type RestoreDocumentMetadataFieldsCASInput = {
   title: string
   summary: string
   tags: string[]
+  /** Opaque historical value; omitted by v1 restores to preserve live mood. */
+  mood?: string | null
 }
 
 /**
@@ -1117,6 +1174,7 @@ export function restoreDocumentMetadataFieldsCASWithinTransaction(
     throw new DocumentMetadataError('INVALID_METADATA_CHANGE', 'summary must be a string of at most 2000 characters')
   }
   const tags = normalizeTags(input.tags)
+  const mood = normalizeStoredMood(input.mood === undefined ? current.mood : input.mood)
   const tagsChanged = !sameIdentitySet(
     currentTagIdentities(db, current.id),
     tags.map((tag) => tag.normalizedName),
@@ -1131,8 +1189,8 @@ export function restoreDocumentMetadataFieldsCASWithinTransaction(
     throw error
   }
   db.prepare(`
-    UPDATE documents SET title = ?, summary = ?, updated_at = ? WHERE id = ?
-  `).run(title, summary, updatedAt, current.id)
+    UPDATE documents SET title = ?, summary = ?, mood = ?, updated_at = ? WHERE id = ?
+  `).run(title, summary, mood, updatedAt, current.id)
   if (tagsChanged) applyDocumentTagsSetDiff(db, current.id, tags)
   return getDocumentMetadata(db, path)!
 }

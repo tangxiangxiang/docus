@@ -106,6 +106,26 @@ describe('Workspace PostSummary patches', () => {
     expect(findFile(result.tree, 'a')).toMatchObject({ title: 'New', mtime: 2 })
   })
 
+  it('preserves the managed Diary Mood and metadata version in replacement summaries', () => {
+    const incoming = post('diary/2026-08-24', {
+      mood: 'future-mood-v3',
+      documentId: 'diary-id',
+      metadataUpdatedAt: 42,
+    })
+    const result = applyPostSummaryToWorkspace(
+      [root([file('diary/2026-08-24')])],
+      [post('diary/2026-08-24', { mood: 'happy', documentId: 'diary-id', metadataUpdatedAt: 41 })],
+      incoming,
+    )
+
+    expect(result.posts[0]).toMatchObject({
+      path: 'diary/2026-08-24',
+      mood: 'future-mood-v3',
+      documentId: 'diary-id',
+      metadataUpdatedAt: 42,
+    })
+  })
+
   it('settles only patches that existed when an accepted refresh started', () => {
     const tracker = createLocalPostPatchTracker()
     tracker.record(post('a', { mtime: 1 }))

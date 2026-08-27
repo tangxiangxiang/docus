@@ -20,7 +20,9 @@ import {
   migrateVaultMetadata,
 } from '../metadataMigration.js'
 import { refreshTagIdentityHealth } from '../tagIdentityMigration.js'
-import { CONTENT_DIR, filePathFor } from '../paths.js'
+import { CONTENT_DIR, filePathFor, normalizeLogicalContentPath } from '../paths.js'
+import { classifyDiaryPath } from '../../shared/diaryProtocol.js'
+import { isMoodId, type MoodId } from '../../shared/diaryMood.js'
 import { bad, ensureMetadata, exists, metadataDb } from './shared.js'
 
 const metadataRoutes = new Hono()
@@ -108,6 +110,32 @@ metadataRoutes.patch('/api/metadata/documents/*', async (c) => {
   const body = await c.req.json().catch(() => null) as Record<string, unknown> | null
   if (!body || Array.isArray(body)) return bad(c, 'body required')
 
+  // Validate the Diary-only field before ensureMetadata() can create a live
+  // row for an otherwise legacy file. A rejected Mood request must not leave
+  // behind metadata on an ordinary or unmanaged Diary path.
+  let requestedMood: MoodId | null | undefined
+  let hasMoodChange = false
+  if (Object.hasOwn(body, 'mood')) {
+    hasMoodChange = true
+    const logicalPath = normalizeLogicalContentPath(documentPath)
+    if (logicalPath === null || classifyDiaryPath(logicalPath) !== 'managed') {
+      return c.json({
+        error: 'mood is only available for canonical managed Diary dates',
+        code: 'INVALID_MOOD',
+      }, 400)
+    }
+    if (body.mood === null) {
+      requestedMood = null
+    } else if (isMoodId(body.mood)) {
+      requestedMood = body.mood
+    } else {
+      return c.json({
+        error: 'mood must be one of the canonical Mood IDs or null',
+        code: 'INVALID_MOOD',
+      }, 400)
+    }
+  }
+
   const [raw, stat] = await Promise.all([fs.readFile(abs, 'utf8'), fs.stat(abs)])
   ensureMetadata(documentPath, raw, stat.mtimeMs)
   const changes: DocumentMetadataChange[] = []
@@ -127,6 +155,9 @@ metadataRoutes.patch('/api/metadata/documents/*', async (c) => {
     if (!Array.isArray(body.tags)) return bad(c, 'tags must be an array of at most 50 strings')
     changes.push({ field: 'tags', values: body.tags as string[] })
   }
+  if (hasMoodChange) {
+    changes.push({ field: 'mood', value: requestedMood! })
+  }
   if (changes.length === 0) return bad(c, 'at least one metadata field is required')
 
   let saved: ReturnType<typeof patchDocumentMetadata>
@@ -134,7 +165,9 @@ metadataRoutes.patch('/api/metadata/documents/*', async (c) => {
     saved = patchDocumentMetadata(metadataDb(), {
       path: documentPath,
       changes,
-      ...(Object.hasOwn(body, 'tags') ? { expectedUpdatedAt: body.expectedUpdatedAt as number } : {}),
+      ...((Object.hasOwn(body, 'tags') || hasMoodChange)
+        ? { expectedUpdatedAt: body.expectedUpdatedAt as number }
+        : {}),
     })
   } catch (error) {
     if (error instanceof DocumentMetadataError) {

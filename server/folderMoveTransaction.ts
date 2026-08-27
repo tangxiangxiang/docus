@@ -236,12 +236,22 @@ export function serializeMetadataSnapshot(snapshot: DocumentMetadataMutationSnap
 }
 
 export function reviveMetadataSnapshot(serialized: SerializedMetadataSnapshot): DocumentMetadataMutationSnapshot {
+  const documents = serialized.documents.map((row) => {
+    const revived = mapRow(row, decodeBufferValue)
+    // Durable folder journals written before D7.1 do not contain the new
+    // nullable column. The live schema supplies NULL for those rows, so
+    // normalize the legacy shape at the recovery boundary before ownership
+    // comparison or reinsertion.
+    return Object.prototype.hasOwnProperty.call(revived, 'mood')
+      ? revived
+      : { ...revived, mood: null }
+  })
   return {
     paths: [...serialized.paths],
     documentIds: [...serialized.documentIds],
     tagIds: [...serialized.tagIds],
     preexistingTagIds: [...serialized.preexistingTagIds],
-    documents: serialized.documents.map((row) => mapRow(row, decodeBufferValue)),
+    documents,
     tags: serialized.tags.map((row) => mapRow(row, decodeBufferValue)),
     documentTags: serialized.documentTags.map((row) => mapRow(row, decodeBufferValue)),
     embeddings: serialized.embeddings.map((row) => mapRow(row, decodeBufferValue)),
@@ -343,7 +353,8 @@ const SNAPSHOT_COLUMNS = new Set([
   'tags', 'documentTags', 'embeddings', 'migrations',
 ])
 const SNAPSHOT_VERSIONED_COLUMNS = new Set([...SNAPSHOT_COLUMNS, 'documentTagsVersion'])
-const DOCUMENT_COLUMNS = ['id', 'path', 'title', 'summary', 'created_at', 'updated_at'] as const
+const LEGACY_DOCUMENT_COLUMNS = ['id', 'path', 'title', 'summary', 'created_at', 'updated_at'] as const
+const DOCUMENT_COLUMNS = [...LEGACY_DOCUMENT_COLUMNS, 'mood'] as const
 const TAG_COLUMNS = ['id', 'name', 'normalized_name'] as const
 const LEGACY_DOCUMENT_TAG_COLUMNS = ['document_id', 'tag_id'] as const
 const V7_DOCUMENT_TAG_COLUMNS = ['association_id', 'document_id', 'tag_id'] as const
@@ -397,11 +408,17 @@ function isSerializedBufferMarker(value: unknown): boolean {
 }
 
 function isDocumentRow(row: unknown): row is Record<string, unknown> {
-  return hasExactColumns(row, DOCUMENT_COLUMNS)
+  // D7.1 adds the nullable live Mood field to the same documents owner.
+  // Existing durable folder journals predate that column and remain valid;
+  // SQLite supplies NULL when such a legacy row is restored.
+  const hasKnownColumns = hasExactColumns(row, DOCUMENT_COLUMNS)
+    || hasExactColumns(row, LEGACY_DOCUMENT_COLUMNS)
+  return hasKnownColumns
     && isNonEmptyString(row.id)
     && typeof row.path === 'string' && validRelativePath(row.path)
     && typeof row.title === 'string'
     && typeof row.summary === 'string'
+    && (row.mood === undefined || row.mood === null || typeof row.mood === 'string')
     && isSafeInteger(row.created_at)
     && isSafeInteger(row.updated_at)
 }
