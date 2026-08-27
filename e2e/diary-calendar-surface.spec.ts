@@ -2,6 +2,16 @@ import { expect, test, type APIRequestContext, type Page } from './fixtures/auth
 
 const TEST_TIME_ZONE = 'Asia/Shanghai'
 
+test.use({
+  timezoneId: TEST_TIME_ZONE,
+})
+
+async function expectDiaryTestTimeZone(page: Page): Promise<void> {
+  expect(
+    await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone),
+  ).toBe(TEST_TIME_ZONE)
+}
+
 function localCivilDate(): string {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: TEST_TIME_ZONE,
@@ -307,6 +317,7 @@ test('Calendar click on a missing future Diary is a browser-visible no-op', asyn
 })
 
 test('missing today and past dates require Mood before create and then open the native Diary', async ({ page, request }) => {
+  await expectDiaryTestTimeZone(page)
   const today = localCivilDate()
   const past = previousCivilDate(today)
   const dates = [today, past]
@@ -361,6 +372,7 @@ test('missing today and past dates require Mood before create and then open the 
 })
 
 test('cancelling Mood-first creation leaves a missing date untouched', async ({ page, request }) => {
+  await expectDiaryTestTimeZone(page)
   const date = localCivilDate()
   const path = diaryPath(date)
   const createMethods: string[] = []

@@ -730,6 +730,7 @@ describe('D7.3 Native Diary mood context removal', () => {
 describe('D7.3 Calendar mood integration wiring', () => {
   it('uses the bulk PostSummary projection and keeps Calendar mutation ownership in VaultView', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+      .replace(/\r\n/g, '\n')
     const calendarBranch = source.match(
       /<DiaryCalendarSurface[\s\S]*?\/>/,
     )?.[0]
