@@ -351,21 +351,21 @@ test('Calendar Home semantics and layout pass the full responsive matrix', async
         const dateButton = content?.querySelector<HTMLElement>(
           ':scope > [data-diary-day-content]',
         ) ?? null
-        const moodAction = content?.querySelector<HTMLElement>(
-          ':scope > [data-testid="diary-calendar-mood-action"]',
+        const moodButton = content?.querySelector<HTMLElement>(
+          ':scope > [data-testid="diary-calendar-mood"]',
         ) ?? null
 
         return {
           dateButtons: content?.querySelectorAll(':scope > [data-diary-day-content]').length ?? 0,
-          moodActions: content?.querySelectorAll(
-            ':scope > [data-testid="diary-calendar-mood-action"]',
+          moodButtons: content?.querySelectorAll(
+            ':scope > [data-testid="diary-calendar-mood"]',
           ).length ?? 0,
           sameParent: Boolean(
             dateButton &&
-            moodAction &&
-            dateButton.parentElement === moodAction.parentElement,
+            moodButton &&
+            dateButton.parentElement === moodButton.parentElement,
           ),
-          moodNestedInDate: Boolean(dateButton && moodAction && dateButton.contains(moodAction)),
+          moodNestedInDate: Boolean(dateButton && moodButton && dateButton.contains(moodButton)),
         }
       })
     })
@@ -373,8 +373,8 @@ test('Calendar Home semantics and layout pass the full responsive matrix', async
     expect(
       nestedControlAudit.every((cell) =>
         cell.dateButtons === 1 &&
-        cell.moodActions === 1 &&
-        cell.sameParent &&
+        cell.moodButtons <= 1 &&
+        (cell.moodButtons === 0 || cell.sameParent) &&
         !cell.moodNestedInDate,
       ),
     ).toBe(true)
@@ -775,14 +775,14 @@ test('ten mixed Calendar focus cycles remain stable without VCalendar runtime er
       } else {
         const dayBox = await day.boundingBox()
         if (!dayBox) throw new Error('Diary day button did not expose a bounding box')
-        // The D7.3 Mood action occupies the date button's top-left area. Use
-        // a lower center point so this lifecycle smoke activates the date
-        // button rather than the sibling Mood control.
+        // The post-closure Mood emoji sits below the date number. Use an
+        // upper-center point so this lifecycle smoke always activates the
+        // date owner rather than the optional sibling Mood control.
         await day.click({
           force: true,
           position: {
             x: dayBox.width / 2,
-            y: Math.max(2, dayBox.height - 4),
+            y: 4,
           },
         })
       }

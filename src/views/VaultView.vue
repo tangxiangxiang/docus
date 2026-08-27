@@ -1726,11 +1726,16 @@ async function updateDiaryCalendarMood(date: DiaryDate, mood: MoodId | null): Pr
   const path = diaryLogicalPathForDate(date)
   let post = posts.value.find((candidate) => candidate.path === path)
   if (mood === null && !post) return
+  const shouldPresentAfterMutation = !post
+  const presentationIntent = shouldPresentAfterMutation
+    ? diaryWorkspacePresentation.beginDateIntent()
+    : null
+  let dateResult: DiaryDateCommandResult | null = null
 
   diaryMoodBusy.value = true
   try {
     if (!post) {
-      const dateResult = await openDiaryDate(date)
+      dateResult = await openDiaryDate(date)
       if (dateResult.status !== 'opened' && dateResult.status !== 'created') return
       post = posts.value.find((candidate) => candidate.path === path)
       if (!post) {
@@ -1770,8 +1775,11 @@ async function updateDiaryCalendarMood(date: DiaryDate, mood: MoodId | null): Pr
     const result = await diaryMoodCommand.setMood(date, mood, expectedUpdatedAt)
     if (result.status === 'updated') {
       await onMetadataSaved(result.metadata)
-      diaryCalendarSurfaceRef.value?.closeMoodPicker()
+      diaryCalendarSurfaceRef.value?.closeMoodPicker(!shouldPresentAfterMutation)
       toast.success(t('mood.saved'))
+      if (dateResult && presentationIntent !== null) {
+        await presentDiaryDateResult(dateResult, presentationIntent)
+      }
     } else if (result.status === 'conflict' || result.status === 'not-found') {
       if (result.status === 'not-found') toast.info(t('mood.not_found'))
       await refreshAfterMoodRejection()
@@ -1799,6 +1807,13 @@ async function onDiaryDateSelected(date: DiaryDate): Promise<void> {
   diaryCalendarSurfaceRef.value?.closeMoodPicker(false)
   const intent = diaryWorkspacePresentation.beginDateIntent()
   const result: DiaryDateCommandResult = await openDiaryDate(date)
+  await presentDiaryDateResult(result, intent)
+}
+
+async function presentDiaryDateResult(
+  result: DiaryDateCommandResult,
+  intent: number,
+): Promise<void> {
   if (
     !diaryWorkspacePresentation.isDateIntentCurrent(intent)
     || !isDiaryScope.value

@@ -15,6 +15,17 @@ D7.4: `NOT STARTED`
 This document records the D7.3 Calendar integration implementation. It does
 not start D7.4.
 
+Post-closure Calendar UX revision: `REVIEW-READY`
+
+Post-closure Independent Review: `PENDING`
+
+Post-closure self-review findings: `P0 = 0`, `P1 = 0`, `P2 = 0`
+
+The post-closure revision starts from
+`7167487e4d2f89d2b5e67a0570f25efa05eac56d` and supersedes only the Calendar
+Mood presentation/creation interaction described below. Historical D7.3
+implementation and review records remain preserved.
+
 ## Baseline and implementation
 
 - Starting HEAD: `5d14967e2a1de829c084cf1cc6a08ade10cdcc3c`
@@ -43,10 +54,10 @@ about to become hidden. This is presentation cleanup only: it does not close
 the backing tab, change the route, change `activePath`, or alter the existing
 date command.
 
-The Mood marker remains a non-interactive, pointer-transparent element inside
-the date button at the lower-right. The sibling Mood action is now a separate
-upper-left affordance (`+` when unset and `✎` when set), so its hit box does
-not cover the marker. The date button remains the sole date-navigation owner.
+This was the first remediation's historical contract. The later post-closure
+UX revision replaces the separate marker plus `+`/`✎` action with one sibling
+Mood emoji button while preserving the non-nested DOM and the date button's
+navigation ownership.
 
 The remediation remains D7.3-only and does not start D7.4.
 
@@ -55,16 +66,28 @@ The remediation remains D7.3-only and does not start D7.4.
 D7.3 adds the Calendar presentation seam for the D7.1 metadata contract and
 the D7.2 native picker:
 
-- Calendar day content shows a non-interactive known Mood marker.
+- Calendar day content shows a known Mood as the interactive Mood button
+  directly below the date number.
 - Unknown stored Mood values remain opaque and are represented without
   inventing a catalog asset.
-- Each in-month date has a sibling Mood action; it is never nested inside the
+- A Mood button exists only when that Diary already has a known or unknown
+  Mood. Existing Diaries without Mood show no `+`/`✎` Calendar affordance.
+- The Mood emoji button is a sibling of, and is never nested inside, the
   VCalendar date button.
 - The date button remains the VCalendar date-navigation and
-  `date-selected(DiaryDate)` owner.
-- The Mood action only opens the Calendar-level picker and emits a
+  `date-selected(DiaryDate)` owner for existing Diaries and missing future
+  dates.
+- The Mood button only opens the Calendar-level picker and emits a
   `mood-change(DiaryDate, MoodId | null)` intent; it does not emit a date
   navigation event.
+- A missing today/past date opens the Mood picker before creation. Escape,
+  explicit close, or outside-pointer dismissal creates no Diary. A successful
+  selection delegates to the existing date command, obtains fresh bulk CAS,
+  writes Mood through `useDiaryMoodCommand`, and only then presents the native
+  Diary document.
+- Missing future dates keep the existing date-command guard and do not enter
+  the writable Mood-first flow. Existing future Diaries retain ordinary open
+  and native Mood editing behavior.
 - The Calendar owns one active `DiaryMoodPicker` presentation instance,
   teleported to `body`. It does not create one picker per cell.
 - Picker selection and clear stay open until VaultView receives the
@@ -89,12 +112,14 @@ Projection rules are:
 4. Duplicate summary anomalies use the newest valid metadata version, with a
    deterministic document-id tie-breaker.
 
-VaultView remains the mutation owner. It consumes the Calendar intent, uses
-the existing `openDiaryDate()` command for a missing today/past date, leaves a
-missing future date blocked by that command, and delegates the metadata write
-to `useDiaryMoodCommand.setMood()` with the current
-`metadataUpdatedAt` CAS value. Existing Diary files, including existing future
-dates, do not cause Calendar Mood selection to navigate or create a file.
+VaultView remains the mutation owner. For a missing today/past date, Mood
+selection starts one presentation intent, uses the existing `openDiaryDate()`
+command to establish the canonical backing document, refreshes/reads the
+current `metadataUpdatedAt`, delegates the write to
+`useDiaryMoodCommand.setMood()`, and transitions from Calendar Home to the
+native document only after that mutation succeeds. Calendar components still
+own no API, route, tab, create, or metadata authority. Existing Diary Mood
+selection, including an existing future Diary, does not navigate or create.
 
 An existing managed Diary day without a valid metadata version is disabled for
 Mood mutation rather than guessed or updated without CAS. Clear is not offered
@@ -103,19 +128,41 @@ for a missing day.
 ## DOM and accessibility boundary
 
 The VCalendar-provided `dayProps` and `dayEvents` are bound to the date button.
-The Mood action is a sibling button, so `button` elements are not nested and a
-Mood click cannot accidentally invoke date navigation. The Mood marker is
-visual/non-interactive and remains inside the date button's lower-right area;
-the sibling action is placed in the upper-left without overlapping that
-marker. The date button's accessible name includes Diary and known/unknown
-Mood information where available. The Mood action has a date-specific
-accessible label, `aria-haspopup`, and `aria-expanded` state.
+The Mood emoji is a sibling button, so `button` elements are not nested and a
+Mood click cannot accidentally invoke date navigation. Date and Mood hit areas
+remain distinct even though they read visually as `date` over `emoji`. The
+date button's accessible name includes Diary and known/unknown Mood information
+where available. The Mood button has a date-specific accessible label,
+`aria-haspopup`, and `aria-expanded` state.
+
+Calendar cells have no hover background, selection background/frame, or
+visible blue existence dot. Mouse focus leaves no persistent decoration.
+Keyboard-only `:focus-visible` outlines remain for both date and Mood buttons.
 
 The existing D7.2 picker remains the single 24-option, four-column by six-row
 radio grid with keyboard movement, focus-visible treatment, Enter/Space
 selection, Escape close, clear, and the established responsive Teleport
 positioning. Calendar integration does not add a second registry or picker
 implementation.
+
+## Post-closure UX revision validation
+
+The revision is covered by the final production contract rather than source
+shape alone:
+
+- component/Vault focused validation: **3 files, 67 tests passed**;
+- Calendar + responsive browser validation: **16 tests passed**;
+- full unit/integration validation: **235 files, 3521 tests passed, 2
+  skipped**;
+- client, server, and aggregate typecheck: **PASS**;
+- production build: **PASS**.
+
+Browser coverage proves that an existing Diary without Mood has no Calendar
+Mood button; an existing Mood emoji opens the one picker without navigation;
+missing today/past cancellation creates nothing; successful Mood-first intent
+creates, writes Mood, and presents the native Diary; missing future remains a
+no-op; blue dots and hover backgrounds are not visually rendered; and the
+picker remains responsive without covering month navigation.
 
 ## Calendar lifecycle and compatibility
 
@@ -286,6 +333,8 @@ D7.2                   = REVIEW-CLOSED
 
 D7.3                   = REVIEW-CLOSED
 D7.3 Independent Review = PASS (`P0 = 0`, `P1 = 0`, `P2 = 0`)
+D7.3 post-closure UX revision = REVIEW-READY
+D7.3 UX revision Independent Review = PENDING
 
 D7.4                   = NOT STARTED
 D7 Mood production     = NOT STARTED

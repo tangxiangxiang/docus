@@ -160,8 +160,8 @@ describe('DiaryCalendarSurface', () => {
     })
     await flushPromises()
 
-    expect(dayCell(wrapper, '2026-08-24').get('.diary-calendar-mood-marker img').attributes('src')).toBe('/emoji/开心.svg')
-    await dayCell(wrapper, '2026-08-24').get('[data-testid="diary-calendar-mood-action"]').trigger('click')
+    expect(dayCell(wrapper, '2026-08-24').get('[data-testid="diary-calendar-mood"] img').attributes('src')).toBe('/emoji/开心.svg')
+    await dayCell(wrapper, '2026-08-24').get('[data-testid="diary-calendar-mood"]').trigger('click')
     await flushPromises()
     const pickerElement = document.body.querySelector('[data-testid="diary-mood-picker"]')
     expect(pickerElement).not.toBeNull()

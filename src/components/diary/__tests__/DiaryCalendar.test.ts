@@ -164,7 +164,7 @@ describe('DiaryCalendar presentation adapter', () => {
     expect(dayCell(wrapper, '2026-08-25').get('[data-diary-day-content]').attributes('aria-disabled')).toBe('false')
   })
 
-  it('renders mood markers and one sibling picker action without nesting interactive buttons', async () => {
+  it('uses the Mood emoji itself as the sibling picker control without plus/edit affordances', async () => {
     const wrapper = mountCalendar([
       {
         ...day('2026-08-24', true),
@@ -184,16 +184,17 @@ describe('DiaryCalendar presentation adapter', () => {
     const knownCell = dayCell(wrapper, '2026-08-24')
     const unknownCell = dayCell(wrapper, '2026-08-25')
     const emptyCell = dayCell(wrapper, '2026-08-26')
-    expect(knownCell.get('.diary-calendar-mood-marker img').attributes('src')).toBe('/emoji/开心.svg')
-    expect(unknownCell.get('.diary-calendar-mood-marker').text()).toBe('?')
-    expect(emptyCell.find('.diary-calendar-mood-marker').exists()).toBe(false)
-    expect(knownCell.get('.diary-calendar-mood-marker').element.closest('[data-diary-day-content]')).not.toBeNull()
-    expect(knownCell.find('[data-testid="diary-calendar-mood-action"] img').exists()).toBe(false)
-    expect(knownCell.get('[data-testid="diary-calendar-mood-action"]').text()).toContain('✎')
+    expect(knownCell.get('[data-testid="diary-calendar-mood"] img').attributes('src')).toBe('/emoji/开心.svg')
+    expect(unknownCell.get('[data-testid="diary-calendar-mood"]').text()).toBe('?')
+    expect(emptyCell.find('[data-testid="diary-calendar-mood"]').exists()).toBe(false)
+    expect(knownCell.get('[data-testid="diary-calendar-mood"]').element.parentElement)
+      .toBe(knownCell.get('[data-diary-day-content]').element.parentElement)
+    expect(knownCell.text()).not.toContain('+')
+    expect(knownCell.text()).not.toContain('✎')
     expect(wrapper.findAll('button button')).toHaveLength(0)
-    expect(knownCell.get('[data-testid="diary-calendar-mood-action"]').attributes('aria-label')).toContain('Happy')
+    expect(knownCell.get('[data-testid="diary-calendar-mood"]').attributes('aria-label')).toContain('Happy')
 
-    await knownCell.get('[data-testid="diary-calendar-mood-action"]').trigger('click')
+    await knownCell.get('[data-testid="diary-calendar-mood"]').trigger('click')
     await flushPromises()
     const pickerElement = document.body.querySelector('[data-testid="diary-mood-picker"]')
     expect(pickerElement).not.toBeNull()
@@ -220,14 +221,14 @@ describe('DiaryCalendar presentation adapter', () => {
     await flushPromises()
     const container = wrapper.get('.vc-container').element
 
-    expect(dayCell(wrapper, '2026-08-24').get('.diary-calendar-mood-marker img').attributes('src')).toBe('/emoji/开心.svg')
+    expect(dayCell(wrapper, '2026-08-24').get('[data-testid="diary-calendar-mood"] img').attributes('src')).toBe('/emoji/开心.svg')
     await wrapper.setProps({ days: [{
       ...day('2026-08-24', true),
       mood: 'sad',
       metadataUpdatedAt: 2,
     }] })
     await flushPromises()
-    expect(dayCell(wrapper, '2026-08-24').get('.diary-calendar-mood-marker img').attributes('src')).toBe('/emoji/伤心.svg')
+    expect(dayCell(wrapper, '2026-08-24').get('[data-testid="diary-calendar-mood"] img').attributes('src')).toBe('/emoji/伤心.svg')
     expect(wrapper.get('.vc-container').element).toBe(container)
   })
 
@@ -267,6 +268,41 @@ describe('DiaryCalendar presentation adapter', () => {
     expect(payload).toBe('2026-08-24')
     expect(payload).not.toBeInstanceOf(Date)
     expect(String(payload)).not.toMatch(/[T/\\]|\.md/)
+  })
+
+  it('opens Mood first for a missing today/past date and cancellation creates no intent', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 7, 27, 12, 0, 0))
+    const wrapper = mountCalendar([])
+    await flushPromises()
+
+    await wrapper.get('[data-date="2026-08-24"]').trigger('click')
+    await flushPromises()
+    expect(document.body.querySelector('[data-testid="diary-mood-picker"]')).not.toBeNull()
+    expect(wrapper.emitted('date-selected')).toBeUndefined()
+    expect(wrapper.emitted('mood-change')).toBeUndefined()
+
+    await new DOMWrapper(document.body.querySelector('[data-testid="diary-mood-picker"]')!)
+      .get('[data-testid="diary-mood-picker-close"]')
+      .trigger('click')
+    await flushPromises()
+    expect(document.body.querySelector('[data-testid="diary-mood-picker"]')).toBeNull()
+    expect(wrapper.emitted('date-selected')).toBeUndefined()
+    expect(wrapper.emitted('mood-change')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('keeps a missing future date on the existing date-command guard path', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 7, 27, 12, 0, 0))
+    const wrapper = mountCalendar([])
+    await flushPromises()
+
+    await wrapper.get('[data-date="2026-08-28"]').trigger('click')
+    await flushPromises()
+    expect(document.body.querySelector('[data-testid="diary-mood-picker"]')).toBeNull()
+    expect(wrapper.emitted('date-selected')).toEqual([['2026-08-28']])
+    wrapper.unmount()
   })
 
   it('keeps the custom day-content seam, click behavior, and non-visual marker meaning', async () => {
@@ -309,7 +345,7 @@ describe('DiaryCalendar presentation adapter', () => {
     ])
     await flushPromises()
 
-    await dayCell(wrapper, '2026-08-24').get('[data-testid="diary-calendar-mood-action"]').trigger('click')
+    await dayCell(wrapper, '2026-08-24').get('[data-testid="diary-calendar-mood"]').trigger('click')
     await flushPromises()
     expect(document.body.querySelector('[data-testid="diary-mood-picker"]')).not.toBeNull()
 
@@ -318,7 +354,7 @@ describe('DiaryCalendar presentation adapter', () => {
     expect(document.body.querySelector('[data-testid="diary-mood-picker"]')).toBeNull()
     expect(wrapper.emitted('date-selected')).toEqual([['2026-08-25']])
 
-    await dayCell(wrapper, '2026-08-24').get('[data-testid="diary-calendar-mood-action"]').trigger('click')
+    await dayCell(wrapper, '2026-08-24').get('[data-testid="diary-calendar-mood"]').trigger('click')
     await flushPromises()
     expect(document.body.querySelector('[data-testid="diary-mood-picker"]')).not.toBeNull()
 

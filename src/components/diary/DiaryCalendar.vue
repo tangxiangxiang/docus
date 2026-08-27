@@ -13,6 +13,7 @@ import {
   diaryCalendarMonthFromPage,
   diaryDateFromCalendarDay,
   hasDiaryCalendarAttribute,
+  localCivilToday,
   normalizeDiaryDays,
   type DiaryCalendarDay,
   type DiaryCalendarMonth,
@@ -99,7 +100,7 @@ function moodLabelForDay(day: CalendarDayLike): string {
   return typeof mood === 'string' ? t('mood.unknown') : t('mood.not_set')
 }
 
-function moodActionLabel(day: CalendarDayLike): string {
+function moodButtonLabel(day: CalendarDayLike): string {
   const date = diaryDateFromCalendarDay(day) ?? day.label ?? t('diary.calendar.day')
   return t('diary.calendar.mood_action', {
     date,
@@ -111,13 +112,17 @@ function isValidMetadataVersion(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 }
 
-function moodActionDisabled(day: CalendarDayLike): boolean {
+function moodButtonDisabled(day: CalendarDayLike): boolean {
   if (props.loading || props.moodBusy) return true
   const data = diaryDayForCalendarDay(day)
-  // A missing day is a valid entry point: VaultView owns the existing
-  // today/past create-or-open command after the user chooses a mood. An
-  // existing file without a CAS version is not safe to mutate from here.
+  // Existing files without a CAS version are not safe to mutate from the
+  // Calendar. Missing today/past dates enter through the date button's
+  // Mood-first flow and obtain fresh CAS only after canonical creation.
   return Boolean(data?.hasDiary && !isValidMetadataVersion(data.metadataUpdatedAt))
+}
+
+function hasDiaryForDay(day: CalendarDayLike): boolean {
+  return diaryDayForCalendarDay(day)?.hasDiary === true
 }
 
 function pickerElement(): HTMLElement | null {
@@ -141,12 +146,34 @@ function updateMoodPickerPosition(): void {
   const pickerHeight = pickerRect.height || picker.offsetHeight
   const maxLeft = Math.max(inset, viewportWidth - pickerWidth - inset)
   const maxTop = Math.max(inset, viewportHeight - pickerHeight - inset)
-  const left = Math.min(Math.max(triggerRect.right - pickerWidth, inset), maxLeft)
+  const calendarHeaderClearance = Math.min(64, maxTop)
   const belowTop = triggerRect.bottom + gap
   const aboveTop = triggerRect.top - pickerHeight - gap
-  const top = belowTop > maxTop && aboveTop >= inset
-    ? aboveTop
-    : Math.min(Math.max(belowTop, inset), maxTop)
+  const canPlaceBelow = belowTop <= maxTop
+  const canPlaceAbove = aboveTop >= calendarHeaderClearance
+  let left = Math.min(Math.max(triggerRect.right - pickerWidth, inset), maxLeft)
+  let top: number
+
+  if (canPlaceBelow) {
+    top = belowTop
+  } else if (canPlaceAbove) {
+    top = aboveTop
+  } else {
+    // Short viewports may not have enough vertical room above or below a
+    // day cell. Prefer a side placement so the picker does not cover the
+    // month title/navigation controls that remain valid outside targets.
+    const rightLeft = triggerRect.right + gap
+    const leftLeft = triggerRect.left - pickerWidth - gap
+    left = rightLeft + pickerWidth <= viewportWidth - inset
+      ? rightLeft
+      : leftLeft >= inset
+        ? leftLeft
+        : left
+    top = Math.min(
+      Math.max(triggerRect.top + (triggerRect.height - pickerHeight) / 2, calendarHeaderClearance),
+      maxTop,
+    )
+  }
 
   moodPickerStyle.value = {
     top: `${Math.round(top)}px`,
@@ -180,12 +207,7 @@ function closeMoodPicker(restoreFocus = true): void {
   if (restoreFocus) void nextTick(() => trigger?.focus())
 }
 
-function openMoodPicker(day: CalendarDayLike, event: MouseEvent): void {
-  if (moodActionDisabled(day)) return
-  const date = diaryDateFromCalendarDay(day)
-  const trigger = event.currentTarget
-  if (!date || !(trigger instanceof HTMLButtonElement)) return
-
+function openMoodPickerForDate(date: DiaryDate, trigger: HTMLButtonElement): void {
   activeMoodDate.value = date
   activeMoodTrigger.value = trigger
   moodPickerStyle.value = { top: '12px', left: '12px' }
@@ -194,6 +216,15 @@ function openMoodPicker(day: CalendarDayLike, event: MouseEvent): void {
     moodPickerRef.value?.focusInitial()
     scheduleMoodPickerPosition()
   })
+}
+
+function openMoodPicker(day: CalendarDayLike, event: MouseEvent): void {
+  if (moodButtonDisabled(day)) return
+  const date = diaryDateFromCalendarDay(day)
+  const trigger = event.currentTarget
+  if (!date || !(trigger instanceof HTMLButtonElement)) return
+
+  openMoodPickerForDate(date, trigger)
 }
 
 function emitMoodChange(mood: MoodId | null): void {
@@ -239,6 +270,21 @@ function onCalendarPagesUpdate(pages: unknown): void {
 function onDayClick(day: CalendarDayLike): void {
   const date = diaryDateFromCalendarDay(day)
   if (!date) return
+
+  // A missing today/past Diary requires a Mood choice before the existing
+  // date command may create it. Opening and dismissing this picker is purely
+  // presentational and therefore cannot create a document. Missing future
+  // dates continue through the existing command so its guard remains the
+  // single authority for the browser-visible no-op.
+  const today = localCivilToday()
+  if (!hasDiaryForDay(day) && today && date <= today) {
+    const trigger = calendarRoot.value?.querySelector<HTMLButtonElement>(
+      `[data-diary-day-content][data-date="${date}"]`,
+    )
+    if (trigger) openMoodPickerForDate(date, trigger)
+    return
+  }
+
   // Date navigation leaves the current Mood picker context. The parent may
   // keep Calendar mounted while the native document surface takes over, so
   // close without restoring focus to the soon-to-be-hidden trigger.
@@ -325,18 +371,11 @@ defineExpose({ focusDate, closeMoodPicker })
               v-on="dayEvents"
               type="button"
               data-diary-day-content
+              :class="{ 'has-mood': moodDefinitionForDay(day) || hasUnknownMoodForDay(day) }"
               :data-date="diaryDateFromCalendarDay(day) ?? undefined"
               :aria-label="dayAriaLabel(day, attributes)"
             >
               <span class="diary-calendar-day-number">{{ day.label }}</span>
-              <span
-                v-if="moodDefinitionForDay(day)"
-                class="diary-calendar-mood-marker"
-                aria-hidden="true"
-              >
-                <img :src="assetUrl(moodDefinitionForDay(day)!.asset)" alt="">
-              </span>
-              <span v-else-if="hasUnknownMoodForDay(day)" class="diary-calendar-mood-marker diary-calendar-mood-marker-unknown" aria-hidden="true">?</span>
               <span v-if="hasDiaryCalendarAttribute(attributes)" class="diary-calendar-visually-hidden">
                 {{ t('diary.calendar.has_diary') }}
               </span>
@@ -345,18 +384,26 @@ defineExpose({ focusDate, closeMoodPicker })
               </span>
             </button>
             <button
+              v-if="moodDefinitionForDay(day) || hasUnknownMoodForDay(day)"
               type="button"
-              class="diary-calendar-mood-action"
-              data-testid="diary-calendar-mood-action"
+              class="diary-calendar-mood"
+              :class="{ 'diary-calendar-mood-unknown': hasUnknownMoodForDay(day) }"
+              data-testid="diary-calendar-mood"
               :data-date="diaryDateFromCalendarDay(day) ?? undefined"
-              :aria-label="moodActionLabel(day)"
+              :aria-label="moodButtonLabel(day)"
               aria-haspopup="dialog"
               :aria-expanded="moodPickerOpen && activeMoodDate === diaryDateFromCalendarDay(day) ? 'true' : 'false'"
-              :disabled="moodActionDisabled(day)"
+              :disabled="moodButtonDisabled(day)"
               @click.stop="openMoodPicker(day, $event)"
               @keydown.stop
             >
-              <span aria-hidden="true">{{ moodDefinitionForDay(day) ? '✎' : '+' }}</span>
+              <img
+                v-if="moodDefinitionForDay(day)"
+                :src="assetUrl(moodDefinitionForDay(day)!.asset)"
+                alt=""
+                aria-hidden="true"
+              >
+              <span v-else aria-hidden="true">?</span>
             </button>
           </div>
         </template>
@@ -571,8 +618,16 @@ defineExpose({ focusDate, closeMoodPicker })
   min-height: 40px;
 }
 
-.diary-calendar-host :deep(.vc-day-content:hover) {
-  background: var(--bg-soft);
+.diary-calendar-host :deep(.vc-day-content:hover),
+.diary-calendar-host :deep(.vc-day-content:focus),
+.diary-calendar-host :deep(.vc-day-content:active),
+.diary-calendar-host :deep(.vc-day-content[aria-selected='true']) {
+  background: transparent;
+  box-shadow: none;
+}
+
+.diary-calendar-host :deep(.vc-dot) {
+  display: none;
 }
 
 .diary-calendar-day-content {
@@ -585,79 +640,73 @@ defineExpose({ focusDate, closeMoodPicker })
 .diary-calendar-day-content > [data-diary-day-content] {
   position: absolute;
   inset: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.diary-calendar-day-content > [data-diary-day-content]:focus {
+  outline: none;
 }
 
 .diary-calendar-day-number {
+  display: inline-block;
   position: relative;
   z-index: 1;
 }
 
-.diary-calendar-mood-marker {
-  position: absolute;
-  right: 9px;
-  bottom: 8px;
-  z-index: 1;
-  display: inline-flex;
-  width: 18px;
-  height: 18px;
-  align-items: center;
-  justify-content: center;
-  pointer-events: none;
+[data-diary-day-content].has-mood .diary-calendar-day-number {
+  transform: translateY(-10px);
 }
 
-.diary-calendar-mood-marker img {
-  width: 18px;
-  height: 18px;
+.diary-calendar-mood {
+  position: absolute;
+  left: 50%;
+  top: calc(50% + 12px);
+  z-index: 2;
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  transform: translate(-50%, -50%);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--vs-text-2, #667085);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.diary-calendar-mood img {
+  width: 21px;
+  height: 21px;
   object-fit: contain;
 }
 
-.diary-calendar-mood-marker-unknown {
-  border: 1px solid var(--vs-text-3, #98a2b3);
-  border-radius: 50%;
-  color: var(--vs-text-2, #667085);
-  font-size: 0.7rem;
-  font-weight: 700;
-}
-
-.diary-calendar-mood-action {
-  position: absolute;
-  top: 4px;
-  left: 4px;
-  z-index: 2;
-  display: inline-flex;
-  width: 30px;
-  height: 30px;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
+.diary-calendar-mood:hover:not(:disabled),
+.diary-calendar-mood:focus,
+.diary-calendar-mood:active {
   border: 0;
-  border-radius: 50%;
   background: transparent;
-  color: var(--vs-text-3, #98a2b3);
-  cursor: pointer;
-  font: inherit;
-  font-size: 1rem;
-  line-height: 1;
-  opacity: 0.72;
+  outline: none;
+  box-shadow: none;
 }
 
-.diary-calendar-mood-action:hover:not(:disabled) {
-  color: var(--vs-text-1, #1b2433);
-  opacity: 1;
-}
-
-.diary-calendar-mood-action:focus-visible {
+.diary-calendar-mood:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-  opacity: 1;
 }
 
-.diary-calendar-mood-action:disabled {
+.diary-calendar-mood:disabled {
   cursor: not-allowed;
   opacity: 0.38;
 }
 
-.diary-calendar-mood-action:disabled:focus-visible {
+.diary-calendar-mood:disabled:focus-visible {
   outline: none;
 }
 
@@ -761,23 +810,19 @@ defineExpose({ focusDate, closeMoodPicker })
     min-height: 44px;
   }
 
-  .diary-calendar-mood-action {
-    top: 1px;
-    left: 1px;
-    width: 28px;
-    height: 28px;
+  .diary-calendar-mood {
+    top: calc(50% + 10px);
+    width: 24px;
+    height: 24px;
   }
 
-  .diary-calendar-mood-marker {
-    right: 1px;
-    bottom: 1px;
-    width: 14px;
-    height: 14px;
+  .diary-calendar-mood img {
+    width: 18px;
+    height: 18px;
   }
 
-  .diary-calendar-mood-marker img {
-    width: 14px;
-    height: 14px;
+  [data-diary-day-content].has-mood .diary-calendar-day-number {
+    transform: translateY(-8px);
   }
 
   .diary-calendar-host :deep(.vc-weeks) {
