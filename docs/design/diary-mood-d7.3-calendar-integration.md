@@ -23,6 +23,31 @@ The implementation commit contains only Calendar/Mood integration code, tests,
 and the focused browser regression. No closed D7 PRD or Implementation Plan
 was rewritten.
 
+## Focused remediation after the first independent review
+
+The first independent review found two Calendar presentation findings:
+
+1. The body-teleported Mood picker could survive a date or month context
+   change while the keep-mounted Calendar was still alive.
+2. The Mood action's larger hit area and duplicated Mood artwork could fully
+   cover the non-interactive Mood marker, weakening the `marker != action`
+   contract.
+
+Remediation commit: `b0f8cdafcfacd7f1f2135f552ad125b6dcf606f0`
+
+The remediation closes the picker with `restoreFocus = false` before date
+navigation, before month navigation, and synchronously when Calendar Home is
+about to become hidden. This is presentation cleanup only: it does not close
+the backing tab, change the route, change `activePath`, or alter the existing
+date command.
+
+The Mood marker remains a non-interactive, pointer-transparent element inside
+the date button at the lower-right. The sibling Mood action is now a separate
+upper-left affordance (`+` when unset and `✎` when set), so its hit box does
+not cover the marker. The date button remains the sole date-navigation owner.
+
+The remediation remains D7.3-only and does not start D7.4.
+
 ## Scope delivered
 
 D7.3 adds the Calendar presentation seam for the D7.1 metadata contract and
@@ -78,9 +103,11 @@ for a missing day.
 The VCalendar-provided `dayProps` and `dayEvents` are bound to the date button.
 The Mood action is a sibling button, so `button` elements are not nested and a
 Mood click cannot accidentally invoke date navigation. The Mood marker is
-visual/non-interactive; the date button's accessible name includes Diary and
-known/unknown Mood information where available. The Mood action has a
-date-specific accessible label, `aria-haspopup`, and `aria-expanded` state.
+visual/non-interactive and remains inside the date button's lower-right area;
+the sibling action is placed in the upper-left without overlapping that
+marker. The date button's accessible name includes Diary and known/unknown
+Mood information where available. The Mood action has a date-specific
+accessible label, `aria-haspopup`, and `aria-expanded` state.
 
 The existing D7.2 picker remains the single 24-option, four-column by six-row
 radio grid with keyboard movement, focus-visible treatment, Enter/Space
@@ -120,7 +147,7 @@ npm exec vitest run \
   src/composables/diary/__tests__/useDiaryMoodCommand.test.ts
 ```
 
-Result: **10 test files, 124 tests passed**.
+Original implementation result: **10 test files, 124 tests passed**.
 
 The focused tests cover:
 
@@ -136,16 +163,32 @@ The focused tests cover:
 - existing D7.1/D7.2 Calendar, picker, date-command, and Mood-command
   regressions.
 
+Focused remediation result: **10 test files, 125 tests passed**. The added
+component regression opens the Teleport picker and then changes both the date
+and the month, proving that the old picker context is cleared before either
+Calendar transition completes. It also verifies that the known marker remains
+inside the date button and that the action uses the separate edit affordance.
+
 Calendar browser regression:
 
 ```text
 npm exec -- playwright test e2e/diary-calendar-surface.spec.ts
 ```
 
-Result: **4 tests passed**. The new browser case uses a real existing Diary to
-verify the single picker, 24 radios, no nested buttons, Mood save and clear,
-no `/api/diary/dates` request, no date navigation, unchanged `/vault` URL, and
-no page/console errors.
+Original implementation result: **4 tests passed**.
+
+Focused remediation result: **8 tests passed**. In addition to the original
+coverage, the browser suite now verifies:
+
+- picker open → existing Diary date navigation closes the picker before the
+  Calendar Home is hidden;
+- picker open → month navigation closes the picker;
+- missing today and past dates use the existing `openDiaryDate()` command and
+  create exactly through the existing Diary-date endpoint;
+- a missing future date remains uncreated and the picker remains available
+  until the user closes it; and
+- known marker/action bounding boxes are disjoint at 1280px, 375px, and
+  320px widths.
 
 Existing native Diary lifecycle browser regression:
 
@@ -162,7 +205,8 @@ Full unit validation:
 npm run test:unit
 ```
 
-Result: **235 test files passed; 3518 tests passed; 2 skipped**. The first
+Current remediation result: **235 test files passed; 3519 tests passed; 2
+skipped**. The first
 sandboxed attempt was limited by local `listen EPERM` errors in unrelated
 HTTP/IPC crash-fixture tests; the same command was rerun with the repository's
 permitted elevated local test environment and passed. This is not a feature
@@ -175,6 +219,19 @@ Typecheck and build:
 - `npm run build` — PASS
 
 `git diff --check` before the implementation commit: PASS.
+
+## Review history
+
+Initial Independent Review: **FAIL** (`P0 = 0`, `P1 = 2`, `P2 = 0`):
+
+- P1: keep-mounted Calendar context changes could leave a stale body-teleported
+  picker open;
+- P1: the Mood action could visually and geometrically occlude the non-
+  interactive marker.
+
+Focused remediation self-review: **PASS** (`P0 = 0`, `P1 = 0`, `P2 = 0`).
+
+Independent re-review: **PENDING**.
 
 ## Scope audit
 
@@ -196,6 +253,12 @@ No `server/**`, `shared/**`, Calendar dependency/version, package manifest,
 lockfile, or new dependency changed. No D7.4/UI phase was started; D7.3 does
 not add Mood statistics, custom icons, multi-select, or a new Reader/Editor
 surface.
+
+The focused remediation commit changed five files: the Calendar adapter,
+VaultView presentation wiring, their focused tests, and the Calendar browser
+regression. It did not change server/shared contracts, the Mood registry,
+Calendar projection, Reader/Editor lifecycle, package manifests, lockfiles, or
+dependencies.
 
 ## Lifecycle state
 
