@@ -62,13 +62,12 @@ import { useDiaryMoodCommand } from '../composables/diary/useDiaryMoodCommand'
 import { useDiaryWorkspacePresentation } from '../composables/diary/useDiaryWorkspacePresentation'
 import { localCivilToday } from '../components/diary/diaryCalendarAdapter'
 import { resolveNativeDiaryMoodContext } from '../components/diary/diaryMoodContext'
-import { diaryLogicalPathForDate, type DiaryDate } from '../../shared/diaryProtocol'
+import { classifyDiaryPath, diaryLogicalPathForDate, type DiaryDate } from '../../shared/diaryProtocol'
 import type { MoodId } from '../../shared/diaryMood'
 import { handleDiaryHomeKeydown } from './diaryHomeKeyboard'
 import FileTree from '../components/vault/FileTree.vue'
 import DiaryWorkspace from '../components/diary/DiaryWorkspace.vue'
 import DiaryCalendarSurface from '../components/diary/DiaryCalendarSurface.vue'
-import DiaryMoodContextAction from '../components/diary/DiaryMoodContextAction.vue'
 import TagPanel from '../components/vault/TagPanel.vue'
 import TagManagementPanel from '../components/vault/TagManagementPanel.vue'
 import ReadingPane from '../components/vault/ReadingPane.vue'
@@ -191,7 +190,7 @@ const { startDrag } = useSplitterDrag({
 const rightRailVisible = computed(() => !rightRailCollapsed.value)
 // Side-panel filters are temporary view state. Keep the Files value here so
 // switching to Tags or History can unmount FileTree without losing it.
-const filesFilter = ref('')
+const filesFilter = useStorage('docus.file-tree.filter', '')
 const tagsFilter = ref('')
 /* The splitter is a grid child only when the rail is visible. In the
    collapsed state the chevron affordance is rendered as an absolutely-
@@ -214,7 +213,6 @@ const emptyActions = computed(() => [
 const vaultRef = shallowRef<HTMLElement | null>(null)
 const paletteRef = ref<InstanceType<typeof CommandPalette> | null>(null)
 const editorTabsRef = ref<InstanceType<typeof EditorTabs> | null>(null)
-const diaryMoodContextRef = ref<InstanceType<typeof DiaryMoodContextAction> | null>(null)
 const fileTreeRef = ref<InstanceType<typeof FileTree> | null>(null)
 const diaryCalendarSurfaceRef = ref<{
   focusDate: (date: DiaryDate) => boolean
@@ -1638,10 +1636,49 @@ const {
 // transition synchronously unmounts its Calendar. D6.1 moves visibility to
 // the Diary presentation owner while preserving this scope-only mount rule.
 const isDiaryCalendarMounted = computed(() => isDiaryScope.value)
-const isDiaryPresentationPrimary = computed(() => isDiaryCalendarMode.value)
-const diaryExactPathFilter = computed(() => (
-  isDiaryDocumentMode.value ? backingPath.value : null
+const hasOpenDiaryDocument = computed(() => workspaceTabs.value.some((tab) => (
+  tab.kind === 'document' && classifyDiaryPath(tab.documentPath) === 'managed'
+)))
+const isDiaryCalendarVisible = computed(() => (
+  isDiaryCalendarMode.value && !hasOpenDiaryDocument.value
 ))
+const isDiaryPresentationPrimary = computed(() => isDiaryCalendarVisible.value)
+const diaryExactPathFilter = computed(() => {
+  if (!isDiaryDocumentMode.value || !backingPath.value) return null
+
+  // The date is seeded into the shared FileTree query when entering a Diary
+  // document, but it must stop being an exact-path constraint as soon as the
+  // user edits that query. This keeps the input a normal FileTree search.
+  const diaryDate = backingPath.value.split('/').at(-1)
+  return filesFilter.value === diaryDate ? backingPath.value : null
+})
+const diaryFilterSeed = ref('')
+
+// Keep the ordinary FileTree search input useful in the Diary context. Seed
+// it only when entering/leaving the Diary scope; it is user-owned afterwards
+// and must not change when a file or another Diary tab is clicked.
+watch(isDiaryScope, (inDiaryScope) => {
+  if (!inDiaryScope) {
+    diaryFilterSeed.value = ''
+    filesFilter.value = ''
+    return
+  }
+  if (!filesFilter.value && classifyDiaryPath(activePath.value) === 'managed') {
+    const date = activePath.value!.split('/').at(-1) ?? ''
+    diaryFilterSeed.value = date
+    filesFilter.value = date
+  }
+}, { immediate: true })
+watch(selectedDiaryDate, (date) => {
+  if (!isDiaryScope.value || !date) return
+  // Follow Calendar date navigation only while the query still contains the
+  // last system-seeded date. Once the user edits it, the FileTree query is
+  // fully user-owned and must remain untouched.
+  if (!filesFilter.value || filesFilter.value === diaryFilterSeed.value) {
+    diaryFilterSeed.value = date
+    filesFilter.value = date
+  }
+})
 
 const nativeMoodExcludedBySurface = computed(() => Boolean(
   isDiaryPresentationPrimary.value
@@ -1654,7 +1691,7 @@ const nativeMoodExcludedBySurface = computed(() => Boolean(
 // Teleport picker is presentation-local, however, so any transition away
 // from Calendar Home must close that context without trying to restore focus
 // to a trigger that is about to be hidden.
-watch(isDiaryCalendarMode, (visible, wasVisible) => {
+watch(isDiaryCalendarVisible, (visible, wasVisible) => {
   if (wasVisible && !visible) diaryCalendarSurfaceRef.value?.closeMoodPicker(false)
 }, { flush: 'sync' })
 
@@ -1805,6 +1842,11 @@ async function closeDiaryPresentation(): Promise<void> {
 
 async function onDiaryDateSelected(date: DiaryDate): Promise<void> {
   diaryCalendarSurfaceRef.value?.closeMoodPicker(false)
+  // A Calendar date click is an explicit navigation intent, so keep the
+  // ordinary FileTree query aligned with the selected Diary date. FileTree
+  // clicks never reach this handler and therefore cannot rewrite the query.
+  diaryFilterSeed.value = date
+  filesFilter.value = date
   const intent = diaryWorkspacePresentation.beginDateIntent()
   const result: DiaryDateCommandResult = await openDiaryDate(date)
   await presentDiaryDateResult(result, intent)
@@ -2176,7 +2218,7 @@ watch(isReadMode, async (reading) => {
   <div
     ref="vaultRef"
     class="vault"
-    :class="{ 'is-read': isReadMode, 'right-rail-open': rightRailVisible, 'side-panel-open': sidePanelOpen, 'diary-calendar-mode': isDiaryCalendarMode, 'diary-native-document-mode': isDiaryDocumentMode }"
+    :class="{ 'is-read': isReadMode, 'right-rail-open': rightRailVisible, 'side-panel-open': sidePanelOpen, 'diary-calendar-mode': isDiaryCalendarVisible, 'diary-native-document-mode': isDiaryDocumentMode }"
     tabindex="0"
     :style="vaultStyle"
     @keydown="onVaultKeydown"
@@ -2230,7 +2272,6 @@ watch(isReadMode, async (reading) => {
       :current-path="activePath"
       :exact-path-filter="diaryExactPathFilter"
       :exact-path-filter-label="selectedDiaryDate"
-      :exact-path-filter-action-label="diaryExactPathFilter ? t('diary.workspace.return_calendar') : null"
       @select="openPost"
       @refresh="refresh"
       @export-pdf="exportPdfDocument"
@@ -2287,7 +2328,7 @@ watch(isReadMode, async (reading) => {
 
     <section
       class="editor-area"
-      :class="{ 'is-read': isReadMode, 'is-empty': workspaceTabs.length === 0, 'is-diary-home': isDiaryCalendarMode }"
+      :class="{ 'is-read': isReadMode, 'is-empty': workspaceTabs.length === 0, 'is-diary-home': isDiaryCalendarVisible }"
     >
       <EditorTabs
         v-if="workspaceTabs.length > 0"
@@ -2295,26 +2336,14 @@ watch(isReadMode, async (reading) => {
         ref="editorTabsRef"
         :tabs="workspaceTabs"
         :active-path="activeWorkspaceTabId"
-        :context-actions-visible="Boolean(activeNativeDiaryContext)"
+        :context-actions-visible="false"
         @select="selectWorkspaceTab"
         @close="closeWorkspaceTab"
         @close-many="closeManyWorkspaceTabs"
         @copy-path="copyWorkspaceTabPath"
         @reveal-in-tree="revealWorkspaceTabInTree"
         @reorder="reorderWorkspaceTabs"
-      >
-        <template #context-actions>
-          <DiaryMoodContextAction
-            v-if="activeNativeDiaryContext"
-            ref="diaryMoodContextRef"
-            :current-mood="activeNativeDiaryContext.mood"
-            :busy="diaryMoodBusy"
-            :disabled="diaryMoodMutationDisabled"
-            @select="updateNativeDiaryMood"
-            @clear="clearNativeDiaryMood"
-          />
-        </template>
-      </EditorTabs>
+      />
 
       <!-- Calendar Home is the only Diary-owned surface. The subtree stays
            mounted for the whole Diary scope while native Vault documents use
@@ -2323,7 +2352,7 @@ watch(isReadMode, async (reading) => {
         v-if="isDiaryCalendarMounted"
         :eligible="diaryPresentationEligible"
         :mode="presentationMode"
-        :visible="isDiaryCalendarMode"
+        :visible="isDiaryCalendarVisible"
         class="content diary-calendar-content"
       >
         <template #home>

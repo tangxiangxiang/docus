@@ -379,7 +379,6 @@ describe('Diary FileTree presentation boundary', () => {
         currentPath: 'diary/2026-08-25',
         exactPathFilter: 'diary/2026-08-25',
         exactPathFilterLabel: '2026-08-25',
-        exactPathFilterActionLabel: '返回日历',
       },
     })
 
@@ -388,7 +387,8 @@ describe('Diary FileTree presentation boundary', () => {
     expect(wrapper.text()).not.toContain('2026-08-24')
     expect(wrapper.text()).not.toContain('2026-08-26')
     expect(wrapper.text()).not.toContain('legacy')
-    expect(wrapper.get('[data-testid="file-tree-exact-context"]').text()).toContain('2026-08-25')
+    expect(wrapper.find('[data-testid="file-tree-exact-context"]').exists()).toBe(false)
+    expect(wrapper.find('.search-input').exists()).toBe(true)
   })
 
   it('does not fall back to the full tree when the exact path is missing', () => {
@@ -406,7 +406,7 @@ describe('Diary FileTree presentation boundary', () => {
     expect(wrapper.text()).not.toContain('legacy')
   })
 
-  it('preserves the user filter while exact context takes precedence', async () => {
+  it('keeps the user filter editable while exact path remains constrained', async () => {
     useScopeFilter().activeScope.value = 'diary'
     const Harness = defineComponent({
       components: { FileTree },
@@ -423,41 +423,33 @@ describe('Diary FileTree presentation boundary', () => {
           :tree="tree"
           :current-path="exactPath"
           :exact-path-filter="exactPath"
-          exact-path-filter-action-label="返回日历"
-          @clear-exact-path-filter="exactPath = null"
         />
         <span data-testid="stored-filter">{{ filesFilter }}</span>
       `,
     })
     const wrapper = mount(Harness)
 
-    expect(wrapper.text()).toContain('2026-08-25')
-    expect(wrapper.text()).not.toContain('2026-08-24')
-    expect(wrapper.get('[data-testid="stored-filter"]').text()).toBe('redis')
-
-    await wrapper.get('[data-testid="file-tree-exact-context-action"]').trigger('click')
-    expect(wrapper.get('[data-testid="stored-filter"]').text()).toBe('redis')
     expect(wrapper.find('.search-input').exists()).toBe(true)
     expect((wrapper.get('.search-input').element as HTMLInputElement).value).toBe('redis')
+    expect(wrapper.text()).not.toContain('2026-08-25')
+    expect(wrapper.get('[data-testid="stored-filter"]').text()).toBe('redis')
+
+    await wrapper.get('.search-input').setValue('2026-08-25')
+    expect(wrapper.text()).toContain('2026-08-25')
   })
 
-  it('does not consume keyboard activation from the exact-context action', () => {
+  it('uses the normal searchable FileTree input in exact-path context', () => {
     useScopeFilter().activeScope.value = 'diary'
     const wrapper = mount(FileTree, {
       props: {
         tree: DIARY_TREE,
         currentPath: 'diary/2026-08-25',
         exactPathFilter: 'diary/2026-08-25',
-        exactPathFilterActionLabel: '返回日历',
       },
       attachTo: document.body,
     })
 
-    const action = wrapper.get('[data-testid="file-tree-exact-context-action"]').element
-    const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
-    action.dispatchEvent(event)
-
-    expect(event.defaultPrevented).toBe(false)
+    expect(wrapper.get('.search-input').element).toBeInstanceOf(HTMLInputElement)
     wrapper.unmount()
   })
 })

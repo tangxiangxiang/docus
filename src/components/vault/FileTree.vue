@@ -106,7 +106,7 @@ const topLevel = computed<TreeNode[]>(() => {
   // higher priority than the user's text/tag query but never mutates that
   // query, so leaving the detail context restores the search verbatim.
   if (props.exactPathFilter) {
-    return children
+    children = children
       .map((child) => filterByExactPath(child, props.exactPathFilter!))
       .filter((node): node is TreeNode => node !== null)
   }
@@ -162,11 +162,6 @@ const contentText = defineModel<string>('filter', { default: '' })
 
 const effectiveQuery = computed(() => contentText.value.trim())
 const exactPathFilterActive = computed(() => props.exactPathFilter !== null)
-const exactPathContextLabel = computed(() => (
-  props.exactPathFilterLabel
-  ?? props.exactPathFilter?.split('/').at(-1)
-  ?? ''
-))
 // Phase 1.1 fix: every FileTree search now flows through the shared
 // query model — no separate legacy branch for plain-text queries.
 // This guarantees three things:
@@ -780,26 +775,10 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
     @keydown="onTreeKeydown"
   >
     <header>
-      <div
-        v-if="exactPathFilterActive"
-        class="exact-path-context"
-        data-testid="file-tree-exact-context"
-      >
-        <span class="exact-path-context-label" :title="props.exactPathFilter ?? undefined">
-          {{ exactPathContextLabel }}
-        </span>
-        <button
-          v-if="props.exactPathFilterActionLabel"
-          class="exact-path-context-action"
-          type="button"
-          data-testid="file-tree-exact-context-action"
-          @click="emit('clear-exact-path-filter')"
-        >{{ props.exactPathFilterActionLabel }}</button>
-      </div>
       <!-- Filters by title, filename, and directory path. Matching is
            case-insensitive and multiple tokens compose with AND.
       -->
-      <div v-else class="search">
+      <div class="search">
         <span class="search-icon" v-html="ICON_SEARCH" aria-hidden="true" />
         <input
           ref="searchInputRef"

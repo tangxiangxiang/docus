@@ -197,7 +197,6 @@ defineExpose({ focusInitial })
       >
         <img :src="assetUrl(mood.asset)" alt="" aria-hidden="true">
         <span class="diary-mood-option-label">{{ displayLabel(mood) }}</span>
-        <span v-if="isSelected(mood.id)" class="diary-mood-option-check" aria-hidden="true">✓</span>
       </button>
     </div>
 
@@ -330,15 +329,6 @@ defineExpose({ focusInitial })
   overflow-wrap: anywhere;
   font-size: 0.68rem;
   line-height: 1.1;
-}
-
-.diary-mood-option-check {
-  position: absolute;
-  top: 2px;
-  right: 4px;
-  color: var(--vs-accent, var(--accent, #4f6fff));
-  font-size: 0.72rem;
-  font-weight: 700;
 }
 
 .diary-mood-picker-unknown {
