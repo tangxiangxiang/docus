@@ -32,4 +32,3 @@ describe('D7 Diary Mood registry', () => {
     expect(getMoodDefinition('future-mood')).toBeUndefined()
   })
 })
-
