@@ -218,7 +218,27 @@ Monaco cancellation messages on the web-server log while all 124 tests
 passed; the five D7.4 tests recorded no page errors or unexpected console
 errors.
 
-## 7. Review and readiness
+## 7. GitHub status
+
+GitHub checks were queried after the D7.4 commits were pushed. At the time of
+the evidence snapshot, Actions run `33103894152` was still `in_progress`:
+
+```text
+visual                    PASS
+auth-browser              PASS
+tags-scale                PASS
+docker-smoke              IN PROGRESS
+verify Ubuntu 22          IN PROGRESS
+verify Ubuntu 24          IN PROGRESS
+verify macOS 24           IN PROGRESS
+verify Windows 24         IN PROGRESS
+```
+
+The run was not used as a completed CI proof. D7.4 readiness is based on the
+local focused/full validation listed above; this document does not claim
+`GitHub CI = PASS` while the remote run is incomplete.
+
+## 8. Review and readiness
 
 Task-scoped self-review:
 
@@ -243,7 +263,7 @@ D7 Mood release = NOT STARTED
 No D7.5 responsive/accessibility work, D7.6 release work, or unrelated
 feature work is included.
 
-## 8. Evidence commands and conclusion
+## 9. Evidence commands and conclusion
 
 Repository and validation commands used for this phase included:
 
