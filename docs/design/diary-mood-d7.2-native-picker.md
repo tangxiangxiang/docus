@@ -2,16 +2,18 @@
 
 ## Status
 
-**D7.2 = REVIEW-READY**
+**D7.2 = REVIEW-CLOSED**
 
-This document records the D7.2 implementation and validation evidence. It is
-not the independent review closure record.
+This document records the D7.2 implementation, validation, and independent
+review closure evidence.
 
 - Starting HEAD: `b5794392ed5dae8235ea4018f443ff89d2b35a89`
 - Implementation commit: `1f8148d187e6268d3a7c6088e1150b11de203ea7` (`feat(diary): add native mood context and picker`)
 - First focused remediation commit: `80db14794116b690ecc8654a8b108dcea0422e96` (`fix(diary): keep mood picker usable on mobile`)
 - Second focused remediation commit: `f066164d0bbca972fc225767b79cacd6ea778eb1` (`fix(diary): clamp mood picker keyboard navigation`)
-- Independent Review: `PENDING`
+- Independent Review: `PASS`
+- Independent Review findings: `P0 = 0`, `P1 = 0`, `P2 = 0`
+- GitHub CI run #529: `PASS`
 - Self-review: `P0 = 0`, `P1 = 0`, `P2 = 0`
 - D7.1: `REVIEW-CLOSED`
 - D7.3: `NOT STARTED`
@@ -19,8 +21,9 @@ not the independent review closure record.
 
 The original docs-only evidence commit was the child of the implementation
 commit above. The focused remediation followed the initial independent
-review; this evidence update records that remediation and remains a
-pre-re-review document. No D7.3 work is included in this phase.
+review. The implementation/evidence phase stopped at `REVIEW-READY`; after
+the independent re-review passed, this closure sync marks D7.2
+`REVIEW-CLOSED`. No D7.3 work is included in this phase.
 
 The initial independent review of the original D7.2 implementation found
 `P0 = 0`, `P1 = 1`, `P2 = 1`: the mobile picker could be clipped by the
@@ -389,26 +392,29 @@ context-action rail behavior.
 - The mobile Mood picker is a single teleported fixed popover; no global
   `.editor-area` overflow behavior was changed.
 - No D7.3 marker, Calendar picker entry, or missing-date flow was started.
-- GitHub status was not queried for this local implementation evidence.
+- GitHub status was not queried for this local implementation evidence; the
+  later GitHub CI run #529 passed and is recorded in the closure result below.
 
 ## D7.2 readiness result
 
 The first independent re-review closed the original mobile clipping P1 and
 empty context-action rail P2, but found the flattened-index keyboard
 boundary P1. The second focused remediation self-review found no additional
-issue and the implementation gates above pass. The phase is intentionally
-stopped before independent re-review:
+issue and the implementation gates above pass. The subsequent independent
+re-review passed with no findings. This closure sync records D7.2 as
+`REVIEW-CLOSED` and keeps the phase stopped before D7.3:
 
 ```text
 D7.0A = REVIEW-CLOSED
 D7.0  = REVIEW-CLOSED
 D7.1  = REVIEW-CLOSED
 
-D7.2  = REVIEW-READY
+D7.2  = REVIEW-CLOSED
 Initial Independent Review = FAIL (P0/P1/P2 = 0/1/1)
 First remediation: mobile P1 CLOSED; empty chrome P2 CLOSED
 Second focused remediation self-review = PASS (P0/P1/P2 = 0/0/0)
-Independent Re-review = PENDING
+Independent Re-review = PASS (P0/P1/P2 = 0/0/0)
+GitHub CI #529 = PASS
 
 D7.3  = NOT STARTED
 D7.4  = NOT STARTED
