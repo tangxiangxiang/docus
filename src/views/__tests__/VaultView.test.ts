@@ -758,6 +758,9 @@ describe('D7.3 Calendar mood integration wiring', () => {
     expect(source).toContain('const dateResult = await openDiaryDate(date)')
     expect(source).toContain('diaryMoodCommand.setMood(date, mood, expectedUpdatedAt)')
     expect(source).toContain('diaryCalendarSurfaceRef.value?.closeMoodPicker()')
+    expect(source).toContain('watch(isDiaryCalendarMode, (visible, wasVisible) => {')
+    expect(source).toContain('diaryCalendarSurfaceRef.value?.closeMoodPicker(false)')
+    expect(source).toContain('async function onDiaryDateSelected(date: DiaryDate): Promise<void> {\n  diaryCalendarSurfaceRef.value?.closeMoodPicker(false)')
     expect(source).not.toContain('updateDocumentMetadata(')
   })
 

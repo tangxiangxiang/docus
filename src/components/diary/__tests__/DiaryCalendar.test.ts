@@ -187,6 +187,9 @@ describe('DiaryCalendar presentation adapter', () => {
     expect(knownCell.get('.diary-calendar-mood-marker img').attributes('src')).toBe('/emoji/开心.svg')
     expect(unknownCell.get('.diary-calendar-mood-marker').text()).toBe('?')
     expect(emptyCell.find('.diary-calendar-mood-marker').exists()).toBe(false)
+    expect(knownCell.get('.diary-calendar-mood-marker').element.closest('[data-diary-day-content]')).not.toBeNull()
+    expect(knownCell.find('[data-testid="diary-calendar-mood-action"] img').exists()).toBe(false)
+    expect(knownCell.get('[data-testid="diary-calendar-mood-action"]').text()).toContain('✎')
     expect(wrapper.findAll('button button')).toHaveLength(0)
     expect(knownCell.get('[data-testid="diary-calendar-mood-action"]').attributes('aria-label')).toContain('Happy')
 
@@ -297,6 +300,32 @@ describe('DiaryCalendar presentation adapter', () => {
     await flushPromises()
     expect(wrapper.get('[data-testid="diary-calendar"]').attributes('data-month')).toBe('2026-08')
     expect(wrapper.emitted('month-change')?.at(-1)?.[0]).toEqual({ year: 2026, month: 8 })
+  })
+
+  it('closes the Teleport picker before date or month navigation changes Calendar context', async () => {
+    const wrapper = mountCalendar([
+      { ...day('2026-08-24'), mood: 'happy', metadataUpdatedAt: 1 },
+      { ...day('2026-08-25'), mood: null, metadataUpdatedAt: 2 },
+    ])
+    await flushPromises()
+
+    await dayCell(wrapper, '2026-08-24').get('[data-testid="diary-calendar-mood-action"]').trigger('click')
+    await flushPromises()
+    expect(document.body.querySelector('[data-testid="diary-mood-picker"]')).not.toBeNull()
+
+    await wrapper.get('[data-date="2026-08-25"]').trigger('click')
+    await flushPromises()
+    expect(document.body.querySelector('[data-testid="diary-mood-picker"]')).toBeNull()
+    expect(wrapper.emitted('date-selected')).toEqual([['2026-08-25']])
+
+    await dayCell(wrapper, '2026-08-24').get('[data-testid="diary-calendar-mood-action"]').trigger('click')
+    await flushPromises()
+    expect(document.body.querySelector('[data-testid="diary-mood-picker"]')).not.toBeNull()
+
+    await wrapper.get('.vc-next').trigger('click')
+    await flushPromises()
+    expect(document.body.querySelector('[data-testid="diary-mood-picker"]')).toBeNull()
+    wrapper.unmount()
   })
 
   it('exposes semantic date focus for presentation close restoration', async () => {

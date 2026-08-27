@@ -200,15 +200,25 @@ function emitMoodChange(mood: MoodId | null): void {
   if (activeMoodDate.value) emit('mood-change', activeMoodDate.value, mood)
 }
 
+function isCalendarContextTarget(target: EventTarget | null): boolean {
+  return target instanceof Element
+    && Boolean(target.closest('[data-diary-day-content], .vc-prev, .vc-next, .vc-title'))
+}
+
 function onDocumentPointerDown(event: PointerEvent): void {
   const target = event.target
   const picker = pickerElement()
-  if (
-    moodPickerOpen.value
-    && target instanceof Node
-    && !calendarRoot.value?.contains(target)
-    && !picker?.contains(target)
-  ) closeMoodPicker(false)
+  if (!moodPickerOpen.value || !(target instanceof Node) || picker?.contains(target)) return
+
+  // A date/header navigation target is a new Calendar context even though it
+  // lives inside the keep-mounted Calendar root. Close at pointerdown so the
+  // picker cannot retain its old date while the subsequent click navigates.
+  if (isCalendarContextTarget(target)) {
+    closeMoodPicker(false)
+    return
+  }
+
+  if (!calendarRoot.value?.contains(target)) closeMoodPicker(false)
 }
 
 function onCalendarPagesUpdate(pages: unknown): void {
@@ -216,16 +226,24 @@ function onCalendarPagesUpdate(pages: unknown): void {
   const month = diaryCalendarMonthFromPage(page)
   if (!month) return
 
-  currentMonth.value = month
   const key = `${month.year}-${String(month.month).padStart(2, '0')}`
   if (lastMonthKey.value === key) return
+  // A page change is a new Calendar context. Do not let a body-teleported
+  // picker continue editing the date from the previous month.
+  closeMoodPicker(false)
+  currentMonth.value = month
   lastMonthKey.value = key
   emit('month-change', month)
 }
 
 function onDayClick(day: CalendarDayLike): void {
   const date = diaryDateFromCalendarDay(day)
-  if (date) emit('date-selected', date)
+  if (!date) return
+  // Date navigation leaves the current Mood picker context. The parent may
+  // keep Calendar mounted while the native document surface takes over, so
+  // close without restoring focus to the soon-to-be-hidden trigger.
+  closeMoodPicker(false)
+  emit('date-selected', date)
 }
 
 function dayAriaLabel(day: CalendarDayLike, attributes: unknown): string {
@@ -338,13 +356,7 @@ defineExpose({ focusDate, closeMoodPicker })
               @click.stop="openMoodPicker(day, $event)"
               @keydown.stop
             >
-              <img
-                v-if="moodDefinitionForDay(day)"
-                :src="assetUrl(moodDefinitionForDay(day)!.asset)"
-                alt=""
-                aria-hidden="true"
-              >
-              <span v-else aria-hidden="true">{{ hasUnknownMoodForDay(day) ? '?' : '+' }}</span>
+              <span aria-hidden="true">{{ moodDefinitionForDay(day) ? '✎' : '+' }}</span>
             </button>
           </div>
         </template>
@@ -609,8 +621,8 @@ defineExpose({ focusDate, closeMoodPicker })
 
 .diary-calendar-mood-action {
   position: absolute;
-  right: 4px;
-  bottom: 4px;
+  top: 4px;
+  left: 4px;
   z-index: 2;
   display: inline-flex;
   width: 30px;
@@ -627,12 +639,6 @@ defineExpose({ focusDate, closeMoodPicker })
   font-size: 1rem;
   line-height: 1;
   opacity: 0.72;
-}
-
-.diary-calendar-mood-action img {
-  width: 22px;
-  height: 22px;
-  object-fit: contain;
 }
 
 .diary-calendar-mood-action:hover:not(:disabled) {
@@ -756,15 +762,22 @@ defineExpose({ focusDate, closeMoodPicker })
   }
 
   .diary-calendar-mood-action {
-    right: 1px;
-    bottom: 1px;
+    top: 1px;
+    left: 1px;
     width: 28px;
     height: 28px;
   }
 
   .diary-calendar-mood-marker {
-    right: 6px;
-    bottom: 6px;
+    right: 1px;
+    bottom: 1px;
+    width: 14px;
+    height: 14px;
+  }
+
+  .diary-calendar-mood-marker img {
+    width: 14px;
+    height: 14px;
   }
 
   .diary-calendar-host :deep(.vc-weeks) {

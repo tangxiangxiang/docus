@@ -1649,6 +1649,15 @@ const nativeMoodExcludedBySurface = computed(() => Boolean(
   || activeWorkingTreeDiff.value
   || activeDraftRecovery.value,
 ))
+
+// Calendar stays mounted across the Diary/native-document handoff. Its
+// Teleport picker is presentation-local, however, so any transition away
+// from Calendar Home must close that context without trying to restore focus
+// to a trigger that is about to be hidden.
+watch(isDiaryCalendarMode, (visible, wasVisible) => {
+  if (wasVisible && !visible) diaryCalendarSurfaceRef.value?.closeMoodPicker(false)
+}, { flush: 'sync' })
+
 const activeNativeDiaryContext = computed(() => resolveNativeDiaryMoodContext(
   activeTab.value,
   posts.value,
@@ -1787,6 +1796,7 @@ async function closeDiaryPresentation(): Promise<void> {
 }
 
 async function onDiaryDateSelected(date: DiaryDate): Promise<void> {
+  diaryCalendarSurfaceRef.value?.closeMoodPicker(false)
   const intent = diaryWorkspacePresentation.beginDateIntent()
   const result: DiaryDateCommandResult = await openDiaryDate(date)
   if (

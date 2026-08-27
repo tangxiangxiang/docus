@@ -36,6 +36,25 @@ function nextCivilDate(value: string): string {
   return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
 }
 
+function previousCivilDate(value: string): string {
+  const [yearText, monthText, dayText] = value.split('-')
+  let year = Number(yearText)
+  let month = Number(monthText)
+  let day = Number(dayText) - 1
+  if (day < 1) {
+    month -= 1
+    if (month < 1) {
+      month = 12
+      year -= 1
+    }
+    const leap = year % 400 === 0 || (year % 4 === 0 && year % 100 !== 0)
+    day = month === 2
+      ? (leap ? 29 : 28)
+      : [4, 6, 9, 11].includes(month) ? 30 : 31
+  }
+  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+}
+
 function diaryPath(date: string): string {
   return `diary/${date}`
 }
@@ -162,6 +181,61 @@ test('Calendar click opens an existing Diary through the native Vault reading su
   expect(diagnostics.notFoundResponses).toEqual([])
 })
 
+test('Calendar Mood picker closes before existing-date navigation hides Calendar Home', async ({ page, request }) => {
+  const date = localCivilDate()
+  const dayOfMonth = Number(date.slice(8))
+  const neighbor = dayOfMonth > 1
+    ? `${date.slice(0, 8)}01`
+    : previousCivilDate(date)
+  const raw = '# Calendar navigation\n\nExisting Diary navigation evidence.\n'
+
+  try {
+    await seedExistingDiary(request, date, raw)
+    await seedExistingDiary(request, neighbor, raw)
+    await page.goto('/vault')
+    await expect(page.locator('.file-tree')).toBeVisible()
+    await page.locator('.scope-chip').filter({ hasText: 'diary' }).click()
+
+    const surface = page.getByTestId('diary-calendar-surface')
+    const action = surface.locator(`[data-testid="diary-calendar-mood-action"][data-date="${date}"]`)
+    await action.click()
+    const picker = page.getByTestId('diary-mood-picker')
+    await expect(picker).toBeVisible()
+
+    await surface.locator(`[data-diary-day-content][data-date="${neighbor}"]`).click()
+    await expect(page).toHaveURL(new RegExp(`/vault/diary/${neighbor.replace('-', '\\-')}`))
+    await expect(picker).toHaveCount(0)
+  } finally {
+    await deleteDiaryDate(request, date)
+    await deleteDiaryDate(request, neighbor)
+  }
+})
+
+test('Calendar Mood picker closes when month navigation changes the Calendar context', async ({ page, request }) => {
+  const date = localCivilDate()
+  const raw = '# Calendar month navigation\n\nExisting Diary month evidence.\n'
+
+  try {
+    await seedExistingDiary(request, date, raw)
+    await page.goto('/vault')
+    await expect(page.locator('.file-tree')).toBeVisible()
+    await page.locator('.scope-chip').filter({ hasText: 'diary' }).click()
+
+    const surface = page.getByTestId('diary-calendar-surface')
+    await surface.locator(`[data-testid="diary-calendar-mood-action"][data-date="${date}"]`).click()
+    const picker = page.getByTestId('diary-mood-picker')
+    await expect(picker).toBeVisible()
+
+    const calendar = page.getByTestId('diary-calendar')
+    const monthBefore = await calendar.getAttribute('data-month')
+    await page.getByTestId('diary-calendar-next').click()
+    await expect(calendar).not.toHaveAttribute('data-month', monthBefore ?? '')
+    await expect(picker).toHaveCount(0)
+  } finally {
+    await deleteDiaryDate(request, date)
+  }
+})
+
 test('Calendar click on a missing future Diary is a browser-visible no-op', async ({ page, request }) => {
   const today = localCivilDate()
   const future = nextCivilDate(today)
@@ -197,6 +271,98 @@ test('Calendar click on a missing future Diary is a browser-visible no-op', asyn
     expect(new URL(page.url()).pathname).toBe(routeBefore)
     expect(await page.locator('.tabs').count()).toBe(tabsBefore)
     expect((await request.get(`/api/posts/${futurePath}`)).status()).toBe(404)
+  } finally {
+    await deleteDiaryDate(request, future)
+  }
+
+  expect(diagnostics.pageErrors).toEqual([])
+  expect(diagnostics.consoleErrors).toEqual([
+    'Failed to load resource: the server responded with a status of 404 (Not Found)',
+  ])
+  expect(diagnostics.notFoundResponses).toEqual([{
+    method: 'GET',
+    pathname: `/api/posts/${futurePath}`,
+    status: 404,
+  }])
+})
+
+test('Calendar Mood action creates missing today and past Diaries through the existing date command', async ({ page, request }) => {
+  const today = localCivilDate()
+  const past = previousCivilDate(today)
+  const dates = [today, past]
+  const createMethods: string[] = []
+  page.on('request', (requestEvent) => {
+    const url = new URL(requestEvent.url())
+    if (url.pathname === '/api/diary/dates') createMethods.push(requestEvent.method())
+  })
+
+  async function readMood(date: string): Promise<string | null> {
+    const response = await request.get(`/api/posts/${diaryPath(date)}`)
+    if (response.status() !== 200) {
+      await response.text()
+      return null
+    }
+    const body = await response.json() as { metadata?: { mood?: string | null } }
+    return body.metadata?.mood ?? null
+  }
+
+  try {
+    for (const date of dates) await deleteDiaryDate(request, date)
+    await page.goto('/vault')
+    await expect(page.locator('.file-tree')).toBeVisible()
+    await page.locator('.scope-chip').filter({ hasText: 'diary' }).click()
+
+    const surface = page.getByTestId('diary-calendar-surface')
+    for (const date of dates) {
+      const action = surface.locator(`[data-testid="diary-calendar-mood-action"][data-date="${date}"]`)
+      await expect(action).toBeVisible()
+      await expect(action).toBeEnabled()
+      await action.click()
+      const picker = page.getByTestId('diary-mood-picker')
+      await expect(picker).toBeVisible()
+      await picker.getByRole('radio', { name: '开心 / Happy' }).click()
+      await expect.poll(() => readMood(date)).toBe('happy')
+      await expect(picker).toHaveCount(0)
+      await expect(surface).toBeVisible()
+    }
+  } finally {
+    for (const date of dates) await deleteDiaryDate(request, date)
+  }
+
+  expect(createMethods).toEqual(['POST', 'POST'])
+})
+
+test('Calendar Mood action keeps a missing future Diary uncreated', async ({ page, request }) => {
+  const today = localCivilDate()
+  const future = nextCivilDate(today)
+  const futurePath = diaryPath(future)
+  const diagnostics = browserDiagnostics(page)
+  const createMethods: string[] = []
+  page.on('request', (requestEvent) => {
+    const url = new URL(requestEvent.url())
+    if (url.pathname === '/api/diary/dates') createMethods.push(requestEvent.method())
+  })
+
+  try {
+    await deleteDiaryDate(request, future)
+    await page.goto('/vault')
+    await expect(page.locator('.file-tree')).toBeVisible()
+    await page.locator('.scope-chip').filter({ hasText: 'diary' }).click()
+
+    const surface = page.getByTestId('diary-calendar-surface')
+    const action = surface.locator(`[data-testid="diary-calendar-mood-action"][data-date="${future}"]`)
+    await expect(action).toBeVisible()
+    await action.click()
+    const picker = page.getByTestId('diary-mood-picker')
+    await expect(picker).toBeVisible()
+    await picker.getByRole('radio', { name: '开心 / Happy' }).click()
+
+    await expect.poll(async () => (await request.get(`/api/posts/${futurePath}`)).status()).toBe(404)
+    await expect.poll(() => createMethods).toEqual([])
+    await expect(page).toHaveURL(/\/vault(?:[?#]|$)/)
+    await expect(picker).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(picker).toHaveCount(0)
   } finally {
     await deleteDiaryDate(request, future)
   }
@@ -253,7 +419,23 @@ test('Calendar mood action uses the single native picker without navigating the 
 
     await expect.poll(() => readMood()).toBe('happy')
     await expect(picker).toHaveCount(0)
-    await expect(action.locator('img')).toHaveCount(1)
+    await expect(action).toContainText('✎')
+    await expect(surface.locator(`[data-date="${date}"] .diary-calendar-mood-marker img`)).toHaveCount(1)
+
+    for (const viewport of [{ width: 1280, height: 720 }, { width: 375, height: 812 }, { width: 320, height: 700 }]) {
+      await page.setViewportSize(viewport)
+      await expect(surface).toBeVisible()
+      const actionBox = await action.boundingBox()
+      const markerBox = await surface.locator(`[data-date="${date}"] .diary-calendar-mood-marker`).boundingBox()
+      expect(actionBox).not.toBeNull()
+      expect(markerBox).not.toBeNull()
+      const separated = actionBox!.x + actionBox!.width <= markerBox!.x
+        || markerBox!.x + markerBox!.width <= actionBox!.x
+        || actionBox!.y + actionBox!.height <= markerBox!.y
+        || markerBox!.y + markerBox!.height <= actionBox!.y
+      expect(separated).toBe(true)
+    }
+    await page.setViewportSize({ width: 1280, height: 720 })
     expect(createMethods).toEqual([])
     expect(new URL(page.url()).pathname).toBe('/vault')
     expect(dateNavigationRequests).toEqual([])
