@@ -20,7 +20,13 @@ import { useWorkspaceTabFocus } from '../../composables/vault/workspace-tabs/use
 
 export type { WorkspaceTabReorderRequest }
 
-const props = defineProps<{ tabs: WorkspaceTab[]; activePath: string | null }>()
+const props = withDefaults(defineProps<{
+  tabs: WorkspaceTab[]
+  activePath: string | null
+  contextActionsVisible?: boolean
+}>(), {
+  contextActionsVisible: true,
+})
 const emit = defineEmits<{
   select: [path: string]
   close: [path: string]
@@ -323,7 +329,10 @@ function onContextMenu(e: MouseEvent, path: string) {
       </div>
       <span class="sr-only" aria-live="polite" aria-atomic="true">{{ liveAnnouncement }}</span>
     </div>
-    <div v-if="$slots['context-actions']" class="editor-tabs-context-actions">
+    <div
+      v-if="$slots['context-actions'] && props.contextActionsVisible !== false"
+      class="editor-tabs-context-actions"
+    >
       <slot name="context-actions" />
     </div>
     <Teleport to="body">

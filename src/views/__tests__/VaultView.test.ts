@@ -713,6 +713,7 @@ describe('D7.2 Native Diary mood context wiring', () => {
     expect(source).toContain("import { resolveNativeDiaryMoodContext } from '../components/diary/diaryMoodContext'")
     expect(source.match(/<DiaryMoodContextAction/g)).toHaveLength(1)
     expect(source).toContain('<template #context-actions>')
+    expect(source).toContain(':context-actions-visible="Boolean(activeNativeDiaryContext)"')
     expect(source).toContain('const activeNativeDiaryContext = computed(() => resolveNativeDiaryMoodContext(')
     expect(source).toContain('nativeMoodExcludedBySurface')
     expect(source).toContain('diaryMoodCommand.setMood(context.date, mood, expectedUpdatedAt)')

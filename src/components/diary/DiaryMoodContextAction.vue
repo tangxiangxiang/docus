@@ -23,7 +23,12 @@ const { locale, t } = useI18n()
 const rootRef = ref<HTMLElement | null>(null)
 const triggerRef = ref<HTMLButtonElement | null>(null)
 const pickerRef = ref<InstanceType<typeof DiaryMoodPicker> | null>(null)
+const pickerStyle = ref<Record<string, string>>({
+  top: '12px',
+  left: '12px',
+})
 const open = ref(false)
+let positionFrame: number | null = null
 
 const currentDefinition = computed(() => (
   isMoodId(props.currentMood) ? getMoodDefinition(props.currentMood) ?? null : null
@@ -42,16 +47,76 @@ function assetUrl(asset: string): string {
   return asset.startsWith('public/') ? `/${asset.slice('public/'.length)}` : asset
 }
 
-function closePicker(): void {
+function pickerElement(): HTMLElement | null {
+  const element = pickerRef.value?.$el
+  return element instanceof HTMLElement ? element : null
+}
+
+function updatePickerPosition(): void {
+  if (!open.value) return
+
+  const trigger = triggerRef.value
+  const picker = pickerElement()
+  if (!trigger || !picker) return
+
+  const triggerRect = trigger.getBoundingClientRect()
+  const pickerRect = picker.getBoundingClientRect()
+  const viewportWidth = window.innerWidth || document.documentElement.clientWidth
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight
+  const inset = 12
+  const gap = 8
+  const pickerWidth = pickerRect.width || picker.offsetWidth
+  const pickerHeight = pickerRect.height || picker.offsetHeight
+  const maxLeft = Math.max(inset, viewportWidth - pickerWidth - inset)
+  const maxTop = Math.max(inset, viewportHeight - pickerHeight - inset)
+
+  const left = Math.min(
+    Math.max(triggerRect.right - pickerWidth, inset),
+    maxLeft,
+  )
+  const belowTop = triggerRect.bottom + gap
+  const aboveTop = triggerRect.top - pickerHeight - gap
+  const top = belowTop > maxTop && aboveTop >= inset
+    ? aboveTop
+    : Math.min(Math.max(belowTop, inset), maxTop)
+
+  pickerStyle.value = {
+    top: `${Math.round(top)}px`,
+    left: `${Math.round(left)}px`,
+  }
+}
+
+function schedulePickerPosition(): void {
+  if (!open.value) return
+  void nextTick(() => {
+    if (!open.value) return
+    if (positionFrame !== null) window.cancelAnimationFrame(positionFrame)
+    if (typeof window.requestAnimationFrame === 'function') {
+      positionFrame = window.requestAnimationFrame(() => {
+        positionFrame = null
+        updatePickerPosition()
+      })
+    } else {
+      updatePickerPosition()
+    }
+  })
+}
+
+function closePicker(restoreFocus = true): void {
   if (!open.value) return
   open.value = false
-  void nextTick(() => triggerRef.value?.focus())
+  pickerStyle.value = { top: '12px', left: '12px' }
+  if (restoreFocus) void nextTick(() => triggerRef.value?.focus())
 }
 
 function openPicker(): void {
   if (props.disabled) return
+  pickerStyle.value = { top: '12px', left: '12px' }
   open.value = true
-  void nextTick(() => pickerRef.value?.focusInitial())
+  void nextTick(() => {
+    pickerRef.value?.focusInitial()
+    schedulePickerPosition()
+  })
 }
 
 function togglePicker(): void {
@@ -61,15 +126,30 @@ function togglePicker(): void {
 
 function onDocumentPointerDown(event: PointerEvent): void {
   const target = event.target
-  if (open.value && target instanceof Node && !rootRef.value?.contains(target)) closePicker()
+  const picker = pickerElement()
+  if (
+    open.value
+    && target instanceof Node
+    && !rootRef.value?.contains(target)
+    && !picker?.contains(target)
+  ) closePicker(false)
 }
 
 function focusTrigger(): void {
   triggerRef.value?.focus()
 }
 
-onMounted(() => document.addEventListener('pointerdown', onDocumentPointerDown, true))
-onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPointerDown, true))
+onMounted(() => {
+  document.addEventListener('pointerdown', onDocumentPointerDown, true)
+  window.addEventListener('resize', schedulePickerPosition)
+  window.addEventListener('scroll', schedulePickerPosition, true)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', onDocumentPointerDown, true)
+  window.removeEventListener('resize', schedulePickerPosition)
+  window.removeEventListener('scroll', schedulePickerPosition, true)
+  if (positionFrame !== null) window.cancelAnimationFrame(positionFrame)
+})
 
 defineExpose({ close: closePicker, focusTrigger })
 </script>
@@ -98,15 +178,18 @@ defineExpose({ close: closePicker, focusTrigger })
       <span class="diary-mood-trigger-label">{{ currentLabel }}</span>
     </button>
 
-    <DiaryMoodPicker
-      v-if="open"
-      ref="pickerRef"
-      :current-mood="props.currentMood"
-      :busy="props.busy"
-      @select="emit('select', $event)"
-      @clear="emit('clear')"
-      @close="closePicker"
-    />
+    <Teleport to="body">
+      <DiaryMoodPicker
+        v-if="open"
+        ref="pickerRef"
+        :style="pickerStyle"
+        :current-mood="props.currentMood"
+        :busy="props.busy"
+        @select="emit('select', $event)"
+        @clear="emit('clear')"
+        @close="closePicker"
+      />
+    </Teleport>
   </div>
 </template>
 
@@ -170,10 +253,4 @@ defineExpose({ close: closePicker, focusTrigger })
   white-space: nowrap;
 }
 
-.diary-mood-context :deep(.diary-mood-picker) {
-  position: absolute;
-  z-index: 20;
-  top: calc(100% + 8px);
-  right: 0;
-}
 </style>

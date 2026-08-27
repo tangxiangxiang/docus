@@ -206,15 +206,17 @@ defineExpose({ focusInitial })
 
 <style scoped>
 .diary-mood-picker {
+  position: fixed;
+  z-index: 1000;
   width: min(320px, calc(100vw - 24px));
   max-height: min(620px, calc(100vh - 52px));
   overflow: auto;
   box-sizing: border-box;
   padding: 12px;
-  border: 1px solid var(--vs-border, #d8dce5);
+  border: 1px solid var(--vs-border, var(--border, #d8dce5));
   border-radius: 10px;
-  background: var(--vs-bg-1, #fff);
-  color: var(--vs-text-1, #1b2433);
+  background: var(--vs-bg-1, var(--bg, #fff));
+  color: var(--vs-text-1, var(--text-h, #1b2433));
   box-shadow: 0 8px 28px rgb(24 34 56 / 14%);
 }
 
@@ -240,7 +242,7 @@ defineExpose({ focusInitial })
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: var(--vs-text-2, #667085);
+  color: var(--vs-text-2, var(--text-muted, #667085));
   cursor: pointer;
 }
 
@@ -253,8 +255,8 @@ defineExpose({ focusInitial })
 
 .diary-mood-picker-close:hover,
 .diary-mood-clear:hover:not(:disabled) {
-  background: var(--vs-hover-bg, rgb(80 90 110 / 8%));
-  color: var(--vs-text-1, #1b2433);
+  background: var(--vs-hover-bg, var(--bg-soft, rgb(80 90 110 / 8%)));
+  color: var(--vs-text-1, var(--text-h, #1b2433));
 }
 
 .diary-mood-picker-close:focus-visible,
@@ -290,12 +292,12 @@ defineExpose({ focusInitial })
 }
 
 .diary-mood-option:hover {
-  background: var(--vs-hover-bg, rgb(80 90 110 / 8%));
+  background: var(--vs-hover-bg, var(--bg-soft, rgb(80 90 110 / 8%)));
 }
 
 .diary-mood-option.is-selected {
-  border-color: var(--vs-accent, #4f6fff);
-  background: color-mix(in srgb, var(--vs-accent, #4f6fff) 10%, transparent);
+  border-color: var(--vs-accent, var(--accent, #4f6fff));
+  background: color-mix(in srgb, var(--vs-accent, var(--accent, #4f6fff)) 10%, transparent);
 }
 
 .diary-mood-option[aria-disabled='true'] {
@@ -320,14 +322,14 @@ defineExpose({ focusInitial })
   position: absolute;
   top: 2px;
   right: 4px;
-  color: var(--vs-accent, #4f6fff);
+  color: var(--vs-accent, var(--accent, #4f6fff));
   font-size: 0.72rem;
   font-weight: 700;
 }
 
 .diary-mood-picker-unknown {
   margin: 0 0 8px;
-  color: var(--vs-text-2, #667085);
+  color: var(--vs-text-2, var(--text-muted, #667085));
   font-size: 0.75rem;
 }
 
@@ -346,7 +348,7 @@ defineExpose({ focusInitial })
 }
 
 .diary-mood-saving {
-  color: var(--vs-text-2, #667085);
+  color: var(--vs-text-2, var(--text-muted, #667085));
   font-size: 0.72rem;
 }
 

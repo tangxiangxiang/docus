@@ -333,6 +333,7 @@ test('native Diary Editor yields to History Comparison without mutating the live
     await expect(page.locator('.history-comparison-pane')).toBeVisible({ timeout: 15_000 })
     await expect(page.getByTestId('diary-calendar')).toBeAttached()
     await expect(page.getByTestId('diary-calendar')).toBeHidden()
+    await expect(page.locator('.editor-tabs-context-actions')).toHaveCount(0)
     expect(putCount).toBe(0)
     await expect(page.locator(`[data-tab-id="${path}"]`)).toHaveCount(1)
     await expect(page.locator(`[data-tab-id="${path}"] .tab-dirty-indicator`)).toHaveCount(1)
@@ -401,6 +402,7 @@ test('divergent Recovery yields to the existing native lifecycle and preserves D
     await expect(pane).toContainText(diskMarker)
     await expect(page.getByTestId('diary-calendar')).toBeAttached()
     await expect(page.getByTestId('diary-calendar')).toBeHidden()
+    await expect(page.locator('.editor-tabs-context-actions')).toHaveCount(0)
     await expect(page.locator(`[data-tab-id="${path}"]`)).toHaveCount(1)
 
     await pane.getByRole('button', { name: 'Open Recovered Content' }).click()
@@ -409,6 +411,7 @@ test('divergent Recovery yields to the existing native lifecycle and preserves D
     await expect(pane).toHaveCount(0)
     await expect.poll(() => draftRowCount(page, draftMarker), { timeout: 15_000 }).toBe(0)
     await expect(page.getByTestId('diary-calendar')).toBeVisible()
+    await expect(page.locator('.editor-tabs-context-actions')).toHaveCount(0)
 
     const resolved = await (await request.get(`/api/posts/${path}`)).json()
     expect(resolved.metadata.id).toBe(document.documentId)
@@ -715,8 +718,106 @@ test('ordinary Note does not expose the native Diary mood context', async ({ pag
     await expect(page.locator(`[role="tab"][data-tab-id="${path}"]`)).toHaveAttribute('aria-selected', 'true')
     await expect(page.getByTestId('diary-native-mood-context')).toHaveCount(0)
     await expect(page.getByTestId('diary-mood-picker')).toHaveCount(0)
+    await expect(page.locator('.editor-tabs-context-actions')).toHaveCount(0)
   } finally {
     await deletePost(request, path)
+  }
+
+  expect(state.pageErrors).toEqual([])
+  expect(state.consoleErrors).toEqual([])
+})
+
+test('native Diary mood picker remains fully usable at 320/375px with the side panel closed or open', async ({ page, request }) => {
+  const date = localCivilDate()
+  const path = diaryPath(date)
+  const state = diagnostics(page)
+
+  async function setExplorerOpen(open: boolean): Promise<void> {
+    const button = page.getByRole('button', { name: /Explorer|文件资源管理器/i })
+    const expected = String(open)
+    if (await button.getAttribute('aria-pressed') !== expected) await button.click()
+    await expect(button).toHaveAttribute('aria-pressed', expected)
+    if (open) await expect(page.locator('.file-tree')).toBeVisible()
+    else await expect(page.locator('.file-tree')).toBeHidden()
+  }
+
+  async function assertPickerGeometry(width: number, height: number, panelState: string): Promise<void> {
+    const picker = page.getByTestId('diary-mood-picker')
+    await expect(picker).toBeVisible()
+    const metrics = await picker.evaluate((element) => {
+      const pickerRect = element.getBoundingClientRect()
+      const grid = element.querySelector<HTMLElement>('.diary-mood-picker-grid')
+      const radios = Array.from(element.querySelectorAll<HTMLElement>('[role="radio"]'))
+      const rects = radios.map((radio) => {
+        const rect = radio.getBoundingClientRect()
+        return {
+          left: rect.left,
+          right: rect.right,
+          top: rect.top,
+          bottom: rect.bottom,
+          width: rect.width,
+          height: rect.height,
+          visibility: getComputedStyle(radio).visibility,
+        }
+      })
+      return {
+        picker: {
+          left: pickerRect.left,
+          right: pickerRect.right,
+          top: pickerRect.top,
+          bottom: pickerRect.bottom,
+          width: pickerRect.width,
+          height: pickerRect.height,
+        },
+        columns: grid ? getComputedStyle(grid).gridTemplateColumns.trim().split(/\s+/).length : 0,
+        rects,
+      }
+    })
+
+    expect(metrics.picker.left, `${width}px ${panelState} picker left`).toBeGreaterThanOrEqual(0)
+    expect(metrics.picker.right, `${width}px ${panelState} picker right`).toBeLessThanOrEqual(width)
+    expect(metrics.picker.top, `${width}px ${panelState} picker top`).toBeGreaterThanOrEqual(0)
+    expect(metrics.picker.bottom, `${width}px ${panelState} picker bottom`).toBeLessThanOrEqual(height)
+    expect(metrics.picker.width).toBeGreaterThan(0)
+    expect(metrics.picker.height).toBeGreaterThan(0)
+    expect(metrics.columns, `${width}px ${panelState} columns`).toBe(4)
+    expect(metrics.rects).toHaveLength(24)
+    expect(metrics.rects.every((rect) => (
+      rect.width >= 44
+      && rect.height >= 44
+      && rect.visibility !== 'hidden'
+      && rect.left >= metrics.picker.left - 1
+      && rect.right <= metrics.picker.right + 1
+      && rect.top >= metrics.picker.top - 1
+      && rect.bottom <= metrics.picker.bottom + 1
+    ))).toBe(true)
+  }
+
+  try {
+    await seedDiary(request, date, `# D7.2 mobile picker ${RUN_ID}`)
+    await openDiaryHome(page)
+    await clickDiaryDate(page, date)
+    await assertNativeReader(page, date)
+
+    for (const viewport of [
+      { width: 320, height: 700 },
+      { width: 375, height: 812 },
+    ]) {
+      await page.setViewportSize(viewport)
+      for (const panel of [false, true]) {
+        await setExplorerOpen(panel)
+        const trigger = page.getByTestId('diary-mood-trigger')
+        await expect(trigger).toBeVisible()
+        await trigger.click()
+        await assertPickerGeometry(viewport.width, viewport.height, panel ? 'open' : 'closed')
+
+        const picker = page.getByTestId('diary-mood-picker')
+        await picker.getByRole('radio', { name: /喜欢 \/ Like|喜欢/ }).click()
+        await expect(picker).toHaveCount(0)
+      }
+    }
+  } finally {
+    await deleteDiaryDate(request, date)
   }
 
   expect(state.pageErrors).toEqual([])

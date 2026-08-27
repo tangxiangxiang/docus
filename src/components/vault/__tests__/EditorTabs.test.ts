@@ -190,6 +190,21 @@ describe('EditorTabs context action slot', () => {
     expect(wrapper.find('.editor-tabs-context-actions').exists()).toBe(true)
     expect(wrapper.get('[role="tablist"]').find('[data-testid="context-action"]').exists()).toBe(false)
   })
+
+  it('does not leave an empty context-action rail when the caller has no action', () => {
+    const wrapper = mount(EditorTabs, {
+      props: {
+        tabs: [makeTab('a.md')],
+        activePath: 'a.md',
+        contextActionsVisible: false,
+      },
+      slots: {
+        'context-actions': '<button data-testid="context-action">Context</button>',
+      },
+    })
+
+    expect(wrapper.find('.editor-tabs-context-actions').exists()).toBe(false)
+  })
 })
 
 describe('EditorTabs ARIA', () => {

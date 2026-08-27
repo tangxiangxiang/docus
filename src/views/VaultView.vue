@@ -2200,6 +2200,7 @@ watch(isReadMode, async (reading) => {
         ref="editorTabsRef"
         :tabs="workspaceTabs"
         :active-path="activeWorkspaceTabId"
+        :context-actions-visible="Boolean(activeNativeDiaryContext)"
         @select="selectWorkspaceTab"
         @close="closeWorkspaceTab"
         @close-many="closeManyWorkspaceTabs"
