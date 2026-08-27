@@ -1,7 +1,7 @@
 # D7.1 — Registry and Metadata Foundation
 
-Status: **REVIEW-READY**
-Independent Review: **PENDING**
+Status: **REVIEW-CLOSED**
+Independent Review: **PASS**
 Self-review: **P0 = 0 / P1 = 0 / P2 = 0**
 
 ## 1. Evidence scope
@@ -19,6 +19,8 @@ Focused D7.1 remediation commit:
 `199fbe4a8de6af151f47f268abb3ff4616db405b`
 
 The initial implementation commit is `feat(diary): add mood registry and metadata foundation`. The remediation preserves trusted pre-Mood History proof, and this evidence document records both commits without reopening any closed D7 design contract.
+
+Review history: the initial D7.1 evidence reached `REVIEW-READY`. The first Independent Review found P1 because `pre-mood-schema` incorrectly downgraded trusted covered provenance to legacy. Remediation commit `199fbe4a8de6af151f47f268abb3ff4616db405b` corrected that boundary; evidence sync commit `b56c2576b6e2111d72be653fa1de1f3f14bb4b4f` recorded the remediation. Independent re-review passed with P0/P1/P2 = 0/0/0.
 
 D7.1 establishes only the registry, live metadata, existing metadata API integration, CAS command, History v1/v2 compatibility, bulk summary seam, and regression evidence. It does not start D7.2 or D7.3.
 
@@ -219,16 +221,16 @@ The full unit run emitted existing jsdom/browser-environment notices (scrollTo, 
     D7.0A                   = REVIEW-CLOSED
     D7.0                    = REVIEW-CLOSED
 
-    D7.1                   = REVIEW-READY
-    D7.1 Independent Review = PENDING
+    D7.1                   = REVIEW-CLOSED
+    D7.1 Independent Review = PASS (0/0/0)
     D7.1 Self-review        = P0/P1/P2 0/0/0
 
     D7.2                   = NOT STARTED
     D7.3                   = NOT STARTED
     D7 Mood UI             = NOT STARTED
 
-The focused D7.1 remediation addressed the independent-review finding that trusted Pre-Mood v1 provenance must not be downgraded to legacy. Independent review remains pending; no new self-review finding is recorded. Remaining risk is intentionally deferred to that review and later implementation phases: the 24-entry registry has no UI yet, and any future History/Recovery behavior must continue to honor the v1/v2 domain policy recorded here. No D7.1 STOP condition was triggered.
+The focused D7.1 remediation addressed the independent-review finding that trusted Pre-Mood v1 provenance must not be downgraded to legacy. Independent re-review passed with P0/P1/P2 = 0/0/0; no new self-review finding is recorded. D7.1 is now closed. Remaining risk is intentionally deferred to later implementation phases: the 24-entry registry has no UI yet, and any future History/Recovery behavior must continue to honor the v1/v2 domain policy recorded here. No D7.1 STOP condition was triggered.
 
 GitHub status: **not queried**.
 
-Conclusion: D7.1 is **READY FOR INDEPENDENT REVIEW**. Stop here; do not start D7.2.
+Conclusion: D7.1 is **REVIEW-CLOSED** after Independent Review PASS. Stop here; do not start D7.2.
