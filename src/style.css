@@ -3985,8 +3985,31 @@ main.container.auth-page-shell {
 }
 
 /* Tabs */
+.editor-tabs-shell {
+  display: flex;
+  width: 100%;
+  height: 36px;
+  min-width: 0;
+  min-height: 0;
+  overflow: visible;
+  background: var(--vs-tabs-bg, var(--vs-bg-3));
+}
+.editor-tabs-context-actions {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  min-width: 0;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--vs-border);
+  border-left: 1px solid var(--vs-border);
+  background: var(--vs-tabs-bg, var(--vs-bg-3));
+}
 .tabs {
   display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
   background: var(--vs-tabs-bg, var(--vs-bg-3));
   border-bottom: 1px solid var(--vs-border);
   overflow-x: auto;

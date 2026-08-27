@@ -58,13 +58,17 @@ import { useDocumentLifecycle } from '../composables/vault/useDocumentLifecycle'
 import type { DocumentLifecycle } from '../composables/vault/useDocumentLifecycle'
 import { applyMetadataToPostSummary } from './metadataPostSummary'
 import { useDiaryDateCommand, type DiaryDateCommandResult } from '../composables/diary/useDiaryDateCommand'
+import { useDiaryMoodCommand } from '../composables/diary/useDiaryMoodCommand'
 import { useDiaryWorkspacePresentation } from '../composables/diary/useDiaryWorkspacePresentation'
 import { localCivilToday } from '../components/diary/diaryCalendarAdapter'
+import { resolveNativeDiaryMoodContext } from '../components/diary/diaryMoodContext'
 import type { DiaryDate } from '../../shared/diaryProtocol'
+import type { MoodId } from '../../shared/diaryMood'
 import { handleDiaryHomeKeydown } from './diaryHomeKeyboard'
 import FileTree from '../components/vault/FileTree.vue'
 import DiaryWorkspace from '../components/diary/DiaryWorkspace.vue'
 import DiaryCalendarSurface from '../components/diary/DiaryCalendarSurface.vue'
+import DiaryMoodContextAction from '../components/diary/DiaryMoodContextAction.vue'
 import TagPanel from '../components/vault/TagPanel.vue'
 import TagManagementPanel from '../components/vault/TagManagementPanel.vue'
 import ReadingPane from '../components/vault/ReadingPane.vue'
@@ -210,6 +214,7 @@ const emptyActions = computed(() => [
 const vaultRef = shallowRef<HTMLElement | null>(null)
 const paletteRef = ref<InstanceType<typeof CommandPalette> | null>(null)
 const editorTabsRef = ref<InstanceType<typeof EditorTabs> | null>(null)
+const diaryMoodContextRef = ref<InstanceType<typeof DiaryMoodContextAction> | null>(null)
 const fileTreeRef = ref<InstanceType<typeof FileTree> | null>(null)
 const diaryCalendarSurfaceRef = ref<{ focusDate: (date: DiaryDate) => boolean } | null>(null)
 const comparisonPaneRef = ref<InstanceType<typeof HistoryComparisonPane> | null>(null)
@@ -1635,6 +1640,72 @@ const diaryExactPathFilter = computed(() => (
   isDiaryDocumentMode.value ? backingPath.value : null
 ))
 
+const nativeMoodExcludedBySurface = computed(() => Boolean(
+  isDiaryPresentationPrimary.value
+  || activeHistoryComparison.value
+  || activeWorkingTreeDiff.value
+  || activeDraftRecovery.value,
+))
+const activeNativeDiaryContext = computed(() => resolveNativeDiaryMoodContext(
+  activeTab.value,
+  posts.value,
+  nativeMoodExcludedBySurface.value,
+))
+const diaryMoodBusy = ref(false)
+const diaryMoodMutationDisabled = computed(() => {
+  const version = activeNativeDiaryContext.value?.metadataUpdatedAt
+  return typeof version !== 'number' || !Number.isSafeInteger(version) || version < 0
+})
+const diaryMoodCommand = useDiaryMoodCommand({
+  mutationLock: historyMutationLock,
+  onBusy: () => toast.info(t('mood.busy')),
+  onConflict: () => toast.info(t('mood.conflict')),
+  onError: (error) => toast.error(t('mood.failed', {
+    error: error.message || t('common.unknown_error'),
+  })),
+})
+
+async function refreshAfterMoodRejection(): Promise<void> {
+  try {
+    await refresh()
+  } catch {
+    toast.info(t('metadata.sync_failed'))
+  }
+}
+
+async function updateNativeDiaryMood(mood: MoodId | null): Promise<void> {
+  if (diaryMoodBusy.value) return
+  const context = activeNativeDiaryContext.value
+  const expectedUpdatedAt = context?.metadataUpdatedAt
+  if (
+    !context
+    || typeof expectedUpdatedAt !== 'number'
+    || !Number.isSafeInteger(expectedUpdatedAt)
+    || expectedUpdatedAt < 0
+  ) return
+
+  diaryMoodBusy.value = true
+  try {
+    const result = await diaryMoodCommand.setMood(context.date, mood, expectedUpdatedAt)
+    if (result.status === 'updated') {
+      await onMetadataSaved(result.metadata)
+      if (activeNativeDiaryContext.value?.path === context.path) {
+        diaryMoodContextRef.value?.close()
+      }
+      toast.success(t('mood.saved'))
+    } else if (result.status === 'conflict' || result.status === 'not-found') {
+      if (result.status === 'not-found') toast.info(t('mood.not_found'))
+      await refreshAfterMoodRejection()
+    }
+  } finally {
+    diaryMoodBusy.value = false
+  }
+}
+
+function clearNativeDiaryMood(): Promise<void> {
+  return updateNativeDiaryMood(null)
+}
+
 async function closeDiaryPresentation(): Promise<void> {
   const target = focusReturnTarget.value
   diaryWorkspacePresentation.closePresentation()
@@ -2135,7 +2206,19 @@ watch(isReadMode, async (reading) => {
         @copy-path="copyWorkspaceTabPath"
         @reveal-in-tree="revealWorkspaceTabInTree"
         @reorder="reorderWorkspaceTabs"
-      />
+      >
+        <template #context-actions>
+          <DiaryMoodContextAction
+            v-if="activeNativeDiaryContext"
+            ref="diaryMoodContextRef"
+            :current-mood="activeNativeDiaryContext.mood"
+            :busy="diaryMoodBusy"
+            :disabled="diaryMoodMutationDisabled"
+            @select="updateNativeDiaryMood"
+            @clear="clearNativeDiaryMood"
+          />
+        </template>
+      </EditorTabs>
 
       <!-- Calendar Home is the only Diary-owned surface. The subtree stays
            mounted for the whole Diary scope while native Vault documents use

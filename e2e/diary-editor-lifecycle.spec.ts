@@ -41,7 +41,11 @@ function normalizeLineEndings(raw: string): string {
 }
 
 async function deleteDiaryDate(request: APIRequestContext, date: string): Promise<void> {
-  const response = await request.delete(`/api/posts/${diaryPath(date)}`)
+  await deletePost(request, diaryPath(date))
+}
+
+async function deletePost(request: APIRequestContext, path: string): Promise<void> {
+  const response = await request.delete(`/api/posts/${path}`)
   expect([200, 404]).toContain(response.status())
 }
 
@@ -71,6 +75,14 @@ async function seedDiary(
     documentId: detail.metadata.id as string,
     raw: detail.raw as string,
   }
+}
+
+async function seedOrdinaryNote(request: APIRequestContext, path: string): Promise<void> {
+  await deletePost(request, path)
+  const created = await request.post('/api/posts', {
+    data: { path, title: path.split('/').at(-1) },
+  })
+  expect([200, 201]).toContain(created.status())
 }
 
 async function commitDiaryRevision(
@@ -609,6 +621,102 @@ test('external conflict stays on the native Diary tab through Calendar and resol
   } finally {
     if (browserAutosaveInstalled) await page.unroute(`**/api/posts/${path}`)
     await deleteDiaryDate(request, date)
+  }
+
+  expect(state.pageErrors).toEqual([])
+  expect(state.consoleErrors).toEqual([])
+})
+
+test('native Diary mood context shares one picker across READ and EDIT without saving the body', async ({ page, request }) => {
+  const date = localCivilDate()
+  const path = diaryPath(date)
+  const baseRaw = `# D7.2 Mood context ${RUN_ID} — Base body ${RUN_ID}`
+  const dirtyMarker = `MOOD_DIRTY_${RUN_ID}`
+  const state = diagnostics(page, ['net::ERR_FAILED'])
+  let browserAutosaveInstalled = false
+
+  async function readDiary() {
+    const response = await request.get(`/api/posts/${path}`)
+    expect(response.status(), await response.text()).toBe(200)
+    return response.json() as Promise<{
+      raw: string
+      metadata: { id: string; mood: string | null; updatedAt: number }
+    }>
+  }
+
+  try {
+    const document = await seedDiary(request, date, baseRaw)
+    await openDiaryHome(page)
+    await clickDiaryDate(page, date)
+    await assertNativeReader(page, date)
+
+    const context = page.getByTestId('diary-native-mood-context')
+    const trigger = context.getByTestId('diary-mood-trigger')
+    await expect(context).toHaveCount(1)
+    await expect(trigger).toBeVisible()
+    await expect(trigger).toBeEnabled()
+
+    await trigger.click()
+    const picker = page.getByTestId('diary-mood-picker')
+    await expect(picker).toBeVisible()
+    await expect(picker.locator('[role="radio"]')).toHaveCount(24)
+    await expect(picker.locator('[role="radio"]').nth(10)).toHaveAttribute('data-mood-id', 'happy')
+    const columns = await picker.locator('.diary-mood-picker-grid').evaluate((element) => (
+      getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/).length
+    ))
+    expect(columns).toBe(4)
+    await picker.getByRole('radio', { name: '开心 / Happy' }).click()
+
+    await expect.poll(async () => (await readDiary()).metadata.mood).toBe('happy')
+    await expect(context).toBeVisible()
+    await expect(picker).toHaveCount(0)
+    await expect(trigger).toContainText(/开心|Happy/)
+
+    await enterEditor(page)
+    await expect(page.getByTestId('diary-native-mood-context')).toHaveCount(1)
+    await expect(page.locator('.editor-pane .monaco-editor')).toHaveCount(1)
+
+    await interceptAutosaveAborted(page, path)
+    browserAutosaveInstalled = true
+    await appendEditorText(page, dirtyMarker)
+    await expect(page.locator(`[data-tab-id="${path}"][data-save-status="dirty"]`)).toBeVisible({ timeout: 15_000 })
+
+    const beforeMoodChange = await readDiary()
+    await expect(page.getByTestId('diary-native-mood-context').getByTestId('diary-mood-trigger')).toBeVisible()
+    await page.getByTestId('diary-mood-trigger').click()
+    const editPicker = page.getByTestId('diary-mood-picker')
+    await expect(editPicker).toBeVisible()
+    await editPicker.getByRole('radio', { name: '伤心 / Sad' }).click()
+
+    await expect.poll(async () => (await readDiary()).metadata.mood).toBe('sad')
+    const afterMoodChange = await readDiary()
+    expect(afterMoodChange.raw).toBe(beforeMoodChange.raw)
+    expect(afterMoodChange.raw).toBe(baseRaw)
+    expect(afterMoodChange.metadata.id).toBe(document.documentId)
+    await expect(page.locator(`[data-tab-id="${path}"][data-save-status="dirty"]`)).toBeVisible()
+    await expect(page.getByTestId('diary-native-mood-context')).toHaveCount(1)
+  } finally {
+    if (browserAutosaveInstalled) await page.unroute(`**/api/posts/${path}`)
+    await deleteDiaryDate(request, date)
+  }
+
+  expect(state.pageErrors).toEqual([])
+  expect(state.consoleErrors).toEqual([])
+})
+
+test('ordinary Note does not expose the native Diary mood context', async ({ page, request }) => {
+  const path = `inbox/d7-2-mood-note-${RUN_ID}`
+  const state = diagnostics(page, ['net::ERR_FAILED'])
+
+  try {
+    await seedOrdinaryNote(request, path)
+    await page.goto(`/vault/${path}`)
+    await expect(page).toHaveURL(new RegExp(`/vault/${path.replace('/', '\\/')}(?:[?#]|$)`))
+    await expect(page.locator(`[role="tab"][data-tab-id="${path}"]`)).toHaveAttribute('aria-selected', 'true')
+    await expect(page.getByTestId('diary-native-mood-context')).toHaveCount(0)
+    await expect(page.getByTestId('diary-mood-picker')).toHaveCount(0)
+  } finally {
+    await deletePost(request, path)
   }
 
   expect(state.pageErrors).toEqual([])

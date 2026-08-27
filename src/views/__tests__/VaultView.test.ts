@@ -702,3 +702,39 @@ describe('VaultView D3.2 Diary surface wiring', () => {
     expect(styles).not.toMatch(/\.vault\.diary-native-document-mode\s*\{\s*\n\s*grid-template-columns: 40px minmax\(136px, 42vw\)/)
   })
 })
+
+describe('D7.2 Native Diary mood context wiring', () => {
+  it('uses one generic document-context slot and the existing authoritative metadata seam', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+    const tabs = readFileSync(fileURLToPath(new URL('../../components/vault/EditorTabs.vue', import.meta.url)), 'utf8')
+
+    expect(source).toContain("import DiaryMoodContextAction from '../components/diary/DiaryMoodContextAction.vue'")
+    expect(source).toContain("import { useDiaryMoodCommand } from '../composables/diary/useDiaryMoodCommand'")
+    expect(source).toContain("import { resolveNativeDiaryMoodContext } from '../components/diary/diaryMoodContext'")
+    expect(source.match(/<DiaryMoodContextAction/g)).toHaveLength(1)
+    expect(source).toContain('<template #context-actions>')
+    expect(source).toContain('const activeNativeDiaryContext = computed(() => resolveNativeDiaryMoodContext(')
+    expect(source).toContain('nativeMoodExcludedBySurface')
+    expect(source).toContain('diaryMoodCommand.setMood(context.date, mood, expectedUpdatedAt)')
+    expect(source).toContain('await onMetadataSaved(result.metadata)')
+    expect(source).not.toContain('posts.value.find((post) => post.path === context.path)!.mood =')
+    expect(source).not.toContain('updateDocumentMetadata(')
+
+    expect(tabs).not.toContain('DiaryMood')
+    expect(tabs).not.toContain('classifyDiaryPath')
+    expect(tabs).toContain('<slot name="context-actions" />')
+  })
+
+  it('keeps the native mood context out of Calendar Home and special surfaces', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+    const exclusion = source.match(/const nativeMoodExcludedBySurface = computed\(\(\) => Boolean\([\s\S]*?\)\)/)?.[0]
+
+    expect(exclusion).toBeDefined()
+    expect(exclusion).toContain('isDiaryPresentationPrimary.value')
+    expect(exclusion).toContain('activeHistoryComparison.value')
+    expect(exclusion).toContain('activeWorkingTreeDiff.value')
+    expect(exclusion).toContain('activeDraftRecovery.value')
+    expect(source).toContain(':disabled="diaryMoodMutationDisabled"')
+    expect(source).toContain('typeof version !== \'number\'')
+  })
+})

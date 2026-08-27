@@ -173,6 +173,25 @@ describe('EditorTabs (existing behavior)', () => {
   })
 })
 
+describe('EditorTabs context action slot', () => {
+  beforeEach(() => {
+    useI18n().setLocale('zh')
+  })
+
+  it('keeps an optional context action outside the tablist', () => {
+    const wrapper = mount(EditorTabs, {
+      props: { tabs: [makeTab('a.md')], activePath: 'a.md' },
+      slots: {
+        'context-actions': '<button data-testid="context-action">Context</button>',
+      },
+    })
+
+    expect(wrapper.find('[data-testid="context-action"]').exists()).toBe(true)
+    expect(wrapper.find('.editor-tabs-context-actions').exists()).toBe(true)
+    expect(wrapper.get('[role="tablist"]').find('[data-testid="context-action"]').exists()).toBe(false)
+  })
+})
+
 describe('EditorTabs ARIA', () => {
   beforeEach(() => {
     useI18n().setLocale('zh')

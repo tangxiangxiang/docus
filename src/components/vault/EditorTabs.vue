@@ -244,83 +244,88 @@ function onContextMenu(e: MouseEvent, path: string) {
 </script>
 
 <template>
-  <div
-    ref="tabsRef"
-    class="tabs"
-    role="tablist"
-    @dragover="onTabsDragOver"
-    @dragleave="onTabsDragLeave"
-    @drop.self="cancelReorder(true)"
-  >
+  <div class="editor-tabs-shell">
     <div
-      v-for="(t, i) in tabs"
-      :key="t.id"
-      role="tab"
-      :data-tab-id="t.id"
-      :data-save-status="t.kind === 'document' ? t.save.status : undefined"
-      :data-status-kind="tabPresentations[i].statusKind"
-      :tabindex="t.id === activePath ? 0 : -1"
-      :aria-selected="t.id === activePath"
-      aria-haspopup="menu"
-      :aria-expanded="menuVisible && menuTabPath === t.id ? 'true' : 'false'"
-      :aria-label="tabPresentations[i].ariaLabel"
-      :aria-describedby="tooltipTabId === t.id ? tooltipId(t.id) : undefined"
-      :aria-roledescription="translate('workspace_tab.draggable')"
-      draggable="true"
-      class="tab"
-      :class="{
-        active: t.id === activePath,
-        diff: t.kind === 'diff',
-        'save-in-flight': t.kind === 'document' && t.save.inFlight,
-        'save-attention': t.kind === 'document' && t.save.attention,
-        dragging: draggedId === t.id,
-        'drop-before': dropTargetId === t.id && dropPosition === 'before',
-        'drop-after': dropTargetId === t.id && dropPosition === 'after',
-      }"
-      @click="onTabClick(t)"
-      @auxclick.middle="() => { hideTooltip(); emit('close', t.id) }"
-      @contextmenu="onContextMenu($event, t.id)"
-      @mouseenter="onTooltipAnchorEnter(t, $event)"
-      @mouseleave="onTooltipAnchorLeave(t, $event)"
-      @focusin="onTooltipAnchorFocus(t, $event)"
-      @focusout="onTooltipAnchorBlur($event)"
-      @keydown="onTabKeydown($event, t)"
-      @dragstart="onDragStart($event, t)"
-      @dragover="onDragOver($event, t.id)"
-      @drop.stop="onDrop($event, t.id)"
-      @dragend="onDragEnd"
+      ref="tabsRef"
+      class="tabs"
+      role="tablist"
+      @dragover="onTabsDragOver"
+      @dragleave="onTabsDragLeave"
+      @drop.self="cancelReorder(true)"
     >
-      <!-- Dirty marker: independent of the save-status indicator so a
-           dirty buffer is still visible when error / offline / external
-           colours are painted. Shape (filled dot) is constant; color
-           comes from the .tab-dirty-indicator rule. -->
-      <span
-        v-if="t.kind === 'document' && t.save.dirty"
-        class="tab-dirty-indicator"
-        :data-newer-changes="t.save.hasNewerChanges ? 'true' : undefined"
-        aria-hidden="true"
-      />
-      <!-- Save-status indicator: distinct per status kind so users
-           can tell saving / error / offline / external apart by shape,
-           not just by color. Skipped for 'none' and 'dirty' (dirty is
-           already covered by the dirty marker above). -->
-      <span
-        v-if="tabPresentations[i].statusKind !== 'none' && tabPresentations[i].statusKind !== 'dirty'"
-        class="tab-status-indicator"
-        :data-kind="tabPresentations[i].statusKind"
-        aria-hidden="true"
-      />
-      <span class="tab-title">{{ tabPresentations[i].displayTitle }}</span>
-      <button
-        class="tab-close"
-        draggable="false"
-        :aria-label="translate('workspace_tab.close_named', { name: tabPresentations[i].displayTitle })"
-        @pointerdown="onClosePointerDown(t.id, $event)"
-        @dragstart.prevent.stop
-        @click.stop="onCloseClick(t)"
-      >×</button>
+      <div
+        v-for="(t, i) in tabs"
+        :key="t.id"
+        role="tab"
+        :data-tab-id="t.id"
+        :data-save-status="t.kind === 'document' ? t.save.status : undefined"
+        :data-status-kind="tabPresentations[i].statusKind"
+        :tabindex="t.id === activePath ? 0 : -1"
+        :aria-selected="t.id === activePath"
+        aria-haspopup="menu"
+        :aria-expanded="menuVisible && menuTabPath === t.id ? 'true' : 'false'"
+        :aria-label="tabPresentations[i].ariaLabel"
+        :aria-describedby="tooltipTabId === t.id ? tooltipId(t.id) : undefined"
+        :aria-roledescription="translate('workspace_tab.draggable')"
+        draggable="true"
+        class="tab"
+        :class="{
+          active: t.id === activePath,
+          diff: t.kind === 'diff',
+          'save-in-flight': t.kind === 'document' && t.save.inFlight,
+          'save-attention': t.kind === 'document' && t.save.attention,
+          dragging: draggedId === t.id,
+          'drop-before': dropTargetId === t.id && dropPosition === 'before',
+          'drop-after': dropTargetId === t.id && dropPosition === 'after',
+        }"
+        @click="onTabClick(t)"
+        @auxclick.middle="() => { hideTooltip(); emit('close', t.id) }"
+        @contextmenu="onContextMenu($event, t.id)"
+        @mouseenter="onTooltipAnchorEnter(t, $event)"
+        @mouseleave="onTooltipAnchorLeave(t, $event)"
+        @focusin="onTooltipAnchorFocus(t, $event)"
+        @focusout="onTooltipAnchorBlur($event)"
+        @keydown="onTabKeydown($event, t)"
+        @dragstart="onDragStart($event, t)"
+        @dragover="onDragOver($event, t.id)"
+        @drop.stop="onDrop($event, t.id)"
+        @dragend="onDragEnd"
+      >
+        <!-- Dirty marker: independent of the save-status indicator so a
+             dirty buffer is still visible when error / offline / external
+             colours are painted. Shape (filled dot) is constant; color
+             comes from the .tab-dirty-indicator rule. -->
+        <span
+          v-if="t.kind === 'document' && t.save.dirty"
+          class="tab-dirty-indicator"
+          :data-newer-changes="t.save.hasNewerChanges ? 'true' : undefined"
+          aria-hidden="true"
+        />
+        <!-- Save-status indicator: distinct per status kind so users
+             can tell saving / error / offline / external apart by shape,
+             not just by color. Skipped for 'none' and 'dirty' (dirty is
+             already covered by the dirty marker above). -->
+        <span
+          v-if="tabPresentations[i].statusKind !== 'none' && tabPresentations[i].statusKind !== 'dirty'"
+          class="tab-status-indicator"
+          :data-kind="tabPresentations[i].statusKind"
+          aria-hidden="true"
+        />
+        <span class="tab-title">{{ tabPresentations[i].displayTitle }}</span>
+        <button
+          class="tab-close"
+          draggable="false"
+          :aria-label="translate('workspace_tab.close_named', { name: tabPresentations[i].displayTitle })"
+          @pointerdown="onClosePointerDown(t.id, $event)"
+          @dragstart.prevent.stop
+          @click.stop="onCloseClick(t)"
+        >×</button>
+      </div>
+      <span class="sr-only" aria-live="polite" aria-atomic="true">{{ liveAnnouncement }}</span>
     </div>
-    <span class="sr-only" aria-live="polite" aria-atomic="true">{{ liveAnnouncement }}</span>
+    <div v-if="$slots['context-actions']" class="editor-tabs-context-actions">
+      <slot name="context-actions" />
+    </div>
     <Teleport to="body">
       <div
         v-if="tooltipPresentation"
