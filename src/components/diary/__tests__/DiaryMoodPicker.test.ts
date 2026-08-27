@@ -57,21 +57,34 @@ describe('DiaryMoodPicker', () => {
     expect(unknown.get('[data-testid="diary-mood-clear"]').attributes('disabled')).toBeUndefined()
   })
 
-  it('uses fixed four-column keyboard geometry without emitting on arrows', async () => {
+  it('clamps keyboard focus within fixed four-column geometry without emitting on arrows', async () => {
     const wrapper = mount(DiaryMoodPicker, {
       props: { currentMood: null },
       attachTo: document.body,
     })
-    const first = wrapper.get('[data-mood-id="kiss"]')
 
-    await first.trigger('keydown', { key: 'ArrowRight' })
-    expect(document.activeElement).toBe(wrapper.get('[data-mood-id="sad"]').element)
-    await wrapper.get('[data-mood-id="sad"]').trigger('keydown', { key: 'ArrowDown' })
-    expect(document.activeElement).toBe(wrapper.get('[data-mood-id="like"]').element)
-    await wrapper.get('[data-mood-id="like"]').trigger('keydown', { key: 'ArrowUp' })
-    expect(document.activeElement).toBe(wrapper.get('[data-mood-id="sad"]').element)
-    await wrapper.get('[data-mood-id="sad"]').trigger('keydown', { key: 'ArrowLeft' })
-    expect(document.activeElement).toBe(first.element)
+    async function expectArrow(fromId: string, key: string, toId: string): Promise<void> {
+      const source = wrapper.get(`[data-mood-id="${fromId}"]`)
+      const sourceElement = source.element as HTMLElement
+      sourceElement.focus()
+      await source.trigger('keydown', { key })
+      expect(document.activeElement).toBe(wrapper.get(`[data-mood-id="${toId}"]`).element)
+    }
+
+    await expectArrow('kiss', 'ArrowLeft', 'kiss')
+    await expectArrow('kiss', 'ArrowUp', 'kiss')
+    await expectArrow('surprised-small', 'ArrowRight', 'surprised-small')
+    await expectArrow('surprised-small', 'ArrowUp', 'surprised-small')
+    await expectArrow('laughing-tears', 'ArrowLeft', 'laughing-tears')
+    await expectArrow('laughing-tears', 'ArrowDown', 'laughing-tears')
+    await expectArrow('devilish', 'ArrowRight', 'devilish')
+    await expectArrow('devilish', 'ArrowDown', 'devilish')
+
+    await expectArrow('shy', 'ArrowRight', 'happy')
+    await expectArrow('shy', 'ArrowLeft', 'afraid')
+    await expectArrow('shy', 'ArrowDown', 'angry')
+    await expectArrow('shy', 'ArrowUp', 'like')
+
     expect(wrapper.emitted('select')).toBeUndefined()
   })
 

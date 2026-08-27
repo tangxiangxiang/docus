@@ -22,6 +22,11 @@ const focusedIndex = ref(0)
 const radioRefs = ref<Array<HTMLButtonElement | null>>([])
 let suppressNextClick = false
 
+// D7.2 freezes the picker as a four-column by six-row grid. Keep keyboard
+// movement in that geometry instead of clamping a flattened array index.
+const MOOD_GRID_COLUMNS = 4
+const MOOD_GRID_ROWS = 6
+
 const selectedIndex = computed(() => (
   isMoodId(props.currentMood)
     ? MOOD_CATALOG.findIndex((mood) => mood.id === props.currentMood)
@@ -54,6 +59,15 @@ function focusRadio(index: number): void {
   void nextTick(() => radioRefs.value[nextIndex]?.focus())
 }
 
+function focusGridCell(index: number, rowDelta: number, columnDelta: number): void {
+  const row = Math.floor(index / MOOD_GRID_COLUMNS)
+  const column = index % MOOD_GRID_COLUMNS
+  const nextRow = Math.max(0, Math.min(MOOD_GRID_ROWS - 1, row + rowDelta))
+  const nextColumn = Math.max(0, Math.min(MOOD_GRID_COLUMNS - 1, column + columnDelta))
+
+  focusRadio(nextRow * MOOD_GRID_COLUMNS + nextColumn)
+}
+
 function focusInitial(): void {
   focusRadio(selectedIndex.value >= 0 ? selectedIndex.value : 0)
 }
@@ -84,18 +98,18 @@ function onRadioKeydown(index: number, event: KeyboardEvent): void {
     return
   }
 
-  const delta = event.key === 'ArrowRight'
-    ? 1
+  const movement = event.key === 'ArrowRight'
+    ? { rowDelta: 0, columnDelta: 1 }
     : event.key === 'ArrowLeft'
-      ? -1
+      ? { rowDelta: 0, columnDelta: -1 }
       : event.key === 'ArrowDown'
-        ? 4
+        ? { rowDelta: 1, columnDelta: 0 }
         : event.key === 'ArrowUp'
-          ? -4
-          : 0
-  if (delta !== 0) {
+          ? { rowDelta: -1, columnDelta: 0 }
+          : null
+  if (movement) {
     event.preventDefault()
-    focusRadio(index + delta)
+    focusGridCell(index, movement.rowDelta, movement.columnDelta)
     return
   }
 
