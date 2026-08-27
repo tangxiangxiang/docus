@@ -384,10 +384,13 @@ defineExpose({ focusDate, closeMoodPicker })
               </span>
             </button>
             <button
-              v-if="moodDefinitionForDay(day) || hasUnknownMoodForDay(day)"
+              v-if="hasDiaryCalendarAttribute(attributes) || moodDefinitionForDay(day) || hasUnknownMoodForDay(day)"
               type="button"
               class="diary-calendar-mood"
-              :class="{ 'diary-calendar-mood-unknown': hasUnknownMoodForDay(day) }"
+              :class="{
+                'diary-calendar-mood-unknown': hasUnknownMoodForDay(day),
+                'diary-calendar-mood-empty': !moodDefinitionForDay(day) && !hasUnknownMoodForDay(day),
+              }"
               data-testid="diary-calendar-mood"
               :data-date="diaryDateFromCalendarDay(day) ?? undefined"
               :aria-label="moodButtonLabel(day)"
@@ -403,7 +406,8 @@ defineExpose({ focusDate, closeMoodPicker })
                 alt=""
                 aria-hidden="true"
               >
-              <span v-else aria-hidden="true">?</span>
+              <span v-else-if="hasUnknownMoodForDay(day)" aria-hidden="true">?</span>
+              <span v-else class="diary-calendar-mood-empty-mark" aria-hidden="true">?</span>
             </button>
           </div>
         </template>
@@ -639,7 +643,14 @@ defineExpose({ focusDate, closeMoodPicker })
 
 .diary-calendar-day-content > [data-diary-day-content] {
   position: absolute;
-  inset: 0;
+  top: calc(50% - 18px);
+  left: 50%;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  transform: translate(-50%, -50%);
+  border: 0;
+  border-radius: 8px;
   background: transparent;
   box-shadow: none;
 }
@@ -657,7 +668,7 @@ defineExpose({ focusDate, closeMoodPicker })
 .diary-calendar-mood {
   position: absolute;
   left: 50%;
-  top: calc(50% + 28px);
+  top: calc(50% + 18px);
   z-index: 2;
   display: inline-flex;
   width: 28px;
@@ -681,6 +692,11 @@ defineExpose({ focusDate, closeMoodPicker })
   width: 21px;
   height: 21px;
   object-fit: contain;
+}
+
+.diary-calendar-mood-empty-mark {
+  font-size: 1rem;
+  font-weight: 500;
 }
 
 .diary-calendar-mood:hover:not(:disabled),
