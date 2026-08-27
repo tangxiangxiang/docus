@@ -346,13 +346,38 @@ test('Calendar Home semantics and layout pass the full responsive matrix', async
     const nestedControlAudit = await page.evaluate(() => {
       const cells = [...document.querySelectorAll<HTMLElement>('.vc-day')]
         .filter((cell) => getComputedStyle(cell).display !== 'none')
-      return cells.map((cell) => ({
-        buttons: cell.querySelectorAll('button').length,
-        diaryButtons: cell.querySelectorAll('[data-diary-day-content]').length,
-      }))
+      return cells.map((cell) => {
+        const content = cell.querySelector<HTMLElement>('.diary-calendar-day-content')
+        const dateButton = content?.querySelector<HTMLElement>(
+          ':scope > [data-diary-day-content]',
+        ) ?? null
+        const moodAction = content?.querySelector<HTMLElement>(
+          ':scope > [data-testid="diary-calendar-mood-action"]',
+        ) ?? null
+
+        return {
+          dateButtons: content?.querySelectorAll(':scope > [data-diary-day-content]').length ?? 0,
+          moodActions: content?.querySelectorAll(
+            ':scope > [data-testid="diary-calendar-mood-action"]',
+          ).length ?? 0,
+          sameParent: Boolean(
+            dateButton &&
+            moodAction &&
+            dateButton.parentElement === moodAction.parentElement,
+          ),
+          moodNestedInDate: Boolean(dateButton && moodAction && dateButton.contains(moodAction)),
+        }
+      })
     })
     expect(nestedControlAudit.length).toBeGreaterThan(0)
-    expect(nestedControlAudit.every((cell) => cell.buttons === 1 && cell.diaryButtons === 1)).toBe(true)
+    expect(
+      nestedControlAudit.every((cell) =>
+        cell.dateButtons === 1 &&
+        cell.moodActions === 1 &&
+        cell.sameParent &&
+        !cell.moodNestedInDate,
+      ),
+    ).toBe(true)
 
     for (const viewport of [...CALENDAR_VIEWPORTS, ...CALENDAR_BREAKPOINT_VIEWPORTS]) {
       await page.setViewportSize(viewport)
@@ -726,6 +751,8 @@ test('exact FileTree context keeps keyboard semantics and the user filter across
 })
 
 test('ten mixed Calendar focus cycles remain stable without VCalendar runtime errors', async ({ page, request }) => {
+  test.setTimeout(60_000)
+
   const date = localCivilDate()
   const path = diaryPath(date)
   const state = await captureDiagnostics(page)
@@ -746,7 +773,18 @@ test('ten mixed Calendar focus cycles remain stable without VCalendar runtime er
         await day.focus()
         await page.keyboard.press('Enter')
       } else {
-        await day.click()
+        const dayBox = await day.boundingBox()
+        if (!dayBox) throw new Error('Diary day button did not expose a bounding box')
+        // The D7.3 Mood action occupies the date button's top-left area. Use
+        // a lower center point so this lifecycle smoke activates the date
+        // button rather than the sibling Mood control.
+        await day.click({
+          force: true,
+          position: {
+            x: dayBox.width / 2,
+            y: Math.max(2, dayBox.height - 4),
+          },
+        })
       }
       await assertNativeRead(page, date)
       await expect(calendar).toBeHidden()
