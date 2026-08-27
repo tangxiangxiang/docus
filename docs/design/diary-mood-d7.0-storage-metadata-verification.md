@@ -584,6 +584,10 @@ fields: { title, summary, tags }
 - unknown field、unsupported/newer schema、digest/body mismatch、identity mismatch
   在 body mutation 前 fail closed；不会产生 body 与 metadata 混合的“成功”结果。
 
+上述 covered v1 结论对 ordinary/non-Diary document 仍然成立；Mood 引入后的 canonical
+Diary 兼容例外由下方 24.6 的 domain-scoped policy 单独定义，不会回溯性削弱普通 Note
+的 metadata-aware History Restore。
+
 这解决了原始 D7.0 blocker：covered generic History Restore 现在可以在同一 live
 SQLite owner 中恢复已覆盖的 metadata，而不是只恢复 body 后继续冒充完整 revision
 restore。
@@ -638,26 +642,60 @@ recovery，必须扩展 generic owner 并重新审计，不得建立 Mood-specif
 
 但 v1 **没有显式保存 `mood: absent/null`**。为遵守已关闭 Amendment 的
 “不能由缺失字段推断清空”规则，不能把“pre-Mood”偷换成“历史 mood 一定是 null”，
-也不能把 v1 body/title/tags 与当前 mood 拼成 mixed revision。最终采用以下安全策略：
+也不能把 v1 body/title/tags 与当前 mood 拼成 mixed revision。这个限制只适用于
+Mood-applicable 的 canonical Diary document，不得扩散到普通 Note。
+
+Mood applicability 必须使用现有 canonical Diary domain authority：只有
+`classifyDiaryPath(path) === 'managed'` 的严格 `diary/YYYY-MM-DD` document 才进入
+Mood 语义；`diary` root、`diary/*` unmanaged content 和其它 ordinary paths 都不是
+Mood-capable document。不能用宽松的 `startsWith("diary/")` 来决定 schema policy。
+
+最终冻结以下 domain-scoped compatibility matrix：
 
 ```text
-v1 pre-Mood revision after Mood exists
-→ legacy-compatible body-only restore
-→ preserve current durable SQLite metadata, including current mood
-→ return explicit metadata-unavailable limitation
+A. v1 + ordinary/non-Diary document
+→ v1 remains a supported covered schema
+→ restore body + title + summary + tags
+→ existing stable identity/CAS/journal semantics
+→ metadataMode = restored
+→ Mood is not applicable
+→ ordinary Note History behavior remains unchanged
 
-v2 Mood-aware revision
-→ exact payload includes mood: string | null
-→ body + title/summary/tags + mood restore in one generic metadata transaction
+B. v1 + canonical managed Diary document after Mood exists
+→ v1 has no explicit historical Mood value
+→ do not infer mood = null
+→ do not restore historical title/summary/tags + current mood as full success
+→ legacy-compatible BODY-ONLY restore
+→ preserve ALL current durable SQLite metadata: title, summary, tags, mood
+→ return metadataMode = unavailable with typed reason pre-mood-schema
+→ pre-mood-schema is distinct from pre-coverage / no-snapshot
+
+C. v2 + canonical managed Diary document
+→ exact payload includes title, summary, tags, mood: string | null
+→ full body + generic metadata + Mood restore in one generic metadata transaction
+→ metadataMode = restored
+
+D. unsupported/newer schema for any document domain
+→ fail closed before body mutation
+→ never downgrade to legacy and never produce a mixed revision
 ```
 
-D7.1 若引入 Mood，必须同时把 Mood-aware capture schema 升级为 v2，并保证 Mood
-启用后不会继续写新的 v1 capture。v1/v2 不能混用字段，也不能通过“当前没有 mood”
-补齐历史 v1。只有 v2 的显式 `mood` 值（包括显式 `null`）可以参与完整 Mood-aware
-restore。
+这意味着 D7 Mood 的引入不会削弱 ordinary Note 的既有 History contract；只有 canonical
+Diary 的 pre-Mood v1 需要显式的 metadata-unavailable limitation。一个可信 v1 snapshot
+仍然是 covered snapshot，只是在 Diary/Mood 语义上缺少完整性，不得被错误标记成
+pre-coverage。
+
+D7.1 若引入 Mood，必须同时把 canonical Diary 的 Mood-aware capture schema 升级为 v2，
+并保证 Mood 启用后不会继续写新的 v1 capture。v1/v2 不能混用字段，也不能通过“当前
+没有 mood”补齐历史 v1。只有 v2 的显式 `mood` 值（包括显式 `null`）可以参与完整
+Mood-aware restore。
 
 未来 v2 的兼容规则：
 
+- ordinary/non-Diary document 继续按 v1/v2 中其适用的 generic metadata schema restore，
+  不产生 Mood 语义；
+- canonical Diary document 的 v2 exact payload includes `mood: string | null`，full
+  restore 必须在同一 generic metadata transaction 内完成；
 - known field + unknown mood **value**（仍为合法 opaque string）必须原样保存、读取和
   restore；旧 registry 不认识该 ID 时不得清空；
 - unknown field 或 unsupported newer schema 必须在任何 body mutation 前 fail closed；
@@ -665,8 +703,16 @@ restore。
 - frontmatter 中的 `mood` 仍不是 controlled source，不能为 v1/v2 补 metadata，也不能
   覆盖 SQLite owner。
 
-该策略同时满足 pre-Mood provenance、legacy safety 和未来 schema evolution；它不是
-通过拒绝 year/date、改变 D1/D2 contract 或新建 Mood history pipeline 来绕过问题。
+这套策略同时满足：
+
+- ordinary Note v1 covered restore 不退化；
+- canonical Diary v1 不会产生 historical fields + current mood 的 mixed revision；
+- v1 的 `pre-mood-schema` limitation 与真正的 pre-coverage legacy branch 清楚分离；
+- v2 成为第一个完整 Mood-aware History schema。
+
+该策略依赖真实的 Diary classification 和 schema provenance，而不是 frontmatter 或
+当前 metadata 状态猜测；它也不通过改变 D1/D2 contract 或新建 Mood history pipeline
+来绕过问题。
 
 ### 24.7 Metadata draft and frontmatter decision
 
@@ -744,9 +790,10 @@ suite 的历史结果冒充为本次新运行结果；D7.0A 文档中已有的�
 | Recovery boundary | PASS | body-only recovery preserves durable metadata |
 | Metadata CAS for future Mood | PASS / implementation pending | same `updatedAt` owner and explicit token required |
 | Dirty body isolation | PASS | metadata paths do not write body/draft state |
-| Pre-Mood v1 policy | PASS | deterministic provenance plus explicit legacy body-only policy |
+| Pre-Mood v1 policy | PASS | domain-scoped; ordinary Note remains covered, Diary has explicit pre-mood limitation |
+| Ordinary Note v1 compatibility | PASS | v1 restores body + title/summary/tags with no Mood semantics |
 | Future v2 Mood schema policy | PASS / implementation pending | explicit `mood: string \| null`; unknown value opaque; unknown schema fail closed |
-| No mixed historical/current revision | PASS | v1 never combines with current Mood; v2 restores atomically |
+| No mixed historical/current revision | PASS | Diary v1 never combines with current Mood; v2 restores atomically |
 | Delete/recreate/generation boundary | PASS / Mood implementation pending | existing identity proof and Diary lifecycle authority |
 | Diary date authority and future guard | PASS | existing command/route tests |
 | Calendar month bulk-read seam | PASS / future seam | one `listPosts()` bulk owner; no per-cell GET |
@@ -783,8 +830,10 @@ D7.1 readiness gate：
 [x] History Comparison remains body-only
 [x] Recovery preserves durable metadata
 [x] CAS/version and dirty-body boundaries confirmed
-[x] pre-Mood v1 policy is deterministic and non-mixed
-[x] future Mood-aware schema/version rule identified
+[x] pre-Mood v1 policy is deterministic, domain-scoped, and non-mixed
+[x] ordinary Note v1 covered restore remains metadata-aware
+[x] Diary v1 has an explicit pre-mood-schema limitation distinct from pre-coverage
+[x] future Mood-aware v2 is the first full Mood schema
 [x] unknown mood value and unknown field behavior separated
 [x] Diary date/create/future authority unchanged
 [x] single bulk-read/reactive seam identified
