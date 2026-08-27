@@ -9,7 +9,8 @@ not the independent review closure record.
 
 - Starting HEAD: `b5794392ed5dae8235ea4018f443ff89d2b35a89`
 - Implementation commit: `1f8148d187e6268d3a7c6088e1150b11de203ea7` (`feat(diary): add native mood context and picker`)
-- Focused remediation commit: `80db14794116b690ecc8654a8b108dcea0422e96` (`fix(diary): keep mood picker usable on mobile`)
+- First focused remediation commit: `80db14794116b690ecc8654a8b108dcea0422e96` (`fix(diary): keep mood picker usable on mobile`)
+- Second focused remediation commit: `f066164d0bbca972fc225767b79cacd6ea778eb1` (`fix(diary): clamp mood picker keyboard navigation`)
 - Independent Review: `PENDING`
 - Self-review: `P0 = 0`, `P1 = 0`, `P2 = 0`
 - D7.1: `REVIEW-CLOSED`
@@ -25,8 +26,12 @@ The initial independent review of the original D7.2 implementation found
 `P0 = 0`, `P1 = 1`, `P2 = 1`: the mobile picker could be clipped by the
 `.editor-area` overflow boundary, and an empty generic context-action rail
 could remain outside Diary contexts. Those findings are retained as history;
-the focused remediation below addresses them without changing the D7.2
-ownership model.
+the first focused remediation addressed them without changing the D7.2
+ownership model. A subsequent independent re-review closed those original
+findings but identified a new P1: flattened-index keyboard movement could
+cross the fixed 4×6 grid geometry at its edges. The second focused
+remediation below addresses that keyboard finding without changing the
+Teleport/mobile or slot-host architecture.
 
 ## Scope
 
@@ -161,11 +166,13 @@ The picker is a controlled presentation component:
   it is disabled for `null`.
 - There is no default Mood.
 
-Keyboard behavior uses roving tabindex:
+Keyboard behavior uses roving tabindex and deterministic row/column clamping:
 
-- Right/Left move by `+1`/`-1`.
-- Down/Up move by `+4`/`-4`.
-- Edges use deterministic clamping.
+- Right/Left change the column within the same row and clamp at columns 1
+  and 4.
+- Down/Up change the row within the same column and clamp at rows 1 and 6.
+- Edge movement never wraps, transposes, or crosses into another row or
+  column; the resulting index is derived from the clamped row and column.
 - Arrow keys only move focus and never submit a mutation.
 - Enter and Space select the focused canonical Mood.
 - Escape closes without mutation.
@@ -328,6 +335,46 @@ full unit run passed in the allowed environment as well. The build retained
 only the repository's existing large-chunk and third-party annotation
 warnings. No failure was a D7.2 assertion or product behavior failure.
 
+Second focused keyboard-boundary remediation validation for
+`f066164d0bbca972fc225767b79cacd6ea778eb1`:
+
+```text
+npm exec vitest run \
+  src/components/diary/__tests__/DiaryMoodPicker.test.ts \
+  src/components/diary/__tests__/DiaryMoodContextAction.test.ts \
+  src/components/diary/__tests__/diaryMoodContext.test.ts \
+  src/components/vault/__tests__/EditorTabs.test.ts \
+  src/views/__tests__/VaultView.test.ts \
+  src/composables/diary/__tests__/useDiaryMoodCommand.test.ts
+→ 6 files passed, 100 tests passed
+
+npm exec -- playwright test e2e/diary-editor-lifecycle.spec.ts
+→ 9 tests passed
+
+npm run test:unit
+→ 235 files passed, 3510 tests passed, 2 skipped
+
+npm run typecheck:client
+→ PASS
+
+npm run typecheck:server
+→ PASS
+
+npm run typecheck
+→ PASS
+
+npm run build
+→ PASS
+```
+
+The component boundary assertions cover all four corners of the 4×6 grid:
+horizontal movement stays on the same row, vertical movement stays in the
+same column, and each edge remains on its current cell. They also cover
+middle-cell movement in each direction and confirm that arrow navigation
+emits no `select` event. The browser suite remains green for the first
+mobile/Teleport remediation, native context lifecycle, and empty
+context-action rail behavior.
+
 ## Scope and lifecycle checks
 
 - Calendar production components were untouched.
@@ -346,9 +393,11 @@ warnings. No failure was a D7.2 assertion or product behavior failure.
 
 ## D7.2 readiness result
 
-The focused remediation self-review found no additional issue and the
-implementation gates above pass. The phase is intentionally stopped before
-independent re-review:
+The first independent re-review closed the original mobile clipping P1 and
+empty context-action rail P2, but found the flattened-index keyboard
+boundary P1. The second focused remediation self-review found no additional
+issue and the implementation gates above pass. The phase is intentionally
+stopped before independent re-review:
 
 ```text
 D7.0A = REVIEW-CLOSED
@@ -357,7 +406,8 @@ D7.1  = REVIEW-CLOSED
 
 D7.2  = REVIEW-READY
 Initial Independent Review = FAIL (P0/P1/P2 = 0/1/1)
-Focused remediation self-review = PASS (P0/P1/P2 = 0/0/0)
+First remediation: mobile P1 CLOSED; empty chrome P2 CLOSED
+Second focused remediation self-review = PASS (P0/P1/P2 = 0/0/0)
 Independent Re-review = PENDING
 
 D7.3  = NOT STARTED
