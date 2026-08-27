@@ -9,14 +9,24 @@ not the independent review closure record.
 
 - Starting HEAD: `b5794392ed5dae8235ea4018f443ff89d2b35a89`
 - Implementation commit: `1f8148d187e6268d3a7c6088e1150b11de203ea7` (`feat(diary): add native mood context and picker`)
+- Focused remediation commit: `80db14794116b690ecc8654a8b108dcea0422e96` (`fix(diary): keep mood picker usable on mobile`)
 - Independent Review: `PENDING`
 - Self-review: `P0 = 0`, `P1 = 0`, `P2 = 0`
 - D7.1: `REVIEW-CLOSED`
 - D7.3: `NOT STARTED`
 - D7.4: `NOT STARTED`
 
-The final docs-only evidence commit is the child of the implementation
-commit above. No D7.3 work is included in this phase.
+The original docs-only evidence commit was the child of the implementation
+commit above. The focused remediation followed the initial independent
+review; this evidence update records that remediation and remains a
+pre-re-review document. No D7.3 work is included in this phase.
+
+The initial independent review of the original D7.2 implementation found
+`P0 = 0`, `P1 = 1`, `P2 = 1`: the mobile picker could be clipped by the
+`.editor-area` overflow boundary, and an empty generic context-action rail
+could remain outside Diary contexts. Those findings are retained as history;
+the focused remediation below addresses them without changing the D7.2
+ownership model.
 
 ## Scope
 
@@ -75,6 +85,15 @@ VaultView
 READ/EDIT toggling therefore reuses the same context action, picker state, and
 authoritative Mood projection. Neither `ReadingPane` nor `EditorPane` owns a
 Mood control.
+
+When open, `DiaryMoodContextAction` still owns exactly one
+`DiaryMoodPicker`, but the picker is rendered through a Vue `Teleport` to
+`document.body`. It is positioned as a fixed viewport popover from the
+trigger's `getBoundingClientRect()`, with horizontal and vertical safe-inset
+clamping and recomputation on open, resize, and scroll. This escapes the
+document grid's `.editor-area { overflow: hidden }` boundary without adding a
+second picker, route, tab, or document lifecycle. The picker uses global-token
+fallbacks while teleported so light/dark body rendering remains legible.
 
 The current value is projected from the existing reactive `posts` summary
 whose path equals the existing `activeTab.path`. D7.2 does not introduce a
@@ -154,7 +173,12 @@ Keyboard behavior uses roving tabindex:
   close return focus to the trigger.
 
 Busy state prevents another mutation and keeps the picker close/Escape path
-available. Outside pointer close is also presentation-only.
+available. The outside-pointer guard treats both the context trigger root and
+the teleported picker root as inside targets, so clicking a radio or picker
+control does not close it before the event is handled. A pointer down on an
+outside interactive target closes the presentation without forcibly moving
+focus back to the trigger; Escape and successful mutation continue to restore
+focus to the trigger.
 
 ## Metadata mutation boundary
 
@@ -212,9 +236,20 @@ aborted, changes the Mood to `sad`, and verifies that the server raw remains
 the base body, the stable document identity is unchanged, and the tab remains
 dirty. The same context action remains the only instance in both branches.
 
+The focused remediation browser regression additionally runs the native Diary
+context at `320×700` and `375×812`, with the Explorer side panel both closed
+and open. It asserts that the single teleported picker stays fully inside the
+viewport, has four computed columns, exposes all 24 radios, keeps each option
+at least 44px in both dimensions, and accepts a selection. The same browser
+suite asserts that ordinary Notes and special History/Recovery surfaces have
+no empty `.editor-tabs-context-actions` rail. `EditorTabs` remains generic:
+its optional `contextActionsVisible` prop is only a generic slot-host
+visibility signal and contains no Diary imports or path policy.
+
 ## Validation evidence
 
-The following commands were run for this implementation:
+The following commands were run for the original implementation before the
+independent review remediation:
 
 ```text
 npm exec vitest run \
@@ -246,8 +281,52 @@ The first restricted-environment attempt at the full unit suite reported
 only existing child TCP/tsx IPC `listen EPERM` failures; the same suite was
 rerun with the allowed environment permission and passed as recorded above.
 The browser suite likewise required permission to bind its local web server;
-the final 8-test run passed. No failure was a D7.2 assertion or product
-behavior failure.
+the final 8-test run passed. These are historical pre-remediation results,
+not the final remediation run.
+
+Focused remediation validation for `80db14794116b690ecc8654a8b108dcea0422e96`:
+
+```text
+npm exec vitest run \
+  src/components/diary/__tests__/DiaryMoodPicker.test.ts \
+  src/components/diary/__tests__/DiaryMoodContextAction.test.ts \
+  src/components/diary/__tests__/diaryMoodContext.test.ts \
+  src/components/vault/__tests__/EditorTabs.test.ts \
+  src/views/__tests__/VaultView.test.ts \
+  src/composables/diary/__tests__/useDiaryMoodCommand.test.ts
+→ 6 files passed, 100 tests passed
+
+npm exec -- playwright test e2e/diary-editor-lifecycle.spec.ts -g \
+  "native Diary mood picker remains fully usable"
+→ 1 test passed
+
+npm exec -- playwright test e2e/diary-editor-lifecycle.spec.ts
+→ 9 tests passed
+
+npm run test:unit
+→ 235 files passed, 3510 tests passed, 2 skipped
+
+npm run typecheck:client
+→ PASS
+
+npm run typecheck:server
+→ PASS
+
+npm run typecheck
+→ PASS
+
+npm run build
+→ PASS
+
+git diff ad0f6b5697608234e12987117f33500d57476181..80db14794116b690ecc8654a8b108dcea0422e96 --check
+→ PASS
+```
+
+The focused browser run required permission to bind the local Playwright
+server; it passed after the allowed environment permission was granted. The
+full unit run passed in the allowed environment as well. The build retained
+only the repository's existing large-chunk and third-party annotation
+warnings. No failure was a D7.2 assertion or product behavior failure.
 
 ## Scope and lifecycle checks
 
@@ -257,13 +336,19 @@ behavior failure.
   foundation were untouched.
 - No package, lockfile, dependency, route, or backend API change was made.
 - The generic `EditorTabs` slot contains no Diary-specific policy.
+- The generic `EditorTabs` context-action host is absent when the caller
+  reports no rendered action, so ordinary and special surfaces do not retain
+  empty tab-strip chrome.
+- The mobile Mood picker is a single teleported fixed popover; no global
+  `.editor-area` overflow behavior was changed.
 - No D7.3 marker, Calendar picker entry, or missing-date flow was started.
 - GitHub status was not queried for this local implementation evidence.
 
 ## D7.2 readiness result
 
-All D7.2 implementation gates are satisfied by the implementation and tests
-above. The phase is intentionally stopped before independent review:
+The focused remediation self-review found no additional issue and the
+implementation gates above pass. The phase is intentionally stopped before
+independent re-review:
 
 ```text
 D7.0A = REVIEW-CLOSED
@@ -271,8 +356,9 @@ D7.0  = REVIEW-CLOSED
 D7.1  = REVIEW-CLOSED
 
 D7.2  = REVIEW-READY
-Independent Review = PENDING
-Self-review P0/P1/P2 = 0/0/0
+Initial Independent Review = FAIL (P0/P1/P2 = 0/1/1)
+Focused remediation self-review = PASS (P0/P1/P2 = 0/0/0)
+Independent Re-review = PENDING
 
 D7.3  = NOT STARTED
 D7.4  = NOT STARTED
