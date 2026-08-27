@@ -28,6 +28,7 @@ import {
   encodeHistoricalMetadataPayload,
   encodeHistoricalMetadataPayloadV2,
   finalizeHistoryMetadataCapture,
+  historicalBodySha,
   metadataImage,
   prepareHistoryMetadataCapture,
   prepareHistoryMetadataRestore,
@@ -336,7 +337,14 @@ describeHistoryIntegration('D7.0A generic history metadata revisions', () => {
       commitSha: historical.sha,
       pathAtRevision: diaryPath,
     })
-    expect(resolved).toMatchObject({ kind: 'legacy', reason: 'pre-mood-schema' })
+    expect(resolved).toMatchObject({
+      kind: 'covered',
+      metadataCompatibility: 'pre-mood-schema',
+      documentId: 'diary-v1-id',
+      generationId: 'diary-v1-id',
+      bodySha: historicalBodySha('historical body\n'),
+      payloadDigest: encoded.payloadDigest,
+    })
 
     const response = await call('POST', '/restore', { path: diaryPath, ref: historical.sha })
 
@@ -355,6 +363,132 @@ describeHistoryIntegration('D7.0A generic history metadata revisions', () => {
       tags: before.tags,
       mood: before.mood,
     })
+  }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
+
+  it('rejects a covered pre-Mood Diary restore when its body binding is corrupted', async () => {
+    const diaryPath = 'diary/2026-08-27.md'
+    const logicalPath = 'diary/2026-08-27'
+    await write(diaryPath, 'historical body\n')
+    const initial = saveDocumentMetadata(metadataDb, {
+      id: 'diary-v1-body-binding-id',
+      path: logicalPath,
+      title: 'Historical',
+      summary: 'Old',
+      tags: ['old'],
+      mood: 'happy',
+      updatedAt: 100,
+    })
+    const historical = await commit([diaryPath], 'capture Diary before Mood')
+    const encoded = encodeHistoricalMetadataPayload({ title: 'Historical', summary: 'Old', tags: ['old'] })
+    metadataDb.prepare(`
+      UPDATE history_metadata_revisions
+      SET schema_version = 1, payload_json = ?, payload_digest = ?, body_sha = ?
+      WHERE commit_sha = ? AND path_at_revision = ?
+    `).run(encoded.payloadJson, encoded.payloadDigest, '0'.repeat(64), historical.sha, diaryPath)
+
+    await write(diaryPath, 'current body\n')
+    patchDocumentMetadata(metadataDb, {
+      path: logicalPath,
+      expectedUpdatedAt: initial.updatedAt,
+      changes: [{ field: 'mood', value: 'sad' }],
+    })
+    await commit([diaryPath], 'current Diary after Mood')
+    const before = getDocumentMetadata(metadataDb, logicalPath)!
+
+    const response = await call('POST', '/restore', { path: diaryPath, ref: historical.sha })
+
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({ code: 'HISTORY_METADATA_BODY_MISMATCH' })
+    expect(await read(diaryPath)).toBe('current body\n')
+    expect(getDocumentMetadata(metadataDb, logicalPath)).toMatchObject({
+      id: before.id,
+      title: before.title,
+      summary: before.summary,
+      tags: before.tags,
+      mood: before.mood,
+    })
+  }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
+
+  it('rejects a covered pre-Mood Diary restore across a delete/recreate generation', async () => {
+    const diaryPath = 'diary/2026-08-28.md'
+    const logicalPath = 'diary/2026-08-28'
+    await write(diaryPath, 'old generation body\n')
+    const initial = saveDocumentMetadata(metadataDb, {
+      id: 'diary-v1-old-generation-id',
+      path: logicalPath,
+      title: 'Old generation',
+      summary: 'Old',
+      tags: ['old'],
+      mood: 'happy',
+      updatedAt: 100,
+    })
+    const historical = await commit([diaryPath], 'capture old Diary generation')
+    const encoded = encodeHistoricalMetadataPayload({ title: 'Old generation', summary: 'Old', tags: ['old'] })
+    metadataDb.prepare(`
+      UPDATE history_metadata_revisions
+      SET schema_version = 1, payload_json = ?, payload_digest = ?
+      WHERE commit_sha = ? AND path_at_revision = ?
+    `).run(encoded.payloadJson, encoded.payloadDigest, historical.sha, diaryPath)
+
+    await fs.unlink(path.join(root, diaryPath))
+    expect(deleteDocumentMetadata(metadataDb, logicalPath)).toBe(true)
+    saveDocumentMetadata(metadataDb, {
+      id: 'diary-v1-new-generation-id',
+      path: logicalPath,
+      title: 'New generation',
+      summary: 'Keep new',
+      tags: ['new'],
+      mood: 'sad',
+      updatedAt: initial.updatedAt + 1,
+    })
+    await write(diaryPath, 'new generation body\n')
+    await commit([diaryPath], 'capture new Diary generation')
+    const before = getDocumentMetadata(metadataDb, logicalPath)!
+
+    const response = await call('POST', '/restore', { path: diaryPath, ref: historical.sha })
+
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({ code: 'HISTORY_METADATA_IDENTITY_CONFLICT' })
+    expect(await read(diaryPath)).toBe('new generation body\n')
+    expect(getDocumentMetadata(metadataDb, logicalPath)).toMatchObject({
+      id: 'diary-v1-new-generation-id',
+      title: before.title,
+      summary: before.summary,
+      tags: before.tags,
+      mood: before.mood,
+    })
+  }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
+
+  it('does not create a path-only generation for a covered pre-Mood Diary restore', async () => {
+    const diaryPath = 'diary/2026-08-29.md'
+    const logicalPath = 'diary/2026-08-29'
+    await write(diaryPath, 'historical body\n')
+    saveDocumentMetadata(metadataDb, {
+      id: 'diary-v1-missing-live-id',
+      path: logicalPath,
+      title: 'Historical',
+      summary: 'Old',
+      tags: ['old'],
+      mood: 'happy',
+      updatedAt: 100,
+    })
+    const historical = await commit([diaryPath], 'capture Diary before missing generation')
+    const encoded = encodeHistoricalMetadataPayload({ title: 'Historical', summary: 'Old', tags: ['old'] })
+    metadataDb.prepare(`
+      UPDATE history_metadata_revisions
+      SET schema_version = 1, payload_json = ?, payload_digest = ?
+      WHERE commit_sha = ? AND path_at_revision = ?
+    `).run(encoded.payloadJson, encoded.payloadDigest, historical.sha, diaryPath)
+
+    await fs.unlink(path.join(root, diaryPath))
+    expect(deleteDocumentMetadata(metadataDb, logicalPath)).toBe(true)
+
+    const response = await call('POST', '/restore', { path: diaryPath, ref: historical.sha })
+
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({ code: 'HISTORY_METADATA_IDENTITY_CONFLICT' })
+    await expect(fs.access(path.join(root, diaryPath))).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(getDocumentMetadata(metadataDb, logicalPath)).toBeNull()
   }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
   it('captures every selected document in one multi-file revision operation', async () => {

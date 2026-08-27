@@ -856,6 +856,12 @@ export async function reconcileHistoryMetadataCaptures(
 
 export type HistoryMetadataRevision = {
   kind: 'covered'
+  /**
+   * The revision remains fully proof-bearing even when its historical schema
+   * predates Mood. This field describes metadata application capability; it
+   * must never be used to downgrade trusted provenance to legacy semantics.
+   */
+  metadataCompatibility: 'restored' | 'pre-mood-schema'
   commitSha: string
   parentSha: string | null
   treeSha: string
@@ -871,7 +877,7 @@ export type HistoryMetadataRevision = {
   kind: 'legacy'
   commitSha: string
   pathAtRevision: string
-  reason: 'pre-coverage' | 'untracked' | 'pre-mood-schema'
+  reason: 'pre-coverage' | 'untracked'
 }
 
 /** Resolve a revision by immutable SHA; an absent capture operation means an
@@ -958,10 +964,19 @@ export function resolveHistoryMetadataRevision(
   }
   if (row.schema_version === HISTORY_METADATA_SCHEMA_VERSION && isManagedHistoryDiaryPath(row.path_at_revision)) {
     return {
-      kind: 'legacy',
+      kind: 'covered',
+      metadataCompatibility: 'pre-mood-schema',
       commitSha: row.commit_sha,
+      parentSha: row.parent_sha,
+      treeSha: row.tree_sha,
       pathAtRevision: row.path_at_revision,
-      reason: 'pre-mood-schema',
+      documentId: row.document_id,
+      generationId: row.generation_id,
+      schemaVersion: row.schema_version,
+      payloadJson: row.payload_json,
+      payloadDigest: row.payload_digest,
+      bodySha: row.body_sha,
+      values: payload.fields,
     }
   }
   if (row.schema_version === HISTORY_METADATA_MOOD_SCHEMA_VERSION
@@ -973,6 +988,7 @@ export function resolveHistoryMetadataRevision(
   }
   return {
     kind: 'covered',
+    metadataCompatibility: 'restored',
     commitSha: row.commit_sha,
     parentSha: row.parent_sha,
     treeSha: row.tree_sha,

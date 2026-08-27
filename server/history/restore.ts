@@ -192,11 +192,15 @@ export async function restoreHistoricalDocument(input: {
       }
 
       const liveMetadata = getDocumentMetadata(input.db, logicalPath)
+      const isPreMoodCoveredRevision = metadataRevision.kind === 'covered'
+        && metadataRevision.metadataCompatibility === 'pre-mood-schema'
       if (metadataRevision.kind === 'covered') {
         // A covered revision can only restore into the same stable document
         // generation. A missing row is legal only when the existing delete
         // lifecycle left a matching tombstone; path equality alone is not an
-        // identity proof.
+        // identity proof. Pre-Mood Diary revisions are proof-bearing too, but
+        // cannot rehydrate a missing current generation because their payload
+        // has no historical Mood image to restore.
         if (liveMetadata) {
           if (liveMetadata.id !== metadataRevision.documentId
             || liveMetadata.path !== logicalPath
@@ -206,7 +210,8 @@ export async function restoreHistoricalDocument(input: {
               `current document generation does not match history: ${logicalPath}`,
             )
           }
-        } else if (before
+        } else if (isPreMoodCoveredRevision
+          || before
           || !metadataTombstoneMatches(input.db, logicalPath, metadataRevision.documentId)
           || getDocumentMetadataById(input.db, metadataRevision.documentId)) {
           throw new HistoryMetadataError(
@@ -214,7 +219,9 @@ export async function restoreHistoricalDocument(input: {
             `historical document generation cannot be proven for: ${logicalPath}`,
           )
         }
+      }
 
+      if (metadataRevision.kind === 'covered' && !isPreMoodCoveredRevision) {
         const targetMetadata = 'mood' in metadataRevision.values
           ? {
               id: metadataRevision.documentId,
@@ -440,11 +447,16 @@ export async function restoreHistoricalDocument(input: {
         }
       }
 
-      // Revisions without a trusted generic snapshot remain ordinary
-      // body-only restores. In particular, a missing live row is not inferred
-      // from historical Frontmatter; the current durable metadata is either
-      // preserved or remains absent.
+      // Untracked/pre-coverage revisions remain ordinary body-only restores.
+      // A trusted pre-Mood Diary revision reaches this same body-only mutation
+      // path only after the covered body, identity, and generation proofs
+      // above have succeeded. Its current durable metadata is preserved; it
+      // is never inferred from historical Frontmatter or upgraded to a
+      // synthetic Mood value.
       const hadMetadata = liveMetadata !== null
+      const metadataReason = metadataRevision.kind === 'covered'
+        ? 'pre-mood-schema' as const
+        : metadataRevision.reason
       const databaseSnapshot = snapshotDocumentMetadataMutation(input.db, [logicalPath])
       let committed = false
       let created = false
@@ -562,7 +574,7 @@ export async function restoreHistoricalDocument(input: {
           raw: historicalRaw,
           mtime: observed.stat.mtimeMs,
           metadataMode: 'unavailable' as const,
-          metadataReason: metadataRevision.reason,
+          metadataReason,
           metadataRestored: false,
           metadataPreserved: true,
         }
