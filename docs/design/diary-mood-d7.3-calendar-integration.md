@@ -15,9 +15,15 @@ D7.4: `NOT STARTED`
 This document records the D7.3 Calendar integration implementation. It does
 not start D7.4.
 
-Post-closure Calendar UX revision: `REVIEW-READY`
+Post-closure Calendar UX revision: `REVIEW-CLOSED`
 
-Post-closure Independent Review: `PENDING`
+Post-closure Independent Review: `PASS`
+
+Post-closure Independent Review findings: `P0 = 0`, `P1 = 0`, `P2 = 0`
+
+Tests-only CI remediation: `PASS`
+
+GitHub CI #539: `PASS`
 
 Post-closure self-review findings: `P0 = 0`, `P1 = 0`, `P2 = 0`
 
@@ -67,10 +73,11 @@ Current remediation commit: `1226b1700741017e0a93368d47b6ce9d7454108f`
 
 Parent: `3eb2fbf002303d9ddb2551b734587d91c0e113b6`
 
-This focused remediation keeps the post-closure revision at
-`REVIEW-READY`; its Independent Re-review remains `PENDING` until a separate
-review. It closes the following implementation/evidence findings without
-starting D7.4:
+This focused remediation initially kept the post-closure revision at
+`REVIEW-READY` while its Independent Re-review was pending. The subsequent
+tests-only CI remediation and independent re-review are recorded below; this
+closure sync now marks the post-closure revision `REVIEW-CLOSED` without
+starting D7.4. It closed the following implementation/evidence findings:
 
 1. Removed the unused Native Diary Mood-context presentation wiring from
    `VaultView.vue`, including its resolver, context state, mutation helpers,
@@ -352,9 +359,19 @@ dead code, stale Exact Context/Return Calendar E2E contracts, mobile Date/Mood
 hit-box overlap, missing-date FileTree filter seeding, and outdated evidence.
 
 Current post-closure remediation self-review: **PASS**
-(`P0 = 0`, `P1 = 0`, `P2 = 0`). The current revision remains
-`REVIEW-READY` with Independent Re-review `PENDING`; this document does not
-close that review.
+(`P0 = 0`, `P1 = 0`, `P2 = 0`).
+
+Tests-only CI remediation commit: `dfe8edd6e7f81e84ae91637ae2dcdaf92dc591be`
+
+The tests-only remediation fixed the two cross-platform harness failures
+without changing production code: the Calendar spec now runs its civil-date
+helper and browser in the same `Asia/Shanghai` timezone, and the
+`VaultView.test.ts` source assertion normalizes CRLF to LF.
+
+Post-closure UX revision Independent Re-review: **PASS**
+(`P0 = 0`, `P1 = 0`, `P2 = 0`). The revision is now
+`REVIEW-CLOSED`; this status is recorded by the separate docs-only closure
+sync after the independent re-review.
 
 GitHub CI #532 was not green at the time of review: visual, docker-smoke,
 tags-scale, and auth-browser had passed; Ubuntu 24/22 and macOS 24 verification
@@ -367,8 +384,15 @@ For the current post-closure remediation, GitHub Actions was queried after the
 implementation commit was pushed. The CI workflow for
 `1226b1700741017e0a93368d47b6ce9d7454108f` was `IN_PROGRESS` at query time
 (run `33090489272`); no PASS conclusion is claimed here. This current revision
-remains pending independent re-review and does not use an unfinished CI run as
-closure evidence.
+was subsequently covered by the tests-only CI remediation below; this
+unfinished historical run is not used as the final closure evidence.
+
+GitHub CI #539 (run `33097659703`) for tests-only remediation commit
+`dfe8edd6e7f81e84ae91637ae2dcdaf92dc591be` completed with conclusion
+`success`. The auth-browser, docker-smoke, visual, tags-scale, Ubuntu 22/24,
+macOS 24, and Windows 24 verification jobs all passed, including their
+typecheck, build, unit/integration, browser, and Draft Store suites. CI #539 is
+the final CI evidence for this post-closure revision.
 
 ## Scope audit
 
@@ -422,8 +446,8 @@ D7.2                   = REVIEW-CLOSED
 
 D7.3                   = REVIEW-CLOSED
 D7.3 Independent Review = PASS (`P0 = 0`, `P1 = 0`, `P2 = 0`)
-D7.3 post-closure UX revision = REVIEW-READY
-D7.3 UX revision Independent Review = PENDING
+D7.3 post-closure UX revision = REVIEW-CLOSED
+D7.3 UX revision Independent Review = PASS (`P0 = 0`, `P1 = 0`, `P2 = 0`)
 
 D7.4                   = NOT STARTED
 D7 Mood production     = NOT STARTED
@@ -431,15 +455,14 @@ D7 Mood production     = NOT STARTED
 
 ## Readiness and stop conditions
 
-The D7.3 implementation and focused remediation are closed after independent
-re-review. The implementation stopped at the Calendar integration boundary: no
-D7.4 work, no mood statistics, no custom catalog changes, no new lifecycle, and
-no new route/API were added.
+The D7.3 implementation and post-closure focused remediation are closed after
+independent re-review and the tests-only CI remediation. The implementation
+stopped at the Calendar integration boundary: no D7.4 work, no mood statistics,
+no custom catalog changes, no new lifecycle, and no new route/API were added.
 
 The independent re-review covered the real browser behavior for existing and
 missing dates, CAS rejection/refresh behavior, unknown Mood preservation, the
 single-picker boundary, no-N+1 projection, and keep-mounted VCalendar
 compatibility.
 
-GitHub status: **queried; CI #532 was not green at review time and is not a
-closure PASS**.
+GitHub status: **queried; CI #539 passed** (run `33097659703`).
