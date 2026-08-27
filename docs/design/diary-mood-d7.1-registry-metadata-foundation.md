@@ -10,11 +10,15 @@ Starting HEAD:
 
 `63f4100b64bdef1e354217bf489c8f45f2ed9879`
 
-Final implementation HEAD:
+Initial implementation HEAD:
 
 `c9e909dbc98bd63175fdfde2eb652603f60f1e1a`
 
-The implementation commit is `feat(diary): add mood registry and metadata foundation`. This evidence document is a follow-up documentation commit on that implementation tip.
+Focused D7.1 remediation commit:
+
+`199fbe4a8de6af151f47f268abb3ff4616db405b`
+
+The initial implementation commit is `feat(diary): add mood registry and metadata foundation`. The remediation preserves trusted pre-Mood History proof, and this evidence document records both commits without reopening any closed D7 design contract.
 
 D7.1 establishes only the registry, live metadata, existing metadata API integration, CAS command, History v1/v2 compatibility, bulk summary seam, and regression evidence. It does not start D7.2 or D7.3.
 
@@ -125,7 +129,7 @@ The History metadata bridge supports both schemas without changing v1 digest sem
 
 New managed Diary captures always use v2, including explicit `mood = null`. Ordinary documents continue to use v1, so a multi-file commit may legally contain ordinary v1 and Diary v2 rows. The v2 payload uses deterministic field ordering and preserves unknown Mood strings opaquely; it does not require the current registry to recognize the historical value.
 
-A managed Diary v1 revision is typed as `pre-mood-schema`, not as an ordinary missing snapshot. It never applies historical title/tags while retaining current Mood, which would create a mixed revision. A v2 managed Diary restore applies title, summary, tags, and Mood through the existing metadata owner transaction, keeps the stable document ID, and mints a fresh metadata version. Explicit null and unknown Mood values are both covered.
+A managed Diary v1 revision resolves as `kind = covered` with `metadataCompatibility = pre-mood-schema`, not as `kind = legacy`. It retains its commit/tree binding, payload digest, `bodySha`, stable `documentId`, and `generationId`; those proofs run before any body mutation. The restore applies body only, preserves the complete current durable metadata image including Mood, and reports `metadataMode = unavailable` with reason `pre-mood-schema`. A missing current metadata generation or a delete/recreate identity mismatch fails closed rather than creating a path-only generation. It never applies historical title/tags while retaining current Mood, which would create a mixed revision. A v2 managed Diary restore applies title, summary, tags, and Mood through the existing metadata owner transaction, keeps the stable document ID, and mints a fresh metadata version. Explicit null and unknown Mood values are both covered.
 
 `HistoricalMetadataImage`, restore-journal before/target images, parsing, equality, reconciliation, and rollback application all include Mood. If a later body step fails, rollback therefore restores the previous Mood as part of the existing metadata image. No Mood-specific History database or second restore pipeline exists.
 
@@ -170,18 +174,14 @@ No `DiaryCalendar.vue`, `DiaryCalendarSurface.vue`, `ReadingPane.vue`, `EditorPa
 
 ## 11. Validation evidence
 
-The following commands were run against the implementation tip:
+The relevant validations below were run after the focused remediation commit `199fbe4`:
 
 | Validation | Result |
 | --- | --- |
-| D7.1 focused registry/command/metadata/History/workspace suite | **PASS — 5 files, 60 tests** |
-| Migration + live Mood metadata suite | **PASS — 2 files, 15 tests** |
-| Related metadata, Diary routes, tree, protocol, draft/recovery, VaultView suite | **PASS — 10 files, 210 tests** |
-| `server/__tests__/links-api.test.ts` | **PASS — 32 tests** |
-| `server/__tests__/round13FolderMoveClosure.test.ts` | **PASS — 6 tests** |
+| D7.1 focused registry/command/metadata/History/workspace suite | **PASS — 5 files, 63 tests** |
 | `npm run test:history-integration` | **PASS — 5 files, 174 tests** |
 | `npm run test:recovery-integration` | **PASS — 5 files, 193 tests** |
-| `npm run test:unit` | **PASS — 232 files, 3482 passed, 2 skipped** |
+| `npm run test:unit` | **PASS — 232 files, 3485 passed, 2 skipped** |
 | `npm run typecheck:client` | **PASS** |
 | `npm run typecheck:server` | **PASS** |
 | `npm run typecheck` | **PASS** |
@@ -201,7 +201,8 @@ The full unit run emitted existing jsdom/browser-environment notices (scrollTo, 
 - [x] Stale same-value CAS conflict covered
 - [x] Unknown stored value, raw bytes, Frontmatter, draft, delete/recreate, and rollback boundaries covered
 - [x] History v1 remains supported; managed Diary capture is v2 from D7.1 onward
-- [x] Managed Diary v1 is body-only with typed `pre-mood-schema` result
+- [x] Managed Diary v1 remains a trusted covered revision with `metadataCompatibility = pre-mood-schema`
+- [x] Pre-Mood body SHA corruption, delete/recreate generation mismatch, and missing-live-generation fail-closed behavior are covered
 - [x] Managed Diary v2 restores Mood through the generic metadata owner
 - [x] Unknown Mood values are preserved; unknown fields/newer schemas fail closed before body mutation
 - [x] Existing body-only Recovery architecture remains unchanged
@@ -226,7 +227,7 @@ The full unit run emitted existing jsdom/browser-environment notices (scrollTo, 
     D7.3                   = NOT STARTED
     D7 Mood UI             = NOT STARTED
 
-Remaining risk is intentionally deferred to the D7.1 independent review and later implementation phases: the 24-entry registry has no UI yet, and any future History/Recovery behavior must continue to honor the v1/v2 domain policy recorded here. No D7.1 STOP condition was triggered.
+The focused D7.1 remediation addressed the independent-review finding that trusted Pre-Mood v1 provenance must not be downgraded to legacy. Independent review remains pending; no new self-review finding is recorded. Remaining risk is intentionally deferred to that review and later implementation phases: the 24-entry registry has no UI yet, and any future History/Recovery behavior must continue to honor the v1/v2 domain policy recorded here. No D7.1 STOP condition was triggered.
 
 GitHub status: **not queried**.
 
