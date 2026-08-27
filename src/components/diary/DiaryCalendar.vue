@@ -654,14 +654,10 @@ defineExpose({ focusDate, closeMoodPicker })
   z-index: 1;
 }
 
-[data-diary-day-content].has-mood .diary-calendar-day-number {
-  transform: translateY(-10px);
-}
-
 .diary-calendar-mood {
   position: absolute;
   left: 50%;
-  top: calc(50% + 12px);
+  top: calc(50% + 28px);
   z-index: 2;
   display: inline-flex;
   width: 28px;
@@ -819,10 +815,6 @@ defineExpose({ focusDate, closeMoodPicker })
   .diary-calendar-mood img {
     width: 18px;
     height: 18px;
-  }
-
-  [data-diary-day-content].has-mood .diary-calendar-day-number {
-    transform: translateY(-8px);
   }
 
   .diary-calendar-host :deep(.vc-weeks) {
