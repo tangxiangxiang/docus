@@ -2,16 +2,18 @@
 
 ## Status
 
-`REVIEW-READY`
+`REVIEW-CLOSED`
 
-Independent Review: `PENDING`
+Independent Review: `PASS`
+
+Independent Review findings: `P0 = 0`, `P1 = 0`, `P2 = 0`
 
 Self-review findings: `P0 = 0`, `P1 = 0`, `P2 = 0`
 
 D7.4: `NOT STARTED`
 
 This document records the D7.3 Calendar integration implementation. It does
-not close D7.3 or start D7.4.
+not start D7.4.
 
 ## Baseline and implementation
 
@@ -231,7 +233,19 @@ Initial Independent Review: **FAIL** (`P0 = 0`, `P1 = 2`, `P2 = 0`):
 
 Focused remediation self-review: **PASS** (`P0 = 0`, `P1 = 0`, `P2 = 0`).
 
-Independent re-review: **PENDING**.
+Independent re-review: **PASS** (`P0 = 0`, `P1 = 0`, `P2 = 0`).
+
+The re-review closed both remediation findings: the Teleport picker now closes
+before Calendar date/month or Diary Home presentation transitions, and the
+Mood action no longer overlaps the non-interactive marker. D7.3 is closed by
+the subsequent docs-only closure sync; no D7.4 work is included.
+
+GitHub CI #532 was not green at the time of review: visual, docker-smoke,
+tags-scale, and auth-browser had passed; Ubuntu 24/22 and macOS 24 verification
+jobs were still running; and Windows 24 verification had failed during the
+full-unit stage after typecheck and build had passed. The failure details were
+not available in this review, so CI #532 is not recorded as PASS and is not
+used as the D7.3 closure proof.
 
 ## Scope audit
 
@@ -270,8 +284,8 @@ D7.0                   = REVIEW-CLOSED
 D7.1                   = REVIEW-CLOSED
 D7.2                   = REVIEW-CLOSED
 
-D7.3                   = REVIEW-READY
-D7.3 Independent Review = PENDING
+D7.3                   = REVIEW-CLOSED
+D7.3 Independent Review = PASS (`P0 = 0`, `P1 = 0`, `P2 = 0`)
 
 D7.4                   = NOT STARTED
 D7 Mood production     = NOT STARTED
@@ -279,13 +293,15 @@ D7 Mood production     = NOT STARTED
 
 ## Readiness and stop conditions
 
-The D7.3 implementation is ready for independent review. The implementation
-stopped at the Calendar integration boundary: no D7.4 work, no mood statistics,
-no custom catalog changes, no new lifecycle, and no new route/API were added.
+The D7.3 implementation and focused remediation are closed after independent
+re-review. The implementation stopped at the Calendar integration boundary: no
+D7.4 work, no mood statistics, no custom catalog changes, no new lifecycle, and
+no new route/API were added.
 
-Independent review should re-check the real browser behavior for existing and
+The independent re-review covered the real browser behavior for existing and
 missing dates, CAS rejection/refresh behavior, unknown Mood preservation, the
 single-picker boundary, no-N+1 projection, and keep-mounted VCalendar
 compatibility.
 
-GitHub status: **GitHub status not queried**.
+GitHub status: **queried; CI #532 was not green at review time and is not a
+closure PASS**.
