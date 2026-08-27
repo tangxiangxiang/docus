@@ -1,8 +1,9 @@
 # D7.0 — Storage / Metadata Ownership Verification
 
-状态（D7.0 Revalidation）：**REVIEW-READY**
+状态（D7.0 Revalidation）：**REVIEW-CLOSED**
 
-Independent Review（本次 revalidation）：`PENDING`
+Independent Revalidation Review（本次 revalidation）：`PASS`
+Review result（本次 revalidation）：`P0 = 0 / P1 = 0 / P2 = 0`
 Self-review（本次 revalidation）：`P0 = 0 / P1 = 0 / P2 = 0`
 
 历史 D7.0 gate：`BLOCKED`
@@ -807,14 +808,24 @@ ownership blocker。
 
 ### 24.11 Current lifecycle and D7.1 readiness
 
+本节 revalidation evidence 提交时先停在以下状态；该历史状态保留，表示当时仍在等待
+Independent Revalidation Review：
+
+```text
+D7.0                      = REVIEW-READY
+D7.0 Independent Review   = PENDING
+```
+
+Independent Revalidation Review 通过后，本 closure sync 的当前生命周期为：
+
 ```text
 D6                         = REVIEW-CLOSED
 D7 PRD                     = REVIEW-CLOSED
 D7 Implementation Plan     = REVIEW-CLOSED
 D7 Plan Amendment          = REVIEW-CLOSED
 D7.0A                     = REVIEW-CLOSED
-D7.0                      = REVIEW-READY
-D7.0 Independent Review    = PENDING
+D7.0                      = REVIEW-CLOSED
+D7.0 Independent Revalidation Review = PASS (P0/P1/P2 = 0/0/0)
 D7.0 self-review           = P0/P1/P2 = 0/0/0
 Selected storage           = SQLite-owned DocumentMetadata
 D7.1                      = NOT STARTED
@@ -863,14 +874,16 @@ no D7.1 implementation
 
 D7.0A 已经解决 generic History metadata foundation；本次 revalidation 也已把
 pre-Mood v1、future Mood schema、CAS、Recovery、bulk-read 与 no-mixed-revision policy
-固定下来。因此原始 P1 blocker 已关闭，D7.0 可以交付 Independent Revalidation Review，
-但本文件不自行把 D7.0 标记为 `REVIEW-CLOSED`。
+固定下来。因此原始 P1 blocker 已关闭。revalidation evidence commit 当时停在
+`REVIEW-READY` / Independent Revalidation Review `PENDING`；在 Independent
+Revalidation Review 以 `PASS (P0/P1/P2 = 0/0/0)` 通过后，本 closure sync 将 D7.0
+更新为 `REVIEW-CLOSED`。
 
 ### 24.13 Conclusion
 
 ```text
-D7.0 Revalidation                 = REVIEW-READY
-Independent Revalidation Review   = PENDING
+D7.0                               = REVIEW-CLOSED
+Independent Revalidation Review    = PASS (P0/P1/P2 = 0/0/0)
 Self-review                       = P0/P1/P2 = 0/0/0
 Selected Storage Direction        = SQLite-owned DocumentMetadata
 D7.1                             = NOT STARTED
@@ -879,4 +892,5 @@ D7.1                             = NOT STARTED
 SQLite 现在可以作为 D7.1 的 selected storage direction：它沿用当前 live metadata
 owner、stable identity、CAS、transaction、History Restore foundation、body-only
 Recovery boundary 和单一 bulk-read seam。后续只能在 D7.1 implementation phase 内按
-本节 schema policy 接入 Mood；在 Independent Revalidation Review 之前不得开始 D7.1。
+本节 schema policy 接入 Mood；本 closure commit 不开始 D7.1，当前 D7.1 仍为
+`NOT STARTED`。
