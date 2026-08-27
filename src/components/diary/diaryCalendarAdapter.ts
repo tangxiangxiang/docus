@@ -7,6 +7,12 @@ import { parseDiaryDate, type DiaryDate } from '../../../shared/diaryProtocol'
 export interface DiaryCalendarDay {
   date: DiaryDate
   hasDiary: boolean
+  /** Current SQLite mood value; unknown strings remain opaque for display. */
+  mood?: string | null
+  /** Current SQLite CAS version for a managed Diary metadata mutation. */
+  metadataUpdatedAt?: number
+  /** Stable SQLite document identity, when supplied by the bulk summary. */
+  documentId?: string
 }
 
 /** A visible month, kept separate from the DiaryDate domain identity. */
@@ -121,13 +127,28 @@ export function normalizeDiaryDays(
     const existing = byDate.get(date)
     if (existing) {
       existing.hasDiary = existing.hasDiary || candidate.hasDiary === true
+      if (existing.mood === undefined && Object.prototype.hasOwnProperty.call(candidate, 'mood')) {
+        existing.mood = typeof candidate.mood === 'string' || candidate.mood === null
+          ? candidate.mood
+          : undefined
+      }
+      if (existing.metadataUpdatedAt === undefined && Number.isSafeInteger(candidate.metadataUpdatedAt)) {
+        existing.metadataUpdatedAt = candidate.metadataUpdatedAt
+      }
+      if (existing.documentId === undefined && typeof candidate.documentId === 'string') {
+        existing.documentId = candidate.documentId
+      }
       continue
     }
 
-    byDate.set(date, {
+    const normalized: DiaryCalendarDay = {
       date,
       hasDiary: candidate.hasDiary === true,
-    })
+    }
+    if (typeof candidate.mood === 'string' || candidate.mood === null) normalized.mood = candidate.mood
+    if (Number.isSafeInteger(candidate.metadataUpdatedAt)) normalized.metadataUpdatedAt = candidate.metadataUpdatedAt
+    if (typeof candidate.documentId === 'string') normalized.documentId = candidate.documentId
+    byDate.set(date, normalized)
   }
 
   return [...byDate.values()].sort((left, right) => left.date.localeCompare(right.date))
@@ -156,7 +177,11 @@ export function diaryDayFromCalendarAttribute(value: unknown): DiaryCalendarDay 
   const candidate = customData as Partial<DiaryCalendarDay>
   const date = parseDiaryDate(candidate.date)
   if (!date || typeof candidate.hasDiary !== 'boolean') return null
-  return { date, hasDiary: candidate.hasDiary }
+  const result: DiaryCalendarDay = { date, hasDiary: candidate.hasDiary }
+  if (typeof candidate.mood === 'string' || candidate.mood === null) result.mood = candidate.mood
+  if (Number.isSafeInteger(candidate.metadataUpdatedAt)) result.metadataUpdatedAt = candidate.metadataUpdatedAt
+  if (typeof candidate.documentId === 'string') result.documentId = candidate.documentId
+  return result
 }
 
 export function hasDiaryCalendarAttribute(attributes: unknown): boolean {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { TreeNode } from '../../../lib/api'
+import type { PostSummary, TreeNode } from '../../../lib/api'
 import { projectDiaryDaysFromTree } from '../diaryCalendarProjection'
 
 function file(path: string, title = path): TreeNode {
@@ -13,6 +13,19 @@ function folder(path: string, children: TreeNode[]): TreeNode {
     name: path.split('/').pop() ?? 'content',
     path,
     children,
+  }
+}
+
+function post(path: string, overrides: Partial<PostSummary> = {}): PostSummary {
+  return {
+    path,
+    title: path,
+    created: '2026-08-24',
+    updated: '2026-08-24',
+    tags: [],
+    size: 0,
+    mtime: 0,
+    ...overrides,
   }
 }
 
@@ -66,6 +79,70 @@ describe('projectDiaryDaysFromTree', () => {
 
     expect(projectDiaryDaysFromTree(tree)).toEqual([
       { date: '2026-08-24', hasDiary: true },
+    ])
+  })
+
+  it('joins exact canonical tree files to bulk PostSummary mood metadata', () => {
+    const tree: TreeNode[] = [folder('', [
+      folder('diary', [
+        file('diary/2026-08-24'),
+        file('diary/2026-08-25'),
+        file('diary/2026-08-26'),
+      ]),
+    ])]
+
+    expect(projectDiaryDaysFromTree(tree, [
+      post('diary/2026-08-24', {
+        mood: 'happy',
+        documentId: 'doc-24',
+        metadataUpdatedAt: 7,
+      }),
+      post('diary/2026-08-25', { mood: null, metadataUpdatedAt: 8 }),
+      post('diary/2026-08-26', { mood: 'future-mood-v3', metadataUpdatedAt: 9 }),
+    ])).toEqual([
+      {
+        date: '2026-08-24',
+        hasDiary: true,
+        mood: 'happy',
+        documentId: 'doc-24',
+        metadataUpdatedAt: 7,
+      },
+      { date: '2026-08-25', hasDiary: true, mood: null, metadataUpdatedAt: 8 },
+      { date: '2026-08-26', hasDiary: true, mood: 'future-mood-v3', metadataUpdatedAt: 9 },
+    ])
+  })
+
+  it('does not create orphan Calendar days from summaries and ignores non-canonical paths', () => {
+    const tree: TreeNode[] = [folder('', [
+      folder('diary', [file('diary/2026-08-24')]),
+    ])]
+
+    expect(projectDiaryDaysFromTree(tree, [
+      post('diary/2026-08-25', { mood: 'happy' }),
+      post('diary/2026-08-24.md', { mood: 'sad' }),
+      post('diary/nested/2026-08-26', { mood: 'angry' }),
+      post('inbox/2026-08-27', { mood: 'like' }),
+    ])).toEqual([
+      { date: '2026-08-24', hasDiary: true },
+    ])
+  })
+
+  it('chooses the newest valid metadata summary deterministically for duplicate paths', () => {
+    const tree: TreeNode[] = [folder('', [
+      folder('diary', [file('diary/2026-08-24')]),
+    ])]
+
+    expect(projectDiaryDaysFromTree(tree, [
+      post('diary/2026-08-24', { mood: 'sad', documentId: 'doc-old', metadataUpdatedAt: 3 }),
+      post('diary/2026-08-24', { mood: 'happy', documentId: 'doc-new', metadataUpdatedAt: 4 }),
+    ])).toEqual([
+      {
+        date: '2026-08-24',
+        hasDiary: true,
+        mood: 'happy',
+        documentId: 'doc-new',
+        metadataUpdatedAt: 4,
+      },
     ])
   })
 })

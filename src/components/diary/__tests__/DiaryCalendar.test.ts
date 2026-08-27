@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { flushPromises, mount, type DOMWrapper, type VueWrapper } from '@vue/test-utils'
+import { DOMWrapper, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import DiaryCalendar from '../DiaryCalendar.vue'
 import {
   diaryCalendarAttributes,
@@ -162,6 +162,70 @@ describe('DiaryCalendar presentation adapter', () => {
     expect(dayCell(wrapper, '2026-08-24').findAll('.vc-dot')).toHaveLength(1)
     expect(dayCell(wrapper, '2026-08-25').findAll('.vc-dot')).toHaveLength(0)
     expect(dayCell(wrapper, '2026-08-25').get('[data-diary-day-content]').attributes('aria-disabled')).toBe('false')
+  })
+
+  it('renders mood markers and one sibling picker action without nesting interactive buttons', async () => {
+    const wrapper = mountCalendar([
+      {
+        ...day('2026-08-24', true),
+        mood: 'happy',
+        metadataUpdatedAt: 3,
+        documentId: 'doc-24',
+      },
+      {
+        ...day('2026-08-25', true),
+        mood: 'unknown-mood-v3',
+        metadataUpdatedAt: 4,
+      },
+      { ...day('2026-08-26', true), mood: null, metadataUpdatedAt: 5 },
+    ])
+    await flushPromises()
+
+    const knownCell = dayCell(wrapper, '2026-08-24')
+    const unknownCell = dayCell(wrapper, '2026-08-25')
+    const emptyCell = dayCell(wrapper, '2026-08-26')
+    expect(knownCell.get('.diary-calendar-mood-marker img').attributes('src')).toBe('/emoji/开心.svg')
+    expect(unknownCell.get('.diary-calendar-mood-marker').text()).toBe('?')
+    expect(emptyCell.find('.diary-calendar-mood-marker').exists()).toBe(false)
+    expect(wrapper.findAll('button button')).toHaveLength(0)
+    expect(knownCell.get('[data-testid="diary-calendar-mood-action"]').attributes('aria-label')).toContain('Happy')
+
+    await knownCell.get('[data-testid="diary-calendar-mood-action"]').trigger('click')
+    await flushPromises()
+    const pickerElement = document.body.querySelector('[data-testid="diary-mood-picker"]')
+    expect(pickerElement).not.toBeNull()
+    const picker = new DOMWrapper(pickerElement!)
+    expect(picker.findAll('[role="radio"]')).toHaveLength(24)
+    await picker.get('[data-mood-id="sad"]').trigger('click')
+    expect(wrapper.emitted('date-selected')).toBeUndefined()
+    expect(wrapper.emitted('mood-change')).toEqual([['2026-08-24', 'sad']])
+
+    await picker.get('[data-testid="diary-mood-clear"]').trigger('click')
+    expect(wrapper.emitted('mood-change')).toEqual([
+      ['2026-08-24', 'sad'],
+      ['2026-08-24', null],
+    ])
+    wrapper.unmount()
+  })
+
+  it('updates mood presentation reactively without remounting the Calendar', async () => {
+    const wrapper = mountCalendar([{
+      ...day('2026-08-24', true),
+      mood: 'happy',
+      metadataUpdatedAt: 1,
+    }])
+    await flushPromises()
+    const container = wrapper.get('.vc-container').element
+
+    expect(dayCell(wrapper, '2026-08-24').get('.diary-calendar-mood-marker img').attributes('src')).toBe('/emoji/开心.svg')
+    await wrapper.setProps({ days: [{
+      ...day('2026-08-24', true),
+      mood: 'sad',
+      metadataUpdatedAt: 2,
+    }] })
+    await flushPromises()
+    expect(dayCell(wrapper, '2026-08-24').get('.diary-calendar-mood-marker img').attributes('src')).toBe('/emoji/伤心.svg')
+    expect(wrapper.get('.vc-container').element).toBe(container)
   })
 
   it('renders a complete calendar with zero markers for an empty projection', async () => {

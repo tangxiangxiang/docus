@@ -211,3 +211,63 @@ test('Calendar click on a missing future Diary is a browser-visible no-op', asyn
     status: 404,
   }])
 })
+
+test('Calendar mood action uses the single native picker without navigating the date', async ({ page, request }) => {
+  const date = localCivilDate()
+  const path = diaryPath(date)
+  const raw = '# Calendar Mood\n\nCalendar integration evidence.\n'
+  const diagnostics = browserDiagnostics(page)
+  const createMethods: string[] = []
+  const dateNavigationRequests: string[] = []
+  page.on('request', (requestEvent) => {
+    const url = new URL(requestEvent.url())
+    if (url.pathname === '/api/diary/dates') createMethods.push(requestEvent.method())
+    if (url.pathname === `/api/posts/${path}`) dateNavigationRequests.push(requestEvent.method())
+  })
+
+  async function readMood(): Promise<string | null> {
+    const response = await request.get(`/api/posts/${path}`)
+    expect(response.status(), await response.text()).toBe(200)
+    const body = await response.json() as { metadata?: { mood?: string | null } }
+    return body.metadata?.mood ?? null
+  }
+
+  try {
+    await seedExistingDiary(request, date, raw)
+    await page.goto('/vault')
+    await expect(page.locator('.file-tree')).toBeVisible()
+    await page.locator('.scope-chip').filter({ hasText: 'diary' }).click()
+
+    const surface = page.getByTestId('diary-calendar-surface')
+    const action = surface.locator(`[data-testid="diary-calendar-mood-action"][data-date="${date}"]`)
+    await expect(action).toBeVisible()
+    await expect(action).toBeEnabled()
+    expect(await surface.locator('button button').count()).toBe(0)
+
+    await action.click()
+    const picker = page.getByTestId('diary-mood-picker')
+    await expect(picker).toBeVisible()
+    await expect(picker.locator('[role="radio"]')).toHaveCount(24)
+    await expect(action).toHaveAttribute('aria-expanded', 'true')
+    await picker.getByRole('radio', { name: '开心 / Happy' }).click()
+
+    await expect.poll(() => readMood()).toBe('happy')
+    await expect(picker).toHaveCount(0)
+    await expect(action.locator('img')).toHaveCount(1)
+    expect(createMethods).toEqual([])
+    expect(new URL(page.url()).pathname).toBe('/vault')
+    expect(dateNavigationRequests).toEqual([])
+
+    await action.click()
+    await expect(page.getByTestId('diary-mood-picker')).toBeVisible()
+    await page.getByTestId('diary-mood-picker').getByTestId('diary-mood-clear').click()
+    await expect.poll(() => readMood()).toBeNull()
+    await expect(page.getByTestId('diary-mood-picker')).toHaveCount(0)
+  } finally {
+    await deleteDiaryDate(request, date)
+  }
+
+  expect(diagnostics.pageErrors).toEqual([])
+  expect(diagnostics.consoleErrors).toEqual([])
+  expect(diagnostics.notFoundResponses).toEqual([])
+})

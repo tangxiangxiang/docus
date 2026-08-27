@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Calendar } from 'v-calendar'
 import 'v-calendar/style.css'
+import { getMoodDefinition, isMoodId, type MoodId } from '../../../shared/diaryMood'
 import { useI18n } from '../../composables/useI18n'
 import { useTheme } from '../../composables/useTheme'
 import type { DiaryDate } from '../../../shared/diaryProtocol'
+import DiaryMoodPicker from './DiaryMoodPicker.vue'
 import {
   diaryCalendarAttributes,
   diaryCalendarMonthFromLocalDate,
@@ -29,19 +31,28 @@ const props = withDefaults(defineProps<{
   loading?: boolean
   error?: string | null
   initialMonth?: DiaryCalendarMonth
+  moodBusy?: boolean
 }>(), {
   loading: false,
   error: null,
+  moodBusy: false,
 })
 
 const emit = defineEmits<{
   'date-selected': [date: DiaryDate]
   'month-change': [month: DiaryCalendarMonth]
+  'mood-change': [date: DiaryDate, mood: MoodId | null]
 }>()
 
 const lastMonthKey = ref<string | null>(null)
 const currentMonth = ref<DiaryCalendarMonth | null>(null)
 const calendarRoot = ref<HTMLElement | null>(null)
+const moodPickerOpen = ref(false)
+const activeMoodDate = ref<DiaryDate | null>(null)
+const activeMoodTrigger = ref<HTMLButtonElement | null>(null)
+const moodPickerRef = ref<InstanceType<typeof DiaryMoodPicker> | null>(null)
+const moodPickerStyle = ref<Record<string, string>>({ top: '12px', left: '12px' })
+let moodPickerPositionFrame: number | null = null
 const { locale, t } = useI18n()
 const { theme } = useTheme()
 
@@ -49,9 +60,156 @@ const calendarLocale = computed(() => (locale.value === 'zh' ? 'zh-CN' : 'en-US'
 const isDark = computed(() => theme.value === 'dark')
 const normalizedDays = computed(() => normalizeDiaryDays(props.days))
 const calendarAttributes = computed(() => diaryCalendarAttributes(normalizedDays.value))
+const daysByDate = computed(() => new Map(
+  normalizedDays.value.map((day) => [day.date, day] as const),
+))
+const activeMoodDay = computed(() => (
+  activeMoodDate.value ? daysByDate.value.get(activeMoodDate.value) ?? null : null
+))
+const activeMood = computed<string | null>(() => activeMoodDay.value?.mood ?? null)
 const initialPage = computed(() => (
   diaryCalendarMonthFromPage(props.initialMonth) ?? diaryCalendarMonthFromLocalDate()
 ))
+
+function assetUrl(asset: string): string {
+  return asset.startsWith('public/') ? `/${asset.slice('public/'.length)}` : asset
+}
+
+function diaryDayForCalendarDay(day: CalendarDayLike): DiaryCalendarDay | null {
+  const date = diaryDateFromCalendarDay(day)
+  return date ? daysByDate.value.get(date) ?? null : null
+}
+
+function moodDefinitionForDay(day: CalendarDayLike) {
+  const mood = diaryDayForCalendarDay(day)?.mood
+  return typeof mood === 'string' && isMoodId(mood) ? getMoodDefinition(mood) ?? null : null
+}
+
+function hasUnknownMoodForDay(day: CalendarDayLike): boolean {
+  const mood = diaryDayForCalendarDay(day)?.mood
+  return typeof mood === 'string' && !isMoodId(mood)
+}
+
+function moodLabelForDay(day: CalendarDayLike): string {
+  const mood = diaryDayForCalendarDay(day)?.mood
+  if (typeof mood === 'string' && isMoodId(mood)) {
+    const definition = getMoodDefinition(mood)
+    if (definition) return locale.value === 'zh' ? definition.zhLabel : definition.enLabel
+  }
+  return typeof mood === 'string' ? t('mood.unknown') : t('mood.not_set')
+}
+
+function moodActionLabel(day: CalendarDayLike): string {
+  const date = diaryDateFromCalendarDay(day) ?? day.label ?? t('diary.calendar.day')
+  return t('diary.calendar.mood_action', {
+    date,
+    mood: moodLabelForDay(day),
+  })
+}
+
+function isValidMetadataVersion(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+}
+
+function moodActionDisabled(day: CalendarDayLike): boolean {
+  if (props.loading || props.moodBusy) return true
+  const data = diaryDayForCalendarDay(day)
+  // A missing day is a valid entry point: VaultView owns the existing
+  // today/past create-or-open command after the user chooses a mood. An
+  // existing file without a CAS version is not safe to mutate from here.
+  return Boolean(data?.hasDiary && !isValidMetadataVersion(data.metadataUpdatedAt))
+}
+
+function pickerElement(): HTMLElement | null {
+  const element = moodPickerRef.value?.$el
+  return element instanceof HTMLElement ? element : null
+}
+
+function updateMoodPickerPosition(): void {
+  if (!moodPickerOpen.value) return
+  const trigger = activeMoodTrigger.value
+  const picker = pickerElement()
+  if (!trigger || !picker) return
+
+  const triggerRect = trigger.getBoundingClientRect()
+  const pickerRect = picker.getBoundingClientRect()
+  const viewportWidth = window.innerWidth || document.documentElement.clientWidth
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight
+  const inset = 12
+  const gap = 8
+  const pickerWidth = pickerRect.width || picker.offsetWidth
+  const pickerHeight = pickerRect.height || picker.offsetHeight
+  const maxLeft = Math.max(inset, viewportWidth - pickerWidth - inset)
+  const maxTop = Math.max(inset, viewportHeight - pickerHeight - inset)
+  const left = Math.min(Math.max(triggerRect.right - pickerWidth, inset), maxLeft)
+  const belowTop = triggerRect.bottom + gap
+  const aboveTop = triggerRect.top - pickerHeight - gap
+  const top = belowTop > maxTop && aboveTop >= inset
+    ? aboveTop
+    : Math.min(Math.max(belowTop, inset), maxTop)
+
+  moodPickerStyle.value = {
+    top: `${Math.round(top)}px`,
+    left: `${Math.round(left)}px`,
+  }
+}
+
+function scheduleMoodPickerPosition(): void {
+  if (!moodPickerOpen.value) return
+  void nextTick(() => {
+    if (!moodPickerOpen.value) return
+    if (moodPickerPositionFrame !== null) window.cancelAnimationFrame(moodPickerPositionFrame)
+    if (typeof window.requestAnimationFrame === 'function') {
+      moodPickerPositionFrame = window.requestAnimationFrame(() => {
+        moodPickerPositionFrame = null
+        updateMoodPickerPosition()
+      })
+    } else {
+      updateMoodPickerPosition()
+    }
+  })
+}
+
+function closeMoodPicker(restoreFocus = true): void {
+  if (!moodPickerOpen.value) return
+  const trigger = activeMoodTrigger.value
+  moodPickerOpen.value = false
+  activeMoodDate.value = null
+  activeMoodTrigger.value = null
+  moodPickerStyle.value = { top: '12px', left: '12px' }
+  if (restoreFocus) void nextTick(() => trigger?.focus())
+}
+
+function openMoodPicker(day: CalendarDayLike, event: MouseEvent): void {
+  if (moodActionDisabled(day)) return
+  const date = diaryDateFromCalendarDay(day)
+  const trigger = event.currentTarget
+  if (!date || !(trigger instanceof HTMLButtonElement)) return
+
+  activeMoodDate.value = date
+  activeMoodTrigger.value = trigger
+  moodPickerStyle.value = { top: '12px', left: '12px' }
+  moodPickerOpen.value = true
+  void nextTick(() => {
+    moodPickerRef.value?.focusInitial()
+    scheduleMoodPickerPosition()
+  })
+}
+
+function emitMoodChange(mood: MoodId | null): void {
+  if (activeMoodDate.value) emit('mood-change', activeMoodDate.value, mood)
+}
+
+function onDocumentPointerDown(event: PointerEvent): void {
+  const target = event.target
+  const picker = pickerElement()
+  if (
+    moodPickerOpen.value
+    && target instanceof Node
+    && !calendarRoot.value?.contains(target)
+    && !picker?.contains(target)
+  ) closeMoodPicker(false)
+}
 
 function onCalendarPagesUpdate(pages: unknown): void {
   const page = Array.isArray(pages) ? pages[0] : null
@@ -72,9 +230,11 @@ function onDayClick(day: CalendarDayLike): void {
 
 function dayAriaLabel(day: CalendarDayLike, attributes: unknown): string {
   const base = day.ariaLabel || day.label || diaryDateFromCalendarDay(day) || t('diary.calendar.day')
-  return hasDiaryCalendarAttribute(attributes)
-    ? `${base}, ${t('diary.calendar.has_diary')}`
-    : base
+  const data = diaryDayForCalendarDay(day)
+  const labels: string[] = []
+  if (hasDiaryCalendarAttribute(attributes) || data?.hasDiary) labels.push(t('diary.calendar.has_diary'))
+  if (data && typeof data.mood === 'string') labels.push(`${t('mood.label')}: ${moodLabelForDay(day)}`)
+  return labels.length ? `${base}, ${labels.join(', ')}` : base
 }
 
 function focusDate(date: DiaryDate): boolean {
@@ -86,7 +246,20 @@ function focusDate(date: DiaryDate): boolean {
   return document.activeElement === target
 }
 
-defineExpose({ focusDate })
+onMounted(() => {
+  document.addEventListener('pointerdown', onDocumentPointerDown, true)
+  window.addEventListener('resize', scheduleMoodPickerPosition)
+  window.addEventListener('scroll', scheduleMoodPickerPosition, true)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', onDocumentPointerDown, true)
+  window.removeEventListener('resize', scheduleMoodPickerPosition)
+  window.removeEventListener('scroll', scheduleMoodPickerPosition, true)
+  if (moodPickerPositionFrame !== null) window.cancelAnimationFrame(moodPickerPositionFrame)
+})
+
+defineExpose({ focusDate, closeMoodPicker })
 
 </script>
 
@@ -128,19 +301,52 @@ defineExpose({ focusDate })
           </span>
         </template>
         <template #day-content="{ day, attributes, dayProps, dayEvents }">
-          <button
-            v-bind="dayProps"
-            v-on="dayEvents"
-            type="button"
-            data-diary-day-content
-            :data-date="diaryDateFromCalendarDay(day) ?? undefined"
-            :aria-label="dayAriaLabel(day, attributes)"
-          >
-            <span>{{ day.label }}</span>
-            <span v-if="hasDiaryCalendarAttribute(attributes)" class="diary-calendar-visually-hidden">
-              {{ t('diary.calendar.has_diary') }}
-            </span>
-          </button>
+          <div class="diary-calendar-day-content">
+            <button
+              v-bind="dayProps"
+              v-on="dayEvents"
+              type="button"
+              data-diary-day-content
+              :data-date="diaryDateFromCalendarDay(day) ?? undefined"
+              :aria-label="dayAriaLabel(day, attributes)"
+            >
+              <span class="diary-calendar-day-number">{{ day.label }}</span>
+              <span
+                v-if="moodDefinitionForDay(day)"
+                class="diary-calendar-mood-marker"
+                aria-hidden="true"
+              >
+                <img :src="assetUrl(moodDefinitionForDay(day)!.asset)" alt="">
+              </span>
+              <span v-else-if="hasUnknownMoodForDay(day)" class="diary-calendar-mood-marker diary-calendar-mood-marker-unknown" aria-hidden="true">?</span>
+              <span v-if="hasDiaryCalendarAttribute(attributes)" class="diary-calendar-visually-hidden">
+                {{ t('diary.calendar.has_diary') }}
+              </span>
+              <span v-if="diaryDayForCalendarDay(day)?.mood !== undefined && diaryDayForCalendarDay(day)?.mood !== null" class="diary-calendar-visually-hidden">
+                {{ t('mood.label') }}: {{ moodLabelForDay(day) }}
+              </span>
+            </button>
+            <button
+              type="button"
+              class="diary-calendar-mood-action"
+              data-testid="diary-calendar-mood-action"
+              :data-date="diaryDateFromCalendarDay(day) ?? undefined"
+              :aria-label="moodActionLabel(day)"
+              aria-haspopup="dialog"
+              :aria-expanded="moodPickerOpen && activeMoodDate === diaryDateFromCalendarDay(day) ? 'true' : 'false'"
+              :disabled="moodActionDisabled(day)"
+              @click.stop="openMoodPicker(day, $event)"
+              @keydown.stop
+            >
+              <img
+                v-if="moodDefinitionForDay(day)"
+                :src="assetUrl(moodDefinitionForDay(day)!.asset)"
+                alt=""
+                aria-hidden="true"
+              >
+              <span v-else aria-hidden="true">{{ hasUnknownMoodForDay(day) ? '?' : '+' }}</span>
+            </button>
+          </div>
         </template>
       </Calendar>
 
@@ -151,6 +357,19 @@ defineExpose({ focusDate })
         {{ props.error }}
       </div>
     </div>
+
+    <Teleport to="body">
+      <DiaryMoodPicker
+        v-if="moodPickerOpen"
+        ref="moodPickerRef"
+        :style="moodPickerStyle"
+        :current-mood="activeMood"
+        :busy="props.moodBusy"
+        @select="emitMoodChange"
+        @clear="emitMoodChange(null)"
+        @close="closeMoodPicker"
+      />
+    </Teleport>
   </section>
 </template>
 
@@ -344,6 +563,98 @@ defineExpose({ focusDate })
   background: var(--bg-soft);
 }
 
+.diary-calendar-day-content {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 44px;
+}
+
+.diary-calendar-day-content > [data-diary-day-content] {
+  position: absolute;
+  inset: 0;
+}
+
+.diary-calendar-day-number {
+  position: relative;
+  z-index: 1;
+}
+
+.diary-calendar-mood-marker {
+  position: absolute;
+  right: 9px;
+  bottom: 8px;
+  z-index: 1;
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.diary-calendar-mood-marker img {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+}
+
+.diary-calendar-mood-marker-unknown {
+  border: 1px solid var(--vs-text-3, #98a2b3);
+  border-radius: 50%;
+  color: var(--vs-text-2, #667085);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.diary-calendar-mood-action {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  z-index: 2;
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--vs-text-3, #98a2b3);
+  cursor: pointer;
+  font: inherit;
+  font-size: 1rem;
+  line-height: 1;
+  opacity: 0.72;
+}
+
+.diary-calendar-mood-action img {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+}
+
+.diary-calendar-mood-action:hover:not(:disabled) {
+  color: var(--vs-text-1, #1b2433);
+  opacity: 1;
+}
+
+.diary-calendar-mood-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  opacity: 1;
+}
+
+.diary-calendar-mood-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
+}
+
+.diary-calendar-mood-action:disabled:focus-visible {
+  outline: none;
+}
+
 /* VCalendar's day-content rule removes the browser outline. The custom
    day button is the actual keyboard target, so restore the same visible
    focus treatment used by the month controls without changing mouse focus. */
@@ -438,6 +749,22 @@ defineExpose({ focusDate })
   .diary-calendar-host :deep(.vc-day-content) {
     min-height: 44px;
     height: 44px;
+  }
+
+  .diary-calendar-day-content {
+    min-height: 44px;
+  }
+
+  .diary-calendar-mood-action {
+    right: 1px;
+    bottom: 1px;
+    width: 28px;
+    height: 28px;
+  }
+
+  .diary-calendar-mood-marker {
+    right: 6px;
+    bottom: 6px;
   }
 
   .diary-calendar-host :deep(.vc-weeks) {

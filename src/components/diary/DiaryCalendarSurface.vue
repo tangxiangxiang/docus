@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import type { TreeNode } from '../../lib/api'
+import type { PostSummary, TreeNode } from '../../lib/api'
 import type { DiaryDate } from '../../../shared/diaryProtocol'
+import type { MoodId } from '../../../shared/diaryMood'
 import { useI18n } from '../../composables/useI18n'
 import DiaryCalendar from './DiaryCalendar.vue'
 import { projectDiaryDaysFromTree } from './diaryCalendarProjection'
@@ -9,28 +10,41 @@ import type { DiaryCalendarDay, DiaryCalendarMonth } from './diaryCalendarAdapte
 
 const props = withDefaults(defineProps<{
   tree: readonly TreeNode[]
+  posts?: readonly PostSummary[]
   loading?: boolean
   error?: string | null
   initialMonth?: DiaryCalendarMonth
+  moodBusy?: boolean
 }>(), {
+  posts: () => [],
   loading: false,
   error: null,
+  moodBusy: false,
 })
 
 const emit = defineEmits<{
   'date-selected': [date: DiaryDate]
   'month-change': [month: DiaryCalendarMonth]
+  'mood-change': [date: DiaryDate, mood: MoodId | null]
 }>()
 
 const { t } = useI18n()
-const days = computed<DiaryCalendarDay[]>(() => projectDiaryDaysFromTree(props.tree))
+const days = computed<DiaryCalendarDay[]>(() => projectDiaryDaysFromTree(props.tree, props.posts))
 const calendarRef = ref<InstanceType<typeof DiaryCalendar> | null>(null)
 
 function focusDate(date: DiaryDate): boolean {
   return calendarRef.value?.focusDate(date) ?? false
 }
 
-defineExpose({ focusDate })
+function closeMoodPicker(restoreFocus = true): void {
+  calendarRef.value?.closeMoodPicker(restoreFocus)
+}
+
+function onMoodChange(date: DiaryDate, mood: MoodId | null): void {
+  emit('mood-change', date, mood)
+}
+
+defineExpose({ focusDate, closeMoodPicker })
 </script>
 
 <template>
@@ -57,8 +71,10 @@ defineExpose({ focusDate })
       :loading="props.loading"
       :error="props.error"
       :initial-month="props.initialMonth"
+      :mood-busy="props.moodBusy"
       @date-selected="emit('date-selected', $event)"
       @month-change="emit('month-change', $event)"
+      @mood-change="onMoodChange"
     />
   </section>
 </template>

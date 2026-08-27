@@ -2,8 +2,8 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { flushPromises, mount, type DOMWrapper, type VueWrapper } from '@vue/test-utils'
-import type { TreeNode } from '../../../lib/api'
+import { DOMWrapper, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import type { PostSummary, TreeNode } from '../../../lib/api'
 import DiaryCalendarSurface from '../DiaryCalendarSurface.vue'
 import { useI18n } from '../../../composables/useI18n'
 import { useTheme } from '../../../composables/useTheme'
@@ -53,6 +53,19 @@ function treeWith(...paths: string[]): TreeNode[] {
       children: paths.map((path) => file('diary/' + path)),
     }],
   }]
+}
+
+function post(path: string, overrides: Partial<PostSummary> = {}): PostSummary {
+  return {
+    path,
+    title: path,
+    created: '2026-08-24',
+    updated: '2026-08-24',
+    tags: [],
+    size: 0,
+    mtime: 0,
+    ...overrides,
+  }
 }
 
 function mountSurface(tree: TreeNode[] = treeWith('2026-08-24'), extraProps: Record<string, unknown> = {}): VueWrapper {
@@ -141,15 +154,33 @@ describe('DiaryCalendarSurface', () => {
     expect(dayCell(wrapper, '2026-08-24').findAll('.vc-dot')).toHaveLength(1)
   })
 
+  it('projects bulk mood summaries and forwards Calendar mood intents', async () => {
+    const wrapper = mountSurface(treeWith('2026-08-24'), {
+      posts: [post('diary/2026-08-24', { mood: 'happy', metadataUpdatedAt: 6 })],
+    })
+    await flushPromises()
+
+    expect(dayCell(wrapper, '2026-08-24').get('.diary-calendar-mood-marker img').attributes('src')).toBe('/emoji/开心.svg')
+    await dayCell(wrapper, '2026-08-24').get('[data-testid="diary-calendar-mood-action"]').trigger('click')
+    await flushPromises()
+    const pickerElement = document.body.querySelector('[data-testid="diary-mood-picker"]')
+    expect(pickerElement).not.toBeNull()
+    await new DOMWrapper(pickerElement!).get('[data-mood-id="sad"]').trigger('click')
+
+    expect(wrapper.emitted('mood-change')).toEqual([['2026-08-24', 'sad']])
+    wrapper.unmount()
+  })
+
   it('does not own API, router, editor, or Diary create lifecycle', () => {
     const source = readFileSync(
       resolve(process.cwd(), 'src/components/diary/DiaryCalendarSurface.vue'),
       'utf8',
     )
 
-    expect(source).toContain('projectDiaryDaysFromTree(props.tree)')
+    expect(source).toContain('projectDiaryDaysFromTree(props.tree, props.posts)')
     expect(source).toContain("@date-selected=\"emit('date-selected', $event)\"")
     expect(source).toContain("@month-change=\"emit('month-change', $event)\"")
+    expect(source).toContain('@mood-change="onMoodChange"')
     expect(source).not.toMatch(/fetch\(|authFetch|createPost|openPost|useRouter|router\.|\/api\/|openDiaryDate|toISOString/)
   })
 })

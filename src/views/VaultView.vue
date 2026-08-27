@@ -62,7 +62,7 @@ import { useDiaryMoodCommand } from '../composables/diary/useDiaryMoodCommand'
 import { useDiaryWorkspacePresentation } from '../composables/diary/useDiaryWorkspacePresentation'
 import { localCivilToday } from '../components/diary/diaryCalendarAdapter'
 import { resolveNativeDiaryMoodContext } from '../components/diary/diaryMoodContext'
-import type { DiaryDate } from '../../shared/diaryProtocol'
+import { diaryLogicalPathForDate, type DiaryDate } from '../../shared/diaryProtocol'
 import type { MoodId } from '../../shared/diaryMood'
 import { handleDiaryHomeKeydown } from './diaryHomeKeyboard'
 import FileTree from '../components/vault/FileTree.vue'
@@ -216,7 +216,10 @@ const paletteRef = ref<InstanceType<typeof CommandPalette> | null>(null)
 const editorTabsRef = ref<InstanceType<typeof EditorTabs> | null>(null)
 const diaryMoodContextRef = ref<InstanceType<typeof DiaryMoodContextAction> | null>(null)
 const fileTreeRef = ref<InstanceType<typeof FileTree> | null>(null)
-const diaryCalendarSurfaceRef = ref<{ focusDate: (date: DiaryDate) => boolean } | null>(null)
+const diaryCalendarSurfaceRef = ref<{
+  focusDate: (date: DiaryDate) => boolean
+  closeMoodPicker: (restoreFocus?: boolean) => void
+} | null>(null)
 const comparisonPaneRef = ref<InstanceType<typeof HistoryComparisonPane> | null>(null)
 const workingTreeDiffPaneRef = ref<InstanceType<typeof WorkingTreeDiffPane> | null>(null)
 const recoveryPaneRef = ref<InstanceType<typeof DraftRecoveryPane> | null>(null)
@@ -1702,6 +1705,73 @@ async function updateNativeDiaryMood(mood: MoodId | null): Promise<void> {
   }
 }
 
+/**
+ * Calendar mood selection is a presentation intent only. VaultView performs
+ * the existing missing-date command when necessary, then delegates the
+ * authoritative CAS mutation to the shared Diary mood command. The Calendar
+ * never owns API, route, or document lifecycle state.
+ */
+async function updateDiaryCalendarMood(date: DiaryDate, mood: MoodId | null): Promise<void> {
+  if (diaryMoodBusy.value) return
+
+  const path = diaryLogicalPathForDate(date)
+  let post = posts.value.find((candidate) => candidate.path === path)
+  if (mood === null && !post) return
+
+  diaryMoodBusy.value = true
+  try {
+    if (!post) {
+      const dateResult = await openDiaryDate(date)
+      if (dateResult.status !== 'opened' && dateResult.status !== 'created') return
+      post = posts.value.find((candidate) => candidate.path === path)
+      if (!post) {
+        try {
+          await refresh()
+        } catch {
+          toast.info(t('metadata.sync_failed'))
+        }
+        post = posts.value.find((candidate) => candidate.path === path)
+      }
+    }
+
+    let expectedUpdatedAt = post?.metadataUpdatedAt
+    if (
+      typeof expectedUpdatedAt !== 'number'
+      || !Number.isSafeInteger(expectedUpdatedAt)
+      || expectedUpdatedAt < 0
+    ) {
+      try {
+        await refresh()
+      } catch {
+        toast.info(t('metadata.sync_failed'))
+      }
+      post = posts.value.find((candidate) => candidate.path === path)
+      expectedUpdatedAt = post?.metadataUpdatedAt
+    }
+
+    if (
+      typeof expectedUpdatedAt !== 'number'
+      || !Number.isSafeInteger(expectedUpdatedAt)
+      || expectedUpdatedAt < 0
+    ) {
+      toast.error(t('mood.failed', { error: t('mood.metadata_unavailable') }))
+      return
+    }
+
+    const result = await diaryMoodCommand.setMood(date, mood, expectedUpdatedAt)
+    if (result.status === 'updated') {
+      await onMetadataSaved(result.metadata)
+      diaryCalendarSurfaceRef.value?.closeMoodPicker()
+      toast.success(t('mood.saved'))
+    } else if (result.status === 'conflict' || result.status === 'not-found') {
+      if (result.status === 'not-found') toast.info(t('mood.not_found'))
+      await refreshAfterMoodRejection()
+    }
+  } finally {
+    diaryMoodBusy.value = false
+  }
+}
+
 function clearNativeDiaryMood(): Promise<void> {
   return updateNativeDiaryMood(null)
 }
@@ -2235,9 +2305,12 @@ watch(isReadMode, async (reading) => {
           <DiaryCalendarSurface
             ref="diaryCalendarSurfaceRef"
             :tree="tree"
+            :posts="posts"
             :loading="treeLoading"
             :error="treeError"
+            :mood-busy="diaryMoodBusy"
             @date-selected="onDiaryDateSelected"
+            @mood-change="updateDiaryCalendarMood"
           />
         </template>
       </DiaryWorkspace>

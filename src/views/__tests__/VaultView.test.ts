@@ -739,3 +739,44 @@ describe('D7.2 Native Diary mood context wiring', () => {
     expect(source).toContain('typeof version !== \'number\'')
   })
 })
+
+describe('D7.3 Calendar mood integration wiring', () => {
+  it('uses the bulk PostSummary projection and keeps Calendar mutation ownership in VaultView', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+    const calendarBranch = source.match(
+      /<DiaryCalendarSurface[\s\S]*?\/>/,
+    )?.[0]
+
+    expect(calendarBranch).toBeDefined()
+    expect(calendarBranch).toContain(':tree="tree"')
+    expect(calendarBranch).toContain(':posts="posts"')
+    expect(calendarBranch).toContain(':mood-busy="diaryMoodBusy"')
+    expect(calendarBranch).toContain('@mood-change="updateDiaryCalendarMood"')
+    expect(source).toContain('import { diaryLogicalPathForDate, type DiaryDate } from')
+    expect(source).toContain('async function updateDiaryCalendarMood(date: DiaryDate, mood: MoodId | null)')
+    expect(source).toContain('const path = diaryLogicalPathForDate(date)')
+    expect(source).toContain('const dateResult = await openDiaryDate(date)')
+    expect(source).toContain('diaryMoodCommand.setMood(date, mood, expectedUpdatedAt)')
+    expect(source).toContain('diaryCalendarSurfaceRef.value?.closeMoodPicker()')
+    expect(source).not.toContain('updateDocumentMetadata(')
+  })
+
+  it('keeps Calendar components free of API, router, and document lifecycle ownership', () => {
+    const calendar = readFileSync(
+      fileURLToPath(new URL('../../components/diary/DiaryCalendar.vue', import.meta.url)),
+      'utf8',
+    )
+    const surface = readFileSync(
+      fileURLToPath(new URL('../../components/diary/DiaryCalendarSurface.vue', import.meta.url)),
+      'utf8',
+    )
+
+    for (const source of [calendar, surface]) {
+      expect(source).not.toMatch(/authFetch|fetch\(|useRouter|router\.|openPost|updateDocumentMetadata|\/api\//)
+    }
+    expect(calendar).toContain("'mood-change'")
+    expect(calendar).toContain('<DiaryMoodPicker')
+    expect(calendar).toContain('emit(\'mood-change\', activeMoodDate.value, mood)')
+    expect(calendar).toContain('diary-calendar-day-content')
+  })
+})
