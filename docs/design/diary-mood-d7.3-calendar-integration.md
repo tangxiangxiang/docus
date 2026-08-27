@@ -61,6 +61,39 @@ navigation ownership.
 
 The remediation remains D7.3-only and does not start D7.4.
 
+## Post-closure UX revision remediation
+
+Current remediation commit: `1226b1700741017e0a93368d47b6ce9d7454108f`
+
+Parent: `3eb2fbf002303d9ddb2551b734587d91c0e113b6`
+
+This focused remediation keeps the post-closure revision at
+`REVIEW-READY`; its Independent Re-review remains `PENDING` until a separate
+review. It closes the following implementation/evidence findings without
+starting D7.4:
+
+1. Removed the unused Native Diary Mood-context presentation wiring from
+   `VaultView.vue`, including its resolver, context state, mutation helpers,
+   and stale close/focus references. Calendar Mood mutation continues to use
+   the shared `useDiaryMoodCommand` and `diaryMoodBusy` seam.
+2. Replaced stale Exact Context and “Return Calendar” browser contracts with
+   the ordinary FileTree `.search-input` and the actual lifecycle: a managed
+   Diary tab keeps Calendar hidden, and closing the final managed Diary tab
+   reveals Calendar.
+3. Separated the Calendar date and Mood hit boxes with a measured gap at
+   1280×720, 375×812, and 320×700. Date navigation and Mood editing remain
+   sibling control owners.
+4. Seeded the ordinary FileTree filter with `YYYY-MM-DD` only after a
+   missing today/past Mood-first create and authoritative Mood CAS succeed.
+   Existing edits, clears, conflicts, cancellations, tab/file selection, and
+   ordinary user queries do not use this missing-date seed path.
+
+The remediation changes no server/shared contract, route ownership, Calendar
+projection, Reader/Editor lifecycle, package manifest, lockfile, or
+dependency. The selected Mood option's background, border, `aria-checked`,
+and keyboard focus-visible treatment remain intact; only the option's check
+glyph is absent as required by the established picker UX.
+
 ## Scope delivered
 
 D7.3 adds the Calendar presentation seam for the D7.1 metadata contract and
@@ -70,8 +103,9 @@ the D7.2 native picker:
   directly below the date number.
 - Unknown stored Mood values remain opaque and are represented without
   inventing a catalog asset.
-- A Mood button exists only when that Diary already has a known or unknown
-  Mood. Existing Diaries without Mood show no `+`/`✎` Calendar affordance.
+- Every canonical existing Diary exposes the single Mood button. A known Mood
+  renders its emoji; an unknown or unset/cleared Mood renders `?` as the
+  add-again entry. There is no separate `+` or `✎` Calendar affordance.
 - The Mood emoji button is a sibling of, and is never nested inside, the
   VCalendar date button.
 - The date button remains the VCalendar date-navigation and
@@ -91,8 +125,10 @@ the D7.2 native picker:
 - The Calendar owns one active `DiaryMoodPicker` presentation instance,
   teleported to `body`. It does not create one picker per cell.
 - Picker selection and clear stay open until VaultView receives the
-  authoritative mutation result; successful mutation closes the picker and
-  restores focus to its trigger.
+  authoritative mutation result; successful existing-date mutation closes
+  the picker and restores focus to its trigger. A successful missing-date
+  create transitions to the native Diary without restoring focus to the
+  trigger that is about to be hidden.
 
 ## Projection and data ownership
 
@@ -128,10 +164,11 @@ for a missing day.
 ## DOM and accessibility boundary
 
 The VCalendar-provided `dayProps` and `dayEvents` are bound to the date button.
-The Mood emoji is a sibling button, so `button` elements are not nested and a
-Mood click cannot accidentally invoke date navigation. Date and Mood hit areas
-remain distinct even though they read visually as `date` over `emoji`. The
-date button's accessible name includes Diary and known/unknown Mood information
+The Mood emoji/`?` is a sibling button, so `button` elements are not nested and
+a Mood click cannot accidentally invoke date navigation. Date and Mood hit
+areas remain distinct, with the Mood control below the date and a measured
+non-overlapping gap at the supported desktop and mobile viewports. The date
+button's accessible name includes Diary and known/unknown Mood information
 where available. The Mood button has a date-specific accessible label,
 `aria-haspopup`, and `aria-expanded` state.
 
@@ -142,27 +179,33 @@ Keyboard-only `:focus-visible` outlines remain for both date and Mood buttons.
 The existing D7.2 picker remains the single 24-option, four-column by six-row
 radio grid with keyboard movement, focus-visible treatment, Enter/Space
 selection, Escape close, clear, and the established responsive Teleport
-positioning. Calendar integration does not add a second registry or picker
-implementation.
+positioning. Its selected background, selected border, and `aria-checked`
+state remain; only the selected check glyph is omitted. Calendar integration
+does not add a second registry or picker implementation.
 
 ## Post-closure UX revision validation
 
 The revision is covered by the final production contract rather than source
 shape alone:
 
-- component/Vault focused validation: **3 files, 67 tests passed**;
+- component/Vault focused validation: **11 files, 178 tests passed**;
 - Calendar + responsive browser validation: **16 tests passed**;
-- full unit/integration validation: **235 files, 3521 tests passed, 2
+- Native Diary lifecycle browser validation: **9 tests passed**;
+- combined Diary browser regression validation: **46 tests passed**;
+- full unit/integration validation: **235 files, 3520 tests passed, 2
   skipped**;
+- full repository browser validation: **119 tests passed**;
 - client, server, and aggregate typecheck: **PASS**;
 - production build: **PASS**.
 
-Browser coverage proves that an existing Diary without Mood has no Calendar
-Mood button; an existing Mood emoji opens the one picker without navigation;
-missing today/past cancellation creates nothing; successful Mood-first intent
-creates, writes Mood, and presents the native Diary; missing future remains a
-no-op; blue dots and hover backgrounds are not visually rendered; and the
-picker remains responsive without covering month navigation.
+Browser coverage proves that an existing Diary without Mood exposes `?` as the
+Calendar Mood entry; an existing Mood emoji opens the one picker without
+navigation; missing today/past cancellation creates nothing; successful
+Mood-first intent creates, writes Mood, seeds the FileTree date filter, and
+presents the native Diary; missing future remains a no-op; blue dots and
+hover backgrounds are not visually rendered; Date/Mood hit boxes do not
+overlap at 1280×720, 375×812, or 320×700; and the picker remains responsive
+without covering month navigation.
 
 ## Calendar lifecycle and compatibility
 
@@ -187,16 +230,17 @@ npm exec vitest run \
   src/components/diary/__tests__/DiaryCalendar.test.ts \
   src/components/diary/__tests__/DiaryCalendarSurface.test.ts \
   src/components/diary/__tests__/diaryCalendarProjection.test.ts \
-  src/components/diary/__tests__/VCalendarCompatibility.test.ts \
   src/components/diary/__tests__/DiaryMoodPicker.test.ts \
   src/components/diary/__tests__/DiaryMoodContextAction.test.ts \
   src/components/diary/__tests__/diaryMoodContext.test.ts \
+  src/components/vault/__tests__/FileTree.test.ts \
+  src/components/vault/__tests__/EditorTabs.test.ts \
   src/views/__tests__/VaultView.test.ts \
   src/composables/diary/__tests__/useDiaryDateCommand.test.ts \
   src/composables/diary/__tests__/useDiaryMoodCommand.test.ts
 ```
 
-Original implementation result: **10 test files, 124 tests passed**.
+Historical implementation result: **10 test files, 124 tests passed**.
 
 The focused tests cover:
 
@@ -212,11 +256,10 @@ The focused tests cover:
 - existing D7.1/D7.2 Calendar, picker, date-command, and Mood-command
   regressions.
 
-Focused remediation result: **10 test files, 125 tests passed**. The added
-component regression opens the Teleport picker and then changes both the date
-and the month, proving that the old picker context is cleared before either
-Calendar transition completes. It also verifies that the known marker remains
-inside the date button and that the action uses the separate edit affordance.
+Current post-closure remediation result: **11 test files, 178 tests passed**.
+The focused selection covers the removed Native Mood-context wiring, shared
+Calendar/Mood projection and command seams, ordinary FileTree behavior, and
+the existing Calendar/picker/date-command/Mood-command regressions.
 
 Calendar browser regression:
 
@@ -226,7 +269,7 @@ npm exec -- playwright test e2e/diary-calendar-surface.spec.ts
 
 Original implementation result: **4 tests passed**.
 
-Focused remediation result: **8 tests passed**. In addition to the original
+Current remediation result: **8 tests passed**. In addition to the original
 coverage, the browser suite now verifies:
 
 - picker open → existing Diary date navigation closes the picker before the
@@ -234,10 +277,22 @@ coverage, the browser suite now verifies:
 - picker open → month navigation closes the picker;
 - missing today and past dates use the existing `openDiaryDate()` command and
   create exactly through the existing Diary-date endpoint;
-- a missing future date remains uncreated and the picker remains available
-  until the user closes it; and
-- known marker/action bounding boxes are disjoint at 1280px, 375px, and
-  320px widths.
+- a missing future date remains uncreated and the Calendar remains available;
+- known Mood controls have disjoint date/Mood bounding boxes at 1280×720,
+  375×812, and 320×700; and
+- clearing a Mood leaves the `?` entry available for another picker open.
+
+Responsive/accessibility browser regression:
+
+```text
+npm exec -- playwright test e2e/diary-responsive-accessibility.spec.ts
+```
+
+Current remediation result: **8 tests passed**. The suite verifies ordinary
+FileTree search semantics, Calendar-hidden/native-document behavior while a
+managed Diary tab remains open, final-tab Calendar restoration, responsive
+focus/layout behavior, and the absence of the removed Exact Context and
+Return Calendar controls.
 
 Existing native Diary lifecycle browser regression:
 
@@ -254,7 +309,7 @@ Full unit validation:
 npm run test:unit
 ```
 
-Current remediation result: **235 test files passed; 3519 tests passed; 2
+Current remediation result: **235 test files passed; 3520 tests passed; 2
 skipped**. The first
 sandboxed attempt was limited by local `listen EPERM` errors in unrelated
 HTTP/IPC crash-fixture tests; the same command was rerun with the repository's
@@ -271,21 +326,35 @@ Typecheck and build:
 
 ## Review history
 
-Initial Independent Review: **FAIL** (`P0 = 0`, `P1 = 2`, `P2 = 0`):
+Historical D7.3 implementation Independent Review: **FAIL**
+(`P0 = 0`, `P1 = 2`, `P2 = 0`):
 
 - P1: keep-mounted Calendar context changes could leave a stale body-teleported
   picker open;
 - P1: the Mood action could visually and geometrically occlude the non-
   interactive marker.
 
-Focused remediation self-review: **PASS** (`P0 = 0`, `P1 = 0`, `P2 = 0`).
+Historical focused remediation self-review: **PASS**
+(`P0 = 0`, `P1 = 0`, `P2 = 0`).
 
-Independent re-review: **PASS** (`P0 = 0`, `P1 = 0`, `P2 = 0`).
+Historical Independent re-review: **PASS**
+(`P0 = 0`, `P1 = 0`, `P2 = 0`).
 
-The re-review closed both remediation findings: the Teleport picker now closes
-before Calendar date/month or Diary Home presentation transitions, and the
-Mood action no longer overlaps the non-interactive marker. D7.3 is closed by
-the subsequent docs-only closure sync; no D7.4 work is included.
+The historical re-review closed the original two remediation findings: the
+Teleport picker closes before Calendar date/month or Diary Home presentation
+transitions, and the original separate Mood action no longer overlapped its
+non-interactive marker. D7.3 was then closed by the subsequent docs-only
+closure sync; no D7.4 work is included.
+
+Post-closure UX revision Independent Review: **FAIL**
+(`P0 = 0`, `P1 = 2`, `P2 = 3`). The findings were stale Native Mood-context
+dead code, stale Exact Context/Return Calendar E2E contracts, mobile Date/Mood
+hit-box overlap, missing-date FileTree filter seeding, and outdated evidence.
+
+Current post-closure remediation self-review: **PASS**
+(`P0 = 0`, `P1 = 0`, `P2 = 0`). The current revision remains
+`REVIEW-READY` with Independent Re-review `PENDING`; this document does not
+close that review.
 
 GitHub CI #532 was not green at the time of review: visual, docker-smoke,
 tags-scale, and auth-browser had passed; Ubuntu 24/22 and macOS 24 verification
@@ -293,6 +362,13 @@ jobs were still running; and Windows 24 verification had failed during the
 full-unit stage after typecheck and build had passed. The failure details were
 not available in this review, so CI #532 is not recorded as PASS and is not
 used as the D7.3 closure proof.
+
+For the current post-closure remediation, GitHub Actions was queried after the
+implementation commit was pushed. The CI workflow for
+`1226b1700741017e0a93368d47b6ce9d7454108f` was `IN_PROGRESS` at query time
+(run `33090489272`); no PASS conclusion is claimed here. This current revision
+remains pending independent re-review and does not use an unfinished CI run as
+closure evidence.
 
 ## Scope audit
 
@@ -315,10 +391,23 @@ lockfile, or new dependency changed. No D7.4/UI phase was started; D7.3 does
 not add Mood statistics, custom icons, multi-select, or a new Reader/Editor
 surface.
 
-The focused remediation commit changed five files: the Calendar adapter,
-VaultView presentation wiring, their focused tests, and the Calendar browser
-regression. It did not change server/shared contracts, the Mood registry,
-Calendar projection, Reader/Editor lifecycle, package manifests, lockfiles, or
+The historical focused remediation commit changed five files: the Calendar
+adapter, VaultView presentation wiring, their focused tests, and the Calendar
+browser regression. The current post-closure remediation commit
+`1226b1700741017e0a93368d47b6ce9d7454108f` changes nine files:
+
+- `src/components/diary/DiaryCalendar.vue`
+- `src/views/VaultView.vue`
+- `src/views/__tests__/VaultView.test.ts`
+- `e2e/diary-calendar-surface.spec.ts`
+- `e2e/diary-editor-lifecycle.spec.ts`
+- `e2e/diary-lifecycle-regression.spec.ts`
+- `e2e/diary-reader.spec.ts`
+- `e2e/diary-release.spec.ts`
+- `e2e/diary-responsive-accessibility.spec.ts`
+
+It does not change server/shared contracts, the Mood registry, Calendar
+projection, Reader/Editor lifecycle, package manifests, lockfiles, or
 dependencies.
 
 ## Lifecycle state
