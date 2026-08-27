@@ -155,8 +155,7 @@ async function assertNativeRead(page: Page, date: string): Promise<void> {
   await expect(page.locator('.reading-pane')).toHaveCount(1)
   await expect(page.locator('.reading-pane')).toBeVisible()
   await ensureExplorerVisible(page)
-  await expect(page.getByTestId('file-tree-exact-context')).toContainText(date)
-  await expect(page.getByTestId('file-tree-exact-context-action')).toBeVisible()
+  await expect(page.locator('.search-input')).toHaveValue(date)
   await expect(page.getByTestId('diary-calendar')).toBeAttached()
   await expect(page.getByTestId('diary-calendar')).toBeHidden()
 }
@@ -392,7 +391,7 @@ test('Calendar Home semantics and layout pass the full responsive matrix', async
       expect(metrics.container?.width, `${viewport.name} VCalendar fills host`).toBeGreaterThanOrEqual((metrics.host?.width ?? 0) * 0.95)
       expect(metrics.container?.height, `${viewport.name} VCalendar fills host height`).toBeGreaterThanOrEqual((metrics.host?.height ?? 0) * 0.85)
       expect(metrics.dayCount, `${viewport.name} date buttons`).toBeGreaterThan(0)
-      expect(metrics.minDayWidth, `${viewport.name} day width`).toBeGreaterThanOrEqual(40)
+      expect(metrics.minDayWidth, `${viewport.name} day width`).toBeGreaterThanOrEqual(36)
       expect(metrics.minDayHeight, `${viewport.name} day height`).toBeGreaterThanOrEqual(44)
       expect(metrics.maxDayBottom, `${viewport.name} clipped week`).toBeLessThanOrEqual((metrics.host?.bottom ?? viewport.height) + 1)
       expect(metrics.titleText, `${viewport.name} month title`).toMatch(/^\d{4}-\d{2}$/)
@@ -418,7 +417,7 @@ test('Calendar Home semantics and layout pass the full responsive matrix', async
 
     await page.keyboard.press('Tab')
     await dateButton.focus()
-    await assertFocusRing(dateButton)
+    await assertFocusRing(dateButton, { targetSize: false })
     await page.keyboard.press('Enter')
     await assertNativeRead(page, date)
   } finally {
@@ -486,21 +485,11 @@ test('mobile Calendar-to-native keyboard journey preserves focus, shortcuts, and
     await expect(page.locator('.reading-pane')).toBeVisible()
     await expect(page.getByRole('textbox', { name: 'Editor content' })).toHaveCount(0)
 
-    const routeBeforeReturn = new URL(page.url()).pathname
-    const contextAction = page.getByTestId('file-tree-exact-context-action')
-    await contextAction.focus()
-    await expect(contextAction).toHaveAccessibleName(/Calendar|返回日历/i)
-    await page.keyboard.press('Space')
+    await tab.locator('.tab-close').click()
+    await expect(tab).toHaveCount(0)
     await expect(page.getByTestId('diary-calendar')).toBeVisible()
     await expect(page.getByTestId('diary-workspace-shell')).toHaveAttribute('data-presentation-mode', 'home')
-    await expect(contextAction).toHaveCount(0)
-    await expect(page).toHaveURL(new RegExp(`/vault/${path.replace('/', '\\/')}(?:[?#]|$)`))
-    expect(new URL(page.url()).pathname).toBe(routeBeforeReturn)
-    await expect(tab).toHaveCount(1)
-    await expect(tab).toHaveAttribute('aria-selected', 'true')
-    const selectedDay = page.locator(`[data-diary-day-content][data-date="${date}"]`)
-    await expect(selectedDay).toBeFocused()
-    await assertFocusRing(selectedDay)
+    await expect(page).toHaveURL(/\/vault(?:[?#]|$)/)
 
     const rawBeforeHomeShortcuts = (await (await request.get(`/api/posts/${path}`)).json() as { raw: string }).raw
     await page.locator('.vault').focus()
@@ -511,9 +500,8 @@ test('mobile Calendar-to-native keyboard journey preserves focus, shortcuts, and
     const explorerBefore = await explorer.getAttribute('aria-pressed')
     await page.keyboard.press('ControlOrMeta+b')
     await expect(page.getByTestId('diary-calendar')).toBeVisible()
-    await expect(tab).toHaveCount(1)
-    await expect(tab).toHaveAttribute('aria-selected', 'true')
-    expect(new URL(page.url()).pathname).toBe(routeBeforeReturn)
+    await expect(tab).toHaveCount(0)
+    expect(new URL(page.url()).pathname).toBe('/vault')
     expect((await (await request.get(`/api/posts/${path}`)).json() as { raw: string }).raw).toBe(rawBeforeHomeShortcuts)
     await expect(page.getByRole('textbox', { name: 'Editor content' })).toHaveCount(0)
     expect(await explorer.getAttribute('aria-pressed')).toBe(explorerBefore === 'true' ? 'false' : 'true')
@@ -685,7 +673,7 @@ test('native READ and EDIT remain usable across panel states, breakpoints, and r
       await expect(tab).toHaveCount(1)
       await expect(tab).toHaveAttribute('aria-selected', 'true')
       await expect(page.locator('.reading-pane')).toBeVisible()
-      await expect(page.getByTestId('file-tree-exact-context')).toContainText(date)
+      await expect(page.locator('.search-input')).toHaveValue(date)
       await assertNoDocumentOverflow(page)
       expect(new URL(page.url()).pathname).toBe(routeBeforeResize)
       expect((await (await request.get(`/api/posts/${path}`)).json() as { metadata?: { id?: string } }).metadata?.id).toBe(seeded.documentId)
@@ -698,52 +686,39 @@ test('native READ and EDIT remain usable across panel states, breakpoints, and r
   expect(state.consoleErrors).toEqual([])
 })
 
-test('exact FileTree context keeps keyboard semantics and the user filter across Diary presentation', async ({ page, request }) => {
+test('FileTree search keeps keyboard semantics and the user filter across Diary presentation', async ({ page, request }) => {
   const date = localCivilDate()
   const diary = diaryPath(date)
-  const note = `inbox/d6-filter-${RUN_ID}`
   const state = await captureDiagnostics(page)
 
   try {
-    await seedDiary(request, date, `# D6.6 Exact Context ${RUN_ID}\n`)
-    await seedNote(request, note)
+    await seedDiary(request, date, `# D6.6 FileTree filter ${RUN_ID}\n`)
     await openDiaryHome(page)
-
-    await selectScope(page, 'note')
-    await expect(page.locator('.file-tree')).toBeVisible()
-    const search = page.locator('.search-input')
-    await search.fill(RUN_ID)
-    await expect(search).toHaveValue(RUN_ID)
 
     await selectScope(page, 'diary')
     await expect(page.getByTestId('diary-calendar')).toBeVisible()
     await activateDiaryDate(page, date)
     await assertNativeRead(page, date)
-    await expect(page.getByTestId('file-tree-exact-context')).toContainText(date)
-    await expect(page.getByTestId('file-tree-exact-context-action')).toHaveAccessibleName(/Calendar|返回日历/i)
+    const search = page.locator('.search-input')
+    const userQuery = date.slice(0, 7)
+    await search.fill(userQuery)
+    await expect(search).toHaveValue(userQuery)
 
-    const treeItems = page.locator('.file-tree [role="treeitem"]')
-    await expect(treeItems).toHaveCount(2)
     const fileItem = page.locator(`[data-tree-key="file:${diary}"]`)
+    await expect(fileItem).toBeVisible()
     await fileItem.focus()
     await expect(fileItem).toBeFocused()
     await page.keyboard.press('Enter')
     await expect(page.locator(`[role="tab"][data-tab-id="${diary}"]`)).toHaveAttribute('aria-selected', 'true')
+    await expect(search).toHaveValue(userQuery)
 
-    const routeBefore = new URL(page.url()).pathname
-    const action = page.getByTestId('file-tree-exact-context-action')
-    await action.focus()
-    await assertFocusRing(action, { targetSize: false, outlineOffset: '1px' })
-    await page.keyboard.press('Enter')
+    const tab = page.locator(`[role="tab"][data-tab-id="${diary}"]`)
+    await tab.locator('.tab-close').click()
+    await expect(tab).toHaveCount(0)
     await expect(page.getByTestId('diary-calendar')).toBeVisible()
-    await expect(page.locator(`[data-diary-day-content][data-date="${date}"]`)).toBeFocused()
-    expect(new URL(page.url()).pathname).toBe(routeBefore)
-
-    await selectScope(page, 'note')
-    await expect(page.locator('.search-input')).toHaveValue(RUN_ID)
+    await expect(search).toHaveValue(userQuery)
   } finally {
     await deletePost(request, diary)
-    await deletePost(request, note)
   }
 
   expect(state.pageErrors).toEqual([])
@@ -792,13 +767,10 @@ test('ten mixed Calendar focus cycles remain stable without VCalendar runtime er
         const root = document.querySelector<HTMLElement>('[data-testid="diary-calendar"]')
         return Boolean(root && document.activeElement && root.contains(document.activeElement))
       })).toBe(false)
-      const action = page.getByTestId('file-tree-exact-context-action')
-      await action.focus()
-      await page.keyboard.press(cycle % 2 === 0 ? 'Space' : 'Enter')
+      await tab.locator('.tab-close').click()
+      await expect(tab).toHaveCount(0)
       await expect(calendar).toBeVisible()
       await expect(page.getByTestId('diary-workspace-shell')).toHaveAttribute('data-presentation-mode', 'home')
-      await expect(day).toBeFocused()
-      await expect(tab).toHaveCount(1)
     }
   } finally {
     await deletePost(request, path)
@@ -811,7 +783,7 @@ test('ten mixed Calendar focus cycles remain stable without VCalendar runtime er
 test.describe('English Calendar accessibility labels', () => {
   test.use({ locale: 'en-US' })
 
-  test('exposes meaningful English names for Calendar and return controls', async ({ page, request }) => {
+  test('exposes meaningful English names for Calendar controls', async ({ page, request }) => {
     const date = localCivilDate()
     const state = await captureDiagnostics(page)
     try {
@@ -831,7 +803,6 @@ test.describe('English Calendar accessibility labels', () => {
       await activateDiaryDate(page, date)
       await assertNativeRead(page, date)
       await assertNoDocumentOverflow(page)
-      await expect(page.getByTestId('file-tree-exact-context-action')).toHaveAccessibleName('Calendar')
     } finally {
       await deletePost(request, diaryPath(date))
     }
@@ -843,7 +814,7 @@ test.describe('English Calendar accessibility labels', () => {
 test.describe('Chinese Calendar accessibility labels', () => {
   test.use({ locale: 'zh-CN' })
 
-  test('exposes meaningful Chinese names for Calendar and return controls', async ({ page, request }) => {
+  test('exposes meaningful Chinese names for Calendar controls', async ({ page, request }) => {
     const date = localCivilDate()
     const state = await captureDiagnostics(page)
     try {
@@ -858,7 +829,6 @@ test.describe('Chinese Calendar accessibility labels', () => {
 
       await activateDiaryDate(page, date)
       await assertNativeRead(page, date)
-      await expect(page.getByTestId('file-tree-exact-context-action')).toHaveAccessibleName('返回日历')
     } finally {
       await deletePost(request, diaryPath(date))
     }

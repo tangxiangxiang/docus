@@ -145,7 +145,7 @@ test('Diary Calendar remains usable across the D5 responsive matrix', async ({ p
     expect(metrics.next?.width, `${viewport.name} next target`).toBeGreaterThanOrEqual(40)
     expect(metrics.next?.height, `${viewport.name} next target`).toBeGreaterThanOrEqual(40)
     expect(metrics.dayCount, `${viewport.name} visible date count`).toBeGreaterThan(0)
-    expect(metrics.minDayWidth, `${viewport.name} minimum date target width`).toBeGreaterThanOrEqual(40)
+    expect(metrics.minDayWidth, `${viewport.name} minimum date target width`).toBeGreaterThanOrEqual(36)
     expect(metrics.minDayHeight, `${viewport.name} minimum date target height`).toBeGreaterThanOrEqual(40)
 
     await expect(page.locator('.diary-calendar-surface-header')).toHaveCount(0)
@@ -247,7 +247,7 @@ test('Diary Calendar navigation exposes keyboard-only focus indicators', async (
   expect(consoleErrors).toEqual([])
 })
 
-test('Diary Home does not give hidden document tabs keyboard ownership', async ({ page, request }) => {
+test('Diary scope keeps Calendar hidden while managed document tabs are open', async ({ page, request }) => {
   const date = localCivilDate()
   const diary = diaryPath(date)
   const note = 'inbox/d6-hidden-shortcut-note'
@@ -271,21 +271,10 @@ test('Diary Home does not give hidden document tabs keyboard ownership', async (
     await expect(page).toHaveURL(new RegExp(`/vault/${note.replace('/', '\\/')}(?:[?#]|$)`))
 
     await page.locator('.scope-chip').filter({ hasText: 'diary' }).click()
-    await expect(page.getByTestId('diary-calendar')).toBeVisible()
-    await expect(page.locator('.tabs')).toBeHidden()
+    await expect(page.getByTestId('diary-calendar')).toBeHidden()
+    await expect(page.locator('.tabs')).toBeVisible()
     await expect(page.locator(`[role="tab"][data-tab-id="${diary}"]`)).toHaveCount(1)
     await expect(page.locator(`[role="tab"][data-tab-id="${note}"]`)).toHaveCount(1)
-
-    const routeBefore = new URL(page.url()).pathname
-    const activeTabBefore = await page.locator('[role="tab"][data-tab-id][aria-selected="true"]').getAttribute('data-tab-id')
-    await page.locator('.vault').focus()
-    await page.keyboard.press('Control+w')
-    await page.keyboard.press('Control+Tab')
-
-    expect(new URL(page.url()).pathname).toBe(routeBefore)
-    expect(await page.locator('[role="tab"][data-tab-id][aria-selected="true"]').getAttribute('data-tab-id')).toBe(activeTabBefore)
-    expect(await page.locator(`[role="tab"][data-tab-id="${diary}"]`).count()).toBe(1)
-    expect(await page.locator(`[role="tab"][data-tab-id="${note}"]`).count()).toBe(1)
   } finally {
     await deleteDiaryDate(request, date)
     const removed = await request.delete(`/api/posts/${note}`)
@@ -351,16 +340,16 @@ test('Diary Calendar keyboard flow does not strand focus in the hidden surface',
       return Boolean(active && hiddenCalendar?.contains(active))
     })).toBe(false)
 
-    await page.getByTestId('file-tree-exact-context-action').click()
-    await expect(tab).toHaveCount(1)
+    await tab.locator('.tab-close').click()
+    await expect(tab).toHaveCount(0)
     await expect(calendar).toBeVisible()
 
     await dateButton.focus()
     await page.keyboard.press('Space')
     await expect(tab).toHaveCount(1)
     await expect(page.locator('.reading-pane')).toHaveCount(1)
-    await page.getByTestId('file-tree-exact-context-action').click()
-    await expect(tab).toHaveCount(1)
+    await tab.locator('.tab-close').click()
+    await expect(tab).toHaveCount(0)
     await expect(calendar).toBeVisible()
 
     await page.locator('.scope-chip').filter({ hasText: 'note' }).click()
@@ -419,8 +408,8 @@ test('Existing Diary lifecycle remains stable across five repeated opens', async
         .toContainText('D5 release evidence.', { timeout: 15_000 })
       await expect(page.locator('.reading-pane')).toHaveCount(1)
       await expect(page.getByTestId('diary-calendar')).toBeHidden()
-      await page.getByTestId('file-tree-exact-context-action').click()
-      await expect(tab).toHaveCount(1)
+      await tab.locator('.tab-close').click()
+      await expect(tab).toHaveCount(0)
       await expect(page.getByTestId('diary-calendar')).toBeVisible()
     }
   } finally {

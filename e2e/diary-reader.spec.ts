@@ -140,14 +140,14 @@ async function assertNativeReader(page: Page, date: string): Promise<void> {
   await expect(page.locator('.reading-pane')).toHaveCount(1)
   await expect(page.locator('.reading-pane')).toBeVisible()
   await expect(page.locator('.file-tree')).toBeVisible()
-  await expect(page.getByTestId('file-tree-exact-context')).toContainText(date)
+  await expect(page.locator('.search-input')).toHaveValue(date)
   await expect(page.locator(`[data-tree-key="file:${path}"]`)).toHaveCount(1)
   await expect(page.getByTestId('diary-calendar')).toBeAttached()
   await expect(page.getByTestId('diary-calendar')).toBeHidden()
   await expect(page.getByTestId('view-toggle')).toHaveAttribute('aria-label', /edit/i)
 }
 
-test('Calendar opens the native Vault reader with an exact FileTree context and returns presentation-only', async ({ page, request }) => {
+test('Calendar opens the native Vault reader with the Diary date filter', async ({ page, request }) => {
   const date = localCivilDate()
   const other = shiftCivilDate(date, -1)
   const path = diaryPath(date)
@@ -158,21 +158,18 @@ test('Calendar opens the native Vault reader with an exact FileTree context and 
     await seedExistingDiary(request, other, '# Other Diary\n')
     await openDiaryScope(page)
     const monthBefore = await page.getByTestId('diary-calendar').getAttribute('data-month')
-    const dateButton = page.locator(`[data-diary-day-content][data-date="${date}"]`)
-
     await clickDiaryDate(page, date)
     await assertNativeReader(page, date)
     await expect(page.locator('.reading-pane article')).toContainText('Current Diary body')
     await expect(page.locator(`[data-tree-key="file:${diaryPath(other)}"]`)).toHaveCount(0)
     await expect(page.locator('.status-bar-row')).toBeVisible()
 
-    const routeBefore = new URL(page.url()).pathname
-    await page.getByTestId('file-tree-exact-context-action').click()
+    const tab = page.locator(`[role="tab"][data-tab-id="${path}"]`)
+    await tab.locator('.tab-close').click()
+    await expect(tab).toHaveCount(0)
     await expect(page.getByTestId('diary-calendar')).toBeVisible()
     await expect(page.getByTestId('diary-calendar')).toHaveAttribute('data-month', monthBefore ?? '')
-    await expect(dateButton).toBeFocused()
-    expect(new URL(page.url()).pathname).toBe(routeBefore)
-    await expect(page.locator(`[role="tab"][data-tab-id="${path}"]`)).toHaveCount(1)
+    await expect(page.locator('.search-input')).toHaveValue(date)
   } finally {
     await deleteDiaryDate(request, date)
     await deleteDiaryDate(request, other)
@@ -267,7 +264,7 @@ test('mobile native Diary documents fill the viewport when the side panel is clo
     await filesButton.click()
     await expect(filesButton).toHaveAttribute('aria-pressed', 'true')
     await expect(page.locator('.file-tree')).toBeVisible()
-    await expect(page.getByTestId('file-tree-exact-context')).toContainText(date)
+    await expect(page.locator('.search-input')).toHaveValue(date)
     await expect(page.locator(`[data-tree-key="file:${path}"]`)).toHaveCount(1)
     await expect(page.locator(`[data-tree-key="file:${otherPath}"]`)).toHaveCount(0)
   } finally {
@@ -279,7 +276,7 @@ test('mobile native Diary documents fill the viewport when the side panel is clo
   expect(state.consoleErrors).toEqual([])
 })
 
-test('created and existing future Diaries enter native READ while missing future stays Home', async ({ page, request }) => {
+test('existing today/past and future Diaries enter native READ while missing future stays Home', async ({ page, request }) => {
   const today = localCivilDate()
   const past = shiftCivilDate(today, -1)
   const existingFuture = shiftCivilDate(today, 1)
@@ -289,23 +286,30 @@ test('created and existing future Diaries enter native READ while missing future
 
   try {
     for (const date of [...createdDates, existingFuture, missingFuture]) await deleteDiaryDate(request, date)
+    for (const date of createdDates) await seedExistingDiary(request, date, `# Existing ${date}\n`)
 
     for (const date of createdDates) {
       await openDiaryScope(page)
       await clickDiaryDate(page, date)
       await assertNativeReader(page, date)
-      await page.getByTestId('file-tree-exact-context-action').click()
+      const tab = page.locator(`[role="tab"][data-tab-id="${diaryPath(date)}"]`)
+      await tab.locator('.tab-close').click()
+      await expect(tab).toHaveCount(0)
+      await expect(page.getByTestId('diary-calendar')).toBeVisible()
     }
 
     await seedExistingFutureDiary(existingFuture, `# Existing future\n\n${existingFuture}\n`)
     await openDiaryScope(page)
     await clickDiaryDate(page, existingFuture)
     await assertNativeReader(page, existingFuture)
-    await page.getByTestId('file-tree-exact-context-action').click()
+    const existingFutureTab = page.locator(`[role="tab"][data-tab-id="${diaryPath(existingFuture)}"]`)
+    await existingFutureTab.locator('.tab-close').click()
+    await expect(existingFutureTab).toHaveCount(0)
+    await expect(page.getByTestId('diary-calendar')).toBeVisible()
 
     await clickDiaryDate(page, missingFuture)
     await expect(page.getByTestId('diary-calendar')).toBeVisible()
-    await expect(page.getByTestId('file-tree-exact-context')).toHaveCount(0)
+    await expect(page.locator(`[role="tab"][data-tab-id="${diaryPath(missingFuture)}"]`)).toHaveCount(0)
   } finally {
     for (const date of [...createdDates, existingFuture, missingFuture]) await deleteDiaryDate(request, date)
   }
@@ -335,8 +339,7 @@ test('real Browser Back passively ends native Diary presentation without retarge
 
     await expect(page).toHaveURL(new RegExp(`/vault/${source.replace('/', '\\/')}(?:[?#]|$)`))
     await expect(page.locator(`[role="tab"][data-tab-id="${source}"]`)).toHaveAttribute('aria-selected', 'true')
-    await expect(page.getByTestId('diary-calendar')).toBeVisible()
-    await expect(page.getByTestId('file-tree-exact-context')).toHaveCount(0)
+    await expect(page.getByTestId('diary-calendar')).toBeHidden()
     await expect(page.locator(`[role="tab"][data-tab-id="${diaryPath(date)}"]`)).toHaveCount(1)
   } finally {
     await deleteDiaryDate(request, date)
@@ -348,7 +351,7 @@ test('real Browser Back passively ends native Diary presentation without retarge
   expect(state.consoleErrors).toEqual([])
 })
 
-test('native Edit keeps the same tab and unsaved raw across Calendar Home and same-date reopen', async ({ page, request }) => {
+test('native Edit keeps the same tab and unsaved raw across presentation toggles', async ({ page, request }) => {
   const date = localCivilDate()
   const path = diaryPath(date)
   const marker = `unsaved-native-${Date.now()}`
@@ -399,17 +402,15 @@ test('native Edit keeps the same tab and unsaved raw across Calendar Home and sa
     await page.keyboard.insertText(`\n${marker}`)
     await expect(page.locator(`[role="tab"][data-tab-id="${path}"]`)).toHaveCount(1)
 
-    await page.getByTestId('file-tree-exact-context-action').click()
-    await expect(page.getByTestId('diary-calendar')).toBeVisible()
+    await expect(page.getByTestId('diary-calendar')).toBeHidden()
     await expect(page.locator(`[role="tab"][data-tab-id="${path}"]`)).toHaveCount(1)
 
-    await clickDiaryDate(page, date)
-    await assertNativeReader(page, date)
+    await page.getByTestId('view-toggle').click()
+    await expect(page.locator('.reading-pane')).toBeVisible()
     await expect(page.locator('.reading-pane article')).toContainText(marker)
-    // Re-running the existing date command performs its authoritative exact
-    // path probe once. The presentation layer adds no fetch, and openPost
-    // reuses the existing tab raw instead of replacing the unsaved marker.
-    await expect.poll(() => documentGets.length).toBe(getsAfterOpen + 1)
+    // Switching the native surface does not re-run the date command or replace
+    // the existing tab raw, so the unsaved marker remains local to the tab.
+    await expect.poll(() => documentGets.length).toBe(getsAfterOpen)
   } finally {
     await deleteDiaryDate(request, date)
   }
@@ -438,7 +439,7 @@ test('ordinary note, archive, and ledger documents retain the native Vault works
       if ((await toggle.getAttribute('aria-label'))?.match(/read|阅读/i)) await toggle.click()
       await expect(page.locator('.reading-pane')).toHaveCount(1)
       await expect(page.locator('.file-tree')).toBeVisible()
-      await expect(page.getByTestId('file-tree-exact-context')).toHaveCount(0)
+      await expect(page.locator('.search-input')).toHaveCount(1)
       await expect(page.getByTestId('diary-reader-dialog')).toHaveCount(0)
     }
   } finally {
@@ -459,9 +460,10 @@ test('native document handoff remains stable across five cycles without dayIndex
     for (let cycle = 0; cycle < 5; cycle += 1) {
       await clickDiaryDate(page, date)
       await assertNativeReader(page, date)
-      await page.getByTestId('file-tree-exact-context-action').click()
+      const tab = page.locator(`[role="tab"][data-tab-id="${diaryPath(date)}"]`)
+      await tab.locator('.tab-close').click()
+      await expect(tab).toHaveCount(0)
       await expect(page.getByTestId('diary-calendar')).toBeVisible()
-      await expect(page.locator(`[role="tab"][data-tab-id="${diaryPath(date)}"]`)).toHaveCount(1)
     }
   } finally {
     await deleteDiaryDate(request, date)

@@ -823,7 +823,7 @@ defineExpose({ focusDate, closeMoodPicker })
   }
 
   .diary-calendar-mood {
-    top: calc(50% + 10px);
+    top: calc(50% + 18px);
     width: 24px;
     height: 24px;
   }

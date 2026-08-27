@@ -165,7 +165,7 @@ async function assertNativeReader(page: Page, date: string): Promise<void> {
   await expect(page.locator('.reading-pane')).toHaveCount(1)
   await expect(page.locator('.reading-pane')).toBeVisible()
   await ensureExplorerVisible(page)
-  await expect(page.getByTestId('file-tree-exact-context')).toContainText(date)
+  await expect(page.locator('.search-input')).toHaveValue(date)
   await expect(page.locator(`[data-tree-key="file:${path}"]`)).toHaveCount(1)
   await expect(page.getByTestId('diary-calendar')).toBeAttached()
   await expect(page.getByTestId('diary-calendar')).toBeHidden()
@@ -179,19 +179,13 @@ async function enterEditor(page: Page): Promise<void> {
   await expect(page.locator('.editor-pane .monaco-editor')).toHaveCount(1)
 }
 
-async function returnToCalendar(page: Page): Promise<void> {
-  await page.getByTestId('file-tree-exact-context-action').click()
-  await expect(page.getByTestId('diary-calendar')).toBeVisible()
-  await expect(page.getByTestId('file-tree-exact-context')).toHaveCount(0)
-}
-
 test.beforeEach(async ({ page }) => {
   await page.goto('/__markdown-test?mode=reading')
   await clearDraftDatabase(page)
   await gotoVaultReady(page)
 })
 
-test('Calendar → native Editor → Calendar preserves the backing tab, raw, dirty state, and identity', async ({ page, request }) => {
+test('Native Editor dirty lifecycle preserves identity and reveals Calendar only after final tab close', async ({ page, request }) => {
   const date = localCivilDate()
   const path = diaryPath(date)
   const baseRaw = `# D6.4 Native Editor ${RUN_ID} — Initial body ${RUN_ID}`
@@ -219,22 +213,24 @@ test('Calendar → native Editor → Calendar preserves the backing tab, raw, di
     await expect(page.locator(`[data-tab-id="${path}"][data-save-status="dirty"]`)).toBeVisible({ timeout: 15_000 })
     await expect.poll(() => draftRowCount(page, dirtyMarker), { timeout: 15_000 }).toBeGreaterThanOrEqual(1)
 
-    const routeBeforeClose = new URL(page.url()).pathname
-    await returnToCalendar(page)
+    const calendar = page.getByTestId('diary-calendar')
+    await expect(calendar).toBeHidden()
     await expect(page.locator(`[role="tab"][data-tab-id="${path}"]`)).toHaveCount(1)
     await expect(page.locator(`[role="tab"][data-tab-id="${path}"]`)).toHaveAttribute('aria-selected', 'true')
-    expect(new URL(page.url()).pathname).toBe(routeBeforeClose)
     await expect(page.locator('.confirm-dialog')).toHaveCount(0)
 
-    // Diary Home owns neither tab close nor tab cycling, even while the
-    // backing native document remains mounted for reopen continuity.
+    // Calendar Home remains hidden while a managed Diary tab is open. A real
+    // dirty tab close continues to use the existing confirmation policy.
     await page.locator('.vault').focus()
     await page.keyboard.press('ControlOrMeta+W')
+    await expect(page.locator('.confirm-dialog')).toBeVisible()
+    await page.locator('.confirm-dialog .confirm-actions .btn').first().click()
     await expect(page.locator(`[role="tab"][data-tab-id="${path}"]`)).toHaveCount(1)
     await expect(page.locator('.confirm-dialog')).toHaveCount(0)
 
-    await clickDiaryDate(page, date)
-    await assertNativeReader(page, date)
+    const readToggle = page.getByTestId('view-toggle')
+    if (/read|阅读/i.test(await readToggle.getAttribute('aria-label') ?? '')) await readToggle.click()
+    await expect(page.locator('.reading-pane')).toBeVisible()
     await expect(page.locator('.reading-pane article')).toContainText(dirtyMarker)
     const reopened = await (await request.get(`/api/posts/${path}`)).json()
     expect(reopened.metadata.id).toBe(document.documentId)
@@ -342,12 +338,12 @@ test('native Diary Editor yields to History Comparison without mutating the live
     await expect(diffTab).toBeVisible()
     await diffTab.locator('.tab-close').click()
     await expect(page.locator('.history-comparison-pane')).toHaveCount(0)
-    await expect(page.getByTestId('diary-calendar')).toBeVisible()
+    await expect(page.getByTestId('diary-calendar')).toBeHidden()
     await expect(page.locator('.reading-pane')).toHaveCount(0)
 
-    await page.locator('button.ab-btn[aria-label^="Explorer"], button.ab-btn[aria-label^="文件资源管理器"]').first().click()
-    await clickDiaryDate(page, date)
-    await assertNativeReader(page, date)
+    const readToggle = page.getByTestId('view-toggle')
+    if (/read|阅读/i.test(await readToggle.getAttribute('aria-label') ?? '')) await readToggle.click()
+    await expect(page.locator('.reading-pane')).toBeVisible()
     await expect(page.locator('.reading-pane article')).toContainText(dirtyMarker)
     const reopened = await (await request.get(`/api/posts/${path}`)).json()
     expect(reopened.metadata.id).toBe(document.documentId)
@@ -410,21 +406,23 @@ test('divergent Recovery yields to the existing native lifecycle and preserves D
     await pane.getByRole('button', { name: 'Use Disk Version' }).click()
     await expect(pane).toHaveCount(0)
     await expect.poll(() => draftRowCount(page, draftMarker), { timeout: 15_000 }).toBe(0)
-    await expect(page.getByTestId('diary-calendar')).toBeVisible()
+    await expect(page.getByTestId('diary-calendar')).toBeHidden()
     await expect(page.locator('.editor-tabs-context-actions')).toHaveCount(0)
 
     const resolved = await (await request.get(`/api/posts/${path}`)).json()
     expect(resolved.metadata.id).toBe(document.documentId)
     expect(resolved.raw).toBe(`${baseRaw}\n${diskMarker}\n`)
 
-    // Reboot through the existing Vault lifecycle before reopening. The
-    // resolution discarded only the draft; the next native load is what
-    // reads the authoritative disk winner into the existing tab/model.
+    // Reboot through the existing Vault lifecycle. The resolution discarded
+    // only the draft; the next native load reads the authoritative disk
+    // winner into the existing tab/model while Calendar remains hidden for
+    // the still-open managed Diary tab.
     await reloadApp(page)
-    await openDiaryHome(page)
+    await expect(page.getByTestId('diary-calendar')).toBeHidden()
     await expect(page.locator(`[data-tab-id="${path}"]`)).toHaveCount(1)
-    await clickDiaryDate(page, date)
-    await assertNativeReader(page, date)
+    const readToggle = page.getByTestId('view-toggle')
+    if (/read|阅读/i.test(await readToggle.getAttribute('aria-label') ?? '')) await readToggle.click()
+    await expect(page.locator('.reading-pane')).toBeVisible()
     await expect(page.locator('.reading-pane article')).toContainText(diskMarker)
     const reopened = await (await request.get(`/api/posts/${path}`)).json()
     expect(reopened.metadata.id).toBe(document.documentId)
@@ -438,7 +436,7 @@ test('divergent Recovery yields to the existing native lifecycle and preserves D
   expect(state.consoleErrors).toEqual([])
 })
 
-test('native Diary History restore keeps the same tab identity through Calendar reopen', async ({ page, request }) => {
+test('native Diary History restore keeps the same tab identity', async ({ page, request }) => {
   const date = localCivilDate()
   const path = diaryPath(date)
   const baseRaw = `# D6.4 Restore ${RUN_ID} — Historical body ${RUN_ID}`
@@ -498,12 +496,12 @@ test('native Diary History restore keeps the same tab identity through Calendar 
     const diffTab = page.locator(`[data-tab-id="diff:${path}"]`)
     await expect(diffTab).toHaveCount(1)
     await diffTab.locator('.tab-close').click()
-    await expect(page.getByTestId('diary-calendar')).toBeVisible()
+    await expect(page.getByTestId('diary-calendar')).toBeHidden()
     await expect(page.locator(`[data-tab-id="${path}"]`)).toHaveCount(1)
 
-    await page.locator('button.ab-btn[aria-label^="Explorer"], button.ab-btn[aria-label^="文件资源管理器"]').first().click()
-    await clickDiaryDate(page, date)
-    await assertNativeReader(page, date)
+    const readToggle = page.getByTestId('view-toggle')
+    if (/read|阅读/i.test(await readToggle.getAttribute('aria-label') ?? '')) await readToggle.click()
+    await expect(page.locator('.reading-pane')).toBeVisible()
     await expect(page.locator('.reading-pane article')).toContainText(baseRaw.slice(2))
     await expect(page.locator('.reading-pane article')).not.toContainText(liveRaw)
     const reopened = await (await request.get(`/api/posts/${path}`)).json()
@@ -539,13 +537,14 @@ test('baseline Recovery adopts the native Diary buffer and keeps the same identi
     await expect.poll(() => draftRowCount(page, recoveredMarker), { timeout: 15_000 }).toBeGreaterThanOrEqual(1)
 
     await page.reload()
-    await expect(page.getByTestId('diary-calendar')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByTestId('diary-calendar')).toBeHidden({ timeout: 15_000 })
     await expect(page.locator('.draft-recovery-backdrop')).toHaveCount(0)
     await expect(page.locator('.editor-pane .monaco-editor .view-lines').first()).toContainText(recoveredMarker, { timeout: 15_000 })
     await expect(page.locator(`[data-tab-id="${path}"][data-save-status="dirty"]`)).toHaveCount(1)
 
-    await clickDiaryDate(page, date)
-    await assertNativeReader(page, date)
+    const readToggle = page.getByTestId('view-toggle')
+    if (/read|阅读/i.test(await readToggle.getAttribute('aria-label') ?? '')) await readToggle.click()
+    await expect(page.locator('.reading-pane')).toBeVisible()
     await expect(page.locator('.reading-pane article')).toContainText(recoveredMarker)
     const adopted = await (await request.get(`/api/posts/${path}`)).json()
     expect(adopted.metadata.id).toBe(document.documentId)
@@ -570,7 +569,7 @@ test('baseline Recovery adopts the native Diary buffer and keeps the same identi
   expect(state.consoleErrors).toEqual([])
 })
 
-test('external conflict stays on the native Diary tab through Calendar and resolves via the existing save owner', async ({ page, request }) => {
+test('external conflict stays on the native Diary tab and resolves via the existing save owner', async ({ page, request }) => {
   const date = localCivilDate()
   const path = diaryPath(date)
   const baseRaw = `# D6.4 External ${RUN_ID} — Base body ${RUN_ID}`
@@ -607,10 +606,11 @@ test('external conflict stays on the native Diary tab through Calendar and resol
     expect(autosave.statuses[0]).toBe(409)
     await expect(page.locator(`[data-tab-id="${path}"][data-save-status="external"]`)).toBeVisible({ timeout: 15_000 })
 
-    await returnToCalendar(page)
+    await expect(page.getByTestId('diary-calendar')).toBeHidden()
     await expect(page.locator(`[data-tab-id="${path}"][data-save-status="external"]`)).toHaveCount(1)
-    await clickDiaryDate(page, date)
-    await assertNativeReader(page, date)
+    const readToggle = page.getByTestId('view-toggle')
+    if (/read|阅读/i.test(await readToggle.getAttribute('aria-label') ?? '')) await readToggle.click()
+    await expect(page.locator('.reading-pane')).toBeVisible()
     await expect(page.locator('.reading-pane article')).toContainText(localMarker)
 
     await enterEditor(page)
@@ -630,76 +630,23 @@ test('external conflict stays on the native Diary tab through Calendar and resol
   expect(state.consoleErrors).toEqual([])
 })
 
-test('native Diary mood context shares one picker across READ and EDIT without saving the body', async ({ page, request }) => {
+test('Native Diary does not expose a separate Mood context action', async ({ page, request }) => {
   const date = localCivilDate()
   const path = diaryPath(date)
-  const baseRaw = `# D7.2 Mood context ${RUN_ID} — Base body ${RUN_ID}`
-  const dirtyMarker = `MOOD_DIRTY_${RUN_ID}`
-  const state = diagnostics(page, ['net::ERR_FAILED'])
-  let browserAutosaveInstalled = false
-
-  async function readDiary() {
-    const response = await request.get(`/api/posts/${path}`)
-    expect(response.status(), await response.text()).toBe(200)
-    return response.json() as Promise<{
-      raw: string
-      metadata: { id: string; mood: string | null; updatedAt: number }
-    }>
-  }
+  const state = diagnostics(page)
 
   try {
-    const document = await seedDiary(request, date, baseRaw)
+    await seedDiary(request, date, `# Native Diary ${RUN_ID}\n`)
     await openDiaryHome(page)
     await clickDiaryDate(page, date)
     await assertNativeReader(page, date)
 
-    const context = page.getByTestId('diary-native-mood-context')
-    const trigger = context.getByTestId('diary-mood-trigger')
-    await expect(context).toHaveCount(1)
-    await expect(trigger).toBeVisible()
-    await expect(trigger).toBeEnabled()
-
-    await trigger.click()
-    const picker = page.getByTestId('diary-mood-picker')
-    await expect(picker).toBeVisible()
-    await expect(picker.locator('[role="radio"]')).toHaveCount(24)
-    await expect(picker.locator('[role="radio"]').nth(10)).toHaveAttribute('data-mood-id', 'happy')
-    const columns = await picker.locator('.diary-mood-picker-grid').evaluate((element) => (
-      getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/).length
-    ))
-    expect(columns).toBe(4)
-    await picker.getByRole('radio', { name: '开心 / Happy' }).click()
-
-    await expect.poll(async () => (await readDiary()).metadata.mood).toBe('happy')
-    await expect(context).toBeVisible()
-    await expect(picker).toHaveCount(0)
-    await expect(trigger).toContainText(/开心|Happy/)
-
+    await expect(page.getByTestId('diary-native-mood-context')).toHaveCount(0)
+    await expect(page.getByTestId('diary-mood-trigger')).toHaveCount(0)
     await enterEditor(page)
-    await expect(page.getByTestId('diary-native-mood-context')).toHaveCount(1)
-    await expect(page.locator('.editor-pane .monaco-editor')).toHaveCount(1)
-
-    await interceptAutosaveAborted(page, path)
-    browserAutosaveInstalled = true
-    await appendEditorText(page, dirtyMarker)
-    await expect(page.locator(`[data-tab-id="${path}"][data-save-status="dirty"]`)).toBeVisible({ timeout: 15_000 })
-
-    const beforeMoodChange = await readDiary()
-    await expect(page.getByTestId('diary-native-mood-context').getByTestId('diary-mood-trigger')).toBeVisible()
-    await page.getByTestId('diary-mood-trigger').click()
-    const editPicker = page.getByTestId('diary-mood-picker')
-    await expect(editPicker).toBeVisible()
-    await editPicker.getByRole('radio', { name: '伤心 / Sad' }).click()
-
-    await expect.poll(async () => (await readDiary()).metadata.mood).toBe('sad')
-    const afterMoodChange = await readDiary()
-    expect(afterMoodChange.raw).toBe(beforeMoodChange.raw)
-    expect(afterMoodChange.raw).toBe(baseRaw)
-    expect(afterMoodChange.metadata.id).toBe(document.documentId)
-    await expect(page.locator(`[data-tab-id="${path}"][data-save-status="dirty"]`)).toBeVisible()
-    await expect(page.getByTestId('diary-native-mood-context')).toHaveCount(1)
+    await expect(page.getByTestId('diary-native-mood-context')).toHaveCount(0)
+    await expect(page.getByTestId('diary-mood-trigger')).toHaveCount(0)
   } finally {
-    if (browserAutosaveInstalled) await page.unroute(`**/api/posts/${path}`)
     await deleteDiaryDate(request, date)
   }
 
@@ -727,21 +674,11 @@ test('ordinary Note does not expose the native Diary mood context', async ({ pag
   expect(state.consoleErrors).toEqual([])
 })
 
-test('native Diary mood picker remains fully usable at 320/375px with the side panel closed or open', async ({ page, request }) => {
+test('Calendar Mood picker remains fully usable at 320/375px', async ({ page, request }) => {
   const date = localCivilDate()
-  const path = diaryPath(date)
   const state = diagnostics(page)
 
-  async function setExplorerOpen(open: boolean): Promise<void> {
-    const button = page.getByRole('button', { name: /Explorer|文件资源管理器/i })
-    const expected = String(open)
-    if (await button.getAttribute('aria-pressed') !== expected) await button.click()
-    await expect(button).toHaveAttribute('aria-pressed', expected)
-    if (open) await expect(page.locator('.file-tree')).toBeVisible()
-    else await expect(page.locator('.file-tree')).toBeHidden()
-  }
-
-  async function assertPickerGeometry(width: number, height: number, panelState: string): Promise<void> {
+  async function assertPickerGeometry(width: number, height: number, context: string): Promise<void> {
     const picker = page.getByTestId('diary-mood-picker')
     await expect(picker).toBeVisible()
     const metrics = await picker.evaluate((element) => {
@@ -774,13 +711,13 @@ test('native Diary mood picker remains fully usable at 320/375px with the side p
       }
     })
 
-    expect(metrics.picker.left, `${width}px ${panelState} picker left`).toBeGreaterThanOrEqual(0)
-    expect(metrics.picker.right, `${width}px ${panelState} picker right`).toBeLessThanOrEqual(width)
-    expect(metrics.picker.top, `${width}px ${panelState} picker top`).toBeGreaterThanOrEqual(0)
-    expect(metrics.picker.bottom, `${width}px ${panelState} picker bottom`).toBeLessThanOrEqual(height)
+    expect(metrics.picker.left, `${width}px ${context} picker left`).toBeGreaterThanOrEqual(0)
+    expect(metrics.picker.right, `${width}px ${context} picker right`).toBeLessThanOrEqual(width)
+    expect(metrics.picker.top, `${width}px ${context} picker top`).toBeGreaterThanOrEqual(0)
+    expect(metrics.picker.bottom, `${width}px ${context} picker bottom`).toBeLessThanOrEqual(height)
     expect(metrics.picker.width).toBeGreaterThan(0)
     expect(metrics.picker.height).toBeGreaterThan(0)
-    expect(metrics.columns, `${width}px ${panelState} columns`).toBe(4)
+    expect(metrics.columns, `${width}px ${context} columns`).toBe(4)
     expect(metrics.rects).toHaveLength(24)
     expect(metrics.rects.every((rect) => (
       rect.width >= 44
@@ -796,25 +733,21 @@ test('native Diary mood picker remains fully usable at 320/375px with the side p
   try {
     await seedDiary(request, date, `# D7.2 mobile picker ${RUN_ID}`)
     await openDiaryHome(page)
-    await clickDiaryDate(page, date)
-    await assertNativeReader(page, date)
-
     for (const viewport of [
       { width: 320, height: 700 },
       { width: 375, height: 812 },
     ]) {
       await page.setViewportSize(viewport)
-      for (const panel of [false, true]) {
-        await setExplorerOpen(panel)
-        const trigger = page.getByTestId('diary-mood-trigger')
-        await expect(trigger).toBeVisible()
-        await trigger.click()
-        await assertPickerGeometry(viewport.width, viewport.height, panel ? 'open' : 'closed')
+      const calendar = page.getByTestId('diary-calendar')
+      await expect(calendar).toBeVisible()
+      const trigger = page.locator(`[data-testid="diary-calendar-mood"][data-date="${date}"]`)
+      await expect(trigger).toBeVisible()
+      await trigger.click()
+      await assertPickerGeometry(viewport.width, viewport.height, 'Calendar Home')
 
-        const picker = page.getByTestId('diary-mood-picker')
-        await picker.getByRole('radio', { name: /喜欢 \/ Like|喜欢/ }).click()
-        await expect(picker).toHaveCount(0)
-      }
+      const picker = page.getByTestId('diary-mood-picker')
+      await picker.getByRole('radio', { name: /喜欢 \/ Like|喜欢/ }).click()
+      await expect(picker).toHaveCount(0)
     }
   } finally {
     await deleteDiaryDate(request, date)

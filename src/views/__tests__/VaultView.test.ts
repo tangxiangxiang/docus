@@ -640,13 +640,15 @@ describe('VaultView D3.2 Diary surface wiring', () => {
     expect(source).toContain('diaryWorkspacePresentation.requestDocument(result.date, result.path)')
     expect(source).toContain("viewModeApi?.set('read')")
     expect(source).toContain(':exact-path-filter="diaryExactPathFilter"')
-    expect(source).toContain('@clear-exact-path-filter="closeDiaryPresentation"')
+    expect(source).not.toContain('@clear-exact-path-filter="closeDiaryPresentation"')
     const presentationCall = source.match(
       /const diaryWorkspacePresentation = useDiaryWorkspacePresentation\([\s\S]*?\n\}\)/,
     )?.[0]
     expect(presentationCall).toBeDefined()
     expect(presentationCall).toContain('activePath,')
     expect(source).toContain('if (activePath.value !== result.path)')
+    expect(source).toContain('diaryFilterSeed.value = date')
+    expect(source).toContain('filesFilter.value = date')
     expect(source).toContain('const isDiaryCalendarMounted = computed(() => isDiaryScope.value)')
     expect(source).toContain('v-if="isReadMode && !isDiaryPresentationPrimary && !activeHistoryComparison')
     expect(source).toContain('<ReadingPane')
@@ -703,37 +705,25 @@ describe('VaultView D3.2 Diary surface wiring', () => {
   })
 })
 
-describe('D7.2 Native Diary mood context wiring', () => {
-  it('uses one generic document-context slot and the existing authoritative metadata seam', () => {
+describe('D7.3 Native Diary mood context removal', () => {
+  it('keeps Native Diary free of the removed Mood context action', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
     const tabs = readFileSync(fileURLToPath(new URL('../../components/vault/EditorTabs.vue', import.meta.url)), 'utf8')
 
     expect(source).toContain("import { useDiaryMoodCommand } from '../composables/diary/useDiaryMoodCommand'")
-    expect(source).toContain("import { resolveNativeDiaryMoodContext } from '../components/diary/diaryMoodContext'")
     expect(source).not.toContain('<DiaryMoodContextAction')
+    expect(source).not.toContain('resolveNativeDiaryMoodContext')
+    expect(source).not.toContain('activeNativeDiaryContext')
+    expect(source).not.toContain('nativeMoodExcludedBySurface')
+    expect(source).not.toContain('diaryMoodMutationDisabled')
+    expect(source).not.toContain('updateNativeDiaryMood')
+    expect(source).not.toContain('clearNativeDiaryMood')
+    expect(source).not.toContain('diaryMoodContextRef')
     expect(source).toContain(':context-actions-visible="false"')
-    expect(source).toContain('const activeNativeDiaryContext = computed(() => resolveNativeDiaryMoodContext(')
-    expect(source).toContain('nativeMoodExcludedBySurface')
-    expect(source).toContain('diaryMoodCommand.setMood(context.date, mood, expectedUpdatedAt)')
-    expect(source).toContain('await onMetadataSaved(result.metadata)')
-    expect(source).not.toContain('posts.value.find((post) => post.path === context.path)!.mood =')
-    expect(source).not.toContain('updateDocumentMetadata(')
 
     expect(tabs).not.toContain('DiaryMood')
     expect(tabs).not.toContain('classifyDiaryPath')
     expect(tabs).toContain('<slot name="context-actions" />')
-  })
-
-  it('keeps the native mood context out of Calendar Home and special surfaces', () => {
-    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
-    const exclusion = source.match(/const nativeMoodExcludedBySurface = computed\(\(\) => Boolean\([\s\S]*?\)\)/)?.[0]
-
-    expect(exclusion).toBeDefined()
-    expect(exclusion).toContain('isDiaryPresentationPrimary.value')
-    expect(exclusion).toContain('activeHistoryComparison.value')
-    expect(exclusion).toContain('activeWorkingTreeDiff.value')
-    expect(exclusion).toContain('activeDraftRecovery.value')
-    expect(source).toContain('typeof version !== \'number\'')
   })
 })
 

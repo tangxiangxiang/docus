@@ -159,7 +159,13 @@ test('Calendar click opens an existing Diary through the native Vault reading su
     await expect(surface).toBeVisible()
     const dateButton = surface.locator(`[data-diary-day-content][data-date="${date}"]`)
     await expect(dateButton).toBeVisible()
-    await expect(surface.locator(`[data-testid="diary-calendar-mood"][data-date="${date}"]`)).toHaveCount(0)
+    const unsetMoodButton = surface.locator(`[data-testid="diary-calendar-mood"][data-date="${date}"]`)
+    await expect(unsetMoodButton).toHaveCount(1)
+    await expect(unsetMoodButton).toHaveText('?')
+    await unsetMoodButton.click()
+    await expect(page.getByTestId('diary-mood-picker')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(page.getByTestId('diary-mood-picker')).toHaveCount(0)
     await dateButton.click()
 
     await expect(page).toHaveURL(new RegExp(`/vault/${path.replace('/', '\\/')}(?:[?#]|$)`), { timeout: 15_000 })
@@ -171,7 +177,7 @@ test('Calendar click opens an existing Diary through the native Vault reading su
       .toContainText('D4 lifecycle integration evidence.', { timeout: 15_000 })
     await expect(page.locator('.reading-pane')).toHaveCount(1)
     await expect(page.locator('.file-tree')).toBeVisible()
-    await expect(page.getByTestId('file-tree-exact-context')).toContainText(date)
+    await expect(page.locator('.search-input')).toHaveValue(date)
 
     const calendar = page.getByTestId('diary-calendar')
     await expect(calendar).toBeAttached()
@@ -180,9 +186,10 @@ test('Calendar click opens an existing Diary through the native Vault reading su
     expect(createMethods).toEqual([])
     expect((await request.get(`/api/posts/${diaryPath(`${date}-2`)}`)).status()).toBe(404)
 
-    await page.getByTestId('file-tree-exact-context-action').click()
-    await expect(tab).toHaveCount(1)
+    await tab.locator('.tab-close').click()
+    await expect(tab).toHaveCount(0)
     await expect(calendar).toBeVisible()
+    await expect(page).toHaveURL(/\/vault(?:[?#]|$)/)
   } finally {
     await deleteDiaryDate(request, date)
   }
@@ -329,7 +336,6 @@ test('missing today and past dates require Mood before create and then open the 
     for (const date of dates) {
       const dateButton = surface.locator(`[data-diary-day-content][data-date="${date}"]`)
       await expect(dateButton).toBeVisible()
-      await expect(surface.locator(`[data-testid="diary-calendar-mood"][data-date="${date}"]`)).toHaveCount(0)
       await dateButton.click()
       const picker = page.getByTestId('diary-mood-picker')
       await expect(picker).toBeVisible()
@@ -340,8 +346,12 @@ test('missing today and past dates require Mood before create and then open the 
       await expect(page).toHaveURL(new RegExp(`/vault/diary/${date}`))
       await expect(surface).toBeHidden()
       await expect(page.locator(`[role="tab"][data-tab-id="${diaryPath(date)}"]`)).toHaveAttribute('aria-selected', 'true')
-      await page.getByTestId('file-tree-exact-context-action').click()
+      await expect(page.locator('.search-input')).toHaveValue(date)
+      const tab = page.locator(`[role="tab"][data-tab-id="${diaryPath(date)}"]`)
+      await tab.locator('.tab-close').click()
+      await expect(tab).toHaveCount(0)
       await expect(surface).toBeVisible()
+      await expect(page).toHaveURL(/\/vault(?:[?#]|$)/)
     }
   } finally {
     for (const date of dates) await deleteDiaryDate(request, date)
@@ -446,6 +456,10 @@ test('Calendar Mood emoji is the only picker entry and never navigates the date'
       expect(moodBox).not.toBeNull()
       expect(moodBox!.x + moodBox!.width / 2).toBeCloseTo(dateBox!.x + dateBox!.width / 2, 0)
       expect(moodBox!.y + moodBox!.height / 2).toBeGreaterThan(dateBox!.y + dateBox!.height / 2)
+      expect(
+        dateBox!.y + dateBox!.height,
+        `${JSON.stringify({ viewport, dateBox, moodBox })}`,
+      ).toBeLessThanOrEqual(moodBox!.y + 0.01)
     }
     await page.setViewportSize({ width: 1280, height: 720 })
     expect(createMethods).toEqual([])
@@ -457,7 +471,13 @@ test('Calendar Mood emoji is the only picker entry and never navigates the date'
     await page.getByTestId('diary-mood-picker').getByTestId('diary-mood-clear').click()
     await expect.poll(() => readMood()).toBeNull()
     await expect(page.getByTestId('diary-mood-picker')).toHaveCount(0)
-    await expect(surface.locator(`[data-testid="diary-calendar-mood"][data-date="${date}"]`)).toHaveCount(0)
+    const clearedMoodButton = surface.locator(`[data-testid="diary-calendar-mood"][data-date="${date}"]`)
+    await expect(clearedMoodButton).toHaveCount(1)
+    await expect(clearedMoodButton).toHaveText('?')
+    await clearedMoodButton.click()
+    await expect(page.getByTestId('diary-mood-picker')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(page.getByTestId('diary-mood-picker')).toHaveCount(0)
   } finally {
     await deleteDiaryDate(request, date)
   }

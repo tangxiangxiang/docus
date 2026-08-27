@@ -61,7 +61,6 @@ import { useDiaryDateCommand, type DiaryDateCommandResult } from '../composables
 import { useDiaryMoodCommand } from '../composables/diary/useDiaryMoodCommand'
 import { useDiaryWorkspacePresentation } from '../composables/diary/useDiaryWorkspacePresentation'
 import { localCivilToday } from '../components/diary/diaryCalendarAdapter'
-import { resolveNativeDiaryMoodContext } from '../components/diary/diaryMoodContext'
 import { classifyDiaryPath, diaryLogicalPathForDate, type DiaryDate } from '../../shared/diaryProtocol'
 import type { MoodId } from '../../shared/diaryMood'
 import { handleDiaryHomeKeydown } from './diaryHomeKeyboard'
@@ -1628,7 +1627,6 @@ const {
   isDocument: isDiaryDocumentMode,
   selectedDiaryDate,
   backingPath,
-  focusReturnTarget,
   isHome: isDiaryCalendarMode,
 } = diaryWorkspacePresentation
 // Keep the VCalendar subtree mounted for the whole Diary scope. v-calendar
@@ -1680,13 +1678,6 @@ watch(selectedDiaryDate, (date) => {
   }
 })
 
-const nativeMoodExcludedBySurface = computed(() => Boolean(
-  isDiaryPresentationPrimary.value
-  || activeHistoryComparison.value
-  || activeWorkingTreeDiff.value
-  || activeDraftRecovery.value,
-))
-
 // Calendar stays mounted across the Diary/native-document handoff. Its
 // Teleport picker is presentation-local, however, so any transition away
 // from Calendar Home must close that context without trying to restore focus
@@ -1695,16 +1686,7 @@ watch(isDiaryCalendarVisible, (visible, wasVisible) => {
   if (wasVisible && !visible) diaryCalendarSurfaceRef.value?.closeMoodPicker(false)
 }, { flush: 'sync' })
 
-const activeNativeDiaryContext = computed(() => resolveNativeDiaryMoodContext(
-  activeTab.value,
-  posts.value,
-  nativeMoodExcludedBySurface.value,
-))
 const diaryMoodBusy = ref(false)
-const diaryMoodMutationDisabled = computed(() => {
-  const version = activeNativeDiaryContext.value?.metadataUpdatedAt
-  return typeof version !== 'number' || !Number.isSafeInteger(version) || version < 0
-})
 const diaryMoodCommand = useDiaryMoodCommand({
   mutationLock: historyMutationLock,
   onBusy: () => toast.info(t('mood.busy')),
@@ -1719,35 +1701,6 @@ async function refreshAfterMoodRejection(): Promise<void> {
     await refresh()
   } catch {
     toast.info(t('metadata.sync_failed'))
-  }
-}
-
-async function updateNativeDiaryMood(mood: MoodId | null): Promise<void> {
-  if (diaryMoodBusy.value) return
-  const context = activeNativeDiaryContext.value
-  const expectedUpdatedAt = context?.metadataUpdatedAt
-  if (
-    !context
-    || typeof expectedUpdatedAt !== 'number'
-    || !Number.isSafeInteger(expectedUpdatedAt)
-    || expectedUpdatedAt < 0
-  ) return
-
-  diaryMoodBusy.value = true
-  try {
-    const result = await diaryMoodCommand.setMood(context.date, mood, expectedUpdatedAt)
-    if (result.status === 'updated') {
-      await onMetadataSaved(result.metadata)
-      if (activeNativeDiaryContext.value?.path === context.path) {
-        diaryMoodContextRef.value?.close()
-      }
-      toast.success(t('mood.saved'))
-    } else if (result.status === 'conflict' || result.status === 'not-found') {
-      if (result.status === 'not-found') toast.info(t('mood.not_found'))
-      await refreshAfterMoodRejection()
-    }
-  } finally {
-    diaryMoodBusy.value = false
   }
 }
 
@@ -1815,6 +1768,12 @@ async function updateDiaryCalendarMood(date: DiaryDate, mood: MoodId | null): Pr
       diaryCalendarSurfaceRef.value?.closeMoodPicker(!shouldPresentAfterMutation)
       toast.success(t('mood.saved'))
       if (dateResult && presentationIntent !== null) {
+        // A missing-date Mood-first flow only owns the FileTree seed after
+        // the canonical Diary create and authoritative Mood CAS both commit.
+        // Existing-date edits, clears, conflicts, and cancellations never
+        // overwrite the user's ordinary FileTree query.
+        diaryFilterSeed.value = date
+        filesFilter.value = date
         await presentDiaryDateResult(dateResult, presentationIntent)
       }
     } else if (result.status === 'conflict' || result.status === 'not-found') {
@@ -1824,20 +1783,6 @@ async function updateDiaryCalendarMood(date: DiaryDate, mood: MoodId | null): Pr
   } finally {
     diaryMoodBusy.value = false
   }
-}
-
-function clearNativeDiaryMood(): Promise<void> {
-  return updateNativeDiaryMood(null)
-}
-
-async function closeDiaryPresentation(): Promise<void> {
-  const target = focusReturnTarget.value
-  diaryWorkspacePresentation.closePresentation()
-  await nextTick()
-  const restored = target?.kind === 'calendar-date'
-    ? diaryCalendarSurfaceRef.value?.focusDate(target.date) ?? false
-    : false
-  if (!restored) vaultRef.value?.focus()
 }
 
 async function onDiaryDateSelected(date: DiaryDate): Promise<void> {
@@ -2271,12 +2216,10 @@ watch(isReadMode, async (reading) => {
       :posts="posts"
       :current-path="activePath"
       :exact-path-filter="diaryExactPathFilter"
-      :exact-path-filter-label="selectedDiaryDate"
       @select="openPost"
       @refresh="refresh"
       @export-pdf="exportPdfDocument"
       @open-history="openFileHistory"
-      @clear-exact-path-filter="closeDiaryPresentation"
     />
     <TagPanel
       v-else-if="activePanel === 'tags'"
