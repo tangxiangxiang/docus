@@ -1874,13 +1874,17 @@ async function onDiaryDateSelected(date: DiaryDate): Promise<void> {
   // Explicit date navigation abandons any deferred Mood-first handoff for a
   // previous repair context, including when it targets the same date.
   clearPendingMoodFirstPresentation()
-  // A Calendar date click is an explicit navigation intent, so keep the
-  // ordinary FileTree query aligned with the selected Diary date. FileTree
-  // clicks never reach this handler and therefore cannot rewrite the query.
-  diaryFilterSeed.value = date
-  filesFilter.value = date
   const intent = diaryWorkspacePresentation.beginDateIntent()
   const result: DiaryDateCommandResult = await openDiaryDate(date)
+  // A Calendar date click becomes a committed FileTree seed only after the
+  // canonical date command opens or creates the Diary. Rejected dates (most
+  // importantly missing future dates) must leave the user's ordinary query
+  // untouched. FileTree clicks never reach this handler and therefore cannot
+  // rewrite the query.
+  if (result.status === 'opened' || result.status === 'created') {
+    diaryFilterSeed.value = date
+    filesFilter.value = date
+  }
   await presentDiaryDateResult(result, intent)
 }
 
