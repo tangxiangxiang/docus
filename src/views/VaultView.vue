@@ -1641,6 +1641,28 @@ const isDiaryCalendarVisible = computed(() => (
   isDiaryCalendarMode.value && !hasOpenDiaryDocument.value
 ))
 const isDiaryPresentationPrimary = computed(() => isDiaryCalendarVisible.value)
+type DiaryFilterOwnership = 'none' | 'calendar' | 'user'
+
+// Persist both the Calendar seed and who owns the current query. A plain
+// empty seed cannot distinguish a fresh empty query from one the user
+// deliberately cleared, so the ownership state must survive refresh too.
+const diaryFilterSeed = useStorage('docus.diary.filter-seed', '')
+const diaryFilterOwnership = useStorage<DiaryFilterOwnership>(
+  'docus.diary.filter-ownership',
+  'none',
+)
+
+// Migrate the pre-ownership state when it still has an intact Calendar seed.
+// A previous user edit already cleared `diaryFilterSeed`, so only an equal,
+// non-empty pair can safely be classified as a Calendar-owned query.
+if (
+  diaryFilterOwnership.value === 'none'
+  && diaryFilterSeed.value
+  && filesFilter.value === diaryFilterSeed.value
+) {
+  diaryFilterOwnership.value = 'calendar'
+}
+
 const diaryExactPathFilter = computed(() => {
   if (!isDiaryDocumentMode.value || !backingPath.value) return null
 
@@ -1649,16 +1671,12 @@ const diaryExactPathFilter = computed(() => {
   // user edits that query. The seed check preserves that provenance boundary
   // even when the user later types the same date again.
   const diaryDate = backingPath.value.split('/').at(-1)
-  return diaryFilterSeed.value === diaryDate && filesFilter.value === diaryDate
+  return diaryFilterOwnership.value === 'calendar'
+    && diaryFilterSeed.value === diaryDate
+    && filesFilter.value === diaryDate
     ? backingPath.value
     : null
 })
-// Persist the Calendar-seed provenance so the scope-exit check can still
-// distinguish a system-seeded date from a user-owned query after refresh.
-// `filesFilter` already survives refresh via useStorage; without this, the
-// scope-exit check `filesFilter === diaryFilterSeed` would always be false
-// after reload and leak a Calendar date into the ordinary Note tree.
-const diaryFilterSeed = useStorage('docus.diary.filter-seed', '')
 const pendingMoodFirstPresentationDate = ref<DiaryDate | null>(null)
 const pendingMoodFirstPresentationIntent = ref<number | null>(null)
 
@@ -1695,13 +1713,25 @@ watch(isDiaryScope, (inDiaryScope) => {
     // A Calendar-seeded date is presentation context and should not hide the
     // ordinary scope's tree. Once the user edits the query, it is their
     // ordinary FileTree state and must survive the scope transition.
-    if (filesFilter.value === diaryFilterSeed.value) filesFilter.value = ''
+    if (
+      diaryFilterOwnership.value === 'calendar'
+      && filesFilter.value === diaryFilterSeed.value
+    ) {
+      filesFilter.value = ''
+    }
     diaryFilterSeed.value = ''
+    if (diaryFilterOwnership.value === 'calendar') {
+      diaryFilterOwnership.value = 'none'
+    }
     return
   }
+  // User-owned state includes an intentionally empty query. It must not be
+  // re-seeded from the active Diary document during refresh or re-entry.
+  if (diaryFilterOwnership.value === 'user') return
   if (!filesFilter.value && classifyDiaryPath(activePath.value) === 'managed') {
     const date = activePath.value!.split('/').at(-1) ?? ''
     diaryFilterSeed.value = date
+    diaryFilterOwnership.value = 'calendar'
     filesFilter.value = date
   }
 }, { immediate: true })
@@ -1712,6 +1742,7 @@ watch(isDiaryScope, (inDiaryScope) => {
 // to the same date later.
 function onFilesFilterEdited(value: string): void {
   diaryFilterSeed.value = ''
+  diaryFilterOwnership.value = 'user'
   filesFilter.value = value
 }
 
@@ -1732,8 +1763,16 @@ watch(selectedDiaryDate, (date) => {
   // Follow Calendar date navigation only while the query still contains the
   // last system-seeded date. Once the user edits it, the FileTree query is
   // fully user-owned and must remain untouched.
-  if (!filesFilter.value || filesFilter.value === diaryFilterSeed.value) {
+  if (diaryFilterOwnership.value === 'user') return
+  if (
+    !filesFilter.value
+    || (
+      diaryFilterOwnership.value === 'calendar'
+      && filesFilter.value === diaryFilterSeed.value
+    )
+  ) {
     diaryFilterSeed.value = date
+    diaryFilterOwnership.value = 'calendar'
     filesFilter.value = date
   }
 })
@@ -1866,6 +1905,7 @@ async function updateDiaryCalendarMood(date: DiaryDate, mood: MoodId | null): Pr
         // edit navigate unexpectedly.
         clearPendingMoodFirstPresentation()
         diaryFilterSeed.value = date
+        diaryFilterOwnership.value = 'calendar'
         filesFilter.value = date
         const openResult = await openDiaryDate(date)
         if (openResult.status === 'opened' || openResult.status === 'created') {
@@ -1903,6 +1943,7 @@ async function onDiaryDateSelected(date: DiaryDate): Promise<void> {
   // rewrite the query.
   if (result.status === 'opened' || result.status === 'created') {
     diaryFilterSeed.value = date
+    diaryFilterOwnership.value = 'calendar'
     filesFilter.value = date
   }
   await presentDiaryDateResult(result, intent)

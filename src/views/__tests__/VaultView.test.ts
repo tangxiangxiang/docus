@@ -658,6 +658,17 @@ describe('VaultView D3.2 Diary surface wiring', () => {
     expect(source).not.toContain('closeTab()')
   })
 
+  it('persists FileTree query ownership so a user-cleared query is not re-seeded', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+
+    expect(source).toContain("type DiaryFilterOwnership = 'none' | 'calendar' | 'user'")
+    expect(source).toContain("'docus.diary.filter-ownership'")
+    expect(source).toContain("diaryFilterOwnership.value = 'user'")
+    expect(source).toContain("diaryFilterOwnership.value === 'user'")
+    expect(source).toContain("diaryFilterOwnership.value === 'calendar'")
+    expect(source).toContain('@update:filter="onFilesFilterEdited"')
+  })
+
   it('keeps the Calendar mounted while presentation state controls visibility', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
     const editorSurface = source.match(

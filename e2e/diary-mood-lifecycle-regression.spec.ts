@@ -1091,6 +1091,75 @@ test('a user query stays owned after being edited back to the Calendar date', as
   expect(state.consoleErrors).toEqual([])
 })
 
+test('a user-owned empty query survives refresh without re-seeding Diary context', async ({ page, request }) => {
+  const date = await findUnusedDiaryDate(request)
+  const otherDate = await findUnusedDiaryDate(request, [date])
+  const path = diaryPath(date)
+  const otherPath = diaryPath(otherDate)
+  const noteName = `d74-round3-empty-query-${date}-${RUN_ID}`
+  const notePath = `inbox/${noteName}`
+  const state = diagnostics(page)
+  let diaryCreateRequests = 0
+  let moodPatchRequests = 0
+
+  page.on('request', (outgoing) => {
+    const pathname = new URL(outgoing.url()).pathname
+    if (outgoing.method() === 'POST' && pathname === '/api/diary/dates') diaryCreateRequests += 1
+    if (outgoing.method() === 'PATCH' && pathname.startsWith('/api/metadata/documents/diary/')) moodPatchRequests += 1
+  })
+
+  try {
+    await seedDiary(request, date, `# Round 3 empty query ${RUN_ID}\n`)
+    await seedDiary(request, otherDate, `# Round 3 second Diary ${RUN_ID}\n`)
+    await seedNote(request, notePath, `# Ordinary empty query note ${RUN_ID}\n`)
+
+    await openDiaryHome(page)
+    await clickDiaryDate(page, date)
+    await assertNativeReader(page, date)
+    await ensureExplorerVisible(page)
+    const search = page.locator('.file-tree .search-input')
+    await expect(search).toHaveValue(date)
+
+    // Clearing the query is still an explicit user edit. Persist that
+    // ownership separately from the empty value so refresh cannot infer a
+    // new Calendar seed from the active Diary document.
+    await search.fill('')
+    await expect(search).toHaveValue('')
+    await expect.poll(() => page.evaluate(() =>
+      localStorage.getItem('docus.diary.filter-ownership'),
+    )).toBe('user')
+
+    await page.reload()
+    await assertNativeReader(page, date, '')
+    await expect.poll(() => page.evaluate(() =>
+      localStorage.getItem('docus.diary.filter-ownership'),
+    )).toBe('user')
+
+    // With Calendar exact-path projection disabled, another Diary remains
+    // visible even though the active native document is still `date`.
+    await expect(page.locator(`[data-tree-key="file:${otherPath}"]`)).toBeVisible()
+
+    // Leaving Diary scope must preserve the intentionally empty, user-owned
+    // query rather than clearing or re-seeding it for the ordinary tree.
+    await selectScope(page, 'note')
+    await ensureExplorerVisible(page)
+    await expect(search).toHaveValue('')
+    const inbox = page.locator('[data-tree-key="folder:inbox"]')
+    if (await inbox.getAttribute('aria-expanded') !== 'true') await inbox.locator('.row-line').click()
+    await expect(page.locator(`[data-tree-key="file:${notePath}"]`)).toBeVisible()
+    await expect(page.locator('.file-tree')).toContainText(noteName)
+    expect(diaryCreateRequests).toBe(0)
+    expect(moodPatchRequests).toBe(0)
+  } finally {
+    await deletePost(request, path)
+    await deletePost(request, otherPath)
+    await deletePost(request, notePath)
+  }
+
+  expect(state.pageErrors).toEqual([])
+  expect(state.consoleErrors).toEqual([])
+})
+
 test('refresh, deep link, and browser Back/Forward preserve Diary identity, Mood, and query', async ({ page, request }) => {
   const date = await findUnusedDiaryDate(request)
   const path = diaryPath(date)
