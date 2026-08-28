@@ -20,6 +20,9 @@ D7.4 Round 1 starting HEAD: `9112065437bfe49ab9a54ee77f89458e6c4e4f7c`
 D7.4 Round 1 implementation commit: `8017594d9da4f7ac2e6ab8482fdefdaa3838781f`
 (`fix(diary): gate missing-date presentation on mood commit`)
 
+D7.4 Round 1 stale-intent remediation commit: `ec4b190a4ad89871021afa46906a77c18ec2fc61`
+(`fix(diary): invalidate stale Mood-first intent`)
+
 This document records the D7.4 lifecycle/conflict regression evidence. The
 implementation/evidence phase started as `IN PROGRESS` and stops at
 `REVIEW-READY`; this document does not claim independent review closure.
@@ -214,8 +217,20 @@ refreshes the canonical Diary without opening a document. `VaultView` now
 uses that deferred path first, performs the existing `useDiaryMoodCommand`
 CAS, and calls `openDiaryDate()` only after an `updated` result. A failed CAS
 keeps the created canonical file, leaves Calendar as the visible owner, and
-retains a pending repair intent so a later successful Mood mutation opens the
+retains a pending repair intent so an immediate successful retry opens the
 native Diary exactly through the existing lifecycle.
+
+The follow-up remediation addresses a lifecycle P2 found during independent
+review: a date-only pending repair could survive an explicit native navigation
+and later make an ordinary existing-Diary Mood edit reopen the document. The
+pending repair is now scoped by both its `DiaryDate` and the existing
+presentation date-intent epoch. Explicit date navigation, leaving Diary scope,
+losing Diary presentation eligibility, Calendar Home becoming hidden, an
+active-path transition, or a different Mood date clears the repair context.
+Asynchronous Mood results retain a pending repair only when their original
+epoch is still current. Once the Mood CAS succeeds, the one-shot repair intent
+is consumed before attempting the native handoff, so a failed handoff cannot
+leak navigation into a later ordinary Mood edit.
 
 ## 6. Round 0 validation snapshot
 
@@ -281,6 +296,45 @@ src/composables/diary/__tests__/useDiaryDateCommand.test.ts
 src/composables/diary/useDiaryDateCommand.ts
 src/views/VaultView.vue
 src/views/__tests__/VaultView.test.ts
+```
+
+No server, shared, router, dependency, package, or lockfile changes were
+made.
+
+### 7.1 Round 1 stale-intent remediation
+
+The remediation regression first failed against the pre-remediation code: a
+failed Mood-first creation followed by explicit opening and closing of the
+same Diary left the old pending date active, so the next ordinary Mood edit
+hid Calendar and reopened Native Diary. After commit
+`ec4b190a4ad89871021afa46906a77c18ec2fc61`, the same flow persists Mood while
+Calendar remains visible, the route remains `/vault`, and no Diary tab is
+created by the later Mood edit. The existing immediate retry flow remains
+covered separately by the original Round 1 scenario.
+
+| Command | Result |
+| --- | --- |
+| Focused stale-intent E2E: `diary-calendar-surface.spec.ts --grep "failed Mood-first repair intent"` | **1 passed** |
+| Complete Diary Calendar E2E: `diary-calendar-surface.spec.ts --project=chromium` | **10 passed** |
+| Focused Vitest: date command and VaultView wiring | **2 files, 59 tests passed** |
+| D7.4 focused Vitest suites | **7 files, 114 tests passed** |
+| `npm run test:unit` (elevated local environment) | **235 files, 3521 tests passed, 2 skipped** |
+| `npm run test:e2e` (elevated local environment) | **126 passed** |
+| `npm run typecheck` | **PASS** (client and server) |
+| `npm run build` | **PASS** |
+| `git diff --check` | **PASS** |
+
+The first full-unit invocation was blocked by local sandbox IPC/listen
+permissions in four unrelated server suites; the elevated rerun passed in
+full. Build output retained only the repository's existing dependency
+annotation and large-chunk warnings. Browser output retained known Monaco
+cancellation messages; all 126 browser tests passed.
+
+The focused remediation changed only:
+
+```text
+e2e/diary-calendar-surface.spec.ts
+src/views/VaultView.vue
 ```
 
 No server, shared, router, dependency, package, or lockfile changes were
