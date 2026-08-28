@@ -1685,7 +1685,9 @@ watch(isDiaryScope, (inDiaryScope) => {
   if (!inDiaryScope) {
     clearPendingMoodFirstPresentation()
     diaryFilterSeed.value = ''
-    filesFilter.value = ''
+    // FileTree query is ordinary user-owned state. Leaving Diary scope must
+    // not erase it; only Calendar date navigation may seed/replace it after
+    // a successful explicit Diary intent.
     return
   }
   if (!filesFilter.value && classifyDiaryPath(activePath.value) === 'managed') {
