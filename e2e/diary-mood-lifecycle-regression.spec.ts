@@ -1140,3 +1140,78 @@ test('refresh, deep link, and browser Back/Forward preserve Diary identity, Mood
   expect(state.pageErrors).toEqual([])
   expect(state.consoleErrors).toEqual([])
 })
+
+test('dirty Diary body survives generic tab selection without losing Mood or identity', async ({ page, request }) => {
+  const firstDate = await findUnusedDiaryDate(request)
+  const secondDate = await findUnusedDiaryDate(request, [firstDate])
+  const firstPath = diaryPath(firstDate)
+  const secondPath = diaryPath(secondDate)
+  const baseRaw = `# Round 3 dirty selection ${RUN_ID}\n`
+  const dirtyMarker = `D74_ROUND3_DIRTY_${RUN_ID}`
+  const state = diagnostics(page, ['net::ERR_FAILED'])
+  let autosaveInstalled = false
+
+  try {
+    const first = await seedDiary(request, firstDate, baseRaw)
+    const second = await seedDiary(request, secondDate, `# Round 3 second Diary ${RUN_ID}\n`)
+    await setDiaryMood(request, firstDate, 'happy')
+    await setDiaryMood(request, secondDate, 'sad')
+
+    await openDiaryHome(page)
+    await clickDiaryDate(page, firstDate)
+    await assertNativeReader(page, firstDate)
+    await page.goto(`/vault/${secondPath}`)
+    await assertNativeReader(page, secondDate, firstDate)
+    await selectWorkspaceTab(page, firstPath)
+    await assertNativeReader(page, firstDate, firstDate)
+
+    await enterEditor(page)
+    await interceptAutosaveAborted(page, firstPath)
+    autosaveInstalled = true
+    await appendEditorText(page, dirtyMarker)
+    await expect(page.locator(`[data-tab-id="${firstPath}"][data-save-status="dirty"]`)).toBeVisible({ timeout: 15_000 })
+    await expect.poll(() => draftRowCount(page, dirtyMarker), { timeout: 15_000 }).toBeGreaterThanOrEqual(1)
+
+    const beforeSelection = await readDiary(request, firstDate)
+    expect(beforeSelection.raw).toBe(baseRaw)
+    expect(beforeSelection.metadata.id).toBe(first.documentId)
+    expect(beforeSelection.metadata.mood).toBe('happy')
+
+    await selectWorkspaceTab(page, secondPath)
+    await expect(page).toHaveURL(new RegExp(`/vault/${secondPath.replace('/', '\\/')}(?:[?#]|$)`))
+    await expect(page.locator(`[data-tab-id="${firstPath}"] .tab-dirty-indicator`)).toHaveCount(1)
+    await expect(page.getByTestId('diary-calendar')).toBeHidden()
+
+    await selectWorkspaceTab(page, firstPath)
+    await expect(page).toHaveURL(new RegExp(`/vault/${firstPath.replace('/', '\\/')}(?:[?#]|$)`))
+    await expect(page.locator(`[data-tab-id="${firstPath}"] .tab-dirty-indicator`)).toHaveCount(1)
+    await expect(page.locator('.editor-pane .monaco-editor .view-lines').first()).toContainText(dirtyMarker)
+    await expect(page.getByTestId('diary-calendar')).toBeHidden()
+
+    const afterSelection = await readDiary(request, firstDate)
+    expect(afterSelection.raw).toBe(baseRaw)
+    expect(afterSelection.metadata.id).toBe(first.documentId)
+    expect(afterSelection.metadata.mood).toBe('happy')
+    const secondAfterSelection = await readDiary(request, secondDate)
+    expect(secondAfterSelection.metadata.id).toBe(second.documentId)
+    expect(secondAfterSelection.metadata.mood).toBe('sad')
+
+    await page.unroute(`**/api/posts/${firstPath}`)
+    autosaveInstalled = false
+    await page.locator('.vault').focus()
+    await page.keyboard.press('Control+s')
+    await expect(page.locator(`[data-tab-id="${firstPath}"][data-save-status="saved"]`)).toBeVisible({ timeout: 15_000 })
+    const saved = await readDiary(request, firstDate)
+    expect(normalizeLineEndings(saved.raw)).toContain(dirtyMarker)
+    expect(saved.metadata.id).toBe(first.documentId)
+    expect(saved.metadata.mood).toBe('happy')
+    await expect.poll(() => draftRowCount(page, dirtyMarker), { timeout: 15_000 }).toBe(0)
+  } finally {
+    if (autosaveInstalled) await page.unroute(`**/api/posts/${firstPath}`)
+    await deletePost(request, firstPath)
+    await deletePost(request, secondPath)
+  }
+
+  expect(state.pageErrors).toEqual([])
+  expect(state.consoleErrors).toEqual([])
+})
