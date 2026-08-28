@@ -20,11 +20,11 @@ Round 2 self-review findings: `P0 = 0`, `P1 = 0`, `P2 = 0`
 
 Self-review findings: `P0 = 0`, `P1 = 0`, `P2 = 0`
 
-`D7.4 Round 3 = REMEDIATION-READY`
+`D7.4 Round 3 = REVIEW-CLOSED`
 
-Independent Re-review: `FAIL` — `P0 = 0`, `P1 = 0`, `P2 = 1`
+Independent Re-review: `PASS` — `P0 = 0`, `P1 = 0`, `P2 = 0`
 
-Re-review findings:
+Historical Round 3 re-review findings before the final remediation:
 
 ```text
 D7.4-R3-P2-4 OPEN at d28c2ab:
@@ -92,10 +92,10 @@ D7.4 Round 3 user-edit provenance remediation commit: `5f4bda4b313e641dca116017d
 D7.4 Round 3 empty-query ownership remediation commit: `f461496`
 (`fix(diary): preserve user-owned empty query`)
 
-This document records the D7.4 lifecycle/conflict regression evidence. The
-implementation/evidence phase started as `IN PROGRESS` and stopped at
-`REVIEW-READY`. After the Round 1 independent re-review passed, this closure
-sync records Round 1 as `REVIEW-CLOSED`; D7.4 itself remains `IN PROGRESS`.
+This document records the D7.4 lifecycle/conflict regression evidence. Each
+implementation/evidence round stopped at `REVIEW-READY`; independent review
+results are recorded by separate closure syncs. D7.4 itself remains
+`IN PROGRESS`.
 
 Current lifecycle:
 
@@ -111,12 +111,13 @@ D7.4 Independent Review = PASS
 D7.4 Round 2 = REVIEW-CLOSED
 D7.4 Round 2 Independent Review = PASS (0/0/0)
 D7.4 Round 2 GitHub CI #547 = PASS
-D7.4 Round 3 = REVIEW-READY
-D7.4 Round 3 Independent Re-review = PENDING
+D7.4 Round 3 = REVIEW-CLOSED
+D7.4 Round 3 Independent Re-review = PASS (0/0/0)
 D7.4-R3-P2-2 = CLOSED (by 57ba3409)
 D7.4-R3-P2-3 = CLOSED (by 5f4bda4)
 D7.4-R3-P2-4 = CLOSED (by f461496)
 D7.4 Round 3 GitHub CI #549 = PASS (at f2ccccc; historical evidence)
+D7.4 Round 3 GitHub CI #552 = PASS
 D7.5  = NOT STARTED
 D7.6  = NOT STARTED
 D7 Mood release = NOT STARTED
@@ -1281,20 +1282,60 @@ local environment. Build output retains the repository's existing dependency
 annotation and large-chunk warnings; test output retains known environment
 informational warnings.
 
-The current Round 3 lifecycle remains:
+The final Round 3 lifecycle is:
 
 ```text
 D7.4 = IN PROGRESS
 D7.4 Round 1 = REVIEW-CLOSED
 D7.4 Round 2 = REVIEW-CLOSED
-D7.4 Round 3 = REVIEW-READY
-D7.4 Round 3 Independent Re-review = PENDING
+D7.4 Round 3 = REVIEW-CLOSED
+D7.4 Round 3 Independent Re-review = PASS (0/0/0)
 D7.4 Round 3 Self-review P0/P1/P2 = 0/0/0
 D7.4-R3-P2-2 = CLOSED (by 57ba3409)
 D7.4-R3-P2-3 = CLOSED (by 5f4bda4)
 D7.4-R3-P2-4 = CLOSED (by f461496)
+D7.4 Round 3 GitHub CI #552 = PASS
 D7.5 = NOT STARTED
 ```
 
-This remediation is ready for independent re-review. Do not start D7.5 in
-this phase.
+Round 3 independent re-review passed with no remaining findings. This
+docs-only closure sync marks Round 3 `REVIEW-CLOSED`; D7.4 remains
+`IN PROGRESS`, and D7.5 has not started.
+
+### 12.9 Round 3 closure sync
+
+The final Round 3 independent re-review confirmed that all Round 3 findings
+were closed:
+
+```text
+D7.4 Round 3 Independent Re-review = PASS
+P0 = 0
+P1 = 0
+P2 = 0
+
+D7.4 Round 3 = REVIEW-CLOSED
+D7.5 = NOT STARTED
+```
+
+The closed findings are:
+
+```text
+D7.4-R3-P2-1 = CLOSED
+D7.4-R3-P2-2 = CLOSED
+D7.4-R3-P2-3 = CLOSED
+D7.4-R3-P2-4 = CLOSED
+```
+
+The final evidence HEAD was validated by GitHub Actions CI #552:
+
+```text
+Run ID: 33172432195
+HEAD: 1efb18fe6b0c2693c8d9531ec0417eec8db0df45
+Status: completed
+Conclusion: success
+Required jobs: PASS
+```
+
+This closure changes documentation only. It does not reopen D7.4 Round 1 or
+Round 2, start D7.5, or change the production, test, server, shared, schema,
+router, package, or dependency boundary.
