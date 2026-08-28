@@ -39,6 +39,9 @@ D7.4 Round 2 test commit: `b8d721ee5c957b0097a1e22d9602822262754867`
 D7.4 Round 2 production remediation commit: `c029408d0e7e44e94f6e3c1c068e07749a82da27`
 (`fix(diary): preserve filter on rejected diary date`)
 
+D7.4 Round 2 focused test remediation commit: `b87cc2acedd23f116a37922a6ae173eac25523e0`
+(`test(diary): close D7.4 lifecycle evidence gaps`)
+
 This document records the D7.4 lifecycle/conflict regression evidence. The
 implementation/evidence phase started as `IN PROGRESS` and stopped at
 `REVIEW-READY`. After the Round 1 independent re-review passed, this closure
@@ -133,8 +136,8 @@ included to show the already-verified owner that D7.4 depends on.
 | Dirty body plus Mood mutation | New E2E test 1: disk body remains unchanged while the native buffer is dirty; Mood changes independently | PASS |
 | Body save ordering and draft removal | New E2E test 1: real `Ctrl+S` persists the dirty body and removes the draft while Mood and identity remain stable | PASS |
 | Metadata CAS conflict | Round 2 clean Calendar conflict and dirty native-body conflict E2E plus `server/__tests__/diary-mood-metadata.test.ts` | PASS |
-| External body conflict | Existing D6.4 real conflict E2E and Round 1 divergent Recovery E2E: buffer/disk reconciliation through the native owner | PASS |
-| Unknown Mood value | Round 2 bulk/detail/explicit-replace-clear server coverage, Calendar opaque-value unit coverage, and D7.2/D7.3 projection coverage | PASS |
+| External body conflict | Round 2 direct native body-conflict E2E plus existing D6.4 real conflict and Round 1 divergent Recovery E2E | PASS |
+| Unknown Mood value | Round 2 native save/refresh/close/reopen E2E, bulk/detail/explicit-replace-clear server coverage, Calendar opaque-value unit coverage, and D7.2/D7.3 projection coverage | PASS |
 | Dirty History Comparison does not mutate live body | Existing D6.4 History Comparison E2E with a dirty native editor | PASS |
 | v2 History Restore restores matching Mood | New E2E test 2 plus `server/__tests__/history-metadata-revisions.test.ts`; actual native History Restore UI | PASS |
 | Legacy/pre-Mood History Restore preserves current Mood | Focused `history-metadata-revisions` coverage from D7.0/D7.1 | PASS |
@@ -150,7 +153,7 @@ included to show the already-verified owner that D7.4 depends on.
 | Identity continuity | New History/Recovery/CAS tests plus existing native lifecycle suites | PASS |
 | Raw/dirty continuity | New tests 1, 3, and 4 plus D6.4 dirty editor coverage | PASS |
 | Metadata continuity | New tests 1–5 and focused server metadata/history suites | PASS |
-| Calendar continuity | Round 2 conflict/unknown assertions, History Restore/Recovery assertions, and existing D6.5/D7.3 Calendar lifecycle | PASS |
+| Calendar continuity | Round 2 conflict/unknown assertions including native close/reopen, History Restore/Recovery assertions, and existing D6.5/D7.3 Calendar lifecycle | PASS |
 | No N+1 metadata reads | D7.3 bulk `PostSummary[]` projection contract and static owner audit; no Calendar component fetch was added | PASS |
 | Ordinary Vault regression | Existing D6.5 ordinary Note/Archive/Ledger coverage, focused VaultView tests, and full browser/unit suites | PASS |
 
@@ -627,10 +630,10 @@ The focused and regression commands were run after the final code changes:
 | Validation | Result |
 | --- | --- |
 | Focused unit/server: 8 files | **111 passed** |
-| Focused Calendar + Mood lifecycle browser suites | **18 passed** |
+| Focused Calendar + Mood lifecycle browser suites before focused test remediation | **18 passed** |
 | Native editor lifecycle browser suite | **9 passed** |
 | `npm run test:unit` | **235 files, 3523 passed, 2 skipped** |
-| `npm run test:e2e` | **129 passed** |
+| `npm run test:e2e` before focused test remediation | **129 passed** |
 | `npm run typecheck:client` | **PASS** |
 | `npm run typecheck:server` | **PASS** |
 | `npm run typecheck` | **PASS** |
@@ -687,3 +690,61 @@ D7.5 = NOT STARTED
 ```
 
 Round 2 is ready for independent review. Do not start D7.5 in this phase.
+
+### 11.9 Focused test-only remediation after Independent Review
+
+The post-`7532a27` review identified two evidence gaps. The remediation is
+test-only and is recorded in:
+
+```text
+Starting HEAD: 7532a27b08280851003385fd03fa9d63f4fb83e6
+Test-only remediation: b87cc2acedd23f116a37922a6ae173eac25523e0
+```
+
+The first added browser case,
+`native body conflict preserves Mood while resolving through the existing save
+owner`, directly exercises the native document path. It keeps a dirty local
+body in the editor, changes the disk body externally, changes the authoritative
+Mood externally, releases the real autosave into a 409 conflict, and resolves
+through the existing Keep Local save owner. The final assertions prove that
+the local body is saved, the external Mood remains authoritative, the stable
+document identity is preserved, and closing the native tab returns Calendar
+with the winning Mood. No second body or metadata lifecycle is introduced.
+
+The second added browser case,
+`unknown Mood survives native save, refresh, close, and reopen`, uses the
+existing E2E database only as a test fixture to seed an opaque stored Mood.
+It verifies the value in Calendar as `?`, saves the body through the native
+editor, refreshes the native route, closes the tab to Calendar, reopens the
+same Diary, and closes it again. Detail reads, body content, stable identity,
+and the opaque Mood remain unchanged throughout. The public Mood mutation
+route still accepts only canonical IDs; no production escape hatch was added.
+
+The focused test-only re-run produced:
+
+| Validation | Result |
+| --- | --- |
+| New native body-conflict + unknown-Mood lifecycle cases | **2 passed** |
+| Full D7.4 Calendar/Mood browser specs | **20 passed** |
+| Full browser suite after remediation | **131 passed** |
+
+The earlier `18` focused-browser and `129` full-browser counts in §11.7 are
+retained as the pre-remediation Round 2 baseline. The existing unit,
+typecheck, and build evidence was not invalidated by this E2E-only change;
+no production file was modified by the remediation.
+
+CI `#546` was reported as `completed / success` for the pre-remediation
+Round 2 HEAD `7532a27`. It does not cover the later test-only commit
+`b87cc2a`; no new GitHub status was queried for that commit, so no new CI
+pass is claimed here.
+
+The focused remediation self-review is:
+
+```text
+P0 = 0
+P1 = 0
+P2 = 0
+```
+
+The independent re-review remains pending. D7.4 Round 2 remains
+`REVIEW-READY`, and D7.5 remains `NOT STARTED`.
