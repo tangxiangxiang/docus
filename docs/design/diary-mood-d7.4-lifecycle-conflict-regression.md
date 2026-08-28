@@ -770,3 +770,203 @@ D7.5 = NOT STARTED
 
 D7.4 remains `IN PROGRESS` because this closure sync does not start a later
 D7 phase. D7.5 remains `NOT STARTED`.
+
+## 12. Round 3 — Navigation / Workspace Lifecycle Continuity
+
+Round 3 is a navigation and workspace-continuity follow-up. It does not
+reopen the independently closed Round 1 or Round 2, and it does not start
+D7.5. The starting baseline was the Round 2 closure HEAD:
+
+```text
+Starting HEAD: ab34ed4d9b598422b7c8f9fbb0cc4bda861980d2
+```
+
+The implementation/test commits were:
+
+```text
+8909970 test(diary): cover D7.4 navigation continuity
+59e8655 fix(diary): preserve query across scope navigation
+60778db test(diary): cover dirty navigation continuity
+e829df7 fix(diary): distinguish seeded and user queries
+```
+
+The final production behavior keeps the existing ownership boundaries. The
+Calendar date command, generic route/tab lifecycle, Diary presentation owner,
+and FileTree remain separate. No server, shared domain, router, generic tab
+store, schema, migration, package, lockfile, or dependency change was made.
+
+### 12.1 Characterization and defect remediation
+
+The new browser characterization covered same-date reopen, multiple managed
+Diary tabs, tab selection and close, scope exit/re-entry, refresh, canonical
+deep links, real Browser Back/Forward, dirty-body continuity, Mood/identity
+continuity, and persisted FileTree query ownership.
+
+The characterization exposed one real P2 in the existing `VaultView` scope
+watcher: it unconditionally cleared `filesFilter` whenever Diary scope was
+left. That erased a query the user had entered while switching between Diary,
+Note, and Ledger contexts. The first minimal change stopped clearing the
+query, but the existing D6.5 lifecycle tests then demonstrated why a Calendar
+date seed must still be cleared when it is only presentation context. The
+final fix therefore clears `filesFilter` only while it still equals the
+current `diaryFilterSeed`; once the query is user-owned, it survives scope
+transitions. This is the only Round 3 production change.
+
+```text
+D7.4-R3-P2-1
+Root cause: system-seeded Diary date and user-owned FileTree query were
+treated as the same state on Diary-scope exit.
+Final rule: clear an unchanged Calendar seed; preserve a user query.
+Result: CLOSED by e829df7.
+```
+
+The existing D7.3 Calendar tests continue to cover the separate picker/intent
+boundary: picker closes before date or month navigation and the stale
+Mood-first presentation intent cannot resurrect Native Diary navigation.
+Round 3 did not redesign that owner.
+
+### 12.2 Round 3 browser evidence
+
+The focused Round 3 command ran the new Mood lifecycle scenarios together
+with the existing D6.5 lifecycle regressions:
+
+```text
+e2e/diary-mood-lifecycle-regression.spec.ts
+e2e/diary-lifecycle-regression.spec.ts
+e2e/diary-editor-lifecycle.spec.ts
+e2e/diary-calendar-surface.spec.ts
+```
+
+It produced **40 passed**. The complete Diary browser set was also included
+in the full Playwright run and passed: Calendar (11), Editor lifecycle (9),
+generic lifecycle (7), Mood lifecycle (13), Reader (7), release (7), and
+responsive/accessibility (8), for **62 Diary tests passed**.
+
+The new Round 3 scenarios prove:
+
+- existing same-date reopen reuses one canonical tab and the same stable
+  `documentId` and Mood;
+- two managed Diary tabs can be selected and closed through the generic tab
+  owner, with Calendar hidden until the final managed Diary tab closes;
+- a Diary tab plus an ordinary Note follows the generic workspace route and
+  tab lifecycle, without synthesizing Calendar intent or Diary writes;
+- a dirty Diary body remains in the native editor buffer while another tab is
+  selected and reselected, with the original disk body, Mood, and identity
+  preserved until the existing save owner is invoked;
+- a user-entered FileTree query survives ordinary tab selection, Diary scope
+  exit/re-entry, Calendar visibility changes, refresh, deep link, and real
+  Back/Forward traversal;
+- refresh, deep link, and history traversal do not create a duplicate tab,
+  create a Diary, or issue an unauthorized Mood mutation;
+- the Calendar remains one attached, hidden-but-mounted surface while a
+  managed Diary document is open and becomes visible again after the final
+  managed Diary closes.
+
+The tests use real authenticated pages, real route/tab transitions, real
+metadata reads, deterministic unused Diary dates, and the existing
+`Asia/Shanghai` browser date authority. They do not use fixed sleeps,
+production test branches, Vue/Pinia internals, or broad error suppression.
+
+### 12.3 Round 3 exit matrix
+
+| Contract | Result | Evidence |
+| --- | --- | --- |
+| Same-date reopen | PASS | New navigation continuity E2E |
+| No duplicate same-date tab | PASS | New navigation continuity E2E |
+| Stable `documentId` across reopen | PASS | New navigation continuity E2E |
+| Two Diary tabs select correctly | PASS | New navigation continuity E2E |
+| Calendar hidden with any Diary tab | PASS | New navigation continuity E2E |
+| Calendar visible after final Diary close | PASS | New navigation continuity E2E |
+| Diary plus ordinary Note generic behavior | PASS | New scope/query E2E + D6.5 lifecycle suite |
+| Calendar visibility is not derived only from `activePath` | PASS | Multi-tab close/select E2E |
+| Dirty Diary survives tab selection | PASS | New dirty navigation E2E |
+| `raw`/`originalRaw`/dirty owner unchanged | PASS | New dirty navigation E2E |
+| Scope exit/re-entry coherent | PASS | New scope/query E2E + D6.5 suite |
+| No stale picker after navigation | PASS | Existing Calendar navigation regressions |
+| No stale Mood-first intent | PASS | Existing failed-repair-intent regression |
+| Calendar Home refresh coherent | PASS | Full Diary browser suite |
+| Native Diary refresh coherent | PASS | New refresh/deep-link E2E + D6.5 suite |
+| No duplicate tab after refresh | PASS | New refresh/deep-link E2E |
+| FileTree query survives refresh | PASS | New refresh/deep-link E2E |
+| Canonical Diary deep link | PASS | New refresh/deep-link E2E + D6.5 suite |
+| No unauthorized create or Mood mutation | PASS | Request assertions in new E2E |
+| Browser Back continuity | PASS | New refresh/deep-link E2E + D6.5 suite |
+| Browser Forward continuity | PASS | New refresh/deep-link E2E + D6.5 suite |
+| Generic tab owner during history traversal | PASS | New refresh/deep-link E2E |
+| No duplicate history tabs | PASS | New refresh/deep-link E2E |
+| Query survives ordinary file/tab navigation | PASS | New scope/query E2E + D6.5 suite |
+| Query survives Back/Forward | PASS | New refresh/deep-link E2E |
+| Future-reject query guard remains closed | PASS | Existing Round 2 browser regression |
+| Mood continuity across transitions | PASS | New navigation/dirty E2E and existing Mood suite |
+| Identity continuity across transitions | PASS | New navigation/refresh E2E and existing suites |
+| One keep-mounted Calendar surface | PASS | New navigation E2E and existing D7.3 proof |
+| No N+1 metadata reads | PASS | Existing bulk `PostSummary[]` projection seam |
+| Ordinary Vault navigation | PASS | Existing D6.5 suite + full browser suite |
+
+### 12.4 Validation
+
+Validation was run after the final Round 3 production fix:
+
+| Command | Result |
+| --- | --- |
+| Focused Round 3 + D6.5 Diary browser suites | **40 passed** |
+| Complete main Playwright suite (`npm run test:e2e`) | **135 passed** |
+| Draft Store Playwright suite (`npm run test:e2e:draft-store`) | **38 passed** |
+| `npm run test:unit` | **235 files, 3523 passed, 2 skipped** |
+| `npm run test:history-integration` | **5 files, 174 passed** |
+| `npm run test:recovery-integration` | **5 files, 193 passed** |
+| `npm run test` | **PASS** |
+| `npm run typecheck:client` | **PASS** |
+| `npm run typecheck:server` | **PASS** |
+| `npm run typecheck` | **PASS** |
+| `npm run build` | **PASS** |
+| `git diff ab34ed4d9b598422b7c8f9fbb0cc4bda861980d2...HEAD --check` | **PASS** |
+
+The first unprivileged local browser and unit attempts were blocked by the
+environment's `listen EPERM` restrictions while starting the local web server
+or temporary test IPC. The same commands were rerun in the repository's
+permitted elevated local environment and passed. Build output retained only
+existing dependency annotation and large-chunk warnings; browser output
+retained known Monaco cancellation messages, with no failing test or
+unexpected error in the Round 3 diagnostics.
+
+### 12.5 Scope audit and lifecycle state
+
+```text
+Production code changed: YES — src/views/VaultView.vue orchestration only
+Tests changed: YES — e2e/diary-mood-lifecycle-regression.spec.ts only
+Server production changed: NO
+Shared changed: NO
+Router changed: NO
+Generic tab store changed: NO
+Schema/migration changed: NO
+Package/lock/dependencies changed: NO
+D7.5 started: NO
+```
+
+Round 3 self-review:
+
+```text
+P0 = 0
+P1 = 0
+P2 = 0
+```
+
+Independent Review remains pending. This evidence does not self-close Round
+3 or D7.4, and it does not reuse Round 2 CI `#547` as a Round 3 result. The
+GitHub status for the final evidence HEAD is to be recorded after that HEAD
+is pushed; no CI result is inferred from the local runs above.
+
+The resulting lifecycle is:
+
+```text
+D7.4 = IN PROGRESS
+D7.4 Round 1 = REVIEW-CLOSED
+D7.4 Round 2 = REVIEW-CLOSED
+D7.4 Round 3 = REVIEW-READY
+D7.4 Round 3 Independent Review = PENDING
+D7.4 Round 3 Self-review P0/P1/P2 = 0/0/0
+D7.5 = NOT STARTED
+```
+
+Round 3 is ready for independent review. Do not start D7.5 in this phase.
