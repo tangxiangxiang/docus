@@ -1646,9 +1646,12 @@ const diaryExactPathFilter = computed(() => {
 
   // The date is seeded into the shared FileTree query when entering a Diary
   // document, but it must stop being an exact-path constraint as soon as the
-  // user edits that query. This keeps the input a normal FileTree search.
+  // user edits that query. The seed check preserves that provenance boundary
+  // even when the user later types the same date again.
   const diaryDate = backingPath.value.split('/').at(-1)
-  return filesFilter.value === diaryDate ? backingPath.value : null
+  return diaryFilterSeed.value === diaryDate && filesFilter.value === diaryDate
+    ? backingPath.value
+    : null
 })
 // Persist the Calendar-seed provenance so the scope-exit check can still
 // distinguish a system-seeded date from a user-owned query after refresh.
@@ -1702,6 +1705,15 @@ watch(isDiaryScope, (inDiaryScope) => {
     filesFilter.value = date
   }
 }, { immediate: true })
+
+// FileTree's model update is the explicit user-edit boundary. System-owned
+// Calendar navigation writes `filesFilter` directly and records a seed; a
+// user edit clears that provenance even if the value happens to be typed back
+// to the same date later.
+function onFilesFilterEdited(value: string): void {
+  diaryFilterSeed.value = ''
+  filesFilter.value = value
+}
 
 // A pending Mood-first repair is scoped to the current Diary presentation.
 // Special surfaces and scope exit reset that presentation, so a later
@@ -2310,11 +2322,12 @@ watch(isReadMode, async (reading) => {
     <FileTree
       v-if="activePanel === 'files'"
       ref="fileTreeRef"
-      v-model:filter="filesFilter"
+      :filter="filesFilter"
       :tree="tree"
       :posts="posts"
       :current-path="activePath"
       :exact-path-filter="diaryExactPathFilter"
+      @update:filter="onFilesFilterEdited"
       @select="openPost"
       @refresh="refresh"
       @export-pdf="exportPdfDocument"

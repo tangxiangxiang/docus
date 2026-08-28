@@ -1054,6 +1054,43 @@ test('scope switching and ordinary tab selection preserve the user FileTree quer
   expect(state.consoleErrors).toEqual([])
 })
 
+test('a user query stays owned after being edited back to the Calendar date', async ({ page, request }) => {
+  const date = await findUnusedDiaryDate(request)
+  const path = diaryPath(date)
+  const noteName = `d74-round3-query-${date}-${RUN_ID}`
+  const notePath = `inbox/${noteName}`
+  const state = diagnostics(page)
+
+  try {
+    await seedDiary(request, date, `# Round 3 repeated query ${RUN_ID}\n`)
+    await seedNote(request, notePath, `# Ordinary note ${RUN_ID}\n`)
+
+    await openDiaryHome(page)
+    await clickDiaryDate(page, date)
+    await assertNativeReader(page, date)
+    await ensureExplorerVisible(page)
+    const search = page.locator('.file-tree .search-input')
+    await expect(search).toHaveValue(date)
+
+    // The first edit transfers ownership from the Calendar seed to the user.
+    // Typing the original date again must not recreate system provenance.
+    await search.fill(`round3-temporary-${RUN_ID}`)
+    await search.fill(date)
+    await expect(search).toHaveValue(date)
+
+    await selectScope(page, 'note')
+    await ensureExplorerVisible(page)
+    await expect(search).toHaveValue(date)
+    await expect(page.locator('.file-tree')).toContainText(noteName)
+  } finally {
+    await deletePost(request, path)
+    await deletePost(request, notePath)
+  }
+
+  expect(state.pageErrors).toEqual([])
+  expect(state.consoleErrors).toEqual([])
+})
+
 test('refresh, deep link, and browser Back/Forward preserve Diary identity, Mood, and query', async ({ page, request }) => {
   const date = await findUnusedDiaryDate(request)
   const path = diaryPath(date)
