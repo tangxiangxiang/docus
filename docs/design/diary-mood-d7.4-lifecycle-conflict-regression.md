@@ -2,16 +2,23 @@
 
 ## Status
 
-`D7.4 = REVIEW-READY`
+`D7.4 = IN PROGRESS`
+
+`D7.4 Round 1 = REVIEW-READY`
 
 Independent Review: `PENDING`
 
 Self-review findings: `P0 = 0`, `P1 = 0`, `P2 = 0`
 
-Starting HEAD: `14b1efdf03a13063420fe344dc36eafc40c61dc8`
+D7.4 Round 0 starting HEAD: `14b1efdf03a13063420fe344dc36eafc40c61dc8`
 
-D7.4 test implementation commit: `ed8524b46e40fb15b38fd39320bfd7f3af2f442c`
+D7.4 Round 0 test implementation commit: `ed8524b46e40fb15b38fd39320bfd7f3af2f442c`
 (`test(diary): cover D7.4 lifecycle conflicts`)
+
+D7.4 Round 1 starting HEAD: `9112065437bfe49ab9a54ee77f89458e6c4e4f7c`
+
+D7.4 Round 1 implementation commit: `8017594d9da4f7ac2e6ab8482fdefdaa3838781f`
+(`fix(diary): gate missing-date presentation on mood commit`)
 
 This document records the D7.4 lifecycle/conflict regression evidence. The
 implementation/evidence phase started as `IN PROGRESS` and stops at
@@ -25,7 +32,8 @@ D7.0  = REVIEW-CLOSED
 D7.1  = REVIEW-CLOSED
 D7.2  = REVIEW-CLOSED
 D7.3  = REVIEW-CLOSED
-D7.4  = REVIEW-READY
+D7.4  = IN PROGRESS
+D7.4 Round 1 = REVIEW-READY
 D7.4 Independent Review = PENDING
 D7.5  = NOT STARTED
 D7.6  = NOT STARTED
@@ -41,10 +49,12 @@ History, Recovery, delete/recreate identity boundaries, native tab/route
 reconciliation, Calendar presentation continuity, and ordinary Vault
 regression.
 
-No production code was changed for D7.4. The implementation commit adds only
-the focused browser regression file. This evidence document is the only other
-D7.4 change. No server, shared domain, migration, PRD, Implementation Plan,
-package, lockfile, or dependency change is included.
+The initial D7.4 Round 0 implementation/evidence snapshot was test-only. Round
+1 is a separate, narrowly scoped lifecycle follow-up: it adds a deferred
+presentation capability to the existing Diary date command, updates the
+VaultView orchestration, and adds the focused failure-path regression. No
+server, shared domain, migration, PRD, Implementation Plan, package, lockfile,
+or dependency change is included.
 
 D7.4 does not start D7.5, D7.6, or a Mood release. It does not add a Diary
 route, a Diary-specific editor/reader, a second tab store, a second save or
@@ -180,24 +190,37 @@ the same civil-date authority used by the Diary E2E helpers, and generated
 dates selected from unused candidates. They do not rely on fixed calendar
 dates or sleeps.
 
-## 5. Defects and test-only remediation
+## 5. Defects and remediation history
 
-No D7.4 production defect was found. During the first focused browser run, the
-dirty-body test asserted a specific `data-save-status="dirty"` state after an
-intentionally aborted autosave and several independent metadata writes. The
-existing save owner can expose an error status after that transport is
-aborted, while the editor buffer and tab dirty indicator remain correct. The
-test was tightened to assert the user-visible dirty tab indicator and the
-actual body/draft invariants instead of overfitting to that transient status.
+During the original D7.4 Round 0 validation, no production defect was found.
+One focused browser assertion expected a specific
+`data-save-status="dirty"` state after an intentionally aborted autosave and
+several independent metadata writes. The existing save owner can expose an
+error status after that transport is aborted, while the editor buffer and tab
+dirty indicator remain correct. The test was tightened to assert the
+user-visible dirty tab indicator and the actual body/draft invariants instead
+of overfitting to that transient status.
 
-This was a test-only portability/stability correction. It did not change the
-save owner or production behavior. The final test file contains no `skip`,
-`only`, fixed delay, fake metadata mutation, or test-only production branch.
+That Round 0 correction was test-only and did not change the save owner or
+production behavior. The final test files contain no `skip`, `only`, fixed
+delay, fake metadata mutation, or test-only production branch.
 
-## 6. Validation evidence
+Round 1 addresses the independently identified Mood-first presentation P1.
+The pre-fix flow called `openDiaryDate()` before the Mood CAS, so creation
+could open a native Diary tab and hide Calendar before the metadata write was
+known to succeed. Round 1 extends the same `useDiaryDateCommand` owner with
+`ensureDiaryDate()`, which validates, locks, creates/resolves, publishes, and
+refreshes the canonical Diary without opening a document. `VaultView` now
+uses that deferred path first, performs the existing `useDiaryMoodCommand`
+CAS, and calls `openDiaryDate()` only after an `updated` result. A failed CAS
+keeps the created canonical file, leaves Calendar as the visible owner, and
+retains a pending repair intent so a later successful Mood mutation opens the
+native Diary exactly through the existing lifecycle.
 
-The following commands were run against the D7.4 test commit and current
-working tree:
+## 6. Round 0 validation snapshot
+
+The following records the original D7.4 Round 0 validation snapshot. It is
+kept as historical evidence and is not presented as the Round 1 validation:
 
 | Command | Result |
 | --- | --- |
@@ -218,7 +241,52 @@ Monaco cancellation messages on the web-server log while all 124 tests
 passed; the five D7.4 tests recorded no page errors or unexpected console
 errors.
 
-## 7. GitHub status
+## 7. Round 1 validation evidence
+
+Round 1 validation was run after implementation commit
+`8017594d9da4f7ac2e6ab8482fdefdaa3838781f`.
+
+Before the production fix, the new focused browser regression failed as
+intended: while the first Mood metadata request was held open, the Calendar
+surface was already hidden by the premature native-document adoption. The
+same scenario passed after the fix, with the first failed Mood CAS leaving
+Calendar visible and the canonical file repairable through `?` before a later
+successful retry opened the native Diary.
+
+| Command | Result |
+| --- | --- |
+| Focused Vitest: Mood picker/context, Calendar surface, mood/date commands, EditorTabs, VaultView | **8 files, 126 tests passed** |
+| Focused Round 1 E2E: `diary-calendar-surface.spec.ts --grep "Mood-first creation keeps Calendar visible until Mood CAS succeeds"` | **1 passed** |
+| Complete Diary E2E set: Calendar, Editor lifecycle, lifecycle regression, Mood lifecycle, Reader, release, responsive/accessibility | **52 passed** |
+| `npm run test:unit` | **235 files, 3521 tests passed, 2 skipped** |
+| `npm run test:e2e` | **125 passed** |
+| `npm run typecheck:client` | **PASS** |
+| `npm run typecheck:server` | **PASS** |
+| `npm run typecheck` | **PASS** (client and server) |
+| `npm run build` | **PASS** |
+| `git diff --check` | **PASS** |
+
+The first unprivileged browser invocation was blocked by the local sandbox
+with `listen EPERM` on `127.0.0.1:4174`; the same requested suites were then
+rerun with the repository's permitted elevated local test environment and
+passed. The build emitted existing dependency annotation and large-chunk
+warnings, and the browser web server emitted known Monaco cancellation
+messages, but no test failed.
+
+Round 1 changed only the following implementation/test files:
+
+```text
+e2e/diary-calendar-surface.spec.ts
+src/composables/diary/__tests__/useDiaryDateCommand.test.ts
+src/composables/diary/useDiaryDateCommand.ts
+src/views/VaultView.vue
+src/views/__tests__/VaultView.test.ts
+```
+
+No server, shared, router, dependency, package, or lockfile changes were
+made.
+
+## 8. GitHub status (Round 0 snapshot)
 
 GitHub checks were queried after the D7.4 commits were pushed. At the time of
 the evidence snapshot, Actions run `33103894152` was still `in_progress`:
@@ -238,7 +306,11 @@ The run was not used as a completed CI proof. D7.4 readiness is based on the
 local focused/full validation listed above; this document does not claim
 `GitHub CI = PASS` while the remote run is incomplete.
 
-## 8. Review and readiness
+This is retained as the Round 0 historical snapshot. Round 1's final HEAD
+status is checked separately after its commits are pushed and is not inferred
+from this older run.
+
+## 9. Review and readiness
 
 Task-scoped self-review:
 
@@ -263,7 +335,7 @@ D7 Mood release = NOT STARTED
 No D7.5 responsive/accessibility work, D7.6 release work, or unrelated
 feature work is included.
 
-## 9. Evidence commands and conclusion
+## 10. Evidence commands and conclusion
 
 Repository and validation commands used for this phase included:
 
@@ -286,7 +358,8 @@ npm run build
 The final D7.4 conclusion is:
 
 ```text
-D7.4 = REVIEW-READY
+D7.4 = IN PROGRESS
+D7.4 Round 1 = REVIEW-READY
 Independent Review = PENDING
 Self-review P0/P1/P2 = 0/0/0
 
