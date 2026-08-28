@@ -27,11 +27,13 @@ Independent Re-review: `FAIL` — `P0 = 0`, `P1 = 0`, `P2 = 1`
 Re-review findings:
 
 ```text
-D7.4-R3-P2-2 OPEN at f2ccccc:
-refresh loses Calendar-seed provenance because diaryFilterSeed (plain ref)
-and filesFilter (useStorage) have different lifecycles; scope-exit check
-`filesFilter === diaryFilterSeed` is unreliable after reload and a Calendar
-date leaks into the ordinary Note tree.
+D7.4-R3-P2-3 OPEN at 2e853ae:
+user edits are not recorded as a provenance transition; a query edited away
+and then back to the Calendar date is still treated as a system seed and can
+be cleared or projected as an exact Diary path.
+
+D7.4-R3-P2-2 CLOSED at 57ba3409:
+Calendar-seed provenance now survives refresh alongside the FileTree query.
 
 D7.4-R3-P2-1 CLOSED at e829df7:
 scope-exit check now distinguishes unchanged Calendar seed from user query.
@@ -81,6 +83,9 @@ f2ccccc docs(diary): record D7.4 round 3 evidence
 D7.4 Round 3 review P2 remediation commit: `57ba340964cfa935756657be0b841a3f742972e4`
 (`fix(diary): persist Calendar-seed provenance across refresh`)
 
+D7.4 Round 3 user-edit provenance remediation commit: `5f4bda4b313e641dca116017d401bb9a5a9b9b37`
+(`fix(diary): track user-owned FileTree query`)
+
 This document records the D7.4 lifecycle/conflict regression evidence. The
 implementation/evidence phase started as `IN PROGRESS` and stopped at
 `REVIEW-READY`. After the Round 1 independent re-review passed, this closure
@@ -100,10 +105,11 @@ D7.4 Independent Review = PASS
 D7.4 Round 2 = REVIEW-CLOSED
 D7.4 Round 2 Independent Review = PASS (0/0/0)
 D7.4 Round 2 GitHub CI #547 = PASS
-D7.4 Round 3 = REMEDIATION-READY
-D7.4 Round 3 Independent Re-review = FAIL (0/0/1)
+D7.4 Round 3 = REVIEW-READY
+D7.4 Round 3 Independent Re-review = PENDING
 D7.4-R3-P2-2 = CLOSED (by 57ba3409)
-D7.4 Round 3 GitHub CI #549 = PASS (at f2ccccc)
+D7.4-R3-P2-3 = CLOSED (by 5f4bda4)
+D7.4 Round 3 GitHub CI #549 = PASS (at f2ccccc; historical evidence)
 D7.5  = NOT STARTED
 D7.6  = NOT STARTED
 D7 Mood release = NOT STARTED
@@ -1109,3 +1115,87 @@ D7.5 = NOT STARTED
 
 Round 3 is now ready for a second independent review with the refresh-seed
 provenance fix applied. Do not start D7.5 in this phase.
+
+### 12.7 Round 3 P2-3 remediation — user-edit provenance must not be inferred by value
+
+The second Round 3 independent re-review (`HEAD 2e853ae`) found one further
+P2 in the FileTree ownership boundary:
+
+```text
+D7.4-R3-P2-3
+Root cause: `filesFilter === diaryFilterSeed` only compared values. A user
+could edit a Calendar-seeded query away and then type the same Diary date
+again, leaving the persisted seed intact. Scope exit could then clear that
+user-owned query, and `diaryExactPathFilter` could still treat it as a
+Calendar exact-path projection.
+```
+
+The focused remediation commit `5f4bda4b313e641dca116017d401bb9a5a9b9b37`
+(`fix(diary): track user-owned FileTree query`) keeps the refresh-safe seed
+from `57ba3409` and makes the user edit an explicit boundary:
+
+- `FileTree` is bound with `:filter` and `@update:filter` rather than an
+  opaque parent `v-model` shortcut;
+- the `update:filter` handler clears `diaryFilterSeed` before assigning the
+  user value, even when that value equals the previous Calendar date;
+- `diaryExactPathFilter` requires both the matching date value and matching
+  active Calendar-seed provenance, so retyping a date does not recreate the
+  Diary presentation constraint;
+- Calendar/system navigation continues to write the query and seed together,
+  while ordinary FileTree navigation does not rewrite either one.
+
+This is still a narrow `VaultView` FileTree/Diary orchestration fix. It does
+not change the FileTree component contract, generic tab/router ownership,
+server/shared code, metadata, schema, package, lockfile, or dependencies.
+The existing refresh provenance remediation remains intact.
+
+The new browser regression is:
+
+```text
+Calendar click Diary A
+→ query = A
+→ user edits query to a temporary value
+→ user edits query back to A
+→ leave Diary scope
+→ query remains A as user-owned state
+→ ordinary Note whose path contains A remains visible
+```
+
+It passed together with the existing Round 3, D6.5, D7.3, and Calendar
+lifecycle regressions. The test is a real authenticated browser flow and
+does not use production-only branches or internal Vue state.
+
+Validation after `5f4bda4`:
+
+| Command | Result |
+| --- | --- |
+| `npx playwright test e2e/diary-mood-lifecycle-regression.spec.ts --project=chromium` | **15 passed** |
+| Round 3 + D6.5 Diary browser suites | **42 passed** |
+| `npx vitest run src/views/__tests__/VaultView.test.ts` | **40 passed** |
+| `npm run test:unit` | **235 files, 3523 passed, 2 skipped** |
+| `npm run typecheck:client` | **PASS** |
+| `npm run typecheck` | **PASS** |
+| `npm run build` | **PASS** |
+
+The first unprivileged browser/unit attempts were blocked by the environment
+with local server/IPC `EPERM`; the same commands were rerun in the permitted
+elevated local environment and passed. Build output retains only existing
+dependency annotation and large-chunk warnings; test output retains known
+jsdom/browser-environment informational warnings.
+
+The current Round 3 lifecycle remains:
+
+```text
+D7.4 = IN PROGRESS
+D7.4 Round 1 = REVIEW-CLOSED
+D7.4 Round 2 = REVIEW-CLOSED
+D7.4 Round 3 = REVIEW-READY
+D7.4 Round 3 Independent Re-review = PENDING
+D7.4 Round 3 Self-review P0/P1/P2 = 0/0/0
+D7.4-R3-P2-2 = CLOSED (by 57ba3409)
+D7.4-R3-P2-3 = CLOSED (by 5f4bda4)
+D7.5 = NOT STARTED
+```
+
+This remediation is ready for independent re-review. Do not start D7.5 in
+this phase.
