@@ -8,6 +8,11 @@ export type DiaryDateCommandResult =
   | { status: 'opened' | 'created'; date: DiaryDate; path: string }
   | { status: 'future' | 'invalid' | 'busy' | 'error'; date?: DiaryDate; path?: string; error?: Error }
 
+export type DiaryDateEnsureResult =
+  | { status: 'existing'; date: DiaryDate; path: string }
+  | { status: 'created'; date: DiaryDate; path: string }
+  | { status: 'future' | 'invalid' | 'busy' | 'error'; date?: DiaryDate; path?: string; error?: Error }
+
 export interface DiaryDateCommandOptions {
   getPost: (path: string) => Promise<Pick<PostDetail, 'path'>>
   createDiaryDate: (input: { date: DiaryDate; timeZone: string }) => Promise<DiaryDateCreateResult>
@@ -68,12 +73,13 @@ export function localDiaryTimeZone(): string {
  */
 export function useDiaryDateCommand(options: DiaryDateCommandOptions) {
   const inFlight = new Map<DiaryDate, Promise<DiaryDateCommandResult>>()
+  const ensureInFlight = new Map<DiaryDate, Promise<DiaryDateEnsureResult>>()
 
   function fail(
     error: unknown,
     date?: DiaryDate,
     path?: string,
-  ): DiaryDateCommandResult {
+  ): DiaryDateEnsureResult {
     const normalized = asError(error)
     options.onError?.(normalized, date)
     return { status: 'error', date, path, error: normalized }
@@ -90,7 +96,7 @@ export function useDiaryDateCommand(options: DiaryDateCommandOptions) {
     return null
   }
 
-  async function run(date: DiaryDate): Promise<DiaryDateCommandResult> {
+  async function run(date: DiaryDate, openDocument: boolean): Promise<DiaryDateEnsureResult> {
     const path = diaryLogicalPathForDate(date)
     const release = options.mutationLock?.acquire(toMutationPaths([path])) ?? null
     if (options.mutationLock && !release) {
@@ -110,8 +116,8 @@ export function useDiaryDateCommand(options: DiaryDateCommandOptions) {
 
       if (!missing) {
         try {
-          await options.openPost(path)
-          return { status: 'opened', date, path }
+          if (openDocument) await options.openPost(path)
+          return { status: 'existing', date, path }
         } catch (error) {
           return fail(error, date, path)
         }
@@ -141,8 +147,8 @@ export function useDiaryDateCommand(options: DiaryDateCommandOptions) {
           try {
             const post = await options.getPost(path)
             if (post.path !== path) return fail(new Error('Diary conflict resolved to a non-canonical path'), date, path)
-            await options.openPost(path)
-            return { status: 'opened', date, path }
+            if (openDocument) await options.openPost(path)
+            return { status: 'existing', date, path }
           } catch (readError) {
             return fail(readError, date, path)
           }
@@ -170,30 +176,64 @@ export function useDiaryDateCommand(options: DiaryDateCommandOptions) {
         options.onRefreshError?.(asError(error))
       }
 
-      try {
-        await options.openPost(path, { refresh: false })
-      } catch (error) {
-        return fail(error, date, path)
+      if (openDocument) {
+        try {
+          await options.openPost(path, { refresh: false })
+        } catch (error) {
+          return fail(error, date, path)
+        }
       }
-      return { status: result.created ? 'created' : 'opened', date, path }
+      return { status: result.created ? 'created' : 'existing', date, path }
     } finally {
       release?.()
     }
   }
 
+  function invalidResult(): { status: 'invalid'; error: Error } {
+    const error = new Error('invalid Diary date; expected YYYY-MM-DD')
+    options.onError?.(error)
+    return { status: 'invalid', error }
+  }
+
+  function toCommandResult(result: DiaryDateEnsureResult): DiaryDateCommandResult {
+    switch (result.status) {
+      case 'existing':
+        return { status: 'opened', date: result.date, path: result.path }
+      case 'created':
+        return result
+      default:
+        return result
+    }
+  }
+
+  function ensureDiaryDate(value: unknown): Promise<DiaryDateEnsureResult> {
+    const date = parseDiaryDate(value)
+    if (!date) return Promise.resolve(invalidResult())
+
+    const existing = ensureInFlight.get(date)
+    if (existing) return existing
+
+    const path = diaryLogicalPathForDate(date)
+    const promise = run(date, false).catch((error) => fail(error, date, path))
+    ensureInFlight.set(date, promise)
+    void promise.then(
+      () => { if (ensureInFlight.get(date) === promise) ensureInFlight.delete(date) },
+      () => { if (ensureInFlight.get(date) === promise) ensureInFlight.delete(date) },
+    )
+    return promise
+  }
+
   function openDiaryDate(value: unknown): Promise<DiaryDateCommandResult> {
     const date = parseDiaryDate(value)
-    if (!date) {
-      const error = new Error('invalid Diary date; expected YYYY-MM-DD')
-      options.onError?.(error)
-      return Promise.resolve({ status: 'invalid', error })
-    }
+    if (!date) return Promise.resolve(invalidResult())
 
     const existing = inFlight.get(date)
     if (existing) return existing
 
     const path = diaryLogicalPathForDate(date)
-    const promise = run(date).catch((error) => fail(error, date, path))
+    const promise = run(date, true)
+      .then(toCommandResult)
+      .catch((error) => fail(error, date, path) as DiaryDateCommandResult)
     inFlight.set(date, promise)
     void promise.then(
       () => { if (inFlight.get(date) === promise) inFlight.delete(date) },
@@ -202,5 +242,5 @@ export function useDiaryDateCommand(options: DiaryDateCommandOptions) {
     return promise
   }
 
-  return { openDiaryDate }
+  return { ensureDiaryDate, openDiaryDate }
 }

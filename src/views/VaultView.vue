@@ -1276,7 +1276,7 @@ async function openPost(path: string, options: { refresh?: boolean } = {}): Prom
   await openEditorPost(path, options)
 }
 
-const { openDiaryDate } = useDiaryDateCommand({
+const { ensureDiaryDate, openDiaryDate } = useDiaryDateCommand({
   getPost,
   createDiaryDate,
   openPost,
@@ -1651,6 +1651,7 @@ const diaryExactPathFilter = computed(() => {
   return filesFilter.value === diaryDate ? backingPath.value : null
 })
 const diaryFilterSeed = ref('')
+const pendingMoodFirstPresentationDate = ref<DiaryDate | null>(null)
 
 // Keep the ordinary FileTree search input useful in the Diary context. Seed
 // it only when entering/leaving the Diary scope; it is user-owned afterwards
@@ -1716,17 +1717,18 @@ async function updateDiaryCalendarMood(date: DiaryDate, mood: MoodId | null): Pr
   const path = diaryLogicalPathForDate(date)
   let post = posts.value.find((candidate) => candidate.path === path)
   if (mood === null && !post) return
-  const shouldPresentAfterMutation = !post
+  const shouldPresentAfterMutation = !post || pendingMoodFirstPresentationDate.value === date
   const presentationIntent = shouldPresentAfterMutation
     ? diaryWorkspacePresentation.beginDateIntent()
     : null
-  let dateResult: DiaryDateCommandResult | null = null
+  let dateReadyForPresentation = pendingMoodFirstPresentationDate.value === date
 
   diaryMoodBusy.value = true
   try {
     if (!post) {
-      dateResult = await openDiaryDate(date)
-      if (dateResult.status !== 'opened' && dateResult.status !== 'created') return
+      const dateResult = await ensureDiaryDate(date)
+      if (dateResult.status !== 'existing' && dateResult.status !== 'created') return
+      dateReadyForPresentation = true
       post = posts.value.find((candidate) => candidate.path === path)
       if (!post) {
         try {
@@ -1758,6 +1760,12 @@ async function updateDiaryCalendarMood(date: DiaryDate, mood: MoodId | null): Pr
       || !Number.isSafeInteger(expectedUpdatedAt)
       || expectedUpdatedAt < 0
     ) {
+      if (shouldPresentAfterMutation && dateReadyForPresentation) {
+        // Creation is authoritative even when the fresh metadata version is
+        // temporarily unavailable. Keep the date repairable in Calendar and
+        // defer native presentation until a later Mood CAS succeeds.
+        pendingMoodFirstPresentationDate.value = date
+      }
       toast.error(t('mood.failed', { error: t('mood.metadata_unavailable') }))
       return
     }
@@ -1767,18 +1775,33 @@ async function updateDiaryCalendarMood(date: DiaryDate, mood: MoodId | null): Pr
       await onMetadataSaved(result.metadata)
       diaryCalendarSurfaceRef.value?.closeMoodPicker(!shouldPresentAfterMutation)
       toast.success(t('mood.saved'))
-      if (dateResult && presentationIntent !== null) {
+      if (shouldPresentAfterMutation && dateReadyForPresentation && presentationIntent !== null) {
         // A missing-date Mood-first flow only owns the FileTree seed after
         // the canonical Diary create and authoritative Mood CAS both commit.
         // Existing-date edits, clears, conflicts, and cancellations never
-        // overwrite the user's ordinary FileTree query.
+        // overwrite the user's ordinary FileTree query. The second command
+        // call is now safe: Mood CAS has already committed, so it can use the
+        // existing native date-opening lifecycle without exposing a document
+        // during a failed Mood mutation.
         diaryFilterSeed.value = date
         filesFilter.value = date
-        await presentDiaryDateResult(dateResult, presentationIntent)
+        const openResult = await openDiaryDate(date)
+        if (openResult.status === 'opened' || openResult.status === 'created') {
+          pendingMoodFirstPresentationDate.value = null
+          await presentDiaryDateResult(openResult, presentationIntent)
+        }
       }
-    } else if (result.status === 'conflict' || result.status === 'not-found') {
+    } else {
+      if (shouldPresentAfterMutation && dateReadyForPresentation) {
+        // Creation is authoritative even when Mood CAS fails. Keep the
+        // created file as an existing '?' repair target, but defer native
+        // Diary presentation until a later Mood CAS succeeds.
+        pendingMoodFirstPresentationDate.value = date
+      }
       if (result.status === 'not-found') toast.info(t('mood.not_found'))
-      await refreshAfterMoodRejection()
+      if (result.status === 'conflict' || result.status === 'not-found' || result.status === 'error') {
+        await refreshAfterMoodRejection()
+      }
     }
   } finally {
     diaryMoodBusy.value = false

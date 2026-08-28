@@ -118,6 +118,26 @@ describe('useDiaryDateCommand', () => {
     expect(state.openPost).toHaveBeenCalledWith('diary/2026-08-24', { refresh: false })
   })
 
+  it('can ensure a missing date without adopting native document presentation', async () => {
+    const state = harness()
+
+    const result = await state.ensureDiaryDate('2026-08-24')
+
+    expect(result).toEqual({
+      status: 'created',
+      date: date('2026-08-24'),
+      path: 'diary/2026-08-24',
+    })
+    expect(state.createDiaryDate).toHaveBeenCalledTimes(1)
+    expect(state.refresh).toHaveBeenCalledTimes(1)
+    expect(state.publish).toHaveBeenCalledWith({
+      path: 'diary/2026-08-24',
+      kind: 'write',
+      source: 'editor-lifecycle',
+    })
+    expect(state.openPost).not.toHaveBeenCalled()
+  })
+
   it('opens the exact server-resolved path when date creation reports created:false', async () => {
     const state = harness({
       createDiaryDate: vi.fn(async (input: { date: DiaryDate; timeZone: string }) => ({
