@@ -1650,7 +1650,12 @@ const diaryExactPathFilter = computed(() => {
   const diaryDate = backingPath.value.split('/').at(-1)
   return filesFilter.value === diaryDate ? backingPath.value : null
 })
-const diaryFilterSeed = ref('')
+// Persist the Calendar-seed provenance so the scope-exit check can still
+// distinguish a system-seeded date from a user-owned query after refresh.
+// `filesFilter` already survives refresh via useStorage; without this, the
+// scope-exit check `filesFilter === diaryFilterSeed` would always be false
+// after reload and leak a Calendar date into the ordinary Note tree.
+const diaryFilterSeed = useStorage('docus.diary.filter-seed', '')
 const pendingMoodFirstPresentationDate = ref<DiaryDate | null>(null)
 const pendingMoodFirstPresentationIntent = ref<number | null>(null)
 

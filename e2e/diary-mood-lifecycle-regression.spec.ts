@@ -1215,3 +1215,62 @@ test('dirty Diary body survives generic tab selection without losing Mood or ide
   expect(state.pageErrors).toEqual([])
   expect(state.consoleErrors).toEqual([])
 })
+
+test('refresh preserves Calendar-seed provenance so Diary scope exit clears it', async ({ page, request }) => {
+  const date = await findUnusedDiaryDate(request)
+  const path = diaryPath(date)
+  const notePath = `inbox/d74-round3-seed-refresh-${RUN_ID}`
+  const state = diagnostics(page)
+  let diaryCreateRequests = 0
+  let moodPatchRequests = 0
+
+  page.on('request', (outgoing) => {
+    const pathname = new URL(outgoing.url()).pathname
+    if (outgoing.method() === 'POST' && pathname === '/api/diary/dates') diaryCreateRequests += 1
+    if (outgoing.method() === 'PATCH' && pathname.startsWith('/api/metadata/documents/diary/')) moodPatchRequests += 1
+  })
+
+  try {
+    await seedDiary(request, date, `# Round 3 refresh seed provenance ${RUN_ID}\n`)
+    await seedNote(request, notePath, `# Round 3 refresh seed note ${RUN_ID}\n`)
+
+    // Enter Diary scope through Calendar, so the date becomes a Calendar seed.
+    await openDiaryHome(page)
+    await clickDiaryDate(page, date)
+    await assertNativeReader(page, date)
+    await ensureExplorerVisible(page)
+    const search = page.locator('.file-tree .search-input')
+    await expect(search).toHaveValue(date)
+
+    // Refresh the page while the Calendar-seeded query is still in place.
+    // `filesFilter` survives via useStorage; the seed must survive too so the
+    // scope-exit check can still recognise it as a system seed.
+    await page.reload()
+    await assertNativeReader(page, date)
+    await expect(search).toHaveValue(date)
+
+    // Leaving Diary scope after refresh must still classify the persisted
+    // query as a Calendar seed (not a user query) and clear it. Otherwise the
+    // ordinary Note tree inherits a Diary presentation filter — that is the
+    // Round 3 refresh-provenance P2 the independent review found.
+    await selectScope(page, 'note')
+    await ensureExplorerVisible(page)
+    await expect(search).toHaveValue('')
+
+    // Navigating to an ordinary Note path after scope exit must not re-seed
+    // the FileTree query with the previously persisted Diary date either.
+    await page.goto(`/vault/${notePath}`)
+    await expect(page.locator(`[role="tab"][data-tab-id="${notePath}"]`)).toHaveAttribute('aria-selected', 'true')
+    await ensureExplorerVisible(page)
+    await expect(search).toHaveValue('')
+
+    expect(diaryCreateRequests).toBe(0)
+    expect(moodPatchRequests).toBe(0)
+  } finally {
+    await deletePost(request, path)
+    await deletePost(request, notePath)
+  }
+
+  expect(state.pageErrors).toEqual([])
+  expect(state.consoleErrors).toEqual([])
+})
