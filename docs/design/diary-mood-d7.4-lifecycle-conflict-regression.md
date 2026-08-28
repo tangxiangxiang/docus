@@ -4,9 +4,11 @@
 
 `D7.4 = IN PROGRESS`
 
-`D7.4 Round 1 = REVIEW-READY`
+`D7.4 Round 1 = REVIEW-CLOSED`
 
-Independent Review: `PENDING`
+Independent Review: `PASS`
+
+Independent Review findings: `P0 = 0`, `P1 = 0`, `P2 = 0`
 
 Self-review findings: `P0 = 0`, `P1 = 0`, `P2 = 0`
 
@@ -24,8 +26,9 @@ D7.4 Round 1 stale-intent remediation commit: `ec4b190a4ad89871021afa46906a77c18
 (`fix(diary): invalidate stale Mood-first intent`)
 
 This document records the D7.4 lifecycle/conflict regression evidence. The
-implementation/evidence phase started as `IN PROGRESS` and stops at
-`REVIEW-READY`; this document does not claim independent review closure.
+implementation/evidence phase started as `IN PROGRESS` and stopped at
+`REVIEW-READY`. After the Round 1 independent re-review passed, this closure
+sync records Round 1 as `REVIEW-CLOSED`; D7.4 itself remains `IN PROGRESS`.
 
 Current lifecycle:
 
@@ -36,8 +39,8 @@ D7.1  = REVIEW-CLOSED
 D7.2  = REVIEW-CLOSED
 D7.3  = REVIEW-CLOSED
 D7.4  = IN PROGRESS
-D7.4 Round 1 = REVIEW-READY
-D7.4 Independent Review = PENDING
+D7.4 Round 1 = REVIEW-CLOSED
+D7.4 Independent Review = PASS
 D7.5  = NOT STARTED
 D7.6  = NOT STARTED
 D7 Mood release = NOT STARTED
@@ -340,6 +343,11 @@ src/views/VaultView.vue
 No server, shared, router, dependency, package, or lockfile changes were
 made.
 
+The Round 1 independent re-review then confirmed that the original
+Mood-first presentation P1 and the stale pending-intent P2 were closed, with
+`P0 = 0`, `P1 = 0`, and `P2 = 0`. This closure sync records that result and
+does not start D7.5.
+
 ## 8. GitHub status (Round 0 snapshot)
 
 GitHub checks were queried after the D7.4 commits were pushed. At the time of
@@ -364,6 +372,15 @@ This is retained as the Round 0 historical snapshot. Round 1's final HEAD
 status is checked separately after its commits are pushed and is not inferred
 from this older run.
 
+## 8.1 Round 1 final CI status
+
+GitHub Actions run `#544` (`33134486083`) was queried for final HEAD
+`bd9539507ad45f9af30841c7cc0698bef36932b0` and completed successfully. The
+eight required jobs passed: Ubuntu 22, Ubuntu 24, Windows 24, macOS 24,
+`auth-browser`, `visual`, `docker-smoke`, and `tags-scale`. This is the final
+Round 1 CI closure evidence; it is not inferred from the historical Round 0
+snapshot above.
+
 ## 9. Review and readiness
 
 Task-scoped self-review:
@@ -374,9 +391,18 @@ P1 = 0
 P2 = 0
 ```
 
-The D7.4 evidence phase is ready for independent review. Independent Review
-is intentionally still `PENDING`; this document does not convert the phase to
-`REVIEW-CLOSED`.
+Independent re-review:
+
+```text
+PASS
+P0 = 0
+P1 = 0
+P2 = 0
+```
+
+The Round 1 evidence phase has passed independent review and is recorded as
+`REVIEW-CLOSED` by this docs-only sync. D7.4 remains in progress because no
+later D7 phase is being started here.
 
 The following remain unchanged and not started:
 
@@ -413,8 +439,10 @@ The final D7.4 conclusion is:
 
 ```text
 D7.4 = IN PROGRESS
-D7.4 Round 1 = REVIEW-READY
-Independent Review = PENDING
+D7.4 Round 1 = REVIEW-CLOSED
+Independent Review = PASS
+Independent Review P0/P1/P2 = 0/0/0
+GitHub CI #544 = PASS
 Self-review P0/P1/P2 = 0/0/0
 
 D7.5 = NOT STARTED
@@ -422,4 +450,5 @@ D7.6 = NOT STARTED
 D7 Mood release = NOT STARTED
 ```
 
-D7.4 is ready for independent review. Do not start D7.5 in this phase.
+D7.4 Round 1 is independently reviewed and closed. Do not start D7.5 in
+this phase.
