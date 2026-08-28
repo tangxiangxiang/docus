@@ -394,8 +394,8 @@ defineExpose({ focusDate, closeMoodPicker })
               data-testid="diary-calendar-mood"
               :data-date="diaryDateFromCalendarDay(day) ?? undefined"
               :aria-label="moodButtonLabel(day)"
-              aria-haspopup="dialog"
               :aria-expanded="moodPickerOpen && activeMoodDate === diaryDateFromCalendarDay(day) ? 'true' : 'false'"
+              :aria-controls="moodPickerOpen && activeMoodDate === diaryDateFromCalendarDay(day) ? 'diary-mood-picker' : undefined"
               :disabled="moodButtonDisabled(day)"
               @click.stop="openMoodPicker(day, $event)"
               @keydown.stop

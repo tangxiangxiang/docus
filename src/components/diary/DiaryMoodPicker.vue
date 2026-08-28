@@ -143,6 +143,7 @@ defineExpose({ focusInitial })
 
 <template>
   <section
+    id="diary-mood-picker"
     class="diary-mood-picker"
     data-testid="diary-mood-picker"
     role="group"
@@ -311,6 +312,10 @@ defineExpose({ focusInitial })
 .diary-mood-option.is-selected {
   border-color: var(--vs-accent, var(--accent, #4f6fff));
   background: color-mix(in srgb, var(--vs-accent, var(--accent, #4f6fff)) 10%, transparent);
+}
+
+.diary-mood-option.is-selected .diary-mood-option-label {
+  font-weight: 700;
 }
 
 .diary-mood-option[aria-disabled='true'] {
