@@ -1684,10 +1684,11 @@ function rememberPendingMoodFirstPresentation(date: DiaryDate, intent: number | 
 watch(isDiaryScope, (inDiaryScope) => {
   if (!inDiaryScope) {
     clearPendingMoodFirstPresentation()
+    // A Calendar-seeded date is presentation context and should not hide the
+    // ordinary scope's tree. Once the user edits the query, it is their
+    // ordinary FileTree state and must survive the scope transition.
+    if (filesFilter.value === diaryFilterSeed.value) filesFilter.value = ''
     diaryFilterSeed.value = ''
-    // FileTree query is ordinary user-owned state. Leaving Diary scope must
-    // not erase it; only Calendar date navigation may seed/replace it after
-    // a successful explicit Diary intent.
     return
   }
   if (!filesFilter.value && classifyDiaryPath(activePath.value) === 'managed') {
