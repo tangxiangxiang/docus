@@ -20,6 +20,28 @@ Round 2 self-review findings: `P0 = 0`, `P1 = 0`, `P2 = 0`
 
 Self-review findings: `P0 = 0`, `P1 = 0`, `P2 = 0`
 
+`D7.4 Round 3 = REMEDIATION-READY`
+
+Independent Re-review: `FAIL` — `P0 = 0`, `P1 = 0`, `P2 = 1`
+
+Re-review findings:
+
+```text
+D7.4-R3-P2-2 OPEN at f2ccccc:
+refresh loses Calendar-seed provenance because diaryFilterSeed (plain ref)
+and filesFilter (useStorage) have different lifecycles; scope-exit check
+`filesFilter === diaryFilterSeed` is unreliable after reload and a Calendar
+date leaks into the ordinary Note tree.
+
+D7.4-R3-P2-1 CLOSED at e829df7:
+scope-exit check now distinguishes unchanged Calendar seed from user query.
+```
+
+D7.4-R3-P2-2 remediation commit: `57ba340964cfa935756657be0b841a3f742972e4`
+(`fix(diary): persist Calendar-seed provenance across refresh`)
+
+Remediation self-review findings: `P0 = 0`, `P1 = 0`, `P2 = 0`
+
 D7.4 Round 0 starting HEAD: `14b1efdf03a13063420fe344dc36eafc40c61dc8`
 
 D7.4 Round 0 test implementation commit: `ed8524b46e40fb15b38fd39320bfd7f3af2f442c`
@@ -44,6 +66,21 @@ D7.4 Round 2 production remediation commit: `c029408d0e7e44e94f6e3c1c068e07749a8
 D7.4 Round 2 focused test remediation commit: `b87cc2acedd23f116a37922a6ae173eac25523e0`
 (`test(diary): close D7.4 lifecycle evidence gaps`)
 
+D7.4 Round 3 starting HEAD: `ab34ed4d9b598422b7c8f9fbb0cc4bda861980d2`
+
+D7.4 Round 3 navigation/test commits:
+
+```text
+8909970 test(diary): cover D7.4 navigation continuity
+59e8655 fix(diary): preserve query across scope navigation
+60778db test(diary): cover dirty navigation continuity
+e829df7 fix(diary): distinguish seeded and user queries
+f2ccccc docs(diary): record D7.4 round 3 evidence
+```
+
+D7.4 Round 3 review P2 remediation commit: `57ba340964cfa935756657be0b841a3f742972e4`
+(`fix(diary): persist Calendar-seed provenance across refresh`)
+
 This document records the D7.4 lifecycle/conflict regression evidence. The
 implementation/evidence phase started as `IN PROGRESS` and stopped at
 `REVIEW-READY`. After the Round 1 independent re-review passed, this closure
@@ -63,6 +100,10 @@ D7.4 Independent Review = PASS
 D7.4 Round 2 = REVIEW-CLOSED
 D7.4 Round 2 Independent Review = PASS (0/0/0)
 D7.4 Round 2 GitHub CI #547 = PASS
+D7.4 Round 3 = REMEDIATION-READY
+D7.4 Round 3 Independent Re-review = FAIL (0/0/1)
+D7.4-R3-P2-2 = CLOSED (by 57ba3409)
+D7.4 Round 3 GitHub CI #549 = PASS (at f2ccccc)
 D7.5  = NOT STARTED
 D7.6  = NOT STARTED
 D7 Mood release = NOT STARTED
@@ -820,6 +861,12 @@ Final rule: clear an unchanged Calendar seed; preserve a user query.
 Result: CLOSED by e829df7.
 ```
 
+The Round 3 independent re-review found one additional lifecycle hole
+(D7.4-R3-P2-2, see §12.6) that the original Round 3 evidence did not
+exercise; the focused remediation commit `57ba3409` closes it without
+reopening the existing Round 1 / Round 2 contracts or the Round 3
+characterization captured by `e829df7`.
+
 The existing D7.3 Calendar tests continue to cover the separate picker/intent
 boundary: picker closes before date or month navigation and the stale
 Mood-first presentation intent cannot resurrect Native Diary navigation.
@@ -902,6 +949,7 @@ production test branches, Vue/Pinia internals, or broad error suppression.
 | One keep-mounted Calendar surface | PASS | New navigation E2E and existing D7.3 proof |
 | No N+1 metadata reads | PASS | Existing bulk `PostSummary[]` projection seam |
 | Ordinary Vault navigation | PASS | Existing D6.5 suite + full browser suite |
+| Calendar seed cleared on scope exit after refresh | PASS | Round 3 refresh-seed provenance E2E |
 
 ### 12.4 Validation
 
@@ -970,3 +1018,94 @@ D7.5 = NOT STARTED
 ```
 
 Round 3 is ready for independent review. Do not start D7.5 in this phase.
+
+### 12.6 Round 3 P2-2 remediation — refresh loses Calendar-seed provenance
+
+The Round 3 independent re-review (`HEAD f2ccccc0`) found one additional P2
+that the original Round 3 characterization did not exercise:
+
+```text
+D7.4-R3-P2-2
+Root cause: diaryFilterSeed was a plain ref('') while filesFilter survived
+refresh via useStorage('docus.file-tree.filter', ''). The two lifecycles
+diverged after reload, so the scope-exit check `filesFilter === diaryFilterSeed`
+could no longer distinguish a Calendar seed from a user query, and a Calendar
+date leaked into the ordinary Note tree.
+Repro chain:
+  1. Calendar click Diary A → diaryFilterSeed=A, filesFilter=A
+  2. Native Diary A opens
+  3. page.reload()
+  4. filesFilter=A (useStorage), diaryFilterSeed='' (lost)
+  5. switch Diary scope → Note scope
+  6. scope watcher: A === '' → false → filter NOT cleared
+  7. Note FileTree still filtered by Diary date A
+Final rule: persist diaryFilterSeed alongside filesFilter so the scope-exit
+check survives refresh. No router/tab/server owner or FileTree rule change.
+Result: CLOSED by 57ba3409 (new focused E2E + one-line production fix in
+VaultView).
+```
+
+The focused remediation commit `57ba3409` adds:
+
+- `test(diary)` — new E2E
+  `'refresh preserves Calendar-seed provenance so Diary scope exit clears it'`
+  in `e2e/diary-mood-lifecycle-regression.spec.ts`. The new scenario seeds
+  Diary A, clicks A on Calendar, reloads, switches to Note scope, and asserts
+  that the FileTree query is cleared (`''`). It also navigates to an ordinary
+  Note path after scope exit and asserts the query stays cleared. It was
+  verified to fail against the pre-remediation `f2ccccc` HEAD and to pass
+  after `57ba3409` lands.
+- `fix(diary)` — `VaultView.vue` orchestration only. `diaryFilterSeed`
+  changes from a local `ref('')` to
+  `useStorage('docus.diary.filter-seed', '')`. The seed and `filesFilter`
+  now share the same `useStorage` lifecycle, so the scope-exit check
+  `filesFilter === diaryFilterSeed` can still recognise a Calendar seed
+  after refresh.
+
+The remediation does not reopen the Round 1 / Round 2 contracts. The existing
+D7.3 picker/intent boundary, the existing D6.5 lifecycle suite, and the
+existing scope/navigation continuity tests all still pass on `57ba3409`. The
+Round 3 navigation/dirty/refresh/deep-link/Back-Forward characterization
+(`8909970` / `59e8655` / `60778db` / `e829df7`) is unchanged: the
+remediation only makes the scope-exit seed clearing work after refresh. The
+remediation is intentionally narrow and is owned by the same
+`VaultView` FileTree/Diary orchestration owner; no router, generic tab store,
+server, schema, migration, package, lockfile, or dependency changed.
+
+The focused remediation validation was run after `57ba3409`:
+
+| Command | Result |
+| --- | --- |
+| `npx playwright test e2e/diary-mood-lifecycle-regression.spec.ts --grep "refresh preserves Calendar-seed provenance"` | **1 passed** |
+| `npx playwright test e2e/diary-mood-lifecycle-regression.spec.ts` | **14 passed** (13 existing + 1 new) |
+| `npx vitest run src/views/__tests__ src/components/vault/__tests__ src/composables/vault/__tests__` | **75 files, 871 tests passed** |
+| `npm run typecheck:client` | **PASS** |
+| `npm run typecheck:server` | **PASS** |
+| `npm run typecheck` | **PASS** |
+
+The new focused E2E was first executed against the pre-remediation HEAD
+with the production change temporarily reverted; it failed on the
+`expect(search).toHaveValue('')` assertion with the persisted Diary date
+still in the input, confirming the test catches the lifecycle hole. The
+same scenario passed after the production change was restored.
+
+The new evidence updates only the Round 3 remediation section. Round 1
+(`8017594d` / `ec4b190a`) and Round 2 (`b8d721ee` / `c029408d` /
+`b87cc2ac`) remain `REVIEW-CLOSED` and are not reopened. `D7.5` is still
+`NOT STARTED`. The GitHub CI status for `57ba3409` is to be recorded after
+that HEAD is pushed; no CI result is inferred from the local runs above.
+
+The resulting lifecycle after the remediation is:
+
+```text
+D7.4 = IN PROGRESS
+D7.4 Round 1 = REVIEW-CLOSED
+D7.4 Round 2 = REVIEW-CLOSED
+D7.4 Round 3 = REMEDIATION-READY
+D7.4 Round 3 Independent Re-review = FAIL (P0=0, P1=0, P2=1)
+D7.4-R3-P2-2 = CLOSED (by 57ba3409)
+D7.5 = NOT STARTED
+```
+
+Round 3 is now ready for a second independent review with the refresh-seed
+provenance fix applied. Do not start D7.5 in this phase.
