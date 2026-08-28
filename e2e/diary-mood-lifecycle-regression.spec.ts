@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import nodePath from 'node:path'
+import Database from 'better-sqlite3'
 import { expect, test, type APIRequestContext, type Page } from './fixtures/auth'
 import {
   appendEditorText,
@@ -8,6 +9,7 @@ import {
   draftRowCount,
   gotoVaultReady,
   interceptAutosaveAborted,
+  interceptAutosaveHeld,
   reloadApp,
 } from './helpers/edit-program'
 
@@ -165,6 +167,19 @@ async function setDiaryMood(
   const body = await response.text()
   expect(response.status(), body).toBe(200)
   return JSON.parse(body) as DiaryPost['metadata']
+}
+
+async function setOpaqueMoodFixture(path: string, mood: string): Promise<void> {
+  const databasePath = process.env.DOCUS_E2E_DB_PATH
+  if (!databasePath) throw new Error('DOCUS_E2E_DB_PATH is required for Mood E2E fixtures')
+  const db = new Database(databasePath)
+  try {
+    db.pragma('busy_timeout = 5000')
+    const result = db.prepare('UPDATE documents SET mood = ? WHERE path = ?').run(mood, path)
+    expect(result.changes).toBe(1)
+  } finally {
+    db.close()
+  }
 }
 
 async function commitDiaryRevision(
@@ -461,6 +476,157 @@ test('external metadata conflict leaves a dirty native body untouched', async ({
     await expect.poll(() => draftRowCount(page, dirtyMarker), { timeout: 15_000 }).toBe(0)
   } finally {
     if (autosaveInstalled) await page.unroute(`**/api/posts/${path}`)
+    await deletePost(request, path)
+  }
+
+  expect(state.pageErrors).toEqual([])
+  expect(state.consoleErrors).toEqual([])
+})
+
+test('native body conflict preserves Mood while resolving through the existing save owner', async ({ page, request }) => {
+  const date = await findUnusedDiaryDate(request)
+  const path = diaryPath(date)
+  const baseRaw = `# D7.4 native body conflict ${RUN_ID}\n`
+  const localMarker = `D74_NATIVE_LOCAL_${RUN_ID}`
+  const localRaw = `${baseRaw}\n${localMarker}`
+  const externalRaw = `# D7.4 native external body ${RUN_ID}\n`
+  const state = diagnostics(page, ['status of 409 (Conflict)'])
+  const autosave = { seen: false, statuses: [] as number[] }
+  let releaseAutosave: () => void = () => {}
+  let browserAutosaveInstalled = false
+
+  try {
+    const document = await seedDiary(request, date, baseRaw)
+    const initialMood = await setDiaryMood(request, date, 'happy')
+    await openDiaryHome(page)
+    await clickDiaryDate(page, date)
+    await assertNativeReader(page, date)
+    await enterEditor(page)
+
+    const gate = new Promise<void>((resolve) => { releaseAutosave = resolve })
+    await interceptAutosaveHeld(page, path, autosave, gate)
+    browserAutosaveInstalled = true
+    await appendEditorText(page, localMarker)
+    await expect(page.locator(`[data-tab-id="${path}"][data-save-status="dirty"]`)).toBeVisible({ timeout: 15_000 })
+    await expect.poll(() => autosave.seen, { timeout: 15_000 }).toBe(true)
+
+    const externalWrite = await request.put(`/api/posts/${path}`, {
+      data: { raw: externalRaw, baseRaw },
+    })
+    expect(externalWrite.status(), await externalWrite.text()).toBe(200)
+    const afterExternalBody = await readDiary(request, date)
+    expect(afterExternalBody.metadata.id).toBe(document.documentId)
+    const externalMood = await setDiaryMood(request, date, 'sad', afterExternalBody.metadata.updatedAt)
+    expect(externalMood.id).toBe(document.documentId)
+    expect(externalMood.updatedAt).toBeGreaterThan(initialMood.updatedAt)
+
+    releaseAutosave()
+    await expect.poll(() => autosave.statuses.length, { timeout: 15_000 }).toBe(1)
+    expect(autosave.statuses[0]).toBe(409)
+    await expect(page.locator(`[data-tab-id="${path}"][data-save-status="external"]`)).toBeVisible({ timeout: 15_000 })
+
+    const conflicted = await readDiary(request, date)
+    expect(conflicted.raw).toBe(externalRaw)
+    expect(conflicted.metadata.id).toBe(document.documentId)
+    expect(conflicted.metadata.mood).toBe('sad')
+    await expect(page.locator('.editor-pane .monaco-editor .view-lines').first()).toContainText(localMarker)
+    await expect(page.getByTestId('diary-calendar')).toBeHidden()
+    await expect(page.locator('.confirm-dialog')).toHaveCount(0)
+
+    const readToggle = page.getByTestId('view-toggle')
+    if (/read|阅读/i.test(await readToggle.getAttribute('aria-label') ?? '')) await readToggle.click()
+    await expect(page.locator('.reading-pane')).toBeVisible()
+    await expect(page.locator('.reading-pane article')).toContainText(localMarker)
+    await enterEditor(page)
+    const keepLocal = page.locator('button[aria-label="Keep local version and overwrite disk"]')
+    await expect(keepLocal).toBeVisible({ timeout: 15_000 })
+    await keepLocal.click()
+    await expect(page.locator(`[data-tab-id="${path}"][data-save-status="saved"]`)).toBeVisible({ timeout: 15_000 })
+
+    const resolved = await readDiary(request, date)
+    expect(normalizeLineEndings(resolved.raw)).toBe(normalizeLineEndings(localRaw))
+    expect(resolved.metadata.id).toBe(document.documentId)
+    expect(resolved.metadata.mood).toBe('sad')
+
+    const tab = page.locator(`[role="tab"][data-tab-id="${path}"]`)
+    await tab.locator('.tab-close').click()
+    await expect(tab).toHaveCount(0)
+    await expect(page.getByTestId('diary-calendar')).toBeVisible()
+    await expect(page.locator(`[data-testid="diary-calendar-mood"][data-date="${date}"] img`)).toHaveAttribute('src', '/emoji/伤心.svg')
+  } finally {
+    if (browserAutosaveInstalled) await page.unroute(`**/api/posts/${path}`)
+    await deletePost(request, path)
+  }
+
+  expect(state.pageErrors).toEqual([])
+  expect(state.consoleErrors).toEqual([])
+})
+
+test('unknown Mood survives native save, refresh, close, and reopen', async ({ page, request }) => {
+  const date = await findUnusedDiaryDate(request)
+  const path = diaryPath(date)
+  const baseRaw = `# D7.4 unknown Mood lifecycle ${RUN_ID}\n`
+  const savedMarker = `Saved body ${RUN_ID}`
+  const savedRaw = `${baseRaw}\n${savedMarker}`
+  const unknownMood = 'unknown-mood-v3'
+  const state = diagnostics(page)
+
+  try {
+    const document = await seedDiary(request, date, baseRaw)
+    await setOpaqueMoodFixture(path, unknownMood)
+    const fixture = await readDiary(request, date)
+    expect(fixture.metadata.id).toBe(document.documentId)
+    expect(fixture.metadata.mood).toBe(unknownMood)
+
+    await openDiaryHome(page)
+    await moveToMonth(page, date)
+    const moodButton = page.locator(`[data-testid="diary-calendar-mood"][data-date="${date}"]`)
+    await expect(moodButton).toBeVisible()
+    await expect(moodButton).toHaveText('?')
+
+    await clickDiaryDate(page, date)
+    await assertNativeReader(page, date)
+    await enterEditor(page)
+    await appendEditorText(page, savedMarker)
+    await expect(page.locator(`[data-tab-id="${path}"][data-save-status="saved"]`)).toBeVisible({ timeout: 15_000 })
+
+    const saved = await readDiary(request, date)
+    expect(normalizeLineEndings(saved.raw)).toBe(normalizeLineEndings(savedRaw))
+    expect(saved.metadata.id).toBe(document.documentId)
+    expect(saved.metadata.mood).toBe(unknownMood)
+
+    await page.reload()
+    await expect(page).toHaveURL(new RegExp(`/vault/${path.replace('/', '\\/')}(?:[?#]|$)`))
+    await expect(page.getByTestId('diary-reader-dialog')).toHaveCount(0)
+    await expect(page.locator(`[role="tab"][data-tab-id="${path}"]`)).toHaveAttribute('aria-selected', 'true')
+    await ensureExplorerVisible(page)
+    await expect(page.locator('.search-input')).toHaveValue(date)
+    await expect(page.getByTestId('diary-calendar')).toBeAttached()
+    await expect(page.getByTestId('diary-calendar')).toBeHidden()
+    await expect(page.locator('.editor-pane, .reading-pane')).toHaveCount(1)
+    const refreshed = await readDiary(request, date)
+    expect(normalizeLineEndings(refreshed.raw)).toBe(normalizeLineEndings(savedRaw))
+    expect(refreshed.metadata.id).toBe(document.documentId)
+    expect(refreshed.metadata.mood).toBe(unknownMood)
+
+    const tab = page.locator(`[role="tab"][data-tab-id="${path}"]`)
+    await tab.locator('.tab-close').click()
+    await expect(tab).toHaveCount(0)
+    await expect(page.getByTestId('diary-calendar')).toBeVisible()
+    const closedMoodButton = page.locator(`[data-testid="diary-calendar-mood"][data-date="${date}"]`)
+    await expect(closedMoodButton).toHaveText('?')
+
+    await clickDiaryDate(page, date)
+    await assertNativeReader(page, date)
+    const reopened = await readDiary(request, date)
+    expect(normalizeLineEndings(reopened.raw)).toBe(normalizeLineEndings(savedRaw))
+    expect(reopened.metadata.id).toBe(document.documentId)
+    expect(reopened.metadata.mood).toBe(unknownMood)
+
+    await page.locator(`[role="tab"][data-tab-id="${path}"] .tab-close`).click()
+    await expect(page.getByTestId('diary-calendar')).toBeVisible()
+    await expect(page.locator(`[data-testid="diary-calendar-mood"][data-date="${date}"]`)).toHaveText('?')
+  } finally {
     await deletePost(request, path)
   }
 
