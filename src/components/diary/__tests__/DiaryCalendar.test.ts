@@ -213,6 +213,44 @@ describe('DiaryCalendar presentation adapter', () => {
     wrapper.unmount()
   })
 
+  it('keeps an unknown Mood opaque until an explicit replacement or clear', async () => {
+    const wrapper = mountCalendar([{
+      ...day('2026-08-25', true),
+      mood: 'future-mood-v3',
+      metadataUpdatedAt: 4,
+    }])
+    await flushPromises()
+
+    const moodButton = dayCell(wrapper, '2026-08-25').get('[data-testid="diary-calendar-mood"]')
+    expect(moodButton.text()).toBe('?')
+    await moodButton.trigger('click')
+    await flushPromises()
+
+    let pickerElement = document.body.querySelector('[data-testid="diary-mood-picker"]')
+    expect(pickerElement).not.toBeNull()
+    const picker = new DOMWrapper(pickerElement!)
+    expect(picker.get('[data-testid="diary-mood-unknown"]')).toBeTruthy()
+    await picker.get('[data-testid="diary-mood-picker-close"]').trigger('click')
+    await flushPromises()
+    expect(document.body.querySelector('[data-testid="diary-mood-picker"]')).toBeNull()
+    expect(wrapper.emitted('mood-change')).toBeUndefined()
+    expect(moodButton.text()).toBe('?')
+
+    await moodButton.trigger('click')
+    await flushPromises()
+    pickerElement = document.body.querySelector('[data-testid="diary-mood-picker"]')
+    expect(pickerElement).not.toBeNull()
+    const reopenedPicker = new DOMWrapper(pickerElement!)
+    await reopenedPicker.get('[data-mood-id="happy"]').trigger('click')
+    await reopenedPicker.get('[data-testid="diary-mood-clear"]').trigger('click')
+    expect(wrapper.emitted('date-selected')).toBeUndefined()
+    expect(wrapper.emitted('mood-change')).toEqual([
+      ['2026-08-25', 'happy'],
+      ['2026-08-25', null],
+    ])
+    wrapper.unmount()
+  })
+
   it('updates mood presentation reactively without remounting the Calendar', async () => {
     const wrapper = mountCalendar([{
       ...day('2026-08-24', true),

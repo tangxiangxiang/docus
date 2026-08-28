@@ -166,6 +166,46 @@ describe('Diary Mood live metadata', () => {
     expect(await byId.json()).toMatchObject({ mood: 'future-mood-v3' })
   })
 
+  it('keeps an unknown Mood opaque in bulk projection until explicit replace or clear', async () => {
+    const logicalPath = 'diary/2026-08-26'
+    const raw = '# Unknown Mood projection\n'
+    await write(logicalPath, raw)
+    const initial = saveDocumentMetadata(db, {
+      id: 'bulk-unknown-mood-id', path: logicalPath, title: 'Diary', updatedAt: 10,
+    })
+    db.prepare('UPDATE documents SET mood = ? WHERE id = ?').run('unknown-mood-v1', initial.id)
+
+    const bulkResponse = await call('GET', '/api/posts')
+    expect(bulkResponse.status).toBe(200)
+    const posts = await bulkResponse.json() as Array<Record<string, unknown> & { path: string }>
+    expect(posts.find((post) => post.path === logicalPath)).toMatchObject({
+      mood: 'unknown-mood-v1',
+      documentId: initial.id,
+      metadataUpdatedAt: 10,
+    })
+    const detailResponse = await call('GET', `/api/posts/${logicalPath}`)
+    expect(detailResponse.status).toBe(200)
+    expect(await detailResponse.json()).toMatchObject({
+      metadata: { id: initial.id, mood: 'unknown-mood-v1' },
+    })
+
+    const replaced = await call('PATCH', `/api/metadata/documents/${logicalPath}`, {
+      mood: 'happy', expectedUpdatedAt: initial.updatedAt,
+    })
+    expect(replaced.status).toBe(200)
+    const replacedMetadata = await replaced.json() as { mood: string | null; updatedAt: number }
+    expect(replacedMetadata.mood).toBe('happy')
+
+    db.prepare('UPDATE documents SET mood = ? WHERE id = ?').run('unknown-mood-v1', initial.id)
+    const opaqueVersion = getDocumentMetadata(db, logicalPath)!.updatedAt
+    const cleared = await call('PATCH', `/api/metadata/documents/${logicalPath}`, {
+      mood: null, expectedUpdatedAt: opaqueVersion,
+    })
+    expect(cleared.status).toBe(200)
+    expect(await cleared.json()).toMatchObject({ mood: null, id: initial.id })
+    expect(await fs.readFile(path.join(vault, `${logicalPath}.md`), 'utf8')).toBe(raw)
+  })
+
   it('preserves the SQL Mood and opaque Frontmatter through a body save', async () => {
     const logicalPath = 'diary/2026-08-27'
     const beforeRaw = '---\nmood: legacy-frontmatter\n---\n\n# Before\n'

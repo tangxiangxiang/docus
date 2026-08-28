@@ -339,6 +339,62 @@ test('Calendar click on a missing future Diary is a browser-visible no-op', asyn
   }])
 })
 
+test('missing future Diary does not overwrite the user FileTree filter', async ({ page, request }) => {
+  await expectDiaryTestTimeZone(page)
+  const today = localCivilDate()
+  const future = nextCivilDate(today)
+  const futurePath = diaryPath(future)
+  const customQuery = `d74-r2-query-${Date.now()}`
+  const diagnostics = browserDiagnostics(page)
+  const mutationRequests: string[] = []
+  page.on('request', (requestEvent) => {
+    const url = new URL(requestEvent.url())
+    if (url.pathname === '/api/diary/dates' || url.pathname === `/api/metadata/documents/${futurePath}`) {
+      mutationRequests.push(`${requestEvent.method()} ${url.pathname}`)
+    }
+  })
+
+  try {
+    await deleteDiaryDate(request, future)
+    await page.goto('/vault')
+    await expect(page.locator('.file-tree')).toBeVisible()
+    const search = page.locator('.file-tree .search-input')
+    await search.fill(customQuery)
+    await expect(search).toHaveValue(customQuery)
+    await expect.poll(() => page.evaluate(() => localStorage.getItem('docus.file-tree.filter')))
+      .toBe(customQuery)
+    await page.locator('.scope-chip').filter({ hasText: 'diary' }).click()
+
+    const routeBefore = new URL(page.url()).pathname
+    const dateButton = page.locator(`[data-diary-day-content][data-date="${future}"]`)
+    await moveCalendarToMonth(page, future)
+    await expect(dateButton).toBeVisible()
+    const probeResponse = page.waitForResponse((response) => {
+      const url = new URL(response.url())
+      return response.request().method() === 'GET'
+        && url.pathname === `/api/posts/${futurePath}`
+    })
+    await dateButton.click()
+    expect((await probeResponse).status()).toBe(404)
+
+    await expect.poll(() => mutationRequests).toEqual([])
+    await expect(search).toHaveValue(customQuery)
+    await expect.poll(() => page.evaluate(() => localStorage.getItem('docus.file-tree.filter')))
+      .toBe(customQuery)
+    await expect(page).toHaveURL(new RegExp(`${routeBefore.replace('/', '\\/')}(?:[?#]|$)`))
+    await expect(page.getByTestId('diary-calendar')).toBeVisible()
+    await expect(page.getByTestId('diary-mood-picker')).toHaveCount(0)
+    await expect(page.locator(`[role="tab"][data-tab-id="${futurePath}"]`)).toHaveCount(0)
+  } finally {
+    await deleteDiaryDate(request, future)
+  }
+
+  expect(diagnostics.pageErrors).toEqual([])
+  expect(diagnostics.consoleErrors).toEqual([
+    'Failed to load resource: the server responded with a status of 404 (Not Found)',
+  ])
+})
+
 test('Mood-first creation keeps Calendar visible until Mood CAS succeeds', async ({ page, request }) => {
   await expectDiaryTestTimeZone(page)
   const date = await findUnusedDiaryDate(request)

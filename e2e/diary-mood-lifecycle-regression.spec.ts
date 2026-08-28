@@ -331,6 +331,143 @@ test('Mood set/change/clear stays separate from a dirty native Diary body', asyn
   expect(state.consoleErrors).toEqual([])
 })
 
+test('external metadata conflict keeps the Calendar winner and allows a fresh retry', async ({ page, request }) => {
+  const date = await findUnusedDiaryDate(request)
+  const path = diaryPath(date)
+  const baseRaw = `# D7.4 clean metadata conflict ${RUN_ID}\n`
+  const state = diagnostics(page)
+
+  try {
+    const document = await seedDiary(request, date, baseRaw)
+    const localMood = await setDiaryMood(request, date, 'happy')
+
+    await openDiaryHome(page)
+    await moveToMonth(page, date)
+    const moodButton = page.locator(`[data-testid="diary-calendar-mood"][data-date="${date}"]`)
+    await expect(moodButton).toBeVisible()
+    await expect(moodButton.locator('img')).toHaveAttribute('src', '/emoji/开心.svg')
+
+    // Keep the browser's Calendar projection at the old version while an
+    // external writer wins the authoritative metadata CAS.
+    const external = await setDiaryMood(request, date, 'sad', localMood.updatedAt)
+    expect(external.id).toBe(document.documentId)
+    expect(external.updatedAt).toBeGreaterThan(localMood.updatedAt)
+
+    await moodButton.click()
+    const picker = page.getByTestId('diary-mood-picker')
+    await expect(picker).toBeVisible()
+    const staleResponse = page.waitForResponse((response) => (
+      response.request().method() === 'PATCH'
+      && new URL(response.url()).pathname === `/api/metadata/documents/${path}`
+    ))
+    await picker.getByRole('radio', { name: '愤怒 / Angry' }).click()
+    expect((await staleResponse).status()).toBe(409)
+
+    await expect.poll(async () => (await readDiary(request, date)).metadata.mood).toBe('sad')
+    const winner = await readDiary(request, date)
+    expect(winner.raw).toBe(baseRaw)
+    expect(winner.metadata.id).toBe(document.documentId)
+    expect(winner.metadata.mood).toBe('sad')
+    expect(winner.metadata.updatedAt).toBe(external.updatedAt)
+    await expect(moodButton.locator('img')).toHaveAttribute('src', '/emoji/伤心.svg')
+    await expect(page).toHaveURL(/\/vault(?:[?#]|$)/)
+    await expect(page.getByTestId('diary-calendar')).toBeVisible()
+    await expect(page.locator('[role="tab"][data-tab-id^="diary/"]')).toHaveCount(0)
+
+    await page.keyboard.press('Escape')
+    await expect(picker).toHaveCount(0)
+    await moodButton.click()
+    await page.getByTestId('diary-mood-picker').getByRole('radio', { name: '愤怒 / Angry' }).click()
+    await expect.poll(async () => (await readDiary(request, date)).metadata.mood).toBe('angry')
+    await expect(moodButton.locator('img')).toHaveAttribute('src', '/emoji/愤怒.svg')
+    await expect(page).toHaveURL(/\/vault(?:[?#]|$)/)
+    await expect(page.locator('[role="tab"][data-tab-id^="diary/"]')).toHaveCount(0)
+  } finally {
+    await deletePost(request, path)
+  }
+
+  expect(state.pageErrors).toEqual([])
+  expect(state.consoleErrors).toEqual([
+    'Failed to load resource: the server responded with a status of 409 (Conflict)',
+  ])
+})
+
+test('external metadata conflict leaves a dirty native body untouched', async ({ page, request }) => {
+  const date = await findUnusedDiaryDate(request)
+  const path = diaryPath(date)
+  const baseRaw = `# D7.4 dirty metadata conflict ${RUN_ID}\n`
+  const dirtyMarker = `D74_METADATA_CONFLICT_DIRTY_${RUN_ID}`
+  const dirtyRaw = `${baseRaw}\n${dirtyMarker}`
+  const state = diagnostics(page, ['net::ERR_FAILED'])
+  let autosaveInstalled = false
+
+  try {
+    const document = await seedDiary(request, date, baseRaw)
+    await setDiaryMood(request, date, 'happy')
+
+    await openDiaryHome(page)
+    await clickDiaryDate(page, date)
+    await assertNativeReader(page, date)
+    await enterEditor(page)
+    await interceptAutosaveAborted(page, path)
+    autosaveInstalled = true
+    await appendEditorText(page, dirtyMarker)
+    await expect(page.locator(`[data-tab-id="${path}"][data-save-status="dirty"]`)).toBeVisible({ timeout: 15_000 })
+    await expect.poll(() => draftRowCount(page, dirtyMarker), { timeout: 15_000 }).toBeGreaterThanOrEqual(1)
+
+    const stale = await readDiary(request, date)
+    expect(stale.metadata.mood).toBe('happy')
+    const external = await setDiaryMood(request, date, 'sad', stale.metadata.updatedAt)
+    expect(external.id).toBe(document.documentId)
+
+    // Native Mood UI is intentionally not reintroduced for this phase. The
+    // API request below is the external/stale CAS boundary while the native
+    // editor keeps the unsaved body buffer mounted and dirty.
+    const conflict = await request.patch(`/api/metadata/documents/${path}`, {
+      data: { mood: 'angry', expectedUpdatedAt: stale.metadata.updatedAt },
+    })
+    expect(conflict.status(), await conflict.text()).toBe(409)
+
+    const whileDirty = await readDiary(request, date)
+    expect(normalizeLineEndings(whileDirty.raw)).toBe(normalizeLineEndings(baseRaw))
+    expect(whileDirty.metadata.id).toBe(document.documentId)
+    expect(whileDirty.metadata.mood).toBe('sad')
+    const dirtyTab = page.locator(`[data-tab-id="${path}"]`)
+    await expect(dirtyTab).toHaveCount(1)
+    await expect(dirtyTab.locator('.tab-dirty-indicator')).toHaveCount(1)
+    await expect(page.locator('.editor-pane .monaco-editor .view-lines').first()).toContainText(dirtyMarker)
+    await expect(page.locator('.confirm-dialog')).toHaveCount(0)
+    await expect(page).toHaveURL(new RegExp(`/vault/${path.replace('/', '\\/')}(?:[?#]|$)`))
+    await expect(page.getByTestId('diary-calendar')).toBeHidden()
+
+    const retry = await setDiaryMood(request, date, 'angry', external.updatedAt)
+    expect(retry.id).toBe(document.documentId)
+    expect(retry.updatedAt).toBeGreaterThan(external.updatedAt)
+    const afterRetry = await readDiary(request, date)
+    expect(afterRetry.metadata.mood).toBe('angry')
+    expect(afterRetry.raw).toBe(baseRaw)
+    await expect(dirtyTab.locator('.tab-dirty-indicator')).toHaveCount(1)
+
+    await page.unroute(`**/api/posts/${path}`)
+    autosaveInstalled = false
+    await page.locator('.vault').focus()
+    await page.keyboard.press('Control+s')
+    await expect(page.locator(`[data-tab-id="${path}"][data-save-status="saved"]`)).toBeVisible({ timeout: 15_000 })
+
+    const saved = await readDiary(request, date)
+    expect(normalizeLineEndings(saved.raw)).toBe(normalizeLineEndings(dirtyRaw))
+    expect(saved.metadata.id).toBe(document.documentId)
+    expect(saved.metadata.mood).toBe('angry')
+    await expect.poll(() => draftRowCount(page, dirtyMarker), { timeout: 15_000 }).toBe(0)
+  } finally {
+    if (autosaveInstalled) await page.unroute(`**/api/posts/${path}`)
+    await deletePost(request, path)
+  }
+
+  expect(state.pageErrors).toEqual([])
+  expect(state.consoleErrors).toEqual([])
+})
+
 test('v2 History Restore restores matching Mood and keeps the native tab identity', async ({ page, request }) => {
   const date = await findUnusedDiaryDate(request)
   const path = diaryPath(date)
