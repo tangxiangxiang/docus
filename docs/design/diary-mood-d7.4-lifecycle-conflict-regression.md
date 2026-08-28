@@ -2,7 +2,11 @@
 
 ## Status
 
-`D7.4 = IN PROGRESS`
+`D7.4 = REVIEW-CLOSED`
+
+D7.4 Final Gate: `PASS`
+
+D7.4 Final Gate findings: `P0 = 0`, `P1 = 0`, `P2 = 0`
 
 `D7.4 Round 1 = REVIEW-CLOSED`
 
@@ -94,8 +98,8 @@ D7.4 Round 3 empty-query ownership remediation commit: `f461496`
 
 This document records the D7.4 lifecycle/conflict regression evidence. Each
 implementation/evidence round stopped at `REVIEW-READY`; independent review
-results are recorded by separate closure syncs. D7.4 itself remains
-`IN PROGRESS`.
+results are recorded by separate closure syncs. The final gate below records
+D7.4 itself as `REVIEW-CLOSED`.
 
 Current lifecycle:
 
@@ -105,7 +109,8 @@ D7.0  = REVIEW-CLOSED
 D7.1  = REVIEW-CLOSED
 D7.2  = REVIEW-CLOSED
 D7.3  = REVIEW-CLOSED
-D7.4  = IN PROGRESS
+D7.4  = REVIEW-CLOSED
+D7.4 Final Gate = PASS (0/0/0)
 D7.4 Round 1 = REVIEW-CLOSED
 D7.4 Independent Review = PASS
 D7.4 Round 2 = REVIEW-CLOSED
@@ -1339,3 +1344,45 @@ Required jobs: PASS
 This closure changes documentation only. It does not reopen D7.4 Round 1 or
 Round 2, start D7.5, or change the production, test, server, shared, schema,
 router, package, or dependency boundary.
+
+## 13. D7.4 final gate and closure sync
+
+The final D7.4 gate reviewed the official lifecycle and conflict exit criteria
+against the characterization matrix above. All required cases have direct
+browser, integration, unit, or existing-owner regression evidence: clean and
+dirty body coexistence with Mood set/change/clear; body save ordering and
+draft removal; History Comparison/Restore; baseline and divergent Recovery;
+external body and metadata conflicts; unknown Mood values; delete/recreate
+generation isolation; same-date reopen; scope, tab, refresh, deep-link,
+Back/Forward, identity, raw, dirty, metadata, Calendar, and ordinary Vault
+continuity; and the bulk projection/no-N+1 boundary.
+
+The final gate result is:
+
+```text
+D7.4 Final Gate = PASS
+P0 = 0
+P1 = 0
+P2 = 0
+
+D7.4 = REVIEW-CLOSED
+D7.4 Round 1 = REVIEW-CLOSED
+D7.4 Round 2 = REVIEW-CLOSED
+D7.4 Round 3 = REVIEW-CLOSED
+D7.4 Round 3 Independent Re-review = PASS (0/0/0)
+GitHub CI #552 = PASS
+D7.5 = NOT STARTED
+D7.6 = NOT STARTED
+D7 Mood release = NOT STARTED
+```
+
+GitHub CI #552 validated the final production/test evidence HEAD
+`1efb18fe6b0c2693c8d9531ec0417eec8db0df45` with all required jobs successful.
+The current closure commit is documentation-only, so it does not require a
+new production or test run. Historical Round 0–3 snapshots that record
+`IN PROGRESS`, `REVIEW-READY`, `PENDING`, or earlier findings remain preserved
+as historical lifecycle evidence and are not the current D7.4 state.
+
+This final closure sync changes only this evidence document. It does not
+start D7.5 or D7.6, reopen any closed D7.4 round, or modify production, test,
+server, shared, schema, router, package, or dependency scope.
