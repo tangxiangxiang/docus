@@ -2,7 +2,11 @@
 
 ## Status
 
-`D7.5 = IN PROGRESS`
+`D7.5 = REVIEW-CLOSED`
+
+`D7.5 Final Gate = PASS`
+
+D7.5 Final Gate Independent Audit findings: `P0 = 0`, `P1 = 0`, `P2 = 0`
 
 `D7.5 Round 1 = REVIEW-CLOSED`
 
@@ -26,9 +30,9 @@ GitHub CI #557: `PASS`
 
 This document records the closed Round 1 responsive, viewport, and overflow
 validation and the separate Round 2 interaction, accessibility, and locale
-validation. Round 1 remains closed by its docs-only closure sync; Round 2 is
-closed by its separate docs-only closure sync; D7.5 remains in progress. This
-document does not begin the D7.5 final gate or D7.6.
+validation. Round 1 and Round 2 are each closed by their docs-only closure
+syncs, and the overall D7.5 phase is closed by the Final Gate recorded below.
+This document does not begin D7.6.
 
 ## Starting HEAD
 
@@ -568,7 +572,7 @@ The four platform jobs also passed their typecheck, build, unit/integration,
 cross-platform browser E2E, and Draft Store E2E stages. The closure commit
 does not change the tested implementation or test files.
 
-### Round 2 Current State
+### Round 2 State at Round 2 Closure
 
 ```text
 D7.0A = REVIEW-CLOSED
@@ -593,3 +597,73 @@ D7.6  = NOT STARTED
 The Round 2 closure sync does not close the overall D7.5 phase or begin its
 final gate. Do not begin D7.6, reopen Round 1, or add unrelated generic Vault
 accessibility work in this Round 2 boundary.
+
+## D7.5 Final Gate / Overall Closure
+
+The Final Gate was independently audited after both implementation rounds were
+closed. It confirms the official D7.5 exit criteria without introducing a
+third round or changing the D7.5 ownership boundary.
+
+| Official exit criterion | Direct evidence | Result |
+| --- | --- | --- |
+| `1280×800` retains 4 columns × 6 rows | Real browser geometry: 6 row tops, 4 column positions, 24 options in canonical order | PASS |
+| `768×1024` retains 4 columns × 6 rows | The same responsive geometry matrix | PASS |
+| `375×812` retains 4 columns × 6 rows | Geometry, containment, and date/Mood non-overlap after the narrow-screen remediation | PASS |
+| `320×700` retains 4 columns × 6 rows | Geometry, containment, Clear reachability, and no horizontal overflow | PASS |
+| Keyboard interaction | Roving tabindex, four-direction independent grid clamping, Arrow without selection/write/navigation, and Enter/Space exactly once | PASS |
+| Touch interaction | Real `hasTouch: true` browser context and `.tap()` for Mood select/Clear exactly once without date navigation | PASS |
+| Focus-visible | Browser computed-style evidence for keyboard focus indicators in light and dark themes | PASS |
+| Selected non-color cue | `aria-checked` plus selected-label `font-weight: 700`; no checkmark glyph | PASS |
+| Clear action | Visible and contained at all four viewports; keyboard and real touch clear mutation | PASS |
+| `zh` locale | Calendar, Picker, ARIA names, and interaction evidence under `zh-CN` light | PASS |
+| `en` locale | Calendar, Picker, ARIA names, and interaction evidence under `en-US` dark | PASS |
+| Light and dark themes | Responsive geometry and keyboard/focus/ARIA semantics in both themes | PASS |
+| No horizontal page overflow | Calendar Home, Picker open, and Native Diary checked at all four viewports with `scrollWidth <= clientWidth + 1` | PASS |
+
+Round 1's browser matrix directly measured 24 Mood options, six real rows,
+four real columns, picker/Clear containment, option overlap, and page-level
+overflow. Round 2 added the interaction and accessibility proof: one named
+radiogroup, 24 radios, roving focus, fixed 4×6 keyboard geometry, truthful
+ARIA relationships, focus-visible behavior, selected non-color semantics,
+Clear, Escape/close focus restoration, and real touch. Round 1 was rerun after
+the Round 2 changes and remained passing. The D7.4 lifecycle suite, full
+Chromium browser suite, Draft Store suite, full unit suite, typechecks, and
+build also passed.
+
+The Final Gate relies on the exact implementation/evidence CI runs already
+recorded above:
+
+```text
+GitHub CI #555 = PASS
+GitHub CI #557 = PASS
+
+D7.5 Final Gate Independent Audit = PASS
+P0/P1/P2 = 0/0/0
+```
+
+The closure sync changes documentation only; it does not alter the production
+or test files covered by those runs.
+
+## Final D7.5 Lifecycle
+
+```text
+D7.0A = REVIEW-CLOSED
+D7.0  = REVIEW-CLOSED
+D7.1  = REVIEW-CLOSED
+D7.2  = REVIEW-CLOSED
+D7.3  = REVIEW-CLOSED
+D7.4  = REVIEW-CLOSED
+
+D7.5  = REVIEW-CLOSED
+D7.5 Round 1 = REVIEW-CLOSED
+D7.5 Round 2 = REVIEW-CLOSED
+D7.5 Final Gate = PASS
+D7.5 Final Gate Independent Audit = PASS
+D7.5 Final Gate P0/P1/P2 = 0/0/0
+GitHub CI #555 = PASS
+GitHub CI #557 = PASS
+
+D7.6  = NOT STARTED
+```
+
+This Final Gate closure does not begin D7.6 or any later phase.
