@@ -14,12 +14,19 @@ Self-review findings: `P0 = 0`, `P1 = 0`, `P2 = 0`
 
 GitHub CI #555: `PASS`
 
+`D7.5 Round 2 = REVIEW-READY`
+
+Round 2 Independent Review: `PENDING`
+
+Round 2 self-review findings: `P0 = 0`, `P1 = 0`, `P2 = 0`
+
 `D7.6 = NOT STARTED`
 
-This document records the Round 1 responsive, viewport, and overflow
-validation only. Round 1 is closed by the docs-only closure sync recorded
-below; D7.5 remains in progress. This document does not begin Round 2 or
-D7.6.
+This document records the closed Round 1 responsive, viewport, and overflow
+validation and the separate Round 2 interaction, accessibility, and locale
+validation. Round 1 remains closed by its docs-only closure sync; D7.5
+remains in progress. Round 2 is review-ready with independent review still
+pending. This document does not begin D7.6.
 
 ## Starting HEAD
 
@@ -44,8 +51,9 @@ Round 1 is limited to the following browser-visible contract:
 - ordinary Vault boundary smoke.
 
 Full keyboard semantics, ARIA semantics, contrast certification, and complete
-locale/accessibility validation remain outside this Round 1 evidence and are
-not being promoted into D7.5 Round 2 here.
+locale/accessibility validation remain outside the Round 1 evidence. The
+separate Round 2 evidence is recorded below without promoting either round
+into a whole-site accessibility certification.
 
 ## Baseline Characterization
 
@@ -306,7 +314,7 @@ This evidence document is the only file added by the following docs commit.
 There are no server/shared/router/tab/schema/package/lockfile/dependency
 changes.
 
-## Final State
+## Round 1 State at Round 1 Closure
 
 ```text
 D7.0A = REVIEW-CLOSED
@@ -326,5 +334,236 @@ D7.5 Round 2 = NOT STARTED
 D7.5 implementation beyond Round 1 = NOT STARTED
 ```
 
-Do not begin Round 2, D7.6, or any unrelated responsive/generic Vault work in
-this Round 1 closure boundary.
+The Round 1 closure boundary did not begin Round 2, D7.6, or unrelated
+responsive/generic Vault work.
+
+## Round 2 — Interaction / Accessibility / Locale
+
+### Round 2 Starting HEAD
+
+`9a35a7c003a3b9000c7f8aca6fb448c65833ad6c`
+
+`docs(diary): close D7.5 round 1 review`
+
+The starting worktree was clean and `github/main` pointed at this exact
+commit. Round 1 was already `REVIEW-CLOSED`; D7.6 remained `NOT STARTED`.
+
+Round 2 was kept separate from the closed responsive round. Its scope was
+limited to real browser characterization of picker keyboard behavior,
+focus-visible behavior, focus restoration, ARIA relationships, selected
+state semantics, Clear, touch activation, locale, and theme interaction.
+
+### Characterization-first Baseline
+
+The new browser suite was written and run against the starting production
+HEAD before any Round 2 production change.
+
+The corrected baseline result was:
+
+```text
+9 tests
+7 passed
+2 failed
+```
+
+The first local run briefly included two assertion mistakes in the new test
+itself (Tab traversal for an out-of-month VCalendar target and an overly
+narrow English label pattern). Those test-only assertions were corrected and
+were not treated as product findings. The remaining two failures were real
+browser observations:
+
+```text
+D7.5-R2-P2-1
+scenario: existing Diary Mood trigger opens the single Calendar picker
+expected: popup semantics describe the actual controlled surface
+actual: aria-haspopup="dialog" pointed at a surface with role="group";
+        the trigger had no aria-controls relationship to the picker
+root cause: stale dialog-shaped ARIA declaration on a non-dialog picker
+severity: P2; the picker remained operable, but the core popup relationship
+          was semantically inaccurate
+
+D7.5-R2-P2-2
+scenario: selected canonical Mood versus an unselected Mood option
+expected: selected state has a visible cue not dependent on color
+actual: computed background/border colors differed, but the visible
+        non-color font/border/style cues were identical
+root cause: selected option label had no non-color visual distinction
+severity: P2; aria-checked was present, but the visible state was color-only
+```
+
+No production change was made before these failures were captured.
+
+### Round 2 Remediation
+
+The focused implementation commit is:
+
+`d53f1d9cc29f75f826227b6bf24e0faa162083ea` `fix(diary): preserve mood accessibility contract`
+
+It contains only two component-local changes:
+
+- Calendar Mood triggers no longer claim `aria-haspopup="dialog"` for the
+  non-dialog picker; only the active trigger exposes `aria-controls`, pointing
+  to the single stable `diary-mood-picker` presentation, while
+  `aria-expanded` remains truthful;
+- the selected option label uses a heavier font weight, providing a visible
+  non-color cue while preserving the selected background, border,
+  `aria-checked`, no-checkmark contract, 4×6 geometry, and one shared picker.
+
+The additional dark-theme keyboard coverage is recorded in:
+
+`48447be39833cc3c2ad0a832531e6c53f16f3a2a` `test(diary): cover dark mood focus semantics`
+
+The initial characterization test commit is:
+
+`ceb2b554f4b1b0c49efeb32c52f3f32d0355fa51` `test(diary): expose D7.5 accessibility regressions`
+
+No Mood catalog IDs/assets/order, server/shared metadata lifecycle, route,
+tab, History, Recovery, Draft Store, CAS, FileTree query ownership,
+dependency, or generic Vault contract was changed.
+
+### Keyboard and Focus Evidence
+
+The dedicated suite
+[`diary-mood-accessibility.spec.ts`](/Users/txx/docus/e2e/diary-mood-accessibility.spec.ts)
+passed 9/9 after remediation. Its real browser assertions prove:
+
+- one picker, one named `radiogroup`, 24 radios, canonical row-major order,
+  exactly one roving `tabindex="0"`, and the selected radio initially focused;
+- ArrowRight/Left/Up/Down preserve the fixed 4 columns × 6 rows with
+  independent row/column clamping at all four corners and representative
+  interior cells;
+- arrows move focus only: they do not change `aria-checked`, issue a Mood
+  PATCH, navigate the route, open a tab, or navigate the Calendar date;
+- Enter, Space, and Clear each produce exactly one authoritative Mood PATCH;
+- Escape and the picker Close button close the presentation and restore focus
+  to the same Calendar Mood trigger without navigation or a write;
+- a missing past date can enter the Mood-first picker by keyboard, while
+  Escape leaves the date absent and creates neither a Diary nor Mood metadata;
+- the Calendar region, date button, Mood trigger, picker, radiogroup, radio
+  names, Close, and Clear expose non-empty accessible names; radio names are
+  unique, `aria-checked` is valid, and `aria-posinset`/`aria-setsize` are
+  consistent from 1..24/24;
+- the Calendar trigger's `aria-expanded` and `aria-controls` correspond to
+  the one mounted picker, and no `✓` is rendered;
+- keyboard-generated focus indicators are visible on the Calendar Mood
+  trigger, selected radio, Clear, and Close in light theme and on the trigger,
+  selected radio, and Clear in dark theme;
+- a real `hasTouch` 375×812 browser context uses `.tap()` to open Mood, select
+  once, Clear once, and keep URL/tab/date navigation unchanged;
+- Chinese light and English dark contexts retain the same 24 IDs, labels,
+  accessible names, selected state, Clear/Close semantics, and picker
+  geometry.
+
+The suite collected `pageerror` and `console.error`; both were empty for all
+Round 2 cases.
+
+### Round 2 Self-review
+
+```text
+Keyboard grid / no-select arrows       PASS
+Enter / Space / Clear exactly once     PASS
+Escape / Close focus restoration       PASS
+Missing-date keyboard cancellation     PASS
+Focus-visible light                    PASS
+Focus-visible dark                     PASS
+ARIA structure and names               PASS
+Popup relationship                     PASS
+24 radios / roving tabindex             PASS
+Selected aria-checked                  PASS
+Selected non-color cue                 PASS
+No checkmark                           PASS
+Real touch activation                  PASS
+zh-CN + light                          PASS
+en-US + dark                           PASS
+
+P0 = 0
+P1 = 0
+P2 = 0
+```
+
+### Round 2 Regression Results
+
+The required regression gates were run after the focused changes. They preserve
+Round 1 and D7.4 lifecycle ownership; they do not reopen either phase:
+
+```text
+D7.5 Round 1 responsive matrix
+e2e/diary-mood-responsive.spec.ts --project=chromium
+2 passed
+
+D7.4 lifecycle and Calendar surface browser suites
+e2e/diary-mood-lifecycle-regression.spec.ts
+e2e/diary-calendar-surface.spec.ts
+27 passed
+
+Focused component/Vault Vitest suite
+6 files, 102 passed
+
+D6 Diary responsive/accessibility, lifecycle, reader, release, and ordinary
+Vault smoke suites
+38 passed after retrying the one existing Monaco teardown cancellation
+
+Full Chromium browser suite
+149 passed
+
+Draft Store browser regression
+38 passed
+
+Full unit suite
+235 test files passed
+3524 passed, 2 skipped
+
+Type checks
+npm run typecheck:client  PASS
+npm run typecheck:server  PASS
+npm run typecheck         PASS
+
+Production build
+npm run build             PASS
+
+Working-tree whitespace validation
+git diff --check         PASS
+```
+
+The initial D6 browser run reported 37 passed plus one existing Monaco
+teardown `Canceled: Canceled` page error; the affected selection was rerun and
+all 8 selected tests passed. No D7.5 assertion failed, and the final evidence
+count for that regression set is 38 passed. The full-unit restricted-sandbox
+attempt was not used because existing crash-child tests hit `EPERM`; the
+authorized rerun above passed in full. The build emitted existing dependency
+annotation/chunk-size warnings but completed successfully.
+
+Round 2 does not begin D7.6 and does not change D7.5's existing lifecycle
+owners.
+
+### Round 2 CI
+
+CI is queried only after the final Round 2 evidence HEAD is pushed. It must
+be reported with the exact run number, run ID, attempt, HEAD, status, and
+conclusion; #555 remains historical Round 1 evidence and is not reused for
+Round 2.
+
+### Round 2 Current State
+
+```text
+D7.0A = REVIEW-CLOSED
+D7.0  = REVIEW-CLOSED
+D7.1  = REVIEW-CLOSED
+D7.2  = REVIEW-CLOSED
+D7.3  = REVIEW-CLOSED
+D7.4  = REVIEW-CLOSED
+
+D7.5  = IN PROGRESS
+D7.5 Round 1 = REVIEW-CLOSED
+D7.5 Round 1 Independent Re-review = PASS (P0/P1/P2 = 0/0/0)
+GitHub CI #555 = PASS
+
+D7.5 Round 2 = REVIEW-READY
+D7.5 Round 2 Independent Review = PENDING
+D7.5 Round 2 Self-review = PASS (P0/P1/P2 = 0/0/0)
+
+D7.6  = NOT STARTED
+```
+
+Do not close D7.5, begin D7.6, reopen Round 1, or add unrelated generic Vault
+accessibility work in this Round 2 boundary.
