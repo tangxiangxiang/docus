@@ -810,7 +810,10 @@ defineExpose({ focusDate, closeMoodPicker })
 
   .diary-calendar-host :deep(.vc-week) {
     flex: 0 0 auto;
-    min-height: 44px;
+    /* The date target and the optional Mood target share each day cell.
+       Keep enough row height for both hit areas so the Mood control cannot
+       enter the following week's date targets on narrow viewports. */
+    min-height: 72px;
   }
 
   .diary-calendar-host :deep(.vc-day-content) {
@@ -819,7 +822,7 @@ defineExpose({ focusDate, closeMoodPicker })
   }
 
   .diary-calendar-day-content {
-    min-height: 44px;
+    min-height: 72px;
   }
 
   .diary-calendar-mood {
