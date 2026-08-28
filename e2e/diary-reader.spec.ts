@@ -422,6 +422,7 @@ test('native Edit keeps the same tab and unsaved raw across presentation toggles
 test('ordinary note, archive, and ledger documents retain the native Vault workspace', async ({ page, request }) => {
   const cases = [
     { scope: 'note', path: 'inbox/d6-native-note-smoke' },
+    { scope: 'note', path: 'literature/d6-native-literature-smoke' },
     { scope: 'note', path: 'archive/d6-native-archive-smoke' },
     { scope: 'ledger', path: 'ledger/d6-native-ledger-smoke' },
   ]
