@@ -10,9 +10,11 @@ Independent Review: `PASS`
 
 Independent Review findings: `P0 = 0`, `P1 = 0`, `P2 = 0`
 
-`D7.4 Round 2 = REVIEW-READY`
+`D7.4 Round 2 = REVIEW-CLOSED`
 
-Independent Review: `PENDING`
+Independent Review: `PASS`
+
+Independent Review findings: `P0 = 0`, `P1 = 0`, `P2 = 0`
 
 Round 2 self-review findings: `P0 = 0`, `P1 = 0`, `P2 = 0`
 
@@ -58,8 +60,9 @@ D7.3  = REVIEW-CLOSED
 D7.4  = IN PROGRESS
 D7.4 Round 1 = REVIEW-CLOSED
 D7.4 Independent Review = PASS
-D7.4 Round 2 = REVIEW-READY
-D7.4 Round 2 Independent Review = PENDING
+D7.4 Round 2 = REVIEW-CLOSED
+D7.4 Round 2 Independent Review = PASS (0/0/0)
+D7.4 Round 2 GitHub CI #547 = PASS
 D7.5  = NOT STARTED
 D7.6  = NOT STARTED
 D7 Mood release = NOT STARTED
@@ -746,5 +749,24 @@ P1 = 0
 P2 = 0
 ```
 
-The independent re-review remains pending. D7.4 Round 2 remains
-`REVIEW-READY`, and D7.5 remains `NOT STARTED`.
+At the time of the test-only evidence commit, the independent re-review was
+pending. The subsequent independent re-review confirmed that both evidence
+gaps were closed, with `P0 = 0`, `P1 = 0`, and `P2 = 0`. GitHub CI `#547`
+then completed successfully for final HEAD `8433d865aa69300bed95a41658e079c3ae621e10`,
+including all required platform verification, browser, unit/integration,
+typecheck, build, and supporting jobs.
+
+This docs-only closure sync records:
+
+```text
+D7.4 Round 2 = REVIEW-CLOSED
+D7.4 Round 2 Independent Re-review = PASS
+P0 = 0
+P1 = 0
+P2 = 0
+GitHub CI #547 = PASS
+D7.5 = NOT STARTED
+```
+
+D7.4 remains `IN PROGRESS` because this closure sync does not start a later
+D7 phase. D7.5 remains `NOT STARTED`.
