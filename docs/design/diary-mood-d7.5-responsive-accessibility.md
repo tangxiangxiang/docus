@@ -14,19 +14,21 @@ Self-review findings: `P0 = 0`, `P1 = 0`, `P2 = 0`
 
 GitHub CI #555: `PASS`
 
-`D7.5 Round 2 = REVIEW-READY`
+`D7.5 Round 2 = REVIEW-CLOSED`
 
-Round 2 Independent Review: `PENDING`
+Round 2 Independent Re-review: `PASS`
 
-Round 2 self-review findings: `P0 = 0`, `P1 = 0`, `P2 = 0`
+Round 2 Independent Re-review findings: `P0 = 0`, `P1 = 0`, `P2 = 0`
+
+GitHub CI #557: `PASS`
 
 `D7.6 = NOT STARTED`
 
 This document records the closed Round 1 responsive, viewport, and overflow
 validation and the separate Round 2 interaction, accessibility, and locale
-validation. Round 1 remains closed by its docs-only closure sync; D7.5
-remains in progress. Round 2 is review-ready with independent review still
-pending. This document does not begin D7.6.
+validation. Round 1 remains closed by its docs-only closure sync; Round 2 is
+closed by its separate docs-only closure sync; D7.5 remains in progress. This
+document does not begin the D7.5 final gate or D7.6.
 
 ## Starting HEAD
 
@@ -538,10 +540,33 @@ owners.
 
 ### Round 2 CI
 
-CI is queried only after the final Round 2 evidence HEAD is pushed. It must
-be reported with the exact run number, run ID, attempt, HEAD, status, and
-conclusion; #555 remains historical Round 1 evidence and is not reused for
-Round 2.
+GitHub Actions CI #557 covered the exact Round 2 implementation/evidence HEAD
+before this docs-only closure sync. It is not reused from the historical Round
+1 CI #555:
+
+```text
+run number: 557
+run ID: 33186412575
+attempt: 2
+HEAD: 3e1a392d575b15492e30df26f28a8bb67a4be9b5
+status: completed
+conclusion: success
+```
+
+Required jobs all passed:
+
+- Ubuntu 22 verify;
+- Ubuntu 24 verify;
+- Windows 24 verify;
+- macOS 24 verify;
+- auth-browser;
+- visual;
+- docker-smoke;
+- tags-scale.
+
+The four platform jobs also passed their typecheck, build, unit/integration,
+cross-platform browser E2E, and Draft Store E2E stages. The closure commit
+does not change the tested implementation or test files.
 
 ### Round 2 Current State
 
@@ -558,12 +583,13 @@ D7.5 Round 1 = REVIEW-CLOSED
 D7.5 Round 1 Independent Re-review = PASS (P0/P1/P2 = 0/0/0)
 GitHub CI #555 = PASS
 
-D7.5 Round 2 = REVIEW-READY
-D7.5 Round 2 Independent Review = PENDING
-D7.5 Round 2 Self-review = PASS (P0/P1/P2 = 0/0/0)
+D7.5 Round 2 = REVIEW-CLOSED
+D7.5 Round 2 Independent Re-review = PASS (P0/P1/P2 = 0/0/0)
+GitHub CI #557 = PASS
 
 D7.6  = NOT STARTED
 ```
 
-Do not close D7.5, begin D7.6, reopen Round 1, or add unrelated generic Vault
+The Round 2 closure sync does not close the overall D7.5 phase or begin its
+final gate. Do not begin D7.6, reopen Round 1, or add unrelated generic Vault
 accessibility work in this Round 2 boundary.
