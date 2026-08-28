@@ -10,6 +10,12 @@ Independent Review: `PASS`
 
 Independent Review findings: `P0 = 0`, `P1 = 0`, `P2 = 0`
 
+`D7.4 Round 2 = REVIEW-READY`
+
+Independent Review: `PENDING`
+
+Round 2 self-review findings: `P0 = 0`, `P1 = 0`, `P2 = 0`
+
 Self-review findings: `P0 = 0`, `P1 = 0`, `P2 = 0`
 
 D7.4 Round 0 starting HEAD: `14b1efdf03a13063420fe344dc36eafc40c61dc8`
@@ -24,6 +30,14 @@ D7.4 Round 1 implementation commit: `8017594d9da4f7ac2e6ab8482fdefdaa3838781f`
 
 D7.4 Round 1 stale-intent remediation commit: `ec4b190a4ad89871021afa46906a77c18ec2fc61`
 (`fix(diary): invalidate stale Mood-first intent`)
+
+D7.4 Round 2 starting HEAD: `658b25fb0edd2e8b5d4e61a8ec3d02c3f52dd479`
+
+D7.4 Round 2 test commit: `b8d721ee5c957b0097a1e22d9602822262754867`
+(`test(diary): cover D7.4 conflict continuity`)
+
+D7.4 Round 2 production remediation commit: `c029408d0e7e44e94f6e3c1c068e07749a82da27`
+(`fix(diary): preserve filter on rejected diary date`)
 
 This document records the D7.4 lifecycle/conflict regression evidence. The
 implementation/evidence phase started as `IN PROGRESS` and stopped at
@@ -41,6 +55,8 @@ D7.3  = REVIEW-CLOSED
 D7.4  = IN PROGRESS
 D7.4 Round 1 = REVIEW-CLOSED
 D7.4 Independent Review = PASS
+D7.4 Round 2 = REVIEW-READY
+D7.4 Round 2 Independent Review = PENDING
 D7.5  = NOT STARTED
 D7.6  = NOT STARTED
 D7 Mood release = NOT STARTED
@@ -116,9 +132,9 @@ included to show the already-verified owner that D7.4 depends on.
 | Clean Mood set, change, and clear | New E2E: `Mood set/change/clear stays separate from a dirty native Diary body`; existing D7.3 Calendar set/clear coverage | PASS |
 | Dirty body plus Mood mutation | New E2E test 1: disk body remains unchanged while the native buffer is dirty; Mood changes independently | PASS |
 | Body save ordering and draft removal | New E2E test 1: real `Ctrl+S` persists the dirty body and removes the draft while Mood and identity remain stable | PASS |
-| Metadata CAS conflict | New E2E test 5 plus `server/__tests__/diary-mood-metadata.test.ts` | PASS |
-| External body conflict | Existing D6.4 real conflict E2E: buffer/disk reconciliation through the native owner | PASS |
-| Unknown Mood value | Focused server metadata tests and D7.2/D7.3 opaque-value coverage | PASS |
+| Metadata CAS conflict | Round 2 clean Calendar conflict and dirty native-body conflict E2E plus `server/__tests__/diary-mood-metadata.test.ts` | PASS |
+| External body conflict | Existing D6.4 real conflict E2E and Round 1 divergent Recovery E2E: buffer/disk reconciliation through the native owner | PASS |
+| Unknown Mood value | Round 2 bulk/detail/explicit-replace-clear server coverage, Calendar opaque-value unit coverage, and D7.2/D7.3 projection coverage | PASS |
 | Dirty History Comparison does not mutate live body | Existing D6.4 History Comparison E2E with a dirty native editor | PASS |
 | v2 History Restore restores matching Mood | New E2E test 2 plus `server/__tests__/history-metadata-revisions.test.ts`; actual native History Restore UI | PASS |
 | Legacy/pre-Mood History Restore preserves current Mood | Focused `history-metadata-revisions` coverage from D7.0/D7.1 | PASS |
@@ -134,7 +150,7 @@ included to show the already-verified owner that D7.4 depends on.
 | Identity continuity | New History/Recovery/CAS tests plus existing native lifecycle suites | PASS |
 | Raw/dirty continuity | New tests 1, 3, and 4 plus D6.4 dirty editor coverage | PASS |
 | Metadata continuity | New tests 1–5 and focused server metadata/history suites | PASS |
-| Calendar continuity | New History Restore/Recovery assertions and existing D6.5/D7.3 Calendar lifecycle | PASS |
+| Calendar continuity | Round 2 conflict/unknown assertions, History Restore/Recovery assertions, and existing D6.5/D7.3 Calendar lifecycle | PASS |
 | No N+1 metadata reads | D7.3 bulk `PostSummary[]` projection contract and static owner audit; no Calendar component fetch was added | PASS |
 | Ordinary Vault regression | Existing D6.5 ordinary Note/Archive/Ledger coverage, focused VaultView tests, and full browser/unit suites | PASS |
 
@@ -452,3 +468,222 @@ D7 Mood release = NOT STARTED
 
 D7.4 Round 1 is independently reviewed and closed. Do not start D7.5 in
 this phase.
+
+## 11. Round 2 — Conflict + Guard Continuity
+
+Round 2 is a focused D7.4 follow-up for conflict continuity and rejected-date
+guard continuity. It does not reopen Round 1 and does not start D7.5.
+
+```text
+Starting HEAD:       658b25fb0edd2e8b5d4e61a8ec3d02c3f52dd479
+Test commit:         b8d721ee5c957b0097a1e22d9602822262754867
+Production fix:      c029408d0e7e44e94f6e3c1c068e07749a82da27
+Round 2 final code:  c029408d0e7e44e94f6e3c1c068e07749a82da27
+```
+
+The Round 2 change set keeps the frozen ownership model: SQLite remains the
+live Mood authority, `useDiaryMoodCommand` remains the CAS mutation owner,
+the native editor remains the raw/dirty/save owner, and `useDiaryDateCommand`
+remains the canonical Diary create/open and future-date guard. No new Mood
+conflict pipeline, metadata cache, route, tab store, recovery owner, or
+server API was introduced.
+
+### 11.1 Missing-future guard and FileTree query
+
+The regression was written and run before the production change. With the
+pre-fix `VaultView` handler, a missing future date changed the persisted
+FileTree query from a generated user query to the rejected date. The browser
+test observed the failure as:
+
+```text
+Expected query: custom D7.4 Round 2 query
+Received query: YYYY-MM-DD future date
+```
+
+The minimal fix in `VaultView.vue` now commits `diaryFilterSeed` and
+`filesFilter` only when the canonical date command returns `opened` or
+`created`. The server future guard is unchanged. A rejected, invalid, or
+future result therefore leaves the user's in-memory and persisted FileTree
+query untouched.
+
+The final browser test,
+`missing future Diary does not overwrite the user FileTree filter`, verifies
+all of the following against a real authenticated app:
+
+- no `POST /api/diary/dates`;
+- no Mood metadata mutation;
+- the future Diary remains absent;
+- no native Diary tab is created;
+- the route and Calendar Home remain unchanged;
+- the custom FileTree query remains in the input and localStorage;
+- the expected future probe is the only accepted 404 diagnostic.
+
+### 11.2 Clean external metadata conflict
+
+`external metadata conflict keeps the Calendar winner and allows a fresh
+retry` seeds a real Diary with body `A` and Mood `happy`, loads that summary
+into Calendar, then performs an external authoritative CAS to `sad`. The
+browser still holds the old `metadataUpdatedAt`; selecting `angry` through the
+real Calendar picker returns `409`.
+
+The test verifies that the external `sad` value wins, body `A` and the stable
+document identity remain unchanged, Calendar refreshes to `sad`, no route or
+Diary tab is created, and a subsequent fresh explicit retry changes the Mood
+to `angry` without navigation.
+
+The expected 409 network diagnostic is asserted explicitly; no unexpected
+page error or console error is ignored.
+
+### 11.3 Dirty native body plus metadata conflict
+
+`external metadata conflict leaves a dirty native body untouched` opens the
+same real Diary in the native editor, creates a persisted dirty draft with
+body `B` while disk remains body `A`, and then performs an external Mood CAS
+from `happy` to `sad`. A stale `angry` metadata request returns `409`.
+
+While that conflict is present, the test verifies that:
+
+- the server-side raw body is still `A`;
+- the native editor still visibly contains dirty body `B`;
+- the tab and dirty indicator remain present;
+- no tab-close confirmation, reload, discard, or route change occurs;
+- the stable document identity remains unchanged;
+- a fresh authoritative retry changes Mood to `angry` without touching the
+  dirty editor buffer;
+- the existing native `Ctrl+S` owner later persists `B` and removes the
+  draft, with Mood still `angry`.
+
+The stale request is sent through the authenticated metadata route because
+Native Mood context UI is intentionally not present in this D7.4 contract.
+This keeps the test at the real CAS authority without adding a second native
+Mood editor or a test-only production path.
+
+### 11.4 External body conflict and Mood continuity
+
+The existing D7.4 divergent Recovery browser scenario remains the body
+conflict evidence. It creates local draft body `B`, mutates disk to `C`, and
+updates the authoritative Mood externally to `sad` before entering the native
+Recovery flow. View Diff, Open Recovered Content, and Use Disk Version remain
+owned by the generic Recovery lifecycle. The final disk body follows the
+selected resolution while the durable Mood remains `sad` and the document
+identity remains stable.
+
+Round 2 did not change the body conflict engine or duplicate its lifecycle;
+it adds the dirty metadata-CAS case above to prove that the two authorities
+can coexist.
+
+### 11.5 Unknown Mood preservation
+
+Unknown Mood values are constructed only through the existing server test DB
+fixture; the public canonical Mood mutation route correctly rejects unknown
+IDs. The new server coverage verifies that `unknown-mood-v1`:
+
+- is returned exactly by the detail document endpoint;
+- is returned exactly by the bulk `/api/posts` summary seam with its document
+  identity and metadata version;
+- can be explicitly replaced with canonical `happy` using CAS;
+- can be explicitly cleared to `NULL` using CAS after it is reintroduced by
+  the fixture;
+- never changes the Markdown body or stable document identity.
+
+Existing body-save coverage additionally confirms that an opaque SQL Mood is
+preserved through a real body `PUT` and returned in the resulting post. The
+Calendar unit test verifies that an unknown Mood renders as the current `?`
+affordance, that opening and cancelling the picker emits no mutation, and
+that only explicit canonical selection or Clear emits replacement/clear.
+Existing projection tests continue to prove that unknown values are joined
+from bulk summaries rather than fetched per day.
+
+The Native workspace intentionally has no separate Mood UI in this contract;
+unknown preservation across native body save and subsequent detail/bulk
+reads is therefore verified at the existing document/metadata authorities,
+without adding a new UI owner.
+
+### 11.6 Round 2 matrix
+
+| Round 2 contract | Evidence | Result |
+| --- | --- | --- |
+| Missing future preserves user FileTree query | `diary-calendar-surface.spec.ts`: `missing future Diary does not overwrite the user FileTree filter` | PASS |
+| Missing future creates no Diary | Same browser test plus existing future no-op test | PASS |
+| Missing future writes no Mood | Same browser test request tracker | PASS |
+| Clean external metadata CAS conflict | `diary-mood-lifecycle-regression.spec.ts`: Calendar winner + fresh retry | PASS |
+| Dirty external metadata CAS conflict | Same file: dirty native body untouched | PASS |
+| Raw/original/dirty separation | Dirty editor buffer, dirty indicator, server raw baseline, and final native save | PASS |
+| Authoritative Mood winner and fresh retry | Clean/dirty CAS tests and server metadata suite | PASS |
+| External body conflict + Mood | Existing divergent Recovery E2E | PASS |
+| Unknown durable detail/bulk read | `server/__tests__/diary-mood-metadata.test.ts` | PASS |
+| Unknown Calendar projection | `DiaryCalendar.test.ts` and `diaryCalendarProjection.test.ts` | PASS |
+| Unknown body save/read continuity | Existing server body-save test plus detail/bulk read coverage | PASS |
+| Unknown open/cancel preservation | `DiaryCalendar.test.ts` | PASS |
+| Unknown explicit replacement | Calendar and server tests | PASS |
+| Unknown explicit Clear | Calendar and server tests | PASS |
+| No N+1 metadata reads | Existing bulk projection seam; no Calendar fetch change in Round 2 | PASS |
+| Ordinary Vault conflict behavior | Native editor lifecycle E2E, full unit, and full browser suites | PASS |
+
+### 11.7 Round 2 validation
+
+The focused and regression commands were run after the final code changes:
+
+| Validation | Result |
+| --- | --- |
+| Focused unit/server: 8 files | **111 passed** |
+| Focused Calendar + Mood lifecycle browser suites | **18 passed** |
+| Native editor lifecycle browser suite | **9 passed** |
+| `npm run test:unit` | **235 files, 3523 passed, 2 skipped** |
+| `npm run test:e2e` | **129 passed** |
+| `npm run typecheck:client` | **PASS** |
+| `npm run typecheck:server` | **PASS** |
+| `npm run typecheck` | **PASS** |
+| `npm run build` | **PASS** |
+| `git diff --check` | **PASS** |
+
+The browser suites used the repository's permitted local web-server
+environment. Build output contained only existing dependency annotation and
+large-chunk warnings; browser output contained known Monaco cancellation
+messages, and no test failed.
+
+### 11.8 Scope audit and lifecycle
+
+Round 2 changed production only in the existing `VaultView` orchestration
+seam, moving the FileTree seed after successful canonical date navigation.
+The test commit added the future guard, clean/dirty CAS, and unknown-value
+coverage. No production server, `shared`, router, schema/migration, package,
+lockfile, or dependency change was made.
+
+```text
+Production code changed: YES — VaultView orchestration only
+Server production changed: NO
+Server tests changed: YES — authoritative metadata characterization
+Shared changed: NO
+Router changed: NO
+Schema/migration changed: NO
+Dependencies changed: NO
+Calendar fetch/N+1 path changed: NO
+D7.5 started: NO
+```
+
+Round 2 self-review:
+
+```text
+P0 = 0
+P1 = 0
+P2 = 0
+```
+
+No new GitHub status was queried for Round 2. The previously recorded Round 1
+CI #544 success remains historical evidence for Round 1; it is not reused as
+a new Round 2 CI claim. Independent Review remains pending until a separate
+reviewer verifies this Round 2 evidence.
+
+Current Round 2 lifecycle:
+
+```text
+D7.4 = IN PROGRESS
+D7.4 Round 1 = REVIEW-CLOSED
+D7.4 Round 1 Independent Review = PASS (0/0/0)
+D7.4 Round 2 = REVIEW-READY
+D7.4 Round 2 Independent Review = PENDING
+D7.5 = NOT STARTED
+```
+
+Round 2 is ready for independent review. Do not start D7.5 in this phase.
