@@ -429,6 +429,116 @@ test('Mood-first creation keeps Calendar visible until Mood CAS succeeds', async
   }
 })
 
+test('failed Mood-first repair intent is invalidated by explicit Diary navigation', async ({ page, request }) => {
+  await expectDiaryTestTimeZone(page)
+  const date = await findUnusedDiaryDate(request)
+  const path = diaryPath(date)
+  let patchAttempts = 0
+  let releaseBlockedPatch!: () => void
+  let markPatchStarted!: () => void
+  const patchStarted = new Promise<void>((resolve) => { markPatchStarted = resolve })
+  const blockedPatch = new Promise<void>((resolve) => { releaseBlockedPatch = resolve })
+  const moodRoute = `**/api/metadata/documents/${path}`
+  const diagnostics = browserDiagnostics(page)
+
+  await page.route(moodRoute, async (route) => {
+    if (route.request().method() !== 'PATCH') {
+      await route.continue()
+      return
+    }
+    patchAttempts += 1
+    if (patchAttempts === 1) {
+      markPatchStarted()
+      await blockedPatch
+      try {
+        await route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'D7.4 forced Mood CAS failure' }),
+        })
+      } catch {
+        // If the assertion above fails, Playwright may dispose the request
+        // before the gate is released. Keep that teardown race from masking
+        // the intended pre-fix lifecycle failure.
+      }
+      return
+    }
+    await route.continue()
+  })
+
+  try {
+    await page.goto('/vault')
+    await expect(page.locator('.file-tree')).toBeVisible()
+    await page.locator('.scope-chip').filter({ hasText: 'diary' }).click()
+    const surface = page.getByTestId('diary-calendar-surface')
+    await expect(surface).toBeVisible()
+    await moveCalendarToMonth(page, date)
+
+    const dateButton = surface.locator(`[data-diary-day-content][data-date="${date}"]`)
+    await expect(dateButton).toBeVisible()
+    await dateButton.click()
+    const picker = page.getByTestId('diary-mood-picker')
+    await expect(picker).toBeVisible()
+    await picker.getByRole('radio', { name: '开心 / Happy' }).click()
+    await patchStarted
+    releaseBlockedPatch()
+
+    await expect.poll(() => patchAttempts).toBe(1)
+    await expect(surface).toBeVisible()
+    await expect(page).toHaveURL(/\/vault(?:[?#]|$)/)
+    await expect(page.locator(`[role="tab"][data-tab-id="${path}"]`)).toHaveCount(0)
+    const created = await request.get(`/api/posts/${path}`)
+    expect(created.status(), await created.text()).toBe(200)
+    const createdBody = await created.json() as { metadata?: { mood?: string | null } }
+    expect(createdBody.metadata?.mood ?? null).toBeNull()
+
+    const repairMood = surface.locator(`[data-testid="diary-calendar-mood"][data-date="${date}"]`)
+    await expect(repairMood).toHaveText('?')
+
+    // Explicit date navigation abandons the failed repair intent. Closing the
+    // native tab returns to Calendar Home without changing that ownership.
+    await dateButton.click()
+    await expect(page).toHaveURL(new RegExp(`/vault/${path.replace('/', '\\/')}(?:[?#]|$)`))
+    const tab = page.locator(`[role="tab"][data-tab-id="${path}"]`)
+    await expect(tab).toHaveAttribute('aria-selected', 'true')
+    await tab.locator('.tab-close').click()
+    await expect(tab).toHaveCount(0)
+    await expect(surface).toBeVisible()
+    await expect(page).toHaveURL(/\/vault(?:[?#]|$)/)
+
+    // This is now an ordinary existing-Diary Mood edit. It must persist the
+    // Mood while staying on Calendar Home; the old failed create cannot make
+    // this later edit reopen the Native Diary.
+    await repairMood.click()
+    await expect(picker).toBeVisible()
+    await picker.getByRole('radio', { name: '开心 / Happy' }).click()
+    await expect.poll(async () => {
+      const response = await request.get(`/api/posts/${path}`)
+      if (response.status() !== 200) return null
+      const body = await response.json() as { metadata?: { mood?: string | null } }
+      return body.metadata?.mood ?? null
+    }).toBe('happy')
+    await expect(picker).toHaveCount(0)
+    await expect(surface).toBeVisible()
+    await expect(page).toHaveURL(/\/vault(?:[?#]|$)/)
+    await expect(page.locator(`[role="tab"][data-tab-id="${path}"]`)).toHaveCount(0)
+  } finally {
+    await page.unroute(moodRoute)
+    await deleteDiaryDate(request, date)
+  }
+
+  expect(diagnostics.pageErrors).toEqual([])
+  expect(diagnostics.consoleErrors).toEqual([
+    'Failed to load resource: the server responded with a status of 404 (Not Found)',
+    'Failed to load resource: the server responded with a status of 500 (Internal Server Error)',
+  ])
+  expect(diagnostics.notFoundResponses).toEqual([{
+    method: 'GET',
+    pathname: `/api/posts/${path}`,
+    status: 404,
+  }])
+})
+
 test('missing today and past dates require Mood before create and then open the native Diary', async ({ page, request }) => {
   await expectDiaryTestTimeZone(page)
   const today = localCivilDate()

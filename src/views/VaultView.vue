@@ -1652,12 +1652,38 @@ const diaryExactPathFilter = computed(() => {
 })
 const diaryFilterSeed = ref('')
 const pendingMoodFirstPresentationDate = ref<DiaryDate | null>(null)
+const pendingMoodFirstPresentationIntent = ref<number | null>(null)
+
+function clearPendingMoodFirstPresentation(): void {
+  pendingMoodFirstPresentationDate.value = null
+  pendingMoodFirstPresentationIntent.value = null
+}
+
+function hasPendingMoodFirstPresentation(date: DiaryDate): boolean {
+  const intent = pendingMoodFirstPresentationIntent.value
+  return pendingMoodFirstPresentationDate.value === date
+    && intent !== null
+    && diaryWorkspacePresentation.isDateIntentCurrent(intent)
+}
+
+function rememberPendingMoodFirstPresentation(date: DiaryDate, intent: number | null): void {
+  if (intent === null) return
+  if (!diaryWorkspacePresentation.isDateIntentCurrent(intent)) {
+    if (pendingMoodFirstPresentationIntent.value === intent) {
+      clearPendingMoodFirstPresentation()
+    }
+    return
+  }
+  pendingMoodFirstPresentationDate.value = date
+  pendingMoodFirstPresentationIntent.value = intent
+}
 
 // Keep the ordinary FileTree search input useful in the Diary context. Seed
 // it only when entering/leaving the Diary scope; it is user-owned afterwards
 // and must not change when a file or another Diary tab is clicked.
 watch(isDiaryScope, (inDiaryScope) => {
   if (!inDiaryScope) {
+    clearPendingMoodFirstPresentation()
     diaryFilterSeed.value = ''
     filesFilter.value = ''
     return
@@ -1668,6 +1694,19 @@ watch(isDiaryScope, (inDiaryScope) => {
     filesFilter.value = date
   }
 }, { immediate: true })
+
+// A pending Mood-first repair is scoped to the current Diary presentation.
+// Special surfaces and scope exit reset that presentation, so a later
+// existing-Diary Mood edit must not inherit the old navigation intent.
+watch(diaryPresentationEligible, (eligible) => {
+  if (!eligible) clearPendingMoodFirstPresentation()
+}, { flush: 'sync' })
+watch(() => activePath.value, (path, previousPath) => {
+  if (path !== previousPath && pendingMoodFirstPresentationDate.value !== null) {
+    clearPendingMoodFirstPresentation()
+  }
+}, { flush: 'sync' })
+
 watch(selectedDiaryDate, (date) => {
   if (!isDiaryScope.value || !date) return
   // Follow Calendar date navigation only while the query still contains the
@@ -1684,7 +1723,10 @@ watch(selectedDiaryDate, (date) => {
 // from Calendar Home must close that context without trying to restore focus
 // to a trigger that is about to be hidden.
 watch(isDiaryCalendarVisible, (visible, wasVisible) => {
-  if (wasVisible && !visible) diaryCalendarSurfaceRef.value?.closeMoodPicker(false)
+  if (!visible) {
+    clearPendingMoodFirstPresentation()
+    if (wasVisible) diaryCalendarSurfaceRef.value?.closeMoodPicker(false)
+  }
 }, { flush: 'sync' })
 
 const diaryMoodBusy = ref(false)
@@ -1714,14 +1756,25 @@ async function refreshAfterMoodRejection(): Promise<void> {
 async function updateDiaryCalendarMood(date: DiaryDate, mood: MoodId | null): Promise<void> {
   if (diaryMoodBusy.value) return
 
+  // A retry is only allowed to inherit the presentation handoff for the
+  // exact date and still-current presentation epoch that created it. Any
+  // other Mood action, or an invalidated epoch, starts a fresh context.
+  if (
+    pendingMoodFirstPresentationDate.value !== null
+    && !hasPendingMoodFirstPresentation(date)
+  ) {
+    clearPendingMoodFirstPresentation()
+  }
+
   const path = diaryLogicalPathForDate(date)
   let post = posts.value.find((candidate) => candidate.path === path)
   if (mood === null && !post) return
-  const shouldPresentAfterMutation = !post || pendingMoodFirstPresentationDate.value === date
+  const pendingRepair = hasPendingMoodFirstPresentation(date)
+  const shouldPresentAfterMutation = !post || pendingRepair
   const presentationIntent = shouldPresentAfterMutation
     ? diaryWorkspacePresentation.beginDateIntent()
     : null
-  let dateReadyForPresentation = pendingMoodFirstPresentationDate.value === date
+  let dateReadyForPresentation = pendingRepair
 
   diaryMoodBusy.value = true
   try {
@@ -1764,7 +1817,7 @@ async function updateDiaryCalendarMood(date: DiaryDate, mood: MoodId | null): Pr
         // Creation is authoritative even when the fresh metadata version is
         // temporarily unavailable. Keep the date repairable in Calendar and
         // defer native presentation until a later Mood CAS succeeds.
-        pendingMoodFirstPresentationDate.value = date
+        rememberPendingMoodFirstPresentation(date, presentationIntent)
       }
       toast.error(t('mood.failed', { error: t('mood.metadata_unavailable') }))
       return
@@ -1775,7 +1828,12 @@ async function updateDiaryCalendarMood(date: DiaryDate, mood: MoodId | null): Pr
       await onMetadataSaved(result.metadata)
       diaryCalendarSurfaceRef.value?.closeMoodPicker(!shouldPresentAfterMutation)
       toast.success(t('mood.saved'))
-      if (shouldPresentAfterMutation && dateReadyForPresentation && presentationIntent !== null) {
+      if (
+        shouldPresentAfterMutation
+        && dateReadyForPresentation
+        && presentationIntent !== null
+        && diaryWorkspacePresentation.isDateIntentCurrent(presentationIntent)
+      ) {
         // A missing-date Mood-first flow only owns the FileTree seed after
         // the canonical Diary create and authoritative Mood CAS both commit.
         // Existing-date edits, clears, conflicts, and cancellations never
@@ -1783,11 +1841,14 @@ async function updateDiaryCalendarMood(date: DiaryDate, mood: MoodId | null): Pr
         // call is now safe: Mood CAS has already committed, so it can use the
         // existing native date-opening lifecycle without exposing a document
         // during a failed Mood mutation.
+        // The repair handoff is one-shot: consume it before attempting the
+        // native open so a failed handoff cannot make a later ordinary Mood
+        // edit navigate unexpectedly.
+        clearPendingMoodFirstPresentation()
         diaryFilterSeed.value = date
         filesFilter.value = date
         const openResult = await openDiaryDate(date)
         if (openResult.status === 'opened' || openResult.status === 'created') {
-          pendingMoodFirstPresentationDate.value = null
           await presentDiaryDateResult(openResult, presentationIntent)
         }
       }
@@ -1796,7 +1857,7 @@ async function updateDiaryCalendarMood(date: DiaryDate, mood: MoodId | null): Pr
         // Creation is authoritative even when Mood CAS fails. Keep the
         // created file as an existing '?' repair target, but defer native
         // Diary presentation until a later Mood CAS succeeds.
-        pendingMoodFirstPresentationDate.value = date
+        rememberPendingMoodFirstPresentation(date, presentationIntent)
       }
       if (result.status === 'not-found') toast.info(t('mood.not_found'))
       if (result.status === 'conflict' || result.status === 'not-found' || result.status === 'error') {
@@ -1810,6 +1871,9 @@ async function updateDiaryCalendarMood(date: DiaryDate, mood: MoodId | null): Pr
 
 async function onDiaryDateSelected(date: DiaryDate): Promise<void> {
   diaryCalendarSurfaceRef.value?.closeMoodPicker(false)
+  // Explicit date navigation abandons any deferred Mood-first handoff for a
+  // previous repair context, including when it targets the same date.
+  clearPendingMoodFirstPresentation()
   // A Calendar date click is an explicit navigation intent, so keep the
   // ordinary FileTree query aligned with the selected Diary date. FileTree
   // clicks never reach this handler and therefore cannot rewrite the query.
