@@ -4,16 +4,22 @@
 
 `D7.5 = IN PROGRESS`
 
-`D7.5 Round 1 = REVIEW-READY`
+`D7.5 Round 1 = REVIEW-CLOSED`
 
-Independent Review: `PENDING`
+Independent Re-review: `PASS`
 
-Independent Review findings: `P0 = 0`, `P1 = 0`, `P2 = 0` (self-review)
+Independent Re-review findings: `P0 = 0`, `P1 = 0`, `P2 = 0`
+
+Self-review findings: `P0 = 0`, `P1 = 0`, `P2 = 0`
+
+GitHub CI #555: `PASS`
 
 `D7.6 = NOT STARTED`
 
 This document records the Round 1 responsive, viewport, and overflow
-validation only. It does not close D7.5, begin Round 2, or begin D7.6.
+validation only. Round 1 is closed by the docs-only closure sync recorded
+below; D7.5 remains in progress. This document does not begin Round 2 or
+D7.6.
 
 ## Starting HEAD
 
@@ -224,14 +230,32 @@ IPC sockets and reported `EPERM`. The authorized rerun above passed in full.
 
 ## CI
 
-The final evidence commit must be pushed before querying GitHub Actions. CI
-for that exact final evidence HEAD is therefore intentionally not claimed in
-this document yet. Historical D7.4 CI #552 is not reused as D7.5 evidence.
+GitHub Actions CI #555 covered the exact Round 1 implementation/evidence
+HEAD before this closure-only commit:
 
-After push, record the exact run number, run ID, attempt, HEAD, status,
-conclusion, and the required Ubuntu 22, Ubuntu 24, Windows 24, macOS 24,
-auth-browser, visual, docker-smoke, and tags-scale jobs. This Round 1 status
-does not become `REVIEW-CLOSED` based on an unqueried or in-progress run.
+```text
+run number: 555
+run ID: 33179840394
+attempt: 1
+HEAD: 5838773095d3468630c0789b7152cb8a48825b16
+status: completed
+conclusion: success
+```
+
+Required jobs all passed:
+
+- Ubuntu 22 verify;
+- Ubuntu 24 verify;
+- Windows 24 verify;
+- macOS 24 verify;
+- auth-browser;
+- visual;
+- docker-smoke;
+- tags-scale.
+
+The four platform jobs also passed their typecheck, build, unit/integration,
+cross-platform browser E2E, and Draft Store E2E stages. The docs-only closure
+sync does not change the tested production or test implementation.
 
 ## Findings and Self-review
 
@@ -241,6 +265,15 @@ remediation and the real browser geometry proof above.
 Current self-review:
 
 ```text
+P0 = 0
+P1 = 0
+P2 = 0
+```
+
+Independent Re-review:
+
+```text
+PASS
 P0 = 0
 P1 = 0
 P2 = 0
@@ -284,8 +317,9 @@ D7.3  = REVIEW-CLOSED
 D7.4  = REVIEW-CLOSED
 
 D7.5  = IN PROGRESS
-D7.5 Round 1 = REVIEW-READY
-D7.5 Independent Review = PENDING
+D7.5 Round 1 = REVIEW-CLOSED
+D7.5 Round 1 Independent Re-review = PASS (P0/P1/P2 = 0/0/0)
+GitHub CI #555 = PASS
 
 D7.6  = NOT STARTED
 D7.5 Round 2 = NOT STARTED
