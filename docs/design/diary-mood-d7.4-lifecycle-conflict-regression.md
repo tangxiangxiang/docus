@@ -27,10 +27,13 @@ Independent Re-review: `FAIL` — `P0 = 0`, `P1 = 0`, `P2 = 1`
 Re-review findings:
 
 ```text
-D7.4-R3-P2-3 OPEN at 2e853ae:
-user edits are not recorded as a provenance transition; a query edited away
-and then back to the Calendar date is still treated as a system seed and can
-be cleared or projected as an exact Diary path.
+D7.4-R3-P2-4 OPEN at d28c2ab:
+a user-owned empty query is indistinguishable from a fresh empty query after
+refresh, so Diary bootstrap can re-seed the active Diary date.
+
+D7.4-R3-P2-3 CLOSED at 5f4bda4:
+user edits are now an explicit provenance transition; a query edited away and
+then back to the Calendar date remains user-owned.
 
 D7.4-R3-P2-2 CLOSED at 57ba3409:
 Calendar-seed provenance now survives refresh alongside the FileTree query.
@@ -86,6 +89,9 @@ D7.4 Round 3 review P2 remediation commit: `57ba340964cfa935756657be0b841a3f7429
 D7.4 Round 3 user-edit provenance remediation commit: `5f4bda4b313e641dca116017d401bb9a5a9b9b37`
 (`fix(diary): track user-owned FileTree query`)
 
+D7.4 Round 3 empty-query ownership remediation commit: `f461496`
+(`fix(diary): preserve user-owned empty query`)
+
 This document records the D7.4 lifecycle/conflict regression evidence. The
 implementation/evidence phase started as `IN PROGRESS` and stopped at
 `REVIEW-READY`. After the Round 1 independent re-review passed, this closure
@@ -109,6 +115,7 @@ D7.4 Round 3 = REVIEW-READY
 D7.4 Round 3 Independent Re-review = PENDING
 D7.4-R3-P2-2 = CLOSED (by 57ba3409)
 D7.4-R3-P2-3 = CLOSED (by 5f4bda4)
+D7.4-R3-P2-4 = CLOSED (by f461496)
 D7.4 Round 3 GitHub CI #549 = PASS (at f2ccccc; historical evidence)
 D7.5  = NOT STARTED
 D7.6  = NOT STARTED
@@ -1194,6 +1201,98 @@ D7.4 Round 3 Independent Re-review = PENDING
 D7.4 Round 3 Self-review P0/P1/P2 = 0/0/0
 D7.4-R3-P2-2 = CLOSED (by 57ba3409)
 D7.4-R3-P2-3 = CLOSED (by 5f4bda4)
+D7.5 = NOT STARTED
+```
+
+This remediation is ready for independent re-review. Do not start D7.5 in
+this phase.
+
+### 12.8 Round 3 P2-4 remediation — user-owned empty query must survive refresh
+
+The independent re-review of `d28c2ab` found one narrower continuation of the
+FileTree ownership boundary:
+
+```text
+D7.4-R3-P2-4
+Root cause: a user-cleared query and a fresh empty query both ended as
+`diaryFilterSeed = ''` and `filesFilter = ''`. After refresh, Diary bootstrap
+could therefore treat the active Diary document as permission to seed its
+date again.
+```
+
+The focused remediation commit `f461496`
+(`fix(diary): preserve user-owned empty query`) adds an explicit persisted
+ownership state without changing the FileTree component contract:
+
+- `DiaryFilterOwnership` is persisted as `none`, `calendar`, or `user` under
+  `docus.diary.filter-ownership`;
+- the existing `@update:filter` boundary marks every user edit as `user`,
+  including an empty string, and clears the Calendar seed;
+- Diary bootstrap and `selectedDiaryDate` follow-up watchers do not seed while
+  the query is user-owned, so a cleared query remains empty after refresh and
+  Diary scope re-entry;
+- Calendar/date navigation writes the query and seed together and marks the
+  state `calendar`; scope exit clears only an unchanged Calendar seed and
+  returns that state to `none`;
+- Diary exact-path projection now also requires `calendar` ownership, so a
+  user who types the same date again does not recreate the projection;
+- intact pre-ownership seed/query pairs migrate to `calendar`; a previously
+  user-edited non-empty query remains ordinary user state.
+
+The fix remains local to `VaultView` orchestration and its regression
+coverage. It does not modify the FileTree component, router, generic tab
+store, server, shared protocol, metadata, schema, package, lockfile, or
+dependencies.
+
+The new browser regression is:
+
+```text
+Calendar click Diary A
+→ query = A
+→ user clears the query
+→ persisted ownership = user
+→ refresh
+→ query remains empty
+→ another Diary is visible, proving exact-path projection is off
+→ leave Diary scope
+→ ordinary Note tree still has an empty query
+```
+
+It is a real authenticated browser flow. It also asserts that refresh,
+scope transition, and the empty query do not create a Diary or issue a Mood
+mutation.
+
+Validation after `f461496`:
+
+| Command | Result |
+| --- | --- |
+| Focused empty-query E2E: `diary-mood-lifecycle-regression.spec.ts --grep "user-owned empty query"` | **1 passed** |
+| D7.4 + D6.5/D7.3 Diary browser suites | **43 passed** |
+| `npx vitest run src/views/__tests__/VaultView.test.ts` | **41 passed** |
+| `npm run test:unit` | **235 files, 3524 passed, 2 skipped** |
+| `npm run typecheck` | **PASS** (client and server) |
+| `npm run build` | **PASS** |
+| `git diff --check` | **PASS** |
+
+The first unprivileged focused browser attempt was blocked by the local
+environment's `127.0.0.1:4174` server-bind `EPERM`; the same test passed in the
+permitted local E2E environment. Unit tests were also run in the permitted
+local environment. Build output retains the repository's existing dependency
+annotation and large-chunk warnings; test output retains known environment
+informational warnings.
+
+The current Round 3 lifecycle remains:
+
+```text
+D7.4 = IN PROGRESS
+D7.4 Round 1 = REVIEW-CLOSED
+D7.4 Round 2 = REVIEW-CLOSED
+D7.4 Round 3 = REVIEW-READY
+D7.4 Round 3 Independent Re-review = PENDING
+D7.4 Round 3 Self-review P0/P1/P2 = 0/0/0
+D7.4-R3-P2-2 = CLOSED (by 57ba3409)
+D7.4-R3-P2-3 = CLOSED (by 5f4bda4)
+D7.4-R3-P2-4 = CLOSED (by f461496)
 D7.5 = NOT STARTED
 ```
 
