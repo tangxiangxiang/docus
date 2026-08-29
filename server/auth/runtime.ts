@@ -19,6 +19,7 @@ import {
 import type { AuthConfig } from './config.js'
 import { AuthService } from './service.js'
 import { DiaryAccessService } from '../diaryAccess/service.js'
+import { findSessionById } from './session.js'
 
 export type AuthRuntime = {
   readonly db: DatabaseT
@@ -29,6 +30,7 @@ export type AuthRuntime = {
   readonly kdfGuard: KdfGuard
   readonly service: AuthService
   readonly diaryAccess: DiaryAccessService
+  readonly diaryUnlockLimiter: AuthRateLimiter
 }
 
 export type AuthRuntimeOptions = {
@@ -39,6 +41,7 @@ export type AuthRuntimeOptions = {
   readonly kdfGuard?: KdfGuard
   readonly loginLimiter?: AuthRateLimiter
   readonly setupLimiter?: AuthRateLimiter
+  readonly diaryUnlockLimiter?: AuthRateLimiter
   readonly rateLimiterOptions?: RateLimiterOptions
   readonly now?: () => number
   readonly diaryAccessVaultId?: () => string
@@ -66,6 +69,8 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
       maxBuckets: Math.min(options.rateLimiterOptions?.maxBuckets ?? SETUP_MAX_BUCKETS, SETUP_MAX_BUCKETS),
     })
   const kdfGuard = options.kdfGuard ?? defaultKdfGuard
+  const diaryUnlockLimiter = options.diaryUnlockLimiter
+    ?? new AuthRateLimiter(options.rateLimiterOptions)
   const service = new AuthService({
     db: options.db,
     bootstrap,
@@ -80,6 +85,13 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
     kdfGuard,
     now: options.now,
     getVaultId: options.diaryAccessVaultId,
+    unlockLimiter: diaryUnlockLimiter,
+    resolveAuthSession: (sessionId) => {
+      const lookup = findSessionById(options.db, sessionId, options.now?.() ?? Date.now())
+      return lookup.status === 'valid' && lookup.session
+        ? { valid: true, expiresAt: lookup.session.expiresAt }
+        : { valid: false }
+    },
   })
   const runtime: AuthRuntime = {
     db: options.db,
@@ -90,6 +102,7 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
     kdfGuard,
     service,
     diaryAccess,
+    diaryUnlockLimiter,
   }
 
   if (options.config.revokeSessionsOnStart) {

@@ -28,6 +28,9 @@ function runtimeOrError(c: any) {
 function serviceError(c: any, error: unknown): Response {
   noStore(c)
   if (error instanceof DiaryAccessServiceError) {
+    if (error.retryAfterMs !== undefined) {
+      c.header('Retry-After', String(Math.max(1, Math.ceil(error.retryAfterMs / 1000))))
+    }
     return c.json({ error: error.message, code: error.code }, error.status)
   }
   return c.json({ error: 'Diary access is temporarily unavailable.', code: 'diary-access-unavailable' }, 503)

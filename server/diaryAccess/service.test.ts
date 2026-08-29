@@ -14,12 +14,17 @@ function makeService(
   db: Database.Database,
   now = 1_700_000_000_000,
   vaultId = VAULT_ID,
+  resolveAuthSession: (sessionId: number) => { valid: boolean; expiresAt?: number } = () => ({
+    valid: true,
+    expiresAt: now + 60_000,
+  }),
 ): DiaryAccessService {
   return new DiaryAccessService({
     db,
     kdfGuard: new KdfGuard({ concurrency: 1, maxQueue: 2, maxQueueWaitMs: 10_000 }),
     now: () => now,
     getVaultId: () => vaultId,
+    resolveAuthSession,
   })
 }
 
@@ -120,5 +125,47 @@ describe('D8.1 Diary access foundation', () => {
     expect(second.nonce.equals(first.nonce)).toBe(false)
     kek.fill(0)
     dek.fill(0)
+  })
+
+  it('fails closed when auth is invalidated during KDF and expires capabilities per session', async () => {
+    const db = new Database(':memory:')
+    applyMigrations(db)
+    let now = 1_700_000_000_000
+    const valid = new Map<number, boolean>([[7, true], [8, true]])
+    const expiresAt = new Map<number, number>([[7, now + 10_000], [8, now + 20_000]])
+    const service = makeService(db, now, VAULT_ID, (sessionId) => ({
+      valid: valid.get(sessionId) === true,
+      expiresAt: expiresAt.get(sessionId),
+    }))
+    const first = await service.setup(7, PASSWORD)
+    const second = await service.unlock(8, PASSWORD)
+
+    service.lock(7)
+    const pending = service.unlock(7, PASSWORD)
+    valid.set(7, false)
+    await expect(pending).rejects.toMatchObject({
+      code: 'diary-access-auth-session-invalid',
+      status: 401,
+    })
+    expect(service.isCapabilityValid(7, first.capability)).toBe(false)
+    expect(service.isCapabilityValid(8, second.capability)).toBe(true)
+
+    now += 20_001
+    // The service clock is captured by makeService, so create a second owner
+    // over the same config to prove absolute auth-session expiry cleanup.
+    const expiring = new DiaryAccessService({
+      db,
+      kdfGuard: new KdfGuard({ concurrency: 1, maxQueue: 2, maxQueueWaitMs: 10_000 }),
+      now: () => now,
+      getVaultId: () => VAULT_ID,
+      resolveAuthSession: (sessionId) => ({
+        valid: valid.get(sessionId) === true,
+        expiresAt: expiresAt.get(sessionId),
+      }),
+    })
+    await expect(expiring.unlock(8, PASSWORD)).rejects.toMatchObject({
+      code: 'diary-access-auth-session-invalid',
+    })
+    db.close()
   })
 })

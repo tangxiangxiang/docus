@@ -725,6 +725,33 @@ describe('AI Diary mutation contract', () => {
     expect(fs.existsSync(path.join(contentDir, 'diary', 'legacy.md'))).toBe(false)
     expect(fs.existsSync(path.join(contentDir, 'inbox', 'legacy.md'))).toBe(true)
   })
+
+  it('authorizes every managed Diary backlink before rename reads its raw body', async () => {
+    writeFile('notes/source.md', '# source\n')
+    writeFile('diary/2000-05-04.md', 'private [[notes/source]] body')
+    saveDocumentMetadata(db, { path: 'notes/source', title: 'source' })
+    saveDocumentMetadata(db, { path: 'diary/2000-05-04', title: '2000-05-04' })
+    await getLinkIndex()
+    const originalReader = fs.readFileSync
+    const bodyReads: string[] = []
+    const reader = vi.spyOn(fs, 'readFileSync').mockImplementation(((file: fs.PathOrFileDescriptor, ...args: unknown[]) => {
+      if (String(file).endsWith(path.join('diary', '2000-05-04.md'))) bodyReads.push(String(file))
+      return originalReader(file, ...(args as [any]))
+    }) as typeof fs.readFileSync)
+    try {
+      const result = await executeToolCall('rename_file', {
+        path: 'notes/source', new_path: 'notes/renamed',
+      }, {
+        ...ctx,
+        diaryBodyAccess: (logicalPath) => logicalPath !== 'diary/2000-05-04',
+      })
+      expect(result.isError).toBe(true)
+      expect(result.content).toContain('Diary body access is locked')
+      expect(bodyReads).toEqual([])
+    } finally {
+      reader.mockRestore()
+    }
+  })
 })
 
 describe('TOOL_DEFINITIONS', () => {

@@ -9,6 +9,7 @@ import {
   type AuthenticatedTestContext,
 } from './helpers/auth.js'
 import { revokeSessionById } from '../auth/session.js'
+import { createSession } from '../auth/session.js'
 
 const PASSWORD = 'diary-access-route-password'
 
@@ -135,5 +136,73 @@ describe('D8.1 Diary access routes', () => {
     expect(status.status).toBe(401)
     expect(await status.json()).toMatchObject({ code: 'auth-session-required' })
     expect(context.runtime.diaryAccess.isCapabilityValid(context.session.id, capability)).toBe(false)
+  })
+
+  it('isolates simultaneous unlock, lock, logout, and cross-session capability use', async () => {
+    const setup = await app.fetch(protectedJson('/api/diary/access/setup', { password: PASSWORD }))
+    const first = await setup.json() as { capability: string }
+    const secondSession = createSession(context.db, context.userId)
+    const secondContext = {
+      cookie: `${context.runtime.config.cookie.name}=${secondSession.rawToken}`,
+    }
+    const secondUnlock = await app.fetch(jsonRequest('/api/diary/access/unlock', {
+      method: 'POST',
+      origin: context.runtime.config.publicOrigin,
+      cookie: secondContext.cookie,
+      body: { password: PASSWORD },
+    }))
+    expect(secondUnlock.status).toBe(200)
+    const second = await secondUnlock.json() as { capability: string }
+
+    expect(context.runtime.diaryAccess.isCapabilityValid(context.session.id, first.capability)).toBe(true)
+    expect(context.runtime.diaryAccess.isCapabilityValid(secondSession.session.id, second.capability)).toBe(true)
+    expect(context.runtime.diaryAccess.isCapabilityValid(secondSession.session.id, first.capability)).toBe(false)
+
+    const secondLock = await app.fetch(withDiaryCapability(
+      secondContext,
+      jsonRequest('/api/diary/access/lock', {
+        method: 'POST', origin: context.runtime.config.publicOrigin, cookie: secondContext.cookie,
+      }),
+      second.capability,
+    ))
+    expect(secondLock.status).toBe(200)
+    expect(context.runtime.diaryAccess.isCapabilityValid(context.session.id, first.capability)).toBe(true)
+    expect(context.runtime.diaryAccess.isCapabilityValid(secondSession.session.id, second.capability)).toBe(false)
+
+    const secondAgain = await context.runtime.diaryAccess.unlock(secondSession.session.id, PASSWORD)
+    const logout = await app.fetch(jsonRequest('/api/auth/logout', {
+      method: 'POST', origin: context.runtime.config.publicOrigin, cookie: context.cookie,
+    }))
+    expect(logout.status).toBe(204)
+    expect(context.runtime.diaryAccess.isCapabilityValid(context.session.id, first.capability)).toBe(false)
+    expect(context.runtime.diaryAccess.isCapabilityValid(secondSession.session.id, secondAgain.capability)).toBe(true)
+  })
+
+  it('throttles wrong secondary-password guesses per auth session and resets after success', async () => {
+    closeAuthTestContext(context)
+    let now = 1_700_000_000_000
+    context = createAuthenticatedTestContext({
+      now: () => now,
+      rateLimiterOptions: { threshold: 2, baseRetryMs: 1_000, maxDelayMs: 5_000 },
+    })
+    await app.fetch(protectedJson('/api/diary/access/setup', { password: PASSWORD }))
+    context.runtime.diaryAccess.lock(context.session.id)
+
+    const firstWrong = await app.fetch(protectedJson('/api/diary/access/unlock', { password: 'wrong-password-one' }))
+    const limited = await app.fetch(protectedJson('/api/diary/access/unlock', { password: 'wrong-password-two' }))
+    expect(firstWrong.status).toBe(401)
+    expect(limited.status).toBe(429)
+    expect(limited.headers.get('retry-after')).toBe('1')
+
+    const secondSession = createSession(context.db, context.userId, { now })
+    await expect(context.runtime.diaryAccess.unlock(secondSession.session.id, 'wrong-password-three'))
+      .rejects.toMatchObject({ status: 401 })
+
+    now += 1_001
+    await expect(context.runtime.diaryAccess.unlock(context.session.id, PASSWORD)).resolves.toMatchObject({ state: 'UNLOCKED' })
+    context.runtime.diaryAccess.lock(context.session.id)
+    await expect(context.runtime.diaryAccess.unlock(context.session.id, 'wrong-password-again'))
+      .rejects.toMatchObject({ status: 401 })
+    expect(context.runtime.diaryUnlockLimiter.size).toBeLessThanOrEqual(context.runtime.diaryUnlockLimiter.maxBuckets)
   })
 })

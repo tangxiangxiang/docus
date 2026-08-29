@@ -25,9 +25,32 @@ import { CONTENT_DIR, filePathFor, normalizeLogicalContentPath } from '../paths.
 import { classifyDiaryPath } from '../../shared/diaryProtocol.js'
 import { isMoodId, type MoodId } from '../../shared/diaryMood.js'
 import { bad, ensureMetadata, exists, metadataDb } from './shared.js'
-import { requireDiaryBodyAccess, requireDiaryVaultBodyAccess } from '../diaryAccess/guard.js'
+import {
+  hasDiaryBodyAccess,
+  requireDiaryBodyAccess,
+  requireDiaryVaultBodyAccess,
+} from '../diaryAccess/guard.js'
+import { DIARY_ACCESS_CAPABILITY_HEADER } from '../diaryAccess/service.js'
 
 const metadataRoutes = new Hono()
+
+function managedDiaryMetadataIsUnlocked(c: any, path: string): boolean {
+  if (classifyDiaryPath(path) !== 'managed') return true
+  return hasDiaryBodyAccess(
+    c.get('authSessionId'),
+    c.req.header(DIARY_ACCESS_CAPABILITY_HEADER),
+  )
+}
+
+function publicManagedDiaryMetadata(metadata: ReturnType<typeof getDocumentMetadataById>) {
+  if (!metadata) return metadata
+  return {
+    ...metadata,
+    title: metadata.path.split('/').pop() ?? metadata.path,
+    summary: '',
+    tags: [],
+  }
+}
 
 let activeMetadataMigration: Promise<Awaited<ReturnType<typeof migrateVaultMetadata>>> | null = null
 
@@ -114,7 +137,9 @@ metadataRoutes.post('/api/metadata/restore', async (c) => {
 metadataRoutes.get('/api/metadata/documents/:id', (c) => {
   const metadata = getDocumentMetadataById(metadataDb(), c.req.param('id'))
   if (!metadata) return bad(c, 'not found', 404)
-  return c.json(metadata)
+  return c.json(managedDiaryMetadataIsUnlocked(c, metadata.path)
+    ? metadata
+    : publicManagedDiaryMetadata(metadata))
 })
 
 metadataRoutes.patch('/api/metadata/documents/*', async (c) => {
@@ -126,6 +151,16 @@ metadataRoutes.patch('/api/metadata/documents/*', async (c) => {
   const body = await c.req.json().catch(() => null) as Record<string, unknown> | null
   if (!body || Array.isArray(body)) return bad(c, 'body required')
 
+  const logicalPath = normalizeLogicalContentPath(documentPath)
+  const isManagedDiary = logicalPath !== null && classifyDiaryPath(logicalPath) === 'managed'
+  const hasPrivateChange = Object.hasOwn(body, 'title')
+    || Object.hasOwn(body, 'summary')
+    || Object.hasOwn(body, 'tags')
+  if (isManagedDiary && hasPrivateChange) {
+    const bodyAccess = requireDiaryBodyAccess(c, documentPath)
+    if (bodyAccess) return bodyAccess
+  }
+
   // Validate the Diary-only field before ensureMetadata() can create a live
   // row for an otherwise legacy file. A rejected Mood request must not leave
   // behind metadata on an ordinary or unmanaged Diary path.
@@ -133,7 +168,6 @@ metadataRoutes.patch('/api/metadata/documents/*', async (c) => {
   let hasMoodChange = false
   if (Object.hasOwn(body, 'mood')) {
     hasMoodChange = true
-    const logicalPath = normalizeLogicalContentPath(documentPath)
     if (logicalPath === null || classifyDiaryPath(logicalPath) !== 'managed') {
       return c.json({
         error: 'mood is only available for canonical managed Diary dates',
@@ -205,7 +239,9 @@ metadataRoutes.patch('/api/metadata/documents/*', async (c) => {
       idx.setTitle(documentPath, saved.title)
     } catch { /* next rebuild repairs a stale display title */ }
   }
-  return c.json(saved)
+  return c.json(isManagedDiary && !managedDiaryMetadataIsUnlocked(c, documentPath)
+    ? publicManagedDiaryMetadata(saved)
+    : saved)
   })
 })
 

@@ -162,17 +162,19 @@ export async function listPostsFlat(
     const fm = isManagedDiary ? emptyFrontmatter() : readFrontmatter(entry.abs)
     out.push({
       path: p,
-      title: metadata?.title ?? titleFromFile(entry.abs, name, fm.firstHeading, fm.title),
+      title: isManagedDiary
+        ? name
+        : metadata?.title ?? titleFromFile(entry.abs, name, fm.firstHeading, fm.title),
       created: metadata ? new Date(metadata.createdAt).toISOString().slice(0, 10) : fm.created ?? '',
       // SQLite is authoritative after import; legacy Frontmatter and then
       // filesystem mtime remain compatibility fallbacks.
       updated: metadata
         ? new Date(metadata.updatedAt).toISOString().slice(0, 10)
         : fm.updated ?? new Date(stat.mtimeMs).toISOString().slice(0, 10),
-      tags: metadata?.tags ?? fm.tags,
+      tags: isManagedDiary ? [] : metadata?.tags ?? fm.tags,
       // Keep an explicit empty string for the client search index when neither
       // database metadata nor legacy Frontmatter provides a summary.
-      summary: metadata?.summary ?? fm.summary ?? '',
+      summary: isManagedDiary ? '' : metadata?.summary ?? fm.summary ?? '',
       size: stat.size,
       mtime: stat.mtimeMs,
       ...(isManagedDiary
@@ -258,7 +260,9 @@ export async function buildTree(
         kind: 'file',
         name,
         path: p,
-        title: metadata?.title ?? titleFromFile(entry.abs, name, fm.firstHeading, fm.title),
+        title: isManagedDiary
+          ? name
+          : metadata?.title ?? titleFromFile(entry.abs, name, fm.firstHeading, fm.title),
         mtime: stat.mtimeMs,
       })
     }

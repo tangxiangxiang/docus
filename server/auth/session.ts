@@ -155,6 +155,41 @@ export function findSessionByRawToken(
   return { status: 'valid', session, user }
 }
 
+/** Resolve an authentication session by its server-owned identity. This is
+ * intentionally unavailable to clients: it is the narrow revalidation seam
+ * used by long-running authenticated operations before they mint a derived
+ * capability after an async KDF boundary. */
+export function findSessionById(
+  db: DatabaseT,
+  sessionId: number,
+  now = Date.now(),
+): SessionLookupResult {
+  if (!Number.isSafeInteger(sessionId) || sessionId < 1) return { status: 'missing' }
+  const row = db.prepare(
+    `SELECT
+       s.id, s.user_id, s.token_hash, s.created_at, s.expires_at,
+       s.last_seen_at, s.revoked_at, u.username, u.disabled
+     FROM auth_sessions s
+     JOIN users u ON u.id = s.user_id
+     JOIN auth_instance ai
+       ON ai.id = 1
+      AND ai.owner_user_id = u.id
+     WHERE s.id = ?
+     LIMIT 1`,
+  ).get(sessionId) as JoinedSessionRow | undefined
+  if (!row || !row.username) return { status: 'missing' }
+  const session = mapSession(row)
+  const user = {
+    id: row.user_id,
+    username: row.username,
+    disabled: row.disabled === 1,
+  }
+  if (session.revokedAt !== null) return { status: 'revoked', session, user }
+  if (session.expiresAt <= now) return { status: 'expired', session, user }
+  if (user.disabled) return { status: 'disabled-owner', session, user }
+  return { status: 'valid', session, user }
+}
+
 export const lookupSessionByRawToken = findSessionByRawToken
 
 export function revokeSession(

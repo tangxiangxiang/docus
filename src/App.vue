@@ -93,16 +93,19 @@ const diaryAccessMode = computed<'setup' | 'unlock'>(() => (
 ))
 let pendingAccess: Promise<boolean> | null = null
 let resolveAccess: ((granted: boolean) => void) | null = null
+let accessIntentGeneration = 0
 
 async function requestDiaryAccess(): Promise<boolean> {
   if (diaryAccess.isUnlocked.value) return true
   if (pendingAccess) return pendingAccess
+  const requestGeneration = accessIntentGeneration
   try {
     await diaryAccess.ensureStatus()
   } catch {
     toast.error(t('diary_access.unavailable'))
     return false
   }
+  if (requestGeneration !== accessIntentGeneration || auth.state.value !== 'authenticated') return false
   if (diaryAccess.isUnlocked.value) return true
   diaryAccessError.value = ''
   diaryAccessOpen.value = true
@@ -120,6 +123,7 @@ async function requestScopeChange(scope: ScopeKey): Promise<void> {
 }
 
 function finishAccess(granted: boolean): void {
+  accessIntentGeneration += 1
   diaryAccessOpen.value = false
   diaryAccessBusy.value = false
   diaryAccessError.value = ''
@@ -137,11 +141,16 @@ async function submitDiaryAccess(payload: { password: string; confirmPassword: s
   }
   diaryAccessBusy.value = true
   diaryAccessError.value = ''
+  const requestGeneration = accessIntentGeneration
   try {
     if (diaryAccessMode.value === 'setup') await diaryAccess.setup(payload.password)
     else await diaryAccess.unlock(payload.password)
+    if (requestGeneration !== accessIntentGeneration
+      || auth.state.value !== 'authenticated'
+      || !diaryAccess.isUnlocked.value) return
     finishAccess(true)
   } catch (error) {
+    if (requestGeneration !== accessIntentGeneration || auth.state.value !== 'authenticated') return
     const code = (error as { code?: unknown } | null)?.code
     diaryAccessError.value = code === 'diary-access-invalid-password'
       ? t('diary_access.invalid_password')
@@ -173,6 +182,12 @@ provide(DiaryAccessContextKey, {
 
 watch(() => diaryAccess.state.value, (next) => {
   if (next !== 'UNLOCKED' && activeScope.value === 'diary') selectScope('note')
+})
+
+watch(() => auth.state.value, (next) => {
+  if (next === 'authenticated') return
+  if (pendingAccess) finishAccess(false)
+  else accessIntentGeneration += 1
 })
 
 // A persisted Diary scope is only a user preference, never permission to

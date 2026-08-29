@@ -24,50 +24,66 @@ export interface DiaryAccessSession {
 const state = ref<DiaryAccessState>('UNINITIALIZED')
 const epoch = ref<number | null>(null)
 const isUnlocked = computed(() => state.value === 'UNLOCKED')
-let statusRequest: Promise<DiaryAccessState> | null = null
+let generation = 0
+let statusRequest: { generation: number; promise: Promise<DiaryAccessState> } | null = null
 let authWatchWired = false
 let expiryUnsubscribe: (() => void) | null = null
 let serverLockUnsubscribe: (() => void) | null = null
 
 function clear(): void {
+  generation += 1
+  statusRequest = null
   clearDiaryCapability()
   epoch.value = null
   if (state.value === 'UNLOCKED') state.value = 'LOCKED'
 }
 
 async function ensureStatus(): Promise<DiaryAccessState> {
-  if (statusRequest) return statusRequest
+  if (statusRequest?.generation === generation) return statusRequest.promise
+  const requestGeneration = generation
   const pending = getDiaryAccessStatus()
     .then((status) => {
+      if (requestGeneration !== generation) return state.value
       state.value = status.state
       epoch.value = status.epoch ?? null
       if (status.state !== 'UNLOCKED') clearDiaryCapability()
       return status.state
     })
     .finally(() => {
-      if (statusRequest === pending) statusRequest = null
+      if (statusRequest?.promise === pending) statusRequest = null
     })
-  statusRequest = pending
+  statusRequest = { generation: requestGeneration, promise: pending }
   return pending
 }
 
 async function setup(password: string): Promise<void> {
+  const requestGeneration = ++generation
+  statusRequest = null
   const result = await setupDiaryAccess(password)
+  if (requestGeneration !== generation) return
   setDiaryCapability(result.capability)
   state.value = result.state
   epoch.value = result.epoch
 }
 
 async function unlock(password: string): Promise<void> {
+  const requestGeneration = ++generation
+  statusRequest = null
   const result = await unlockDiaryAccess(password)
+  if (requestGeneration !== generation) return
   setDiaryCapability(result.capability)
   state.value = result.state
   epoch.value = result.epoch
 }
 
 async function lock(): Promise<void> {
+  const requestGeneration = ++generation
+  statusRequest = null
+  clearDiaryCapability()
+  epoch.value = null
+  state.value = 'LOCKED'
   await lockDiaryAccess()
-  clear()
+  if (requestGeneration !== generation) return
   state.value = 'LOCKED'
 }
 
@@ -101,5 +117,6 @@ export function resetDiaryAccessSessionForTesting(): void {
   clearDiaryCapability()
   state.value = 'UNINITIALIZED'
   epoch.value = null
+  generation += 1
   statusRequest = null
 }

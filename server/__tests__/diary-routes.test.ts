@@ -6,7 +6,7 @@ import path from 'node:path'
 import app, { __setMetadataDbForTesting } from '../index'
 import { applyMigrations } from '../db'
 import { ensureInitialFolders } from '../seed'
-import { deleteDocumentMetadata, getDocumentMetadata } from '../documentMetadata'
+import { deleteDocumentMetadata, getDocumentMetadata, patchDocumentMetadata } from '../documentMetadata'
 import { __resetLinkIndexForTesting } from '../linkIndex'
 import { CONTENT_DIR, setContentDir } from '../paths'
 import { localDiaryDateForTimeZone } from '../routes/diary'
@@ -190,6 +190,49 @@ describe('Diary REST mutation contract', () => {
 
     expect(response.status).toBe(200)
     expect((await response.json())).toMatchObject({ path: `diary/${date}`, mood: 'happy' })
+  })
+
+  it('never leaks private managed-Diary metadata through locked structural or Mood routes', async () => {
+    const date = '2000-05-04'
+    expect((await call('POST', '/api/diary/dates', { date, timeZone: TIME_ZONE })).status).toBe(201)
+    const pathName = `diary/${date}`
+    const secretTitle = 'PRIVATE_DIARY_TITLE_SENTINEL'
+    const secretSummary = 'PRIVATE_DIARY_SUMMARY_SENTINEL'
+    const secretTag = 'PRIVATE_DIARY_TAG_SENTINEL'
+    const privateMetadata = patchDocumentMetadata(db, {
+      path: pathName,
+      changes: [
+        { field: 'title', value: secretTitle },
+        { field: 'summary', value: secretSummary },
+        { field: 'tags', values: [secretTag] },
+      ],
+      expectedUpdatedAt: getDocumentMetadata(db, pathName)!.updatedAt,
+    })
+
+    const posts = await callWithoutDiaryCapability('GET', '/api/posts')
+    const tree = await callWithoutDiaryCapability('GET', '/api/tree')
+    const byId = await callWithoutDiaryCapability('GET', `/api/metadata/documents/${privateMetadata.id}`)
+    const moodPatch = await callWithoutDiaryCapability('PATCH', `/api/metadata/documents/${pathName}`, {
+      mood: 'happy', expectedUpdatedAt: privateMetadata.updatedAt,
+    })
+    for (const response of [posts, tree, byId, moodPatch]) {
+      expect(response.status).toBe(200)
+      const wire = JSON.stringify(await response.json())
+      expect(wire).not.toContain(secretTitle)
+      expect(wire).not.toContain(secretSummary)
+      expect(wire).not.toContain(secretTag)
+    }
+    const lockedPrivatePatch = await callWithoutDiaryCapability('PATCH', `/api/metadata/documents/${pathName}`, {
+      title: 'still-private',
+    })
+    expect(lockedPrivatePatch.status).toBe(423)
+
+    const unlockedById = await call('GET', `/api/metadata/documents/${privateMetadata.id}`)
+    expect(await unlockedById.json()).toMatchObject({
+      title: secretTitle,
+      summary: secretSummary,
+      tags: [secretTag],
+    })
   })
 
   it('blocks generic create/recovery and nested folder creation under diary', async () => {

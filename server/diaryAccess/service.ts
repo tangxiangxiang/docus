@@ -3,6 +3,7 @@ import type { Database as DatabaseT } from 'better-sqlite3'
 import { getVaultId } from '../vaultIdentity.js'
 import { isValidPassword } from '../auth/password.js'
 import type { KdfGuard } from '../auth/kdfGuard.js'
+import type { AuthRateLimiter } from '../auth/rateLimit.js'
 import {
   SCRYPT_KEY_BYTES,
   SCRYPT_MAXMEM,
@@ -34,20 +35,25 @@ export type DiaryAccessErrorCode =
   | 'diary-access-invalid-state'
   | 'diary-access-unavailable'
   | 'diary-access-invalid-input'
+  | 'diary-access-rate-limited'
+  | 'diary-access-auth-session-invalid'
 
 export class DiaryAccessServiceError extends Error {
   readonly code: DiaryAccessErrorCode
-  readonly status: 400 | 401 | 409 | 503
+  readonly status: 400 | 401 | 409 | 429 | 503
+  readonly retryAfterMs?: number
 
   constructor(
     code: DiaryAccessErrorCode,
-    status: 400 | 401 | 409 | 503,
+    status: 400 | 401 | 409 | 429 | 503,
     message: string,
+    retryAfterMs?: number,
   ) {
     super(message)
     this.name = 'DiaryAccessServiceError'
     this.code = code
     this.status = status
+    this.retryAfterMs = retryAfterMs
   }
 }
 
@@ -83,7 +89,16 @@ type Capability = {
   readonly sessionId: number
   readonly vaultId: string
   readonly epoch: number
+  readonly expiresAt: number
   readonly dek: Buffer
+  expiryTimer?: ReturnType<typeof setTimeout>
+}
+
+const MAX_CAPABILITY_EXPIRY_TIMER_MS = 2_147_000_000
+
+export type DiaryAccessAuthSession = {
+  readonly valid: boolean
+  readonly expiresAt?: number
 }
 
 function asBuffer(value: unknown): Buffer | null {
@@ -134,6 +149,8 @@ export type DiaryAccessServiceOptions = {
   readonly kdfGuard: KdfGuard
   readonly now?: () => number
   readonly getVaultId?: () => string
+  readonly resolveAuthSession?: (sessionId: number) => DiaryAccessAuthSession
+  readonly unlockLimiter?: AuthRateLimiter
 }
 
 export class DiaryAccessService {
@@ -141,7 +158,9 @@ export class DiaryAccessService {
   readonly kdfGuard: KdfGuard
   readonly now: () => number
   readonly getVaultId: () => string
-  private epoch = 0
+  readonly resolveAuthSession: (sessionId: number) => DiaryAccessAuthSession
+  readonly unlockLimiter?: AuthRateLimiter
+  private readonly sessionEpochs = new Map<number, number>()
   private readonly capabilities = new Map<string, Capability>()
 
   constructor(options: DiaryAccessServiceOptions) {
@@ -149,6 +168,8 @@ export class DiaryAccessService {
     this.kdfGuard = options.kdfGuard
     this.now = options.now ?? Date.now
     this.getVaultId = options.getVaultId ?? getVaultId
+    this.resolveAuthSession = options.resolveAuthSession ?? (() => ({ valid: true, expiresAt: Number.MAX_SAFE_INTEGER }))
+    this.unlockLimiter = options.unlockLimiter
   }
 
   private loadConfig(): DiaryAccessConfig | null {
@@ -165,8 +186,28 @@ export class DiaryAccessService {
 
   private dropCapability(token: string): void {
     const capability = this.capabilities.get(token)
-    if (capability) capability.dek.fill(0)
+    if (capability) {
+      if (capability.expiryTimer !== undefined) clearTimeout(capability.expiryTimer)
+      capability.dek.fill(0)
+    }
     this.capabilities.delete(token)
+  }
+
+  private scheduleCapabilityExpiry(token: string): void {
+    const capability = this.capabilities.get(token)
+    if (!capability) return
+    const remaining = capability.expiresAt - this.now()
+    if (remaining <= 0) {
+      this.dropCapability(token)
+      return
+    }
+    capability.expiryTimer = setTimeout(() => {
+      const current = this.capabilities.get(token)
+      if (!current) return
+      current.expiryTimer = undefined
+      this.scheduleCapabilityExpiry(token)
+    }, Math.min(remaining, MAX_CAPABILITY_EXPIRY_TIMER_MS))
+    capability.expiryTimer.unref?.()
   }
 
   private dropSessionCapabilities(sessionId: number): void {
@@ -180,14 +221,37 @@ export class DiaryAccessService {
   }
 
   private issueCapability(sessionId: number, vaultId: string, dek: Buffer): { capability: string; epoch: number } {
-    // Epoch changes are process-wide. Drop every previous DEK before issuing
-    // the new session-bound capability so an old capability cannot remain in
-    // memory after a fresh setup/unlock operation.
-    this.dropAllCapabilities()
-    this.epoch += 1
+    const authSession = this.requireCurrentAuthSession(sessionId)
+    this.dropSessionCapabilities(sessionId)
+    const epoch = (this.sessionEpochs.get(sessionId) ?? 0) + 1
+    this.sessionEpochs.set(sessionId, epoch)
     const capability = capabilityToken()
-    this.capabilities.set(capability, { sessionId, vaultId, epoch: this.epoch, dek })
-    return { capability, epoch: this.epoch }
+    this.capabilities.set(capability, {
+      sessionId,
+      vaultId,
+      epoch,
+      expiresAt: authSession.expiresAt!,
+      dek,
+    })
+    this.scheduleCapabilityExpiry(capability)
+    return { capability, epoch }
+  }
+
+  private requireCurrentAuthSession(sessionId: number): Required<DiaryAccessAuthSession> {
+    const resolved = this.resolveAuthSession(sessionId)
+    if (!resolved.valid || !Number.isFinite(resolved.expiresAt) || resolved.expiresAt! <= this.now()) {
+      this.dropSessionCapabilities(sessionId)
+      throw new DiaryAccessServiceError(
+        'diary-access-auth-session-invalid',
+        401,
+        'Authentication session is no longer valid.',
+      )
+    }
+    return { valid: true, expiresAt: resolved.expiresAt! }
+  }
+
+  private limiterKey(sessionId: number, vaultId: string): string {
+    return `${vaultId}:${sessionId}`
   }
 
   private assertSessionId(sessionId: number): void {
@@ -215,11 +279,18 @@ export class DiaryAccessService {
     }
     if (!resolvedConfig || typeof presentedCapability !== 'string' || presentedCapability.length < 32 || presentedCapability.length > 128) return false
     const capability = this.capabilities.get(presentedCapability)
+    if (capability && (
+      capability.expiresAt <= this.now()
+      || !this.resolveAuthSession(capability.sessionId).valid
+    )) {
+      this.dropCapability(presentedCapability)
+      return false
+    }
     return Boolean(
       capability
       && capability.sessionId === sessionId
       && capability.vaultId === resolvedConfig.vaultId
-      && capability.epoch === this.epoch
+      && capability.epoch === this.sessionEpochs.get(sessionId)
       && capability.dek.length === SCRYPT_KEY_BYTES,
     )
   }
@@ -240,6 +311,7 @@ export class DiaryAccessService {
     try {
       kek = await deriveDiaryKek(password, salt, this.kdfGuard, signal)
       const wrapped = wrapDiaryDek(kek, dek, vaultId)
+      this.requireCurrentAuthSession(sessionId)
       const now = this.now()
       try {
         const transaction = this.db.transaction(() => {
@@ -299,37 +371,61 @@ export class DiaryAccessService {
     }
     const config = this.loadConfig()
     if (!config) throw new DiaryAccessServiceError('diary-access-invalid-state', 409, 'Diary access is not initialized.')
+    const limiterKey = this.limiterKey(sessionId, config.vaultId)
+    const retryAfterMs = this.unlockLimiter?.retryAfter(limiterKey, this.now()) ?? 0
+    if (retryAfterMs > 0) {
+      throw new DiaryAccessServiceError(
+        'diary-access-rate-limited',
+        429,
+        'Too many Diary unlock attempts. Please try again later.',
+        retryAfterMs,
+      )
+    }
+    let dek: Buffer | null = null
     try {
-      const dek = await unwrapDiaryDek(password, config, this.kdfGuard, signal)
+      dek = await unwrapDiaryDek(password, config, this.kdfGuard, signal)
       if (dek.length !== SCRYPT_KEY_BYTES) {
         dek.fill(0)
         throw new DiaryAccessServiceError('diary-access-unavailable', 503, 'Diary access configuration is unavailable.')
       }
       const issued = this.issueCapability(sessionId, config.vaultId, dek)
+      this.unlockLimiter?.reset(limiterKey)
       return { state: 'UNLOCKED', ...issued }
     } catch (error) {
       if (error instanceof DiaryAccessServiceError) throw error
       if (error instanceof DiaryAccessCryptoError && error.code === 'invalid-password') {
+        const failure = this.unlockLimiter?.recordFailure(limiterKey, this.now())
+        if (failure && failure.retryAfterMs > 0) {
+          throw new DiaryAccessServiceError(
+            'diary-access-rate-limited',
+            429,
+            'Too many Diary unlock attempts. Please try again later.',
+            failure.retryAfterMs,
+          )
+        }
         throw new DiaryAccessServiceError('diary-access-invalid-password', 401, 'Diary access password is invalid.')
       }
       throw new DiaryAccessServiceError('diary-access-unavailable', 503, 'Diary access is unavailable.')
+    } finally {
+      if (dek && ![...this.capabilities.values()].some((entry) => entry.dek === dek)) dek.fill(0)
     }
   }
 
   lock(sessionId: number): { state: 'LOCKED' } {
     this.assertSessionId(sessionId)
-    this.dropAllCapabilities()
-    this.epoch += 1
+    this.dropSessionCapabilities(sessionId)
+    this.sessionEpochs.set(sessionId, (this.sessionEpochs.get(sessionId) ?? 0) + 1)
     return { state: 'LOCKED' }
   }
 
   invalidateAuthSession(sessionId: number): void {
     if (!Number.isSafeInteger(sessionId) || sessionId < 1) return
     this.dropSessionCapabilities(sessionId)
+    this.sessionEpochs.set(sessionId, (this.sessionEpochs.get(sessionId) ?? 0) + 1)
   }
 
   resetForTesting(): void {
     this.dropAllCapabilities()
-    this.epoch = 0
+    this.sessionEpochs.clear()
   }
 }

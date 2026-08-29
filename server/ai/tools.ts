@@ -1031,6 +1031,33 @@ export interface RenamePlan {
   references: RenamePlanReference[]
 }
 
+type RenameReferenceSnapshot = {
+  readonly allPaths: readonly string[]
+  readonly sourcePaths: readonly string[]
+}
+
+/** Discover the potential backlink footprint from the structural LinkIndex
+ * only. This phase deliberately performs no body I/O, so Diary capability
+ * authorization can cover every candidate before buildRenamePlan reads raw. */
+async function discoverRenameReferenceSnapshot(input: {
+  path?: string
+  new_path?: string
+  update_references?: boolean
+}): Promise<RenameReferenceSnapshot> {
+  const sourcePath = input.path as string
+  const destinationPath = input.new_path as string
+  if (
+    input.update_references === false
+    || typeof sourcePath !== 'string' || sourcePath.length === 0
+    || typeof destinationPath !== 'string' || destinationPath.length === 0
+  ) return { allPaths: [], sourcePaths: [] }
+  const idx = await getLinkIndex()
+  return {
+    allPaths: idx.snapshot().paths,
+    sourcePaths: [...new Set(idx.getBacklinks(sourcePath).map((backlink) => backlink.source))],
+  }
+}
+
 /**
  * Compute the full plan for one rename: the source→destination move
  * plus every reference file whose rewrite WILL be modified
@@ -1052,7 +1079,7 @@ async function buildRenamePlan(input: {
   path?: string
   new_path?: string
   update_references?: boolean
-}): Promise<RenamePlan> {
+}, snapshot?: RenameReferenceSnapshot): Promise<RenamePlan> {
   const sourcePath = input.path as string
   const destinationPath = input.new_path as string
   const references: RenamePlanReference[] = []
@@ -1061,23 +1088,23 @@ async function buildRenamePlan(input: {
     && typeof sourcePath === 'string' && sourcePath.length > 0
     && typeof destinationPath === 'string' && destinationPath.length > 0
   ) {
-    const idx = await getLinkIndex()
-    const allPaths = idx.snapshot().paths
+    const resolved = snapshot ?? await discoverRenameReferenceSnapshot(input)
+    const allPaths = [...resolved.allPaths]
     let selfRaw: string | null = null
-    for (const backlink of idx.getBacklinks(sourcePath)) {
-      const isSelf = backlink.source === sourcePath
+    for (const backlinkSource of resolved.sourcePaths) {
+      const isSelf = backlinkSource === sourcePath
       let refRaw: string
       if (isSelf) {
         if (selfRaw === null) selfRaw = fs.readFileSync(filePathFor(sourcePath), 'utf8')
         refRaw = selfRaw
       } else {
-        refRaw = fs.readFileSync(filePathFor(backlink.source), 'utf8')
+        refRaw = fs.readFileSync(filePathFor(backlinkSource), 'utf8')
       }
-      const updatedRaw = rewriteDocumentReferences(refRaw, backlink.source, sourcePath, destinationPath, allPaths)
+      const updatedRaw = rewriteDocumentReferences(refRaw, backlinkSource, sourcePath, destinationPath, allPaths)
       if (updatedRaw === refRaw) continue
       references.push({
-        sourcePath: backlink.source,
-        outputPath: isSelf ? destinationPath : backlink.source,
+        sourcePath: backlinkSource,
+        outputPath: isSelf ? destinationPath : backlinkSource,
         originalRaw: refRaw,
         updatedRaw,
       })
@@ -1086,21 +1113,9 @@ async function buildRenamePlan(input: {
   return { sourcePath, destinationPath, references }
 }
 
-/**
- * The plan's lock/guard footprint beyond source and destination:
- * every file the plan writes OTHER than the destination itself
- * (self-reference rewrites land in the destination, already in the
- * footprint).
- */
-function planFootprint(plan: RenamePlan): string[] {
-  return plan.references
-    .filter((r) => r.outputPath !== plan.destinationPath)
-    .map((r) => r.outputPath)
-}
-
 /** Set equality over canonical logical paths (notes/a ≡ notes/a.md). */
-function sameNormalizedPathSet(a: string[], b: string[]): boolean {
-  const normalize = (list: string[]) => new Set(list.map((p) => normalizeLogicalContentPath(p) ?? p))
+function sameNormalizedPathSet(a: readonly string[], b: readonly string[]): boolean {
+  const normalize = (list: readonly string[]) => new Set(list.map((p) => normalizeLogicalContentPath(p) ?? p))
   const setA = normalize(a)
   const setB = normalize(b)
   if (setA.size !== setB.size) return false
@@ -1221,45 +1236,63 @@ async function executeGuardedRename(
   diaryBodyAccess?: (path: string) => boolean,
 ): Promise<ToolResult> {
   const renameInput = input as { path?: string; new_path?: string; update_references?: boolean }
+  let discovered: RenameReferenceSnapshot
+  try {
+    discovered = await discoverRenameReferenceSnapshot(renameInput)
+  } catch (e) {
+    return err(`rename_file: ${(e as Error).message}`)
+  }
+  const discoveryAccessError = diaryBodyAccessError(diaryBodyAccess, [
+    base.sourcePath,
+    base.destinationPath,
+    ...discovered.sourcePaths,
+  ])
+  if (discoveryAccessError) return discoveryAccessError
   let plan: RenamePlan
   try {
-    plan = await buildRenamePlan(renameInput)
+    plan = await buildRenamePlan(renameInput, discovered)
   } catch (e) {
     return err(`rename_file: ${(e as Error).message}`)
   }
   const locked: Extract<ToolMutationTarget, { kind: 'rename' }> = {
     ...base,
-    referencePaths: planFootprint(plan),
+    referencePaths: [...discovered.sourcePaths],
   }
   return withMutationLocks(locked, async () => {
     const accessError = diaryBodyAccessError(diaryBodyAccess, [
       plan.sourcePath,
       plan.destinationPath,
-      ...planFootprint(plan),
+      ...discovered.sourcePaths,
     ])
     if (accessError) return accessError
     if (__renameRaceHooks?.beforeReplan) await __renameRaceHooks.beforeReplan()
-    let candidate: RenamePlan
+    let candidateSnapshot: RenameReferenceSnapshot
     try {
-      candidate = await buildRenamePlan(renameInput)
+      candidateSnapshot = await discoverRenameReferenceSnapshot(renameInput)
     } catch (e) {
       return err(`rename_file: ${(e as Error).message}`)
     }
-    if (!sameNormalizedPathSet(planFootprint(plan), planFootprint(candidate))) {
+    if (!sameNormalizedPathSet(discovered.sourcePaths, candidateSnapshot.sourcePaths)) {
       return err(
         `rename_file: the set of files linking to ${renameInput.path} changed while this rename was being prepared ` +
           `(a concurrent edit added or removed a link). Retry the rename; the retry will plan against the updated link set.`,
       )
     }
     const candidateAccessError = diaryBodyAccessError(diaryBodyAccess, [
-      candidate.sourcePath,
-      candidate.destinationPath,
-      ...planFootprint(candidate),
+      base.sourcePath,
+      base.destinationPath,
+      ...candidateSnapshot.sourcePaths,
     ])
     if (candidateAccessError) return candidateAccessError
+    let candidate: RenamePlan
+    try {
+      candidate = await buildRenamePlan(renameInput, candidateSnapshot)
+    } catch (e) {
+      return err(`rename_file: ${(e as Error).message}`)
+    }
     const decision = await guardToolMutation({
       policy,
-      target: { ...base, referencePaths: planFootprint(candidate) },
+      target: { ...base, referencePaths: [...candidateSnapshot.sourcePaths] },
       readCurrentDocument: (logicalPath) => readCurrentServerDocument(db, logicalPath),
     })
     if (!decision.allowed) {
@@ -1271,7 +1304,7 @@ async function executeGuardedRename(
     const preExecuteAccessError = diaryBodyAccessError(diaryBodyAccess, [
       candidate.sourcePath,
       candidate.destinationPath,
-      ...planFootprint(candidate),
+      ...candidateSnapshot.sourcePaths,
     ])
     if (preExecuteAccessError) return preExecuteAccessError
     // The candidate plan is the executed plan — verbatim.
