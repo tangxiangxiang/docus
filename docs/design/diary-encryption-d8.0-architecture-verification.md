@@ -114,7 +114,7 @@ The most important finding is that the current atomic protocol is safe for ordin
 
 The vault History implementation is a nested Git repository independent of the root Docus repository. `server/history/git.ts` uses `git show`/`git add`/`commit-tree` style operations; `rawAt()` returns the exact bytes at a ref. `server/history/repo.ts` creates a vault `.gitignore` that ignores Docus runtime/build/log artifacts but currently does not exclude `diary/`.
 
-The D7 Git-backed History behavior was correct under the old contract. D8 intentionally supersedes that behavior only for managed Diary body revisions because the new privacy contract is that new encrypted Diary content must not be added to Git at all.
+The D7 Git-backed History behavior was correct under the old contract. D8 intentionally supersedes that behavior only for managed Diary body revisions: after D8 takes effect, new managed Diary bodies use encrypted representation only in D8-controlled durable storage, and new body revisions are excluded from new vault Git commits. Legacy Git history or legacy external backups may still contain old plaintext; D8 does not claim retroactive deletion, rewrite or protection of those copies.
 
 The frozen D8 policy is:
 
@@ -270,6 +270,15 @@ D8.0-IR-P2-1  Incomplete exactly-one scope       = REMEDIATED
 
 The remediation self-review is `P0/P1/P2 = 0/0/0`; independent re-review remains pending.
 
+A subsequent residual wording review identified two further documentation findings. This cleanup changes only the two D8.0 documents and does not claim independent review approval:
+
+```text
+D8.0-IR-P2-2  Legacy Git security-boundary wording  = REMEDIATED
+D8.0-IR-P2-3  Mood encryption lifecycle wording      = REMEDIATED
+```
+
+The cleanup self-review remains `P0/P1/P2 = 0/0/0`; independent re-review remains pending.
+
 ## 12. Final lifecycle for this evidence commit
 
 ```text
@@ -284,7 +293,7 @@ D8.2              = NOT STARTED
 D8.3              = NOT STARTED
 D8.4              = NOT STARTED
 
-D8 Mood encryption production = NOT STARTED
+D8 Mood encryption = OUT OF SCOPE
 ```
 
 本文件记录的是 D8.0 architecture/security verification，而非 D8.1 implementation authorization。Independent Review 通过之前不要进入 D8.1。

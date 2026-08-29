@@ -22,7 +22,9 @@ D8.4  Migration, full regression, release and closure
 
 ### 2.1 What D8 protects
 
-- managed Diary 的正文 body 在静态磁盘、vault Git 历史、备份和应用可恢复的本地持久化中不再以明文作为 durable representation；
+- D8 生效后，新的 managed Diary body 在 D8 控制的静态磁盘和应用可恢复 durable storage 中只以密文持久化；
+- 新的 managed Diary body revisions 完全不进入新的 vault Git commit，无论应用层 representation 是明文还是密文；
+- legacy Git history 与 legacy external backups 可能继续包含旧 plaintext；D8 不宣称追溯删除、重写或保护这些 legacy copies；
 - 未解锁时不能通过 Calendar、FileTree、route、persisted tabs、History、Recovery 或搜索间接拿到 Diary 正文；
 - 解锁后仍使用现有 Native ReadingPane / EditorPane、单一 tab、现有 save/dirty/CAS/History/Recovery seam；
 - Mood、日期、Diary 是否存在和稳定 document identity 继续由现有 SQLite DocumentMetadata owner 管理，不把 Mood 复制到正文加密层。
@@ -243,6 +245,15 @@ D8.0-IR-P2-1  Incomplete exactly-one scope       = REMEDIATED
 ```
 
 The resulting self-review of this remediation is `P0/P1/P2 = 0/0/0`. Independent re-review remains pending.
+
+A subsequent residual wording review identified two further documentation findings. This cleanup changes only the two D8.0 documents and does not claim independent review approval:
+
+```text
+D8.0-IR-P2-2  Legacy Git security-boundary wording  = REMEDIATED
+D8.0-IR-P2-3  Mood encryption lifecycle wording      = REMEDIATED
+```
+
+The cleanup self-review remains `P0/P1/P2 = 0/0/0`; independent re-review remains pending.
 
 ## 12. Lifecycle at this commit
 
