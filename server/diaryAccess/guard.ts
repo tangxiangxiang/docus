@@ -1,6 +1,9 @@
 import { classifyDiaryPath } from '../../shared/diaryProtocol.js'
+import { promises as fs } from 'node:fs'
+import path from 'node:path'
+import { filePathFor } from '../paths.js'
 import { getAuthRuntime } from '../auth/runtime.js'
-import { DIARY_ACCESS_CAPABILITY_HEADER } from './service.js'
+import { DIARY_ACCESS_CAPABILITY_HEADER, type DiaryBodyOperation } from './service.js'
 
 /** History routes conventionally include `.md`; the live API uses logical paths. */
 function logicalBodyPath(path: string): string {
@@ -22,13 +25,16 @@ export function hasDiaryBodyAccess(sessionId: unknown, capability: unknown): boo
   return Boolean(runtime && runtime.diaryAccess.isCapabilityValid(sessionId, capability))
 }
 
-/** Return an operation-owned DEK copy after applying the same body gate. */
-export function getDiaryBodyKey(c: any): Buffer | null {
+/** Execute a bounded body operation without exposing the live DEK to routes. */
+export async function withDiaryBodyOperation<T>(
+  c: any,
+  callback: (operation: DiaryBodyOperation) => Promise<T> | T,
+): Promise<T | null> {
   const runtime = getAuthRuntime()
   const sessionId = c.get('authSessionId')
   const capability = c.req.header(DIARY_ACCESS_CAPABILITY_HEADER)
   if (!runtime || typeof sessionId !== 'number') return null
-  return runtime.diaryAccess.getCapabilityDek(sessionId, capability)
+  return runtime.diaryAccess.withBodyOperation(sessionId, capability, callback)
 }
 
 /**
@@ -42,6 +48,38 @@ export function requireDiaryBodyAccess(c: any, path: string): Response | null {
   const capability = c.req.header(DIARY_ACCESS_CAPABILITY_HEADER)
   if (runtime && hasDiaryBodyAccess(sessionId, capability)) return null
   return lockedResponse(c)
+}
+
+/**
+ * Fail closed before a generic reference-rewrite planner asks LinkIndex to
+ * scan body files. The directory enumeration is structural only; no Diary
+ * body is opened. A locked caller receives the normal 423 gate first.
+ */
+export async function rejectManagedDiaryReferenceFootprint(c: any): Promise<Response | null> {
+  let entries: import('node:fs').Dirent[]
+  try {
+    // Derive the directory through filePathFor so test vaults that replace
+    // the path adapter keep this structural preflight scoped to that vault.
+    const diaryRoot = path.dirname(filePathFor('diary/2000-01-01'))
+    entries = await fs.readdir(diaryRoot, { withFileTypes: true })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw error
+  }
+  const paths = entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
+    .map((entry) => `diary/${entry.name.slice(0, -3)}`)
+    .filter((value) => isManagedDiaryBodyPath(value))
+  for (const diaryPath of paths) {
+    const bodyAccess = requireDiaryBodyAccess(c, diaryPath)
+    if (bodyAccess) return bodyAccess
+  }
+  if (paths.length === 0) return null
+  c.header('Cache-Control', 'no-store')
+  return c.json({
+    error: 'Reference rewrite footprint contains a managed Diary encrypted body.',
+    code: 'diary-encrypted-reference-unsupported',
+  }, 422)
 }
 
 /**

@@ -25,6 +25,13 @@ import {
   unwrapDiaryDek,
   wrapDiaryDek,
 } from './crypto.js'
+import {
+  decryptDiaryBody,
+  encryptDiaryBody,
+  readDiaryBody,
+  type BodyContext,
+  type DiaryBodyRead,
+} from './body.js'
 
 export const DIARY_ACCESS_CAPABILITY_HEADER = 'X-Docus-Diary-Capability'
 
@@ -92,6 +99,14 @@ type Capability = {
   readonly expiresAt: number
   readonly dek: Buffer
   expiryTimer?: ReturnType<typeof setTimeout>
+}
+
+export type DiaryBodyOperation = {
+  readonly assertCurrent: () => void
+  readonly isCurrent: () => boolean
+  readonly encrypt: (raw: string, context: BodyContext) => Buffer
+  readonly decrypt: (bytes: Buffer, context: BodyContext) => DiaryBodyRead
+  readonly read: (absolutePath: string, context: BodyContext) => Promise<DiaryBodyRead & { readonly stat: Awaited<ReturnType<typeof import('node:fs/promises').stat>> }>
 }
 
 const MAX_CAPABILITY_EXPIRY_TIMER_MS = 2_147_000_000
@@ -162,6 +177,8 @@ export class DiaryAccessService {
   readonly unlockLimiter?: AuthRateLimiter
   private readonly sessionEpochs = new Map<number, number>()
   private readonly capabilities = new Map<string, Capability>()
+  private readonly activeBodyOperations = new Map<number, number>()
+  private readonly pendingLocks = new Map<number, Array<() => void>>()
 
   constructor(options: DiaryAccessServiceOptions) {
     this.db = options.db
@@ -295,15 +312,73 @@ export class DiaryAccessService {
     )
   }
 
+  private releaseBodyOperation(sessionId: number): void {
+    const remaining = (this.activeBodyOperations.get(sessionId) ?? 1) - 1
+    if (remaining > 0) {
+      this.activeBodyOperations.set(sessionId, remaining)
+      return
+    }
+    this.activeBodyOperations.delete(sessionId)
+    const waiters = this.pendingLocks.get(sessionId)
+    if (!waiters?.length) return
+    this.pendingLocks.delete(sessionId)
+    for (const resolve of waiters) resolve()
+  }
+
   /**
-   * Return a short-lived copy for one authorized body operation. The service
-   * remains the only owner of the live DEK; callers must fill the returned
-   * buffer when the operation completes.
+   * Execute one bounded body operation. Routes receive capability-scoped
+   * crypto methods, never a DEK. A lock waits for this callback to finish,
+   * so a successful lock cannot race an active decrypt or durable write.
    */
-  getCapabilityDek(sessionId: number, presentedCapability: unknown): Buffer | null {
+  async withBodyOperation<T>(
+    sessionId: number,
+    presentedCapability: unknown,
+    callback: (operation: DiaryBodyOperation) => Promise<T> | T,
+  ): Promise<T | null> {
     if (!this.isCapabilityValid(sessionId, presentedCapability)) return null
-    const capability = this.capabilities.get(String(presentedCapability))
-    return capability ? Buffer.from(capability.dek) : null
+    const token = String(presentedCapability)
+    const capability = this.capabilities.get(token)
+    if (!capability) return null
+    const epoch = capability.epoch
+    this.activeBodyOperations.set(sessionId, (this.activeBodyOperations.get(sessionId) ?? 0) + 1)
+    const isCurrent = () => (
+      this.capabilities.get(token) === capability
+      && capability.epoch === epoch
+      && this.isCapabilityValid(sessionId, token)
+    )
+    const operation: DiaryBodyOperation = {
+      isCurrent,
+      assertCurrent: () => {
+        if (!isCurrent()) throw new DiaryAccessServiceError(
+          'diary-access-invalid-state',
+          409,
+          'Diary body operation is no longer current.',
+        )
+      },
+      encrypt: (raw, context) => {
+        operation.assertCurrent()
+        const result = encryptDiaryBody(raw, context, capability.dek)
+        operation.assertCurrent()
+        return result
+      },
+      decrypt: (bytes, context) => {
+        operation.assertCurrent()
+        const result = decryptDiaryBody(bytes, context, capability.dek)
+        operation.assertCurrent()
+        return result
+      },
+      read: async (absolutePath, context) => {
+        operation.assertCurrent()
+        const result = await readDiaryBody(absolutePath, context, capability.dek)
+        operation.assertCurrent()
+        return result
+      },
+    }
+    try {
+      return await callback(operation)
+    } finally {
+      this.releaseBodyOperation(sessionId)
+    }
   }
 
   async setup(sessionId: number, password: unknown, signal?: AbortSignal): Promise<{ state: 'UNLOCKED'; capability: string; epoch: number }> {
@@ -422,8 +497,20 @@ export class DiaryAccessService {
     }
   }
 
-  lock(sessionId: number): { state: 'LOCKED' } {
+  lock(sessionId: number): { state: 'LOCKED' } | Promise<{ state: 'LOCKED' }> {
     this.assertSessionId(sessionId)
+    const active = this.activeBodyOperations.get(sessionId) ?? 0
+    if (active > 0) {
+      return new Promise((resolve) => {
+        const waiters = this.pendingLocks.get(sessionId) ?? []
+        waiters.push(() => {
+          this.dropSessionCapabilities(sessionId)
+          this.sessionEpochs.set(sessionId, (this.sessionEpochs.get(sessionId) ?? 0) + 1)
+          resolve({ state: 'LOCKED' })
+        })
+        this.pendingLocks.set(sessionId, waiters)
+      })
+    }
     this.dropSessionCapabilities(sessionId)
     this.sessionEpochs.set(sessionId, (this.sessionEpochs.get(sessionId) ?? 0) + 1)
     return { state: 'LOCKED' }

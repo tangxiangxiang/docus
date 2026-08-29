@@ -716,7 +716,7 @@ describe('AI Diary mutation contract', () => {
     expect(renameInUnmanaged.isError).toBe(true)
     expect(renameInUnmanaged.content).toMatch(/Diary namespace/)
     expect(cleanupOut.isError).toBe(false)
-    expect(write.isError).toBe(false)
+    expect(write.isError).toBe(true)
     expect(deleted.isError).toBe(false)
     expect(fs.existsSync(path.join(contentDir, 'diary', 'generic.md'))).toBe(false)
     expect(fs.existsSync(path.join(contentDir, 'diary', 'missing.md'))).toBe(false)
@@ -784,6 +784,7 @@ describe('AI Diary mutation contract', () => {
       expect(diaryBodyReads).toEqual([])
       expect(fs.readFileSync(sourceAbs, 'utf8')).toBe('source')
       expect(fs.readFileSync(diaryAbs, 'utf8')).toBe('private [[notes/source]] body')
+      diaryBodyReads.length = 0
 
       const allowed = await executeToolCall('rename_file', {
         path: 'notes/source', new_path: 'notes/renamed',
@@ -791,12 +792,11 @@ describe('AI Diary mutation contract', () => {
         ...ctx,
         diaryBodyAccess: () => true,
       })
-      expect(allowed.isError).toBe(false)
-      // The allowed operation may read the Diary during the index rebuild
-      // and again while preparing/verifying the actual reference rewrite.
-      expect(diaryBodyReads.length).toBeGreaterThan(0)
+      expect(allowed.isError).toBe(true)
+      expect(allowed.content).toContain('encrypted managed Diary body')
+      expect(diaryBodyReads).toEqual([])
       expect(fs.readFileSync(path.join(contentDir, 'diary/2000-05-05.md'), 'utf8'))
-        .toBe('private [[notes/renamed]] body')
+        .toBe('private [[notes/source]] body')
     } finally {
       reader.mockRestore()
     }

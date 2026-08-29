@@ -864,58 +864,17 @@ describeHistoryIntegration('POST /api/history/restore', () => {
     expect(getDocumentMetadata(metadataDb, 'note')?.id).toBe('preserved-document-id')
   }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
-  it('characterizes existing History Restore as body-only for SQLite metadata', async () => {
+  it('fails closed for managed Diary History create and restore while encrypted History is unavailable', async () => {
     const logicalFile = 'diary/2000-04-04.md'
-    const historicalRaw = [
-      '---',
-      'title: Historical file title',
-      'summary: Historical file summary',
-      'tags: [historical]',
-      'mood: historical-value',
-      '---',
-      '',
-      'historical body',
-      '',
-    ].join('\n')
-    await write(logicalFile, historicalRaw)
-    const historical = await call('POST', '/commits', { paths: [logicalFile], message: 'historical diary' })
-    const ref = (await historical.json() as { sha: string }).sha
+    await write(logicalFile, 'private Diary body\n')
+    const commit = await call('POST', '/commits', { paths: [logicalFile], message: 'must not publish' })
+    expect(commit.status).toBe(422)
+    expect(await commit.json()).toMatchObject({ code: 'diary-history-encrypted-unsupported' })
 
-    const currentRaw = [
-      '---',
-      'title: Current file title',
-      'summary: Current file summary',
-      'tags: [current]',
-      'mood: current-value',
-      '---',
-      '',
-      'current body',
-      '',
-    ].join('\n')
-    await write(logicalFile, currentRaw)
-    await call('POST', '/commits', { paths: [logicalFile], message: 'current diary' })
-    saveDocumentMetadata(metadataDb, {
-      id: 'history-metadata-current',
-      path: 'diary/2000-04-04',
-      title: 'SQLite current title',
-      summary: 'SQLite current summary',
-      tags: ['sqlite-current'],
-      updatedAt: 100,
-    })
-    const before = getDocumentMetadata(metadataDb, 'diary/2000-04-04')!
-
-    const response = await call('POST', '/restore', { path: logicalFile, ref })
-
-    expect(response.status).toBe(200)
-    expect(await read(logicalFile)).toBe(historicalRaw)
-    expect(getDocumentMetadata(metadataDb, 'diary/2000-04-04')).toMatchObject({
-      id: before.id,
-      path: before.path,
-      title: 'SQLite current title',
-      summary: 'SQLite current summary',
-      tags: ['sqlite-current'],
-    })
-    expect(getDocumentMetadata(metadataDb, 'diary/2000-04-04')!.updatedAt).toBeGreaterThan(before.updatedAt)
+    const restore = await call('POST', '/restore', { path: logicalFile, ref: 'HEAD' })
+    expect(restore.status).toBe(422)
+    expect(await restore.json()).toMatchObject({ code: 'diary-history-encrypted-unsupported' })
+    expect(await read(logicalFile)).toBe('private Diary body\n')
   }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
   it('returns 409 and preserves an external edit that wins the CAS', async () => {
@@ -1024,18 +983,13 @@ describeHistoryIntegration('POST /api/history/restore', () => {
     expect(getDocumentMetadata(metadataDb, 'folder/note')?.id).toBe('missing-target-id')
   }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
-  it('restores a missing managed Diary only with Git-backed prior-content provenance', async () => {
+  it('rejects History Restore for managed Diary while encrypted History is unavailable', async () => {
     const date = '2000-04-04'
     const logicalFile = `diary/${date}.md`
-    await write(logicalFile, '# historical Diary\n')
-    const historical = await call('POST', '/commits', { paths: [logicalFile], message: 'diary history' })
-    const ref = (await historical.json() as { sha: string }).sha
-    await fs.unlink(path.join(root, logicalFile))
-
-    const response = await call('POST', '/restore', { path: logicalFile, ref })
-
-    expect(response.status).toBe(200)
-    expect(await read(logicalFile)).toBe('# historical Diary\n')
+    const response = await call('POST', '/restore', { path: logicalFile, ref: 'HEAD' })
+    expect(response.status).toBe(422)
+    expect(await response.json()).toMatchObject({ code: 'diary-history-encrypted-unsupported' })
+    await expect(fs.stat(path.join(root, logicalFile))).rejects.toMatchObject({ code: 'ENOENT' })
   }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
   it('returns 409 without replacing a create-only incumbent', async () => {

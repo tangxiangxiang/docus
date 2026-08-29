@@ -82,11 +82,11 @@ diaryAccessRoutes.post('/api/diary/access/unlock', async (c) => {
   }
 })
 
-diaryAccessRoutes.post('/api/diary/access/lock', (c) => {
+diaryAccessRoutes.post('/api/diary/access/lock', async (c) => {
   const resolved = runtimeOrError(c)
   if (!resolved.runtime) return resolved.response
   try {
-    const result = resolved.runtime.diaryAccess.lock(sessionId(c))
+    const result = await resolved.runtime.diaryAccess.lock(sessionId(c))
     noStore(c)
     return c.json(result)
   } catch (error) {

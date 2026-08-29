@@ -293,6 +293,18 @@ function canonicalManagedDiaryPath(value: unknown): string | null {
   return canonical && classifyDiaryPath(canonical) === 'managed' ? canonical : null
 }
 
+function managedDiaryPathsOnDisk(): string[] {
+  try {
+    const diaryRoot = folderPathFor('diary')
+    return fs.readdirSync(diaryRoot, { withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .map((entry) => canonicalManagedDiaryPath(`diary/${entry.name.replace(/\.md$/, '')}`))
+      .filter((value): value is string => value !== null)
+  } catch {
+    return []
+  }
+}
+
 function diaryBodyAccessError(
   access: ((path: string) => boolean) | undefined,
   paths: readonly unknown[],
@@ -302,6 +314,20 @@ function diaryBodyAccessError(
     const path = canonicalManagedDiaryPath(value)
     if (path && !access(path)) {
       return err(`Tool blocked: diary-locked. Diary body access is locked for ${path}. Unlock Diary before reading or changing it.`)
+    }
+  }
+  return null
+}
+
+function diaryEncryptedBodyUnsupportedError(
+  name: string,
+  paths: readonly unknown[],
+): ToolResult | null {
+  if (!['read_file', 'create_file', 'write_file', 'patch_file'].includes(name)) return null
+  for (const value of paths) {
+    const diaryPath = canonicalManagedDiaryPath(value)
+    if (diaryPath) {
+      return err(`Tool blocked: diary-encrypted-body-unsupported. AI ${name} is disabled for managed Diary body ${diaryPath} until an adapter-aware owner is available.`)
     }
   }
   return null
@@ -1182,6 +1208,12 @@ export async function executeToolCall(
         ? diaryBodyAccessError(ctx.diaryBodyAccess, [target.sourcePath, target.destinationPath])
         : null
   if (pathAccessError) return pathAccessError
+  const encryptedBodyError = name === 'read_file'
+    ? diaryEncryptedBodyUnsupportedError(name, [input.path])
+    : target.kind === 'single-path'
+      ? diaryEncryptedBodyUnsupportedError(name, [target.path])
+      : null
+  if (encryptedBodyError) return encryptedBodyError
   if (target.kind === 'none' || target.kind === 'unknown') {
     return dispatchToolCall(name, input, db)
   }
@@ -1242,6 +1274,15 @@ async function executeGuardedRename(
   diaryBodyAccess?: (path: string) => boolean,
 ): Promise<ToolResult> {
   const renameInput = input as { path?: string; new_path?: string; update_references?: boolean }
+  if (canonicalManagedDiaryPath(renameInput.path) || canonicalManagedDiaryPath(renameInput.new_path)) {
+    return err('rename_file: managed Diary cannot change identity; encrypted-body rename/reference rewrite is unsupported until an adapter-aware owner is available.')
+  }
+  const managedDiaryPaths = managedDiaryPathsOnDisk()
+  const onDiskAccessError = diaryBodyAccessError(diaryBodyAccess, managedDiaryPaths)
+  if (onDiskAccessError) return onDiskAccessError
+  if (renameInput.update_references !== false && managedDiaryPaths.length > 0) {
+    return err('rename_file: reference rewrite footprint may contain an encrypted managed Diary body; operation failed closed.')
+  }
   let discovered: RenameReferenceSnapshot
   try {
     discovered = await discoverRenameReferenceSnapshot(renameInput, diaryBodyAccess)
@@ -1258,6 +1299,9 @@ async function executeGuardedRename(
     ...discovered.sourcePaths,
   ])
   if (discoveryAccessError) return discoveryAccessError
+  if (discovered.sourcePaths.some((value) => canonicalManagedDiaryPath(value))) {
+    return err('rename_file: reference rewrite footprint contains an encrypted managed Diary body; operation failed closed.')
+  }
   let plan: RenamePlan
   try {
     plan = await buildRenamePlan(renameInput, discovered)
@@ -1298,6 +1342,9 @@ async function executeGuardedRename(
       ...candidateSnapshot.sourcePaths,
     ])
     if (candidateAccessError) return candidateAccessError
+    if (candidateSnapshot.sourcePaths.some((value) => canonicalManagedDiaryPath(value))) {
+      return err('rename_file: reference rewrite footprint contains an encrypted managed Diary body; operation failed closed.')
+    }
     let candidate: RenamePlan
     try {
       candidate = await buildRenamePlan(renameInput, candidateSnapshot)

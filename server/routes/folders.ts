@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import type { Database as DatabaseT } from 'better-sqlite3'
 import { Hono } from 'hono'
 import { canModify } from '../../shared/archiveProtocol.js'
+import { classifyDiaryPath } from '../../shared/diaryProtocol.js'
 import { AtomicTextWriteConflictError, atomicReplaceTextIfUnchanged, removeDurableJournal, rewriteDurableJournal, sha256Hex, syncParentDirectoryBestEffort, verifyDirectoryGeneration, writeDurableJournal } from '../atomicTextWrite.js'
 import {
   deleteDocumentMetadata,
@@ -68,7 +69,7 @@ import { listSubtreePaths } from '../tree.js'
 import { bad, ensureMetadata, exists, metadataDb, recordCommittedMetadata } from './shared.js'
 import { nextMetadataBatchUpdatedAt } from '../metadataVersion.js'
 import { validateFolderMutation } from '../documentMutationPolicy.js'
-import { requireDiaryBodyAccess } from '../diaryAccess/guard.js'
+import { rejectManagedDiaryReferenceFootprint, requireDiaryBodyAccess } from '../diaryAccess/guard.js'
 
 const folderRoutes = new Hono()
 
@@ -268,6 +269,10 @@ folderRoutes.patch('/api/folders/*', async (c) => {
   // the whole transaction instead of slipping a new child in between
   // the enumeration and the lock acquisition.
   return withVaultMutation(CONTENT_DIR, () => withVaultStructureLock(async () => {
+  if (body.updateReferences !== false) {
+    const referenceError = await rejectManagedDiaryReferenceFootprint(c)
+    if (referenceError) return referenceError
+  }
   const plannedOldPaths = await listSubtreePaths(CONTENT_DIR, srcPath)
   const plannedReferencePaths = body.updateReferences
     ? Object.entries((await getLinkIndex()).snapshot().outgoing)
@@ -277,6 +282,9 @@ folderRoutes.patch('/api/folders/*', async (c) => {
   for (const bodyPath of [...plannedOldPaths, ...plannedReferencePaths]) {
     const bodyAccess = requireDiaryBodyAccess(c, bodyPath)
     if (bodyAccess) return bodyAccess
+  }
+  if ([...plannedOldPaths, ...plannedReferencePaths].some((value) => classifyDiaryPath(value) === 'managed')) {
+    return bad(c, 'folder rename reference footprint contains an encrypted managed Diary body', 422, 'diary-encrypted-reference-unsupported')
   }
   const plannedNewPaths = plannedOldPaths.map((oldPath) => newPath + oldPath.slice(srcPath.length))
   const plannedReferenceWritePaths = plannedReferencePaths.map((source) =>

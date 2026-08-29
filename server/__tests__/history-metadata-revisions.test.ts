@@ -253,7 +253,11 @@ describeHistoryIntegration('D7.0A generic history metadata revisions', () => {
     expect(operation.expected_parent_sha).toBeNull()
   }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
-  it('captures canonical managed Diary metadata as v2, including explicit null Mood', async () => {
+  // D8.2 intentionally fail-closes managed Diary History/Git routes. The
+  // pre-D8.2 lifecycle remains documented by D7.0A evidence; these endpoint
+  // characterizations are retained as historical references but are not
+  // executable under the encrypted-body policy.
+  it.skip('captures canonical managed Diary metadata as v2, including explicit null Mood', async () => {
     const diaryPath = 'diary/2026-08-24.md'
     await write(diaryPath, '# Diary\n')
     const metadata = saveDocumentMetadata(metadataDb, {
@@ -279,7 +283,7 @@ describeHistoryIntegration('D7.0A generic history metadata revisions', () => {
     })
   }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
-  it('captures and restores v2 Diary Mood while preserving stable identity and minting a new version', async () => {
+  it.skip('captures and restores v2 Diary Mood while preserving stable identity and minting a new version', async () => {
     const diaryPath = 'diary/2026-08-25.md'
     const logicalPath = 'diary/2026-08-25'
     await write(diaryPath, 'historical body\n')
@@ -327,7 +331,7 @@ describeHistoryIntegration('D7.0A generic history metadata revisions', () => {
     expect(getDocumentMetadata(metadataDb, logicalPath)!.updatedAt).toBeGreaterThan(beforeRestore.updatedAt)
   }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
-  it('classifies a managed v1 capture as pre-Mood body-only restore', async () => {
+  it.skip('classifies a managed v1 capture as pre-Mood body-only restore', async () => {
     const diaryPath = 'diary/2026-08-26.md'
     const logicalPath = 'diary/2026-08-26'
     await write(diaryPath, 'historical body\n')
@@ -389,7 +393,7 @@ describeHistoryIntegration('D7.0A generic history metadata revisions', () => {
     })
   }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
-  it('rejects a covered pre-Mood Diary restore when its body binding is corrupted', async () => {
+  it.skip('rejects a covered pre-Mood Diary restore when its body binding is corrupted', async () => {
     const diaryPath = 'diary/2026-08-27.md'
     const logicalPath = 'diary/2026-08-27'
     await write(diaryPath, 'historical body\n')
@@ -433,7 +437,7 @@ describeHistoryIntegration('D7.0A generic history metadata revisions', () => {
     })
   }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
-  it('rejects a covered pre-Mood Diary restore across a delete/recreate generation', async () => {
+  it.skip('rejects a covered pre-Mood Diary restore across a delete/recreate generation', async () => {
     const diaryPath = 'diary/2026-08-28.md'
     const logicalPath = 'diary/2026-08-28'
     await write(diaryPath, 'old generation body\n')
@@ -483,7 +487,7 @@ describeHistoryIntegration('D7.0A generic history metadata revisions', () => {
     })
   }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
-  it('does not create a path-only generation for a covered pre-Mood Diary restore', async () => {
+  it.skip('does not create a path-only generation for a covered pre-Mood Diary restore', async () => {
     const diaryPath = 'diary/2026-08-29.md'
     const logicalPath = 'diary/2026-08-29'
     await write(diaryPath, 'historical body\n')
@@ -515,7 +519,7 @@ describeHistoryIntegration('D7.0A generic history metadata revisions', () => {
     expect(getDocumentMetadata(metadataDb, logicalPath)).toBeNull()
   }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
-  it('captures every selected document in one multi-file revision operation', async () => {
+  it.skip('captures every selected document in one multi-file revision operation', async () => {
     await write('a.md', 'a\n')
     await write('b.md', 'b\n')
     await write('diary/2026-08-27.md', 'diary\n')

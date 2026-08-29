@@ -10,6 +10,8 @@ import { deleteDocumentMetadata, getDocumentMetadata, patchDocumentMetadata } fr
 import { __resetLinkIndexForTesting } from '../linkIndex'
 import { CONTENT_DIR, setContentDir } from '../paths'
 import { localDiaryDateForTimeZone } from '../routes/diary'
+import { __setAtomicWriteTestHooksForTesting } from '../atomicTextWrite'
+import { DIARY_BODY_ENVELOPE_MAGIC } from '../diaryAccess/body'
 import {
   closeAuthTestContext,
   createAuthenticatedTestContext,
@@ -71,6 +73,7 @@ afterEach(async () => {
   db.close()
   setContentDir(ORIGINAL_CONTENT_DIR)
   __resetLinkIndexForTesting()
+  __setAtomicWriteTestHooksForTesting(null)
   await fs.rm(vault, { recursive: true, force: true })
 })
 
@@ -109,6 +112,21 @@ describe('POST /api/diary/dates', () => {
     })
     expect((await fs.readdir(path.join(vault, 'diary'))).filter(name => name.endsWith('.md')))
       .toEqual([`${date}.md`])
+  })
+
+  it('fails closed for an encrypted Diary whose metadata identity is missing', async () => {
+    const date = '2000-02-28'
+    expect((await call('POST', '/api/diary/dates', { date, timeZone: TIME_ZONE })).status).toBe(201)
+    const diaryPath = path.join(vault, 'diary', `${date}.md`)
+    const encryptedBefore = await fs.readFile(diaryPath)
+
+    deleteDocumentMetadata(db, `diary/${date}`)
+    const response = await call('POST', '/api/diary/dates', { date, timeZone: TIME_ZONE })
+
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({ code: 'diary-body-identity-mismatch' })
+    expect(getDocumentMetadata(db, `diary/${date}`)).toBeNull()
+    expect(await fs.readFile(diaryPath)).toEqual(encryptedBefore)
   })
 
   it('creates a missing past date and rejects a missing future without a file', async () => {
@@ -159,6 +177,46 @@ describe('POST /api/diary/dates', () => {
     expect((await fs.readdir(path.join(vault, 'diary'))).filter(name => name.endsWith('.md')))
       .toEqual([`${date}.md`])
     expect(await fs.readFile(path.join(vault, 'diary', `${date}.md`), 'utf8')).not.toContain(`# ${date}`)
+  })
+
+  it('keeps private body sentinels out of the final and temporary physical representations', async () => {
+    const date = '2000-03-02'
+    const sentinel = 'D8_2_PRIVATE_BODY_SENTINEL'
+    expect((await call('POST', '/api/diary/dates', { date, timeZone: TIME_ZONE })).status).toBe(201)
+    const current = await call('GET', `/api/posts/diary/${date}`)
+    const currentRaw = (await current.json() as { raw: string }).raw
+    let temporaryPath: string | null = null
+    let release!: () => void
+    const paused = new Promise<void>((resolve) => { release = resolve })
+    __setAtomicWriteTestHooksForTesting({
+      afterTemporaryCloseBeforeIdentity: async (pathName) => {
+        temporaryPath = pathName
+        await paused
+      },
+    })
+    const save = call('PUT', `/api/posts/diary/${date}`, {
+      raw: `${currentRaw}${sentinel}\n`,
+      baseRaw: currentRaw,
+    })
+    while (temporaryPath === null) await new Promise<void>((resolve) => setImmediate(resolve))
+    const temporary = await fs.readFile(temporaryPath, 'utf8')
+    expect(temporary).toContain(DIARY_BODY_ENVELOPE_MAGIC)
+    expect(temporary).not.toContain(sentinel)
+    release()
+    expect((await save).status).toBe(200)
+    expect(await fs.readFile(path.join(vault, 'diary', `${date}.md`), 'utf8')).not.toContain(sentinel)
+    expect((await (await call('GET', `/api/posts/diary/${date}`)).json() as { raw: string }).raw)
+      .toContain(sentinel)
+  })
+
+  it('restores metadata when encrypted Diary preparation fails before a file is created', async () => {
+    const date = '2000-03-03'
+    __setAtomicWriteTestHooksForTesting({
+      afterParentIdentityBeforeTemporaryOpen: () => { throw new Error('D8_2_TEMP_SENTINEL prepare failure') },
+    })
+    expect((await call('POST', '/api/diary/dates', { date, timeZone: TIME_ZONE })).status).toBe(500)
+    expect(getDocumentMetadata(db, `diary/${date}`)).toBeNull()
+    await expect(fs.stat(path.join(vault, 'diary', `${date}.md`))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })
 

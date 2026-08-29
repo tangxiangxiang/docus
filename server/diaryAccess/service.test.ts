@@ -127,6 +127,34 @@ describe('D8.1 Diary access foundation', () => {
     dek.fill(0)
   })
 
+  it('waits for an active body lease before reporting a successful lock', async () => {
+    const db = new Database(':memory:')
+    applyMigrations(db)
+    const service = makeService(db)
+    const unlocked = await service.setup(7, PASSWORD)
+    let release!: () => void
+    const hold = new Promise<void>((resolve) => { release = resolve })
+    const operation = service.withBodyOperation(7, unlocked.capability, async (body) => {
+      body.assertCurrent()
+      await hold
+      body.assertCurrent()
+      return 'completed'
+    })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    let lockSettled = false
+    const lock = Promise.resolve(service.lock(7)).then((result) => {
+      lockSettled = true
+      return result
+    })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(lockSettled).toBe(false)
+    release()
+    await expect(operation).resolves.toBe('completed')
+    await expect(lock).resolves.toEqual({ state: 'LOCKED' })
+    expect(service.isCapabilityValid(7, unlocked.capability)).toBe(false)
+    db.close()
+  })
+
   it('fails closed when auth is invalidated during KDF and expires capabilities per session', async () => {
     const db = new Database(':memory:')
     applyMigrations(db)

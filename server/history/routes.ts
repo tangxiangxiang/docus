@@ -48,7 +48,16 @@ import {
   isValidHistoryRef,
   validateHistoryPaths,
 } from './validation.js'
-import { requireDiaryBodyAccess } from '../diaryAccess/guard.js'
+import { isManagedDiaryBodyPath, requireDiaryBodyAccess } from '../diaryAccess/guard.js'
+
+function rejectEncryptedDiaryHistory(c: any, path: string): Response | null {
+  if (!isManagedDiaryBodyPath(path)) return null
+  c.header('Cache-Control', 'no-store')
+  return c.json({
+    error: 'Managed Diary body History is unavailable while encrypted History is not implemented.',
+    code: 'diary-history-encrypted-unsupported',
+  }, 422)
+}
 
 /**
  * Where git runs — the vault root. By default this is the same
@@ -250,6 +259,8 @@ history.post('/content-hashes', async (c) => {
   const paths = validateHistoryPaths(body?.paths)
   if (!paths) return bad(c, 'invalid paths')
   for (const filePath of paths) {
+    const historyError = rejectEncryptedDiaryHistory(c, filePath)
+    if (historyError) return historyError
     const bodyAccess = requireDiaryBodyAccess(c, filePath)
     if (bodyAccess) return bodyAccess
   }
@@ -272,6 +283,10 @@ history.get('/log', async (c) => {
   const limitStr = c.req.query('limit')
   const limit = limitStr ? Math.max(1, Math.min(2000, Number(limitStr) || 200)) : 200
   if (pathParam && !isValidHistoryPath(pathParam)) return bad(c, 'invalid path')
+  if (pathParam) {
+    const historyError = rejectEncryptedDiaryHistory(c, pathParam)
+    if (historyError) return historyError
+  }
   const path = pathParam || undefined
   try {
     await ensureRepo(repoRoot())
@@ -292,6 +307,8 @@ history.get('/file', async (c) => {
   const ref = c.req.query('ref') ?? 'HEAD'
   const validPath = validPathParam(c, path)
   if (validPath instanceof Response) return validPath
+  const historyError = rejectEncryptedDiaryHistory(c, validPath)
+  if (historyError) return historyError
   const bodyAccess = requireDiaryBodyAccess(c, validPath)
   if (bodyAccess) return bodyAccess
   const validRef = validRefParam(c, ref, 'ref', { allowWorktree: true })
@@ -323,6 +340,8 @@ history.get('/diff', async (c) => {
   const newRef = c.req.query('new')
   const validPath = validPathParam(c, path)
   if (validPath instanceof Response) return validPath
+  const historyError = rejectEncryptedDiaryHistory(c, validPath)
+  if (historyError) return historyError
   const bodyAccess = requireDiaryBodyAccess(c, validPath)
   if (bodyAccess) return bodyAccess
   if (!oldRef || !newRef) return bad(c, 'old and new refs required')
@@ -375,6 +394,8 @@ history.post('/commits', async (c) => {
   const paths = validateHistoryPaths(body.paths)
   if (!paths) return bad(c, 'invalid path')
   for (const filePath of paths) {
+    const historyError = rejectEncryptedDiaryHistory(c, filePath)
+    if (historyError) return historyError
     const bodyAccess = requireDiaryBodyAccess(c, filePath)
     if (bodyAccess) return bodyAccess
   }
@@ -617,6 +638,8 @@ history.post('/restore', async (c) => {
   }
   const validPath = validPathParam(c, body.path)
   if (validPath instanceof Response) return validPath
+  const historyError = rejectEncryptedDiaryHistory(c, validPath)
+  if (historyError) return historyError
   const bodyAccess = requireDiaryBodyAccess(c, validPath)
   if (bodyAccess) return bodyAccess
   if (body.ref !== git.WORKTREE_REF && !isValidHistoryRef(body.ref)) return bad(c, 'invalid ref')

@@ -6,8 +6,12 @@ export const DIARY_BODY_ALGORITHM = 'aes-256-gcm' as const
 export const DIARY_BODY_NONCE_BYTES = 12
 export const DIARY_BODY_TAG_BYTES = 16
 export const DIARY_BODY_CONTEXT = 'docus/diary-body/v1'
+export const DIARY_BODY_ENVELOPE_MAGIC = 'DOCUS-DIARY-ENC-V1\n'
+export const DIARY_BODY_MAX_PLAINTEXT_BYTES = 16 * 1024 * 1024
+export const DIARY_BODY_MAX_ENVELOPE_BYTES = 20 * 1024 * 1024
+export const DIARY_BODY_MAX_CIPHERTEXT_BYTES = 16 * 1024 * 1024
 
-type BodyContext = {
+export type BodyContext = {
   readonly vaultId: string
   readonly documentId: string
   readonly logicalPath: string
@@ -17,6 +21,11 @@ export type DiaryBodyRead = {
   readonly raw: string
   readonly encrypted: boolean
   readonly bytes: Buffer
+}
+
+export function isEncryptedDiaryBody(bytes: Buffer): boolean {
+  return bytes.subarray(0, Buffer.byteLength(DIARY_BODY_ENVELOPE_MAGIC, 'utf8'))
+    .equals(Buffer.from(DIARY_BODY_ENVELOPE_MAGIC, 'utf8'))
 }
 
 export class DiaryBodyCryptoError extends Error {
@@ -65,26 +74,41 @@ function assertKey(key: Buffer): void {
 }
 
 function decodeBase64(value: unknown, expectedLength: number, field: string): Buffer {
-  if (typeof value !== 'string' || !value) {
+  if (typeof value !== 'string' || (field !== 'ciphertext' && !value)) {
     throw new DiaryBodyCryptoError('invalid-envelope', `Diary body envelope has no valid ${field}`)
   }
   const decoded = Buffer.from(value, 'base64')
+  if (decoded.toString('base64') !== value) {
+    throw new DiaryBodyCryptoError('invalid-envelope', `Diary body envelope has non-canonical ${field}`)
+  }
   if (decoded.length !== expectedLength && field !== 'ciphertext') {
     throw new DiaryBodyCryptoError('invalid-envelope', `Diary body envelope has invalid ${field}`)
+  }
+  if (field === 'ciphertext' && decoded.length > DIARY_BODY_MAX_CIPHERTEXT_BYTES) {
+    throw new DiaryBodyCryptoError('invalid-envelope', 'Diary body envelope ciphertext is too large')
   }
   return decoded
 }
 
 function parseEnvelope(bytes: Buffer): DiaryBodyEnvelope | null {
+  const magic = Buffer.from(DIARY_BODY_ENVELOPE_MAGIC, 'utf8')
+  if (!bytes.subarray(0, magic.length).equals(magic)) return null
+  if (bytes.length > DIARY_BODY_MAX_ENVELOPE_BYTES) {
+    throw new DiaryBodyCryptoError('invalid-envelope', 'Diary body envelope is too large')
+  }
   let parsed: unknown
   try {
-    parsed = JSON.parse(bytes.toString('utf8'))
+    parsed = JSON.parse(bytes.subarray(magic.length).toString('utf8'))
   } catch {
-    return null
+    throw new DiaryBodyCryptoError('invalid-envelope', 'Diary body envelope is malformed')
   }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new DiaryBodyCryptoError('invalid-envelope', 'Diary body envelope is not an object')
+  }
   const record = parsed as Record<string, unknown>
-  if (record.kind !== 'docus-diary-body') return null
+  if (record.kind !== 'docus-diary-body') {
+    throw new DiaryBodyCryptoError('invalid-envelope', 'Diary body envelope kind is invalid')
+  }
   if (record.version !== DIARY_BODY_ENVELOPE_VERSION || record.algorithm !== DIARY_BODY_ALGORITHM) {
     throw new DiaryBodyCryptoError('unsupported-envelope', 'Diary body envelope version is not supported')
   }
@@ -99,6 +123,9 @@ function parseEnvelope(bytes: Buffer): DiaryBodyEnvelope | null {
 
 export function encryptDiaryBody(raw: string, context: BodyContext, key: Buffer): Buffer {
   assertKey(key)
+  if (Buffer.byteLength(raw, 'utf8') > DIARY_BODY_MAX_PLAINTEXT_BYTES) {
+    throw new DiaryBodyCryptoError('invalid-envelope', 'Diary body is too large')
+  }
   const nonce = randomBytes(DIARY_BODY_NONCE_BYTES)
   const cipher = createCipheriv(DIARY_BODY_ALGORITHM, key, nonce)
   cipher.setAAD(aadFor(context))
@@ -115,11 +142,14 @@ export function encryptDiaryBody(raw: string, context: BodyContext, key: Buffer)
     ciphertext: ciphertext.toString('base64'),
     tag: tag.toString('base64'),
   }
-  return Buffer.from(JSON.stringify(envelope), 'utf8')
+  return Buffer.from(DIARY_BODY_ENVELOPE_MAGIC + JSON.stringify(envelope), 'utf8')
 }
 
 export function decryptDiaryBody(bytes: Buffer, context: BodyContext, key: Buffer): DiaryBodyRead {
   assertKey(key)
+  if (bytes.length > DIARY_BODY_MAX_ENVELOPE_BYTES) {
+    throw new DiaryBodyCryptoError('invalid-envelope', 'Diary body is too large')
+  }
   const envelope = parseEnvelope(bytes)
   if (!envelope) {
     // D8.4 owns migration. D8.2 can read a legacy plaintext body only as an
