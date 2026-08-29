@@ -33,6 +33,9 @@ Initial evidence commit:
 
 Independent Review remediation commit:
 1c0b7ca5c56cf8cd0099c56335db866cf9e6c8a1
+
+Final cold-LinkIndex remediation commit:
+f766897 fix(diary): gate cold LinkIndex body reads
 ```
 
 The working tree was clean at the stated starting HEAD and the implementation
@@ -304,6 +307,10 @@ Focused remediation coverage includes:
 - deferred managed Diary tab restore and authorized deep-link restore;
 - locked direct Diary/posts/History/tool body operations;
 - locked structural tree/list behavior without managed Diary frontmatter reads;
+- true cold-start AI rename/LinkIndex authorization: the singleton is reset and
+  the asynchronous body-read spy is installed before discovery; a locked
+  managed Diary blocks rename with zero Diary body reads, while an allowed
+  retry can rebuild and preserve the existing backlink rewrite behavior;
 - ordinary-note and existing D7 Diary/Mood/Calendar regressions (also covered
   by the passing full unit suite).
 
@@ -327,6 +334,15 @@ D8.1-IR-P1-4 AI rename authorization before body I/O      = REMEDIATED
 D8.1-IR-P1-5 auth-session TOCTOU / DEK lifetime           = REMEDIATED
 D8.1-IR-P2-1 secondary-password failure throttling        = REMEDIATED
 ```
+
+The P1-4 remediation now has a true cold-start regression rather than only a
+warm-index assertion. An access-aware LinkIndex rebuild authorizes every
+managed Diary path from the structural listing before reading any Markdown
+body. With the singleton cold and Diary access denied, AI rename fails closed,
+the ordinary source is unchanged, and the managed Diary body-read count is
+zero. With access allowed, the same cold rebuild proceeds through the existing
+Edit-10.4 backlink rewrite path. Warm-index candidate authorization remains in
+place for the already-cached path.
 
 This is remediation self-review evidence only. It does not mark Independent
 Review as passed or close D8.1.
