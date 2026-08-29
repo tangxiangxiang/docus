@@ -8,7 +8,7 @@ Starting commit        = docs(diary): close D7 mood implementation
 D8 overall             = IN PROGRESS
 D8.0                   = REVIEW-READY
 D8.0 Self-review       = PASS (P0/P1/P2 = 0/0/0)
-D8.0 Independent Review = PENDING
+D8.0 Independent Review = RE-REVIEW PENDING
 D8.1                   = NOT STARTED
 D8.2                   = NOT STARTED
 D8.3                   = NOT STARTED
@@ -93,8 +93,8 @@ useDocumentSave.saveLatest()
 | Primary `diary/YYYY-MM-DD.md` | plaintext UTF-8 Markdown | durable on vault disk | replace with versioned authenticated envelope |
 | Atomic save temp / staged generation | `writeTemporaryTextFile()` writes `raw`; replacement/staging are plaintext | durable during transaction and crash windows | pass ciphertext only; journal contains identity/hash, never body |
 | Diary create/recovery temp | `prepareAtomicTextCreate()` receives raw | durable until commit/rollback | same encrypted create/recovery seam |
-| Nested vault Git working tree/history | `server/history/git.ts` reads/commits bytes at path; current nested `.gitignore` does not ignore `diary/` | durable if Diary is staged/committed | future commits contain ciphertext only; classify existing plaintext history as legacy, no silent purge claim |
-| History `/file`, `/diff`, restore | `git.rawAt()` and history routes return raw; client comparison stores `beforeRaw`/`afterRaw` | network/UI memory; current Git source may be plaintext | decrypt only through authorized History adapter; locked/unsupported paths fail closed |
+| Nested vault Git working tree/history | `server/history/git.ts` reads/commits bytes at path; current nested `.gitignore` does not ignore `diary/` | durable if Diary is staged/committed | D8 must exclude new managed-Diary body revisions from every new Git commit, whether plaintext or ciphertext; classify existing plaintext history as legacy, with no silent rewrite/purge |
+| History `/file`, `/diff`, restore | `git.rawAt()` and history routes return raw; client comparison stores `beforeRaw`/`afterRaw` | network/UI memory; current Git source may be plaintext | Note History remains unchanged; new D8 managed-Diary body History is unavailable/disabled until a separately approved non-Git encrypted owner exists; legacy/unsupported Diary history fails closed and is not exposed while locked |
 | Rename-reference journals | `prepareRenameReferenceJournal()` writes before/after raw payload files | durable crash-recovery payload | Diary reference payload must be encrypted or forbidden; hashes alone are not a body substitute |
 | SQLite `documents` | stores title/summary/tags/timestamps/Mood/id/path, not normal body | durable metadata; some fields may be sensitive | retain single owner; define locked structural projection and metadata privacy policy |
 | `metadata_migrations.frontmatter_backup` | migration reads every `.md` and can retain frontmatter backup | durable plaintext metadata; not normally body | Diary migration must classify/clean/protect it; never use it as a body backup |
@@ -114,12 +114,15 @@ The most important finding is that the current atomic protocol is safe for ordin
 
 The vault History implementation is a nested Git repository independent of the root Docus repository. `server/history/git.ts` uses `git show`/`git add`/`commit-tree` style operations; `rawAt()` returns the exact bytes at a ref. `server/history/repo.ts` creates a vault `.gitignore` that ignores Docus runtime/build/log artifacts but currently does not exclude `diary/`.
 
-The safe D8 policy is:
+The D7 Git-backed History behavior was correct under the old contract. D8 intentionally supersedes that behavior only for managed Diary body revisions because the new privacy contract is that new encrypted Diary content must not be added to Git at all.
 
-1. after migration, Git sees only encrypted envelope bytes for managed Diary;
-2. History comparison/diff/restore remains available only through a Diary-aware adapter that authenticates/decrypts the selected envelope after unlock;
-3. if an old revision is plaintext or has an unknown envelope, it is classified as legacy/unsupported and the operation fails closed or returns an explicit metadata/body-unavailable state; it must not mix historical plaintext body with current Mood/metadata;
-4. D8 does not rewrite a user's existing Git history automatically. A release document must state whether legacy plaintext remains and what explicit user-controlled purge/backup operation is offered.
+The frozen D8 policy is:
+
+1. after D8 takes effect, no new managed-Diary body revision enters a new vault Git commit, whether the representation would be plaintext or ciphertext; `.gitignore` is defense-in-depth only and the actual History/Git mutation owner must enforce the exclusion;
+2. existing legacy plaintext Diary history is classified as legacy exposure. D8 does not automatically rewrite, purge or claim retroactive removal of that history; any rewrite/purge requires explicit user approval, backup policy and a separately reviewed operation;
+3. Note History remains unchanged;
+4. Git-backed History comparison/diff/restore for new managed-Diary body revisions is unavailable/disabled. A future non-Git encrypted body-history store would require a separate approved design; D8 does not imply one;
+5. legacy or unsupported Diary history is never silently exposed while locked and must fail closed or return an explicit unavailable state rather than mixing a historical body with current Mood/metadata.
 
 This supersedes only the D8 privacy behavior for managed Diary. It does not reopen D7’s already-correct body-only History/Mood compatibility decision.
 
@@ -127,9 +130,35 @@ This supersedes only the D8 privacy behavior for managed Diary. It does not reop
 
 ### 6.1 Current scope behavior
 
-`src/composables/vault/useScopeFilter.ts` owns module-level `activeScope: Ref<ScopeKey | null>` and persists `docus.vault.activeScope` in `localStorage`. `toggleScope()` can set the scope back to `null`, and a persisted `diary` value can be loaded before `VaultView` mounts.
+`src/composables/vault/useScopeFilter.ts` currently owns module-level `activeScope: Ref<ScopeKey | null>` and persists `docus.vault.activeScope` in `localStorage`. `toggleScope()` can set the scope back to `null`, and a persisted `diary` value can be loaded before `VaultView` mounts. This is current pre-D8 behavior, not the target contract.
 
 `NavBar.vue` reads the same composable above `RouterView`; `FileTree.vue` consumes the scope to filter generic roots; `VaultView.vue` also reads it and has an existing `activeScope.value = null` reveal path. This confirms that D8.1’s lock owner must be shell-level and must replace ad hoc Diary-sensitive writes with explicit safe-scope transitions.
+
+The frozen D8 target is an exclusive selection, not a toggle:
+
+```ts
+type ScopeKey = 'note' | 'diary' | 'ledger'
+activeScope: ScopeKey
+```
+
+`activeScope` must always be exactly one of `note`, `diary` or `ledger`; `null` and a fourth neutral scope are forbidden. Selecting the current scope is a NO-OP. `requestScopeChange('diary')` may authenticate or initialize first, but only a successful result may commit `activeScope = 'diary'`. Cancellation or wrong password preserves the current scope, route, tabs and presentation. `activeScope === 'diary'` implies an `UNLOCKED` Diary session.
+
+D8.1 must freeze the session state model separately from scope selection:
+
+```text
+UNINITIALIZED
+  ├─ Diary request ─► password setup ─► generate DEK / wrap DEK
+  │                                  └─► establish UNLOCKED(sessionEpoch)
+  ├─ cancel/setup failure ─► UNINITIALIZED
+  └─ no scope change, no migration
+
+LOCKED
+  ├─ unlock request ─► UNLOCKING ─► UNLOCKED(sessionEpoch)
+  ├─ invalid password ─► LOCKED
+  └─ lock / logout / expiry ─► LOCKING ─► LOCKED
+```
+
+On first use, `UNINITIALIZED` is not an unlock failure: the user must complete secondary-password setup, the approved KDF derives a KEK, a random Diary DEK is generated and wrapped, only approved wrapped-key/KDF metadata is persisted, and the first in-memory unlocked capability/session epoch is established. Only then may authorized legacy plaintext migration run. Cancel or setup failure performs no scope change, body migration or partial durable success. An initialized installation starts `LOCKED` on each new application/session; successful password verification reaches `UNLOCKED(sessionEpoch)`.
 
 ### 6.2 Current tab restore behavior
 
@@ -143,7 +172,8 @@ The target owner is one session state machine, not a boolean in Calendar or Vaul
 
 ```text
 DiaryLockSession
-  owns: locked/unlocking/unlocked/locking, session epoch, capability
+  owns: UNINITIALIZED/LOCKED/UNLOCKED plus implementation sub-states,
+        session epoch and capability
   guards: scope, deep link, tab restore, body read/write, History, Recovery
 
 DiaryCryptoStorage
@@ -151,7 +181,7 @@ DiaryCryptoStorage
   receives: current session capability
 ```
 
-All body operations capture the session epoch. Lock/logout/expiry prevents a stale completion from returning/rendering plaintext or committing a post-lock mutation. A failed unlock must not change scope, restore tabs, or populate caches.
+All body operations capture the session epoch. Lock/logout/expiry prevents a stale completion from returning/rendering plaintext or committing a post-lock mutation. A failed unlock or setup must not change scope, restore tabs, migrate body or populate caches. A persisted Diary scope on startup is normalized to `note` before any Diary body fetch; it is not a fourth neutral scope.
 
 ## 7. Crypto/runtime inventory
 
@@ -179,6 +209,8 @@ Before D8.1/D8.2 implementation, the plan must answer:
 - whether managed Diary rename/move is disallowed or implemented as a transaction that rebinds/re-encrypts the envelope;
 - how password change/rekey and backup/restore are supported without partial mixed state.
 
+The pre-implementation decisions are also frozen at this boundary: new managed-Diary body revisions are excluded from Git entirely; first use is `UNINITIALIZED → setup → UNLOCKED → authorized migration`; initialized startup is `LOCKED`; and a persisted Diary scope normalizes to the existing safe/default `note` scope before Diary content is mounted.
+
 No answer may be inferred by silently reusing the AI key or by retaining a plaintext fallback.
 
 ## 9. STOP conditions and D8.0 determination
@@ -192,6 +224,8 @@ The audit confirms existing plaintext body channels listed in §4. This is expec
 The current system has identifiable adapter seams: route body reads/writes, Diary create/recovery, atomic ciphertext commit, Git byte storage, SQLite structural metadata, and shell-level scope/tab gating. Therefore D8.0 is `REVIEW-READY`, not `BLOCKED`.
 
 It must become `BLOCKED` before implementation if the selected deployment threat model requires client-only decryption while the team cannot replace server plaintext scans/History/Draft paths, or if a transaction cannot prevent plaintext from reaching durable temp/journal/payload files. D8.0 does not waive those future gates.
+
+The following are explicit D8.1/D8.2 STOP conditions: a new managed-Diary body revision reaches a Git commit, first-use setup is conflated with existing-password verification or performs migration before the first unlocked session, or any code represents `activeScope` as `null`/a fourth value or exposes Diary scope without an `UNLOCKED` session.
 
 ## 10. Evidence and review record
 
@@ -221,17 +255,29 @@ Production implementation started  NO
 D8.1 started                        NO
 
 D8.0 Self-review P0/P1/P2          0/0/0
-D8.0 Independent Review             PENDING
+D8.0 Independent Review             RE-REVIEW PENDING
 ```
 
-## 11. Final lifecycle for this evidence commit
+## 11. D8.0 Independent Review remediation record
+
+The first independent review identified three documentation contract findings. This remediation changes only the two D8 documents and does not claim independent review approval:
+
+```text
+D8.0-IR-P1-1  Git / History contract drift       = REMEDIATED
+D8.0-IR-P1-2  Missing UNINITIALIZED first-use    = REMEDIATED
+D8.0-IR-P2-1  Incomplete exactly-one scope       = REMEDIATED
+```
+
+The remediation self-review is `P0/P1/P2 = 0/0/0`; independent re-review remains pending.
+
+## 12. Final lifecycle for this evidence commit
 
 ```text
 D7.0A–D7.6       = REVIEW-CLOSED
 D8 overall        = IN PROGRESS
 D8.0              = REVIEW-READY
 D8.0 Self-review  = PASS (0/0/0)
-D8.0 Independent Review = PENDING
+D8.0 Independent Review = RE-REVIEW PENDING
 
 D8.1              = NOT STARTED
 D8.2              = NOT STARTED

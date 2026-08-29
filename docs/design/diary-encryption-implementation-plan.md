@@ -1,6 +1,6 @@
 # D8 — Diary Encryption Implementation Plan
 
-状态：`D8.0 REVIEW-READY`；`D8.0 Self-review = PASS (P0/P1/P2 = 0/0/0)`；`D8.0 Independent Review = PENDING`。
+状态：`D8.0 REVIEW-READY`；`D8.0 Self-review = PASS (P0/P1/P2 = 0/0/0)`；`D8.0 Independent Review = RE-REVIEW PENDING`。
 
 基线：`1fb1389cab053d5ff72630253f509f0170e588c2`（`docs(diary): close D7 mood implementation`）。D7.0A、D7.0、D7.1、D7.2、D7.3、D7.4、D7.5、D7.6 均保持 `REVIEW-CLOSED`。D8 只从 Diary 加密边界开始，不重开 D7，也不创建独立 Private Vault。
 
@@ -46,7 +46,9 @@ Primary Docus login password、`DOCUS_MASTER_KEY`、`DOCUS_MASTER_KEY_FILE` 和 
 | Route / activePath | 仍不能因为 metadata 或 scope 自动打开 DOCUMENT；explicit intent 仍是打开条件 |
 | FileTree | 继续是 generic tree/exact-context projection，不把 Diary policy 硬编码为 generic tree contract |
 | Scope | Diary 是现有 scope 的一部分，但在 D8.1 起只有已建立的 Diary unlock session 才能进入正文可见状态 |
-| History / Recovery | 不创建 Diary 专属 dialog/lifecycle；改为复用同一安全 storage adapter，或在 adapter 未覆盖前 fail closed |
+| History / Recovery | 不创建 Diary 专属 dialog/lifecycle；Note History 保持不变；D8 生效后的 managed Diary body 不进入新的 Git History，直到有单独批准的非 Git 加密历史方案；未覆盖时 fail closed |
+
+D7 的 Git-backed Diary History 在旧 contract 下是正确的；D8 只为 managed Diary 引入新的 privacy contract：D8 生效后新的 Diary 正文 revision 无论是明文还是密文，都不得进入新的 vault Git commit。这个有意 supersede D7 Diary body History 的决定不重开 D7；新的非 Git 加密正文历史若需要，必须另行设计、批准并指定 owner。
 
 ## 4. Current ownership and plaintext graph
 
@@ -59,7 +61,7 @@ D8.0 取证详情记录在 [D8.0 architecture verification](./diary-encryption-d
 | Diary create | `POST /api/diary/dates` | create plaintext only in memory, persist encrypted envelope, return plaintext only to authorized unlocked caller |
 | Recovery create | `PUT /api/recover/*` | encrypted Diary adapter required; no plaintext recovery payload on disk |
 | Rename / folder move | generic document lifecycle and reference rewrite | opaque ciphertext may move only with identity proof; any reference rewrite must decrypt/re-encrypt transactionally or be rejected for managed Diary |
-| History | nested vault Git and `/api/history/*` | Git may retain only encrypted envelope bytes; history read/diff/restore must authenticate/decrypt or fail closed |
+| History | nested vault Git and `/api/history/*` | D8 生效后的 managed Diary body 完全排除在新的 Git commit 之外；现有 legacy plaintext History 只作 legacy exposure 处理，不自动 rewrite/purge；新的 Diary body History 暂停/不可用，直到单独批准的非 Git 加密历史 owner 存在 |
 | Draft / Recovery | browser IndexedDB `drafts` / `draftConflicts` | no plaintext managed-Diary body in IndexedDB; MVP may disable persistent Diary draft/recovery until encrypted adapter exists |
 | Search | `primeBody()` and module `bodyCache` | exclude locked Diary; after unlock use a bounded, memory-only adapter and clear on lock |
 | Link index | server `LinkIndex` reads every `.md` and stores links/title | generic index must not parse ciphertext as Markdown or retain decrypted Diary links after lock |
@@ -76,7 +78,7 @@ Keep the logical path and stable identity unchanged. Add one Diary-aware storage
 1. envelope detection and authenticated decrypt on reads;
 2. plaintext-to-envelope encryption before any durable write;
 3. body hash/CAS comparison in memory;
-4. encrypted representation for create, save, recovery, rename/move and History;
+4. encrypted representation for create, save, recovery and any approved rename/move transaction; enforce managed-Diary exclusion at the History/Git mutation owner rather than storing Diary body revisions in Git;
 5. fail-closed behavior for unknown envelope versions, invalid authentication tags, missing identity binding and locked sessions.
 
 The adapter must be the only route into a managed Diary body. A caller must not choose between raw `fs.readFile` and the adapter based on a loose `startsWith('diary/')`; it must use the already normalized logical path and the shared `classifyDiaryPath()` authority.
@@ -108,7 +110,7 @@ versioned envelope
   ciphertext + authentication tag = body bytes only
 ```
 
-The physical file may retain the logical `.md` path for compatibility, but its bytes must be unambiguously opaque to generic Markdown readers. A plaintext fallback must not be silently accepted after migration. Unknown/newer envelopes fail closed before any body mutation.
+The physical file may retain the logical `.md` path for compatibility, but its bytes must be unambiguously opaque to generic Markdown readers. A plaintext fallback must not be silently accepted after migration. Unknown/newer envelopes fail closed before any body mutation. The encrypted envelope is a file representation only; it is not permission to add managed Diary body revisions to a new vault Git commit.
 
 ### 5.4 Metadata and Mood separation
 
@@ -118,25 +120,41 @@ The existing `documents` SQLite row remains the single live metadata owner. Titl
 
 ## 6. Scope, startup and transactional unlock
 
-The current `activeScope` is a module-level `ScopeKey | null` persisted in `localStorage`, and the current tab persistence stores paths/active path without knowing whether a path is Diary. That is not a sufficient privacy gate.
+The current `activeScope` is a module-level `ScopeKey | null` persisted in `localStorage`, and the current tab persistence stores paths/active path without knowing whether a path is Diary. That is not a sufficient privacy gate. D8.1 must replace the nullable toggle semantics with the following frozen target contract:
 
-D8.1 must establish this state machine at application-shell scope, above `VaultView` because `NavBar` is also above `RouterView`:
-
-```text
-locked
-  ├─ unlock request ─► unlocking ─► unlocked(sessionEpoch)
-  ├─ invalid password ─► locked
-  └─ lock / logout / expiry ─► locking ─► locked
+```ts
+type ScopeKey = 'note' | 'diary' | 'ledger'
+activeScope: ScopeKey
 ```
 
-Required startup rules:
+`activeScope` is always exactly one of `note`, `diary` or `ledger`; `null` and a fourth neutral scope are forbidden. Selecting the already-selected scope is a NO-OP. The public operation is selection (`selectScope(scope)` / `requestScopeChange(scope)`), not toggle/deselection.
 
-- normalize a persisted `diary` scope to a safe neutral scope before Diary content is mounted;
-- do not restore/open persisted managed-Diary tabs or Diary deep links until the unlock capability is established;
-- ordinary Note tab restore may proceed independently, but the persisted tab list must be filtered before any Diary `getPost`/body fetch;
-- a locked Diary deep link shows the unlock surface and does not fetch, decrypt, render or search body bytes;
-- lock/logout/expiry invalidates the session epoch, clears Diary body views/models/caches, prevents late async results from rehydrating a tab, and returns to a safe scope;
-- the unlock/lock operation is serialized with body reads/writes. A body transaction captures the current epoch; lock either waits for its durable ciphertext commit or aborts before mutation. A stale capability cannot commit after lock.
+D8.1 must establish the lock/session state machine at application-shell scope, above `VaultView` because `NavBar` is also above `RouterView`:
+
+```text
+UNINITIALIZED
+  ├─ Diary request ─► password setup ─► generate DEK / wrap DEK
+  │                                  └─► establish UNLOCKED(sessionEpoch)
+  ├─ cancel/setup failure ─► UNINITIALIZED
+  └─ no scope change, no migration
+
+LOCKED
+  ├─ unlock request ─► UNLOCKING ─► UNLOCKED(sessionEpoch)
+  ├─ invalid password ─► LOCKED
+  └─ lock / logout / expiry ─► LOCKING ─► LOCKED
+```
+
+First use is distinct from verification of an existing installation. `UNINITIALIZED` remains the state until the user requests Diary, completes secondary-password setup, derives the approved KEK, generates a random Diary DEK, wraps it, persists only approved wrapped-key/KDF metadata, and establishes the first in-memory unlocked capability/session epoch. Only after that successful setup may authorized legacy plaintext migration run. Cancel or setup failure leaves `activeScope` unchanged, remains `UNINITIALIZED`, performs no body migration and leaves no partial durable success state. An initialized installation starts `LOCKED` on every application/session restart; successful password verification reaches `UNLOCKED(sessionEpoch)`.
+
+Required scope and startup rules:
+
+- `requestScopeChange('diary')` authenticates or initializes first; only successful setup/unlock may commit `activeScope = 'diary'`.
+- Wrong password or cancellation leaves the current selected scope, route, tabs and presentation unchanged. `activeScope === 'diary'` implies an active `UNLOCKED` Diary session.
+- A persisted `activeScope = 'diary'` on a new application session is normalized and persisted to `note` before Diary content is mounted. It does not fetch/restore Diary body; explicit Diary intent later opens the unlock/setup flow. Persisted `note` and `ledger` retain ordinary behavior.
+- Do not restore/open persisted managed-Diary tabs or Diary deep links until the unlock capability is established. Ordinary Note tab restore may proceed independently, but the persisted tab list must be filtered before any Diary `getPost`/body fetch.
+- A locked Diary deep link shows the unlock surface and does not fetch, decrypt, render or search body bytes.
+- lock/logout/expiry invalidates the session epoch, clears Diary body views/models/caches, prevents late async results from rehydrating a tab, and returns to `note`.
+- The unlock/lock operation is serialized with body reads/writes. A body transaction captures the current epoch; lock either waits for its durable encrypted commit or aborts before mutation. A stale capability cannot commit after lock.
 
 ## 7. Phase plan and gates
 
@@ -164,7 +182,7 @@ Exit requires that the primary file, save temp, staged generation and recovery p
 
 Scope: History/Git, Recovery/Draft, search/body cache, LinkIndex, tree/list, rename/folder moves, external conflict, PDF/clipboard policy, logs and lock teardown.
 
-Exit requires every surfaced Diary body path to use the adapter or fail closed, and every persistent/plaintext cache path to be either encrypted, disabled for Diary, or explicitly outside the automatic storage guarantee with user-visible semantics.
+Exit requires every surfaced Diary body path to use the adapter or fail closed, every persistent/plaintext cache path to be either encrypted, disabled for Diary, or explicitly outside the automatic storage guarantee with user-visible semantics, and the actual History/Git mutation owner to exclude new managed-Diary body revisions entirely.
 
 ### D8.4 — Migration, full regression, release and closure
 
@@ -180,7 +198,7 @@ Migration must be explicit and fail closed:
 | --- | --- |
 | plaintext canonical Diary file with live identity | migrate only after unlock; encrypt, verify decrypt/hash/identity, then atomically replace; do not delete external backups silently |
 | plaintext body in existing browser Draft/Recovery stores | do not auto-read into a locked session; offer an explicit user-authorized migration or discard path; never copy it into a new plaintext store |
-| plaintext Diary in nested Git history | classify as legacy exposure; do not claim retroactive purge. Future commits must contain ciphertext only; history rewrite/purge needs an explicit user-controlled operation and backup policy |
+| plaintext Diary in nested Git history | classify as legacy exposure; do not claim retroactive purge or silently rewrite/delete it. New managed-Diary body revisions must not enter Git at all; any history rewrite/purge needs an explicit user-controlled operation and backup policy |
 | encrypted envelope with supported version | verify tag, identity binding and metadata association before exposing body |
 | unknown/newer/corrupt envelope | fail closed before body mutation; preserve evidence for repair, never guess a plaintext format |
 | missing file or missing stable generation | retain D7 identity rules; do not create a path-only encrypted identity during migration |
@@ -208,17 +226,32 @@ Stop before the next phase if any of these occur:
 - [x] Current plaintext persistence/leakage paths include disk, Git, IndexedDB, search, LinkIndex, temp/staging, UI and export handling.
 - [x] A single recommended crypto/runtime owner and a separate secondary-password/key hierarchy are documented.
 - [x] Scope, startup, persisted tabs, deep links and transactional lock invalidation requirements are explicit.
+- [x] New D8 managed-Diary body is excluded from Git commits entirely; Note History remains unchanged and legacy Diary Git history has a non-destructive policy.
+- [x] `UNINITIALIZED` / `LOCKED` / `UNLOCKED` semantics, first-use setup ordering and migration ordering are frozen.
+- [x] `activeScope` is exactly one of `note` / `diary` / `ledger`; current-scope selection is a NO-OP; locked persisted Diary startup normalizes to `note`; `activeScope === 'diary'` implies `UNLOCKED`.
 - [x] Migration, legacy History, unknown envelope and mixed-state STOP policies are explicit.
 - [x] No production code, tests, dependencies, migration or D8.1 implementation was started.
 
-## 11. Lifecycle at this commit
+## 11. D8.0 Independent Review remediation record
+
+The first independent review identified three documentation contract findings. This remediation changes only the canonical plan; it does not claim independent review approval:
+
+```text
+D8.0-IR-P1-1  Git / History contract drift       = REMEDIATED
+D8.0-IR-P1-2  Missing UNINITIALIZED first-use    = REMEDIATED
+D8.0-IR-P2-1  Incomplete exactly-one scope       = REMEDIATED
+```
+
+The resulting self-review of this remediation is `P0/P1/P2 = 0/0/0`. Independent re-review remains pending.
+
+## 12. Lifecycle at this commit
 
 ```text
 D7.0A–D7.6       = REVIEW-CLOSED
 D8 overall        = IN PROGRESS
 D8.0              = REVIEW-READY
 D8.0 Self-review  = PASS (0/0/0)
-D8.0 Independent Review = PENDING
+D8.0 Independent Review = RE-REVIEW PENDING
 D8.1             = NOT STARTED
 D8.2             = NOT STARTED
 D8.3             = NOT STARTED
