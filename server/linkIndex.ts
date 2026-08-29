@@ -24,6 +24,19 @@ import { listPostsFlat } from './tree.js'
 import { CONTENT_DIR, filePathFor } from './paths.js'
 import { resolveWikiTarget } from '../shared/linkResolve.js'
 import { getDb } from './db.js'
+import { classifyDiaryPath } from '../shared/diaryProtocol.js'
+
+/** Raised when a body-scanning index build is requested without access to a
+ * managed Diary body. */
+export class LinkIndexBodyAccessError extends Error {
+  readonly path: string
+
+  constructor(path: string) {
+    super(`LinkIndex body access is required for ${path}`)
+    this.name = 'LinkIndexBodyAccessError'
+    this.path = path
+  }
+}
 
 export interface Link {
   /** Resolved vault path (no .md extension, no #anchor). */
@@ -173,8 +186,14 @@ export class LinkIndex {
   private paths = new Set<string>()
   private titles = new Map<string, string>()
 
-  /** Full rebuild from disk. Reads every .md file in `rootDir`. */
-  async rebuild(rootDir: string = CONTENT_DIR, useMetadataDb = false): Promise<void> {
+  /** Full rebuild from disk. Reads every .md file in `rootDir`. When a body
+   * access predicate is supplied, all managed Diary paths are authorized
+   * after the structural listing and before the first body read. */
+  async rebuild(
+    rootDir: string = CONTENT_DIR,
+    useMetadataDb = false,
+    canReadBody?: (path: string) => boolean,
+  ): Promise<void> {
     this.forward.clear()
     this.paths.clear()
     this.titles.clear()
@@ -184,6 +203,11 @@ export class LinkIndex {
       this.titles.set(p.path, p.title)
     }
     const allPaths = Array.from(this.paths)
+    if (canReadBody) {
+      const denied = posts.find((p) =>
+        classifyDiaryPath(p.path) === 'managed' && !canReadBody(p.path))
+      if (denied) throw new LinkIndexBodyAccessError(denied.path)
+    }
     for (const p of posts) {
       const abs = filePathFor(p.path)
       let raw: string
@@ -307,18 +331,40 @@ export class LinkIndex {
 let _index: LinkIndex | null = null
 let _indexPromise: Promise<LinkIndex> | null = null
 
+function startIndexRebuild(canReadBody?: (path: string) => boolean): Promise<LinkIndex> {
+  const promise = (async () => {
+    const idx = new LinkIndex()
+    await idx.rebuild(CONTENT_DIR, true, canReadBody)
+    _index = idx
+    return idx
+  })()
+  _indexPromise = promise
+  // A failed access preflight must not poison the singleton. A later unlock
+  // must be able to retry the cold body operation.
+  void promise.catch(() => {
+    if (_indexPromise === promise) _indexPromise = null
+  })
+  return promise
+}
+
 /** Lazy singleton. The first call triggers a full rebuild from
  *  CONTENT_DIR; subsequent calls return the cached instance. */
 export async function getIndex(): Promise<LinkIndex> {
   if (_index) return _index
   if (_indexPromise) return _indexPromise
-  _indexPromise = (async () => {
-    const idx = new LinkIndex()
-    await idx.rebuild(CONTENT_DIR, true)
-    _index = idx
-    return idx
-  })()
-  return _indexPromise
+  return startIndexRebuild()
+}
+
+/** Obtain the singleton for a body operation. On a cold rebuild, every
+ * managed Diary path is checked before any Markdown body is read. Warm
+ * indexes are returned as-is; callers still authorize the candidate bodies
+ * they will read. */
+export async function getIndexForBodyOperation(
+  canReadBody: (path: string) => boolean,
+): Promise<LinkIndex> {
+  if (_index) return _index
+  if (_indexPromise) return _indexPromise
+  return startIndexRebuild(canReadBody)
 }
 
 /** Test-only escape hatch: drop the cached singleton so the next

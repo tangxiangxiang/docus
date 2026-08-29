@@ -752,6 +752,55 @@ describe('AI Diary mutation contract', () => {
       reader.mockRestore()
     }
   })
+
+  it('fails closed before a cold LinkIndex rebuild reads a locked Diary body', async () => {
+    const sourceAbs = writeFile('notes/source.md', 'source')
+    const diaryAbs = writeFile('diary/2000-05-05.md', 'private [[notes/source]] body')
+    saveDocumentMetadata(db, { path: 'notes/source', title: 'source' })
+    saveDocumentMetadata(db, { path: 'diary/2000-05-05', title: '2000-05-05' })
+    __resetLinkIndexForTesting()
+
+    const originalReader = fs.promises.readFile
+    const diaryBodyReads: string[] = []
+    const reader = vi.spyOn(fs.promises, 'readFile').mockImplementation((async (
+      file: fs.PathLike | fs.FileHandle,
+      ...args: unknown[]
+    ) => {
+      if (String(file).endsWith(path.join('diary', '2000-05-05.md'))) {
+        diaryBodyReads.push(String(file))
+      }
+      return originalReader(file as any, ...(args as [any]))
+    }) as typeof fs.promises.readFile)
+    try {
+      const blocked = await executeToolCall('rename_file', {
+        path: 'notes/source', new_path: 'notes/renamed',
+      }, {
+        ...ctx,
+        diaryBodyAccess: (logicalPath) => logicalPath !== 'diary/2000-05-05',
+      })
+
+      expect(blocked.isError).toBe(true)
+      expect(blocked.content).toContain('Diary body access is locked')
+      expect(diaryBodyReads).toEqual([])
+      expect(fs.readFileSync(sourceAbs, 'utf8')).toBe('source')
+      expect(fs.readFileSync(diaryAbs, 'utf8')).toBe('private [[notes/source]] body')
+
+      const allowed = await executeToolCall('rename_file', {
+        path: 'notes/source', new_path: 'notes/renamed',
+      }, {
+        ...ctx,
+        diaryBodyAccess: () => true,
+      })
+      expect(allowed.isError).toBe(false)
+      // The allowed operation may read the Diary during the index rebuild
+      // and again while preparing/verifying the actual reference rewrite.
+      expect(diaryBodyReads.length).toBeGreaterThan(0)
+      expect(fs.readFileSync(path.join(contentDir, 'diary/2000-05-05.md'), 'utf8'))
+        .toBe('private [[notes/renamed]] body')
+    } finally {
+      reader.mockRestore()
+    }
+  })
 })
 
 describe('TOOL_DEFINITIONS', () => {

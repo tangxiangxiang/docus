@@ -51,7 +51,11 @@ import {
   RenameSourceReusedError,
   renameDocumentWithMetadata,
 } from '../documentFileLifecycle.js'
-import { getIndex as getLinkIndex } from '../linkIndex.js'
+import {
+  getIndex as getLinkIndex,
+  getIndexForBodyOperation,
+  LinkIndexBodyAccessError,
+} from '../linkIndex.js'
 import { rewriteDocumentReferences } from '../renameReferences.js'
 import { validateDocumentMutation } from '../documentMutationPolicy.js'
 import {
@@ -1043,7 +1047,7 @@ async function discoverRenameReferenceSnapshot(input: {
   path?: string
   new_path?: string
   update_references?: boolean
-}): Promise<RenameReferenceSnapshot> {
+}, diaryBodyAccess?: (path: string) => boolean): Promise<RenameReferenceSnapshot> {
   const sourcePath = input.path as string
   const destinationPath = input.new_path as string
   if (
@@ -1051,7 +1055,9 @@ async function discoverRenameReferenceSnapshot(input: {
     || typeof sourcePath !== 'string' || sourcePath.length === 0
     || typeof destinationPath !== 'string' || destinationPath.length === 0
   ) return { allPaths: [], sourcePaths: [] }
-  const idx = await getLinkIndex()
+  const idx = diaryBodyAccess
+    ? await getIndexForBodyOperation(diaryBodyAccess)
+    : await getLinkIndex()
   return {
     allPaths: idx.snapshot().paths,
     sourcePaths: [...new Set(idx.getBacklinks(sourcePath).map((backlink) => backlink.source))],
@@ -1238,8 +1244,12 @@ async function executeGuardedRename(
   const renameInput = input as { path?: string; new_path?: string; update_references?: boolean }
   let discovered: RenameReferenceSnapshot
   try {
-    discovered = await discoverRenameReferenceSnapshot(renameInput)
+    discovered = await discoverRenameReferenceSnapshot(renameInput, diaryBodyAccess)
   } catch (e) {
+    if (e instanceof LinkIndexBodyAccessError && diaryBodyAccess) {
+      return diaryBodyAccessError(diaryBodyAccess, [e.path])
+        ?? err(`rename_file: ${e.message}`)
+    }
     return err(`rename_file: ${(e as Error).message}`)
   }
   const discoveryAccessError = diaryBodyAccessError(diaryBodyAccess, [
@@ -1268,8 +1278,12 @@ async function executeGuardedRename(
     if (__renameRaceHooks?.beforeReplan) await __renameRaceHooks.beforeReplan()
     let candidateSnapshot: RenameReferenceSnapshot
     try {
-      candidateSnapshot = await discoverRenameReferenceSnapshot(renameInput)
+      candidateSnapshot = await discoverRenameReferenceSnapshot(renameInput, diaryBodyAccess)
     } catch (e) {
+      if (e instanceof LinkIndexBodyAccessError && diaryBodyAccess) {
+        return diaryBodyAccessError(diaryBodyAccess, [e.path])
+          ?? err(`rename_file: ${e.message}`)
+      }
       return err(`rename_file: ${(e as Error).message}`)
     }
     if (!sameNormalizedPathSet(discovered.sourcePaths, candidateSnapshot.sourcePaths)) {
