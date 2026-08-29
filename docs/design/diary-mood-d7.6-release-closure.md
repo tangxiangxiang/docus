@@ -24,7 +24,6 @@ D7.3  = REVIEW-CLOSED
 D7.4  = REVIEW-CLOSED
 D7.5  = REVIEW-CLOSED
 D7.6  = REVIEW-READY
-D7.7  = NOT STARTED
 ```
 
 ## Starting HEAD
@@ -409,9 +408,8 @@ D7.6 Self-review = PASS (0/0/0)
 D7.6 Independent Review = PENDING
 
 D7 overall = NOT CLOSED
-D7.7 = NOT STARTED
 ```
 
 The later closure commit must remain separate and requires Independent Review
 `PASS`, `P0/P1/P2 = 0/0/0`, and exact-head CI `PASS`. This execution does not
-create that closure commit and does not start D7.7.
+create that closure commit.
