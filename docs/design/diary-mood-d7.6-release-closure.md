@@ -2,16 +2,18 @@
 
 ## Status
 
-`D7.6 = REVIEW-READY`
+`D7.6 = REVIEW-CLOSED`
 
 `D7.6 Self-review = PASS`
 
 Self-review findings: `P0 = 0`, `P1 = 0`, `P2 = 0`
 
-`D7.6 Independent Review = PENDING`
+`D7.6 Independent Review = PASS`
 
-Independent Review has not been performed by this execution. This document is
-release evidence, not the final closure sync. `D7 overall` remains `NOT CLOSED`.
+Independent Review findings: `P0 = 0`, `P1 = 0`, `P2 = 0`
+
+Independent Review PASS and GitHub CI #560 PASS are recorded by this separate
+docs-only closure sync. `D7 overall` is now `REVIEW-CLOSED`.
 
 The closed phases remain:
 
@@ -23,7 +25,7 @@ D7.2  = REVIEW-CLOSED
 D7.3  = REVIEW-CLOSED
 D7.4  = REVIEW-CLOSED
 D7.5  = REVIEW-CLOSED
-D7.6  = REVIEW-READY
+D7.6  = REVIEW-CLOSED
 ```
 
 ## Starting HEAD
@@ -49,9 +51,23 @@ test(diary): cover literature ordinary vault release gate
 Its parent is the exact D7.6 starting HEAD. It adds one existing ordinary Vault
 release case for `Literature`; it contains no production change.
 
-The final evidence commit is this document-only commit. Its exact SHA is
-reported from Git after commit and push; no SHA is guessed inside its own
-commit contents.
+The release evidence commit is:
+
+```text
+f8aa61c32048fadf4edc6b0dc1ebb5fcf9630ac7
+docs(diary): record D7.6 release evidence
+```
+
+The lifecycle-boundary remediation commit is:
+
+```text
+379f4e0d5c034c5b383118673f6eb6afad0598ca
+docs(diary): align D7.6 lifecycle boundary
+```
+
+It removed the stale reference to a nonexistent later phase. This final
+closure commit is a separate docs-only change; its exact SHA is reported from
+Git after commit and push rather than guessed inside its own contents.
 
 ## D7 Release Lineage Matrix
 
@@ -68,7 +84,7 @@ they are not reclassified as fresh D7.6 findings.
 | D7.3 | `5d14967e2a1de829c084cf1cc6a08ade10cdcc3c` | implementation `e1a5b6c61373a99f42fb3b1d4af22d8805409b1e`; Calendar remediation `b0f8cdafcfacd7f1f2135f552ad125b6dcf606f0`; post-closure UX remediation ended at `1226b1700741017e0a93368d47b6ce9d7454108f` | evidence `3fd8497a37e47ffd17a568990391a2181c22a190`; historical closure `98cd94bdd1c7f9bb3bf445242f2d7ad41beae2a1`; post-closure closure evidence `79020855945745f561498e6936ef332b2c78a503` | Independent reviews `PASS`; CI #539 `PASS`; final `P0/P1/P2 = 0/0/0` |
 | D7.4 | `14b1efdf03a13063420fe344dc36eafc40c61dc8` (Round 0) | Round 0 test `ed8524b46e40fb15b38fd39320bfd7f3af2f442c`; Round 1 `8017594d9da4f7ac2e6ab8482fdefdaa3838781f`, `ec4b190a4ad89871021afa46906a77c18ec2fc61`; Round 2 tests/remediation `b8d721ee5c957b0097a1e22d9602822262754867`, `b87cc2acedd23f116a37922a6ae173eac25523e0`; Round 3 lineage `89099702f8710335bb537f04d8eff9101a500c94`, `57ba340964cfa935756657be0b841a3f742972e4`, `5f4bda4b313e641dca116017d401bb9a5a9b9b37`, `f46149642aa6547687efa9bb75b2de5b7fa52d9c` | Round 0 evidence `4202fc25f78415f062af1c13c290bf994836b92c`; Round 3 closure `4ec6f197686f826fe28e30ff56d25e822fc65f35`; overall closure `93dca2729003069beffc6060336a72a737771b87` | Final Gate `PASS`; CI #544/#547/#552 `PASS`; `P0/P1/P2 = 0/0/0` |
 | D7.5 | `93dca2729003069beffc6060336a72a737771b87` | Round 1 `f48c77fe4638f176e58418a09e96618467d1e499`, `3b43867e21f7af2e137c379621a775a6d37d04c0`; Round 2 `ceb2b554f4b1b0c49efeb32c52f3f32d0355fa51`, `d53f1d9cc29f75f826227b6bf24e0faa162083ea`, `48447be39833cc3c2ad0a832531e6c53f16f3a2a` | Round 1 evidence `5838773095d3468630c0789b7152cb8a48825b16`; Round 2 evidence `3e1a392d575b15492e30df26f28a8bb67a4be9b5`; closure `7e9f2cf64de55dca882dd4b6c66174f4d4daac72` | Final Gate `PASS`; CI #555/#557 `PASS`; `P0/P1/P2 = 0/0/0` |
-| D7.6 | `7e9f2cf64de55dca882dd4b6c66174f4d4daac72` | coverage-only commit `af3dd6c4fbd5d54fc40346aedfbfbb709fa08bb1` | this release evidence commit | Self-review `PASS`; Independent Review `PENDING`; `P0/P1/P2 = 0/0/0` |
+| D7.6 | `7e9f2cf64de55dca882dd4b6c66174f4d4daac72` | coverage-only commit `af3dd6c4fbd5d54fc40346aedfbfbb709fa08bb1`; lifecycle remediation `379f4e0d5c034c5b383118673f6eb6afad0598ca` | release evidence `f8aa61c32048fadf4edc6b0dc1ebb5fcf9630ac7`; final closure is this docs-only commit | Independent Review `PASS`; CI #560 `PASS`; `P0/P1/P2 = 0/0/0` |
 
 The D7.0A–D7.5 rows are historical phase evidence. The D7.6 row is the only
 fresh release phase in this document.
@@ -123,7 +139,8 @@ The D7.6 delta is separately and exactly:
  1 file changed, 1 insertion(+)
 ```
 
-The final evidence commit adds only this document. D7.6 therefore changes no
+The release evidence, lifecycle remediation, and final closure commits add
+only this document. D7.6 therefore changes no
 production code, server code, shared code, migration, package, lockfile,
 dependency, or test behavior beyond the one ordinary Literature coverage
 case.
@@ -321,6 +338,12 @@ D7.6-P1-1 = none
 D7.6-P2-1 = CLOSED by af3dd6c4fbd5d54fc40346aedfbfbb709fa08bb1
 ```
 
+The later lifecycle-document finding was also resolved before closure:
+
+```text
+D7.6-P2-2 = CLOSED by 379f4e0d5c034c5b383118673f6eb6afad0598ca
+```
+
 ## STOP-condition Audit
 
 The fresh release audit found no need for:
@@ -347,7 +370,8 @@ The D7.6 delta after the required starting HEAD contains only:
 e2e/diary-reader.spec.ts
 ```
 
-The final evidence commit contains only this documentation file. D7.6 adds or
+The release evidence, remediation, and final closure commits contain only this
+documentation file. D7.6 adds or
 changes no `package.json`, lockfile, dependency, migration, server, shared,
 router, Calendar, Vault production, or metadata owner file.
 
@@ -367,12 +391,20 @@ status and exact `github/main` SHA are reported after push.
 ## CI
 
 This document does not reuse historical D7.5 CI #555 or #557. The exact-head
-GitHub Actions result for the final D7.6 evidence commit is queried after push
-and is reported from that SHA. A docs-only CI run validates the exact evidence
-HEAD and repository/platform health; the fresh local results above are the
-functional D7.6 release evidence.
+GitHub Actions result for the D7.6 release evidence commit was:
 
-No CI result is predeclared or guessed in this document.
+```text
+CI #560
+Run ID      = 33195176529
+Attempt     = 1
+HEAD        = f8aa61c32048fadf4edc6b0dc1ebb5fcf9630ac7
+Status      = completed
+Conclusion  = success
+```
+
+All required platform and auxiliary jobs passed. The subsequent remediation and
+closure commits are docs-only and do not change the tested production or test
+scope, so CI #560 remains the release validation result.
 
 ## Self-review
 
@@ -384,7 +416,8 @@ The self-review of `7e9f2cf64de55dca882dd4b6c66174f4d4daac72..HEAD` confirms:
   was introduced;
 - all D7.0A–D7.5 evidence remains historical and closed;
 - no historical PASS count is presented as a D7.6 fresh result;
-- the D7.6 lifecycle is not prematurely marked closed.
+- the release evidence commit did not prematurely mark the D7.6 lifecycle
+  closed.
 
 ```text
 P0 = 0
@@ -403,13 +436,12 @@ D7.3  = REVIEW-CLOSED
 D7.4  = REVIEW-CLOSED
 D7.5  = REVIEW-CLOSED
 
-D7.6 = REVIEW-READY
+D7.6 = REVIEW-CLOSED
 D7.6 Self-review = PASS (0/0/0)
-D7.6 Independent Review = PENDING
+D7.6 Independent Review = PASS (0/0/0)
 
-D7 overall = NOT CLOSED
+D7 overall = REVIEW-CLOSED
 ```
 
-The later closure commit must remain separate and requires Independent Review
-`PASS`, `P0/P1/P2 = 0/0/0`, and exact-head CI `PASS`. This execution does not
-create that closure commit.
+The final closure commit is separate from the release evidence and remediation
+commits, and does not start any later D7 phase.
