@@ -6,9 +6,9 @@
 Starting HEAD          = 1fb1389cab053d5ff72630253f509f0170e588c2
 Starting commit        = docs(diary): close D7 mood implementation
 D8 overall             = IN PROGRESS
-D8.0                   = REVIEW-READY
+D8.0                   = REVIEW-CLOSED
 D8.0 Self-review       = PASS (P0/P1/P2 = 0/0/0)
-D8.0 Independent Review = RE-REVIEW PENDING
+D8.0 Independent Review = PASS (P0/P1/P2 = 0/0/0)
 D8.1                   = NOT STARTED
 D8.2                   = NOT STARTED
 D8.3                   = NOT STARTED
@@ -221,7 +221,7 @@ The audit confirms existing plaintext body channels listed in §4. This is expec
 
 ### No D8.0 architecture impossibility declared
 
-The current system has identifiable adapter seams: route body reads/writes, Diary create/recovery, atomic ciphertext commit, Git byte storage, SQLite structural metadata, and shell-level scope/tab gating. Therefore D8.0 is `REVIEW-READY`, not `BLOCKED`.
+At the original D8.0 determination, the current system had identifiable adapter seams: route body reads/writes, Diary create/recovery, atomic ciphertext commit, Git byte storage, SQLite structural metadata, and shell-level scope/tab gating. Therefore D8.0 was `REVIEW-READY`, not `BLOCKED`.
 
 It must become `BLOCKED` before implementation if the selected deployment threat model requires client-only decryption while the team cannot replace server plaintext scans/History/Draft paths, or if a transaction cannot prevent plaintext from reaching durable temp/journal/payload files. D8.0 does not waive those future gates.
 
@@ -255,7 +255,7 @@ Production implementation started  NO
 D8.1 started                        NO
 
 D8.0 Self-review P0/P1/P2          0/0/0
-D8.0 Independent Review             RE-REVIEW PENDING
+D8.0 Independent Review             RE-REVIEW PENDING (historical remediation checkpoint)
 ```
 
 ## 11. D8.0 Independent Review remediation record
@@ -268,7 +268,7 @@ D8.0-IR-P1-2  Missing UNINITIALIZED first-use    = REMEDIATED
 D8.0-IR-P2-1  Incomplete exactly-one scope       = REMEDIATED
 ```
 
-The remediation self-review is `P0/P1/P2 = 0/0/0`; independent re-review remains pending.
+At the remediation checkpoint, self-review was `P0/P1/P2 = 0/0/0` and independent re-review remained pending.
 
 A subsequent residual wording review identified two further documentation findings. This cleanup changes only the two D8.0 documents and does not claim independent review approval:
 
@@ -277,16 +277,27 @@ D8.0-IR-P2-2  Legacy Git security-boundary wording  = REMEDIATED
 D8.0-IR-P2-3  Mood encryption lifecycle wording      = REMEDIATED
 ```
 
-The cleanup self-review remains `P0/P1/P2 = 0/0/0`; independent re-review remains pending.
+At the cleanup checkpoint, self-review remained `P0/P1/P2 = 0/0/0` and independent re-review remained pending.
 
-## 12. Final lifecycle for this evidence commit
+## 12. D8.0 closure record
+
+The independent re-review verified the final cleanup at `cc2d6df0c92a3e85962a605ed6674e39bb6b031d` and passed with no remaining findings:
+
+```text
+D8.0 Independent Re-review = PASS
+D8.0 Independent Review P0/P1/P2 = 0/0/0
+```
+
+This closure sync changes only the D8.0 lifecycle state. It does not start D8.1 or change production code, tests or dependencies.
+
+## 13. Final lifecycle for this evidence commit
 
 ```text
 D7.0A–D7.6       = REVIEW-CLOSED
 D8 overall        = IN PROGRESS
-D8.0              = REVIEW-READY
+D8.0              = REVIEW-CLOSED
 D8.0 Self-review  = PASS (0/0/0)
-D8.0 Independent Review = RE-REVIEW PENDING
+D8.0 Independent Review = PASS (0/0/0)
 
 D8.1              = NOT STARTED
 D8.2              = NOT STARTED
@@ -296,4 +307,4 @@ D8.4              = NOT STARTED
 D8 Mood encryption = OUT OF SCOPE
 ```
 
-本文件记录的是 D8.0 architecture/security verification，而非 D8.1 implementation authorization。Independent Review 通过之前不要进入 D8.1。
+本文件记录的是 D8.0 architecture/security verification；本 closure 不开始 D8.1。D8.1 仍保持 `NOT STARTED`。

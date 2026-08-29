@@ -1,6 +1,6 @@
 # D8 — Diary Encryption Implementation Plan
 
-状态：`D8.0 REVIEW-READY`；`D8.0 Self-review = PASS (P0/P1/P2 = 0/0/0)`；`D8.0 Independent Review = RE-REVIEW PENDING`。
+状态：`D8.0 REVIEW-CLOSED`；`D8.0 Self-review = PASS (P0/P1/P2 = 0/0/0)`；`D8.0 Independent Review = PASS (P0/P1/P2 = 0/0/0)`。
 
 基线：`1fb1389cab053d5ff72630253f509f0170e588c2`（`docs(diary): close D7 mood implementation`）。D7.0A、D7.0、D7.1、D7.2、D7.3、D7.4、D7.5、D7.6 均保持 `REVIEW-CLOSED`。D8 只从 Diary 加密边界开始，不重开 D7，也不创建独立 Private Vault。
 
@@ -244,7 +244,7 @@ D8.0-IR-P1-2  Missing UNINITIALIZED first-use    = REMEDIATED
 D8.0-IR-P2-1  Incomplete exactly-one scope       = REMEDIATED
 ```
 
-The resulting self-review of this remediation is `P0/P1/P2 = 0/0/0`. Independent re-review remains pending.
+At the remediation checkpoint, the resulting self-review was `P0/P1/P2 = 0/0/0` and independent re-review remained pending.
 
 A subsequent residual wording review identified two further documentation findings. This cleanup changes only the two D8.0 documents and does not claim independent review approval:
 
@@ -253,16 +253,27 @@ D8.0-IR-P2-2  Legacy Git security-boundary wording  = REMEDIATED
 D8.0-IR-P2-3  Mood encryption lifecycle wording      = REMEDIATED
 ```
 
-The cleanup self-review remains `P0/P1/P2 = 0/0/0`; independent re-review remains pending.
+At the cleanup checkpoint, self-review remained `P0/P1/P2 = 0/0/0` and independent re-review remained pending.
 
-## 12. Lifecycle at this commit
+## 12. D8.0 closure record
+
+The independent re-review verified the remediation at `cc2d6df0c92a3e85962a605ed6674e39bb6b031d` and passed with no remaining findings:
+
+```text
+D8.0 Independent Re-review = PASS
+D8.0 Independent Review P0/P1/P2 = 0/0/0
+```
+
+This closure sync changes only the D8.0 lifecycle state. It does not start D8.1 or change production code, tests or dependencies.
+
+## 13. Lifecycle at this commit
 
 ```text
 D7.0A–D7.6       = REVIEW-CLOSED
 D8 overall        = IN PROGRESS
-D8.0              = REVIEW-READY
+D8.0              = REVIEW-CLOSED
 D8.0 Self-review  = PASS (0/0/0)
-D8.0 Independent Review = RE-REVIEW PENDING
+D8.0 Independent Review = PASS (0/0/0)
 D8.1             = NOT STARTED
 D8.2             = NOT STARTED
 D8.3             = NOT STARTED
