@@ -15,6 +15,7 @@ import { DIARY_BODY_ENVELOPE_MAGIC } from '../diaryAccess/body'
 import {
   closeAuthTestContext,
   createAuthenticatedTestContext,
+  jsonRequest,
   unlockDiaryAccessForTesting,
   withAuthCookie,
   withDiaryCapability,
@@ -221,6 +222,45 @@ describe('POST /api/diary/dates', () => {
 })
 
 describe('Diary REST mutation contract', () => {
+  it('does not complete auth logout before an active encrypted Diary save finishes', async () => {
+    const date = '2000-05-02'
+    expect((await call('POST', '/api/diary/dates', { date, timeZone: TIME_ZONE })).status).toBe(201)
+    const current = await call('GET', `/api/posts/diary/${date}`)
+    const currentRaw = (await current.json() as { raw: string }).raw
+    let release!: () => void
+    const paused = new Promise<void>((resolve) => { release = resolve })
+    let temporaryPath: string | null = null
+    __setAtomicWriteTestHooksForTesting({
+      afterTemporaryCloseBeforeIdentity: async (pathName) => {
+        temporaryPath = pathName
+        await paused
+      },
+    })
+
+    const save = call('PUT', `/api/posts/diary/${date}`, {
+      raw: `${currentRaw}save-before-logout\n`,
+      baseRaw: currentRaw,
+    })
+    while (temporaryPath === null) await new Promise<void>((resolve) => setImmediate(resolve))
+
+    let logoutSettled = false
+    const logout = app.fetch(jsonRequest('/api/auth/logout', {
+      method: 'POST',
+      origin: auth.runtime.config.publicOrigin,
+      cookie: auth.cookie,
+    })).then((response) => {
+      logoutSettled = true
+      return response
+    })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(logoutSettled).toBe(false)
+
+    release()
+    expect((await save).status).toBe(200)
+    expect((await logout).status).toBe(204)
+    expect(logoutSettled).toBe(true)
+  })
+
   it('fails closed for managed body reads and date resolution without Diary capability while keeping structural listing available', async () => {
     const date = '2000-05-01'
     expect((await call('POST', '/api/diary/dates', { date, timeZone: TIME_ZONE })).status).toBe(201)

@@ -101,6 +101,14 @@ type Capability = {
   expiryTimer?: ReturnType<typeof setTimeout>
 }
 
+type SessionQuiescence = {
+  readonly drained: Promise<void>
+  readonly resolveDrained: () => void
+  readonly completed: Promise<void>
+  readonly resolveCompleted: () => void
+  finalized: boolean
+}
+
 export type DiaryBodyOperation = {
   readonly assertCurrent: () => void
   readonly isCurrent: () => boolean
@@ -178,7 +186,7 @@ export class DiaryAccessService {
   private readonly sessionEpochs = new Map<number, number>()
   private readonly capabilities = new Map<string, Capability>()
   private readonly activeBodyOperations = new Map<number, number>()
-  private readonly pendingLocks = new Map<number, Array<() => void>>()
+  private readonly sessionQuiescences = new Map<number, SessionQuiescence>()
 
   constructor(options: DiaryAccessServiceOptions) {
     this.db = options.db
@@ -222,7 +230,14 @@ export class DiaryAccessService {
       const current = this.capabilities.get(token)
       if (!current) return
       current.expiryTimer = undefined
-      this.scheduleCapabilityExpiry(token)
+      if (current.expiresAt > this.now()) {
+        this.scheduleCapabilityExpiry(token)
+        return
+      }
+      // Expiry follows the same quiescing boundary as explicit lock/logout.
+      // New leases are rejected immediately; an already leased operation is
+      // allowed to reach its defined callback boundary before the DEK drops.
+      void this.invalidateAuthSession(current.sessionId)
     }, Math.min(remaining, MAX_CAPABILITY_EXPIRY_TIMER_MS))
     capability.expiryTimer.unref?.()
   }
@@ -237,9 +252,15 @@ export class DiaryAccessService {
     for (const token of this.capabilities.keys()) this.dropCapability(token)
   }
 
-  private issueCapability(sessionId: number, vaultId: string, dek: Buffer): { capability: string; epoch: number } {
-    const authSession = this.requireCurrentAuthSession(sessionId)
-    this.dropSessionCapabilities(sessionId)
+  private async issueCapability(sessionId: number, vaultId: string, dek: Buffer): Promise<{ capability: string; epoch: number }> {
+    this.requireCurrentAuthSession(sessionId)
+    const hasExistingCapability = this.hasSessionCapability(sessionId) || this.sessionQuiescences.has(sessionId)
+    if (hasExistingCapability) {
+      // Repeated unlock is a capability replacement boundary. It must not
+      // revoke the old DEK while an existing body operation still owns it.
+      await this.invalidateAuthSession(sessionId)
+    }
+    const currentAuthSession = this.requireCurrentAuthSession(sessionId)
     const epoch = (this.sessionEpochs.get(sessionId) ?? 0) + 1
     this.sessionEpochs.set(sessionId, epoch)
     const capability = capabilityToken()
@@ -247,7 +268,7 @@ export class DiaryAccessService {
       sessionId,
       vaultId,
       epoch,
-      expiresAt: authSession.expiresAt!,
+      expiresAt: currentAuthSession.expiresAt!,
       dek,
     })
     this.scheduleCapabilityExpiry(capability)
@@ -257,7 +278,7 @@ export class DiaryAccessService {
   private requireCurrentAuthSession(sessionId: number): Required<DiaryAccessAuthSession> {
     const resolved = this.resolveAuthSession(sessionId)
     if (!resolved.valid || !Number.isFinite(resolved.expiresAt) || resolved.expiresAt! <= this.now()) {
-      this.dropSessionCapabilities(sessionId)
+      void this.invalidateAuthSession(sessionId)
       throw new DiaryAccessServiceError(
         'diary-access-auth-session-invalid',
         401,
@@ -288,6 +309,10 @@ export class DiaryAccessService {
   }
 
   isCapabilityValid(sessionId: number, presentedCapability: unknown, config?: DiaryAccessConfig | null): boolean {
+    // A quiescing session rejects new leases immediately. Existing leases do
+    // not call this method; their operation-local lease remains current until
+    // the quiescing transition drains and drops the capability.
+    if (this.sessionQuiescences.has(sessionId)) return false
     let resolvedConfig: DiaryAccessConfig | null
     try {
       resolvedConfig = config === undefined ? this.loadConfig() : config
@@ -300,7 +325,7 @@ export class DiaryAccessService {
       capability.expiresAt <= this.now()
       || !this.resolveAuthSession(capability.sessionId).valid
     )) {
-      this.dropCapability(presentedCapability)
+      void this.invalidateAuthSession(capability.sessionId)
       return false
     }
     return Boolean(
@@ -319,10 +344,42 @@ export class DiaryAccessService {
       return
     }
     this.activeBodyOperations.delete(sessionId)
-    const waiters = this.pendingLocks.get(sessionId)
-    if (!waiters?.length) return
-    this.pendingLocks.delete(sessionId)
-    for (const resolve of waiters) resolve()
+    const quiescence = this.sessionQuiescences.get(sessionId)
+    if (quiescence) quiescence.resolveDrained()
+  }
+
+  private beginQuiescence(sessionId: number): SessionQuiescence {
+    const existing = this.sessionQuiescences.get(sessionId)
+    if (existing) return existing
+
+    let resolveDrained!: () => void
+    let resolveCompleted!: () => void
+    const quiescence: SessionQuiescence = {
+      drained: new Promise<void>((resolve) => { resolveDrained = resolve }),
+      resolveDrained: () => resolveDrained(),
+      completed: new Promise<void>((resolve) => { resolveCompleted = resolve }),
+      resolveCompleted: () => resolveCompleted(),
+      finalized: false,
+    }
+    this.sessionQuiescences.set(sessionId, quiescence)
+    if ((this.activeBodyOperations.get(sessionId) ?? 0) === 0) quiescence.resolveDrained()
+    return quiescence
+  }
+
+  private async finishQuiescence(sessionId: number, quiescence: SessionQuiescence): Promise<void> {
+    await quiescence.drained
+    if (this.sessionQuiescences.get(sessionId) === quiescence && !quiescence.finalized) {
+      quiescence.finalized = true
+      this.dropSessionCapabilities(sessionId)
+      this.sessionEpochs.set(sessionId, (this.sessionEpochs.get(sessionId) ?? 0) + 1)
+      this.sessionQuiescences.delete(sessionId)
+      quiescence.resolveCompleted()
+    }
+    await quiescence.completed
+  }
+
+  private hasSessionCapability(sessionId: number): boolean {
+    return [...this.capabilities.values()].some((entry) => entry.sessionId === sessionId)
   }
 
   /**
@@ -335,16 +392,19 @@ export class DiaryAccessService {
     presentedCapability: unknown,
     callback: (operation: DiaryBodyOperation) => Promise<T> | T,
   ): Promise<T | null> {
-    if (!this.isCapabilityValid(sessionId, presentedCapability)) return null
+    if (this.sessionQuiescences.has(sessionId) || !this.isCapabilityValid(sessionId, presentedCapability)) return null
     const token = String(presentedCapability)
     const capability = this.capabilities.get(token)
     if (!capability) return null
     const epoch = capability.epoch
+    let leaseOpen = true
     this.activeBodyOperations.set(sessionId, (this.activeBodyOperations.get(sessionId) ?? 0) + 1)
     const isCurrent = () => (
+      leaseOpen
+      && !this.sessionQuiescences.get(sessionId)?.finalized
+      &&
       this.capabilities.get(token) === capability
       && capability.epoch === epoch
-      && this.isCapabilityValid(sessionId, token)
     )
     const operation: DiaryBodyOperation = {
       isCurrent,
@@ -377,6 +437,7 @@ export class DiaryAccessService {
     try {
       return await callback(operation)
     } finally {
+      leaseOpen = false
       this.releaseBodyOperation(sessionId)
     }
   }
@@ -434,7 +495,7 @@ export class DiaryAccessService {
         if (error instanceof DiaryAccessServiceError) throw error
         throw new DiaryAccessServiceError('diary-access-unavailable', 503, 'Diary access setup could not be saved.')
       }
-      const issued = this.issueCapability(sessionId, vaultId, dek)
+      const issued = await this.issueCapability(sessionId, vaultId, dek)
       return { state: 'UNLOCKED', ...issued }
     } catch (error) {
       if (error instanceof DiaryAccessServiceError) throw error
@@ -474,7 +535,7 @@ export class DiaryAccessService {
         dek.fill(0)
         throw new DiaryAccessServiceError('diary-access-unavailable', 503, 'Diary access configuration is unavailable.')
       }
-      const issued = this.issueCapability(sessionId, config.vaultId, dek)
+      const issued = await this.issueCapability(sessionId, config.vaultId, dek)
       this.unlockLimiter?.reset(limiterKey)
       return { state: 'UNLOCKED', ...issued }
     } catch (error) {
@@ -497,33 +558,21 @@ export class DiaryAccessService {
     }
   }
 
-  lock(sessionId: number): { state: 'LOCKED' } | Promise<{ state: 'LOCKED' }> {
+  lock(sessionId: number): Promise<{ state: 'LOCKED' }> {
     this.assertSessionId(sessionId)
-    const active = this.activeBodyOperations.get(sessionId) ?? 0
-    if (active > 0) {
-      return new Promise((resolve) => {
-        const waiters = this.pendingLocks.get(sessionId) ?? []
-        waiters.push(() => {
-          this.dropSessionCapabilities(sessionId)
-          this.sessionEpochs.set(sessionId, (this.sessionEpochs.get(sessionId) ?? 0) + 1)
-          resolve({ state: 'LOCKED' })
-        })
-        this.pendingLocks.set(sessionId, waiters)
-      })
-    }
-    this.dropSessionCapabilities(sessionId)
-    this.sessionEpochs.set(sessionId, (this.sessionEpochs.get(sessionId) ?? 0) + 1)
-    return { state: 'LOCKED' }
+    return this.invalidateAuthSession(sessionId).then(() => ({ state: 'LOCKED' as const }))
   }
 
-  invalidateAuthSession(sessionId: number): void {
-    if (!Number.isSafeInteger(sessionId) || sessionId < 1) return
-    this.dropSessionCapabilities(sessionId)
-    this.sessionEpochs.set(sessionId, (this.sessionEpochs.get(sessionId) ?? 0) + 1)
+  invalidateAuthSession(sessionId: number): Promise<void> {
+    if (!Number.isSafeInteger(sessionId) || sessionId < 1) return Promise.resolve()
+    const quiescence = this.beginQuiescence(sessionId)
+    return this.finishQuiescence(sessionId, quiescence)
   }
 
   resetForTesting(): void {
     this.dropAllCapabilities()
     this.sessionEpochs.clear()
+    this.sessionQuiescences.clear()
+    this.activeBodyOperations.clear()
   }
 }

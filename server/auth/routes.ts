@@ -198,7 +198,7 @@ authRoutes.post('/login', authRequestBodyLimit, async (c) => {
   }
 })
 
-authRoutes.post('/logout', (c) => {
+authRoutes.post('/logout', async (c) => {
   const resolved = runtimeOrError(c)
   if (!resolved.runtime) return resolved.response!
   const runtime = resolved.runtime
@@ -216,7 +216,7 @@ authRoutes.post('/logout', (c) => {
   // Invalidate the in-memory Diary capability before revoking the auth
   // session. Even if the persistent logout write fails, a capability from
   // the session being logged out must not remain usable in this process.
-  if (sessionId !== null) runtime.diaryAccess.invalidateAuthSession(sessionId)
+  if (sessionId !== null) await runtime.diaryAccess.invalidateAuthSession(sessionId)
   let logoutError: unknown = null
   try {
     runtime.service.logout(rawToken)

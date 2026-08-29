@@ -1,11 +1,11 @@
 import Database from 'better-sqlite3'
 import { randomBytes } from 'node:crypto'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { applyMigrations } from '../db.js'
 import { KdfGuard } from '../auth/kdfGuard.js'
 import { SCRYPT_KEY_BYTES } from '../auth/password.js'
 import { wrapDiaryDek } from './crypto.js'
-import { DiaryAccessService } from './service.js'
+import { DiaryAccessService, type DiaryBodyOperation } from './service.js'
 
 const PASSWORD = 'diary-access-test-password'
 const VAULT_ID = 'test-vault-01'
@@ -152,6 +152,150 @@ describe('D8.1 Diary access foundation', () => {
     await expect(operation).resolves.toBe('completed')
     await expect(lock).resolves.toEqual({ state: 'LOCKED' })
     expect(service.isCapabilityValid(7, unlocked.capability)).toBe(false)
+    db.close()
+  })
+
+  it('waits for logout quiescence while allowing the current body response to finish', async () => {
+    const db = new Database(':memory:')
+    applyMigrations(db)
+    const service = makeService(db)
+    const unlocked = await service.setup(7, PASSWORD)
+    let release!: () => void
+    const hold = new Promise<void>((resolve) => { release = resolve })
+    const bodyResponse = service.withBodyOperation(7, unlocked.capability, async (body) => {
+      body.assertCurrent()
+      await hold
+      body.assertCurrent()
+      return 'plaintext-conflict-or-body-response'
+    })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    let logoutSettled = false
+    const logout = service.invalidateAuthSession(7).then(() => {
+      logoutSettled = true
+    })
+    expect(service.isCapabilityValid(7, unlocked.capability)).toBe(false)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(logoutSettled).toBe(false)
+
+    release()
+    await expect(bodyResponse).resolves.toBe('plaintext-conflict-or-body-response')
+    await logout
+    expect(logoutSettled).toBe(true)
+    expect(service.isCapabilityValid(7, unlocked.capability)).toBe(false)
+    db.close()
+  })
+
+  it('keeps capability replacement behind the same-session body lease boundary', async () => {
+    const db = new Database(':memory:')
+    applyMigrations(db)
+    const service = makeService(db)
+    const unlocked = await service.setup(7, PASSWORD)
+    let release!: () => void
+    const hold = new Promise<void>((resolve) => { release = resolve })
+    const active = service.withBodyOperation(7, unlocked.capability, async (body) => {
+      await hold
+      body.assertCurrent()
+      return 'completed'
+    })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    let replacementSettled = false
+    const replacement = service.unlock(7, PASSWORD).then((result) => {
+      replacementSettled = true
+      return result
+    })
+    await vi.waitFor(() => {
+      expect(service.isCapabilityValid(7, unlocked.capability)).toBe(false)
+    }, { timeout: 5_000 })
+    expect(replacementSettled).toBe(false)
+
+    release()
+    await expect(active).resolves.toBe('completed')
+    const next = await replacement
+    expect(next.capability).not.toBe(unlocked.capability)
+    expect(next.epoch).toBeGreaterThan(unlocked.epoch)
+    expect(service.isCapabilityValid(7, next.capability)).toBe(true)
+    db.close()
+  })
+
+  it('quiesces an active lease when capability expiry is observed', async () => {
+    const db = new Database(':memory:')
+    applyMigrations(db)
+    let now = 1_700_000_000_000
+    const service = new DiaryAccessService({
+      db,
+      kdfGuard: new KdfGuard({ concurrency: 1, maxQueue: 2, maxQueueWaitMs: 10_000 }),
+      now: () => now,
+      getVaultId: () => VAULT_ID,
+      resolveAuthSession: () => ({ valid: true, expiresAt: now + 10_000 }),
+    })
+    const unlocked = await service.setup(7, PASSWORD)
+    let release!: () => void
+    const hold = new Promise<void>((resolve) => { release = resolve })
+    const active = service.withBodyOperation(7, unlocked.capability, async (body) => {
+      await hold
+      body.assertCurrent()
+      return 'completed-before-expiry-finalization'
+    })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    now = 1_700_000_000_001
+    expect(service.isCapabilityValid(7, unlocked.capability)).toBe(true)
+    now = 1_700_000_010_000
+    expect(service.isCapabilityValid(7, unlocked.capability)).toBe(false)
+    release()
+    await expect(active).resolves.toBe('completed-before-expiry-finalization')
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(service.isCapabilityValid(7, unlocked.capability)).toBe(false)
+    db.close()
+  })
+
+  it('does not allow a captured body operation to outlive its callback', async () => {
+    const db = new Database(':memory:')
+    applyMigrations(db)
+    const service = makeService(db)
+    const unlocked = await service.setup(7, PASSWORD)
+    let captured!: DiaryBodyOperation
+    await expect(service.withBodyOperation(7, unlocked.capability, (body) => {
+      captured = body
+      body.assertCurrent()
+      return 'done'
+    })).resolves.toBe('done')
+
+    expect(captured.isCurrent()).toBe(false)
+    expect(() => captured.assertCurrent()).toThrowError(expect.objectContaining({
+      code: 'diary-access-invalid-state',
+    }))
+    db.close()
+  })
+
+  it('keeps session quiescence isolated between sessions', async () => {
+    const db = new Database(':memory:')
+    applyMigrations(db)
+    const service = makeService(db)
+    const first = await service.setup(7, PASSWORD)
+    const second = await service.unlock(8, PASSWORD)
+    let release!: () => void
+    const hold = new Promise<void>((resolve) => { release = resolve })
+    const active = service.withBodyOperation(7, first.capability, async (body) => {
+      await hold
+      body.assertCurrent()
+      return 'session-a'
+    })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    const logoutA = service.invalidateAuthSession(7)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(service.isCapabilityValid(7, first.capability)).toBe(false)
+    expect(service.isCapabilityValid(8, second.capability)).toBe(true)
+    const sessionB = await service.withBodyOperation(8, second.capability, () => 'session-b')
+    expect(sessionB).toBe('session-b')
+
+    release()
+    await expect(active).resolves.toBe('session-a')
+    await logoutA
+    expect(service.isCapabilityValid(8, second.capability)).toBe(true)
     db.close()
   })
 

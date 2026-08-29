@@ -65,7 +65,7 @@ export const authBoundary: MiddlewareHandler = async (c, next) => {
     // request cannot retain an otherwise stale DEK in server memory.
     const invalidSessionId = status.session?.session?.id
     if (invalidSessionId !== undefined) {
-      runtime.diaryAccess.invalidateAuthSession(invalidSessionId)
+      await runtime.diaryAccess.invalidateAuthSession(invalidSessionId)
     }
     return jsonError(c, 401, 'Authentication required.', 'auth-session-required')
   }
