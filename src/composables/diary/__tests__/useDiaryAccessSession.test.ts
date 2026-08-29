@@ -49,6 +49,7 @@ describe('D8.1 Diary client transition generation', () => {
     pending.resolve({ state: 'UNLOCKED', epoch: 4 })
     await status
     expect(access.isUnlocked.value).toBe(false)
+    expect(access.statusResolved.value).toBe(false)
     expect(getDiaryCapability()).toBeNull()
   })
 
@@ -80,6 +81,20 @@ describe('D8.1 Diary client transition generation', () => {
     await first
     expect(access.isUnlocked.value).toBe(true)
     expect(access.epoch.value).toBe(2)
+    expect(access.statusResolved.value).toBe(true)
     expect(getDiaryCapability()).toBe('current-capability')
+  })
+
+  it('keeps status reconciliation resolved after a real lock boundary', async () => {
+    vi.mocked(getDiaryAccessStatus).mockResolvedValue({ state: 'UNLOCKED', epoch: 7 })
+    const access = useDiaryAccessSession()
+
+    await access.ensureStatus()
+    expect(access.statusResolved.value).toBe(true)
+    expect(access.isUnlocked.value).toBe(true)
+
+    access.clear()
+    expect(access.state.value).toBe('LOCKED')
+    expect(access.statusResolved.value).toBe(true)
   })
 })

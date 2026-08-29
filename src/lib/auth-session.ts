@@ -113,16 +113,12 @@ export async function observeDiaryAccessLockedResponse(response: Response): Prom
   return true
 }
 
-/**
- * Fetch helper for protected application wrappers.  It captures the epoch at
- * request start, then observes the response without consuming its body.
- */
-export async function authFetch(
+async function fetchWithSessionObservation(
   input: string | URL | Request,
-  init?: RequestInit,
+  init: RequestInit | undefined,
+  capability: string | null,
 ): Promise<Response> {
   const requestGeneration = captureAuthSessionGeneration()
-  const capability = getDiaryCapability()
   let requestInput = input
   let requestInit = init
   if (capability) {
@@ -141,6 +137,30 @@ export async function authFetch(
   await observeAuthSessionResponse(response, requestGeneration)
   await observeDiaryAccessLockedResponse(response)
   return response
+}
+
+/**
+ * Fetch helper for ordinary protected application wrappers. It observes the
+ * authentication session but never reads or forwards the Diary capability.
+ * Diary authority must be requested through the explicit seam below.
+ */
+export async function authFetch(
+  input: string | URL | Request,
+  init?: RequestInit,
+): Promise<Response> {
+  return fetchWithSessionObservation(input, init, null)
+}
+
+/**
+ * Explicit request seam for an operation that has already established that it
+ * is inside the managed-Diary capability boundary. A missing capability is
+ * intentionally sent as no header; the server then fails closed with 423.
+ */
+export async function diaryAuthFetch(
+  input: string | URL | Request,
+  init?: RequestInit,
+): Promise<Response> {
+  return fetchWithSessionObservation(input, init, getDiaryCapability())
 }
 
 /** Test-only reset; no production code relies on this. */

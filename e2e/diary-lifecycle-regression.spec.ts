@@ -4,6 +4,8 @@ import { clearDraftDatabase, gotoVaultReady } from './helpers/edit-program'
 const TEST_TIME_ZONE = 'Asia/Shanghai'
 const RUN_ID = String(Date.now())
 
+test.use({ trace: 'off', screenshot: 'only-on-failure' })
+
 function civilParts(value: string): { year: number; month: number; day: number } {
   const [year, month, day] = value.split('-').map(Number)
   return { year, month, day }

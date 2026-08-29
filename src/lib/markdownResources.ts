@@ -1,5 +1,5 @@
 import type MarkdownIt from 'markdown-it'
-import { authFetch } from './auth-session'
+import { authFetchForPath } from './diary-request'
 import { findMarkdownInlineSourceOwnership } from './markdownInlineSource'
 
 export const MAX_SNIPPET_BYTES = 256 * 1024
@@ -676,7 +676,7 @@ async function readJsonError(response: Response): Promise<never> {
 export const authenticatedMarkdownResourceResolver: MarkdownResourceResolver = {
   async read(request): Promise<MarkdownResourceReadResult> {
     const query = new URLSearchParams({ kind: request.kind, path: request.path })
-    const response = await authFetch(`/api/markdown-resources?${query.toString()}`, {
+    const response = await authFetchForPath(request.path, `/api/markdown-resources?${query.toString()}`, {
       method: 'GET',
       credentials: 'same-origin',
       signal: request.signal,

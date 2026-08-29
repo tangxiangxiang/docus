@@ -4,6 +4,8 @@ const TEST_TIME_ZONE = 'Asia/Shanghai'
 
 test.use({
   timezoneId: TEST_TIME_ZONE,
+  trace: 'off',
+  screenshot: 'only-on-failure',
 })
 
 async function expectDiaryTestTimeZone(page: Page): Promise<void> {

@@ -4,6 +4,8 @@ import { expect, test, type APIRequestContext, type Page } from './fixtures/diar
 
 const TEST_TIME_ZONE = 'Asia/Shanghai'
 
+test.use({ trace: 'off', screenshot: 'only-on-failure' })
+
 function civilParts(value: string): { year: number; month: number; day: number } {
   const [year, month, day] = value.split('-').map(Number)
   return { year, month, day }
@@ -119,7 +121,10 @@ async function moveToMonth(page: Page, date: string): Promise<void> {
 
 async function clickDiaryDate(page: Page, date: string): Promise<void> {
   await moveToMonth(page, date)
-  const button = page.locator(`[data-diary-day-content][data-date="${date}"]`)
+  // VCalendar can retain the outgoing month during its page transition. Use
+  // the current rendered occurrence rather than making the helper strict over
+  // both transition panes.
+  const button = page.locator(`[data-diary-day-content][data-date="${date}"]`).last()
   await expect(button).toBeVisible()
   await button.click()
 }

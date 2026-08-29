@@ -1,5 +1,10 @@
 import { expect, test, DIARY_ACCESS_CAPABILITY_HEADER } from './fixtures/diary'
 
+// Diary fixtures carry a live capability in memory. Do not let the
+// repository-wide retain-on-failure setting serialize request headers into a
+// trace artifact; screenshots and error context remain enabled.
+test.use({ trace: 'off', screenshot: 'only-on-failure' })
+
 const BASE_URL = 'http://127.0.0.1:4174'
 const UNPUBLISHED_DIARY_PATH = 'diary/2099-01-01'
 

@@ -3,7 +3,11 @@ import { expect, test, type APIRequestContext, type Page } from './fixtures/diar
 const TEST_TIME_ZONE = 'Asia/Shanghai'
 const RUN_ID = String(Date.now())
 
-test.use({ timezoneId: TEST_TIME_ZONE })
+test.use({
+  timezoneId: TEST_TIME_ZONE,
+  trace: 'off',
+  screenshot: 'only-on-failure',
+})
 
 function localCivilDate(): string {
   const parts = new Intl.DateTimeFormat('en-US', {

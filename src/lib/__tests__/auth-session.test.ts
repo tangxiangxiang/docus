@@ -3,6 +3,7 @@ import {
   advanceAuthSessionGeneration,
   authFetch,
   captureAuthSessionGeneration,
+  diaryAuthFetch,
   observeAuthSessionResponse,
   resetAuthSessionForTesting,
   subscribeDiaryAccessLocked,
@@ -62,8 +63,21 @@ describe('auth-session response observer', () => {
   })
 })
 
-describe('authFetch Diary session boundary', () => {
-  it('sends the opaque capability and notifies the client when the server is locked', async () => {
+describe('explicit Diary request session boundary', () => {
+  it('does not send an in-memory capability on an ordinary authenticated request', async () => {
+    const capability = 'a'.repeat(43)
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(new Headers(init?.headers).get('X-Docus-Diary-Capability')).toBeNull()
+      return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    setDiaryCapability(capability)
+
+    await expect(authFetch('/api/posts/inbox/ordinary-note')).resolves.toMatchObject({ status: 200 })
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it('sends the opaque capability only through the explicit Diary seam', async () => {
     const capability = 'a'.repeat(43)
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       expect(new Headers(init?.headers).get('X-Docus-Diary-Capability')).toBe(capability)
@@ -77,7 +91,7 @@ describe('authFetch Diary session boundary', () => {
     const locked = vi.fn()
     const unsubscribe = subscribeDiaryAccessLocked(locked)
 
-    const response = await authFetch('/api/posts/diary/2026-08-27')
+    const response = await diaryAuthFetch('/api/posts/diary/2026-08-27')
 
     expect(response.status).toBe(423)
     expect(fetchMock).toHaveBeenCalledOnce()

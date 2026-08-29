@@ -19,6 +19,8 @@ const E2E_VAULT = process.env.DOCUS_DRAFT_E2E_VAULT ?? nodePath.join('src', 'con
 
 test.use({
   timezoneId: TEST_TIME_ZONE,
+  trace: 'off',
+  screenshot: 'only-on-failure',
 })
 
 type DiaryMetadata = {

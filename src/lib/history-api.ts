@@ -8,6 +8,7 @@
 // need).
 
 import { authFetch } from './auth-session'
+import { authFetchForPath, authFetchForPaths } from './diary-request'
 
 export interface Capability {
   gitAvailable: boolean
@@ -168,7 +169,9 @@ export async function getLog(opts: { path?: string; limit?: number } = {}): Prom
   const q = new URLSearchParams()
   if (opts.path) q.set('path', opts.path)
   if (opts.limit !== undefined) q.set('limit', String(opts.limit))
-  const r = await authFetch(`/api/history/log?${q.toString()}`)
+  const r = await (opts.path
+    ? authFetchForPath(opts.path, `/api/history/log?${q.toString()}`)
+    : authFetch(`/api/history/log?${q.toString()}`))
   return readJson(r, 'getLog failed')
 }
 
@@ -176,7 +179,7 @@ export async function getLog(opts: { path?: string; limit?: number } = {}): Prom
 
 export async function getFileAt(path: string, ref: string): Promise<{ path: string; ref: string; content: string }> {
   const q = new URLSearchParams({ path, ref })
-  const r = await authFetch(`/api/history/file?${q.toString()}`)
+  const r = await authFetchForPath(path, `/api/history/file?${q.toString()}`)
   return readJson(r, `getFileAt ${path}@${ref} failed`)
 }
 
@@ -184,7 +187,7 @@ export async function getFileAt(path: string, ref: string): Promise<{ path: stri
 
 export async function getDiff(path: string, oldRef: string, newRef: string): Promise<{ path: string; oldRef: string; newRef: string; diff: FileDiff }> {
   const q = new URLSearchParams({ path, old: oldRef, new: newRef })
-  const r = await authFetch(`/api/history/diff?${q.toString()}`)
+  const r = await authFetchForPath(path, `/api/history/diff?${q.toString()}`)
   return readJson(r, `getDiff ${path} failed`)
 }
 
@@ -215,7 +218,7 @@ export interface IndexRepairTransaction {
 export type ContentHashes = Record<string, string | null>
 
 export async function getContentHashes(paths: string[]): Promise<ContentHashes> {
-  const r = await authFetch('/api/history/content-hashes', {
+  const r = await authFetchForPaths(paths, '/api/history/content-hashes', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ paths }),
@@ -229,7 +232,7 @@ export async function createCommit(
   message: string,
   expected: ContentHashes,
 ): Promise<CommitResult> {
-  const r = await authFetch('/api/history/commits', {
+  const r = await authFetchForPaths(paths, '/api/history/commits', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ paths, message, expected }),
@@ -314,7 +317,7 @@ export interface RestoreFileResult {
 }
 
 export async function restoreFile(path: string, ref: string): Promise<RestoreFileResult> {
-  const r = await authFetch('/api/history/restore', {
+  const r = await authFetchForPath(path, '/api/history/restore', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ path, ref }),

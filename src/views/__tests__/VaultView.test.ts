@@ -669,6 +669,15 @@ describe('VaultView D3.2 Diary surface wiring', () => {
     expect(source).toContain('@update:filter="onFilesFilterEdited"')
   })
 
+  it('distinguishes fresh access bootstrap from a reconciled lock boundary', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+
+    expect(source).toContain('if (!diaryAccess.statusResolved.value) return')
+    expect(source).not.toContain("diaryAccess.state.value !== 'UNLOCKED'")
+    expect(source).toContain('diaryFilterOwnership.value === \'calendar\'')
+    expect(source).toContain('diaryFilterOwnership.value = \'none\'')
+  })
+
   it('keeps the Calendar mounted while presentation state controls visibility', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
     const editorSurface = source.match(

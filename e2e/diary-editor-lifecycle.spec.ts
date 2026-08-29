@@ -16,6 +16,9 @@ import {
 
 const TEST_TIME_ZONE = 'Asia/Shanghai'
 const RUN_ID = String(Date.now())
+
+test.use({ trace: 'off', screenshot: 'only-on-failure' })
+
 const E2E_VAULT = process.env.DOCUS_DRAFT_E2E_VAULT ?? nodePath.join('src', 'content')
 
 function localCivilDate(): string {

@@ -4,8 +4,12 @@ import { describe, expect, it, vi } from 'vitest'
 import { applyMigrations } from '../db.js'
 import { KdfGuard } from '../auth/kdfGuard.js'
 import { SCRYPT_KEY_BYTES } from '../auth/password.js'
-import { wrapDiaryDek } from './crypto.js'
-import { DiaryAccessService, type DiaryBodyOperation } from './service.js'
+import { unwrapDiaryDek, wrapDiaryDek } from './crypto.js'
+import {
+  DiaryAccessService,
+  type DiaryAccessServiceOptions,
+  type DiaryBodyOperation,
+} from './service.js'
 
 const PASSWORD = 'diary-access-test-password'
 const VAULT_ID = 'test-vault-01'
@@ -18,6 +22,7 @@ function makeService(
     valid: true,
     expiresAt: now + 60_000,
   }),
+  options: Pick<DiaryAccessServiceOptions, 'unwrapDek'> = {},
 ): DiaryAccessService {
   return new DiaryAccessService({
     db,
@@ -25,7 +30,14 @@ function makeService(
     now: () => now,
     getVaultId: () => vaultId,
     resolveAuthSession,
+    ...options,
   })
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((next) => { resolve = next })
+  return { promise, resolve }
 }
 
 describe('D8.1 Diary access foundation', () => {
@@ -49,7 +61,7 @@ describe('D8.1 Diary access foundation', () => {
     expect(row.dek).toBeUndefined()
     expect(row.wrapped_dek).toBeTruthy()
 
-    service.lock(7)
+    await service.lock(7)
     expect(service.status(7, setup.capability).state).toBe('LOCKED')
     db.close()
   })
@@ -312,7 +324,7 @@ describe('D8.1 Diary access foundation', () => {
     const first = await service.setup(7, PASSWORD)
     const second = await service.unlock(8, PASSWORD)
 
-    service.lock(7)
+    await service.lock(7)
     const pending = service.unlock(7, PASSWORD)
     valid.set(7, false)
     await expect(pending).rejects.toMatchObject({
@@ -338,6 +350,122 @@ describe('D8.1 Diary access foundation', () => {
     await expect(expiring.unlock(8, PASSWORD)).rejects.toMatchObject({
       code: 'diary-access-auth-session-invalid',
     })
+    db.close()
+  })
+
+  it('does not publish a paused unlock after an explicit lock and zeroizes its unpublished DEK', async () => {
+    const db = new Database(':memory:')
+    applyMigrations(db)
+    const paused = deferred<Buffer>()
+    const unwrap = vi.fn<typeof unwrapDiaryDek>(() => paused.promise)
+    const service = makeService(db, 1_700_000_000_000, VAULT_ID, undefined, { unwrapDek: unwrap })
+    await service.setup(7, PASSWORD)
+    await service.lock(7)
+
+    const pending = service.unlock(7, PASSWORD)
+    await vi.waitFor(() => expect(unwrap).toHaveBeenCalledOnce())
+
+    const lock = service.lock(7)
+    const unpublishedDek = randomBytes(SCRYPT_KEY_BYTES)
+    paused.resolve(unpublishedDek)
+
+    await expect(pending).rejects.toMatchObject({
+      code: 'diary-access-issuance-invalidated',
+      status: 409,
+    })
+    await expect(lock).resolves.toEqual({ state: 'LOCKED' })
+    expect(unpublishedDek.every((byte) => byte === 0)).toBe(true)
+    expect(service.status(7).state).toBe('LOCKED')
+    db.close()
+  })
+
+  it('does not republish a paused unlock after auth logout invalidates its session', async () => {
+    const db = new Database(':memory:')
+    applyMigrations(db)
+    const paused = deferred<Buffer>()
+    const unwrap = vi.fn<typeof unwrapDiaryDek>(() => paused.promise)
+    const service = makeService(db, 1_700_000_000_000, VAULT_ID, undefined, { unwrapDek: unwrap })
+    await service.setup(7, PASSWORD)
+    await service.lock(7)
+
+    const pending = service.unlock(7, PASSWORD)
+    await vi.waitFor(() => expect(unwrap).toHaveBeenCalledOnce())
+
+    const logout = service.invalidateAuthSession(7)
+    const unpublishedDek = randomBytes(SCRYPT_KEY_BYTES)
+    paused.resolve(unpublishedDek)
+
+    await expect(pending).rejects.toMatchObject({
+      code: 'diary-access-issuance-invalidated',
+      status: 409,
+    })
+    await expect(logout).resolves.toBeUndefined()
+    expect(unpublishedDek.every((byte) => byte === 0)).toBe(true)
+    expect(service.status(7).state).toBe('LOCKED')
+    db.close()
+  })
+
+  it('does not republish a paused unlock after capability expiry invalidates its session', async () => {
+    const db = new Database(':memory:')
+    applyMigrations(db)
+    let now = 1_700_000_000_000
+    const paused = deferred<Buffer>()
+    const unwrap = vi.fn<typeof unwrapDiaryDek>(() => paused.promise)
+    const service = new DiaryAccessService({
+      db,
+      kdfGuard: new KdfGuard({ concurrency: 1, maxQueue: 2, maxQueueWaitMs: 10_000 }),
+      now: () => now,
+      getVaultId: () => VAULT_ID,
+      resolveAuthSession: () => ({ valid: true, expiresAt: now + 60_000 }),
+      unwrapDek: unwrap,
+    })
+    const initial = await service.setup(7, PASSWORD)
+    const pending = service.unlock(7, PASSWORD)
+    await vi.waitFor(() => expect(unwrap).toHaveBeenCalledOnce())
+
+    now += 60_000
+    expect(service.isCapabilityValid(7, initial.capability)).toBe(false)
+    const unpublishedDek = randomBytes(SCRYPT_KEY_BYTES)
+    paused.resolve(unpublishedDek)
+
+    await expect(pending).rejects.toMatchObject({
+      code: 'diary-access-issuance-invalidated',
+      status: 409,
+    })
+    expect(unpublishedDek.every((byte) => byte === 0)).toBe(true)
+    expect(service.status(7).state).toBe('LOCKED')
+    db.close()
+  })
+
+  it('makes concurrent same-session unlocks deterministic: the newest issuance wins', async () => {
+    const db = new Database(':memory:')
+    applyMigrations(db)
+    const older = deferred<Buffer>()
+    const newer = deferred<Buffer>()
+    const unwrap = vi.fn<typeof unwrapDiaryDek>()
+      .mockImplementationOnce(() => older.promise)
+      .mockImplementationOnce(() => newer.promise)
+    const service = makeService(db, 1_700_000_000_000, VAULT_ID, undefined, { unwrapDek: unwrap })
+    const initial = await service.setup(7, PASSWORD)
+
+    const olderUnlock = service.unlock(7, PASSWORD)
+    const newerUnlock = service.unlock(7, PASSWORD)
+    await vi.waitFor(() => expect(unwrap).toHaveBeenCalledTimes(2))
+
+    const newerDek = randomBytes(SCRYPT_KEY_BYTES)
+    newer.resolve(newerDek)
+    const current = await newerUnlock
+    expect(current.capability).not.toBe(initial.capability)
+    expect(service.isCapabilityValid(7, current.capability)).toBe(true)
+
+    const olderDek = randomBytes(SCRYPT_KEY_BYTES)
+    older.resolve(olderDek)
+    await expect(olderUnlock).rejects.toMatchObject({
+      code: 'diary-access-issuance-invalidated',
+      status: 409,
+    })
+    expect(olderDek.every((byte) => byte === 0)).toBe(true)
+    expect(service.isCapabilityValid(7, current.capability)).toBe(true)
     db.close()
   })
 })

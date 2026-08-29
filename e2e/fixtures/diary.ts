@@ -28,24 +28,47 @@ async function readAccessState(response: Awaited<ReturnType<APIRequestContext['g
 async function ensureDiaryConfiguration(
   playwright: PlaywrightApi,
   baseURL: string,
-  storageState: StorageState,
 ): Promise<void> {
-  const api = await playwright.request.newContext({
+  // Configuration is a worker concern, but its setup capability must not be
+  // stranded on the worker auth session that later tests depend on. Use a
+  // disposable authenticated session and revoke it explicitly below.
+  const auth = await playwright.request.newContext({
     baseURL,
-    storageState,
     extraHTTPHeaders: originHeaders(baseURL),
   })
   try {
-    const status = await api.get('/api/diary/access/status')
+    const authSetup = await auth.post('/api/auth/setup', {
+      data: {
+        bootstrapToken: process.env.DOCUS_SETUP_TOKEN ?? 'docus-e2e-setup-token-0123456789abcdef',
+        username: 'e2e-owner',
+        password: 'e2e-owner-password-strong-123',
+      },
+    })
+    if (authSetup.status() === 409) {
+      const login = await auth.post('/api/auth/login', {
+        data: {
+          username: 'e2e-owner',
+          password: 'e2e-owner-password-strong-123',
+        },
+      })
+      expect(login.status(), await login.text()).toBe(200)
+    } else {
+      expect(authSetup.status(), await authSetup.text()).toBe(201)
+    }
+
+    const status = await auth.get('/api/diary/access/status')
     const access = await readAccessState(status)
     if (access.state !== 'UNINITIALIZED') return
 
-    const setup = await api.post('/api/diary/access/setup', {
+    const setup = await auth.post('/api/diary/access/setup', {
       data: { password: DIARY_PASSWORD },
     })
     expect([201, 409], await setup.text()).toContain(setup.status())
   } finally {
-    await api.dispose()
+    // setup returns a process-local capability, so disposing the request
+    // context alone is not a supported revocation boundary.
+    await auth.post('/api/auth/logout').catch(() => undefined)
+    await auth.dispose()
   }
 }
 
@@ -88,6 +111,7 @@ async function loginForDiaryApi(
     })
     return { auth, api }
   } catch (error) {
+    await auth.post('/api/auth/logout').catch(() => undefined)
     await auth.dispose()
     throw error
   }
@@ -120,15 +144,8 @@ async function activateScopeChip(page: Page, chip: ReturnType<Page['locator']>):
     await chip.press('Enter')
     return
   }
-  await chip.click()
-}
-
-function waitForDiaryAccessStatus(page: Page): Promise<unknown> {
-  return page.waitForResponse(
-    (response) => response.request().method() === 'GET'
-      && new URL(response.url()).pathname === '/api/diary/access/status',
-    { timeout: 15_000 },
-  ).catch(() => null)
+  await chip.focus()
+  await chip.press('Enter')
 }
 
 async function bootstrapDiaryPage(page: Page, keepDiaryScope: boolean): Promise<void> {
@@ -140,14 +157,29 @@ async function bootstrapDiaryPage(page: Page, keepDiaryScope: boolean): Promise<
   await expect(diaryChip).toBeVisible({ timeout: 15_000 })
 
   const password = page.locator('#diary-access-password')
+  const initialAccessDialogVisible = await password.isVisible().catch(() => false)
 
   // A reload can restore the generic recovery surface at the same time as
   // the persisted Diary scope asks App.vue to request access. Resolve an
   // already-open access dialog first; clicking a scope chip while the
   // recovery backdrop is present would only retry a blocked click and hide
   // the real unlock path behind a timeout.
-  if (await password.isVisible().catch(() => false)) {
+  if (initialAccessDialogVisible) {
     await submitDiaryAccess(page)
+  }
+
+  // On a fresh process the persisted Diary scope can briefly render as active
+  // before App.vue reconciles the missing process-local capability and opens
+  // the access dialog. Do not let that transient aria state satisfy the
+  // bootstrap; wait for either the dialog or the normalization to note.
+  if (keepDiaryScope
+    && await diaryChip.getAttribute('aria-pressed') === 'true'
+    && !initialAccessDialogVisible
+    && !await password.isVisible().catch(() => false)) {
+    await expect.poll(async () => (
+      await password.isVisible().catch(() => false)
+        || await diaryChip.getAttribute('aria-pressed') !== 'true'
+    ), { timeout: 15_000 }).toBe(true)
   }
 
   // A full page navigation starts a new browser JS process, so a persisted
@@ -200,9 +232,9 @@ async function logoutBrowserContext(
 }
 
 export const test = authTest.extend<{}, { diaryConfigReady: void }>({
-  diaryConfigReady: [async ({ playwright, authStorageState }, use) => {
+  diaryConfigReady: [async ({ playwright }, use) => {
     const origin = resolvedBaseURL(undefined)
-    await ensureDiaryConfiguration(playwright, origin, authStorageState)
+    await ensureDiaryConfiguration(playwright, origin)
     await use()
   }, { scope: 'worker' }],
 
@@ -265,19 +297,13 @@ export const test = authTest.extend<{}, { diaryConfigReady: void }>({
       } catch {
         targetPath = new URL(url, origin).pathname
       }
-      const accessStatus = keepDiaryScope || targetPath.startsWith('/vault/diary/')
-        ? waitForDiaryAccessStatus(page)
-        : null
       const response = await originalGoto(url, options)
-      if (accessStatus) await accessStatus
       await bootstrapDiaryPage(page, keepDiaryScope || targetPath.startsWith('/vault/diary/'))
       return response
     }
     page.reload = async (options) => {
       const keepDiaryScope = await currentDiaryScope(page)
-      const accessStatus = keepDiaryScope ? waitForDiaryAccessStatus(page) : null
       const response = await originalReload(options)
-      if (accessStatus) await accessStatus
       await bootstrapDiaryPage(page, keepDiaryScope)
       return response
     }

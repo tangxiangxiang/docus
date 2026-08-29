@@ -14,6 +14,10 @@ export interface DiaryAccessSession {
   readonly state: Readonly<Ref<DiaryAccessState>>
   readonly epoch: Readonly<Ref<number | null>>
   readonly isUnlocked: Readonly<Ref<boolean>>
+  /** True once this browser process has received an authoritative access
+   *  status or transition result. It distinguishes fresh bootstrap from a
+   *  real lock/expiry/logout after the session was already reconciled. */
+  readonly statusResolved: Readonly<Ref<boolean>>
   readonly ensureStatus: () => Promise<DiaryAccessState>
   readonly setup: (password: string) => Promise<void>
   readonly unlock: (password: string) => Promise<void>
@@ -23,6 +27,7 @@ export interface DiaryAccessSession {
 
 const state = ref<DiaryAccessState>('UNINITIALIZED')
 const epoch = ref<number | null>(null)
+const statusResolved = ref(false)
 const isUnlocked = computed(() => state.value === 'UNLOCKED')
 let generation = 0
 let statusRequest: { generation: number; promise: Promise<DiaryAccessState> } | null = null
@@ -46,10 +51,12 @@ async function ensureStatus(): Promise<DiaryAccessState> {
       if (requestGeneration !== generation) return state.value
       state.value = status.state
       epoch.value = status.epoch ?? null
+      statusResolved.value = true
       if (status.state !== 'UNLOCKED') clearDiaryCapability()
       return status.state
     })
     .finally(() => {
+      if (requestGeneration === generation) statusResolved.value = true
       if (statusRequest?.promise === pending) statusRequest = null
     })
   statusRequest = { generation: requestGeneration, promise: pending }
@@ -64,6 +71,7 @@ async function setup(password: string): Promise<void> {
   setDiaryCapability(result.capability)
   state.value = result.state
   epoch.value = result.epoch
+  statusResolved.value = true
 }
 
 async function unlock(password: string): Promise<void> {
@@ -74,6 +82,7 @@ async function unlock(password: string): Promise<void> {
   setDiaryCapability(result.capability)
   state.value = result.state
   epoch.value = result.epoch
+  statusResolved.value = true
 }
 
 async function lock(): Promise<void> {
@@ -82,6 +91,7 @@ async function lock(): Promise<void> {
   clearDiaryCapability()
   epoch.value = null
   state.value = 'LOCKED'
+  statusResolved.value = true
   await lockDiaryAccess()
   if (requestGeneration !== generation) return
   state.value = 'LOCKED'
@@ -91,6 +101,7 @@ const coordinator: DiaryAccessSession = {
   state: readonly(state),
   epoch: readonly(epoch),
   isUnlocked: readonly(isUnlocked),
+  statusResolved: readonly(statusResolved),
   ensureStatus,
   setup,
   unlock,
@@ -117,6 +128,7 @@ export function resetDiaryAccessSessionForTesting(): void {
   clearDiaryCapability()
   state.value = 'UNINITIALIZED'
   epoch.value = null
+  statusResolved.value = false
   generation += 1
   statusRequest = null
 }

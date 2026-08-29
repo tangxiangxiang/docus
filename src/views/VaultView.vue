@@ -1748,11 +1748,11 @@ watch(isDiaryScope, (inDiaryScope) => {
   if (!inDiaryScope) {
     // A fresh browser process cannot restore the process-local Diary
     // capability from persisted scope state. App.vue therefore normalizes a
-    // persisted Diary scope to note while it resolves access. That security
-    // bootstrap is not a user leaving Diary, so do not discard a Calendar
-    // filter seed during this transient transition; the explicit unlock and
-    // scope re-entry below can continue the same presentation context.
-    if (diaryAccess.state.value !== 'UNLOCKED') return
+    // persisted Diary scope to note while it resolves access. Only that
+    // unresolved bootstrap is exempt from the normal scope-exit cleanup;
+    // once status has been reconciled, LOCKED also represents a real
+    // lock/expiry/logout boundary and must clear Calendar-owned state.
+    if (!diaryAccess.statusResolved.value) return
     clearPendingMoodFirstPresentation()
     // A Calendar-seeded date is presentation context and should not hide the
     // ordinary scope's tree. Once the user edits the query, it is their

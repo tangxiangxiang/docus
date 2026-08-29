@@ -1,6 +1,6 @@
 import MiniSearch from 'minisearch'
 import type { PostSummary } from './api'
-import { authFetch } from './auth-session'
+import { authFetchForPath } from './diary-request'
 
 /**
  * 客户端搜索:基于 minisearch,索引 PostSummary(path/title/tags/summary),
@@ -86,7 +86,7 @@ export async function primeBody(posts: PostSummary[]): Promise<void> {
         // still call it to be defensive against a future loosening of
         // the path syntax). This matches what useEditorTabs.doSave
         // does at useEditorTabs.ts:155.
-        const res = await authFetch(`/api/posts/${encodeURI(p.path)}`)
+        const res = await authFetchForPath(p.path, `/api/posts/${encodeURI(p.path)}`)
         if (!res.ok) return
         const data = (await res.json()) as { content: string }
         // A slower request for an older revision must not overwrite a

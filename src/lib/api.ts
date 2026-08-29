@@ -1,4 +1,5 @@
-import { authFetch } from './auth-session'
+import { authFetch, diaryAuthFetch } from './auth-session'
+import { authFetchForPath, authFetchForPaths } from './diary-request'
 import type { DiaryDate } from '../../shared/diaryProtocol'
 import type { MoodId } from '../../shared/diaryMood'
 
@@ -166,7 +167,10 @@ export async function getFileStates(paths: string[]): Promise<Array<{
 }
 
 export async function getPost(path: string): Promise<PostDetail> {
-  return jsonOrThrow<PostDetail>(await authFetch('/api/posts/' + splat(path)))
+  return jsonOrThrow<PostDetail>(await authFetchForPath(
+    path,
+    '/api/posts/' + splat(path),
+  ))
 }
 
 function isSavePostConflictPayload(value: unknown): value is SavePostConflictPayload {
@@ -188,7 +192,7 @@ export async function savePost(
   raw: string,
   baseRaw: string,
 ): Promise<SavePostResult> {
-  const response = await authFetch('/api/posts/' + splat(path), {
+  const response = await authFetchForPath(path, '/api/posts/' + splat(path), {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ raw, baseRaw } satisfies SavePostInput),
@@ -210,7 +214,7 @@ export interface RecoverPostResult {
 }
 
 export async function recoverPost(path: string, raw: string): Promise<RecoverPostResult> {
-  return jsonOrThrow(await authFetch('/api/recover/' + splat(path), {
+  return jsonOrThrow(await authFetchForPath(path, '/api/recover/' + splat(path), {
     method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ raw }),
   }))
 }
@@ -231,7 +235,7 @@ export async function updateDocumentMetadata(
   path: string,
   input: UpdateDocumentMetadata,
 ): Promise<DocumentMetadata> {
-  return jsonOrThrow<DocumentMetadata>(await authFetch('/api/metadata/documents/' + splat(path), {
+  return jsonOrThrow<DocumentMetadata>(await authFetchForPath(path, '/api/metadata/documents/' + splat(path), {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
@@ -248,7 +252,7 @@ export async function getMetadataMigrationStatus(): Promise<{
 }
 
 export async function cleanDocumentFrontmatter(paths: string[]): Promise<FrontmatterMutationResult> {
-  return jsonOrThrow(await authFetch('/api/metadata/cleanup', {
+  return jsonOrThrow(await authFetchForPaths(paths, '/api/metadata/cleanup', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ paths, confirm: 'REMOVE_FRONTMATTER' }),
@@ -259,7 +263,7 @@ export async function restoreDocumentFrontmatter(
   paths: string[],
   mode: 'canonical' | 'original' = 'original',
 ): Promise<FrontmatterMutationResult> {
-  return jsonOrThrow(await authFetch('/api/metadata/restore', {
+  return jsonOrThrow(await authFetchForPaths(paths, '/api/metadata/restore', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ paths, mode, confirm: 'RESTORE_FRONTMATTER' }),
@@ -267,7 +271,7 @@ export async function restoreDocumentFrontmatter(
 }
 
 export async function getFrontmatterCleanupPreview(): Promise<FrontmatterCleanupPreview> {
-  return jsonOrThrow(await authFetch('/api/metadata/cleanup/preview'))
+  return jsonOrThrow(await diaryAuthFetch('/api/metadata/cleanup/preview'))
 }
 
 export async function exportDocumentFrontmatter(
@@ -276,13 +280,13 @@ export async function exportDocumentFrontmatter(
 ): Promise<string> {
   const query = new URLSearchParams({ path, mode })
   const result = await jsonOrThrow<{ frontmatter: string }>(
-    await authFetch('/api/metadata/export?' + query.toString()),
+    await authFetchForPath(path, '/api/metadata/export?' + query.toString()),
   )
   return result.frontmatter
 }
 
 export async function createPost(input: { path: string; title?: string }): Promise<PostSummary> {
-  return jsonOrThrow<PostSummary>(await authFetch('/api/posts', {
+  return jsonOrThrow<PostSummary>(await authFetchForPath(input.path, '/api/posts', {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
   }))
@@ -293,7 +297,7 @@ export async function createDiaryDate(input: {
   date: DiaryDate
   timeZone: string
 }): Promise<DiaryDateCreateResult> {
-  return jsonOrThrow<DiaryDateCreateResult>(await authFetch('/api/diary/dates', {
+  return jsonOrThrow<DiaryDateCreateResult>(await diaryAuthFetch('/api/diary/dates', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
@@ -301,18 +305,29 @@ export async function createDiaryDate(input: {
 }
 
 export async function patchPost(srcPath: string, body: { name?: string; targetPath?: string; updateReferences?: boolean }): Promise<PostSummary> {
-  return jsonOrThrow<PostSummary>(await authFetch('/api/posts/' + splat(srcPath), {
-    method: 'PATCH', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-  }))
+  return jsonOrThrow<PostSummary>(await authFetchForPaths(
+    [srcPath, ...(body.targetPath ? [body.targetPath] : [])],
+    '/api/posts/' + splat(srcPath),
+    {
+      method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+  ))
 }
 
 export async function getRenameImpact(path: string, recursive = false): Promise<{ path: string; count: number; sources: string[] }> {
-  return jsonOrThrow(await authFetch('/api/links/rename-impact?path=' + encodeURIComponent(path) + (recursive ? '&recursive=true' : '')))
+  return jsonOrThrow(await authFetchForPath(
+    path,
+    '/api/links/rename-impact?path=' + encodeURIComponent(path) + (recursive ? '&recursive=true' : ''),
+  ))
 }
 
 export async function deletePost(path: string): Promise<{ ok: true }> {
-  return jsonOrThrow<{ ok: true }>(await authFetch('/api/posts/' + splat(path), { method: 'DELETE' }))
+  return jsonOrThrow<{ ok: true }>(await authFetchForPath(
+    path,
+    '/api/posts/' + splat(path),
+    { method: 'DELETE' },
+  ))
 }
 
 export async function createFolder(path: string): Promise<{ path: string }> {
@@ -323,7 +338,7 @@ export async function createFolder(path: string): Promise<{ path: string }> {
 }
 
 export async function renameFolder(srcPath: string, newPath: string, updateReferences = false): Promise<{ path: string; moved: string[]; updatedReferences?: Array<{ path: string; raw: string; mtime: number }> }> {
-  return jsonOrThrow<{ path: string; moved: string[]; updatedReferences?: Array<{ path: string; raw: string; mtime: number }> }>(await authFetch('/api/folders/' + splat(srcPath), {
+  return jsonOrThrow<{ path: string; moved: string[]; updatedReferences?: Array<{ path: string; raw: string; mtime: number }> }>(await authFetchForPaths([srcPath, newPath], '/api/folders/' + splat(srcPath), {
     method: 'PATCH', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ newPath, updateReferences }),
   }))

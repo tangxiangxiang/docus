@@ -8,6 +8,8 @@ import {
 const TEST_TIME_ZONE = 'Asia/Shanghai'
 const RUN_ID = String(Date.now())
 
+test.use({ trace: 'off', screenshot: 'only-on-failure' })
+
 type Viewport = { name: string; width: number; height: number }
 
 const CALENDAR_VIEWPORTS: Viewport[] = [

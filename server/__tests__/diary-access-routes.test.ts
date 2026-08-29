@@ -186,7 +186,7 @@ describe('D8.1 Diary access routes', () => {
       rateLimiterOptions: { threshold: 2, baseRetryMs: 1_000, maxDelayMs: 5_000 },
     })
     await app.fetch(protectedJson('/api/diary/access/setup', { password: PASSWORD }))
-    context.runtime.diaryAccess.lock(context.session.id)
+    await context.runtime.diaryAccess.lock(context.session.id)
 
     const firstWrong = await app.fetch(protectedJson('/api/diary/access/unlock', { password: 'wrong-password-one' }))
     const limited = await app.fetch(protectedJson('/api/diary/access/unlock', { password: 'wrong-password-two' }))
@@ -200,7 +200,7 @@ describe('D8.1 Diary access routes', () => {
 
     now += 1_001
     await expect(context.runtime.diaryAccess.unlock(context.session.id, PASSWORD)).resolves.toMatchObject({ state: 'UNLOCKED' })
-    context.runtime.diaryAccess.lock(context.session.id)
+    await context.runtime.diaryAccess.lock(context.session.id)
     await expect(context.runtime.diaryAccess.unlock(context.session.id, 'wrong-password-again'))
       .rejects.toMatchObject({ status: 401 })
     expect(context.runtime.diaryUnlockLimiter.size).toBeLessThanOrEqual(context.runtime.diaryUnlockLimiter.maxBuckets)

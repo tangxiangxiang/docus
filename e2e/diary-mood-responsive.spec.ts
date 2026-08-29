@@ -6,6 +6,8 @@ const RUN_ID = String(Date.now())
 
 test.use({
   timezoneId: TEST_TIME_ZONE,
+  trace: 'off',
+  screenshot: 'only-on-failure',
 })
 
 type Viewport = {

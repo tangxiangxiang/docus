@@ -1,4 +1,4 @@
-import { authFetch } from './auth-session'
+import { authFetch, diaryAuthFetch } from './auth-session'
 import { jsonOrThrow } from './api'
 
 export type DiaryAccessState = 'UNINITIALIZED' | 'LOCKED' | 'UNLOCKED'
@@ -43,7 +43,12 @@ function validateUnlocked(value: unknown): DiaryAccessUnlocked {
 }
 
 export async function getDiaryAccessStatus(): Promise<DiaryAccessStatus> {
-  return validateStatus(await jsonOrThrow(await authFetch('/api/diary/access/status')))
+  // Status is the access-session reconciliation seam: when this browser
+  // process already holds a capability, the server must be able to report
+  // UNLOCKED rather than making the caller infer that a missing header means
+  // that the Diary is locked. Setup/unlock remain ordinary auth requests;
+  // only this capability-aware status read uses the explicit Diary seam.
+  return validateStatus(await jsonOrThrow(await diaryAuthFetch('/api/diary/access/status')))
 }
 
 async function postPassword(path: string, password: string): Promise<DiaryAccessUnlocked> {

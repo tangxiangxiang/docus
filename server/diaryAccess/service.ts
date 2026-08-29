@@ -44,6 +44,7 @@ export type DiaryAccessErrorCode =
   | 'diary-access-invalid-input'
   | 'diary-access-rate-limited'
   | 'diary-access-auth-session-invalid'
+  | 'diary-access-issuance-invalidated'
 
 export class DiaryAccessServiceError extends Error {
   readonly code: DiaryAccessErrorCode
@@ -107,6 +108,12 @@ type SessionQuiescence = {
   readonly completed: Promise<void>
   readonly resolveCompleted: () => void
   finalized: boolean
+}
+
+type CapabilityIssuance = {
+  readonly sessionId: number
+  readonly lifecycleGeneration: number
+  readonly sequence: number
 }
 
 export type DiaryBodyOperation = {
@@ -174,6 +181,9 @@ export type DiaryAccessServiceOptions = {
   readonly getVaultId?: () => string
   readonly resolveAuthSession?: (sessionId: number) => DiaryAccessAuthSession
   readonly unlockLimiter?: AuthRateLimiter
+  /** Test seam for deterministic issuance-race barriers. Production uses the
+   *  real unwrap implementation and never supplies this override. */
+  readonly unwrapDek?: typeof unwrapDiaryDek
 }
 
 export class DiaryAccessService {
@@ -183,10 +193,14 @@ export class DiaryAccessService {
   readonly getVaultId: () => string
   readonly resolveAuthSession: (sessionId: number) => DiaryAccessAuthSession
   readonly unlockLimiter?: AuthRateLimiter
+  readonly unwrapDek: typeof unwrapDiaryDek
   private readonly sessionEpochs = new Map<number, number>()
   private readonly capabilities = new Map<string, Capability>()
   private readonly activeBodyOperations = new Map<number, number>()
   private readonly sessionQuiescences = new Map<number, SessionQuiescence>()
+  private readonly sessionLifecycleGenerations = new Map<number, number>()
+  private readonly sessionIssuanceSequences = new Map<number, number>()
+  private readonly sessionIssuanceTails = new Map<number, Promise<void>>()
 
   constructor(options: DiaryAccessServiceOptions) {
     this.db = options.db
@@ -195,6 +209,7 @@ export class DiaryAccessService {
     this.getVaultId = options.getVaultId ?? getVaultId
     this.resolveAuthSession = options.resolveAuthSession ?? (() => ({ valid: true, expiresAt: Number.MAX_SAFE_INTEGER }))
     this.unlockLimiter = options.unlockLimiter
+    this.unwrapDek = options.unwrapDek ?? unwrapDiaryDek
   }
 
   private loadConfig(): DiaryAccessConfig | null {
@@ -252,27 +267,115 @@ export class DiaryAccessService {
     for (const token of this.capabilities.keys()) this.dropCapability(token)
   }
 
-  private async issueCapability(sessionId: number, vaultId: string, dek: Buffer): Promise<{ capability: string; epoch: number }> {
+  private lifecycleGeneration(sessionId: number): number {
+    return this.sessionLifecycleGenerations.get(sessionId) ?? 0
+  }
+
+  private bumpLifecycleGeneration(sessionId: number): number {
+    const next = this.lifecycleGeneration(sessionId) + 1
+    this.sessionLifecycleGenerations.set(sessionId, next)
+    return next
+  }
+
+  /**
+   * Reserve an issuance before the asynchronous KDF starts. The lifecycle
+   * generation fences lock/logout/expiry, while the sequence gives
+   * same-session concurrent unlocks a deterministic newest-issuance-wins
+   * policy. A ticket that loses either boundary can never publish a DEK.
+   */
+  private beginCapabilityIssuance(sessionId: number): CapabilityIssuance {
     this.requireCurrentAuthSession(sessionId)
-    const hasExistingCapability = this.hasSessionCapability(sessionId) || this.sessionQuiescences.has(sessionId)
-    if (hasExistingCapability) {
-      // Repeated unlock is a capability replacement boundary. It must not
-      // revoke the old DEK while an existing body operation still owns it.
-      await this.invalidateAuthSession(sessionId)
+    if (this.sessionQuiescences.has(sessionId)) {
+      throw new DiaryAccessServiceError(
+        'diary-access-issuance-invalidated',
+        409,
+        'Diary access issuance was invalidated.',
+      )
     }
-    const currentAuthSession = this.requireCurrentAuthSession(sessionId)
-    const epoch = (this.sessionEpochs.get(sessionId) ?? 0) + 1
-    this.sessionEpochs.set(sessionId, epoch)
-    const capability = capabilityToken()
-    this.capabilities.set(capability, {
+    const sequence = (this.sessionIssuanceSequences.get(sessionId) ?? 0) + 1
+    this.sessionIssuanceSequences.set(sessionId, sequence)
+    return {
       sessionId,
-      vaultId,
-      epoch,
-      expiresAt: currentAuthSession.expiresAt!,
-      dek,
+      lifecycleGeneration: this.lifecycleGeneration(sessionId),
+      sequence,
+    }
+  }
+
+  private assertCapabilityIssuanceCurrent(
+    issuance: CapabilityIssuance,
+    lifecycleGeneration = issuance.lifecycleGeneration,
+  ): void {
+    if (
+      this.sessionQuiescences.has(issuance.sessionId)
+      || this.lifecycleGeneration(issuance.sessionId) !== lifecycleGeneration
+      || this.sessionIssuanceSequences.get(issuance.sessionId) !== issuance.sequence
+    ) {
+      throw new DiaryAccessServiceError(
+        'diary-access-issuance-invalidated',
+        409,
+        'Diary access issuance was invalidated.',
+      )
+    }
+    this.requireCurrentAuthSession(issuance.sessionId)
+  }
+
+  /** Serialize capability publication/replacement for one auth session. */
+  private async withIssuanceLock<T>(sessionId: number, callback: () => Promise<T>): Promise<T> {
+    const previous = this.sessionIssuanceTails.get(sessionId) ?? Promise.resolve()
+    let release!: () => void
+    const current = new Promise<void>((resolve) => { release = resolve })
+    const tail = previous.then(() => current)
+    this.sessionIssuanceTails.set(sessionId, tail)
+    await previous
+    try {
+      return await callback()
+    } finally {
+      release()
+      if (this.sessionIssuanceTails.get(sessionId) === tail) {
+        this.sessionIssuanceTails.delete(sessionId)
+      }
+    }
+  }
+
+  private async issueCapability(
+    issuance: CapabilityIssuance,
+    vaultId: string,
+    dek: Buffer,
+  ): Promise<{ capability: string; epoch: number }> {
+    return this.withIssuanceLock(issuance.sessionId, async () => {
+      this.assertCapabilityIssuanceCurrent(issuance)
+      const hasExistingCapability = this.hasSessionCapability(issuance.sessionId)
+      let permittedGeneration = issuance.lifecycleGeneration
+      if (hasExistingCapability) {
+        // Repeated unlock is a capability replacement boundary. It must not
+        // revoke the old DEK while an existing body operation still owns it.
+        // This issuance owns this replacement generation; any independent
+        // lock/logout/expiry that joins the wait advances the generation again
+        // and invalidates this ticket before publication.
+        const replacement = this.beginSessionInvalidation(issuance.sessionId)
+        permittedGeneration = replacement.lifecycleGeneration
+        await this.finishQuiescence(issuance.sessionId, replacement.quiescence)
+        this.assertCapabilityIssuanceCurrent(issuance, permittedGeneration)
+      }
+
+      // Keep this authority check immediately adjacent to publication. There
+      // is no async yield between the final check and the capability map write,
+      // so a lock/logout/expiry transition cannot reopen this boundary.
+      this.assertCapabilityIssuanceCurrent(issuance, permittedGeneration)
+      const currentAuthSession = this.requireCurrentAuthSession(issuance.sessionId)
+      const epoch = (this.sessionEpochs.get(issuance.sessionId) ?? 0) + 1
+      this.sessionEpochs.set(issuance.sessionId, epoch)
+      const capability = capabilityToken()
+      this.capabilities.set(capability, {
+        sessionId: issuance.sessionId,
+        vaultId,
+        epoch,
+        expiresAt: currentAuthSession.expiresAt!,
+        dek,
+      })
+      this.scheduleCapabilityExpiry(capability)
+      return { capability, epoch }
     })
-    this.scheduleCapabilityExpiry(capability)
-    return { capability, epoch }
   }
 
   private requireCurrentAuthSession(sessionId: number): Required<DiaryAccessAuthSession> {
@@ -366,6 +469,19 @@ export class DiaryAccessService {
     return quiescence
   }
 
+  private beginSessionInvalidation(sessionId: number): {
+    lifecycleGeneration: number
+    quiescence: SessionQuiescence
+  } {
+    // Advance synchronously, before the first await. Every operation that
+    // started before this boundary is now barred from capability publication,
+    // even if its KDF is still running or an older body lease is draining.
+    return {
+      lifecycleGeneration: this.bumpLifecycleGeneration(sessionId),
+      quiescence: this.beginQuiescence(sessionId),
+    }
+  }
+
   private async finishQuiescence(sessionId: number, quiescence: SessionQuiescence): Promise<void> {
     await quiescence.drained
     if (this.sessionQuiescences.get(sessionId) === quiescence && !quiescence.finalized) {
@@ -451,6 +567,7 @@ export class DiaryAccessService {
       throw new DiaryAccessServiceError('diary-access-invalid-state', 409, 'Diary access is already initialized.')
     }
 
+    const issuance = this.beginCapabilityIssuance(sessionId)
     const vaultId = this.getVaultId()
     const salt = randomBytes(SCRYPT_SALT_BYTES)
     const dek = randomBytes(SCRYPT_KEY_BYTES)
@@ -458,7 +575,7 @@ export class DiaryAccessService {
     try {
       kek = await deriveDiaryKek(password, salt, this.kdfGuard, signal)
       const wrapped = wrapDiaryDek(kek, dek, vaultId)
-      this.requireCurrentAuthSession(sessionId)
+      this.assertCapabilityIssuanceCurrent(issuance)
       const now = this.now()
       try {
         const transaction = this.db.transaction(() => {
@@ -495,7 +612,7 @@ export class DiaryAccessService {
         if (error instanceof DiaryAccessServiceError) throw error
         throw new DiaryAccessServiceError('diary-access-unavailable', 503, 'Diary access setup could not be saved.')
       }
-      const issued = await this.issueCapability(sessionId, vaultId, dek)
+      const issued = await this.issueCapability(issuance, vaultId, dek)
       return { state: 'UNLOCKED', ...issued }
     } catch (error) {
       if (error instanceof DiaryAccessServiceError) throw error
@@ -529,13 +646,14 @@ export class DiaryAccessService {
       )
     }
     let dek: Buffer | null = null
+    const issuance = this.beginCapabilityIssuance(sessionId)
     try {
-      dek = await unwrapDiaryDek(password, config, this.kdfGuard, signal)
+      dek = await this.unwrapDek(password, config, this.kdfGuard, signal)
       if (dek.length !== SCRYPT_KEY_BYTES) {
         dek.fill(0)
         throw new DiaryAccessServiceError('diary-access-unavailable', 503, 'Diary access configuration is unavailable.')
       }
-      const issued = await this.issueCapability(sessionId, config.vaultId, dek)
+      const issued = await this.issueCapability(issuance, config.vaultId, dek)
       this.unlockLimiter?.reset(limiterKey)
       return { state: 'UNLOCKED', ...issued }
     } catch (error) {
@@ -565,8 +683,8 @@ export class DiaryAccessService {
 
   invalidateAuthSession(sessionId: number): Promise<void> {
     if (!Number.isSafeInteger(sessionId) || sessionId < 1) return Promise.resolve()
-    const quiescence = this.beginQuiescence(sessionId)
-    return this.finishQuiescence(sessionId, quiescence)
+    const invalidation = this.beginSessionInvalidation(sessionId)
+    return this.finishQuiescence(sessionId, invalidation.quiescence)
   }
 
   resetForTesting(): void {
@@ -574,5 +692,8 @@ export class DiaryAccessService {
     this.sessionEpochs.clear()
     this.sessionQuiescences.clear()
     this.activeBodyOperations.clear()
+    this.sessionLifecycleGenerations.clear()
+    this.sessionIssuanceSequences.clear()
+    this.sessionIssuanceTails.clear()
   }
 }

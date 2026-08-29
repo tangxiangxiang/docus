@@ -2,6 +2,8 @@ import { expect, test, type APIRequestContext, type Page } from './fixtures/diar
 
 const TEST_TIME_ZONE = 'Asia/Shanghai'
 
+test.use({ trace: 'off', screenshot: 'only-on-failure' })
+
 function localCivilDate(): string {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: TEST_TIME_ZONE,
