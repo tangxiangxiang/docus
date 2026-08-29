@@ -1746,6 +1746,13 @@ function rememberPendingMoodFirstPresentation(date: DiaryDate, intent: number | 
 // and must not change when a file or another Diary tab is clicked.
 watch(isDiaryScope, (inDiaryScope) => {
   if (!inDiaryScope) {
+    // A fresh browser process cannot restore the process-local Diary
+    // capability from persisted scope state. App.vue therefore normalizes a
+    // persisted Diary scope to note while it resolves access. That security
+    // bootstrap is not a user leaving Diary, so do not discard a Calendar
+    // filter seed during this transient transition; the explicit unlock and
+    // scope re-entry below can continue the same presentation context.
+    if (diaryAccess.state.value !== 'UNLOCKED') return
     clearPendingMoodFirstPresentation()
     // A Calendar-seeded date is presentation context and should not hide the
     // ordinary scope's tree. Once the user edits the query, it is their

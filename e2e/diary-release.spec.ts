@@ -1,4 +1,4 @@
-import { expect, test, type APIRequestContext, type Page } from './fixtures/auth'
+import { expect, test, type APIRequestContext, type Page } from './fixtures/diary'
 
 const TEST_TIME_ZONE = 'Asia/Shanghai'
 
@@ -53,7 +53,10 @@ async function seedOrdinaryNote(request: APIRequestContext, path: string): Promi
 }
 
 async function openDiaryScope(page: Page): Promise<void> {
-  await page.goto('/vault')
+  // The caller is already returned to Calendar Home after closing the last
+  // Diary tab. Avoid an unnecessary full navigation that would replace the
+  // browser JS process and force another process-local access bootstrap.
+  if (new URL(page.url()).pathname !== '/vault') await page.goto('/vault')
   const surface = page.getByTestId('diary-calendar-surface')
   if (await surface.count() === 0) {
     await page.locator('.scope-chip').filter({ hasText: 'note' }).click()

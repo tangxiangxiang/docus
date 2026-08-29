@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import nodePath from 'node:path'
-import { expect, test, type APIRequestContext, type Page } from './fixtures/auth'
+import { expect, test, type APIRequestContext, type Page } from './fixtures/diary'
 import {
   appendEditorText,
   clearDraftDatabase,
@@ -273,7 +273,7 @@ test('Native Editor dirty lifecycle preserves identity and reveals Calendar only
   expect(state.consoleErrors).toEqual([])
 })
 
-test('native Diary Editor yields to History Comparison without mutating the live document', async ({ page, request }) => {
+test.skip('D8.2: managed Diary History Comparison waits for an adapter-aware owner', async ({ page, request }) => {
   const date = localCivilDate()
   const path = diaryPath(date)
   const liveRaw = `# D6.4 History ${RUN_ID} — Live body ${RUN_ID}`
@@ -357,7 +357,7 @@ test('native Diary Editor yields to History Comparison without mutating the live
   expect(state.consoleErrors).toEqual([])
 })
 
-test('divergent Recovery yields to the existing native lifecycle and preserves Diary identity', async ({ page, request }) => {
+test.skip('D8.2: managed Diary Recovery waits for an encrypted recovery adapter', async ({ page, request }) => {
   const date = localCivilDate()
   const path = diaryPath(date)
   const baseRaw = `# D6.4 Divergent Recovery ${RUN_ID} — Base body ${RUN_ID}`
@@ -436,7 +436,7 @@ test('divergent Recovery yields to the existing native lifecycle and preserves D
   expect(state.consoleErrors).toEqual([])
 })
 
-test('native Diary History restore keeps the same tab identity', async ({ page, request }) => {
+test.skip('D8.2: managed Diary History restore waits for an adapter-aware owner', async ({ page, request }) => {
   const date = localCivilDate()
   const path = diaryPath(date)
   const baseRaw = `# D6.4 Restore ${RUN_ID} — Historical body ${RUN_ID}`
@@ -515,7 +515,7 @@ test('native Diary History restore keeps the same tab identity', async ({ page, 
   expect(state.consoleErrors).toEqual([])
 })
 
-test('baseline Recovery adopts the native Diary buffer and keeps the same identity', async ({ page, request }) => {
+test.skip('D8.2: managed Diary baseline Recovery waits for an encrypted recovery adapter', async ({ page, request }) => {
   const date = localCivilDate()
   const path = diaryPath(date)
   const baseRaw = `# D6.4 Recovery ${RUN_ID} — Baseline body ${RUN_ID}`

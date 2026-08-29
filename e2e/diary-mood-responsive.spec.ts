@@ -1,4 +1,4 @@
-import { expect, test, type APIRequestContext, type Page } from './fixtures/auth'
+import { expect, test, type APIRequestContext, type Page } from './fixtures/diary'
 import { clearDraftDatabase, gotoVaultReady } from './helpers/edit-program'
 
 const TEST_TIME_ZONE = 'Asia/Shanghai'

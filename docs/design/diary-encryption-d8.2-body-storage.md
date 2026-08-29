@@ -183,6 +183,76 @@ The earlier envelope/bypass remediation remains historical evidence:
 
 The current quiescence and cross-platform test remediation is `bc33c60`.
 
+## Diary E2E access-lifecycle remediation
+
+The browser failure cascade was traced to a missing D8.2 precondition rather
+than to a common Diary product failure. Playwright `storageState` carried the
+authenticated login cookie, but a new `BrowserContext`, page JavaScript
+process, or `APIRequestContext` did not carry the server's process-local Diary
+capability. The first protected Diary setup/cleanup calls therefore received
+the expected `423 diary-locked`. A worker-scoped login must not be interpreted
+as Diary access, and no capability token was logged during this diagnosis.
+
+The Diary E2E fixture now makes that distinction explicit:
+
+- each Diary test gets a fresh authenticated browser session;
+- the page enters Diary through the normal UI setup/unlock flow after a full
+  navigation or reload, without persisting the capability;
+- API seed/cleanup uses a separate fresh authenticated client and carries its
+  freshly issued capability only in an in-memory
+  `X-Docus-Diary-Capability` request header;
+- `storageState`, local/session storage, cookies, IndexedDB, URLs, and the
+  database remain capability-free;
+- locking the browser page does not invalidate the separate API session;
+- a client with the login cookie but no capability remains `423 diary-locked`,
+  while the capability-bearing fixture reaches the normal protected-route
+  result (for an absent date, `404`).
+
+This preserves the server guard and D8.2 quiescence instead of weakening them.
+The fixture also keeps unsupported managed-Diary History and generic Recovery
+paths as explicit fail-closed evidence (`422` with their stable error codes).
+The seven pre-D8.2 managed-Diary History/Recovery success cases remain
+transparent skips with an adapter-ownership reason; they are not counted as
+passing support for encrypted-body History or Recovery.
+
+One narrow product integration fix was required by the same fresh-process
+boundary. During the security bootstrap, `App.vue` can transiently normalize a
+persisted Diary scope to `note` before the UI unlocks again. `VaultView` now
+leaves the Calendar query seed/provenance intact during that locked bootstrap;
+an actual unlocked scope exit still applies the existing query ownership rules.
+This does not grant access, change routing, or create a second query owner.
+
+The new access regression covers the exact boundary:
+
+```text
+authenticated cookie without capability -> 423 diary-locked
+normal UI unlock / explicit API capability -> protected route proceeds
+capability absent from browser and Playwright storage -> PASS
+page-session lock -> separate API capability remains isolated
+managed History/Recovery without an adapter -> stable 422 fail closed
+```
+
+Fresh validation after the fixture and bootstrap remediation:
+
+```text
+focused client/Vault suites: 6 files / 102 passed
+Diary browser suites: 69 passed / 7 skipped
+access-lifecycle regression: 3 passed
+complete Chromium E2E: 152 collected / 145 passed / 7 skipped
+full unit: 240 files / 3562 passed / 9 skipped
+History integration: 5 files / 174 passed
+Recovery integration: 5 files / 193 passed
+Tags-scale: 2 files / 6 passed
+client + server typecheck: PASS
+production build: PASS
+```
+
+The seven browser skips are the same intentionally unsupported managed-Diary
+History/Recovery success paths described above; the complete run contains no
+active Diary access failure. No production server guard, capability storage
+rule, D8.2 quiescence boundary, Diary body owner, Calendar lifecycle, or
+ordinary Note behavior was bypassed.
+
 ## Review record
 
 ```text

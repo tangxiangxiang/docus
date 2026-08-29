@@ -1,6 +1,6 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { expect, test, type APIRequestContext, type Page } from './fixtures/auth'
+import { expect, test, type APIRequestContext, type Page } from './fixtures/diary'
 
 const TEST_TIME_ZONE = 'Asia/Shanghai'
 
@@ -88,7 +88,9 @@ async function seedExistingFutureDiary(date: string, raw: string): Promise<void>
 }
 
 async function openDiaryScope(page: Page): Promise<void> {
-  await page.goto('/vault')
+  // Closing the current Diary tab already returns this test to Calendar Home;
+  // avoid replacing the browser process with a redundant same-route reload.
+  if (new URL(page.url()).pathname !== '/vault') await page.goto('/vault')
   const surface = page.getByTestId('diary-calendar-surface')
   if (await surface.count() === 0) {
     await page.locator('.scope-chip').filter({ hasText: 'note' }).click()
@@ -122,12 +124,14 @@ async function clickDiaryDate(page: Page, date: string): Promise<void> {
   await button.click()
 }
 
-function diagnostics(page: Page): { pageErrors: string[]; consoleErrors: string[] } {
+function diagnostics(page: Page, ignoredConsoleErrors: string[] = []): { pageErrors: string[]; consoleErrors: string[] } {
   const pageErrors: string[] = []
   const consoleErrors: string[] = []
   page.on('pageerror', (error) => pageErrors.push(error.stack ?? error.message))
   page.on('console', (message) => {
-    if (message.type() === 'error') consoleErrors.push(message.text())
+    if (message.type() === 'error' && !ignoredConsoleErrors.some((part) => message.text().includes(part))) {
+      consoleErrors.push(message.text())
+    }
   })
   return { pageErrors, consoleErrors }
 }
@@ -276,12 +280,12 @@ test('mobile native Diary documents fill the viewport when the side panel is clo
   expect(state.consoleErrors).toEqual([])
 })
 
-test('existing today/past and future Diaries enter native READ while missing future stays Home', async ({ page, request }) => {
+test('existing today/past enter native READ while unsupported future files and missing future stay Home', async ({ page, request }) => {
   const today = localCivilDate()
   const past = shiftCivilDate(today, -1)
   const existingFuture = shiftCivilDate(today, 1)
   const missingFuture = shiftCivilDate(existingFuture, 1)
-  const state = diagnostics(page)
+  const state = diagnostics(page, ['status of 503 (Service Unavailable)'])
   const createdDates = [today, past]
 
   try {
@@ -301,11 +305,11 @@ test('existing today/past and future Diaries enter native READ while missing fut
     await seedExistingFutureDiary(existingFuture, `# Existing future\n\n${existingFuture}\n`)
     await openDiaryScope(page)
     await clickDiaryDate(page, existingFuture)
-    await assertNativeReader(page, existingFuture)
-    const existingFutureTab = page.locator(`[role="tab"][data-tab-id="${diaryPath(existingFuture)}"]`)
-    await existingFutureTab.locator('.tab-close').click()
-    await expect(existingFutureTab).toHaveCount(0)
+    // A direct future file without SQLite identity is intentionally not an
+    // existing Diary under D8.2. The encrypted body route must fail closed
+    // rather than let the browser synthesize a document identity from path.
     await expect(page.getByTestId('diary-calendar')).toBeVisible()
+    await expect(page.locator(`[role="tab"][data-tab-id="${diaryPath(existingFuture)}"]`)).toHaveCount(0)
 
     await clickDiaryDate(page, missingFuture)
     await expect(page.getByTestId('diary-calendar')).toBeVisible()
