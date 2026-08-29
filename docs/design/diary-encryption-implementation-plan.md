@@ -1,6 +1,6 @@
 # D8 — Diary Encryption Implementation Plan
 
-状态：`D8.0 REVIEW-CLOSED`；`D8.0 Self-review = PASS (P0/P1/P2 = 0/0/0)`；`D8.0 Independent Review = PASS (P0/P1/P2 = 0/0/0)`；`D8.2 IN PROGRESS`。
+状态：`D8.0 REVIEW-CLOSED`；`D8.0 Self-review = PASS (P0/P1/P2 = 0/0/0)`；`D8.0 Independent Review = PASS (P0/P1/P2 = 0/0/0)`；`D8.1 REVIEW-CLOSED`；`D8.1 Independent Review = PASS (P0/P1/P2 = 0/0/0)`；`D8.2 REVIEW-READY`；`D8.2 Self-review = PASS (P0/P1/P2 = 0/0/0)`；`D8.2 Independent Review = PENDING`。
 
 基线：`1fb1389cab053d5ff72630253f509f0170e588c2`（`docs(diary): close D7 mood implementation`）。D7.0A、D7.0、D7.1、D7.2、D7.3、D7.4、D7.5、D7.6 均保持 `REVIEW-CLOSED`。D8 只从 Diary 加密边界开始，不重开 D7，也不创建独立 Private Vault。
 
@@ -274,10 +274,14 @@ D8 overall        = IN PROGRESS
 D8.0              = REVIEW-CLOSED
 D8.0 Self-review  = PASS (0/0/0)
 D8.0 Independent Review = PASS (0/0/0)
-D8.1             = NOT STARTED
-D8.2             = IN PROGRESS
+D8.1             = REVIEW-CLOSED
+D8.2             = REVIEW-READY
+D8.2 Self-review = PASS (0/0/0)
+D8.2 Independent Review = PENDING
 D8.3             = NOT STARTED
 D8.4             = NOT STARTED
 ```
 
-This document is a design/implementation plan only. It does not authorize D8.1, encrypted body implementation, or any later phase.
+The sentence above is the historical D8.0 checkpoint boundary. The current
+lifecycle is recorded at the top of this plan and in the D8.2 evidence; it
+does not authorize D8.3 or D8.4 work before their own gates.

@@ -47,10 +47,14 @@ available only in the authorized operation's memory.
 The server-side Diary access service remains the sole owner of the live DEK.
 Routes receive a bounded body-operation lease only after the existing
 capability gate; the lease exposes read/decrypt/encrypt/assert-current methods,
-never the raw DEK, and remains active until the callback completes. Lock waits
-for active body leases before dropping capabilities. No password, KEK, DEK, or
-plaintext body is placed in local/session storage, SQLite, Git, logs, or the
-envelope.
+never the raw DEK, and remains active until the callback completes. The lease
+is operation-local and unusable after the callback exits. Explicit lock, auth
+logout/invalidation, capability expiry, and same-session capability replacement
+share one per-session quiescence boundary: new leases are rejected immediately,
+existing leases may finish their callback, and the transition does not report
+completion until those leases drain and the capability DEK is dropped. Session
+quiescence is isolated by auth session. No password, KEK, DEK, or plaintext body
+is placed in local/session storage, SQLite, Git, logs, or the envelope.
 
 ## Compatibility and explicit non-goals
 
@@ -116,17 +120,76 @@ The original implementation checkpoint remains historical evidence: its
 focused count was `5 files / 47 tests`. It is not the final D8.2 validation
 count.
 
-The remediation implementation/test commit is:
+The initial D8.2 Independent Review recorded `P0 = 0`, `P1 = 1`, and
+`P2 = 3`. The follow-up remediation added deterministic lifecycle evidence
+for each finding:
+
+- auth logout/invalidation waits for an active encrypted body operation before
+  the successful transition completes;
+- an active operation may finish against its still-owned lease, while new body
+  leases for the quiescing session are rejected immediately;
+- same-session unlock/capability replacement waits for active body leases and
+  only then publishes the replacement capability;
+- capability expiry uses the same quiescence boundary and does not zeroize an
+  active lease mid-callback;
+- session A quiescence does not block or invalidate session B;
+- a captured `DiaryBodyOperation` fails closed after `withBodyOperation()`
+  returns;
+- the exact-head tags-scale migration expectation follows schema version 11,
+  including D8.1 migration `0011_diary_access.sql`.
+
+The implementation/test remediation commits are:
+
+```text
+471a6f9  fix(diary): close D8.2 encrypted body bypasses
+bc33c60  fix(diary): unify D8.2 body quiescence
+```
+
+The evidence sync after this remediation remains review-ready rather than a
+closure record. It retains the Independent Review `CHANGES REQUIRED` history
+for P1-1, P2-1, P2-2 and P2-3; this remediation records those findings as
+addressed and leaves the independent re-review pending.
+
+## Fresh remediation validation
+
+The final remediation head was validated with these results:
+
+```text
+D8.2 focused suites: 6 files / 229 tests = PASS
+D8.1 adversarial/access regression: 2 files / 18 tests = PASS
+D7 Diary/Mood/Calendar regression: 9 files / 95 tests = PASS
+Full unit: 240 files / 3562 passed / 9 skipped = PASS
+History integration: 5 files / 174 tests = PASS
+Recovery integration: 5 files / 193 tests = PASS
+Tags-scale: 2 files / 6 tests = PASS
+npm run typecheck: PASS
+npm run typecheck:client: PASS
+npm run typecheck:server: PASS
+npm run build: PASS
+git diff --check: PASS
+```
+
+The build emitted only the repository's existing dependency annotation and
+large-chunk warnings. The nine skipped unit tests are the seven historical
+managed-Diary History endpoint characterizations intentionally superseded by
+D8.2 fail-closed behavior plus the two pre-existing skips; active ordinary
+Note History coverage remains passing.
+
+The earlier envelope/bypass remediation remains historical evidence:
 
 ```text
 471a6f9 fix(diary): close D8.2 encrypted body bypasses
 ```
 
+The current quiescence and cross-platform test remediation is `bc33c60`.
+
 ## Review record
 
 ```text
 D8.2 Self-review P0/P1/P2 = 0/0/0
-D8.2 Independent Review    = PENDING
+D8.2 Independent Review    = RE-REVIEW PENDING
+D8.2 prior IR findings     = P0: 0, P1: 1, P2: 3
+D8.2 remediation           = COMPLETE; re-review pending
 D8.2 closure               = NOT STARTED
 ```
 
