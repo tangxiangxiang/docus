@@ -14,7 +14,7 @@ D8.0              = REVIEW-CLOSED
 D8.1              = REVIEW-CLOSED
 D8.2              = REVIEW-READY
 D8.2 Self-review  = PASS (0/0/0)
-D8.2 Independent Review = PENDING
+D8.2 Independent Review = RE-REVIEW PENDING
 D8.3              = NOT STARTED
 D8.4              = NOT STARTED
 D8 Mood encryption = OUT OF SCOPE
@@ -138,19 +138,33 @@ for each finding:
 - the exact-head tags-scale migration expectation follows schema version 11,
   including D8.1 migration `0011_diary_access.sql`.
 
-The implementation/test remediation commits are:
+The line above is an earlier checkpoint. The consolidated Independent Review
+of the D8.2 baseline later classified the complete set of findings as
+`P0 = 0`, `P1 = 2`, `P2 = 3`, `CHANGES REQUIRED`; the current remediation
+record below preserves that classification and its history rather than
+rewriting it as a pass.
+
+The implementation/test remediation lineage is:
 
 ```text
 471a6f9  fix(diary): close D8.2 encrypted body bypasses
 bc33c60  fix(diary): unify D8.2 body quiescence
+7a52e2b  docs(diary): record D8.2 quiescence remediation
+6e418fe  fix(diary): align D8.2 E2E access lifecycle
+00df558  test(diary): avoid redundant lifecycle navigation
+69ef0a8  fix(diary): close D8.2 access lifecycle gaps
 ```
 
 The evidence sync after this remediation remains review-ready rather than a
-closure record. It retains the Independent Review `CHANGES REQUIRED` history
-for P1-1, P2-1, P2-2 and P2-3; this remediation records those findings as
-addressed and leaves the independent re-review pending.
+closure record. It retains the consolidated Independent Review `CHANGES
+REQUIRED` history for P1-1, P1-2, P2-1, P2-2 and P2-3; this remediation records
+those findings as addressed and leaves the independent re-review pending.
 
-## Fresh remediation validation
+## Historical remediation validation
+
+The following block belongs to the earlier remediation checkpoint before the
+current access-boundary remediation. It is retained as historical evidence;
+the current counts and dispositions are recorded in the section below.
 
 The final remediation head was validated with these results:
 
@@ -183,7 +197,11 @@ The earlier envelope/bypass remediation remains historical evidence:
 
 The current quiescence and cross-platform test remediation is `bc33c60`.
 
-## Diary E2E access-lifecycle remediation
+## Historical Diary E2E access-lifecycle remediation
+
+This section records the earlier fixture/bootstrap remediation and remains
+historical. It is not the final validation record for the current access
+boundary changes.
 
 The browser failure cascade was traced to a missing D8.2 precondition rather
 than to a common Diary product failure. Playwright `storageState` carried the
@@ -253,12 +271,133 @@ active Diary access failure. No production server guard, capability storage
 rule, D8.2 quiescence boundary, Diary body owner, Calendar lifecycle, or
 ordinary Note behavior was bypassed.
 
+## Current access-boundary remediation evidence
+
+This section is the current remediation record on implementation commit
+`69ef0a8033165c9d8ab43e5acc8034269cb24a2f`, whose parent is the reviewed
+`00df5583f4929a4f04463d36fd7070aa42f63893`. It is separate from the
+historical validation blocks above and does not close D8.2.
+
+### Capability request routing
+
+The ambient client request helper no longer reads or forwards the in-memory
+`X-Docus-Diary-Capability` value. Capability-bearing requests use the explicit
+`diaryAuthFetch` seam, and path-aware wrappers select that seam only when the
+canonical logical path is a managed `diary/YYYY-MM-DD` path (including the
+history `.md` wire spelling). Ordinary Note requests to the same generic
+post/history/resource wrappers remain on ordinary `authFetch` and carry no
+Diary header. Structural summary/tree/metadata reads remain ordinary by
+design; vault-wide body-scanning preview uses the explicit Diary seam, while
+generic scanner/index privacy remains D8.3 scope.
+
+The request-boundary unit test proves, with a live in-memory capability, that
+an ordinary Note request sends no capability, while a managed Diary post and
+managed Diary history request send the capability. The capability remains
+process-local: it is not put in local/session storage, IndexedDB, cookies,
+URLs, storage state, SQLite, logs, or response artifacts.
+
+### Trace and failure-artifact containment
+
+All ten Diary Playwright specs that import the Diary fixture set
+`trace: 'off'` and retain `screenshot: 'only-on-failure'`. This avoids
+serializing capability-bearing network headers into Diary trace archives while
+preserving screenshots and error context for failures; the repository's
+non-Diary suites retain their existing artifact policy.
+
+A controlled deliberately failing Diary fixture check produced a failure
+screenshot and `error-context.md`, produced zero trace zip archives, and found
+no `X-Docus-Diary-Capability` header in that result directory. This is an
+artifact-containment check, not a claim that all unrelated test artifacts are
+sanitized.
+
+### Capability issuance and quiescence fence
+
+Setup/unlock reserves a per-session issuance ticket before asynchronous KDF or
+unwrap work. A lifecycle generation is advanced synchronously when lock,
+logout/invalidation, expiry, or capability replacement begins; the latest
+same-session issuance sequence wins deterministically. The final issuance
+check is adjacent to the capability-map publication with no asynchronous gap.
+An invalidated unpublished DEK is zeroized, and replacement still waits for
+existing encrypted body leases through the established quiescence boundary.
+
+The service tests cover paused unlocks invalidated by explicit lock, auth
+logout, and expiry, plus concurrent same-session unlocks where the newest
+issuance remains valid and the older unpublished DEK is rejected and cleared.
+The existing body-operation lease and cross-session isolation tests remain
+passing.
+
+### Fresh bootstrap, access loss, and fixture lifecycle
+
+`useDiaryAccessSession` exposes an authoritative `statusResolved` signal.
+`VaultView` no longer infers a real lock boundary from `state !== UNLOCKED`:
+fresh-process scope normalization can preserve Calendar-owned context while
+status is unresolved, whereas a reconciled lock/logout/expiry clears
+Calendar-owned query and provenance and preserves user-owned FileTree state.
+The source regression verifies this distinction.
+
+The worker Diary configuration now uses a disposable authenticated session and
+explicit logout/teardown. Each browser test receives a fresh authenticated
+session; API setup/cleanup uses a separate fresh session with its capability
+only in an in-memory request header; page fixture teardown explicitly logs out
+its own session. The worker session needed by later tests is not revoked as a
+side effect of configuration cleanup.
+
+### Current validation
+
+```text
+D8.2 focused unit/API suites: 7 files / 87 passed / 7 skipped = PASS
+Diary Chromium suite: 10 specs / 79 collected / 72 passed / 7 skipped = PASS
+Diary lifecycle regression subset: 7 passed = PASS
+History integration: 5 files / 174 passed = PASS
+Recovery integration: 5 files / 193 passed = PASS
+Tags-scale: 2 files / 6 passed = PASS
+npm run typecheck: client + server = PASS
+npm run build = PASS
+Full unit harness: 240 passed files / 3568 passed / 9 skipped;
+  1 file with 2 pre-existing unrelated failures in useEditorTabs.test.ts
+  = NOT A PASS
+git diff --check: PASS
+```
+
+The seven skips in the current D8.2-focused and Diary browser records are the
+intentionally unsupported managed-Diary History/Recovery success paths; they
+are not new omissions. The two full-unit failures are the existing
+`useEditorTabs.test.ts` dirty-close and rename-event failures, outside this
+remediation's changed files and scope. No current evidence claims a full-unit
+pass because of those failures.
+
+### Current remediation disposition and lifecycle
+
+The consolidated prior Independent Review of the `00df5583` baseline was
+`P0 = 0`, `P1 = 2`, `P2 = 3`, `CHANGES REQUIRED`. Its findings and current
+remediation dispositions are:
+
+```text
+D8.2-IR-P1-1  ambient capability injection + Diary trace artifact  REMEDIATED
+D8.2-IR-P1-2  unlock issuance resurrection across lifecycle fences  REMEDIATED
+D8.2-IR-P2-1  fresh bootstrap confused with real access loss        REMEDIATED
+D8.2-IR-P2-2  worker fixture session teardown                         REMEDIATED
+D8.2-IR-P2-3  lineage/count/evidence drift                            REMEDIATED
+
+D8.2 Self-review                 = PASS (0/0/0)
+D8.2 Independent Re-review       = RE-REVIEW PENDING
+D8.2 closure                     = NOT STARTED
+D8.3                           = NOT STARTED
+D8.4                           = NOT STARTED
+D8 Mood encryption              = OUT OF SCOPE
+```
+
+This remediation record is review-ready evidence only. It does not claim
+Independent Review PASS, does not create a D8.2 closure record, and does not
+start D8.3 or D8.4.
+
 ## Review record
 
 ```text
 D8.2 Self-review P0/P1/P2 = 0/0/0
 D8.2 Independent Review    = RE-REVIEW PENDING
-D8.2 prior IR findings     = P0: 0, P1: 1, P2: 3
+D8.2 earlier checkpoint    = P0: 0, P1: 1, P2: 3
+D8.2 consolidated prior IR = P0: 0, P1: 2, P2: 3; CHANGES REQUIRED
 D8.2 remediation           = COMPLETE; re-review pending
 D8.2 closure               = NOT STARTED
 ```
