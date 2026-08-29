@@ -77,6 +77,22 @@ describe('explicit Diary request session boundary', () => {
     expect(fetchMock).toHaveBeenCalledOnce()
   })
 
+  it('allows an explicit Diary operation to use a generic Vault endpoint', async () => {
+    const capability = 'a'.repeat(43)
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(new Headers(init?.headers).get('X-Docus-Diary-Capability')).toBe(capability)
+      return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    setDiaryCapability(capability)
+
+    await expect(diaryAuthFetch('/api/files/state', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+    })).resolves.toMatchObject({ status: 200 })
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
   it('sends the opaque capability only through the explicit Diary seam', async () => {
     const capability = 'a'.repeat(43)
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {

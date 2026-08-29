@@ -142,9 +142,12 @@ async function fetchWithSessionObservation(
 /**
  * Fetch helper for ordinary protected application wrappers. It observes the
  * authentication session but never reads or forwards the Diary capability.
- * Diary authority must be requested through the explicit seam below.
+ * Diary authority must be requested through the explicit seam below. Keep
+ * this as a Promise-returning function rather than an async wrapper: the
+ * workspace lifecycle relies on the same settlement timing as the original
+ * authFetch implementation.
  */
-export async function authFetch(
+export function authFetch(
   input: string | URL | Request,
   init?: RequestInit,
 ): Promise<Response> {
@@ -155,8 +158,10 @@ export async function authFetch(
  * Explicit request seam for an operation that has already established that it
  * is inside the managed-Diary capability boundary. A missing capability is
  * intentionally sent as no header; the server then fails closed with 423.
+ * This seam is operation-owned, so it may carry the capability to a generic
+ * Vault endpoint when the caller has already established Diary context.
  */
-export async function diaryAuthFetch(
+export function diaryAuthFetch(
   input: string | URL | Request,
   init?: RequestInit,
 ): Promise<Response> {
