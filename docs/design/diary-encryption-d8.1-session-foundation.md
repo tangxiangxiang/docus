@@ -5,19 +5,21 @@
 ```text
 D8 overall                 = IN PROGRESS
 D8.0                       = REVIEW-CLOSED
-D8.1                       = REVIEW-READY
+D8.1                       = REVIEW-CLOSED
 D8.1 Self-review           = PASS (0/0/0)
-D8.1 Independent Review    = RE-REVIEW PENDING
+D8.1 Independent Review    = PASS (0/0/0)
 D8.2                       = NOT STARTED
 D8.3                       = NOT STARTED
 D8.4                       = NOT STARTED
 D8 Mood encryption         = OUT OF SCOPE
 ```
 
-This document records the D8.1 implementation/evidence checkpoint. It is not
-a closure record and does not claim Independent Review approval. D8.1 creates
-the secondary-password access foundation only; it does not encrypt Diary
-bodies, migrate plaintext, change Git history, or start D8.2–D8.4.
+This document records the D8.1 implementation/evidence checkpoint and the
+separate docs-only closure sync. The implementation/evidence checkpoint
+stopped at REVIEW-READY; the closure record below reflects the subsequent
+Independent Review PASS. D8.1 creates the secondary-password access
+foundation only; it does not encrypt Diary bodies, migrate plaintext, change
+Git history, or start D8.2–D8.4.
 
 ## 2. Baseline and commits
 
@@ -344,8 +346,9 @@ zero. With access allowed, the same cold rebuild proceeds through the existing
 Edit-10.4 backlink rewrite path. Warm-index candidate authorization remains in
 place for the already-cached path.
 
-This is remediation self-review evidence only. It does not mark Independent
-Review as passed or close D8.1.
+At the remediation evidence checkpoint, this record intentionally did not mark
+Independent Review as passed or close D8.1. The separate closure record below
+was added only after the independent re-review passed.
 
 ## 16. Self-review and open D8 work
 
@@ -363,7 +366,7 @@ D8.1 no migration claimed           PASS
 D8.1 no Git history rewrite claimed PASS
 
 D8.1 Self-review P0/P1/P2           0/0/0
-D8.1 Independent Review             RE-REVIEW PENDING
+D8.1 Independent Review             PASS (0/0/0)
 ```
 
 The following remain outside this checkpoint and must not be inferred from
@@ -374,21 +377,43 @@ the current pass results:
 - D8.4 migration, legacy compatibility, full release gate and closure;
 - password change/rekey, backup/restore and client-only decryption decisions.
 
-## 17. Final lifecycle at this checkpoint
+## 17. D8.1 closure record
+
+The final cold-LinkIndex remediation was independently re-reviewed at
+`84a70cf625b80033629cc0bb354db53d05c288fc` and passed with no remaining
+findings:
+
+```text
+D8.1-IR-P1-1 per-auth-session capability isolation       = CLOSED
+D8.1-IR-P1-2 stale client async transition suppression    = CLOSED
+D8.1-IR-P1-3 locked private metadata non-disclosure       = CLOSED
+D8.1-IR-P1-4 AI rename authorization before body I/O      = CLOSED
+D8.1-IR-P1-5 auth-session TOCTOU / DEK lifetime           = CLOSED
+D8.1-IR-P2-1 secondary-password failure throttling        = CLOSED
+
+D8.1 Independent Re-review = PASS
+D8.1 Independent Review P0/P1/P2 = 0/0/0
+```
+
+This is a separate docs-only closure sync. It changes the D8.1 lifecycle
+state only; it does not start D8.2 or claim encrypted body implementation.
+
+## 18. Final lifecycle at this checkpoint
 
 ```text
 D7 overall                 = REVIEW-CLOSED
 
 D8 overall                 = IN PROGRESS
 D8.0                       = REVIEW-CLOSED
-D8.1                       = REVIEW-READY
+D8.1                       = REVIEW-CLOSED
 D8.1 Self-review           = PASS (0/0/0)
-D8.1 Independent Review    = RE-REVIEW PENDING
+D8.1 Independent Review    = PASS (0/0/0)
 D8.2                       = NOT STARTED
 D8.3                       = NOT STARTED
 D8.4                       = NOT STARTED
 D8 Mood encryption         = OUT OF SCOPE
 ```
 
-Stop here for Independent Review. Do not mark D8.1 closed and do not begin
-D8.2 in this implementation/evidence checkpoint.
+The original implementation/evidence checkpoint stopped here for Independent
+Review and did not mark D8.1 closed. The separate closure sync above records
+the later Independent Review PASS; D8.2 remains not started.
