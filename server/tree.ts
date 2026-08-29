@@ -58,6 +58,10 @@ function nameFromPath(p: string): string {
   return p.split('/').pop()!
 }
 
+function emptyFrontmatter(): ReturnType<typeof readFrontmatter> {
+  return { tags: [], firstHeading: null, title: null, created: null, updated: null, summary: null }
+}
+
 const naturalCollator = new Intl.Collator(undefined, {
   numeric: true,
   sensitivity: 'base',
@@ -148,9 +152,14 @@ export async function listPostsFlat(
     const p = relToPath(entry.rel)
     const name = nameFromPath(p)
     const stat = await fs.stat(entry.abs)
-    const fm = readFrontmatter(entry.abs)
     const metadata = metadataDb ? getDocumentMetadata(metadataDb, p) : null
     const isManagedDiary = classifyDiaryPath(p) === 'managed'
+    // A locked Diary still exposes its SQLite-owned structural projection,
+    // but generic tree/list building must not read the legacy plaintext body
+    // merely to derive a heading or frontmatter fallback. If metadata has not
+    // been imported yet, the filename is the safe title fallback until an
+    // authorized body operation can establish the row.
+    const fm = isManagedDiary ? emptyFrontmatter() : readFrontmatter(entry.abs)
     out.push({
       path: p,
       title: metadata?.title ?? titleFromFile(entry.abs, name, fm.firstHeading, fm.title),
@@ -242,8 +251,9 @@ export async function buildTree(
       const parent = nodes.get(parentPath)
       if (!parent || parent.kind !== 'folder') continue
       const stat = await fs.stat(entry.abs)
-      const fm = readFrontmatter(entry.abs)
       const metadata = metadataDb ? getDocumentMetadata(metadataDb, p) : null
+      const isManagedDiary = classifyDiaryPath(p) === 'managed'
+      const fm = isManagedDiary ? emptyFrontmatter() : readFrontmatter(entry.abs)
       parent.children.push({
         kind: 'file',
         name,

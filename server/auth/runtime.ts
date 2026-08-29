@@ -18,6 +18,7 @@ import {
 } from './rateLimit.js'
 import type { AuthConfig } from './config.js'
 import { AuthService } from './service.js'
+import { DiaryAccessService } from '../diaryAccess/service.js'
 
 export type AuthRuntime = {
   readonly db: DatabaseT
@@ -27,6 +28,7 @@ export type AuthRuntime = {
   readonly setupLimiter: AuthRateLimiter
   readonly kdfGuard: KdfGuard
   readonly service: AuthService
+  readonly diaryAccess: DiaryAccessService
 }
 
 export type AuthRuntimeOptions = {
@@ -39,6 +41,7 @@ export type AuthRuntimeOptions = {
   readonly setupLimiter?: AuthRateLimiter
   readonly rateLimiterOptions?: RateLimiterOptions
   readonly now?: () => number
+  readonly diaryAccessVaultId?: () => string
 }
 
 let currentRuntime: AuthRuntime | null = null
@@ -72,6 +75,12 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
     now: options.now,
     sessionLastSeenUpdateIntervalMs: options.config.sessionLastSeenUpdateIntervalMs,
   })
+  const diaryAccess = new DiaryAccessService({
+    db: options.db,
+    kdfGuard,
+    now: options.now,
+    getVaultId: options.diaryAccessVaultId,
+  })
   const runtime: AuthRuntime = {
     db: options.db,
     config: options.config,
@@ -80,6 +89,7 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
     setupLimiter,
     kdfGuard,
     service,
+    diaryAccess,
   }
 
   if (options.config.revokeSessionsOnStart) {

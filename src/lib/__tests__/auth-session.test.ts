@@ -1,16 +1,26 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   advanceAuthSessionGeneration,
+  authFetch,
   captureAuthSessionGeneration,
   observeAuthSessionResponse,
   resetAuthSessionForTesting,
+  subscribeDiaryAccessLocked,
   subscribeAuthSessionRequired,
 } from '../auth-session'
+import {
+  getDiaryCapability,
+  resetDiaryCapabilityForTesting,
+  setDiaryCapability,
+} from '../diary-capability'
 
 afterEach(() => {
   resetAuthSessionForTesting()
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+  resetDiaryCapabilityForTesting()
 })
+
 describe('auth-session response observer', () => {
   it.each([
     [401, { code: 'auth-session-required' }, true],
@@ -49,5 +59,33 @@ describe('auth-session response observer', () => {
     expect(listener).toHaveBeenCalledWith({ generation: requestGeneration })
     stop()
     advanceAuthSessionGeneration()
+  })
+})
+
+describe('authFetch Diary session boundary', () => {
+  it('sends the opaque capability and notifies the client when the server is locked', async () => {
+    const capability = 'a'.repeat(43)
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(new Headers(init?.headers).get('X-Docus-Diary-Capability')).toBe(capability)
+      return new Response(JSON.stringify({ error: 'Diary access is locked.', code: 'diary-locked' }), {
+        status: 423,
+        headers: { 'content-type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    setDiaryCapability(capability)
+    const locked = vi.fn()
+    const unsubscribe = subscribeDiaryAccessLocked(locked)
+
+    const response = await authFetch('/api/posts/diary/2026-08-27')
+
+    expect(response.status).toBe(423)
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(locked).toHaveBeenCalledOnce()
+    // The observer only signals the session owner. The capability is cleared
+    // by useDiaryAccessSession, so this low-level test keeps that ownership
+    // distinction explicit.
+    expect(getDiaryCapability()).toBe(capability)
+    unsubscribe()
   })
 })

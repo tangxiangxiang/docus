@@ -30,15 +30,13 @@ const TREE: TreeNode[] = [
               { kind: 'file', name: 'nested', path: 'archive/organized/nested', title: 'Nested', mtime: 0 },
             ],
           },
-        ],
-      },
-      // A user-defined top-level folder that is NOT one of the three
-      // protected roots. Files inside are user content but the
-      // archive-note action should not appear (only inbox/ and
-      // literature/ files qualify).
-      {
-        kind: 'folder', name: 'projects', path: 'projects', children: [
-          { kind: 'file', name: 'old', path: 'projects/old', title: 'Old', mtime: 0 },
+          // A user-defined folder that is not one of the three protected
+          // roots. Its file must not receive the archive-note action.
+          {
+            kind: 'folder', name: 'projects', path: 'archive/projects', children: [
+              { kind: 'file', name: 'old', path: 'archive/projects/old', title: 'Old', mtime: 0 },
+            ],
+          },
         ],
       },
     ],
@@ -63,7 +61,7 @@ describe('FileTree context menu', () => {
     localStorage.clear()
     // Context-menu coverage exercises the unfiltered tree, including a
     // user-defined top-level folder outside the default note scope.
-    useScopeFilter().activeScope.value = null
+    useScopeFilter().activeScope.value = 'note'
     // The context menu is teleported to <body>, so it survives
     // w.unmount() and would leak into the next case's
     // document.querySelector('.tree-context-menu'). Wipe any leftover
@@ -251,7 +249,7 @@ describe('FileTree context menu', () => {
 describe('FileTree context menu — Diary presentation guards', () => {
   beforeEach(() => {
     localStorage.clear()
-    useScopeFilter().activeScope.value = null
+    useScopeFilter().activeScope.value = 'diary'
     document.querySelectorAll('.tree-context-menu').forEach((el) => el.remove())
   })
 
@@ -298,6 +296,7 @@ describe('FileTree context menu — Diary presentation guards', () => {
 describe('FileTree context menu — archive-note visibility', () => {
   beforeEach(() => {
     localStorage.clear()
+    useScopeFilter().activeScope.value = 'note'
     document.querySelectorAll('.tree-context-menu').forEach((el) => el.remove())
   })
 

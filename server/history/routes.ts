@@ -48,6 +48,7 @@ import {
   isValidHistoryRef,
   validateHistoryPaths,
 } from './validation.js'
+import { requireDiaryBodyAccess } from '../diaryAccess/guard.js'
 
 /**
  * Where git runs — the vault root. By default this is the same
@@ -248,6 +249,10 @@ history.post('/content-hashes', async (c) => {
   const body = await c.req.json().catch(() => null) as { paths?: unknown } | null
   const paths = validateHistoryPaths(body?.paths)
   if (!paths) return bad(c, 'invalid paths')
+  for (const filePath of paths) {
+    const bodyAccess = requireDiaryBodyAccess(c, filePath)
+    if (bodyAccess) return bodyAccess
+  }
   try {
     await ensureRepo(repoRoot())
     const entries = await Promise.all(paths.map(async (filePath) => (
@@ -287,6 +292,8 @@ history.get('/file', async (c) => {
   const ref = c.req.query('ref') ?? 'HEAD'
   const validPath = validPathParam(c, path)
   if (validPath instanceof Response) return validPath
+  const bodyAccess = requireDiaryBodyAccess(c, validPath)
+  if (bodyAccess) return bodyAccess
   const validRef = validRefParam(c, ref, 'ref', { allowWorktree: true })
   if (validRef instanceof Response) return validRef
   try {
@@ -316,6 +323,8 @@ history.get('/diff', async (c) => {
   const newRef = c.req.query('new')
   const validPath = validPathParam(c, path)
   if (validPath instanceof Response) return validPath
+  const bodyAccess = requireDiaryBodyAccess(c, validPath)
+  if (bodyAccess) return bodyAccess
   if (!oldRef || !newRef) return bad(c, 'old and new refs required')
   const validOldRef = validRefParam(c, oldRef, 'old', { allowWorktree: true })
   if (validOldRef instanceof Response) return validOldRef
@@ -365,6 +374,10 @@ history.post('/commits', async (c) => {
   }
   const paths = validateHistoryPaths(body.paths)
   if (!paths) return bad(c, 'invalid path')
+  for (const filePath of paths) {
+    const bodyAccess = requireDiaryBodyAccess(c, filePath)
+    if (bodyAccess) return bodyAccess
+  }
   if (typeof body.message !== 'string' || body.message.trim().length === 0) {
     return bad(c, 'message must be a non-empty string')
   }
@@ -604,6 +617,8 @@ history.post('/restore', async (c) => {
   }
   const validPath = validPathParam(c, body.path)
   if (validPath instanceof Response) return validPath
+  const bodyAccess = requireDiaryBodyAccess(c, validPath)
+  if (bodyAccess) return bodyAccess
   if (body.ref !== git.WORKTREE_REF && !isValidHistoryRef(body.ref)) return bad(c, 'invalid ref')
   try {
     // WORKTREE is a sentinel meaning "the file as it sits on disk".

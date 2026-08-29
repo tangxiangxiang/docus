@@ -6,13 +6,18 @@ import { ICON_AB_USER, ICON_LOGOUT } from './icons'
 const props = withDefaults(defineProps<{
   username?: string | null
   logoutBusy?: boolean
+  diaryUnlocked?: boolean
+  diaryLockBusy?: boolean
 }>(), {
   username: '',
   logoutBusy: false,
+  diaryUnlocked: false,
+  diaryLockBusy: false,
 })
 
 const emit = defineEmits<{
   logout: []
+  'lock-diary': []
 }>()
 
 const { t } = useI18n()
@@ -60,6 +65,12 @@ function handleLogout(): void {
   if (props.logoutBusy) return
   closeAccountMenu(true)
   emit('logout')
+}
+
+function handleLockDiary(): void {
+  if (props.logoutBusy || props.diaryLockBusy || !props.diaryUnlocked) return
+  closeAccountMenu(true)
+  emit('lock-diary')
 }
 
 function onDocumentPointerDown(event: PointerEvent): void {
@@ -158,6 +169,20 @@ onBeforeUnmount(() => {
         <span class="account-menu-username" :title="displayUsername">{{ displayUsername }}</span>
       </div>
       <div class="account-menu-divider" role="separator" />
+      <button
+        v-if="props.diaryUnlocked"
+        type="button"
+        class="account-menu-item"
+        role="menuitem"
+        tabindex="-1"
+        :disabled="props.logoutBusy || props.diaryLockBusy"
+        :aria-busy="props.diaryLockBusy || undefined"
+        data-testid="account-lock-diary"
+        @click="handleLockDiary"
+      >
+        <span class="account-menu-item-icon" aria-hidden="true">&#128274;</span>
+        <span>{{ props.diaryLockBusy ? t('diary_access.working') : t('diary_access.lock') }}</span>
+      </button>
       <button
         type="button"
         class="account-menu-item"

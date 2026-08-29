@@ -84,6 +84,7 @@ interface Harness {
   onKeydown: (e: KeyboardEvent) => void
   onCommandPaletteNew: (t: string) => Promise<void>
   refresh: () => Promise<void>
+  resumeDeferredDiaryTabs: () => Promise<void>
   applyPostSummary: (post: PostSummary) => void
   renameOpenDocuments: (mappings: ReadonlyArray<{ from: string; to: string }>) => void
   removeOpenDocuments: (paths: readonly string[]) => void
@@ -123,7 +124,10 @@ afterEach(() => {
   mountedWrappers.clear()
 })
 
-function setup(): Promise<Harness> {
+function setup(
+  overrides: Partial<Parameters<typeof useEditorTabs>[0]> = {},
+  initialPath = '/vault',
+): Promise<Harness> {
   return new Promise(async (resolveOuter) => {
     let captured: Harness | null = null
     const Comp = defineComponent({
@@ -131,13 +135,13 @@ function setup(): Promise<Harness> {
         const selectPanel = vi.fn()
         const toggleViewMode = vi.fn()
         const fileChanges = createVaultFileChanges()
-        const api = useEditorTabs({ vaultId: 'test-vault', selectPanel, toggleViewMode, fileChanges })
+        const api = useEditorTabs({ vaultId: 'test-vault', selectPanel, toggleViewMode, fileChanges, ...overrides })
         captured = { ...(api as unknown as Omit<Harness, 'selectPanel' | 'toggleViewMode' | 'fileChanges' | 'unmount'>), selectPanel, toggleViewMode, fileChanges, unmount: () => {} }
         return () => h('div')
       },
     })
     const router = makeRouter()
-    router.push('/vault').catch(() => {})
+    router.push(initialPath).catch(() => {})
     await router.isReady()
     const wrapper = mount(Comp, { global: { plugins: [router] } })
     mountedWrappers.add(wrapper)
@@ -1808,6 +1812,113 @@ describe('useEditorTabs — tab persistence', () => {
     expect(h.tabs.value[0].raw).toBe('A')
     expect(h.tabs.value[1].raw).toBe('B')
     expect(h.activePath.value).toBe('a')
+  })
+
+  it('defers persisted managed Diary tabs without reading their body while locked', async () => {
+    let diaryBodyReads = 0
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/posts/diary/2026-08-27': () => {
+        diaryBodyReads += 1
+        return { path: 'diary/2026-08-27', raw: 'secret', content: 'secret', frontmatter: {}, size: 6, mtime: 1 }
+      },
+    }))
+    localStorage.setItem(PERSIST_KEY, JSON.stringify({
+      v: 1, paths: ['diary/2026-08-27'], active: 'diary/2026-08-27',
+    }))
+
+    const h = await setup({
+      isDiaryAccessReady: () => false,
+      authorizeDocumentPath: vi.fn(async () => false),
+    })
+
+    expect(h.tabs.value).toEqual([])
+    expect(h.activePath.value).toBeNull()
+    expect(diaryBodyReads).toBe(0)
+  })
+
+  it('does not read a locked managed Diary deep link when access is cancelled', async () => {
+    let diaryBodyReads = 0
+    const authorizeDocumentPath = vi.fn(async () => false)
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/posts/diary/2026-08-27': () => {
+        diaryBodyReads += 1
+        return { path: 'diary/2026-08-27', raw: 'secret', content: 'secret', frontmatter: {}, size: 6, mtime: 1 }
+      },
+    }))
+
+    const h = await setup(
+      {
+        isDiaryAccessReady: () => false,
+        authorizeDocumentPath,
+      },
+      '/vault/diary/2026-08-27',
+    )
+
+    expect(authorizeDocumentPath).toHaveBeenCalledWith('diary/2026-08-27')
+    expect(h.tabs.value).toEqual([])
+    expect(h.activePath.value).toBeNull()
+    expect(diaryBodyReads).toBe(0)
+  })
+
+  it('resumes a deferred managed Diary tab exactly once after access becomes ready', async () => {
+    let diaryBodyReads = 0
+    let ready = false
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/posts/diary/2026-08-27': () => {
+        diaryBodyReads += 1
+        return { path: 'diary/2026-08-27', raw: 'secret', content: 'secret', frontmatter: {}, size: 6, mtime: 1 }
+      },
+    }))
+    localStorage.setItem(PERSIST_KEY, JSON.stringify({
+      v: 1, paths: ['diary/2026-08-27'], active: 'diary/2026-08-27',
+    }))
+
+    const h = await setup({
+      isDiaryAccessReady: () => ready,
+      authorizeDocumentPath: vi.fn(async () => true),
+    })
+
+    expect(h.tabs.value).toEqual([])
+    expect(diaryBodyReads).toBe(0)
+
+    ready = true
+    await h.resumeDeferredDiaryTabs()
+    await h.resumeDeferredDiaryTabs()
+
+    expect(diaryBodyReads).toBe(1)
+    expect(h.tabs.value.map((tab) => tab.path)).toEqual(['diary/2026-08-27'])
+  })
+
+  it('loads an authorized managed Diary deep link once after access is granted', async () => {
+    let diaryBodyReads = 0
+    const authorizeDocumentPath = vi.fn(async () => true)
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/posts/diary/2026-08-27': () => {
+        diaryBodyReads += 1
+        return { path: 'diary/2026-08-27', raw: 'secret', content: 'secret', frontmatter: {}, size: 6, mtime: 1 }
+      },
+    }))
+
+    const h = await setup(
+      {
+        isDiaryAccessReady: () => false,
+        authorizeDocumentPath,
+      },
+      '/vault/diary/2026-08-27',
+    )
+
+    expect(authorizeDocumentPath).toHaveBeenCalledOnce()
+    expect(diaryBodyReads).toBe(1)
+    expect(h.tabs.value.map((tab) => tab.path)).toEqual(['diary/2026-08-27'])
+    expect(h.activePath.value).toBe('diary/2026-08-27')
   })
 
   it('falls back to the first restored tab when the saved active path no longer exists', async () => {

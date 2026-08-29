@@ -18,7 +18,8 @@ import { CONTENT_DIR, setContentDir } from '../paths'
 import {
   closeAuthTestContext,
   createAuthenticatedTestContext,
-  withAuthCookie,
+  unlockDiaryAccessForTesting,
+  withDiaryCapability,
   type AuthenticatedTestContext,
 } from './helpers/auth'
 
@@ -27,6 +28,7 @@ const ORIGINAL_CONTENT_DIR = CONTENT_DIR
 let vault: string
 let db: Database.Database
 let auth: AuthenticatedTestContext
+let diaryCapability: string
 
 async function write(logicalPath: string, raw: string): Promise<void> {
   const absolute = path.join(vault, `${logicalPath}.md`)
@@ -40,7 +42,7 @@ async function call(method: string, urlPath: string, body?: unknown): Promise<Re
     headers: body === undefined ? undefined : { 'content-type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   })
-  return app.fetch(withAuthCookie(auth, request))
+  return app.fetch(withDiaryCapability(auth, request, diaryCapability))
 }
 
 beforeEach(async () => {
@@ -48,9 +50,10 @@ beforeEach(async () => {
   db = new Database(':memory:')
   db.pragma('foreign_keys = ON')
   applyMigrations(db)
-  auth = createAuthenticatedTestContext({ db })
   __setMetadataDbForTesting(db)
   setContentDir(vault)
+  auth = createAuthenticatedTestContext({ db })
+  diaryCapability = await unlockDiaryAccessForTesting(auth)
   await ensureInitialFolders(vault)
 })
 

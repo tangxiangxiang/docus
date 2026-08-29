@@ -60,6 +60,8 @@ import { applyMetadataToPostSummary } from './metadataPostSummary'
 import { useDiaryDateCommand, type DiaryDateCommandResult } from '../composables/diary/useDiaryDateCommand'
 import { useDiaryMoodCommand } from '../composables/diary/useDiaryMoodCommand'
 import { useDiaryWorkspacePresentation } from '../composables/diary/useDiaryWorkspacePresentation'
+import { useDiaryAccessSession } from '../composables/diary/useDiaryAccessSession'
+import { DiaryAccessContextKey } from '../composables/diary/diaryAccessContext'
 import { localCivilToday } from '../components/diary/diaryCalendarAdapter'
 import { classifyDiaryPath, diaryLogicalPathForDate, type DiaryDate } from '../../shared/diaryProtocol'
 import type { MoodId } from '../../shared/diaryMood'
@@ -202,6 +204,30 @@ const toast = useToast()
 const { confirm, confirmCancellable } = useConfirm()
 const { locale, t } = useI18n()
 const auth = useAuth()
+const diaryAccess = useDiaryAccessSession()
+const diaryAccessContext = inject(DiaryAccessContextKey, null)
+const { activeScope, selectScope } = useScopeFilter()
+const diaryLockBusy = ref(false)
+
+async function authorizeDiaryDocumentPath(path: string): Promise<boolean> {
+  if (classifyDiaryPath(path) !== 'managed') return true
+  const granted = diaryAccessContext
+    ? await diaryAccessContext.requestAccess()
+    : diaryAccess.isUnlocked.value || (await diaryAccess.ensureStatus()) === 'UNLOCKED'
+  if (granted) selectScope('diary')
+  return granted
+}
+
+async function lockDiaryFromWorkspace(): Promise<void> {
+  if (diaryLockBusy.value || !diaryAccess.isUnlocked.value) return
+  diaryLockBusy.value = true
+  try {
+    if (diaryAccessContext) await diaryAccessContext.lock()
+    else await diaryAccess.lock()
+  } finally {
+    diaryLockBusy.value = false
+  }
+}
 const emptyActions = computed(() => [
   { label: t('vault.command_palette'), keys: shortcuts.format('mod+P') },
   { label: t('vault.toggle_sidebar'), keys: shortcuts.format('mod+B') },
@@ -308,6 +334,8 @@ const {
   getAuthTransitionSnapshot,
   prepareAuthTransition,
   saveAllForActiveLogout,
+  clearManagedDiaryWorkspace,
+  resumeDeferredDiaryTabs,
 } = useEditorTabs({
   vaultId: authoritativeVaultId,
   selectPanel,
@@ -322,6 +350,20 @@ const {
   },
   draftStore,
   draftPersistence,
+  authorizeDocumentPath: authorizeDiaryDocumentPath,
+  isDiaryAccessReady: () => diaryAccess.isUnlocked.value,
+})
+
+watch(() => diaryAccess.state.value, (next) => {
+  if (next === 'UNLOCKED') {
+    void resumeDeferredDiaryTabs()
+    return
+  }
+  clearManagedDiaryWorkspace()
+  recoveryTabs.deactivate()
+  historyComparisons.deactivate()
+  workingTreeDiffs.deactivate()
+  selectScope('note')
 })
 
 function restoreRenamedTabFocus(
@@ -1400,7 +1442,7 @@ async function copyWorkspaceTabPath(path: string): Promise<void> {
 async function revealWorkspaceTabInTree(path: string): Promise<void> {
   activePanel.value = 'files'
   filesFilter.value = ''
-  activeScope.value = null
+  selectScope('note')
   await nextTick()
   await revealWorkspacePath(path, {
     revealPath: async (targetPath) => fileTreeRef.value?.revealPath(targetPath),
@@ -1605,12 +1647,7 @@ async function showExternalDiff() {
   await confirm(`${t('vault.local_version')}：\n\n${tab.raw.slice(0, 1600)}\n\n────────\n${t('vault.disk_version')}：\n\n${(tab.externalRaw ?? `(${t('vault.file_deleted')})`).slice(0, 1600)}`)
 }
 
-/* ---------- Scope filter (NavBar chips) ---------- */
-// useScopeFilter is application-shell state because NavBar lives above the
-// router view. This call installs its localStorage watcher; NavBar reads
-// `activeScope` / `toggleScope` from the same instance, and FileTree
-// filters `topLevel` off the same `activeScope` ref.
-const { activeScope } = useScopeFilter()
+/* ---------- Diary presentation ---------- */
 const isDiaryScope = computed(() => activeScope.value === 'diary')
 const documentPaths = computed(() => tabs.value.map((tab) => tab.path))
 const diaryWorkspacePresentation = useDiaryWorkspacePresentation({
@@ -2324,9 +2361,12 @@ watch(isReadMode, async (reading) => {
       :active-panel="activePanel"
       :username="auth.user.value?.username"
       :logout-busy="auth.transitionKind.value === 'logout'"
+      :diary-unlocked="diaryAccess.isUnlocked.value"
+      :diary-lock-busy="diaryLockBusy"
       @select-panel="selectActivityPanel"
       @open-settings="settingsOpen = true"
       @logout="emit('logout')"
+      @lock-diary="lockDiaryFromWorkspace"
     />
 
     <SettingsModal

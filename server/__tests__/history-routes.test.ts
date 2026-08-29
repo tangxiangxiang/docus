@@ -12,6 +12,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 import Database from 'better-sqlite3'
+import { Hono } from 'hono'
 import * as historyGit from '../history/git.js'
 import { applyMigrations } from '../db.js'
 import { __setMetadataDbForTesting } from '../routes/shared.js'
@@ -27,9 +28,28 @@ import {
   describeHistoryIntegration,
   HISTORY_GIT_INTEGRATION_TIMEOUT_MS,
 } from './helpers/historyIntegration.js'
+import {
+  closeAuthTestContext,
+  createAuthenticatedTestContext,
+  unlockDiaryAccessForTesting,
+  withDiaryCapability,
+  type AuthenticatedTestContext,
+} from './helpers/auth.js'
 
 let root: string
 let metadataDb: Database.Database
+let auth: AuthenticatedTestContext
+let diaryCapability: string
+
+// Most history tests intentionally remain direct sub-router tests. This
+// wrapper supplies only the protected-route session context needed by the
+// D8.1 managed-Diary body gate; it does not add a second auth implementation.
+const historyTestApp = new Hono()
+historyTestApp.use('*', async (c, next) => {
+  c.set('authSessionId', auth.session.id)
+  await next()
+})
+historyTestApp.route('/', historyRoutes)
 
 async function write(rel: string, body: string) {
   const abs = path.join(root, rel)
@@ -46,6 +66,8 @@ beforeEach(async () => {
   metadataDb = new Database(':memory:')
   metadataDb.pragma('foreign_keys = ON')
   applyMigrations(metadataDb)
+  auth = createAuthenticatedTestContext({ db: metadataDb })
+  diaryCapability = await unlockDiaryAccessForTesting(auth)
   __setMetadataDbForTesting(metadataDb)
   setRepoRootForTesting(root)
   __resetGitCapabilityForTesting()
@@ -64,6 +86,7 @@ afterEach(async () => {
   __resetGitCapabilityForTesting()
   __setHistoryMutationHooksForTesting(null)
   __setMetadataDbForTesting(null)
+  closeAuthTestContext(auth)
   metadataDb.close()
   await cleanupHistoryTempRepo(root)
 })
@@ -105,7 +128,7 @@ async function call(method: string, urlPath: string, body?: unknown, autoExpecte
     headers: requestBody ? { 'content-type': 'application/json' } : undefined,
     body: requestBody ? JSON.stringify(requestBody) : undefined,
   })
-  return historyRoutes.fetch(req)
+  return historyTestApp.fetch(withDiaryCapability(auth, req, diaryCapability))
 }
 
 describeHistoryIntegration('GET /api/history/capability', () => {

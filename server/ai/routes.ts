@@ -15,6 +15,7 @@ import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import matter from 'gray-matter'
 import { getDb } from '../db.js'
+import { getAuthRuntime } from '../auth/runtime.js'
 import {
   CONTENT_DIR,
   isValidPathSyntax,
@@ -34,6 +35,9 @@ import { generateSlug } from './slug.js'
 import { CommitMessagePromptLimitError, generateCommitMessage } from './commitMessage.js'
 import { generateSummary, SummaryPromptLimitError } from './summary.js'
 import { ChatError } from './errors.js'
+import { hasDiaryBodyAccess, requireDiaryBodyAccess } from '../diaryAccess/guard.js'
+import { DIARY_ACCESS_CAPABILITY_HEADER } from '../diaryAccess/service.js'
+import { classifyDiaryPath } from '../../shared/diaryProtocol.js'
 import {
   AiConnectionError,
   probeAiConnection,
@@ -520,6 +524,8 @@ ai.post('/summary', async (c) => {
   if (!body || typeof body.path !== 'string' || !isValidPathSyntax(body.path)) {
     return bad(c, 'valid path required')
   }
+  const bodyAccess = requireDiaryBodyAccess(c, body.path)
+  if (bodyAccess) return bodyAccess
   if (body.content !== undefined && typeof body.content !== 'string') {
     return bad(c, 'content must be a string')
   }
@@ -583,6 +589,10 @@ ai.post('/commit-message', async (c) => {
   if (paths.length > MAX_COMMIT_MESSAGE_PATHS) return bad(c, 'too many paths', 413)
   if (new Set(paths).size !== paths.length) return bad(c, 'duplicate paths')
   if (paths.length === 0) return bad(c, 'at least one path required')
+  for (const filePath of paths) {
+    const bodyAccess = requireDiaryBodyAccess(c, filePath)
+    if (bodyAccess) return bodyAccess
+  }
   let dirtyPaths: Set<string>
   try {
     dirtyPaths = new Set(
@@ -670,6 +680,9 @@ ai.post('/chat', async (c) => {
   // Bind to locals so the narrowed types survive into runChat().
   const sessionId = body.sessionId
   const userContent = body.content
+  const authSessionId = (c as any).get('authSessionId') as unknown
+  const presentedDiaryCapability = c.req.header(DIARY_ACCESS_CAPABILITY_HEADER)
+  const authRuntime = getAuthRuntime()
   const contextPaths = parseChatContextPaths(body.contextPaths)
   if (contextPaths === null) {
     return c.json({ ok: false, reason: 'invalid-context-paths' }, 400)
@@ -764,6 +777,11 @@ ai.post('/chat', async (c) => {
         userContent,
         ctx,
         model: runtimeConfig.model,
+        diaryBodyAccess: (path) => {
+          const canonical = normalizeLogicalContentPath(path)
+          if (!canonical || classifyDiaryPath(canonical) !== 'managed') return true
+          return Boolean(authRuntime && hasDiaryBodyAccess(authSessionId, presentedDiaryCapability))
+        },
         signal: c.req.raw.signal,
         onEvent: writeEvent,
       })

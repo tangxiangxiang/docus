@@ -6,8 +6,10 @@
  * response.  The observer reads a clone so each feature-specific parser keeps
  * ownership of the original response body.
  */
+import { getDiaryCapability } from './diary-capability'
 
 export const AUTH_SESSION_REQUIRED_CODE = 'auth-session-required' as const
+export const DIARY_ACCESS_LOCKED_CODE = 'diary-locked' as const
 
 export type AuthSessionRequiredEvent = {
   /** Request epoch captured when the protected request started. */
@@ -15,9 +17,11 @@ export type AuthSessionRequiredEvent = {
 }
 
 type Listener = (event: AuthSessionRequiredEvent) => void
+type DiaryAccessLockedListener = () => void
 
 let generation = 0
 const listeners = new Set<Listener>()
+const diaryAccessLockedListeners = new Set<DiaryAccessLockedListener>()
 
 /** Capture the current request epoch before starting a protected fetch. */
 export function captureAuthSessionGeneration(): number {
@@ -33,6 +37,16 @@ export function advanceAuthSessionGeneration(): number {
 export function subscribeAuthSessionRequired(listener: Listener): () => void {
   listeners.add(listener)
   return () => listeners.delete(listener)
+}
+
+/**
+ * Subscribe to the server-side Diary lock boundary. This is deliberately a
+ * separate channel from authentication expiry: the owner session can still
+ * be valid when a restarted server process has lost its in-memory Diary DEK.
+ */
+export function subscribeDiaryAccessLocked(listener: DiaryAccessLockedListener): () => void {
+  diaryAccessLockedListeners.add(listener)
+  return () => diaryAccessLockedListeners.delete(listener)
 }
 
 async function responseCode(response: Response): Promise<unknown> {
@@ -53,6 +67,11 @@ async function responseCode(response: Response): Promise<unknown> {
 export async function isAuthSessionRequiredResponse(response: Response): Promise<boolean> {
   if (response.status !== 401) return false
   return await responseCode(response) === AUTH_SESSION_REQUIRED_CODE
+}
+
+export async function isDiaryAccessLockedResponse(response: Response): Promise<boolean> {
+  if (response.status !== 423) return false
+  return await responseCode(response) === DIARY_ACCESS_LOCKED_CODE
 }
 
 /**
@@ -77,6 +96,24 @@ export async function observeAuthSessionResponse(
 }
 
 /**
+ * Observe a locked Diary body response without consuming the caller-owned
+ * response. A process restart intentionally loses the server's in-memory DEK;
+ * this event makes the browser drop its matching capability and plaintext
+ * workspace immediately instead of leaving a stale unlocked presentation.
+ */
+export async function observeDiaryAccessLockedResponse(response: Response): Promise<boolean> {
+  if (!await isDiaryAccessLockedResponse(response)) return false
+  for (const listener of [...diaryAccessLockedListeners]) {
+    try {
+      listener()
+    } catch {
+      // The feature-specific parser still owns the original response.
+    }
+  }
+  return true
+}
+
+/**
  * Fetch helper for protected application wrappers.  It captures the epoch at
  * request start, then observes the response without consuming its body.
  */
@@ -85,8 +122,24 @@ export async function authFetch(
   init?: RequestInit,
 ): Promise<Response> {
   const requestGeneration = captureAuthSessionGeneration()
-  const response = init === undefined ? await fetch(input) : await fetch(input, init)
+  const capability = getDiaryCapability()
+  let requestInput = input
+  let requestInit = init
+  if (capability) {
+    const headers = new Headers(input instanceof Request ? input.headers : undefined)
+    if (init?.headers) {
+      new Headers(init.headers).forEach((value, name) => headers.set(name, value))
+    }
+    headers.set('X-Docus-Diary-Capability', capability)
+    if (input instanceof Request && init === undefined) {
+      requestInput = new Request(input, { headers })
+    } else {
+      requestInit = { ...init, headers }
+    }
+  }
+  const response = requestInit === undefined ? await fetch(requestInput) : await fetch(requestInput, requestInit)
   await observeAuthSessionResponse(response, requestGeneration)
+  await observeDiaryAccessLockedResponse(response)
   return response
 }
 

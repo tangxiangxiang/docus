@@ -3,11 +3,17 @@ import {
   MarkdownResourceError,
   readMarkdownResource,
 } from '../markdownResources.js'
+import { requireDiaryBodyAccess } from '../diaryAccess/guard.js'
 
 const markdownResourceRoutes = new Hono()
 
 markdownResourceRoutes.get('/api/markdown-resources', async (c) => {
   try {
+    const resourcePath = c.req.query('path')
+    if (typeof resourcePath === 'string') {
+      const bodyAccess = requireDiaryBodyAccess(c, resourcePath)
+      if (bodyAccess) return bodyAccess
+    }
     const result = await readMarkdownResource(
       c.req.query('kind'),
       c.req.query('path'),

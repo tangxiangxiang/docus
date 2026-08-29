@@ -4,6 +4,7 @@
 
 import { onBeforeUnmount, onMounted } from 'vue'
 import { createPost, type PostSummary } from '../../lib/api'
+import { classifyDiaryPath } from '../../../shared/diaryProtocol'
 import { useToast } from '../useToast'
 import { useConfirm } from '../useConfirm'
 import type { SidePanel } from '../../components/vault/ActivityBar.vue'
@@ -49,6 +50,11 @@ export function useEditorTabs(opts: {
   prepareWorkspaceRename?: (from: string, to: string) => () => void
   draftStore?: DraftStore
   draftPersistence?: UnsavedDraftPersistence
+  /** Gate managed Diary body access before a tab/route can load raw text. */
+  authorizeDocumentPath?: (path: string) => Promise<boolean>
+  /** Synchronous capability check used to defer persisted Diary tabs. */
+  isDiaryAccessReady?: () => boolean
+  onDiaryAccessCancelled?: (path: string) => void
 }) {
   const toast = useToast()
   const { confirm } = useConfirm()
@@ -67,8 +73,8 @@ export function useEditorTabs(opts: {
     activeSize,
     refresh,
     applyPostSummary,
-    openPost,
-    restoreOneTab,
+    openPost: openWorkspacePost,
+    restoreOneTab: restoreWorkspaceTab,
     closeTab: closeTabState,
     confirmCloseMany: confirmCloseManyState,
     closeManyConfirmed,
@@ -229,6 +235,55 @@ export function useEditorTabs(opts: {
     workspaceShortcuts: opts.workspaceShortcuts,
   })
 
+  const deferredDiaryTabs: string[] = []
+
+  function needsDiaryAccess(path: string): boolean {
+    return classifyDiaryPath(path) === 'managed'
+      && Boolean(opts.isDiaryAccessReady)
+      && !opts.isDiaryAccessReady!()
+  }
+
+  async function openAuthorizedPost(
+    path: string,
+    openOptions: { refresh?: boolean } = {},
+  ): Promise<void> {
+    if (needsDiaryAccess(path)) {
+      const granted = opts.authorizeDocumentPath ? await opts.authorizeDocumentPath(path) : false
+      if (!granted) {
+        opts.onDiaryAccessCancelled?.(path)
+        return
+      }
+    }
+    await openWorkspacePost(path, openOptions)
+  }
+
+  async function restoreAuthorizedTab(path: string): Promise<boolean> {
+    if (needsDiaryAccess(path)) {
+      if (!deferredDiaryTabs.includes(path)) deferredDiaryTabs.push(path)
+      return true
+    }
+    return restoreWorkspaceTab(path)
+  }
+
+  async function resumeDeferredDiaryTabs(): Promise<void> {
+    // Do not manufacture a path merely to probe the access gate. The
+    // capability readiness callback is the direct owner of this decision;
+    // a representative Diary date could be misleading if path rules ever
+    // change independently of the access state.
+    if (opts.isDiaryAccessReady && !opts.isDiaryAccessReady()) return
+    const paths = [...new Set(deferredDiaryTabs.splice(0))]
+    for (const path of paths) await restoreWorkspaceTab(path)
+  }
+
+  function clearManagedDiaryWorkspace(): void {
+    const paths = tabs.value
+      .filter((tab) => classifyDiaryPath(tab.path) === 'managed')
+      .map((tab) => tab.path)
+    if (!paths.length) return
+    void discardDocumentDrafts(paths)
+    closeManyConfirmed(paths)
+  }
+
   async function onCommandPaletteNew(title: string) {
     const trimmed = (title ?? '').trim()
     if (!trimmed) return
@@ -252,7 +307,7 @@ export function useEditorTabs(opts: {
           console.warn(`[useEditorTabs] Created ${created.path}, but Vault refresh failed`, error)
         }
       }
-      await openPost(created.path, { refresh: false })
+      await openAuthorizedPost(created.path, { refresh: false })
       toast.success(t('common.created', { path: created.path }))
     } catch (e) {
       toast.error(t('common.create_failed', { error: (e as Error).message }))
@@ -269,7 +324,7 @@ export function useEditorTabs(opts: {
     // External deletion is not an explicit user discard. Edit-09.5 decides
     // orphan/migration behavior; this stage must preserve its draft.
     removeOpenDocument: (path) => closeManyConfirmed([path]),
-    openPost,
+    openPost: openAuthorizedPost,
     navigateTo: (path) => { navigateTo(path) },
     confirm,
     toastInfo: toast.info,
@@ -278,7 +333,7 @@ export function useEditorTabs(opts: {
     prepareWorkspaceRename: opts.prepareWorkspaceRename,
   })
 
-  const { routePath } = useRouteSync({ activePath, openPost })
+  const { routePath } = useRouteSync({ activePath, openPost: openAuthorizedPost })
   let disposed = false
   let stopFileChangeSubscription: (() => void) | null = null
 
@@ -312,7 +367,7 @@ export function useEditorTabs(opts: {
       const missing: string[] = []
       const toRestore = saved.paths.slice(0, TAB_HARD_LIMIT)
       for (const p of toRestore) {
-        const ok = await restoreOneTab(p)
+        const ok = await restoreAuthorizedTab(p)
         if (disposed) return
         if (!ok) missing.push(p)
       }
@@ -334,7 +389,7 @@ export function useEditorTabs(opts: {
     }
 
     if (routePath.value && routePath.value !== activePath.value) {
-      await openPost(routePath.value)
+      await openAuthorizedPost(routePath.value)
       if (disposed) return
     }
     // Subscribe to the file-change bus so AI tool writes/deletes/
@@ -371,11 +426,13 @@ export function useEditorTabs(opts: {
     activeSize,
     refresh,
     applyPostSummary,
-    openPost,
+    openPost: openAuthorizedPost,
     closeTab,
     closeMany,
     confirmCloseMany,
     closeManyConfirmed: closeManyConfirmedWithDrafts,
+    clearManagedDiaryWorkspace,
+    resumeDeferredDiaryTabs,
     reorderOpenDocuments,
     renameOpenDocuments,
     removeOpenDocuments,

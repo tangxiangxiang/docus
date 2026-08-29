@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, provide, ref, watchEffect } from 'vue'
+import { computed, provide, ref, watch, watchEffect } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import NavBar from './components/NavBar.vue'
 import ToastHost from './components/ToastHost.vue'
@@ -11,6 +11,11 @@ import { shouldShowNormalChrome } from './lib/auth-chrome'
 import { useI18n } from './composables/useI18n'
 import { ensureVaultIdentity, getVaultIdentityState } from './lib/vault-identity'
 import { useToast } from './composables/useToast'
+import { useScopeFilter } from './composables/vault/useScopeFilter'
+import { useDiaryAccessSession } from './composables/diary/useDiaryAccessSession'
+import { DiaryAccessContextKey } from './composables/diary/diaryAccessContext'
+import DiaryAccessDialog from './components/diary/DiaryAccessDialog.vue'
+import type { ScopeKey } from '../shared/scopeProtocol'
 
 const route = useRoute()
 const router = useRouter()
@@ -18,6 +23,8 @@ const auth = useAuth()
 const vaultIdentity = getVaultIdentityState()
 const { t } = useI18n()
 const toast = useToast()
+const diaryAccess = useDiaryAccessSession()
+const { activeScope, selectScope } = useScopeFilter()
 /* Vault routes AND dev previews both set `fullWidth: true` so the
    navbar sits at its shorter height. But only vault routes should
    lock the outer scroll — the dev previews (/__icon-preview,
@@ -77,6 +84,116 @@ async function onLogout(): Promise<void> {
     toast.error(t('auth.unavailable'))
   }
 }
+
+const diaryAccessOpen = ref(false)
+const diaryAccessBusy = ref(false)
+const diaryAccessError = ref('')
+const diaryAccessMode = computed<'setup' | 'unlock'>(() => (
+  diaryAccess.state.value === 'UNINITIALIZED' ? 'setup' : 'unlock'
+))
+let pendingAccess: Promise<boolean> | null = null
+let resolveAccess: ((granted: boolean) => void) | null = null
+
+async function requestDiaryAccess(): Promise<boolean> {
+  if (diaryAccess.isUnlocked.value) return true
+  if (pendingAccess) return pendingAccess
+  try {
+    await diaryAccess.ensureStatus()
+  } catch {
+    toast.error(t('diary_access.unavailable'))
+    return false
+  }
+  if (diaryAccess.isUnlocked.value) return true
+  diaryAccessError.value = ''
+  diaryAccessOpen.value = true
+  pendingAccess = new Promise<boolean>((resolve) => { resolveAccess = resolve })
+  return pendingAccess
+}
+
+async function requestScopeChange(scope: ScopeKey): Promise<void> {
+  if (scope === activeScope.value) return
+  if (scope === 'diary') {
+    if (await requestDiaryAccess()) selectScope('diary')
+    return
+  }
+  selectScope(scope)
+}
+
+function finishAccess(granted: boolean): void {
+  diaryAccessOpen.value = false
+  diaryAccessBusy.value = false
+  diaryAccessError.value = ''
+  const resolve = resolveAccess
+  resolveAccess = null
+  pendingAccess = null
+  resolve?.(granted)
+}
+
+async function submitDiaryAccess(payload: { password: string; confirmPassword: string }): Promise<void> {
+  if (diaryAccessBusy.value) return
+  if (diaryAccessMode.value === 'setup' && payload.password !== payload.confirmPassword) {
+    diaryAccessError.value = t('auth.password_mismatch')
+    return
+  }
+  diaryAccessBusy.value = true
+  diaryAccessError.value = ''
+  try {
+    if (diaryAccessMode.value === 'setup') await diaryAccess.setup(payload.password)
+    else await diaryAccess.unlock(payload.password)
+    finishAccess(true)
+  } catch (error) {
+    const code = (error as { code?: unknown } | null)?.code
+    diaryAccessError.value = code === 'diary-access-invalid-password'
+      ? t('diary_access.invalid_password')
+      : t('diary_access.unavailable')
+    diaryAccessBusy.value = false
+  }
+}
+
+function cancelDiaryAccess(): void {
+  if (diaryAccessBusy.value) return
+  finishAccess(false)
+}
+
+async function lockDiary(): Promise<void> {
+  if (!diaryAccess.isUnlocked.value) return
+  try {
+    await diaryAccess.lock()
+  } catch {
+    toast.error(t('diary_access.unavailable'))
+  }
+}
+
+provide(DiaryAccessContextKey, {
+  session: diaryAccess,
+  requestAccess: requestDiaryAccess,
+  requestScopeChange,
+  lock: lockDiary,
+})
+
+watch(() => diaryAccess.state.value, (next) => {
+  if (next !== 'UNLOCKED' && activeScope.value === 'diary') selectScope('note')
+})
+
+// A persisted Diary scope is only a user preference, never permission to
+// restore a Diary body. On a fresh browser process the capability is absent,
+// so resolve the access status first and normalize the scope to note before
+// VaultView can treat the persisted selection as an active Diary context.
+let scopeBootstrapRequest = 0
+watch(
+  [() => auth.state.value, () => activeScope.value],
+  ([authState, scope]) => {
+    if (authState !== 'authenticated' || scope !== 'diary') return
+    const request = ++scopeBootstrapRequest
+    void diaryAccess.ensureStatus().then((next) => {
+      if (request !== scopeBootstrapRequest || activeScope.value !== 'diary') return
+      if (next !== 'UNLOCKED') selectScope('note')
+    }).catch(() => {
+      if (request === scopeBootstrapRequest && activeScope.value === 'diary') selectScope('note')
+    })
+  },
+  { immediate: true },
+)
 
 /* The vault uses an internal scrollable surface (FileTree, Editor,
    Preview). It must NOT let the outer document scroll, otherwise
@@ -169,4 +286,12 @@ provide(VaultViewModeKey, { mode: viewMode, set: setViewMode, toggle: toggleView
   <ToastHost />
   <ConfirmHost />
   <PromptHost />
+  <DiaryAccessDialog
+    :open="diaryAccessOpen"
+    :mode="diaryAccessMode"
+    :busy="diaryAccessBusy"
+    :error="diaryAccessError"
+    @submit="submitDiaryAccess"
+    @cancel="cancelDiaryAccess"
+  />
 </template>

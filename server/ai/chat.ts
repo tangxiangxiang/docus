@@ -214,6 +214,7 @@ export type RunChatOpts = {
   // Nested `ctx` matches the original signature (and the route
   // layer in routes.ts that builds it from the request body).
   ctx: ChatContext
+  diaryBodyAccess?: (path: string) => boolean
   onEvent: (e: ChatEvent) => void | Promise<void>
 } & RunChatDeps
 
@@ -335,7 +336,12 @@ export async function runChat(opts: RunChatOpts): Promise<{
         const r = await executeToolCall(
           tc.name,
           tc.input,
-          { signal: toolCtxSignal, db: opts.db, safety: toolSafety },
+          {
+            signal: toolCtxSignal,
+            db: opts.db,
+            safety: toolSafety,
+            diaryBodyAccess: opts.diaryBodyAccess,
+          },
         )
         await emit(opts.onEvent, {
           type: 'tool_result',

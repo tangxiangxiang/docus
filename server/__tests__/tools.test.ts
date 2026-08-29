@@ -125,6 +125,27 @@ describe('read_file', () => {
     const r = await executeToolCall('read_file', { path: '../escape' }, ctx)
     expect(r.isError).toBe(true)
   })
+
+  it('fails closed for managed Diary body reads and writes without the session capability', async () => {
+    writeFile('diary/2000-05-03.md', 'private diary body')
+    const lockedContext: ToolContext = {
+      ...ctx,
+      diaryBodyAccess: () => false,
+    }
+
+    const read = await executeToolCall('read_file', { path: 'diary/2000-05-03' }, lockedContext)
+    const write = await executeToolCall('write_file', {
+      path: 'diary/2000-05-03',
+      content: 'should not be written',
+    }, lockedContext)
+
+    expect(read.isError).toBe(true)
+    expect(read.content).toContain('diary-locked')
+    expect(read.content).not.toContain('private diary body')
+    expect(write.isError).toBe(true)
+    expect(fs.readFileSync(path.join(contentDir, 'diary/2000-05-03.md'), 'utf8'))
+      .toBe('private diary body')
+  })
 })
 
 // --- list_files -------------------------------------------------------------

@@ -15,7 +15,7 @@ installDialogMocks()
 
 beforeEach(() => {
   localStorage.clear()
-  useScopeFilter().activeScope.value = null
+  useScopeFilter().activeScope.value = 'note'
   metadataDrafts.clear()
   useI18n().setLocale('zh')
 })

@@ -68,6 +68,7 @@ import { listSubtreePaths } from '../tree.js'
 import { bad, ensureMetadata, exists, metadataDb, recordCommittedMetadata } from './shared.js'
 import { nextMetadataBatchUpdatedAt } from '../metadataVersion.js'
 import { validateFolderMutation } from '../documentMutationPolicy.js'
+import { requireDiaryBodyAccess } from '../diaryAccess/guard.js'
 
 const folderRoutes = new Hono()
 
@@ -273,6 +274,10 @@ folderRoutes.patch('/api/folders/*', async (c) => {
       .filter(([, links]) => links.some((link) => plannedOldPaths.includes(link.target)))
       .map(([source]) => source)
     : []
+  for (const bodyPath of [...plannedOldPaths, ...plannedReferencePaths]) {
+    const bodyAccess = requireDiaryBodyAccess(c, bodyPath)
+    if (bodyAccess) return bodyAccess
+  }
   const plannedNewPaths = plannedOldPaths.map((oldPath) => newPath + oldPath.slice(srcPath.length))
   const plannedReferenceWritePaths = plannedReferencePaths.map((source) =>
     source === srcPath || source.startsWith(`${srcPath}/`) ? newPath + source.slice(srcPath.length) : source,
@@ -303,6 +308,8 @@ folderRoutes.patch('/api/folders/*', async (c) => {
     const moves = oldPaths.map((oldPath) => ({ oldPath, newPath: newPath + oldPath.slice(srcPath.length) }))
     for (const [source, links] of Object.entries(indexSnapshot.outgoing)) {
       if (!links.some((link) => oldPaths.includes(link.target))) continue
+      const bodyAccess = requireDiaryBodyAccess(c, source)
+      if (bodyAccess) return bodyAccess
       const raw = await fs.readFile(filePathFor(source), 'utf8')
       const updated = moves.reduce(
         (text, move) => rewriteDocumentReferences(text, source, move.oldPath, move.newPath, indexSnapshot.paths), raw,
@@ -1077,6 +1084,10 @@ folderRoutes.delete('/api/folders/*', async (c) => {
   // membership-stable world (see the rename route for the full note).
   return withVaultMutation(CONTENT_DIR, () => withVaultStructureLock(async () => {
   const planned = await listSubtreePaths(CONTENT_DIR, folderP)
+  for (const bodyPath of planned) {
+    const bodyAccess = requireDiaryBodyAccess(c, bodyPath)
+    if (bodyAccess) return bodyAccess
+  }
   const plannedDatabasePaths = snapshotDocumentMetadataPrefixMutation(metadataDb(), [folderP], planned).paths
   return withDocumentWriteLocks([folderP, ...planned, ...plannedDatabasePaths], async () => {
   if (!await exists(abs)) return bad(c, 'not found', 404)

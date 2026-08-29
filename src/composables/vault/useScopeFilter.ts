@@ -16,6 +16,12 @@ function loadScope(): ScopeKey {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return DEFAULT_SCOPE
+    // Diary is permission-bearing. A persisted Diary selection is only a
+    // preference from a previous application session, never proof of a live
+    // secondary-password capability. Start safely in note; the shell-level
+    // access coordinator can select Diary only after the current session is
+    // unlocked.
+    if (raw === 'diary') return DEFAULT_SCOPE
     if (Object.prototype.hasOwnProperty.call(SCOPE_ROOTS, raw)) return raw as ScopeKey
     // Keep an existing saved root selection useful after the UI changes from
     // root chips to content scopes. All three legacy roots belong to note.
@@ -26,20 +32,21 @@ function loadScope(): ScopeKey {
   }
 }
 
-const activeScope = ref<ScopeKey | null>(loadScope())
+const activeScope = ref<ScopeKey>(loadScope())
 let persistenceWired = false
 
 export function useScopeFilter() {
   if (!persistenceWired && typeof window !== 'undefined') {
     watch(activeScope, (v) => {
-      try { localStorage.setItem(STORAGE_KEY, v ?? '') } catch { /* ignore */ }
-    })
+      try { localStorage.setItem(STORAGE_KEY, v) } catch { /* ignore */ }
+    }, { immediate: true })
     persistenceWired = true
   }
 
-  function toggleScope(scope: ScopeKey) {
-    activeScope.value = activeScope.value === scope ? null : scope
+  function selectScope(scope: ScopeKey): void {
+    if (activeScope.value === scope) return
+    activeScope.value = scope
   }
 
-  return { activeScope, toggleScope }
+  return { activeScope, selectScope }
 }

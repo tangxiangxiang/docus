@@ -28,6 +28,7 @@ import {
   exists,
   metadataDb,
 } from './shared.js'
+import { requireDiaryBodyAccess } from '../diaryAccess/guard.js'
 
 const diaryRoutes = new Hono()
 
@@ -139,6 +140,8 @@ diaryRoutes.post('/api/diary/dates', async (c) => {
   } | null
   const date = parseDiaryDate(body?.date)
   if (!date) return bad(c, 'invalid Diary date; expected YYYY-MM-DD', 400, 'invalid-diary-date')
+  const bodyAccess = requireDiaryBodyAccess(c, `diary/${date}`)
+  if (bodyAccess) return bodyAccess
   const timeZone = parseDiaryTimeZone(body?.timeZone)
   if (!timeZone) return bad(c, 'invalid IANA timezone', 400, 'invalid-timezone')
 

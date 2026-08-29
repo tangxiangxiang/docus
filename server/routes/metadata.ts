@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs'
 import { Hono } from 'hono'
 import {
   DocumentMetadataError,
+  getDocumentMetadata,
   getDocumentMetadataById,
   patchDocumentMetadata,
   type DocumentMetadataChange,
@@ -24,6 +25,7 @@ import { CONTENT_DIR, filePathFor, normalizeLogicalContentPath } from '../paths.
 import { classifyDiaryPath } from '../../shared/diaryProtocol.js'
 import { isMoodId, type MoodId } from '../../shared/diaryMood.js'
 import { bad, ensureMetadata, exists, metadataDb } from './shared.js'
+import { requireDiaryBodyAccess, requireDiaryVaultBodyAccess } from '../diaryAccess/guard.js'
 
 const metadataRoutes = new Hono()
 
@@ -47,12 +49,16 @@ metadataRoutes.get('/api/metadata/migration', (c) => {
 })
 
 metadataRoutes.post('/api/metadata/migrate', async (c) => {
+  const bodyAccess = requireDiaryVaultBodyAccess(c)
+  if (bodyAccess) return bodyAccess
   const report = await runMetadataMigration()
   const health = await refreshTagIdentityHealth(metadataDb(), CONTENT_DIR, report)
   return c.json({ report, summary: getMetadataMigrationSummary(metadataDb()), tagIdentityHealth: health })
 })
 
 metadataRoutes.get('/api/metadata/cleanup/preview', async (c) => {
+  const bodyAccess = requireDiaryVaultBodyAccess(c)
+  if (bodyAccess) return bodyAccess
   return c.json(await previewFrontmatterCleanup(metadataDb()))
 })
 
@@ -60,6 +66,8 @@ metadataRoutes.get('/api/metadata/export', (c) => {
   const documentPath = c.req.query('path')
   const mode = c.req.query('mode') ?? 'canonical'
   if (!documentPath) return bad(c, 'path required')
+  const bodyAccess = requireDiaryBodyAccess(c, documentPath)
+  if (bodyAccess) return bodyAccess
   if (mode !== 'canonical' && mode !== 'original') return bad(c, 'invalid export mode')
   const frontmatter = exportDocumentFrontmatter(metadataDb(), documentPath, mode)
   if (frontmatter === null) return bad(c, 'frontmatter export not available', 404)
@@ -78,6 +86,10 @@ function confirmedPaths(body: unknown, confirmation: string): string[] | null {
 metadataRoutes.post('/api/metadata/cleanup', async (c) => {
   const paths = confirmedPaths(await c.req.json().catch(() => null), 'REMOVE_FRONTMATTER')
   if (!paths) return bad(c, 'explicit confirmation and paths are required')
+  for (const documentPath of paths) {
+    const bodyAccess = requireDiaryBodyAccess(c, documentPath)
+    if (bodyAccess) return bodyAccess
+  }
   return c.json(await cleanDocumentFrontmatter(metadataDb(), paths))
 })
 
@@ -87,6 +99,10 @@ metadataRoutes.post('/api/metadata/restore', async (c) => {
   const mode = body?.mode ?? 'original'
   if (!paths) return bad(c, 'explicit confirmation and paths are required')
   if (mode !== 'original' && mode !== 'canonical') return bad(c, 'invalid restore mode')
+  for (const documentPath of paths) {
+    const bodyAccess = requireDiaryBodyAccess(c, documentPath)
+    if (bodyAccess) return bodyAccess
+  }
   return c.json(await restoreDocumentFrontmatter(metadataDb(), paths, mode))
 })
 
@@ -136,8 +152,13 @@ metadataRoutes.patch('/api/metadata/documents/*', async (c) => {
     }
   }
 
-  const [raw, stat] = await Promise.all([fs.readFile(abs, 'utf8'), fs.stat(abs)])
-  ensureMetadata(documentPath, raw, stat.mtimeMs)
+  const currentMetadata = getDocumentMetadata(metadataDb(), documentPath)
+  if (!currentMetadata) {
+    const bodyAccess = requireDiaryBodyAccess(c, documentPath)
+    if (bodyAccess) return bodyAccess
+    const [raw, nextStat] = await Promise.all([fs.readFile(abs, 'utf8'), fs.stat(abs)])
+    ensureMetadata(documentPath, raw, nextStat.mtimeMs)
+  }
   const changes: DocumentMetadataChange[] = []
   if (Object.hasOwn(body, 'title')) {
     if (typeof body.title !== 'string' || !body.title.trim() || body.title.length > 200) {

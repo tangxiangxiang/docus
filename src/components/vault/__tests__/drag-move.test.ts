@@ -46,7 +46,7 @@ const TREE: TreeNode[] = [
 describe('FileTree drag-move (sub-documents)', () => {
   beforeEach(() => {
     localStorage.clear()
-    useScopeFilter().activeScope.value = null
+    useScopeFilter().activeScope.value = 'note'
     vi.restoreAllMocks()
     dialogStubs.toast.error.mockClear()
   })
@@ -267,12 +267,18 @@ describe('FileTree drag-move (sub-documents)', () => {
     await w.vm.$nextTick()
 
     const inbox = rowByLabel(w.findAll('li.tree-row'), 'inbox')
-    const diary = rowByLabel(w.findAll('li.tree-row'), 'diary')
     await inbox.find('.chevron').trigger('click')
     await w.vm.$nextTick()
     const testFolder = rowByLabel(w.findAll('li.tree-row'), 'test')
     await testFolder.find('.chevron').trigger('click')
     await w.vm.$nextTick()
+
+    // Diary is a separate exactly-one scope. Switch after preparing the
+    // ordinary source path so the reserved Diary root becomes visible without
+    // weakening the default note-scope contract.
+    useScopeFilter().activeScope.value = 'diary'
+    await w.vm.$nextTick()
+    const diary = rowByLabel(w.findAll('li.tree-row'), 'diary')
 
     const dataTransfer = makeDT()
     dataTransfer.setData('text/x-docus-path', 'inbox/test/test1')

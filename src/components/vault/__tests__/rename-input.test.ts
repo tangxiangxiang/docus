@@ -49,7 +49,7 @@ async function clickRenameMenuButton() {
 describe('FileTree prompt rename', () => {
   beforeEach(() => {
     localStorage.clear()
-    useScopeFilter().activeScope.value = null
+    useScopeFilter().activeScope.value = 'note'
     resetDialogMocks()
     vi.restoreAllMocks()
   })
@@ -131,6 +131,7 @@ describe('FileTree prompt rename', () => {
     vi.spyOn(api, 'getRenameImpact').mockResolvedValue({ path: 'diary/legacy', count: 0, sources: [] })
     dialogStubs.prompt.mockResolvedValueOnce('renamed')
 
+    useScopeFilter().activeScope.value = 'diary'
     const w = mount(FileTree, { props: { tree: DIARY_TREE, currentPath: null } })
     await w.vm.$nextTick()
     const diary = rowByLabel(w.findAll('.tree-row'), 'diary')

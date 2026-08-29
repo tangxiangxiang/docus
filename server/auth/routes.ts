@@ -9,7 +9,7 @@ import {
 import { checkCsrfHeaders, checkJsonContentType } from './csrf.js'
 import { AuthServiceError } from './service.js'
 import { getAuthRuntime } from './runtime.js'
-import { selectSessionToken } from './session.js'
+import { findSessionByRawToken, selectSessionToken } from './session.js'
 
 const authRoutes = new Hono()
 
@@ -205,6 +205,18 @@ authRoutes.post('/logout', (c) => {
   const csrf = csrfError(c, runtime, false)
   if (csrf) return csrf
   const rawToken = selectSessionToken(parseCookies(c), runtime.config)
+  let sessionId: number | null = null
+  try {
+    const lookup = rawToken ? findSessionByRawToken(runtime.db, rawToken) : null
+    sessionId = lookup?.session?.id ?? null
+  } catch {
+    // The existing logout error path below remains authoritative; no
+    // capability cleanup is attempted without a proven session identity.
+  }
+  // Invalidate the in-memory Diary capability before revoking the auth
+  // session. Even if the persistent logout write fails, a capability from
+  // the session being logged out must not remain usable in this process.
+  if (sessionId !== null) runtime.diaryAccess.invalidateAuthSession(sessionId)
   let logoutError: unknown = null
   try {
     runtime.service.logout(rawToken)

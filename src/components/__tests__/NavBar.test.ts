@@ -109,7 +109,7 @@ describe('NavBar — scope chips', () => {
     await chips[1].trigger('click')
 
     expect(chips[1].attributes('aria-pressed')).toBe('true')
-    expect(chips[1].attributes('aria-label')).toBe('Filtered to diary (click again to clear)')
+    expect(chips[1].attributes('aria-label')).toBe('Current scope: diary')
   })
 })
 

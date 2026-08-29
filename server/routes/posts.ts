@@ -44,6 +44,7 @@ import { rewriteDocumentReferences } from '../renameReferences.js'
 import { validateDocumentMutation } from '../documentMutationPolicy.js'
 import { listPostsFlat, readFrontmatter } from '../tree.js'
 import { bad, ensureMetadata, exists, metadataDb, recordCommittedMetadata } from './shared.js'
+import { requireDiaryBodyAccess } from '../diaryAccess/guard.js'
 
 const postRoutes = new Hono()
 
@@ -133,6 +134,8 @@ postRoutes.post('/api/posts', async (c) => {
   if (!isValidPathSyntax(body.path)) {
     return bad(c, 'invalid path syntax')
   }
+  const bodyAccess = requireDiaryBodyAccess(c, documentPath)
+  if (bodyAccess) return bodyAccess
   try { validateDocumentMutation({ operation: 'create', destinationPath: body.path }) }
   catch (error) { return bad(c, (error as Error).message, 422) }
   if (body.title !== undefined && typeof body.title !== 'string') {
@@ -203,6 +206,8 @@ postRoutes.post('/api/posts', async (c) => {
 // legacy Frontmatter is preserved but no longer mutated.
 postRoutes.put('/api/posts/*', async (c) => {
   const splat = c.req.path.replace(/^\/api\/posts\//, '')
+  const bodyAccess = requireDiaryBodyAccess(c, splat)
+  if (bodyAccess) return bodyAccess
   let abs: string
   try { abs = filePathFor(splat) } catch (e: any) { return bad(c, e.message) }
   try { validateDocumentMutation({ operation: 'write', destinationPath: splat, destinationExists: true }) }
@@ -340,6 +345,8 @@ postRoutes.put('/api/posts/*', async (c) => {
 
 postRoutes.put('/api/recover/*', async (c) => {
   const documentPath = c.req.path.replace(/^\/api\/recover\//, '')
+  const bodyAccess = requireDiaryBodyAccess(c, documentPath)
+  if (bodyAccess) return bodyAccess
   if (!isValidPathSyntax(documentPath)) return bad(c, 'invalid path')
   try { validateDocumentMutation({ operation: 'recover', destinationPath: documentPath }) }
   catch (error) { return bad(c, (error as Error).message, 422) }
@@ -419,6 +426,8 @@ postRoutes.put('/api/recover/*', async (c) => {
 postRoutes.patch('/api/posts/*', async (c) => {
   const splat = c.req.path.replace(/^\/api\/posts\//, '')
   const srcPath = splat
+  const sourceBodyAccess = requireDiaryBodyAccess(c, srcPath)
+  if (sourceBodyAccess) return sourceBodyAccess
   let src: string
   try { src = filePathFor(srcPath) } catch (e: any) { return bad(c, e.message) }
   if (!await exists(src)) return bad(c, 'not found', 404)
@@ -455,6 +464,8 @@ postRoutes.patch('/api/posts/*', async (c) => {
   } catch (error) {
     return bad(c, (error as Error).message, 422)
   }
+  const destinationBodyAccess = requireDiaryBodyAccess(c, destPath)
+  if (destinationBodyAccess) return destinationBodyAccess
   if (await exists(dest)) {
     if (body.targetPath !== undefined && isInArchive(destPath)) {
       const unique = await uniqueMoveTarget(dest, destPath)
@@ -470,6 +481,10 @@ postRoutes.patch('/api/posts/*', async (c) => {
   const plannedReferencePaths = body.updateReferences
     ? (await getLinkIndex()).getBacklinks(srcPath).map((backlink) => backlink.source)
     : []
+  for (const referencePath of plannedReferencePaths) {
+    const bodyAccess = requireDiaryBodyAccess(c, referencePath)
+    if (bodyAccess) return bodyAccess
+  }
   return withDocumentWriteLocks([srcPath, destPath, ...plannedReferencePaths], async () => {
   if (!await exists(src)) return bad(c, 'not found', 404)
   if (await exists(dest)) return bad(c, 'destination exists', 409)
@@ -503,6 +518,8 @@ postRoutes.patch('/api/posts/*', async (c) => {
     }
     if (__postRenameRaceHooks?.afterPlanVerified) await __postRenameRaceHooks.afterPlanVerified()
     for (const backlink of backlinks) {
+      const bodyAccess = requireDiaryBodyAccess(c, backlink.source)
+      if (bodyAccess) return bodyAccess
       const raw = backlink.source === srcPath ? sourceRaw : await fs.readFile(filePathFor(backlink.source), 'utf8')
       const updated = rewriteDocumentReferences(raw, backlink.source, srcPath, destPath, allPaths)
       if (updated === raw) continue
@@ -696,6 +713,8 @@ postRoutes.patch('/api/posts/*', async (c) => {
 // path validation and the reserved-root contract remain in force.
 postRoutes.delete('/api/posts/*', async (c) => {
   const splat = c.req.path.replace(/^\/api\/posts\//, '')
+  const bodyAccess = requireDiaryBodyAccess(c, splat)
+  if (bodyAccess) return bodyAccess
   let abs: string
   try { abs = filePathFor(splat) } catch (e: any) { return bad(c, e.message) }
   try { validateDocumentMutation({ operation: 'delete', sourcePath: splat }) }
@@ -780,6 +799,8 @@ postRoutes.delete('/api/posts/*', async (c) => {
 // Read a single post (raw + frontmatter)
 postRoutes.get('/api/posts/*', async (c) => {
   const splat = c.req.path.replace(/^\/api\/posts\//, '')
+  const bodyAccess = requireDiaryBodyAccess(c, splat)
+  if (bodyAccess) return bodyAccess
   let abs: string
   try { abs = filePathFor(splat) } catch (e: any) { return bad(c, e.message) }
   if (!await exists(abs)) return bad(c, 'not found', 404)

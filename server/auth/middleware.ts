@@ -59,6 +59,14 @@ export const authBoundary: MiddlewareHandler = async (c, next) => {
     return jsonError(c, 503, 'Authentication is temporarily unavailable.', 'auth-unavailable')
   }
   if (!status.authenticated || !status.user) {
+    // A revoked/expired/disabled session can still have a process-local
+    // Diary capability until the next explicit lock. Remove that capability
+    // as soon as the auth boundary observes the invalid session so a later
+    // request cannot retain an otherwise stale DEK in server memory.
+    const invalidSessionId = status.session?.session?.id
+    if (invalidSessionId !== undefined) {
+      runtime.diaryAccess.invalidateAuthSession(invalidSessionId)
+    }
     return jsonError(c, 401, 'Authentication required.', 'auth-session-required')
   }
 
@@ -76,8 +84,10 @@ export const authBoundary: MiddlewareHandler = async (c, next) => {
   }
 
   // Keep the context deliberately safe and minimal. Existing handlers do
-  // not depend on it yet; it is the future owner-identity seam.
+  // not depend on it yet; it is the owner-identity seam for capability
+  // binding. The session token itself never enters route context.
   c.set('authUser', { id: status.user.id, username: status.user.username })
+  c.set('authSessionId', status.session.session.id)
 
   if (isUnsafeMethod(method)) {
     const csrf = checkCsrfHeaders(c.req.raw.headers, method, runtime.config)

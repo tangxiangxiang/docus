@@ -6,6 +6,7 @@ import { createAuthRuntime, installAuthRuntimeForTesting, resetAuthRuntimeForTes
 import type { RateLimiterOptions } from '../../auth/rateLimit.js'
 import { DUMMY_PASSWORD_HASH } from '../../auth/service.js'
 import { createSession, type CreatedSession } from '../../auth/session.js'
+import { DIARY_ACCESS_CAPABILITY_HEADER } from '../../diaryAccess/service.js'
 
 export const TEST_SETUP_TOKEN = 'phase-2-test-token-0123456789abcdef'
 
@@ -154,6 +155,30 @@ export function withAuthCookie(
   const headers = new Headers(request.headers)
   headers.set('Cookie', context.cookie)
   return new Request(request, { headers })
+}
+
+/** Establish the process-local Diary capability for a route test that is
+ * intentionally exercising an unlocked managed Diary body. */
+export async function unlockDiaryAccessForTesting(
+  context: AuthenticatedTestContext,
+  password = 'diary-access-test-password',
+): Promise<string> {
+  const result = await context.runtime.diaryAccess.setup(context.session.id, password)
+  return result.capability
+}
+
+/** Add the authenticated session cookie and an explicitly supplied Diary
+ * capability. Tests that expect the locked boundary should continue using
+ * withAuthCookie without this helper. */
+export function withDiaryCapability(
+  context: Pick<AuthenticatedTestContext, 'cookie'>,
+  request: Request,
+  capability: string,
+): Request {
+  const authenticated = withAuthCookie(context, request)
+  const headers = new Headers(authenticated.headers)
+  headers.set(DIARY_ACCESS_CAPABILITY_HEADER, capability)
+  return new Request(authenticated, { headers })
 }
 
 export function jsonRequest(

@@ -22,11 +22,14 @@ const props = defineProps<{
   activePanel: SidePanel | null
   username?: string | null
   logoutBusy?: boolean
+  diaryUnlocked?: boolean
+  diaryLockBusy?: boolean
 }>()
 const emit = defineEmits<{
   'select-panel': [panel: SidePanel]
   'open-settings': []
   logout: []
+  'lock-diary': []
 }>()
 
 const h = useHistory()
@@ -75,6 +78,9 @@ const { t } = useI18n()
       :username="props.username"
       :logout-busy="props.logoutBusy"
       @logout="emit('logout')"
+      :diary-unlocked="props.diaryUnlocked"
+      :diary-lock-busy="props.diaryLockBusy"
+      @lock-diary="emit('lock-diary')"
     />
     <button
       class="ab-btn ab-btn-settings"

@@ -22,6 +22,7 @@ import {
   folderPathFor,
   normalizeLogicalContentPath,
 } from '../paths.js'
+import { classifyDiaryPath } from '../../shared/diaryProtocol.js'
 import { naturalPathCompare } from '../tree.js'
 import { prepareRenameReferenceJournal, type PreparedRenameReferenceJournal } from '../renameReferenceJournal.js'
 import { getDb } from '../db.js'
@@ -68,6 +69,8 @@ import {
 export type ToolContext = {
   signal: AbortSignal
   db?: DatabaseT
+  /** Server-side D8.1 gate for tools that can read or mutate Diary bodies. */
+  diaryBodyAccess?: (path: string) => boolean
   /**
    * Edit-10.4: the safety policy derived ONCE per runChat from the
    * normalized ChatContext. Absent (or unrestricted) keeps the
@@ -278,6 +281,26 @@ function ok(content: string, changed?: FileChangeDescriptor): ToolResult {
 
 function err(content: string): ToolResult {
   return { content, isError: true }
+}
+
+function canonicalManagedDiaryPath(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const canonical = normalizeLogicalContentPath(value)
+  return canonical && classifyDiaryPath(canonical) === 'managed' ? canonical : null
+}
+
+function diaryBodyAccessError(
+  access: ((path: string) => boolean) | undefined,
+  paths: readonly unknown[],
+): ToolResult | null {
+  if (!access) return null
+  for (const value of paths) {
+    const path = canonicalManagedDiaryPath(value)
+    if (path && !access(path)) {
+      return err(`Tool blocked: diary-locked. Diary body access is locked for ${path}. Unlock Diary before reading or changing it.`)
+    }
+  }
+  return null
 }
 
 function executeReadFile(input: { path?: string }, db: DatabaseT): ToolResult {
@@ -1130,13 +1153,21 @@ export async function executeToolCall(
   // the executor — locked = guarded = executed.
   const policy = ctx.safety ?? { kind: 'unrestricted' }
   const target = getToolMutationTarget(name, input)
+  const pathAccessError = name === 'read_file'
+    ? diaryBodyAccessError(ctx.diaryBodyAccess, [input.path])
+    : target.kind === 'single-path'
+      ? diaryBodyAccessError(ctx.diaryBodyAccess, [target.path])
+      : target.kind === 'rename'
+        ? diaryBodyAccessError(ctx.diaryBodyAccess, [target.sourcePath, target.destinationPath])
+        : null
+  if (pathAccessError) return pathAccessError
   if (target.kind === 'none' || target.kind === 'unknown') {
     return dispatchToolCall(name, input, db)
   }
   if (target.kind === 'rename') {
     // rename_file runs the atomic plan flow: the locked plan is the
     // guarded plan is the executed plan (see executeGuardedRename).
-    return executeGuardedRename(target, input, db, policy)
+    return executeGuardedRename(target, input, db, policy, ctx.diaryBodyAccess)
   }
   // create/delete always change tree membership; write_file may create
   // the file — all three take the vault structure lock in addition to
@@ -1145,6 +1176,8 @@ export async function executeToolCall(
   // place and stays on the document lock only.
   const structural = name === 'create_file' || name === 'write_file' || name === 'delete_file'
   return withMutationLocks(target, async () => {
+    const accessError = diaryBodyAccessError(ctx.diaryBodyAccess, [target.path])
+    if (accessError) return accessError
     const decision = await guardToolMutation({
       policy,
       target,
@@ -1157,6 +1190,8 @@ export async function executeToolCall(
       // asking the user to save / resolve the workspace.
       return err(decision.message)
     }
+    const postGuardAccessError = diaryBodyAccessError(ctx.diaryBodyAccess, [target.path])
+    if (postGuardAccessError) return postGuardAccessError
     return dispatchToolCall(name, input, db)
   }, { structural })
 }
@@ -1183,6 +1218,7 @@ async function executeGuardedRename(
   input: Record<string, unknown>,
   db: DatabaseT,
   policy: ToolSafetyPolicy,
+  diaryBodyAccess?: (path: string) => boolean,
 ): Promise<ToolResult> {
   const renameInput = input as { path?: string; new_path?: string; update_references?: boolean }
   let plan: RenamePlan
@@ -1196,6 +1232,12 @@ async function executeGuardedRename(
     referencePaths: planFootprint(plan),
   }
   return withMutationLocks(locked, async () => {
+    const accessError = diaryBodyAccessError(diaryBodyAccess, [
+      plan.sourcePath,
+      plan.destinationPath,
+      ...planFootprint(plan),
+    ])
+    if (accessError) return accessError
     if (__renameRaceHooks?.beforeReplan) await __renameRaceHooks.beforeReplan()
     let candidate: RenamePlan
     try {
@@ -1209,6 +1251,12 @@ async function executeGuardedRename(
           `(a concurrent edit added or removed a link). Retry the rename; the retry will plan against the updated link set.`,
       )
     }
+    const candidateAccessError = diaryBodyAccessError(diaryBodyAccess, [
+      candidate.sourcePath,
+      candidate.destinationPath,
+      ...planFootprint(candidate),
+    ])
+    if (candidateAccessError) return candidateAccessError
     const decision = await guardToolMutation({
       policy,
       target: { ...base, referencePaths: planFootprint(candidate) },
@@ -1220,6 +1268,12 @@ async function executeGuardedRename(
       return err(decision.message)
     }
     if (__renameRaceHooks?.beforeExecute) await __renameRaceHooks.beforeExecute()
+    const preExecuteAccessError = diaryBodyAccessError(diaryBodyAccess, [
+      candidate.sourcePath,
+      candidate.destinationPath,
+      ...planFootprint(candidate),
+    ])
+    if (preExecuteAccessError) return preExecuteAccessError
     // The candidate plan is the executed plan — verbatim.
     return dispatchToolCall('rename_file', renameInput, db, candidate)
   }, { structural: true })

@@ -13,7 +13,9 @@ import { localDiaryDateForTimeZone } from '../routes/diary'
 import {
   closeAuthTestContext,
   createAuthenticatedTestContext,
+  unlockDiaryAccessForTesting,
   withAuthCookie,
+  withDiaryCapability,
   type AuthenticatedTestContext,
 } from './helpers/auth'
 
@@ -23,8 +25,21 @@ const TIME_ZONE = 'Asia/Shanghai'
 let vault: string
 let db: Database.Database
 let auth: AuthenticatedTestContext
+let diaryCapability: string
 
 async function call(method: string, urlPath: string, body?: unknown): Promise<Response> {
+  const request = new Request(`http://localhost${urlPath}`, {
+    method,
+    headers: {
+      Origin: auth.runtime.config.publicOrigin,
+      ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+  return app.fetch(withDiaryCapability(auth, request, diaryCapability))
+}
+
+async function callWithoutDiaryCapability(method: string, urlPath: string, body?: unknown): Promise<Response> {
   const request = new Request(`http://localhost${urlPath}`, {
     method,
     headers: body === undefined ? undefined : { 'content-type': 'application/json' },
@@ -42,9 +57,10 @@ beforeEach(async () => {
   db = new Database(':memory:')
   db.pragma('foreign_keys = ON')
   applyMigrations(db)
-  auth = createAuthenticatedTestContext({ db })
   __setMetadataDbForTesting(db)
   setContentDir(vault)
+  auth = createAuthenticatedTestContext({ db })
+  diaryCapability = await unlockDiaryAccessForTesting(auth)
   __resetLinkIndexForTesting()
   await ensureInitialFolders(vault)
 })
@@ -145,6 +161,37 @@ describe('POST /api/diary/dates', () => {
 })
 
 describe('Diary REST mutation contract', () => {
+  it('fails closed for managed body reads and date resolution without Diary capability while keeping structural listing available', async () => {
+    const date = '2000-05-01'
+    expect((await call('POST', '/api/diary/dates', { date, timeZone: TIME_ZONE })).status).toBe(201)
+
+    const body = await callWithoutDiaryCapability('GET', `/api/posts/diary/${date}`)
+    const resolve = await callWithoutDiaryCapability('POST', '/api/diary/dates', { date, timeZone: TIME_ZONE })
+    const listing = await callWithoutDiaryCapability('GET', '/api/posts')
+
+    expect(body.status).toBe(423)
+    expect(await body.json()).toMatchObject({ code: 'diary-locked' })
+    expect(resolve.status).toBe(423)
+    expect(await resolve.json()).toMatchObject({ code: 'diary-locked' })
+    expect(listing.status).toBe(200)
+    expect((await listing.json()).map((post: { path: string }) => post.path)).toContain(`diary/${date}`)
+  })
+
+  it('keeps SQLite-owned Mood metadata editable without a Diary body capability', async () => {
+    const date = '2000-05-02'
+    expect((await call('POST', '/api/diary/dates', { date, timeZone: TIME_ZONE })).status).toBe(201)
+    const current = getDocumentMetadata(db, `diary/${date}`)
+    expect(current).not.toBeNull()
+
+    const response = await callWithoutDiaryCapability('PATCH', `/api/metadata/documents/diary/${date}`, {
+      mood: 'happy',
+      expectedUpdatedAt: current!.updatedAt,
+    })
+
+    expect(response.status).toBe(200)
+    expect((await response.json())).toMatchObject({ path: `diary/${date}`, mood: 'happy' })
+  })
+
   it('blocks generic create/recovery and nested folder creation under diary', async () => {
     const generic = await call('POST', '/api/posts', { path: 'diary/generic', title: 'Generic' })
     const recovery = await call('PUT', '/api/recover/diary/recovered', { raw: '# bypass\n' })
@@ -208,6 +255,53 @@ describe('Diary REST mutation contract', () => {
     await expect(fs.stat(path.join(vault, 'diary', 'ordinary.md'))).rejects.toThrow()
     expect(getDocumentMetadata(db, sourcePath)).toMatchObject({ id: sourceMetadataBefore!.id, path: sourcePath })
     expect(getDocumentMetadata(db, destinationPath)).toBeNull()
+  })
+
+  it('blocks a locked file rename before reading a managed Diary backlink body', async () => {
+    const date = '2000-04-04'
+    const targetPath = 'inbox/rename-target'
+    expect((await call('POST', '/api/diary/dates', { date, timeZone: TIME_ZONE })).status).toBe(201)
+    expect((await call('POST', '/api/posts', { path: targetPath, title: 'Target' })).status).toBe(201)
+    const diaryBody = `# ${date}\n\n[[${targetPath}]]\n`
+    expect((await call('PUT', `/api/posts/diary/${date}`, {
+      raw: diaryBody,
+      baseRaw: `# ${date}\n`,
+    })).status).toBe(200)
+
+    const rename = await callWithoutDiaryCapability('PATCH', `/api/posts/${targetPath}`, {
+      name: 'rename-target-new',
+      updateReferences: true,
+    })
+
+    expect(rename.status).toBe(423)
+    await expect(fs.readFile(path.join(vault, 'inbox', 'rename-target.md'), 'utf8'))
+      .resolves.toBe('# Target\n')
+    await expect(fs.readFile(path.join(vault, 'diary', `${date}.md`), 'utf8'))
+      .resolves.toBe(diaryBody)
+  })
+
+  it('blocks a locked folder rename before reading a managed Diary backlink body', async () => {
+    const date = '2000-04-05'
+    const folderPath = 'inbox/rename-folder'
+    const targetPath = `${folderPath}/child`
+    expect((await call('POST', '/api/diary/dates', { date, timeZone: TIME_ZONE })).status).toBe(201)
+    expect((await call('POST', '/api/folders', { path: folderPath })).status).toBe(201)
+    expect((await call('POST', '/api/posts', { path: targetPath, title: 'Child' })).status).toBe(201)
+    const diaryBody = `# ${date}\n\n[[${targetPath}]]\n`
+    expect((await call('PUT', `/api/posts/diary/${date}`, {
+      raw: diaryBody,
+      baseRaw: `# ${date}\n`,
+    })).status).toBe(200)
+
+    const rename = await callWithoutDiaryCapability('PATCH', `/api/folders/${folderPath}`, {
+      newPath: 'inbox/renamed-folder',
+      updateReferences: true,
+    })
+
+    expect(rename.status).toBe(423)
+    await expect(fs.stat(path.join(vault, 'inbox', 'rename-folder', 'child.md'))).resolves.toBeTruthy()
+    await expect(fs.readFile(path.join(vault, 'diary', `${date}.md`), 'utf8'))
+      .resolves.toBe(diaryBody)
   })
 
   it('fails closed for generic recovery even when a missing Diary path looks managed', async () => {

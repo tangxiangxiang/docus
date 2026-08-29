@@ -8,6 +8,7 @@ import type { ScopeKey } from '../../shared/scopeProtocol'
 import { ICON_EDIT, ICON_EYE, ICON_PANEL_RIGHT_OPEN, ICON_SCOPE_NOTE, ICON_SCOPE_DIARY, ICON_SCOPE_LEDGER, ICON_SEARCH, ICON_NAV_THEME_LIGHT, ICON_NAV_THEME_DARK } from './vault/icons'
 import { useVaultLayout } from '../composables/vault/useVaultLayout'
 import { useI18n } from '../composables/useI18n'
+import { DiaryAccessContextKey } from '../composables/diary/diaryAccessContext'
 
 const props = defineProps<{ isVault?: boolean; logoutBusy?: boolean }>()
 const emit = defineEmits<{
@@ -52,7 +53,16 @@ const isReadMode = computed(() => viewModeApi?.mode.value === 'read')
 /* Scope filter (vault root chips). Owned by the composable so
    FileTree can read the active scope and the chips here can write it.
    Counts are pushed in by VaultView whenever the tree changes. */
-const { activeScope, toggleScope } = useScopeFilter()
+const { activeScope, selectScope } = useScopeFilter()
+const diaryAccess = inject(DiaryAccessContextKey, null)
+
+function onScopeClick(scope: ScopeKey): void {
+  if (scope === 'diary' && diaryAccess) {
+    void diaryAccess.requestScopeChange(scope)
+    return
+  }
+  selectScope(scope)
+}
 
 /* Right-rail toggle. This button owns only the rail's expanded/collapsed
    state; the three tabs inside the rail own tab selection. Keeping those
@@ -155,7 +165,7 @@ onBeforeUnmount(() => {
           :aria-pressed="activeScope === chip.scope"
           :aria-label="scopeLabel(chip.scope, chip.label)"
           :title="scopeLabel(chip.scope, chip.label)"
-          @click="toggleScope(chip.scope)"
+          @click="onScopeClick(chip.scope)"
         >
           <span class="scope-chip-icon" aria-hidden="true" v-html="chip.icon" />
           <span class="scope-chip-label">{{ chip.label }}</span>
