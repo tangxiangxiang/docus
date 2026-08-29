@@ -419,6 +419,85 @@ test('real Browser Back and Forward reconcile route lifecycle without reopening 
   const first = `inbox/d65-back-first-${RUN_ID}`
   const second = `inbox/d65-back-second-${RUN_ID}`
   const state = diagnostics(page)
+  const historyDiagnostics: string[] = []
+  const cdp = await page.context().newCDPSession(page)
+  page.on('console', (message) => {
+    if (message.type() === 'debug' && message.text().startsWith('[docus-history-diag]')) {
+      historyDiagnostics.push(message.text())
+    }
+  })
+  page.on('framenavigated', (frame) => {
+    if (frame === page.mainFrame()) historyDiagnostics.push(`[frame] ${frame.url()}`)
+  })
+  const recordNavigationHistory = async (label: string): Promise<void> => {
+    const snapshot = await cdp.send('Page.getNavigationHistory') as {
+      currentIndex: number
+      entries: Array<{ id: number; url: string; userTypedURL?: string; transitionType?: string }>
+    }
+    historyDiagnostics.push(`[cdp] ${label} ${JSON.stringify({
+      pageUrl: page.url(),
+      currentIndex: snapshot.currentIndex,
+      entries: snapshot.entries.map((entry) => ({
+        id: entry.id,
+        url: entry.url,
+        userTypedURL: entry.userTypedURL,
+        transitionType: entry.transitionType,
+      })),
+    })}`)
+  }
+  await page.addInitScript(() => {
+    const win = window as typeof window & { __docusHistoryDiagInstalled?: boolean }
+    if (win.__docusHistoryDiagInstalled) return
+    win.__docusHistoryDiagInstalled = true
+
+    const snapshot = () => {
+      let state = 'null'
+      try {
+        state = JSON.stringify(window.history.state) ?? 'null'
+      } catch {
+        state = '[unserializable]'
+      }
+      return { href: window.location.href, length: window.history.length, state }
+    }
+    const report = (type: string, extra: Record<string, unknown> = {}) => {
+      let stack = ''
+      try {
+        stack = new Error().stack?.split('\n').slice(0, 8).join('\n') ?? ''
+      } catch {
+        // Diagnostics must never affect navigation.
+      }
+      console.debug('[docus-history-diag]', JSON.stringify({
+        type,
+        time: Math.round(performance.now()),
+        ...snapshot(),
+        ...extra,
+        stack,
+      }))
+    }
+
+    const originalPushState = window.history.pushState
+    window.history.pushState = function (...args) {
+      const result = Reflect.apply(originalPushState, window.history, args)
+      report('pushState', { requestedUrl: String(args[2] ?? '') })
+      return result
+    }
+    const originalReplaceState = window.history.replaceState
+    window.history.replaceState = function (...args) {
+      const result = Reflect.apply(originalReplaceState, window.history, args)
+      report('replaceState', { requestedUrl: String(args[2] ?? '') })
+      return result
+    }
+    window.addEventListener('popstate', (event) => {
+      let eventState = 'null'
+      try {
+        eventState = JSON.stringify(event.state) ?? 'null'
+      } catch {
+        eventState = '[unserializable]'
+      }
+      report('popstate', { eventState })
+    })
+    report('init')
+  })
   try {
     await seedDiary(request, date, `# Browser navigation ${RUN_ID}\n`)
     await seedNote(request, first, `# First ${RUN_ID}\n`)
@@ -433,18 +512,27 @@ test('real Browser Back and Forward reconcile route lifecycle without reopening 
     await clickDiaryDate(page, date)
     await assertNativeDiary(page, date)
 
+    await recordNavigationHistory('before-goBack')
     const historyBefore = await page.evaluate(() => history.length)
     await page.goBack()
+    await recordNavigationHistory('after-goBack-wrapper')
     await expect(page).toHaveURL(new RegExp(`/vault/${first.replace('/', '\\/')}(?:[?#]|$)`))
     await expect(page.locator(`[role="tab"][data-tab-id="${first}"]`)).toHaveAttribute('aria-selected', 'true')
     await expect(page.getByTestId('diary-calendar')).toBeHidden()
 
+    await recordNavigationHistory('before-goForward')
     await page.goForward()
+    await recordNavigationHistory('after-goForward-wrapper')
     await expect(page).toHaveURL(new RegExp(`/vault/${path.replace('/', '\\/')}(?:[?#]|$)`))
     await expect(page.locator(`[role="tab"][data-tab-id="${path}"]`)).toHaveAttribute('aria-selected', 'true')
     await expect(page.getByTestId('diary-calendar')).toBeHidden()
     expect(await page.evaluate(() => history.length)).toBe(historyBefore)
   } finally {
+    await test.info().attach('browser-history-diagnostics', {
+      body: historyDiagnostics.join('\n'),
+      contentType: 'text/plain',
+    })
+    console.error(`HISTORY_DIAG_BEGIN\n${historyDiagnostics.join('\n')}\nHISTORY_DIAG_END`)
     for (const path of [diaryPath(date), first, second]) await deletePost(request, path)
   }
   expect(state.pageErrors).toEqual([])
