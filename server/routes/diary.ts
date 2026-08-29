@@ -1,4 +1,5 @@
 import { promises as fs } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import type { PostSummary } from '../../src/lib/api.js'
 import { Hono } from 'hono'
@@ -29,8 +30,22 @@ import {
   metadataDb,
 } from './shared.js'
 import { requireDiaryBodyAccess } from '../diaryAccess/guard.js'
+import { getDiaryBodyKey } from '../diaryAccess/guard.js'
+import { DiaryBodyCryptoError, decryptDiaryBody, encryptDiaryBody } from '../diaryAccess/body.js'
+import { getVaultId } from '../vaultIdentity.js'
 
 const diaryRoutes = new Hono()
+
+function diaryBodyError(c: any, error: unknown): Response {
+  if (!(error instanceof DiaryBodyCryptoError)) throw error
+  const code = error.code === 'unsupported-envelope'
+    ? 'diary-body-unsupported-envelope'
+    : error.code === 'identity-mismatch'
+      ? 'diary-body-identity-mismatch'
+      : 'diary-body-invalid-envelope'
+  c.header('Cache-Control', 'no-store')
+  return c.json({ error: error.message, code }, 409)
+}
 
 class DiaryPathConflictError extends Error {
   constructor(message: string) {
@@ -97,6 +112,7 @@ function postSummary(
 async function readExistingDiary(
   logicalPath: string,
   absolutePath: string,
+  key: Buffer,
 ): Promise<PostSummary | null> {
   let stat: Awaited<ReturnType<typeof fs.lstat>>
   try {
@@ -112,10 +128,17 @@ async function readExistingDiary(
   if (stat.isSymbolicLink() || !stat.isFile()) {
     throw new DiaryPathConflictError('Diary date path is occupied by a non-file')
   }
-  const raw = await fs.readFile(absolutePath, 'utf8')
+  const bytes = await fs.readFile(absolutePath)
   const metadata = getDocumentMetadata(metadataDb(), logicalPath)
-    ?? ensureMetadata(logicalPath, raw, stat.mtimeMs)
-  return postSummary(logicalPath, stat, metadata)
+  const raw = metadata
+    ? decryptDiaryBody(
+        bytes,
+        { vaultId: getVaultId(), documentId: metadata.id, logicalPath },
+        key,
+      ).raw
+    : bytes.toString('utf8')
+  const resolvedMetadata = metadata ?? ensureMetadata(logicalPath, raw, stat.mtimeMs)
+  return postSummary(logicalPath, stat, resolvedMetadata)
 }
 
 async function ensureDiaryRoot(absolutePath: string): Promise<void> {
@@ -144,6 +167,8 @@ diaryRoutes.post('/api/diary/dates', async (c) => {
   if (bodyAccess) return bodyAccess
   const timeZone = parseDiaryTimeZone(body?.timeZone)
   if (!timeZone) return bad(c, 'invalid IANA timezone', 400, 'invalid-timezone')
+  const key = getDiaryBodyKey(c)
+  if (!key) return bad(c, 'Diary access is locked', 423, 'diary-locked')
 
   const logicalPath = diaryLogicalPathForDate(date)
   let absolutePath: string
@@ -155,10 +180,11 @@ diaryRoutes.post('/api/diary/dates', async (c) => {
 
   return withVaultStructureLock(() => withDocumentWriteLock(logicalPath, async () => {
     try {
-      const existing = await readExistingDiary(logicalPath, absolutePath)
+      const existing = await readExistingDiary(logicalPath, absolutePath, key)
       if (existing) return c.json({ date, path: logicalPath, created: false, post: existing }, 200)
     } catch (error) {
       if (error instanceof DiaryPathConflictError) return bad(c, error.message, 409)
+      if (error instanceof DiaryBodyCryptoError) return diaryBodyError(c, error)
       throw error
     }
 
@@ -178,34 +204,40 @@ diaryRoutes.post('/api/diary/dates', async (c) => {
 
     const raw = `# ${date}\n`
     const databaseSnapshot = snapshotDocumentMetadataMutation(metadataDb(), [logicalPath])
-    const prepared = await prepareAtomicTextCreate(absolutePath, raw)
+    const documentId = randomUUID()
+    // A new physical generation must not inherit a stale row from a prior
+    // delete/recreate cycle; the snapshot above restores it on failure.
+    deleteDocumentMetadata(metadataDb(), logicalPath)
+    const metadata = createDocumentMetadata(metadataDb(), {
+      id: documentId,
+      path: logicalPath,
+      title: String(date),
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    })
+    const physicalRaw = encryptDiaryBody(
+      raw,
+      { vaultId: getVaultId(), documentId: metadata.id, logicalPath },
+      key,
+    ).toString('utf8')
+    const prepared = await prepareAtomicTextCreate(absolutePath, physicalRaw)
     let committed = false
     try {
-      // A stale row cannot claim the new exact generation. If creation wins,
-      // it is replaced by the new identity below; if another writer wins,
-      // the snapshot is restored before resolving the exact path.
-      deleteDocumentMetadata(metadataDb(), logicalPath)
       await prepared.commit()
       committed = true
       const stat = await fs.stat(absolutePath)
-      const metadata = createDocumentMetadata(metadataDb(), {
-        path: logicalPath,
-        title: String(date),
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      })
       const post = postSummary(logicalPath, stat, metadata)
       try {
         const index = await getLinkIndex()
         index.applyWrite(logicalPath, raw)
         index.setTitle(logicalPath, metadata.title)
-      } catch { /* the next index rebuild repairs the projection */ }
+      } catch { /* D8.3 clears this projection on lock */ }
       return c.json({ date, path: logicalPath, created: true, post }, 201)
     } catch (error) {
       const failures: unknown[] = [error]
       try {
         if (committed) {
-          if (await exists(absolutePath)) await atomicRemoveTextIfUnchanged(absolutePath, raw)
+          if (await exists(absolutePath)) await atomicRemoveTextIfUnchanged(absolutePath, physicalRaw)
         } else {
           await prepared.rollback()
         }
@@ -217,10 +249,11 @@ diaryRoutes.post('/api/diary/dates', async (c) => {
       }
       if (isExistenceConflict(error)) {
         try {
-          const existing = await readExistingDiary(logicalPath, absolutePath)
+          const existing = await readExistingDiary(logicalPath, absolutePath, key)
           if (existing) return c.json({ date, path: logicalPath, created: false, post: existing }, 200)
         } catch (readError) {
           if (readError instanceof DiaryPathConflictError) return bad(c, readError.message, 409)
+          if (readError instanceof DiaryBodyCryptoError) return diaryBodyError(c, readError)
           throw readError
         }
         return bad(c, 'Diary date was claimed but could not be resolved', 409, 'diary-create-conflict')
@@ -230,7 +263,7 @@ diaryRoutes.post('/api/diary/dates', async (c) => {
       }
       throw error
     }
-  }))
+  })).finally(() => key.fill(0))
 })
 
 export default diaryRoutes

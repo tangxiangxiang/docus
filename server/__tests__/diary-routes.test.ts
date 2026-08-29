@@ -87,7 +87,9 @@ describe('POST /api/diary/dates', () => {
       post: { path: `diary/${date}` },
     })
     await expect(fs.readFile(path.join(vault, 'diary', `${date}.md`), 'utf8'))
-      .resolves.toBe(`# ${date}\n`)
+      .resolves.not.toContain(`# ${date}`)
+    const body = await call('GET', `/api/posts/diary/${date}`)
+    expect(await body.json()).toMatchObject({ raw: `# ${date}\n`, content: `# ${date}\n` })
     expect(getDocumentMetadata(db, `diary/${date}`)).not.toBeNull()
   })
 
@@ -156,7 +158,7 @@ describe('POST /api/diary/dates', () => {
     expect(new Set(bodies.map(body => body.path))).toEqual(new Set([`diary/${date}`]))
     expect((await fs.readdir(path.join(vault, 'diary'))).filter(name => name.endsWith('.md')))
       .toEqual([`${date}.md`])
-    expect(await fs.readFile(path.join(vault, 'diary', `${date}.md`), 'utf8')).toBe(`# ${date}\n`)
+    expect(await fs.readFile(path.join(vault, 'diary', `${date}.md`), 'utf8')).not.toContain(`# ${date}`)
   })
 })
 
@@ -320,7 +322,7 @@ describe('Diary REST mutation contract', () => {
     await expect(fs.readFile(path.join(vault, 'inbox', 'rename-target.md'), 'utf8'))
       .resolves.toBe('# Target\n')
     await expect(fs.readFile(path.join(vault, 'diary', `${date}.md`), 'utf8'))
-      .resolves.toBe(diaryBody)
+      .resolves.not.toContain(diaryBody)
   })
 
   it('blocks a locked folder rename before reading a managed Diary backlink body', async () => {
@@ -344,7 +346,7 @@ describe('Diary REST mutation contract', () => {
     expect(rename.status).toBe(423)
     await expect(fs.stat(path.join(vault, 'inbox', 'rename-folder', 'child.md'))).resolves.toBeTruthy()
     await expect(fs.readFile(path.join(vault, 'diary', `${date}.md`), 'utf8'))
-      .resolves.toBe(diaryBody)
+      .resolves.not.toContain(diaryBody)
   })
 
   it('fails closed for generic recovery even when a missing Diary path looks managed', async () => {

@@ -295,6 +295,17 @@ export class DiaryAccessService {
     )
   }
 
+  /**
+   * Return a short-lived copy for one authorized body operation. The service
+   * remains the only owner of the live DEK; callers must fill the returned
+   * buffer when the operation completes.
+   */
+  getCapabilityDek(sessionId: number, presentedCapability: unknown): Buffer | null {
+    if (!this.isCapabilityValid(sessionId, presentedCapability)) return null
+    const capability = this.capabilities.get(String(presentedCapability))
+    return capability ? Buffer.from(capability.dek) : null
+  }
+
   async setup(sessionId: number, password: unknown, signal?: AbortSignal): Promise<{ state: 'UNLOCKED'; capability: string; epoch: number }> {
     this.assertSessionId(sessionId)
     if (!isValidPassword(password)) {

@@ -1,6 +1,6 @@
 # D8 — Diary Encryption Implementation Plan
 
-状态：`D8.0 REVIEW-CLOSED`；`D8.0 Self-review = PASS (P0/P1/P2 = 0/0/0)`；`D8.0 Independent Review = PASS (P0/P1/P2 = 0/0/0)`。
+状态：`D8.0 REVIEW-CLOSED`；`D8.0 Self-review = PASS (P0/P1/P2 = 0/0/0)`；`D8.0 Independent Review = PASS (P0/P1/P2 = 0/0/0)`；`D8.2 IN PROGRESS`。
 
 基线：`1fb1389cab053d5ff72630253f509f0170e588c2`（`docs(diary): close D7 mood implementation`）。D7.0A、D7.0、D7.1、D7.2、D7.3、D7.4、D7.5、D7.6 均保持 `REVIEW-CLOSED`。D8 只从 Diary 加密边界开始，不重开 D7，也不创建独立 Private Vault。
 
@@ -275,7 +275,7 @@ D8.0              = REVIEW-CLOSED
 D8.0 Self-review  = PASS (0/0/0)
 D8.0 Independent Review = PASS (0/0/0)
 D8.1             = NOT STARTED
-D8.2             = NOT STARTED
+D8.2             = IN PROGRESS
 D8.3             = NOT STARTED
 D8.4             = NOT STARTED
 ```

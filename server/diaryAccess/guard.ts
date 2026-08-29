@@ -22,6 +22,15 @@ export function hasDiaryBodyAccess(sessionId: unknown, capability: unknown): boo
   return Boolean(runtime && runtime.diaryAccess.isCapabilityValid(sessionId, capability))
 }
 
+/** Return an operation-owned DEK copy after applying the same body gate. */
+export function getDiaryBodyKey(c: any): Buffer | null {
+  const runtime = getAuthRuntime()
+  const sessionId = c.get('authSessionId')
+  const capability = c.req.header(DIARY_ACCESS_CAPABILITY_HEADER)
+  if (!runtime || typeof sessionId !== 'number') return null
+  return runtime.diaryAccess.getCapabilityDek(sessionId, capability)
+}
+
 /**
  * Return a 423 response for managed Diary body access without a capability.
  * Structural metadata endpoints intentionally do not call this helper.

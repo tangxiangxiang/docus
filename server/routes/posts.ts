@@ -44,9 +44,130 @@ import { rewriteDocumentReferences } from '../renameReferences.js'
 import { validateDocumentMutation } from '../documentMutationPolicy.js'
 import { listPostsFlat, readFrontmatter } from '../tree.js'
 import { bad, ensureMetadata, exists, metadataDb, recordCommittedMetadata } from './shared.js'
-import { requireDiaryBodyAccess } from '../diaryAccess/guard.js'
+import { getDiaryBodyKey, requireDiaryBodyAccess } from '../diaryAccess/guard.js'
+import { DiaryBodyCryptoError, encryptDiaryBody, readDiaryBody } from '../diaryAccess/body.js'
+import { getVaultId } from '../vaultIdentity.js'
 
 const postRoutes = new Hono()
+
+function diaryBodyContext(logicalPath: string, documentId: string) {
+  return { vaultId: getVaultId(), documentId, logicalPath }
+}
+
+function diaryBodyError(c: any, error: unknown): Response {
+  if (!(error instanceof DiaryBodyCryptoError)) throw error
+  const code = error.code === 'unsupported-envelope'
+    ? 'diary-body-unsupported-envelope'
+    : error.code === 'identity-mismatch'
+      ? 'diary-body-identity-mismatch'
+      : 'diary-body-invalid-envelope'
+  c.header('Cache-Control', 'no-store')
+  return c.json({ error: error.message, code }, 409)
+}
+
+function diaryPostSummary(
+  logicalPath: string,
+  stat: { size: number | bigint; mtimeMs: number | bigint },
+  metadata: ReturnType<typeof ensureMetadata>,
+): PostSummary {
+  return {
+    path: logicalPath,
+    title: metadata.title,
+    created: new Date(metadata.createdAt).toISOString().slice(0, 10),
+    updated: new Date(metadata.updatedAt).toISOString().slice(0, 10),
+    tags: [...metadata.tags],
+    summary: metadata.summary,
+    size: Number(stat.size),
+    mtime: Number(stat.mtimeMs),
+    ...moodSummaryFields(logicalPath, metadata),
+  }
+}
+
+async function saveManagedDiary(
+  c: any,
+  logicalPath: string,
+  abs: string,
+  key: Buffer,
+  requestedRaw: string,
+  baseRaw: string,
+): Promise<Response> {
+  return withDocumentWriteLock(logicalPath, async () => {
+    if (!await exists(abs)) return bad(c, 'not found', 404)
+    const metadata = getDocumentMetadata(metadataDb(), logicalPath)
+    if (!metadata) return bad(c, 'Diary metadata is unavailable', 503, 'diary-metadata-unavailable')
+
+    let current: Awaited<ReturnType<typeof readDiaryBody>>
+    try {
+      current = await readDiaryBody(abs, diaryBodyContext(logicalPath, metadata.id), key)
+    } catch (error) {
+      return diaryBodyError(c, error)
+    }
+    const conflict = () => c.json({
+      error: 'document changed on disk',
+      code: 'EDIT_CONFLICT' as const,
+      current: {
+        raw: current.raw,
+        mtime: Number(current.stat.mtimeMs),
+        size: Number(current.stat.size),
+      },
+    }, 409)
+    if (current.raw === requestedRaw) {
+      return c.json({
+        ok: true,
+        raw: current.raw,
+        post: diaryPostSummary(logicalPath, current.stat, metadata),
+      } satisfies SavePostResult)
+    }
+    if (current.raw !== baseRaw) return conflict()
+
+    const context = diaryBodyContext(logicalPath, metadata.id)
+    const encryptedRaw = encryptDiaryBody(requestedRaw, context, key).toString('utf8')
+    const currentPhysicalRaw = current.bytes.toString('utf8')
+    const databaseSnapshot = snapshotDocumentMetadataMutation(metadataDb(), [logicalPath])
+    const prepared = await prepareAtomicTextWrite(abs, encryptedRaw, { mode: Number(current.stat.mode) })
+    try {
+      await prepared.commit(currentPhysicalRaw)
+    } catch (error) {
+      await prepared.rollback()
+      restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot)
+      if (error instanceof AtomicTextWriteConflictError) return conflict()
+      if (error instanceof AtomicTextWriteTargetMissingError) return bad(c, 'not found', 404)
+      if (error instanceof AtomicTextWritePostCommitExternalMutationError
+        || error instanceof AtomicTextWriteCleanupError) {
+        return c.json({ error: error.message, code: error.code }, 409)
+      }
+      throw error
+    }
+
+    let stat: Awaited<ReturnType<typeof fs.stat>>
+    let committedMetadata: ReturnType<typeof ensureMetadata>
+    try {
+      stat = await fs.stat(abs)
+      committedMetadata = recordCommittedMetadata(logicalPath, requestedRaw, stat.mtimeMs, Date.now())
+      trackCleanedDocumentWrite(metadataDb(), logicalPath, requestedRaw)
+    } catch (error) {
+      const failures: unknown[] = [error]
+      try {
+        await atomicReplaceTextIfUnchanged(abs, encryptedRaw, currentPhysicalRaw, { mode: Number(current.stat.mode) })
+      } catch (rollbackError) {
+        if (!(rollbackError instanceof AtomicTextWriteConflictError)) failures.push(rollbackError)
+      }
+      try { restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot) }
+      catch (rollbackError) { failures.push(rollbackError) }
+      if (failures.length > 1) throw new AggregateError(failures, 'encrypted Diary metadata update failed and rollback was incomplete')
+      throw error
+    }
+    try {
+      const index = await getLinkIndex()
+      index.applyWrite(logicalPath, requestedRaw)
+    } catch { /* D8.3 owns memory-index teardown on lock */ }
+    return c.json({
+      ok: true,
+      raw: requestedRaw,
+      post: diaryPostSummary(logicalPath, stat, committedMetadata),
+    } satisfies SavePostResult)
+  })
+}
 
 function moodSummaryFields(
   logicalPath: string,
@@ -222,6 +343,16 @@ postRoutes.put('/api/posts/*', async (c) => {
   const requestedRaw = body.raw
   const baseRaw = body.baseRaw
 
+  if (classifyDiaryPath(splat) === 'managed') {
+    const key = getDiaryBodyKey(c)
+    if (!key) return bad(c, 'Diary access is locked', 423, 'diary-locked')
+    try {
+      return await saveManagedDiary(c, splat, abs, key, requestedRaw, baseRaw)
+    } finally {
+      key.fill(0)
+    }
+  }
+
   return withDocumentWriteLock(splat, async () => {
     if (!await exists(abs)) return bad(c, 'not found', 404)
 
@@ -353,14 +484,35 @@ postRoutes.put('/api/recover/*', async (c) => {
   const body = await c.req.json().catch(() => null) as { raw?: unknown } | null
   if (!body || typeof body.raw !== 'string') return bad(c, 'raw required')
   const requestedRaw = body.raw
+  const managedDiary = classifyDiaryPath(documentPath) === 'managed'
+  const diaryKey = managedDiary ? getDiaryBodyKey(c) : null
+  if (managedDiary && !diaryKey) return bad(c, 'Diary access is locked', 423, 'diary-locked')
   // Recovery creates the file: membership change, structure lock first.
   return withVaultStructureLock(() => withDocumentWriteLock(documentPath, async () => {
     const abs = filePathFor(documentPath)
     if (await exists(abs)) return bad(c, 'file already exists', 409)
     const databaseSnapshot = snapshotDocumentMetadataMutation(metadataDb(), [documentPath])
     const previousMetadata = getDocumentMetadata(metadataDb(), documentPath)
+    const documentId = previousMetadata?.id ?? randomUUID()
+    let physicalRaw = requestedRaw
+    if (managedDiary) {
+      physicalRaw = encryptDiaryBody(
+        requestedRaw,
+        { vaultId: getVaultId(), documentId, logicalPath: documentPath },
+        diaryKey!,
+      ).toString('utf8')
+      if (!previousMetadata) {
+        createDocumentMetadata(metadataDb(), {
+          id: documentId,
+          path: documentPath,
+          title: path.basename(documentPath),
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        })
+      }
+    }
     await fs.mkdir(path.dirname(abs), { recursive: true })
-    const prepared = await prepareAtomicTextCreate(abs, requestedRaw)
+    const prepared = await prepareAtomicTextCreate(abs, physicalRaw)
     let committed = false
     let stat: Awaited<ReturnType<typeof fs.stat>>
     let metadata: ReturnType<typeof ensureMetadata>
@@ -379,7 +531,7 @@ postRoutes.put('/api/recover/*', async (c) => {
           // Our commit landed but the metadata step failed: remove our
           // own write, and ONLY our write — the raw match is proof of
           // ownership because we hold the create-only commit.
-          if (await exists(abs)) await atomicRemoveTextIfUnchanged(abs, requestedRaw)
+          if (await exists(abs)) await atomicRemoveTextIfUnchanged(abs, physicalRaw)
         } else {
           // The commit itself failed (e.g. EEXIST: an external writer
           // landed the same path after our exists-check). We never
@@ -406,7 +558,9 @@ postRoutes.put('/api/recover/*', async (c) => {
       }
       throw error
     }
-    try { (await getLinkIndex()).applyWrite(documentPath, requestedRaw) } catch { /* next rebuild repairs it */ }
+    if (!managedDiary) {
+      try { (await getLinkIndex()).applyWrite(documentPath, requestedRaw) } catch { /* next rebuild repairs it */ }
+    }
     const post: PostSummary = {
       path: documentPath,
       title: metadata.title,
@@ -419,7 +573,7 @@ postRoutes.put('/api/recover/*', async (c) => {
       ...moodSummaryFields(documentPath, metadata),
     }
     return c.json({ ok: true, raw: requestedRaw, mtime: stat.mtimeMs, post })
-  }))
+  })).finally(() => diaryKey?.fill(0))
 })
 
 // PATCH a file: rename within folder (name) or move (targetPath). Exactly one.
@@ -804,10 +958,30 @@ postRoutes.get('/api/posts/*', async (c) => {
   let abs: string
   try { abs = filePathFor(splat) } catch (e: any) { return bad(c, e.message) }
   if (!await exists(abs)) return bad(c, 'not found', 404)
-  const raw = await fs.readFile(abs, 'utf8')
-  const parsed = matter(raw)
-  const st = await fs.stat(abs)
   const metadata = getDocumentMetadata(metadataDb(), splat)
+  let raw: string
+  let size: number
+  let mtime: number
+  if (classifyDiaryPath(splat) === 'managed') {
+    const key = getDiaryBodyKey(c)
+    if (!key || !metadata) return bad(c, 'Diary access is locked', 423, 'diary-locked')
+    try {
+      const read = await readDiaryBody(abs, diaryBodyContext(splat, metadata.id), key)
+      raw = read.raw
+      size = Number(read.stat.size)
+      mtime = Number(read.stat.mtimeMs)
+    } catch (error) {
+      return diaryBodyError(c, error)
+    } finally {
+      key.fill(0)
+    }
+  } else {
+    const st = await fs.stat(abs)
+    raw = await fs.readFile(abs, 'utf8')
+    size = Number(st.size)
+    mtime = Number(st.mtimeMs)
+  }
+  const parsed = matter(raw)
   const compatibleFrontmatter = metadata
     ? {
         ...parsed.data,
@@ -824,8 +998,8 @@ postRoutes.get('/api/posts/*', async (c) => {
     content: parsed.content,
     frontmatter: compatibleFrontmatter,
     metadata: metadata ?? undefined,
-    size: st.size,
-    mtime: st.mtimeMs,
+    size,
+    mtime,
   } satisfies PostDetail)
 })
 

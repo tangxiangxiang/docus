@@ -235,7 +235,9 @@ describe('Diary Mood live metadata', () => {
         documentId: initial.id,
       },
     })
-    expect(await fs.readFile(path.join(vault, `${logicalPath}.md`), 'utf8')).toBe(afterRaw)
+    expect(await fs.readFile(path.join(vault, `${logicalPath}.md`), 'utf8')).not.toContain(afterRaw)
+    const readBack = await call('GET', `/api/posts/${logicalPath}`)
+    expect(await readBack.json()).toMatchObject({ raw: afterRaw, content: '\n# After\n' })
     expect(getDocumentMetadata(db, logicalPath)).toMatchObject({
       id: initial.id,
       mood: 'future-mood-v3',
