@@ -7,7 +7,7 @@ D8 overall                 = IN PROGRESS
 D8.0                       = REVIEW-CLOSED
 D8.1                       = REVIEW-READY
 D8.1 Self-review           = PASS (0/0/0)
-D8.1 Independent Review    = PENDING
+D8.1 Independent Review    = RE-REVIEW PENDING
 D8.2                       = NOT STARTED
 D8.3                       = NOT STARTED
 D8.4                       = NOT STARTED
@@ -28,8 +28,11 @@ d977fff009bdc7d5bc35dcce2226fed5f38cf227
 Implementation commit:
 a24ff6f874fb50e4cc3d1a045c3f5c46d4840b1a
 
-Evidence commit:
-the commit that adds this document
+Initial evidence commit:
+1e42a1ec91ed08e9055a69937482fdd46b537e15
+
+Independent Review remediation commit:
+1c0b7ca5c56cf8cd0099c56335db866cf9e6c8a1
 ```
 
 The working tree was clean at the stated starting HEAD and the implementation
@@ -98,16 +101,19 @@ The capability is bound in memory to:
 ```text
 authentication session id
 vault identity
-process-wide access epoch
+per-auth-session access epoch
+authentication-session absolute expiry
 unwrapped DEK
 ```
 
-Only the current epoch is valid. A new setup/unlock drops older in-memory
-capabilities; explicit lock increments the epoch and zeroizes the in-memory
-DEK. A new server process has no capability map, so a configured Diary starts
-locked even though its wrapped configuration remains durable. Auth logout,
-session expiry/revocation and a server-side `diary-locked` response invalidate
-the corresponding client/server capability state.
+Only the current epoch for that authentication session is valid. A new
+setup/unlock supersedes only that session's older capability; explicit lock
+increments only that session's epoch and zeroizes only its in-memory DEK.
+Other authenticated browser sessions remain independent. Capability use and
+post-KDF issuance both revalidate the originating auth session. Absolute
+expiry is enforced lazily and by a best-effort unref'ed cleanup timer. A new
+server process has no capability map, so a configured Diary starts locked
+even though its wrapped configuration remains durable.
 
 The browser stores only the opaque capability in a module-level memory value.
 It is not written to `localStorage`, `sessionStorage`, IndexedDB, SQLite, a
@@ -130,6 +136,11 @@ session id is the only auth identity passed into Diary access ownership; the
 raw login token is not placed in route context. No login, CSRF, session cookie
 or auth-provider semantics were replaced.
 
+Unlock failures use a dedicated bounded limiter keyed by vault identity and
+authentication session. It is separate from primary login/setup buckets,
+retains the shared memory-hard KDF guard, emits the existing bounded
+`429`/`Retry-After` contract and resets after successful unlock.
+
 ## 8. Shell UI and client session owner
 
 `App.vue` owns the access dialog and the scope transition contract. The dialog
@@ -140,9 +151,12 @@ workspace unchanged; successful setup/unlock resolves the pending explicit
 Diary intent exactly once.
 
 The shared `useDiaryAccessSession` coordinator owns client state, capability
-transport and auth/server-lock invalidation. `VaultView` reuses that coordinator
-and does not create a second unlock state or key owner. Account actions expose
-an explicit Diary lock operation.
+transport and auth/server-lock invalidation. Async status/setup/unlock work
+captures a client transition generation; clear, lock, auth invalidation and a
+newer transition advance it. A stale response cannot restore `UNLOCKED`, set a
+capability/epoch or grant an old access intent. `App.vue` also invalidates its
+pending dialog/scope intent across auth-session transitions. `VaultView`
+reuses this coordinator and does not create a second unlock state or key owner.
 
 ## 9. Exactly-one scope contract
 
@@ -195,9 +209,9 @@ body operations, including:
 | History content hashes, file, diff, commits and restore | gated |
 | metadata cleanup/restore/export and raw migration scan | gated |
 | Markdown resource body access | gated |
-| AI read/write/patch/delete/rename/chat body tools | gated by the same path/capability seam |
-| tree/list/files state | structural projection; managed Diary listing avoids body parsing |
-| SQLite document metadata/Mood endpoints | existing metadata owner remains available |
+| AI read/write/patch/delete/rename/chat body tools | same capability seam; rename authorizes structural backlink candidates before raw reads |
+| tree/list/files state | structural projection; no managed Diary body parsing or private title/summary/tags |
+| SQLite document metadata/Mood endpoints | locked projection is date/path, identity/version and Mood; private title/summary/tags require access |
 
 The guard uses the shared normalized path classifier rather than a loose
 `startsWith('diary/')` rule. The current LinkIndex/search/draft plaintext
@@ -216,8 +230,9 @@ discarding only in-memory/plaintext draft presentation as required by the
 locked boundary. Files, SQLite Mood/metadata, stable identities and durable
 configuration are not deleted.
 
-Late async unlock/status results are guarded by the current session/capability
-state. A body request that discovers the server process has lost its in-memory
+Late async unlock/status results are guarded by a client transition generation,
+and post-KDF capability issuance revalidates the auth-session authority. A
+body request that discovers the server process has lost its in-memory
 capability emits the lock event so the client cannot remain visibly unlocked.
 
 ## 13. D7 and ordinary-workspace boundaries
@@ -241,14 +256,14 @@ Editor, save, draft or History lifecycle.
 
 ## 14. Validation evidence
 
-The following validations were run for this implementation checkpoint:
+The following validations were run for the Independent Review remediation:
 
 ```text
-Focused access/session/tab regression:
-3 files, 110 tests PASS
+Focused adversarial access/session/metadata/AI regression:
+5 files, 145 tests PASS
 
 Full unit suite:
-238 files, 3545 tests PASS, 2 skipped
+239 files, 3553 tests PASS, 2 skipped
 
 History integration:
 5 files, 174 tests PASS
@@ -272,21 +287,51 @@ History/Recovery suites were rerun because the locked body gate changes their
 authenticated fixtures; their assertions continue to pass with explicit test
 capabilities where body access is intended.
 
-Focused coverage includes:
+Focused remediation coverage includes:
 
 - approved crypto/config lengths, malformed parameters, vault binding and
   restart-without-capability behavior;
-- exactly-once setup, wrong-password lock retention, lock and new-capability
-  epochs, auth logout and revoked-session invalidation;
+- simultaneous two-session unlock, per-session lock/logout isolation,
+  cross-session capability rejection and absolute expiry;
+- stale client status/unlock suppression and newer-transition ownership;
+- auth invalidation during an in-flight KDF with no capability issuance;
+- per-session secondary-password failure limiting and success reset;
+- locked metadata sentinel non-disclosure through posts/tree/by-id/Mood PATCH;
+- authorization-before-body-I/O for AI rename Diary backlinks;
 - capability header transport and client lock observation;
 - first-use dialog setup/unlock/cancel/Escape behavior;
 - nullable-scope removal and safe persisted-scope normalization;
 - deferred managed Diary tab restore and authorized deep-link restore;
 - locked direct Diary/posts/History/tool body operations;
 - locked structural tree/list behavior without managed Diary frontmatter reads;
-- ordinary-note and existing D7 Diary/Mood route regressions.
+- ordinary-note and existing D7 Diary/Mood/Calendar regressions (also covered
+  by the passing full unit suite).
 
-## 15. Self-review and open D8 work
+The first sandboxed full-unit and Recovery attempts could not create the local
+listener/tsx IPC used by real subprocess tests (`listen EPERM`). They were
+rerun unchanged with the required local-process permission: full unit and
+Recovery then passed at the counts above. This was an execution-environment
+classification, not a product/test assertion failure.
+
+## 15. Independent Review remediation record
+
+The initial Independent Review of `1e42a1ec...` returned
+`FAIL (P0/P1/P2 = 0/5/1)`. The remediation closes the six recorded findings
+without beginning D8.2:
+
+```text
+D8.1-IR-P1-1 per-auth-session capability isolation       = REMEDIATED
+D8.1-IR-P1-2 stale client async transition suppression    = REMEDIATED
+D8.1-IR-P1-3 locked private metadata non-disclosure       = REMEDIATED
+D8.1-IR-P1-4 AI rename authorization before body I/O      = REMEDIATED
+D8.1-IR-P1-5 auth-session TOCTOU / DEK lifetime           = REMEDIATED
+D8.1-IR-P2-1 secondary-password failure throttling        = REMEDIATED
+```
+
+This is remediation self-review evidence only. It does not mark Independent
+Review as passed or close D8.1.
+
+## 16. Self-review and open D8 work
 
 ```text
 D8.1 crypto/config foundation       PASS
@@ -302,7 +347,7 @@ D8.1 no migration claimed           PASS
 D8.1 no Git history rewrite claimed PASS
 
 D8.1 Self-review P0/P1/P2           0/0/0
-D8.1 Independent Review             PENDING
+D8.1 Independent Review             RE-REVIEW PENDING
 ```
 
 The following remain outside this checkpoint and must not be inferred from
@@ -313,7 +358,7 @@ the current pass results:
 - D8.4 migration, legacy compatibility, full release gate and closure;
 - password change/rekey, backup/restore and client-only decryption decisions.
 
-## 16. Final lifecycle at this checkpoint
+## 17. Final lifecycle at this checkpoint
 
 ```text
 D7 overall                 = REVIEW-CLOSED
@@ -322,7 +367,7 @@ D8 overall                 = IN PROGRESS
 D8.0                       = REVIEW-CLOSED
 D8.1                       = REVIEW-READY
 D8.1 Self-review           = PASS (0/0/0)
-D8.1 Independent Review    = PENDING
+D8.1 Independent Review    = RE-REVIEW PENDING
 D8.2                       = NOT STARTED
 D8.3                       = NOT STARTED
 D8.4                       = NOT STARTED
