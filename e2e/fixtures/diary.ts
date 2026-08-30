@@ -4,6 +4,30 @@ import type { BrowserContext, Page } from '@playwright/test'
 type StorageState = Awaited<ReturnType<BrowserContext['storageState']>>
 type PlaywrightApi = typeof import('playwright-core')
 
+type DiaryBootstrapPhase =
+  | 'NAVIGATION_START'
+  | 'NAVIGATION_SETTLED'
+  | 'START'
+  | 'SCOPE_VISIBLE'
+  | 'ACCESS_DIALOG_CHECK'
+  | 'ACCESS_SUBMIT_START'
+  | 'ACCESS_SUBMIT_FINISH'
+  | 'SCOPE_ACTIVATION_START'
+  | 'SCOPE_ACTIVATION_FINISH'
+  | 'ACCESS_READY'
+  | 'WORKSPACE_CHECK'
+  | 'FINISH'
+  | 'STALE'
+  | 'ERROR'
+  | 'TEARDOWN'
+
+interface DiaryBootstrapDiagnosticContext {
+  generation: number
+  targetRoute: string
+  currentGeneration: () => number
+  record: (phase: DiaryBootstrapPhase, detail?: string) => Promise<void>
+}
+
 const DEFAULT_BASE_URL = 'http://127.0.0.1:4174'
 const DIARY_PASSWORD = 'e2e-diary-access-password-strong-123'
 export const DIARY_ACCESS_CAPABILITY_HEADER = 'X-Docus-Diary-Capability'
@@ -148,16 +172,26 @@ async function activateScopeChip(page: Page, chip: ReturnType<Page['locator']>):
   await chip.press('Enter')
 }
 
-async function bootstrapDiaryPage(page: Page, keepDiaryScope: boolean): Promise<void> {
+async function bootstrapDiaryPage(
+  page: Page,
+  keepDiaryScope: boolean,
+  diagnostics: DiaryBootstrapDiagnosticContext,
+): Promise<void> {
+  await diagnostics.record('START')
   const pathname = new URL(page.url()).pathname
-  if (!pathname.startsWith('/vault')) return
+  if (!pathname.startsWith('/vault')) {
+    await diagnostics.record('FINISH', 'non-vault')
+    return
+  }
 
   const diaryChip = page.locator('.scope-chip').filter({ hasText: 'diary' })
   const noteChip = page.locator('.scope-chip').filter({ hasText: 'note' })
   await expect(diaryChip).toBeVisible({ timeout: 15_000 })
+  await diagnostics.record('SCOPE_VISIBLE')
 
   const password = page.locator('#diary-access-password')
   const initialAccessDialogVisible = await password.isVisible().catch(() => false)
+  await diagnostics.record('ACCESS_DIALOG_CHECK', initialAccessDialogVisible ? 'visible' : 'hidden')
 
   // A reload can restore the generic recovery surface at the same time as
   // the persisted Diary scope asks App.vue to request access. Resolve an
@@ -165,7 +199,9 @@ async function bootstrapDiaryPage(page: Page, keepDiaryScope: boolean): Promise<
   // recovery backdrop is present would only retry a blocked click and hide
   // the real unlock path behind a timeout.
   if (initialAccessDialogVisible) {
+    await diagnostics.record('ACCESS_SUBMIT_START', 'initial-dialog')
     await submitDiaryAccess(page)
+    await diagnostics.record('ACCESS_SUBMIT_FINISH', 'initial-dialog')
   }
 
   // On a fresh process the persisted Diary scope can briefly render as active
@@ -186,11 +222,15 @@ async function bootstrapDiaryPage(page: Page, keepDiaryScope: boolean): Promise<
   // Diary scope must not be mistaken for a live capability. Force the real
   // scope transition to invoke App.vue's normal access dialog.
   if (await diaryChip.getAttribute('aria-pressed') === 'true' && !keepDiaryScope) {
+    await diagnostics.record('SCOPE_ACTIVATION_START', 'note')
     await activateScopeChip(page, noteChip)
     await expect(noteChip).toHaveAttribute('aria-pressed', 'true')
+    await diagnostics.record('SCOPE_ACTIVATION_FINISH', 'note')
   }
   if (await diaryChip.getAttribute('aria-pressed') !== 'true') {
+    await diagnostics.record('SCOPE_ACTIVATION_START', 'diary')
     await activateScopeChip(page, diaryChip)
+    await diagnostics.record('SCOPE_ACTIVATION_FINISH', 'diary')
   }
 
   await expect.poll(async () => (
@@ -198,14 +238,26 @@ async function bootstrapDiaryPage(page: Page, keepDiaryScope: boolean): Promise<
       || await password.isVisible().catch(() => false)
   ), { timeout: 15_000 }).toBe(true)
   if (await password.isVisible().catch(() => false)) {
+    await diagnostics.record('ACCESS_SUBMIT_START', 'post-scope-dialog')
     await submitDiaryAccess(page)
+    await diagnostics.record('ACCESS_SUBMIT_FINISH', 'post-scope-dialog')
   }
 
   await expect(diaryChip).toHaveAttribute('aria-pressed', 'true', { timeout: 15_000 })
+  await diagnostics.record('ACCESS_READY')
   if (!keepDiaryScope) {
+    await diagnostics.record('SCOPE_ACTIVATION_START', 'restore-note')
     await activateScopeChip(page, noteChip)
     await expect(noteChip).toHaveAttribute('aria-pressed', 'true')
+    await diagnostics.record('SCOPE_ACTIVATION_FINISH', 'restore-note')
   }
+  await diagnostics.record('WORKSPACE_CHECK')
+  if (diagnostics.generation !== diagnostics.currentGeneration()) {
+    // Attribution only: the first diagnostic pass records stale ownership but
+    // deliberately preserves existing fixture semantics.
+    await diagnostics.record('STALE')
+  }
+  await diagnostics.record('FINISH')
 }
 
 async function logoutBrowserContext(
@@ -281,13 +333,122 @@ export const test = authTest.extend<{}, { diaryConfigReady: void }>({
   // The Diary capability belongs to the page's current JS process. Re-run
   // the supported UI setup/unlock flow after full navigations that replace
   // that process, while preserving the scope the test was already using.
-  page: async ({ page, playwright, baseURL, diaryConfigReady }, use) => {
+  page: async ({ page, playwright, baseURL, diaryConfigReady }, use, testInfo) => {
     void diaryConfigReady
     const origin = resolvedBaseURL(baseURL)
     const originalGoto = page.goto.bind(page)
     const originalReload = page.reload.bind(page)
     const originalGoBack = page.goBack.bind(page)
     const originalGoForward = page.goForward.bind(page)
+    let diaryNavigationGeneration = 0
+    const bootstrapDiagnostics: string[] = []
+    let firstBrowserErrorRecorded = false
+
+    function safePathname(value: string): string {
+      try {
+        return new URL(value, origin).pathname
+      } catch {
+        return '[invalid-url]'
+      }
+    }
+
+    function appendDiagnostic(entry: Record<string, unknown>): void {
+      bootstrapDiagnostics.push(JSON.stringify(entry))
+    }
+
+    async function recordBootstrapPhase(
+      generation: number,
+      targetRoute: string,
+      phase: DiaryBootstrapPhase,
+      detail?: string,
+    ): Promise<void> {
+      const currentGeneration = diaryNavigationGeneration
+      const base = {
+        event: 'diary-bootstrap',
+        generation,
+        currentGeneration,
+        phase,
+        targetRoute,
+        currentRoute: page.isClosed() ? '[page-closed]' : safePathname(page.url()),
+        stale: generation !== currentGeneration,
+        detail: detail ?? '',
+      }
+      if (page.isClosed()) {
+        appendDiagnostic(base)
+        return
+      }
+      try {
+        const snapshot = await page.evaluate(() => ({
+          readyState: document.readyState,
+          scope: Array.from(document.querySelectorAll<HTMLElement>('.scope-chip'))
+            .find((chip) => chip.textContent?.trim() === 'diary')
+            ?.getAttribute('aria-pressed') ?? null,
+          accessDialogVisible: Boolean(document.querySelector('#diary-access-password')),
+          tabPaths: Array.from(document.querySelectorAll<HTMLElement>('[role="tab"][data-tab-id]'))
+            .map((tab) => tab.dataset.tabId ?? ''),
+          selectedTabPath: document.querySelector<HTMLElement>('[role="tab"][data-tab-id][aria-selected="true"]')
+            ?.dataset.tabId ?? null,
+          calendarVisible: (() => {
+            const calendar = document.querySelector<HTMLElement>('[data-testid="diary-calendar"]')
+            if (!calendar) return null
+            return getComputedStyle(calendar).display !== 'none'
+          })(),
+        }))
+        appendDiagnostic({ ...base, ...snapshot })
+      } catch (error) {
+        appendDiagnostic({
+          ...base,
+          snapshotError: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+
+    function beginNavigation(kind: string, targetRoute: string): DiaryBootstrapDiagnosticContext {
+      const generation = ++diaryNavigationGeneration
+      const record = (phase: DiaryBootstrapPhase, detail?: string) => (
+        recordBootstrapPhase(generation, targetRoute, phase, detail)
+      )
+      void record('NAVIGATION_START', kind)
+      return {
+        generation,
+        targetRoute,
+        currentGeneration: () => diaryNavigationGeneration,
+        record,
+      }
+    }
+
+    page.on('response', (response) => {
+      const pathname = safePathname(response.url())
+      if (pathname !== '/api/diary/access/status') return
+      appendDiagnostic({
+        event: 'diary-access-status-response',
+        generation: diaryNavigationGeneration,
+        currentRoute: page.isClosed() ? '[page-closed]' : safePathname(page.url()),
+        status: response.status(),
+      })
+    })
+    page.on('pageerror', (error) => {
+      if (firstBrowserErrorRecorded) return
+      firstBrowserErrorRecorded = true
+      appendDiagnostic({
+        event: 'first-pageerror',
+        generation: diaryNavigationGeneration,
+        currentRoute: page.isClosed() ? '[page-closed]' : safePathname(page.url()),
+        message: error.stack ?? error.message,
+      })
+    })
+    page.on('console', (message) => {
+      if (firstBrowserErrorRecorded || !['error', 'warning'].includes(message.type())) return
+      firstBrowserErrorRecorded = true
+      appendDiagnostic({
+        event: 'first-console-error',
+        generation: diaryNavigationGeneration,
+        currentRoute: page.isClosed() ? '[page-closed]' : safePathname(page.url()),
+        type: message.type(),
+        message: message.text(),
+        location: message.location(),
+      })
+    })
 
     page.goto = async (url, options) => {
       const keepDiaryScope = await currentDiaryScope(page)
@@ -297,33 +458,59 @@ export const test = authTest.extend<{}, { diaryConfigReady: void }>({
       } catch {
         targetPath = new URL(url, origin).pathname
       }
+      const diagnostics = beginNavigation('goto', targetPath)
       const response = await originalGoto(url, options)
-      await bootstrapDiaryPage(page, keepDiaryScope || targetPath.startsWith('/vault/diary/'))
+      await diagnostics.record('NAVIGATION_SETTLED', 'goto')
+      await bootstrapDiaryPage(
+        page,
+        keepDiaryScope || targetPath.startsWith('/vault/diary/'),
+        diagnostics,
+      )
       return response
     }
     page.reload = async (options) => {
       const keepDiaryScope = await currentDiaryScope(page)
+      const diagnostics = beginNavigation('reload', safePathname(page.url()))
       const response = await originalReload(options)
-      await bootstrapDiaryPage(page, keepDiaryScope)
+      await diagnostics.record('NAVIGATION_SETTLED', 'reload')
+      await bootstrapDiaryPage(page, keepDiaryScope, diagnostics)
       return response
     }
     page.goBack = async (options) => {
       const keepDiaryScope = await currentDiaryScope(page)
+      const diagnostics = beginNavigation('goBack', '[browser-back]')
       const response = await originalGoBack(options)
-      await bootstrapDiaryPage(page, keepDiaryScope)
+      await diagnostics.record('NAVIGATION_SETTLED', 'goBack')
+      await bootstrapDiaryPage(page, keepDiaryScope, diagnostics)
       return response
     }
     page.goForward = async (options) => {
       const keepDiaryScope = await currentDiaryScope(page)
+      const diagnostics = beginNavigation('goForward', '[browser-forward]')
       const response = await originalGoForward(options)
-      await bootstrapDiaryPage(page, keepDiaryScope)
+      await diagnostics.record('NAVIGATION_SETTLED', 'goForward')
+      await bootstrapDiaryPage(page, keepDiaryScope, diagnostics)
       return response
     }
 
     try {
       await use(page)
     } finally {
+      const teardownGeneration = ++diaryNavigationGeneration
+      await recordBootstrapPhase(teardownGeneration, safePathname(page.url()), 'TEARDOWN')
       await logoutBrowserContext(playwright, origin, page.context())
+      await testInfo.attach('diary-bootstrap-diagnostics', {
+        body: bootstrapDiagnostics.join('\n'),
+        contentType: 'application/x-ndjson',
+      })
+      if (
+        process.env.DOCUS_DIARY_BOOTSTRAP_DIAGNOSTICS === '1'
+        || testInfo.status !== testInfo.expectedStatus
+      ) {
+        console.error(
+          `DIARY_BOOTSTRAP_DIAG_BEGIN\n${bootstrapDiagnostics.join('\n')}\nDIARY_BOOTSTRAP_DIAG_END`,
+        )
+      }
     }
   },
 })
