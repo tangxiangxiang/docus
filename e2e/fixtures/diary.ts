@@ -1,4 +1,5 @@
 import { test as authTest, expect, type APIRequestContext } from './auth'
+import { sanitizeDiagnosticText } from './sanitize-diagnostic'
 import type { BrowserContext, Page } from '@playwright/test'
 
 type StorageState = Awaited<ReturnType<BrowserContext['storageState']>>
@@ -386,15 +387,8 @@ export const test = authTest.extend<{}, { diaryConfigReady: void }>({
       }
     }
 
-    function sanitizeDiagnosticText(value: string): string {
-      return value
-        .replaceAll(DIARY_PASSWORD, '[REDACTED]')
-        .replace(/Bearer\s+[^\s,;}]+/gi, 'Bearer [REDACTED]')
-        .replace(
-          /(X-Docus-Diary-Capability|Authorization|Cookie)(\s*[:=]\s*)[^\s,;}]+/gi,
-          '$1$2[REDACTED]',
-        )
-        .slice(0, 8_000)
+    function redactDiagnosticText(value: string): string {
+      return sanitizeDiagnosticText(value, DIARY_PASSWORD)
     }
 
     function appendDiagnostic(entry: Record<string, unknown>): void {
@@ -479,7 +473,7 @@ export const test = authTest.extend<{}, { diaryConfigReady: void }>({
         event: 'first-pageerror',
         generation: diaryNavigationGeneration,
         currentRoute: page.isClosed() ? '[page-closed]' : safePathname(page.url()),
-        message: sanitizeDiagnosticText(error.stack ?? error.message),
+        message: redactDiagnosticText(error.stack ?? error.message),
       })
     })
     page.on('console', (message) => {
@@ -490,7 +484,7 @@ export const test = authTest.extend<{}, { diaryConfigReady: void }>({
         generation: diaryNavigationGeneration,
         currentRoute: page.isClosed() ? '[page-closed]' : safePathname(page.url()),
         type: message.type(),
-        message: sanitizeDiagnosticText(message.text()),
+        message: redactDiagnosticText(message.text()),
         location: {
           path: safePathname(message.location().url),
           lineNumber: message.location().lineNumber,
