@@ -272,7 +272,15 @@ export function useEditorTabs(opts: {
     // change independently of the access state.
     if (opts.isDiaryAccessReady && !opts.isDiaryAccessReady()) return
     const paths = [...new Set(deferredDiaryTabs.splice(0))]
-    for (const path of paths) await restoreWorkspaceTab(path)
+    for (const path of paths) {
+      const restored = await restoreWorkspaceTab(path)
+      // A deferred tab can be the document that owns the current route. In
+      // that case restoring the tab must also restore route-led activation;
+      // otherwise the tab appears in the strip but remains unselected while
+      // the router still points at it. Do not activate a deferred tab if the
+      // user has navigated elsewhere while access was being granted.
+      if (restored && routePath.value === path) activePath.value = path
+    }
   }
 
   function clearManagedDiaryWorkspace(): void {
@@ -337,23 +345,27 @@ export function useEditorTabs(opts: {
   let disposed = false
   let stopFileChangeSubscription: (() => void) | null = null
 
-  // Initial load: refresh the tree + posts, then restore any tabs
-  // persisted from the previous session, then handle a deep-link
-  // override if the URL specifies a path. Order matters:
+  // Initial load: capture the route-led intent before any asynchronous
+  // restore work, refresh the tree + posts, then restore any tabs persisted
+  // from the previous session. A document route is the initialization
+  // authority; persisted active state only owns navigation from the bare
+  // /vault home.
+  // Order matters:
+  //   0. Capture routePath before restore can issue a router.replace().
   //   1. refresh() — needed for getPost calls inside restoreOneTab.
   //   2. Restore persisted tabs. Each path is probed via getPost so
   //      a deleted/renamed file silently drops out (and is reported
   //      in one aggregate toast). Restore is capped at TAB_HARD_LIMIT
   //      to match the runtime cap, so we never end up with more tabs
   //      than the UI accepts.
-  //   3. Deep-link override. If the URL points to a different path
-  //      than the restored active, open it (additive — the restored
-  //      tabs stay). If the deep-link points to one of the restored
-  //      tabs, openPost just reactivates it (no duplicate tab).
+  //   3. If a route intent was captured, open it additively (or reactivate
+  //      the restored tab) without first navigating to the persisted active.
+  //      Otherwise restore the persisted active from /vault.
   // The routePath watcher (no `immediate: true`) handles subsequent
   // URL changes; we don't want it to also fire on mount or we'd
   // double-open.
   onMounted(async () => {
+    const initialRoutePath = routePath.value
     window.addEventListener('beforeunload', handleBeforeUnload)
     window.addEventListener('online', handleOnline)
     await refresh()
@@ -371,7 +383,7 @@ export function useEditorTabs(opts: {
         if (disposed) return
         if (!ok) missing.push(p)
       }
-      if (tabs.value.length > 0) {
+      if (!initialRoutePath && tabs.value.length > 0) {
         // Prefer the saved active if it survived restore; otherwise
         // fall back to the first restored tab (left-to-right reading
         // order matches the persisted order).
@@ -388,8 +400,8 @@ export function useEditorTabs(opts: {
       }
     }
 
-    if (routePath.value && routePath.value !== activePath.value) {
-      await openAuthorizedPost(routePath.value)
+    if (initialRoutePath) {
+      await openAuthorizedPost(initialRoutePath)
       if (disposed) return
     }
     // Subscribe to the file-change bus so AI tool writes/deletes/

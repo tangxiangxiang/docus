@@ -156,6 +156,49 @@ function setup(
   })
 }
 
+async function mountWithRouter(
+  overrides: Partial<Parameters<typeof useEditorTabs>[0]> = {},
+  initialPath = '/vault',
+  beforeMount?: (router: ReturnType<typeof makeRouter>) => void,
+): Promise<{ harness: Harness; router: ReturnType<typeof makeRouter> }> {
+  let captured: Harness | null = null
+  const router = makeRouter()
+  await router.push(initialPath)
+  await router.isReady()
+  beforeMount?.(router)
+  const Comp = defineComponent({
+    setup() {
+      const selectPanel = vi.fn()
+      const toggleViewMode = vi.fn()
+      const fileChanges = createVaultFileChanges()
+      const api = useEditorTabs({
+        vaultId: 'test-vault',
+        selectPanel,
+        toggleViewMode,
+        fileChanges,
+        ...overrides,
+      })
+      captured = {
+        ...(api as unknown as Omit<Harness, 'selectPanel' | 'toggleViewMode' | 'fileChanges' | 'unmount'>),
+        selectPanel,
+        toggleViewMode,
+        fileChanges,
+        unmount: () => {},
+      }
+      return () => h('div')
+    },
+  })
+  const wrapper = mount(Comp, { global: { plugins: [router] } })
+  mountedWrappers.add(wrapper)
+  captured!.unmount = () => {
+    if (!mountedWrappers.delete(wrapper)) return
+    wrapper.unmount()
+  }
+  await nextTick()
+  await flushPromises()
+  return { harness: captured!, router }
+}
+
 function stubFetch(handlers: Record<string, (body?: unknown) => unknown | Promise<unknown>>) {
   return vi.fn(async (url: string, init?: RequestInit) => {
     const method = init?.method ?? 'GET'
@@ -2040,6 +2083,99 @@ describe('useEditorTabs — tab persistence', () => {
     expect(harness.tabs.value.map((t) => t.path).sort()).toEqual(['a', 'b', 'c'])
     // Deep-link wins for active.
     expect(harness.activePath.value).toBe('c')
+  })
+
+  it('does not navigate to a persisted active tab before an ordinary deep link wins', async () => {
+    stubFetchForPaths({ 'inbox/a': 'A', 'inbox/b': 'B' })
+    localStorage.setItem(PERSIST_KEY, JSON.stringify({
+      v: 1,
+      paths: ['inbox/a', 'inbox/b'],
+      active: 'inbox/a',
+    }))
+
+    const replacements: string[] = []
+    const { harness, router } = await mountWithRouter({}, '/vault/inbox/b', (router) => {
+      const originalReplace = router.replace.bind(router)
+      vi.spyOn(router, 'replace').mockImplementation((to) => {
+        replacements.push(typeof to === 'string' ? to : router.resolve(to).fullPath)
+        return originalReplace(to)
+      })
+    })
+    expect(harness.activePath.value).toBe('inbox/b')
+    expect(router.currentRoute.value.path).toBe('/vault/inbox/b')
+    expect(replacements).not.toContain('/vault/inbox/a')
+  })
+
+  it('keeps a locked Diary deep link authoritative while persisted Note tabs restore', async () => {
+    stubFetchForPaths({
+      'inbox/fallback': 'fallback',
+      'diary/2026-08-30': 'secret',
+    })
+    localStorage.setItem(PERSIST_KEY, JSON.stringify({
+      v: 1,
+      paths: ['inbox/fallback', 'diary/2026-08-30'],
+      active: 'diary/2026-08-30',
+    }))
+
+    let accessReady = false
+    const authorizeDocumentPath = vi.fn(async () => false)
+    const { harness, router } = await mountWithRouter({
+      isDiaryAccessReady: () => accessReady,
+      authorizeDocumentPath,
+    }, '/vault/diary/2026-08-30')
+
+    expect(router.currentRoute.value.path).toBe('/vault/diary/2026-08-30')
+    expect(router.currentRoute.value.path).not.toBe('/vault/inbox/fallback')
+    expect(harness.activePath.value).toBeNull()
+    expect(harness.tabs.value.map((tab) => tab.path)).toEqual(['inbox/fallback'])
+    expect(authorizeDocumentPath).toHaveBeenCalledWith('diary/2026-08-30')
+
+    accessReady = true
+    await harness.resumeDeferredDiaryTabs()
+    await flushPromises()
+
+    expect(harness.tabs.value.map((tab) => tab.path)).toEqual([
+      'inbox/fallback',
+      'diary/2026-08-30',
+    ])
+    expect(harness.activePath.value).toBe('diary/2026-08-30')
+    expect(router.currentRoute.value.path).toBe('/vault/diary/2026-08-30')
+  })
+
+  it('restores the persisted active tab only when the initial route is the Vault home', async () => {
+    stubFetchForPaths({ 'inbox/saved': 'saved' })
+    localStorage.setItem(PERSIST_KEY, JSON.stringify({
+      v: 1,
+      paths: ['inbox/saved'],
+      active: 'inbox/saved',
+    }))
+
+    const { harness, router } = await mountWithRouter({}, '/vault')
+
+    expect(harness.activePath.value).toBe('inbox/saved')
+    expect(router.currentRoute.value.path).toBe('/vault/inbox/saved')
+  })
+
+  it('does not fall back to a persisted Note when a locked Diary deep link is cancelled', async () => {
+    stubFetchForPaths({ 'inbox/fallback': 'fallback' })
+    localStorage.setItem(PERSIST_KEY, JSON.stringify({
+      v: 1,
+      paths: ['inbox/fallback', 'diary/2026-08-30'],
+      active: 'diary/2026-08-30',
+    }))
+
+    const authorizeDocumentPath = vi.fn(async () => false)
+    const { harness, router } = await mountWithRouter({
+      isDiaryAccessReady: () => false,
+      authorizeDocumentPath,
+    }, '/vault/diary/2026-08-30')
+
+    expect(authorizeDocumentPath).toHaveBeenCalledWith('diary/2026-08-30')
+    expect(router.currentRoute.value.path).toBe('/vault/diary/2026-08-30')
+    expect(harness.activePath.value).toBeNull()
+    expect(harness.tabs.value.map((tab) => tab.path)).toEqual(['inbox/fallback'])
+    await harness.resumeDeferredDiaryTabs()
+    expect(harness.tabs.value.map((tab) => tab.path)).toEqual(['inbox/fallback'])
   })
 
   it('does nothing on mount when localStorage is empty', async () => {
