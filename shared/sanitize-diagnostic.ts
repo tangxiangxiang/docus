@@ -1,8 +1,8 @@
 /**
- * Diagnostic text sanitizer used by `e2e/fixtures/diary.ts` before
- * persisting browser console output or page errors as Playwright
- * attachments. Kept dependency-free so it can be unit-tested without
- * standing up the Playwright fixture.
+ * Diagnostic text sanitizer used by E2E fixtures before persisting browser
+ * console output or page errors as Playwright attachments. Kept dependency-
+ * free so it can be used from both production-safe source boundaries and
+ * unit-tested without standing up the Playwright fixture.
  *
  * Three classes of leakage the sanitizer must cover, motivated by what
  * the fixture has actually observed in browser console output:

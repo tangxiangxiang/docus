@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { sanitizeDiagnosticText } from '../../e2e/fixtures/sanitize-diagnostic'
+import { sanitizeDiagnosticText } from '../../shared/sanitize-diagnostic'
 
 const PASSWORD_LITERAL = 'e2e-diary-access-password-strong-123'
 

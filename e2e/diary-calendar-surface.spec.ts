@@ -114,7 +114,10 @@ async function moveCalendarToMonth(page: Page, date: string): Promise<void> {
   const targetMonth = date.slice(0, 7)
   for (let attempt = 0; attempt < 24; attempt += 1) {
     const currentMonth = await calendar.getAttribute('data-month')
-    if (currentMonth === targetMonth) return
+    if (currentMonth === targetMonth) {
+      await expect(calendar.locator(`[data-diary-day-content][data-date="${date}"]`)).toHaveCount(1)
+      return
+    }
     if (!currentMonth) throw new Error('Calendar did not expose its current month')
     await page.getByTestId(currentMonth < targetMonth ? 'diary-calendar-next' : 'diary-calendar-previous').click()
   }
@@ -312,6 +315,7 @@ test('Calendar click on a missing future Diary is a browser-visible no-op', asyn
     await expect(surface).toBeVisible()
     const routeBefore = new URL(page.url()).pathname
     const tabsBefore = await page.locator('.tabs').count()
+    await moveCalendarToMonth(page, future)
     const dateButton = surface.locator(`[data-diary-day-content][data-date="${future}"]`)
     await expect(dateButton).toBeVisible()
     const probeResponse = page.waitForResponse((response) => {

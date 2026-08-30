@@ -1,5 +1,5 @@
 import { test as authTest, expect, type APIRequestContext } from './auth'
-import { sanitizeDiagnosticText } from './sanitize-diagnostic'
+import { sanitizeDiagnosticText } from '../../shared/sanitize-diagnostic'
 import type { BrowserContext, Page } from '@playwright/test'
 
 type StorageState = Awaited<ReturnType<BrowserContext['storageState']>>

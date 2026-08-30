@@ -108,7 +108,10 @@ async function moveCalendarToMonth(page: Page, date: string): Promise<void> {
   const calendar = page.getByTestId('diary-calendar')
   for (let attempt = 0; attempt < 24; attempt += 1) {
     const currentMonth = await calendar.getAttribute('data-month')
-    if (currentMonth === targetMonth) return
+    if (currentMonth === targetMonth) {
+      await expect(calendar.locator(`[data-diary-day-content][data-date="${date}"]`)).toHaveCount(1)
+      return
+    }
     if (!currentMonth) throw new Error('Calendar did not expose its current month')
     await page.getByTestId(currentMonth < targetMonth ? 'diary-calendar-next' : 'diary-calendar-previous').click()
   }
@@ -408,6 +411,7 @@ async function runResponsiveMatrix(page: Page, date: string): Promise<void> {
     await expect(calendar).not.toHaveAttribute('data-month', monthBefore ?? '')
     await page.getByTestId('diary-calendar-previous').click()
     await expect(calendar).toHaveAttribute('data-month', monthBefore ?? '')
+    await expect(moodButton()).toHaveCount(1)
 
     await moodButton().click()
     const picker = page.getByTestId('diary-mood-picker')

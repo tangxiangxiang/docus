@@ -403,6 +403,11 @@ onMounted(() => {
     unicodeHighlight: { ambiguousCharacters: false },
     quickSuggestions: { other: true, comments: false, strings: false },
     suggestOnTriggerCharacters: true,
+    // Monaco's built-in occurrence highlighter schedules a cancellable
+    // promise on focus. Disposing the editor during a view-mode switch can
+    // reject that promise as an unhandled CancellationError; Docus already
+    // owns its Markdown decorations and does not use occurrence highlights.
+    occurrencesHighlight: 'off',
   })
   rememberLinkCommand = editor.addCommand(0, (_context, path: string) => recordRecentLink(path))
   const saved = readViewState()
