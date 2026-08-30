@@ -125,3 +125,50 @@ test('a page-session lock does not invalidate a separate Diary API session', asy
   await page.goto('/vault')
   await openDiaryScope(page)
 })
+
+test('full Diary navigation waits for route-led workspace hydration', async ({ page, request }) => {
+  const date = '2026-08-30'
+  const path = `diary/${date}`
+  const existing = await request.get(`/api/posts/${path}`)
+  let created = false
+  if (existing.status() === 404) {
+    const response = await request.post('/api/diary/dates', {
+      data: { date, timeZone: 'Asia/Shanghai' },
+    })
+    expect(response.status(), await response.text()).toBe(201)
+    created = true
+  } else {
+    expect(existing.status(), await existing.text()).toBe(200)
+  }
+
+  const hydrationApi = '**/api/tree'
+  let releaseHydration!: () => void
+  const hydrationGate = new Promise<void>((resolve) => { releaseHydration = resolve })
+  let hydrationBlocked!: () => void
+  const hydrationWasBlocked = new Promise<void>((resolve) => { hydrationBlocked = resolve })
+  await page.route(hydrationApi, async (route) => {
+    hydrationBlocked()
+    await hydrationGate
+    await route.continue()
+  })
+
+  const navigation = page.goto(`/vault/${path}`)
+  try {
+    // Initial workspace hydration owns route-led tab creation. Hold that
+    // exact request without sleeping, then verify the wrapped navigation does
+    // not resolve until production has naturally selected the target tab.
+    await hydrationWasBlocked
+    releaseHydration()
+    await navigation
+    expect(await page.locator(`[role="tab"][data-tab-id="${path}"]`)
+      .getAttribute('aria-selected')).toBe('true')
+  } finally {
+    releaseHydration()
+    await navigation
+    await page.unroute(hydrationApi)
+    if (created) {
+      await page.locator(`[role="tab"][data-tab-id="${path}"] .tab-close`).click()
+      await request.delete(`/api/posts/${path}`)
+    }
+  }
+})

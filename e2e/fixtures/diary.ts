@@ -172,6 +172,39 @@ async function activateScopeChip(page: Page, chip: ReturnType<Page['locator']>):
   await chip.press('Enter')
 }
 
+function waitForDiaryAccessStatus(page: Page): Promise<unknown> {
+  return page.waitForResponse(
+    (response) => response.request().method() === 'GET'
+      && new URL(response.url()).pathname === '/api/diary/access/status',
+    { timeout: 15_000 },
+  )
+}
+
+function managedDiaryPathFromVaultRoute(pathname: string): string | null {
+  const prefix = '/vault/diary/'
+  if (!pathname.startsWith(prefix)) return null
+  const encodedPath = pathname.slice('/vault/'.length)
+  try {
+    const path = decodeURIComponent(encodedPath)
+    return /^diary\/\d{4}-\d{2}-\d{2}$/.test(path) ? path : null
+  } catch {
+    return null
+  }
+}
+
+async function waitForDiaryWorkspaceRoute(
+  page: Page,
+  diagnostics: DiaryBootstrapDiagnosticContext,
+): Promise<void> {
+  const pathname = new URL(page.url()).pathname
+  const path = managedDiaryPathFromVaultRoute(pathname)
+  if (!path) return
+  const tab = page.locator(`[role="tab"][data-tab-id="${path}"]`)
+  await expect(tab).toHaveCount(1)
+  await expect(tab).toHaveAttribute('aria-selected', 'true')
+  await diagnostics.record('WORKSPACE_CHECK', 'managed-route-ready')
+}
+
 async function bootstrapDiaryPage(
   page: Page,
   keepDiaryScope: boolean,
@@ -251,6 +284,7 @@ async function bootstrapDiaryPage(
     await expect(noteChip).toHaveAttribute('aria-pressed', 'true')
     await diagnostics.record('SCOPE_ACTIVATION_FINISH', 'restore-note')
   }
+  await waitForDiaryWorkspaceRoute(page, diagnostics)
   await diagnostics.record('WORKSPACE_CHECK')
   if (diagnostics.generation !== diagnostics.currentGeneration()) {
     // Attribution only: the first diagnostic pass records stale ownership but
@@ -459,8 +493,12 @@ export const test = authTest.extend<{}, { diaryConfigReady: void }>({
         targetPath = new URL(url, origin).pathname
       }
       const diagnostics = beginNavigation('goto', targetPath)
+      const accessStatus = managedDiaryPathFromVaultRoute(targetPath)
+        ? waitForDiaryAccessStatus(page)
+        : null
       const response = await originalGoto(url, options)
       await diagnostics.record('NAVIGATION_SETTLED', 'goto')
+      if (accessStatus) await accessStatus
       await bootstrapDiaryPage(
         page,
         keepDiaryScope || targetPath.startsWith('/vault/diary/'),
@@ -470,9 +508,14 @@ export const test = authTest.extend<{}, { diaryConfigReady: void }>({
     }
     page.reload = async (options) => {
       const keepDiaryScope = await currentDiaryScope(page)
-      const diagnostics = beginNavigation('reload', safePathname(page.url()))
+      const targetPath = safePathname(page.url())
+      const diagnostics = beginNavigation('reload', targetPath)
+      const accessStatus = managedDiaryPathFromVaultRoute(targetPath)
+        ? waitForDiaryAccessStatus(page)
+        : null
       const response = await originalReload(options)
       await diagnostics.record('NAVIGATION_SETTLED', 'reload')
+      if (accessStatus) await accessStatus
       await bootstrapDiaryPage(page, keepDiaryScope, diagnostics)
       return response
     }
