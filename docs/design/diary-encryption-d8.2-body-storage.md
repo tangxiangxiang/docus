@@ -271,6 +271,68 @@ active Diary access failure. No production server guard, capability storage
 rule, D8.2 quiescence boundary, Diary body owner, Calendar lifecycle, or
 ordinary Note behavior was bypassed.
 
+## Final exact-head route and tab hydration remediation
+
+The post-remediation full-unit regression was first isolated by A/B comparison
+of the same two `useEditorTabs.test.ts` cases and the full unit suite. The
+unmodified test file was not treated as proof of a pre-existing failure:
+
+```text
+00df5583  reviewed baseline
+69ef0a8   auth-session capability-routing remediation
+32c7419   evidence-only checkpoint
+e2208578  auth request-boundary timing remediation
+```
+
+The A/B result attributed the unit regression to the `auth-session.ts` change
+in `69ef0a8`, relative to `00df5583`; `e2208578` resolved that unit regression.
+The later browser failure was not attributed to `e2208578` merely because it
+was the first commit that allowed the browser phase to run. Its symptom was
+isolated separately with the temporary, behavior-preserving history
+instrumentation in `50dd20a`: the browser Forward entry remained available,
+while initial canonical route hydration raced persisted active-tab restoration.
+
+The final route/tab remediation is `4d916ea01ee38bce91cbb7a0b9ed5f7d1b49dced`
+(`fix(diary): preserve initial route during tab hydration`), whose parent is
+the diagnostic commit `50dd20a`. It changes only
+`src/composables/vault/useEditorTabs.ts` and its tests. The initial non-home
+route is now the initialization authority; persisted state restores the tab
+collection, and its persisted active tab is only selected automatically when
+the initial route is the bare Vault home. A deferred locked-Diary route is
+reactivated only if that same route is still current after access resolves.
+This preserves route, tab, and access-session ownership without adding a new
+router or workspace owner.
+
+The final local validation at this exact head was:
+
+```text
+useEditorTabs deterministic route-hydration cases: 100/100 = PASS
+Diary lifecycle regression target: 1/1 = PASS
+Diary lifecycle regression spec: 7/7 = PASS
+Full unit: 241 files / 3575 passed / 9 skipped = PASS
+Client + server typecheck: PASS
+Production build: PASS
+git diff --check: PASS
+```
+
+The exact-head GitHub validation is:
+
+```text
+CI #579
+Run ID: 33295460868
+Attempt: 2
+HEAD: 4d916ea01ee38bce91cbb7a0b9ed5f7d1b49dced
+Status: completed
+Conclusion: success
+Required jobs: 8/8 = PASS
+```
+
+The eight successful jobs are Ubuntu Node 22, Ubuntu Node 24, macOS Node 24,
+Windows Node 24, `auth-browser`, `visual`, `tags-scale`, and `docker-smoke`.
+This exact-head result validates both the earlier unit regression resolution
+and the later browser route/tab lifecycle remediation. It does not by itself
+close D8.2 or replace the pending Independent Re-review.
+
 ## Current access-boundary remediation evidence
 
 This section is the current remediation record on implementation commit
@@ -381,6 +443,7 @@ D8.2-IR-P2-3  lineage/count/evidence drift                            REMEDIATED
 
 D8.2 Self-review                 = PASS (0/0/0)
 D8.2 Independent Re-review       = RE-REVIEW PENDING
+D8.2 route/tab remediation        = COMPLETE; exact-head CI validated
 D8.2 closure                     = NOT STARTED
 D8.3                           = NOT STARTED
 D8.4                           = NOT STARTED
@@ -399,6 +462,7 @@ D8.2 Independent Review    = RE-REVIEW PENDING
 D8.2 earlier checkpoint    = P0: 0, P1: 1, P2: 3
 D8.2 consolidated prior IR = P0: 0, P1: 2, P2: 3; CHANGES REQUIRED
 D8.2 remediation           = COMPLETE; re-review pending
+D8.2 exact-head CI         = #579 PASS (8/8 jobs)
 D8.2 closure               = NOT STARTED
 ```
 
