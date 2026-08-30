@@ -98,10 +98,15 @@ export function useDiaryDateCommand(options: DiaryDateCommandOptions) {
 
   async function run(date: DiaryDate, openDocument: boolean): Promise<DiaryDateEnsureResult> {
     const path = diaryLogicalPathForDate(date)
-    const release = options.mutationLock?.acquire(toMutationPaths([path])) ?? null
+    let release = options.mutationLock?.acquire(toMutationPaths([path])) ?? null
     if (options.mutationLock && !release) {
       options.onBusy?.(date)
       return { status: 'busy', date, path }
+    }
+
+    function releaseMutationLock(): void {
+      release?.()
+      release = null
     }
 
     try {
@@ -116,6 +121,11 @@ export function useDiaryDateCommand(options: DiaryDateCommandOptions) {
 
       if (!missing) {
         try {
+          // The lock owns exact-path resolution/create synchronization, not
+          // ordinary Vault presentation. Release it before openPost so a
+          // visible native document can be closed immediately instead of a
+          // concurrent close being rejected as busy after the reader mounts.
+          releaseMutationLock()
           if (openDocument) await options.openPost(path)
           return { status: 'existing', date, path }
         } catch (error) {
@@ -147,6 +157,7 @@ export function useDiaryDateCommand(options: DiaryDateCommandOptions) {
           try {
             const post = await options.getPost(path)
             if (post.path !== path) return fail(new Error('Diary conflict resolved to a non-canonical path'), date, path)
+            releaseMutationLock()
             if (openDocument) await options.openPost(path)
             return { status: 'existing', date, path }
           } catch (readError) {
@@ -176,6 +187,7 @@ export function useDiaryDateCommand(options: DiaryDateCommandOptions) {
         options.onRefreshError?.(asError(error))
       }
 
+      releaseMutationLock()
       if (openDocument) {
         try {
           await options.openPost(path, { refresh: false })
@@ -185,7 +197,7 @@ export function useDiaryDateCommand(options: DiaryDateCommandOptions) {
       }
       return { status: result.created ? 'created' : 'existing', date, path }
     } finally {
-      release?.()
+      releaseMutationLock()
     }
   }
 

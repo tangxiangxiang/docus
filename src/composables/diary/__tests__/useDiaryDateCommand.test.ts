@@ -34,8 +34,10 @@ function harness(options: {
   existing?: string[]
   getPost?: DiaryDateCommandOptions['getPost']
   createDiaryDate?: DiaryDateCommandOptions['createDiaryDate']
+  openPost?: DiaryDateCommandOptions['openPost']
   refresh?: () => Promise<void>
   getToday?: () => DiaryDate | null
+  mutationLock?: DiaryDateCommandOptions['mutationLock']
 } = {}) {
   const existing = new Set(options.existing ?? [])
   const getPost = options.getPost ?? vi.fn(async (path: string) => {
@@ -50,7 +52,8 @@ function harness(options: {
     existing.add(path)
     return createResult({ date: input.date, path, created: true })
   })
-  const openPost = vi.fn(async (_path: string, _options?: { refresh?: boolean }) => {})
+  const openPost = vi.fn(options.openPost
+    ?? (async (_path: string, _options?: { refresh?: boolean }) => {}))
   const refresh = options.refresh ?? vi.fn(async () => {})
   const publish = vi.fn()
   const onFuture = vi.fn()
@@ -63,6 +66,7 @@ function harness(options: {
     openPost,
     refresh,
     fileChanges: { publish } as Pick<VaultFileChanges, 'publish'>,
+    mutationLock: options.mutationLock,
     getToday: options.getToday ?? (() => date('2026-08-24')),
     getTimeZone: () => 'Asia/Shanghai',
     onFuture,
@@ -96,6 +100,32 @@ describe('useDiaryDateCommand', () => {
     expect(state.createDiaryDate).not.toHaveBeenCalled()
     expect(state.openPost).toHaveBeenCalledWith(path)
     expect(state.publish).not.toHaveBeenCalled()
+  })
+
+  it('releases the path mutation lock before adopting native Vault presentation', async () => {
+    const path = 'diary/2026-08-24'
+    let pathLocked = false
+    const release = vi.fn(() => { pathLocked = false })
+    const acquire = vi.fn(() => {
+      pathLocked = true
+      return release
+    })
+    const openPost = vi.fn(async () => {
+      expect(pathLocked).toBe(false)
+    })
+    const state = harness({
+      existing: [path],
+      openPost,
+      mutationLock: { acquire },
+    })
+
+    await expect(state.openDiaryDate('2026-08-24')).resolves.toMatchObject({
+      status: 'opened',
+      path,
+    })
+    expect(acquire).toHaveBeenCalledWith([`${path}.md`])
+    expect(release).toHaveBeenCalledTimes(1)
+    expect(openPost).toHaveBeenCalledWith(path)
   })
 
   it('creates a missing today date through the D2 command, refreshes, then opens it', async () => {
