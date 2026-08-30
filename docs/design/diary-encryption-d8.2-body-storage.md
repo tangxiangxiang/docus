@@ -14,7 +14,7 @@ D8.0              = REVIEW-CLOSED
 D8.1              = REVIEW-CLOSED
 D8.2              = REVIEW-READY
 D8.2 Self-review  = PASS (0/0/0)
-D8.2 Independent Review = RE-REVIEW PENDING
+D8.2 Independent Review = PASS (0/0/0)
 D8.3              = NOT STARTED
 D8.4              = NOT STARTED
 D8 Mood encryption = OUT OF SCOPE
@@ -155,10 +155,10 @@ bc33c60  fix(diary): unify D8.2 body quiescence
 69ef0a8  fix(diary): close D8.2 access lifecycle gaps
 ```
 
-The evidence sync after this remediation remains review-ready rather than a
-closure record. It retains the consolidated Independent Review `CHANGES
-REQUIRED` history for P1-1, P1-2, P2-1, P2-2 and P2-3; this remediation records
-those findings as addressed and leaves the independent re-review pending.
+At that remediation checkpoint, the evidence sync remained review-ready rather
+than a closure record. It retains the consolidated Independent Review `CHANGES
+REQUIRED` history for P1-1, P1-2, P2-1, P2-2 and P2-3; the final independent
+re-review is recorded below.
 
 ## Historical remediation validation
 
@@ -330,10 +330,75 @@ Required jobs: 8/8 = PASS
 The eight successful jobs are Ubuntu Node 22, Ubuntu Node 24, macOS Node 24,
 Windows Node 24, `auth-browser`, `visual`, `tags-scale`, and `docker-smoke`.
 This exact-head result validates both the earlier unit regression resolution
-and the later browser route/tab lifecycle remediation. It does not by itself
-close D8.2 or replace the pending Independent Re-review.
+and the later browser route/tab lifecycle remediation. At this implementation
+checkpoint it did not by itself close D8.2 or replace the then-pending
+Independent Re-review; the final review result is recorded below.
 
-## Current access-boundary remediation evidence
+## Final Independent Re-review and evidence sync
+
+The final read-only Independent Re-review covered the five consolidated D8.2
+findings, the later unit regression, and the route/tab hydration remediation.
+No residual security, lifecycle, ownership, or evidence-provenance finding was
+identified:
+
+```text
+D8.2-IR-P1-1  ambient capability injection + Diary trace artifact  CLOSED
+D8.2-IR-P1-2  unlock issuance resurrection across lifecycle fences  CLOSED
+D8.2-IR-P2-1  fresh bootstrap confused with real access loss        CLOSED
+D8.2-IR-P2-2  worker fixture session teardown                         CLOSED
+D8.2-IR-P2-3  lineage/count/evidence drift                            CLOSED
+
+D8.2 implementation            = COMPLETE
+D8.2 remediation               = COMPLETE
+D8.2 Independent Re-review     = PASS (0/0/0)
+D8.2 closure                   = NOT CREATED
+D8.3                          = NOT STARTED
+D8.4                          = NOT STARTED
+```
+
+The capability boundary remains explicit: ordinary `authFetch` never reads or
+forwards the in-memory Diary capability, while `diaryAuthFetch` and the
+path-aware wrappers are the controlled operation-owned seams. Browser storage,
+URLs, logs, and Playwright traces remain capability-free. Server issuance,
+replacement, expiry, logout, and lock transitions retain the synchronous
+generation fence and per-session body-lease quiescence. The route/tab fix keeps
+an initial document route authoritative over persisted active-tab state and
+does not create a second router or workspace owner.
+
+Independent-review local validation was:
+
+```text
+Focused D8.2-related tests: 11 files / 392 passed = PASS
+History metadata characterization: 27 passed / 7 intentional skips = PASS
+git diff --check: PASS
+```
+
+The seven History metadata skips are the intentionally superseded managed-Diary
+History revision cases that D8.2 rejects fail-closed; they are not claimed as
+passing encrypted History support. The later full-unit and Diary browser
+records retain their explicit skip accounting, and the historical 69ef0a8 unit
+failures are superseded by the later `e2208578` and `4d916ea` validation.
+
+Implementation exact-head provenance:
+
+```text
+HEAD: 4d916ea01ee38bce91cbb7a0b9ed5f7d1b49dced
+CI #579 / Run 33295460868 / Attempt 2 = PASS (8/8 jobs)
+```
+
+Final evidence-head provenance:
+
+```text
+HEAD: 259f71c4cfbd59296246040a05591f9427818e56
+CI #580 / Run 33299382665 / Attempt 2 = PASS (8/8 jobs)
+```
+
+The evidence-head CI is a docs-only exact-head validation; it does not add
+production or test changes. D8.2 is ready for a separate docs-only closure
+commit, but this evidence sync does not create that closure and does not start
+D8.3 or D8.4.
+
+## Access-boundary remediation checkpoint
 
 This section is the current remediation record on implementation commit
 `69ef0a8033165c9d8ab43e5acc8034269cb24a2f`, whose parent is the reviewed
@@ -442,7 +507,7 @@ D8.2-IR-P2-2  worker fixture session teardown                         REMEDIATED
 D8.2-IR-P2-3  lineage/count/evidence drift                            REMEDIATED
 
 D8.2 Self-review                 = PASS (0/0/0)
-D8.2 Independent Re-review       = RE-REVIEW PENDING
+D8.2 Independent Re-review       = PASS (0/0/0)
 D8.2 route/tab remediation        = COMPLETE; exact-head CI validated
 D8.2 closure                     = NOT STARTED
 D8.3                           = NOT STARTED
@@ -450,24 +515,23 @@ D8.4                           = NOT STARTED
 D8 Mood encryption              = OUT OF SCOPE
 ```
 
-This remediation record is review-ready evidence only. It does not claim
-Independent Review PASS, does not create a D8.2 closure record, and does not
-start D8.3 or D8.4.
+This remediation record is the implementation checkpoint; the final
+Independent Re-review and exact-head evidence sync are recorded above. It does
+not create a D8.2 closure record and does not start D8.3 or D8.4.
 
 ## Review record
 
 ```text
 D8.2 Self-review P0/P1/P2 = 0/0/0
-D8.2 Independent Review    = RE-REVIEW PENDING
+D8.2 Independent Review    = PASS (0/0/0)
 D8.2 earlier checkpoint    = P0: 0, P1: 1, P2: 3
 D8.2 consolidated prior IR = P0: 0, P1: 2, P2: 3; CHANGES REQUIRED
-D8.2 remediation           = COMPLETE; re-review pending
+D8.2 remediation           = COMPLETE; independent re-review PASS
 D8.2 exact-head CI         = #579 PASS (8/8 jobs)
-D8.2 closure               = NOT STARTED
+D8.2 evidence-head CI      = #580 PASS (8/8 jobs)
+D8.2 closure               = NOT CREATED
 ```
 
-This is a review-ready evidence record, not a closure record. The next
-independent review must verify that primary files and atomic temp/staging paths
-contain no requested Diary plaintext, that CAS compares decrypted plaintext
-while committing ciphertext, that lock waits for active body leases, and that
-ordinary Note semantics remain unchanged.
+This is a review-passed evidence record, not a closure record. A separate
+docs-only closure must preserve the verified security and lifecycle boundaries;
+it must not start D8.3 or D8.4.
