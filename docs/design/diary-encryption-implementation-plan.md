@@ -1,6 +1,6 @@
 # D8 — Diary Encryption Implementation Plan
 
-状态：`D8.0 REVIEW-CLOSED`；`D8.0 Self-review = PASS (P0/P1/P2 = 0/0/0)`；`D8.0 Independent Review = PASS (P0/P1/P2 = 0/0/0)`；`D8.1 REVIEW-CLOSED`；`D8.1 Independent Review = PASS (P0/P1/P2 = 0/0/0)`；`D8.2 REVIEW-CLOSED`；`D8.2 Self-review = PASS (P0/P1/P2 = 0/0/0)`；`D8.2 Independent Review = PASS (P0/P1/P2 = 0/0/0)`。
+状态：`D8.0 REVIEW-CLOSED`；`D8.0 Self-review = PASS (P0/P1/P2 = 0/0/0)`；`D8.0 Independent Review = PASS (P0/P1/P2 = 0/0/0)`；`D8.1 REVIEW-CLOSED`；`D8.1 Independent Review = PASS (P0/P1/P2 = 0/0/0)`；`D8.2 REVIEW-CLOSED`；`D8.2 Self-review = PASS (P0/P1/P2 = 0/0/0)`；`D8.2 Independent Review = PASS (P0/P1/P2 = 0/0/0)`；`D8.3 REVIEW-CLOSED`；`D8.4 Planning = REVIEW-READY`；`D8.4 Planning Independent Review = PENDING`；`D8.4 implementation = NOT STARTED`。
 
 基线：`1fb1389cab053d5ff72630253f509f0170e588c2`（`docs(diary): close D7 mood implementation`）。D7.0A、D7.0、D7.1、D7.2、D7.3、D7.4、D7.5、D7.6 均保持 `REVIEW-CLOSED`。D8 只从 Diary 加密边界开始，不重开 D7，也不创建独立 Private Vault。
 
@@ -288,7 +288,10 @@ D8.3 Independent Re-review = PASS (0/0/0)
 D8.3-IR-P1-1 = CLOSED
 D8.3-IR-P1-2 = CLOSED
 D8.3             = REVIEW-CLOSED
-D8.4             = NOT STARTED
+D8.4 Planning    = REVIEW-READY
+D8.4 Planning Independent Review = PENDING
+D8.4 implementation = NOT STARTED
+D8.4             = NOT REVIEW-CLOSED
 ```
 
 The canonical D8.3 entry point is now the final closure record below. The
@@ -350,3 +353,21 @@ and release/migration closure remain D8.4 scope. Intentional D8.3 feature
 degradations remain in force, including managed generic History, persistent
 Draft/Recovery, body search, body-derived LinkIndex projections, managed
 rename/move, managed generic delete, and managed body AI surfaces.
+
+## 15. D8.4 planning entry point
+
+The D8.4 Planning PRD and Implementation Plan are the current entry point for
+the final planned phase. They are docs-only planning artifacts at the exact
+closure baseline `c88e99554c291181c6e3f17e695aa228f34d40b2` and do not imply
+Planning approval or implementation:
+
+```text
+D8.4 Planning = REVIEW-READY
+D8.4 Planning Independent Review = PENDING
+D8.4 implementation = NOT STARTED
+D8.4 = NOT REVIEW-CLOSED
+```
+
+See [D8.4 Migration, Legacy Cleanup & Release Closure PRD](./diary-encryption-d8.4-migration-release-prd.md)
+and [D8.4 Implementation Plan](./diary-encryption-d8.4-implementation-plan.md).
+The next authorized action is a separate D8.4 Independent Planning Review.
