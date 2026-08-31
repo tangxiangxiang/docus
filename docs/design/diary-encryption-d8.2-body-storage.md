@@ -549,3 +549,8 @@ D8.2 closure               = REVIEW-CLOSED
 This is the review-passed D8.2 closure record. The closure is docs-only and
 preserves the verified security and lifecycle boundaries; it does not start
 D8.3 or D8.4.
+
+The canonical D8.3 entry point is this D8.2 `REVIEW-CLOSED` boundary. D8.3
+remains `NOT STARTED`; its implementation and evidence must begin in a later
+phase record against the D8.3 scope and exit gate in the main Implementation
+Plan. This sync adds no D8.3 or D8.4 implementation.
