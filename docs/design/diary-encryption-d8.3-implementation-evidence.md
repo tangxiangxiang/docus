@@ -1,9 +1,11 @@
 # D8.3 — Privacy Enforcement Implementation Evidence
 
-Status: `IMPLEMENTING`; implementation is complete locally and exact-head CI is pending.
+Status: `REVIEW-READY`; implementation and fresh diff-based self-review are
+complete. Exact-head CI for the implementation checkpoint is 8/8 success.
 Planning approval is the D8.3 planning-review baseline at `99f693b` (the
 docs-only remediation checkpoint). This document records implementation
-evidence only; it does not claim an independent review or `REVIEW-CLOSED`.
+evidence and self-review only; it does not claim an independent review or
+`REVIEW-CLOSED`.
 
 ## Baseline and lineage
 
@@ -15,8 +17,8 @@ planning CI baseline: #590 / run 33352478819 / attempt 3
 planning baseline result: Ubuntu Node 22/24, macOS Node 24, Windows Node 24,
   auth-browser, tags-scale, visual, docker-smoke — 8/8 success
 implementation commit: 584cf770111bc2f5ee86be08ecda7ea50586bc87
-follow-up test/evidence commit: pending local commit
-final implementation/evidence HEAD: pending push
+follow-up test/evidence commit: 6308947cd6fd758cd6055a687a1d4e49891a5e2c
+final implementation HEAD (exact CI head): 6308947cd6fd758cd6055a687a1d4e49891a5e2c
 ```
 
 The implementation keeps D8.2's existing Diary adapter and lifecycle owners.
@@ -110,29 +112,31 @@ Local validation completed for the implementation worktree includes:
 ## GitHub CI exact-head evidence
 
 ```text
-implementation/evidence HEAD: pending push
+implementation/evidence HEAD (exact CI head): 6308947cd6fd758cd6055a687a1d4e49891a5e2c
 first implementation CI #591: Ubuntu/macOS verify hit the router guard lazy
   module-graph timeout before the test-only stub follow-up; no D8.3 assertion
   failed in that run
-run number / run ID / attempt: pending
-Ubuntu Node 22: pending
-Ubuntu Node 24: pending
-macOS Node 24: pending
-Windows Node 24: pending
-auth-browser: pending
-tags-scale: pending
-visual: pending
-docker-smoke: pending
+run number / run ID / attempt: #592 / 33369599249 / 1
+HEAD: 6308947cd6fd758cd6055a687a1d4e49891a5e2c
+Ubuntu Node 22: PASS
+Ubuntu Node 24: PASS
+macOS Node 24: PASS
+Windows Node 24: PASS
+auth-browser: PASS
+tags-scale: PASS
+visual: PASS
+docker-smoke: PASS
 ```
 
 ## Remaining risks and D8.4 boundary
 
-- Independent review is pending; this record must not be read as a review
-  pass.
+- Independent review is pending; this record must not be read as an
+  independent review pass. Self-review classified the implementation at
+  P0 = 0, P1 = 0, P2 = 0 after the router test-only stability follow-up.
 - Legacy plaintext files, Git history, IndexedDB rows, SQLite private metadata
   rows, and `frontmatter_backup` are classified/hidden or left untouched for
   D8.4. D8.3 does not claim retroactive cleanup.
 - Explicit PDF/clipboard export is an external copy and is outside automatic
   OS/browser clipboard or downloaded-file wiping guarantees.
-- The final evidence-sync commit and exact-head CI result must replace the
-  pending markers above before D8.3 can move to `REVIEW-READY`.
+- The evidence-sync commit that records this exact-head result is docs-only;
+  it does not change the implementation checkpoint validated by CI #592.
