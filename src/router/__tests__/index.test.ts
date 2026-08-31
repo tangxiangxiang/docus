@@ -9,6 +9,12 @@ vi.mock('../../lib/auth-api', () => ({
   login: vi.fn(),
   setupOwner: vi.fn(),
 }))
+// Router guard tests assert navigation policy, not VaultView rendering. Keep
+// the authenticated redirects independent of the workspace's large lazy
+// module graph so the suite does not time out while transforming the view.
+vi.mock('../../views/VaultView.vue', () => ({
+  default: { template: '<div />' },
+}))
 
 const auth = useAuth()
 

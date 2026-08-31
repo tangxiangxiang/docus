@@ -14,7 +14,8 @@ starting worktree: clean
 planning CI baseline: #590 / run 33352478819 / attempt 3
 planning baseline result: Ubuntu Node 22/24, macOS Node 24, Windows Node 24,
   auth-browser, tags-scale, visual, docker-smoke — 8/8 success
-implementation commit: pending local commit
+implementation commit: 584cf770111bc2f5ee86be08ecda7ea50586bc87
+follow-up test/evidence commit: pending local commit
 final implementation/evidence HEAD: pending push
 ```
 
@@ -81,11 +82,10 @@ ordinary Note-only operations without that footprint remain unchanged.
 
 Local validation completed for the implementation worktree includes:
 
-- `npm run test:unit -- --exclude src/router/__tests__/index.test.ts` — 241
-  files, 3,600 tests passed, 9 skipped.
-- `npx vitest run src/router/__tests__/index.test.ts` — 7/7 passed in
-  isolation. The unmodified full unit run has one pre-existing, intermittent
-  5-second timeout in the external-redirect case; no D8.3 assertion failed.
+- `npm run test:unit` — 242 files, 3,607 tests passed, 9 skipped.
+- `npx vitest run src/router/__tests__/index.test.ts` — 7/7 passed; its
+  navigation-policy tests use a local `VaultView` stub so the assertions do
+  not depend on transforming the large workspace lazy module graph.
 - `npm run test:history-integration` — 5 files, 175/175 passed.
 - `npm run test:recovery-integration` — 5 files, 193/193 passed.
 - D8.3 History/LinkIndex/Search/teardown focused run — 8 files, 166/166
@@ -111,6 +111,9 @@ Local validation completed for the implementation worktree includes:
 
 ```text
 implementation/evidence HEAD: pending push
+first implementation CI #591: Ubuntu/macOS verify hit the router guard lazy
+  module-graph timeout before the test-only stub follow-up; no D8.3 assertion
+  failed in that run
 run number / run ID / attempt: pending
 Ubuntu Node 22: pending
 Ubuntu Node 24: pending
