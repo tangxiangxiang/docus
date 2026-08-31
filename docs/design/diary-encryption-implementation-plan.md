@@ -1,6 +1,6 @@
 # D8 — Diary Encryption Implementation Plan
 
-状态：`D8.0 REVIEW-CLOSED`；`D8.0 Self-review = PASS (P0/P1/P2 = 0/0/0)`；`D8.0 Independent Review = PASS (P0/P1/P2 = 0/0/0)`；`D8.1 REVIEW-CLOSED`；`D8.1 Independent Review = PASS (P0/P1/P2 = 0/0/0)`；`D8.2 REVIEW-CLOSED`；`D8.2 Self-review = PASS (P0/P1/P2 = 0/0/0)`；`D8.2 Independent Review = PASS (P0/P1/P2 = 0/0/0)`；`D8.3 REVIEW-CLOSED`；`D8.4 Planning = REVIEW-READY`；`D8.4 Planning Independent Review = PENDING`；`D8.4 implementation = NOT STARTED`。
+状态：`D8.0 REVIEW-CLOSED`；`D8.0 Self-review = PASS (P0/P1/P2 = 0/0/0)`；`D8.0 Independent Review = PASS (P0/P1/P2 = 0/0/0)`；`D8.1 REVIEW-CLOSED`；`D8.1 Independent Review = PASS (P0/P1/P2 = 0/0/0)`；`D8.2 REVIEW-CLOSED`；`D8.2 Self-review = PASS (P0/P1/P2 = 0/0/0)`；`D8.2 Independent Review = PASS (P0/P1/P2 = 0/0/0)`；`D8.3 REVIEW-CLOSED`；`D8.4 Planning = REVIEW-READY / NOT APPROVED`；`D8.4 Independent Planning Review = CHANGES REQUIRED (0/5/3) [historical]`；`D8.4 Planning Remediation = COMPLETE`；`D8.4 Independent Planning Re-review = PENDING`；`D8.4 implementation = NOT STARTED`。
 
 基线：`1fb1389cab053d5ff72630253f509f0170e588c2`（`docs(diary): close D7 mood implementation`）。D7.0A、D7.0、D7.1、D7.2、D7.3、D7.4、D7.5、D7.6 均保持 `REVIEW-CLOSED`。D8 只从 Diary 加密边界开始，不重开 D7，也不创建独立 Private Vault。
 
@@ -188,9 +188,9 @@ Exit requires every surfaced Diary body path to use the adapter or fail closed, 
 
 ### D8.4 — Migration, full regression, release and closure
 
-Scope: idempotent plaintext-to-envelope migration, legacy History policy, metadata cleanup/classification, rekey/password change if selected, rollback/recovery proof, full D7 regression, responsive/a11y regression, CI, complete evidence and separate docs-only closure.
+Scope: idempotent plaintext-to-envelope migration, legacy History policy, metadata cleanup/classification, rollback/recovery proof, full D7 regression, responsive/a11y regression, CI, complete evidence and separate docs-only closure. Rekey/password change remains out of scope.
 
-Exit requires no mixed plaintext/encrypted managed-Diary state, no unreviewed legacy plaintext claim, and an independent review followed by a separate closure commit. D8 overall is not closed by an implementation/evidence commit.
+Exit requires every Docus-controlled current private store to be resolved/cleaned, valid-encrypted no-op, policy-retained or explicit attention (not an unreviewed legacy-plaintext claim), and an independent review followed by a separate closure commit. D8 overall is not closed by an implementation/evidence commit.
 
 ## 8. Migration and compatibility policy
 
@@ -198,7 +198,7 @@ Migration must be explicit and fail closed:
 
 | Existing state | D8 policy |
 | --- | --- |
-| plaintext canonical Diary file with live identity | migrate only after unlock; encrypt, verify decrypt/hash/identity, then atomically replace; do not delete external backups silently |
+| plaintext canonical Diary file with live identity | migrate only after unlock through the D8.4 `DiaryMigrationFs` no-copy/create-only protocol; authenticate exact identity/generation before `PUBLISHED`; do not delete external backups silently |
 | plaintext body in existing browser Draft/Recovery stores | do not auto-read into a locked session; offer an explicit user-authorized migration or discard path; never copy it into a new plaintext store |
 | plaintext Diary in nested Git history | classify as legacy exposure; do not claim retroactive purge or silently rewrite/delete it. New managed-Diary body revisions must not enter Git at all; any history rewrite/purge needs an explicit user-controlled operation and backup policy |
 | encrypted envelope with supported version | verify tag, identity binding and metadata association before exposing body |
@@ -206,6 +206,32 @@ Migration must be explicit and fail closed:
 | missing file or missing stable generation | retain D7 identity rules; do not create a path-only encrypted identity during migration |
 
 The migration must be resumable and idempotent per stable document identity. A failed migration must not leave a success-looking metadata status while the file remains plaintext. Existing plaintext is not retroactively erased by D8.0 documentation; D8.4 must state exactly what the user opted into and what legacy copies remain.
+
+### 8.1 D8.4 planning-remediation constraints
+
+The D8.4 planning entry point is governed by the companion PRD and plan. Their
+shared security contracts are explicit: a locked restart that may have
+published ciphertext records `RECOVERY_AUTH_REQUIRED` and never restores
+plaintext, deletes quarantine or calls a syntactic V1 envelope authenticated;
+unlock revalidates the exact internal ciphertext fingerprint/generation and
+uses the sole server-side Diary body lease for AES-GCM/AAD authentication.
+`DiaryMigrationFs` is the only migration filesystem owner and must provide
+handle-/directory-relative no-copy source transition, atomic create-only
+ciphertext publication and explicit Linux/macOS/Windows durability or
+unsupported results; no copy/delete or overwrite operation is permitted.
+
+Every destructive operation is bound to an immutable `inventoryRevision`, exact
+item/generation and independent action scope. SQLite `sessions/messages` and
+structured managed-Diary AI tool-result envelopes are inventoried; only a
+provable exposure receives explicit whole-session discard or policy-retention,
+and mixed/free text is never substring-edited. A null-ID `frontmatter_backup`
+row remains `FRONTMATTER_IDENTITY_UNRESOLVED` until a separately proven
+non-destructive identity binding; path-only cleanup is forbidden. Legacy body
+byte size is private and may be transient only, never durable or locked-visible.
+Ordinary managed PUT serializes behind the existing FIFO document lock and
+revalidates after acquisition; no migration-specific 409 is promised for mere
+lock wait. The exact deterministic migration crash hooks and durable-state
+oracle are mandatory implementation evidence.
 
 ## 9. STOP conditions
 
@@ -288,8 +314,10 @@ D8.3 Independent Re-review = PASS (0/0/0)
 D8.3-IR-P1-1 = CLOSED
 D8.3-IR-P1-2 = CLOSED
 D8.3             = REVIEW-CLOSED
-D8.4 Planning    = REVIEW-READY
-D8.4 Planning Independent Review = PENDING
+D8.4 Planning    = REVIEW-READY / NOT APPROVED
+D8.4 Independent Planning Review = CHANGES REQUIRED (0/5/3) [historical]
+D8.4 Planning Remediation = COMPLETE
+D8.4 Independent Planning Re-review = PENDING
 D8.4 implementation = NOT STARTED
 D8.4             = NOT REVIEW-CLOSED
 ```
@@ -362,12 +390,22 @@ closure baseline `c88e99554c291181c6e3f17e695aa228f34d40b2` and do not imply
 Planning approval or implementation:
 
 ```text
-D8.4 Planning = REVIEW-READY
-D8.4 Planning Independent Review = PENDING
+D8.4 Planning = REVIEW-READY / NOT APPROVED
+D8.4 Independent Planning Review = CHANGES REQUIRED (0/5/3) [historical]
+D8.4 Planning Remediation = COMPLETE
+D8.4 Independent Planning Re-review = PENDING
 D8.4 implementation = NOT STARTED
 D8.4 = NOT REVIEW-CLOSED
 ```
 
 See [D8.4 Migration, Legacy Cleanup & Release Closure PRD](./diary-encryption-d8.4-migration-release-prd.md)
 and [D8.4 Implementation Plan](./diary-encryption-d8.4-implementation-plan.md).
-The next authorized action is a separate D8.4 Independent Planning Review.
+The historical Independent Planning Review at
+`9f8d06d1f0dd2223dfc2ccc3d313f4a30053c386` returned
+`CHANGES REQUIRED (0/5/3)`. The docs-only Planning Remediation freezes the
+deferred-auth recovery state, one cross-platform `DiaryMigrationFs` ownership
+contract, immutable inventory/action consent scopes, AI-history and null-ID
+frontmatter disposition, no-body-size ledger privacy, FIFO ordinary-save
+concurrency and deterministic crash hooks. It does not alter the historical
+review record or authorize implementation. The next authorized action is a
+separate D8.4 Independent Planning Re-review.
