@@ -10,7 +10,6 @@ import {
 } from '../../shared/diaryProtocol.js'
 import {
   AtomicTextWriteConflictError,
-  atomicRemoveTextIfUnchanged,
   prepareAtomicTextCreate,
 } from '../atomicTextWrite.js'
 import {
@@ -26,7 +25,6 @@ import { filePathFor } from '../paths.js'
 import {
   bad,
   ensureMetadata,
-  exists,
   metadataDb,
 } from './shared.js'
 import { requireDiaryBodyAccess, withDiaryBodyOperation } from '../diaryAccess/guard.js'
@@ -211,7 +209,6 @@ diaryRoutes.post('/api/diary/dates', async (c) => {
     let metadata: ReturnType<typeof createDocumentMetadata>
     let physicalRaw: string
     let prepared: Awaited<ReturnType<typeof prepareAtomicTextCreate>> | null = null
-    let committed = false
     try {
       deleteDocumentMetadata(metadataDb(), logicalPath)
       metadata = createDocumentMetadata(metadataDb(), {
@@ -228,7 +225,6 @@ diaryRoutes.post('/api/diary/dates', async (c) => {
       prepared = await prepareAtomicTextCreate(absolutePath, physicalRaw)
       operation.assertCurrent()
       await prepared.commit()
-      committed = true
       const stat = await fs.stat(absolutePath)
       operation.assertCurrent()
       const post = postSummary(logicalPath, stat, metadata)
@@ -243,15 +239,8 @@ diaryRoutes.post('/api/diary/dates', async (c) => {
     } catch (error) {
       const failures: unknown[] = [error]
       try {
-        if (committed) {
-          if (await exists(absolutePath)) {
-            // This is the narrowly-scoped rollback for a just-created encrypted
-            // Diary file; public delete paths remain fail-closed.
-            await atomicRemoveTextIfUnchanged(absolutePath, physicalRaw!, { allowManagedDiary: true })
-          }
-        } else {
-          await prepared?.rollback()
-        }
+        const rolledBack = await prepared?.rollbackCreatedGenerationIfStillOwned()
+        if (rolledBack === null || rolledBack === undefined) await prepared?.rollback()
       } catch (rollbackError) { failures.push(rollbackError) }
       try { restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot) }
       catch (rollbackError) { failures.push(rollbackError) }

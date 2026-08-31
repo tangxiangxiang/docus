@@ -219,6 +219,17 @@ describe('POST /api/diary/dates', () => {
     expect(getDocumentMetadata(db, `diary/${date}`)).toBeNull()
     await expect(fs.stat(path.join(vault, 'diary', `${date}.md`))).rejects.toMatchObject({ code: 'ENOENT' })
   })
+
+  it('rolls back the exact encrypted generation when a failure follows create commit', async () => {
+    const date = '2000-03-04'
+    __setAtomicWriteTestHooksForTesting({
+      afterCreateCommitBeforeCleanup: () => { throw new Error('D8_3_POST_COMMIT_CREATE_SENTINEL') },
+    })
+
+    expect((await call('POST', '/api/diary/dates', { date, timeZone: TIME_ZONE })).status).toBe(500)
+    expect(getDocumentMetadata(db, `diary/${date}`)).toBeNull()
+    await expect(fs.stat(path.join(vault, 'diary', `${date}.md`))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
 })
 
 describe('Diary REST mutation contract', () => {

@@ -53,8 +53,6 @@ import {
 } from '../documentFileLifecycle.js'
 import {
   getIndex as getLinkIndex,
-  getIndexForBodyOperation,
-  LinkIndexBodyAccessError,
 } from '../linkIndex.js'
 import { rewriteDocumentReferences } from '../renameReferences.js'
 import { validateDocumentMutation } from '../documentMutationPolicy.js'
@@ -291,18 +289,6 @@ function canonicalManagedDiaryPath(value: unknown): string | null {
   if (typeof value !== 'string') return null
   const canonical = normalizeLogicalContentPath(value)
   return canonical && classifyDiaryPath(canonical) === 'managed' ? canonical : null
-}
-
-function managedDiaryPathsOnDisk(): string[] {
-  try {
-    const diaryRoot = folderPathFor('diary')
-    return fs.readdirSync(diaryRoot, { withFileTypes: true })
-      .filter((entry) => entry.isFile())
-      .map((entry) => canonicalManagedDiaryPath(`diary/${entry.name.replace(/\.md$/, '')}`))
-      .filter((value): value is string => value !== null)
-  } catch {
-    return []
-  }
 }
 
 function diaryBodyAccessError(
@@ -1090,7 +1076,7 @@ async function discoverRenameReferenceSnapshot(input: {
   path?: string
   new_path?: string
   update_references?: boolean
-}, diaryBodyAccess?: (path: string) => boolean): Promise<RenameReferenceSnapshot> {
+}): Promise<RenameReferenceSnapshot> {
   const sourcePath = input.path as string
   const destinationPath = input.new_path as string
   if (
@@ -1098,9 +1084,10 @@ async function discoverRenameReferenceSnapshot(input: {
     || typeof sourcePath !== 'string' || sourcePath.length === 0
     || typeof destinationPath !== 'string' || destinationPath.length === 0
   ) return { allPaths: [], sourcePaths: [] }
-  const idx = diaryBodyAccess
-    ? await getIndexForBodyOperation(diaryBodyAccess)
-    : await getLinkIndex()
+  // Rename planning is structural-only. LinkIndex deliberately excludes
+  // managed-Diary body-derived edges, so an unrelated encrypted Diary must
+  // not force a vault-wide body authorization scan or block Note renames.
+  const idx = await getLinkIndex()
   return {
     allPaths: idx.snapshot().paths,
     sourcePaths: [...new Set(idx.getBacklinks(sourcePath).map((backlink) => backlink.source))],
@@ -1298,20 +1285,10 @@ async function executeGuardedRename(
   if (canonicalManagedDiaryPath(renameInput.path) || canonicalManagedDiaryPath(renameInput.new_path)) {
     return err('rename_file: managed Diary cannot change identity; encrypted-body rename/reference rewrite is unsupported until an adapter-aware owner is available.')
   }
-  const managedDiaryPaths = managedDiaryPathsOnDisk()
-  const onDiskAccessError = diaryBodyAccessError(diaryBodyAccess, managedDiaryPaths)
-  if (onDiskAccessError) return onDiskAccessError
-  if (renameInput.update_references !== false && managedDiaryPaths.length > 0) {
-    return err('rename_file: reference rewrite footprint may contain an encrypted managed Diary body; operation failed closed.')
-  }
   let discovered: RenameReferenceSnapshot
   try {
-    discovered = await discoverRenameReferenceSnapshot(renameInput, diaryBodyAccess)
+    discovered = await discoverRenameReferenceSnapshot(renameInput)
   } catch (e) {
-    if (e instanceof LinkIndexBodyAccessError && diaryBodyAccess) {
-      return diaryBodyAccessError(diaryBodyAccess, [e.path])
-        ?? err(`rename_file: ${e.message}`)
-    }
     return err(`rename_file: ${(e as Error).message}`)
   }
   const discoveryAccessError = diaryBodyAccessError(diaryBodyAccess, [
@@ -1343,12 +1320,8 @@ async function executeGuardedRename(
     if (__renameRaceHooks?.beforeReplan) await __renameRaceHooks.beforeReplan()
     let candidateSnapshot: RenameReferenceSnapshot
     try {
-      candidateSnapshot = await discoverRenameReferenceSnapshot(renameInput, diaryBodyAccess)
+      candidateSnapshot = await discoverRenameReferenceSnapshot(renameInput)
     } catch (e) {
-      if (e instanceof LinkIndexBodyAccessError && diaryBodyAccess) {
-        return diaryBodyAccessError(diaryBodyAccess, [e.path])
-          ?? err(`rename_file: ${e.message}`)
-      }
       return err(`rename_file: ${(e as Error).message}`)
     }
     if (!sameNormalizedPathSet(discovered.sourcePaths, candidateSnapshot.sourcePaths)) {

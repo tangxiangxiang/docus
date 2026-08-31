@@ -20,8 +20,11 @@ import {
   writeDurableJournal,
 } from '../atomicTextWrite'
 import { __setDurableArtifactTestHooksForTesting } from '../durableCreateOnlyFile'
+import { CONTENT_DIR, setContentDir } from '../paths'
+import { DIARY_BODY_ENVELOPE_MAGIC } from '../diaryAccess/body'
 import { cleanupRecoveryTempDir } from './helpers/recoveryIntegration'
 
+const ORIGINAL_CONTENT_DIR = CONTENT_DIR
 let directory = ''
 let target = ''
 
@@ -31,6 +34,7 @@ async function temporaryFiles(): Promise<string[]> {
 
 beforeEach(async () => {
   directory = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-atomic-write-'))
+  setContentDir(directory)
   target = path.join(directory, 'note.md')
   await fs.writeFile(target, 'original', 'utf8')
   await fs.chmod(target, 0o640)
@@ -41,6 +45,7 @@ afterEach(async () => {
   __setAtomicDurableJournalTestHooksForTesting(null)
   __setDurableArtifactTestHooksForTesting(null)
   vi.restoreAllMocks()
+  setContentDir(ORIGINAL_CONTENT_DIR)
   await cleanupRecoveryTempDir(directory)
 })
 
@@ -259,6 +264,65 @@ describe('atomic text writes', () => {
 
     expect(await fs.readFile(target, 'utf8')).toBe('external C')
     expect(await temporaryFiles()).toEqual([])
+  })
+})
+
+describe('managed Diary create rollback provenance', () => {
+  function managedPath(): string {
+    return path.join(directory, 'diary', '2026-08-31.md')
+  }
+
+  it('rejects the generic managed delete owner with no caller-controlled bypass', async () => {
+    const managed = managedPath()
+    await fs.mkdir(path.dirname(managed), { recursive: true })
+    const existing = `${DIARY_BODY_ENVELOPE_MAGIC}existing-generation`
+    await fs.writeFile(managed, existing, 'utf8')
+
+    await expect(atomicRemoveTextIfUnchanged(managed, existing)).rejects.toMatchObject({
+      name: 'ManagedDiaryDeleteUnsupportedError',
+      code: 'diary-encrypted-delete-unsupported',
+    })
+    // JavaScript callers cannot opt into managed deletion by passing the old
+    // boolean (or any equivalent third argument); the owner ignores it and
+    // still enforces the managed-path rejection.
+    await expect((atomicRemoveTextIfUnchanged as any)(managed, existing, {
+      allowManagedDiary: true,
+    })).rejects.toMatchObject({ name: 'ManagedDiaryDeleteUnsupportedError' })
+    expect(await fs.readFile(managed, 'utf8')).toBe(existing)
+  })
+
+  it('rolls back only a committed generation through the create capability', async () => {
+    const managed = managedPath()
+    const created = `${DIARY_BODY_ENVELOPE_MAGIC}created-generation`
+    await fs.mkdir(path.dirname(managed), { recursive: true })
+    __setAtomicWriteTestHooksForTesting({
+      afterCreateCommitBeforeCleanup: () => { throw new Error('post-commit create failure') },
+    })
+    const prepared = await prepareAtomicTextCreate(managed, created)
+
+    await expect(prepared.commit()).rejects.toThrow('post-commit create failure')
+    const result = await prepared.rollbackCreatedGenerationIfStillOwned()
+
+    expect(result).toMatchObject({ removed: true })
+    await expect(fs.stat(managed)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await temporaryFiles()).toEqual([])
+  })
+
+  it('preserves an external replacement at the reused target path', async () => {
+    const managed = managedPath()
+    const created = `${DIARY_BODY_ENVELOPE_MAGIC}created-generation`
+    const external = `${DIARY_BODY_ENVELOPE_MAGIC}external-generation`
+    await fs.mkdir(path.dirname(managed), { recursive: true })
+    const prepared = await prepareAtomicTextCreate(managed, created)
+    await prepared.commit()
+
+    await fs.rename(managed, `${managed}.old-generation`)
+    await fs.writeFile(managed, external, 'utf8')
+
+    await expect(prepared.rollbackCreatedGenerationIfStillOwned()).rejects.toMatchObject({
+      name: 'AtomicTextWriteOwnershipError',
+    })
+    expect(await fs.readFile(managed, 'utf8')).toBe(external)
   })
 })
 

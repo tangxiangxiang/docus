@@ -23,7 +23,7 @@ import { applyMigrations } from '../db'
 import { getDocumentMetadata, saveDocumentMetadata, snapshotDocumentMetadataDatabase } from '../documentMetadata'
 import { applyTagOperation, previewTagOperation, type TagOperationRequest } from '../tagManagement'
 import { applyTagUndo, getTagUndoAvailability, previewTagUndo } from '../tagUndo'
-import { __resetLinkIndexForTesting, getIndex as getLinkIndex } from '../linkIndex'
+import { __resetLinkIndexForTesting, getIndex as getLinkIndex, LinkIndex } from '../linkIndex'
 import {
   documentWriteLockWaitersForTesting,
   pendingDocumentWriteLocksForTesting,
@@ -728,9 +728,9 @@ describe('AI Diary mutation contract', () => {
     expect(fs.existsSync(path.join(contentDir, 'inbox', 'legacy.md'))).toBe(true)
   })
 
-  it('authorizes every managed Diary backlink before rename reads its raw body', async () => {
+  it('allows a Note-only rename when an unrelated managed Diary exists without reading its body', async () => {
     writeFile('notes/source.md', '# source\n')
-    writeFile('diary/2000-05-04.md', 'private [[notes/source]] body')
+    const diaryAbs = writeFile('diary/2000-05-04.md', 'private Diary bytes')
     saveDocumentMetadata(db, { path: 'notes/source', title: 'source' })
     saveDocumentMetadata(db, { path: 'diary/2000-05-04', title: '2000-05-04' })
     await getLinkIndex()
@@ -747,20 +747,27 @@ describe('AI Diary mutation contract', () => {
         ...ctx,
         diaryBodyAccess: (logicalPath) => logicalPath !== 'diary/2000-05-04',
       })
-      expect(result.isError).toBe(true)
-      expect(result.content).toContain('Diary body access is locked')
+      expect(result.isError).toBe(false)
+      expect(result.changed).toMatchObject({ kind: 'rename', path: 'notes/renamed', oldPath: 'notes/source' })
       expect(bodyReads).toEqual([])
+      expect(fs.readFileSync(diaryAbs, 'utf8')).toBe('private Diary bytes')
     } finally {
       reader.mockRestore()
     }
   })
 
-  it('fails closed before a cold LinkIndex rebuild reads a locked Diary body', async () => {
+  it('fails closed before body reads when structural discovery reports a managed Diary footprint', async () => {
     const sourceAbs = writeFile('notes/source.md', 'source')
     const diaryAbs = writeFile('diary/2000-05-05.md', 'private [[notes/source]] body')
     saveDocumentMetadata(db, { path: 'notes/source', title: 'source' })
     saveDocumentMetadata(db, { path: 'diary/2000-05-05', title: '2000-05-05' })
     __resetLinkIndexForTesting()
+
+    const backlinks = vi.spyOn(LinkIndex.prototype, 'getBacklinks').mockImplementation((target) => (
+      target === 'notes/source'
+        ? [{ source: 'diary/2000-05-05', kind: 'wiki' }]
+        : []
+    ))
 
     const originalReader = fs.promises.readFile
     const diaryBodyReads: string[] = []
@@ -801,6 +808,7 @@ describe('AI Diary mutation contract', () => {
         .toBe('private [[notes/source]] body')
     } finally {
       reader.mockRestore()
+      backlinks.mockRestore()
     }
   })
 })

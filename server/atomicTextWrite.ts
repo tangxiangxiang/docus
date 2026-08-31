@@ -214,6 +214,7 @@ export function __setAtomicWriteCrashHooksForTesting(hooks: AtomicWriteCrashHook
 export type AtomicWriteTestHooks = {
   afterParentIdentityBeforeTemporaryOpen?: (temporaryPath: string) => void | Promise<void>
   afterTemporaryCloseBeforeIdentity?: (temporaryPath: string) => void | Promise<void>
+  afterCreateCommitBeforeCleanup?: (targetPath: string) => void | Promise<void>
   beforeUnconditionalReplaceRename?: (temporaryPath: string) => void | Promise<void>
   beforeAtomicRemoveRename?: (targetPath: string, stagedPath: string) => void | Promise<void>
   beforeAtomicRemoveUnlink?: (stagedPath: string) => void | Promise<void>
@@ -238,11 +239,31 @@ type OwnedTemporaryFile = {
 
 type OwnedArtifact = OwnedTemporaryFile
 
+export type AtomicRemoveResult =
+  | { removed: true; restored: false; externalMutationDetected: false; quarantined: false }
+  | { removed: false; restored: boolean; externalMutationDetected: boolean; quarantined: boolean }
+
+function sameOwnedArtifact(a: OwnedArtifact, b: OwnedArtifact): boolean {
+  return a.path === b.path
+    && a.parentPath === b.parentPath
+    && a.fileIdentity.dev === b.fileIdentity.dev
+    && a.fileIdentity.ino === b.fileIdentity.ino
+    && a.parentIdentity.dev === b.parentIdentity.dev
+    && a.parentIdentity.ino === b.parentIdentity.ino
+}
+
 export interface PreparedAtomicTextWrite {
   readonly temporaryPath: string
   readonly ownership: OwnedTemporaryFile
   commit(): Promise<void>
   rollback(): Promise<void>
+  /**
+   * Roll back the exact generation created by this create transaction. The
+   * capability is closure-bound to the successful create-only link and is
+   * consumed after one attempt; it is not a generic managed-Diary delete.
+   * Returns null when the create never committed a generation.
+   */
+  rollbackCreatedGenerationIfStillOwned(): Promise<AtomicRemoveResult | null>
 }
 
 export class AtomicTextWriteOwnershipError extends Error {
@@ -456,6 +477,8 @@ export async function prepareAtomicTextCreate(
   const prepared = await prepareAtomicTextWrite(targetPath, raw, options)
   const { parentPath, fileIdentity: temporaryIdentity, parentIdentity } = prepared.ownership
   let settled = false
+  let committedArtifact: OwnedArtifact | null = null
+  let createdRollbackConsumed = false
   return {
     temporaryPath: prepared.temporaryPath,
     ownership: prepared.ownership,
@@ -472,7 +495,18 @@ export async function prepareAtomicTextCreate(
         // link(2) is the create-only counterpart to rename: it atomically
         // fails with EEXIST and never replaces a newer generation.
         await fs.link(prepared.temporaryPath, targetPath)
+        // A successful create-only link proves that the target is this
+        // transaction's generation. Retain that identity independently of
+        // temporary-path cleanup/settled state so a later route failure can
+        // roll back only this exact generation.
+        committedArtifact = {
+          path: targetPath,
+          parentPath,
+          fileIdentity: temporaryIdentity,
+          parentIdentity,
+        }
         settled = true
+        await __atomicWriteTestHooks?.afterCreateCommitBeforeCleanup?.(targetPath)
         await removeOwnedTemporaryPath(
           prepared.temporaryPath,
           parentPath,
@@ -510,6 +544,11 @@ export async function prepareAtomicTextCreate(
         targetPath,
       )
       settled = true
+    },
+    async rollbackCreatedGenerationIfStillOwned() {
+      if (createdRollbackConsumed || !committedArtifact) return null
+      createdRollbackConsumed = true
+      return removeTextIfUnchanged(targetPath, raw, committedArtifact)
     },
   }
 }
@@ -1116,14 +1155,11 @@ export async function atomicReplaceTextIfUnchanged(
  * bytes change after takeover, the formal path is restored when safe and a
  * structured post-commit conflict is thrown; a missing target is a no-op.
  */
-export async function atomicRemoveTextIfUnchanged(
+async function removeTextIfUnchanged(
   targetPath: string,
   expectedRaw: string,
-  options: { allowManagedDiary?: boolean } = {},
+  expectedArtifact?: OwnedArtifact,
 ): Promise<AtomicRemoveResult> {
-  if (managedDiaryTarget(targetPath) && options.allowManagedDiary !== true) {
-    throw new ManagedDiaryDeleteUnsupportedError(targetPath)
-  }
   let target: { artifact: OwnedArtifact; snapshot: StableTextSnapshot }
   try {
     target = await captureOwnedTextArtifact(targetPath, targetPath)
@@ -1132,6 +1168,9 @@ export async function atomicRemoveTextIfUnchanged(
       return { removed: false, restored: false, externalMutationDetected: false, quarantined: false }
     }
     throw error
+  }
+  if (expectedArtifact && !sameOwnedArtifact(target.artifact, expectedArtifact)) {
+    throw new AtomicTextWriteOwnershipError(targetPath)
   }
   if (target.snapshot.raw !== expectedRaw) {
     return { removed: false, restored: false, externalMutationDetected: false, quarantined: false }
@@ -1221,9 +1260,15 @@ export async function atomicRemoveTextIfUnchanged(
   return { removed: true, restored: false, externalMutationDetected: false, quarantined: false }
 }
 
-export type AtomicRemoveResult =
-  | { removed: true; restored: false; externalMutationDetected: false; quarantined: false }
-  | { removed: false; restored: boolean; externalMutationDetected: boolean; quarantined: boolean }
+export async function atomicRemoveTextIfUnchanged(
+  targetPath: string,
+  expectedRaw: string,
+): Promise<AtomicRemoveResult> {
+  if (managedDiaryTarget(targetPath)) {
+    throw new ManagedDiaryDeleteUnsupportedError(targetPath)
+  }
+  return removeTextIfUnchanged(targetPath, expectedRaw)
+}
 
 /**
  * Unconditional replacement: prepare + rename. Callers that need
