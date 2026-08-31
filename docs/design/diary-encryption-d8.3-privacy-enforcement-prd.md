@@ -1,6 +1,8 @@
 # D8.3 — Privacy Enforcement PRD
 
-Status: `PLAN-READY` after this planning task; implementation has **not** started. The repository remains at D8.2 `REVIEW-CLOSED`; D8.3 and D8.4 remain `NOT STARTED`.
+Status: `PLAN-READY`; the docs-only planning-review remediation is applied and
+planning re-review is pending; implementation has **not** started. The
+repository remains at D8.2 `REVIEW-CLOSED`; D8.3 and D8.4 remain `NOT STARTED`.
 
 This is a source-backed design record. It intentionally does not change production code, tests, CI, Docker configuration, security behavior, or legacy data.
 
@@ -63,11 +65,11 @@ These contracts are frozen and are not redesigned by D8.3:
 | --- | --- |
 | Managed identity | One date maps to one `diary/YYYY-MM-DD.md` managed document; stable `documentId` remains owned by `DocumentMetadata`. |
 | Workspace | Reuse Calendar, Native Vault workspace, ReadingPane, EditorPane, existing tabs, route, dirty/save/CAS lifecycle, and metadata owner. No Diary-specific editor, reader, workspace, tab lifecycle, or route. |
-| Session authority | `useDiaryAccessSession` is the sole client authority with `UNINITIALIZED`, `LOCKED`, `UNLOCKING`, `UNLOCKED(sessionEpoch)`, `LOCKING`; server `diaryAccess/service.ts` is the sole capability/body-operation authority. |
-| Key material | Secondary password, KEK, unwrapped DEK, capability, and plaintext body are ephemeral runtime values only. They never enter local/session storage, IndexedDB, SQLite, Git, URLs, logs, telemetry, storage state, traces, or error artifacts. |
+| Session authority | `useDiaryAccessSession` is the sole client authority with `UNINITIALIZED`, `LOCKED`, `UNLOCKING`, `UNLOCKED(sessionEpoch)`, `LOCKING`; server `diaryAccess/service.ts` is the sole capability/body-operation authority and the sole owner of the live/unwrapped DEK. |
+| Key material | The server-side Diary access service solely owns the live/unwrapped DEK; the client never owns a DEK and holds only existing session/capability state plus necessary transient password/input. These values and plaintext body are ephemeral runtime values only: they never enter local/session storage, IndexedDB, SQLite, Git, URLs, logs, telemetry, storage state, traces, or error artifacts. |
 | Envelope | AES-256-GCM, fresh 96-bit nonce per write, 128-bit tag, explicit version/algorithm, vault/document/path/version AAD, fail closed on unknown/malformed/identity/auth failure. |
 | Primary body | Diary routes create/read/save through the existing body operation and persist the authenticated envelope; plaintext is returned only to an authorized operation. |
-| Ordinary Note | Ordinary Note behavior remains unchanged unless a shared infrastructure fix is required and covered by explicit Note regressions. |
+| Ordinary Note | Ordinary Note behavior remains unchanged unless a shared infrastructure fix is required and covered by explicit Note regressions. D8.3 intentionally supersedes only the cross-scope `Note → managed Diary` LinkIndex projection; Note-to-Note links and all other Note semantics remain unchanged. |
 
 ## 4. Problem statement
 
@@ -114,7 +116,10 @@ than `PUT /api/posts/*`. Source inspection found:
 6. Unknown or malformed encrypted envelopes never flow to Markdown,
    frontmatter, link, search, or AI parsers.
 7. Ordinary Note read/write/history/recovery/search/link/rename/move/conflict/
-   export/tree behavior remains unchanged.
+   export/tree behavior remains unchanged. The sole deliberate projection
+   exception is suppression of cross-scope `Note → managed Diary` LinkIndex
+   edges, because that target relation is body-derived sensitive data; Note-
+   to-Note edges remain unchanged.
 
 ## 6. Non-goals
 
@@ -125,7 +130,9 @@ than `PUT /api/posts/*`. Source inspection found:
   Diary-specific LinkIndex in D8.3 MVP.
 * No claim that a user’s OS clipboard or an explicitly downloaded PDF can be
   wiped by Docus.
-* No change to ordinary Note semantics and no second Diary lifecycle owner.
+* No change to ordinary Note semantics and no second Diary lifecycle owner,
+  except for the intentional cross-scope `Note → managed Diary` LinkIndex
+  suppression defined in §13.
 * No promise to protect an already compromised/unlocked browser or server
   process, developer tools, or user-authorized external copies.
 
@@ -147,8 +154,9 @@ are separate concerns. D8.3 must not reuse them as a second Diary key owner.
 | Data | Classification | Locked visibility | Durable plaintext allowed? | D8.3 disposition |
 | --- | --- | --- | --- | --- |
 | Diary body | secret | No | No | Adapter/authorized memory only; otherwise reject. |
-| Secondary password | secret | No | No | Existing session owner only. |
-| KEK / DEK | secret | No | No | Existing server/client ephemeral owners only. |
+| Secondary password | secret | No | No | Existing session owner receives it only as necessary transient input. |
+| KEK | secret | No | No | Existing server-side Diary access owner only; never client-owned or persisted. |
+| Live / unwrapped DEK | secret | No | No | Solely owned by the server-side Diary access service; the client never owns a DEK and holds only existing session/capability state plus necessary transient input. |
 | Diary capability | secret | No | No | `diaryAuthFetch`/body lease only; never ambient storage. |
 | `documentId` | structural | Yes when approved | Approved metadata only | Keep in `DocumentMetadata`; never body-derived. |
 | Canonical date/path | structural | Yes | Yes | Calendar/tree/list identity projection. |
@@ -163,6 +171,10 @@ are separate concerns. D8.3 must not reuse them as a second Diary key owner.
 | PDF | explicit user copy | N/A | Outside automatic guarantee | Allow only while unlocked/current epoch; browser memory rendering. |
 | Clipboard | explicit user copy | N/A | Outside automatic guarantee | Allow only while unlocked/current epoch; do not claim OS wipe. |
 | Logs/telemetry/artifacts | security metadata | No body/keys | No | Structured identifiers only; canary and artifact-grep gates. |
+
+The ownership boundary is explicit: only the server-side Diary access service
+may hold the live/unwrapped DEK. Client code is never a DEK owner; it may hold
+the existing session/capability state and necessary transient user input only.
 
 ## 9. Complete plaintext / derived-data graph
 
@@ -310,8 +322,11 @@ D8.3 uses one structural LinkIndex policy, not a second Diary database:
   Diary writes/deletes/renames do not add body-derived entries;
 * link/backlink/rename-impact snapshots filter any managed-Diary source or
   target edge; the client `useLinkIndex` clears state on lock/epoch change;
-* ordinary Note-to-Note links are unchanged; suppressing a Note-to-Diary edge
-  is intentional because the target relation is body-derived sensitive data;
+* ordinary Note behavior is unchanged, including Note-to-Note links. D8.3
+  intentionally supersedes the generic cross-scope `Note → managed Diary`
+  LinkIndex projection: suppressing that target edge is required because the
+  relation is body-derived sensitive data. This narrow projection exception
+  does not change Note editing, storage, search, or any other Note semantics;
 * a warm legacy Diary projection is purged or, if that cannot be proven
   synchronously, the query fails closed. D8.4 handles legacy state inventory.
 
@@ -353,6 +368,31 @@ staging, metadata mutation, LinkIndex mutation, or filesystem mutation. No
 partial Note+Diary operation is allowed. A future re-encrypt/rebind transaction
 is a separate design; D8.4 may specify it only with an identity proof,
 authenticated decrypt/re-encrypt, atomic commit, and rollback.
+
+### 15.1 Delete is an intentional D8.3 feature degradation
+
+Deleting opaque ciphertext is not automatically safe in the current generic
+delete pipeline. `DELETE /api/posts` and folder delete first use
+`.docus-delete-inflight-*` staging and may capture raw/metadata for rollback,
+reindex, or journal recovery. D8.3 has no adapter-aware delete owner that can
+prove those steps are ciphertext-only while keeping the metadata and
+LinkIndex transaction atomic. The fact that the primary file is encrypted is
+therefore insufficient to authorize the existing generic delete path.
+
+The frozen product contract is:
+
+* a direct managed-Diary document delete returns HTTP `422`
+  `diary-encrypted-delete-unsupported` before any raw read, staging, journal,
+  metadata, LinkIndex, or filesystem mutation;
+* a folder or bulk delete whose complete footprint contains any managed Diary
+  returns the same `422` before staging, and no Note subset is partially
+  deleted; and
+* a Note-only delete keeps its existing behavior unchanged.
+
+This is a deliberate temporary user-visible degradation, not a claim that
+encrypted deletion is impossible. A future D8.x/D8.4 design may re-enable it
+only with an adapter-owned ciphertext-only delete, authenticated metadata and
+structural-index transaction, recovery/rollback proof, and independent review.
 
 ## 16. Conflict handling
 
@@ -440,12 +480,14 @@ The following statuses are frozen for D8.3 MVP:
 | --- | --- | --- |
 | Primary Diary read/save/create | Supported through D8.2 adapter/lease | Works only while unlocked; lock is `423 diary-locked`. |
 | Diary Git History/restore/diff/body log | Fail closed | Stable `422 diary-history-encrypted-unsupported`; no Git mutation. |
-| Persistent Diary draft/conflict/recovery | Disabled | “Diary recovery unavailable”; no IndexedDB write/read for managed paths. |
+| Persistent Diary draft/conflict/recovery | Disabled | Client-only `diary-draft-recovery-unsupported`; “Diary recovery unavailable”; no IndexedDB write/read for managed paths. |
 | Diary body search/snippets | Disabled | Structural date/path remains available; no body result or cache. |
-| Diary body-derived LinkIndex/backlinks | Disabled | Structural paths only; no links/title/snippets; filtered endpoint results. |
-| Diary rename/move/delete/reference rewrite | Fail closed | Stable unsupported error before mutation; no partial mixed operation. |
-| Private Diary title/summary/tags migration/tag mutation | Fail closed/filtered | Public date/path/Mood projection only; D8.4 owns old rows/backups. |
-| AI live context, Diary summary, commit-message, body tools | Disabled | Stable unsupported error; ordinary Note AI remains unchanged. |
+| Diary body-derived LinkIndex/backlinks | Disabled | Structural paths only; no links/title/snippets; filtered endpoint results. Cross-scope `Note → managed Diary` edges are intentionally suppressed; Note-to-Note links remain unchanged. |
+| Diary rename/move/reference rewrite | Fail closed | HTTP `422 diary-encrypted-rename-unsupported` for document rename/move; HTTP `422 diary-encrypted-reference-unsupported` for folder/reference footprints; no partial mixed operation. |
+| Diary direct delete/folder or bulk delete touching managed paths | Fail closed | HTTP `422 diary-encrypted-delete-unsupported` before staging/journal/filesystem/index mutation; no partial mixed operation; intentional temporary feature degradation. |
+| Private Diary title/summary/tags migration/archive/tag mutation | Fail closed | HTTP `422 diary-private-metadata-unsupported`; no private-field read or backup mutation; D8.4 owns old rows/backups. |
+| Private Diary public metadata projection | Filtered | HTTP `200`; date/path/existence/id/Mood only. |
+| AI live context, Diary summary, commit-message, body tools | Disabled | Each returns HTTP `422` before raw/provider access: live context=`diary-ai-context-unsupported`; summary=`diary-ai-summary-unsupported`; commit-message=`diary-ai-commit-message-unsupported`. Ordinary Note AI remains unchanged. |
 | Tree/list structural projection | Supported | Date/path/existence/id/Mood only; no envelope parsing. |
 | PDF/clipboard | Explicit external copy | Current epoch/unlocked check; no OS/download wipe claim. |
 | Markdown resources | Supported only with body operation | Guarded target, abort/clear on lock, no cross-epoch cache. |
@@ -457,44 +499,42 @@ The following statuses are frozen for D8.3 MVP:
   locked.
 * Opening a Diary while locked prompts for the existing unlock flow; there is
   no alternative editor or reader.
-* History, recovery, body search, body-derived backlinks, rename/move, and
-  private metadata actions show a stable “unavailable while encrypted” state,
+* History, recovery, body search, body-derived backlinks, rename/move/delete,
+  and private metadata actions show a stable “unavailable while encrypted” state,
   not a generic empty success and not ciphertext rendered as Markdown.
 * A lock/logout immediately removes open Diary content, diffs, previews, AI
   context, and conflict dialogs. A late request is ignored rather than shown.
 * PDF/export and copy are explicit actions. The UI states that the resulting
   download/clipboard is an external copy outside automatic Docus retention.
-* Ordinary Note behavior and messaging remain unchanged.
+* Ordinary Note behavior and messaging remain unchanged, except that the
+  LinkIndex intentionally suppresses cross-scope `Note → managed Diary` edges;
+  Note-to-Note links remain unchanged.
 
 ## 22. Failure behavior
 
-Existing stable contracts are reused:
+The following contract is frozen at Gate 0; implementation must not choose a
+different status, code, or client invalidation behavior. Every HTTP error is
+`Cache-Control: no-store` and contains only stable code/message/path identity,
+never raw content, envelope, keys, or provider context.
 
-| HTTP | Code | Use |
-| --- | --- | --- |
-| 423 | `diary-locked` | Missing/expired body access or lease. |
-| 422 | `diary-history-encrypted-unsupported` | Managed Diary body History operation. |
-| 422 | `diary-encrypted-rename-unsupported` | Managed document rename/move. |
-| 422 | `diary-encrypted-reference-unsupported` | Reference/folder footprint includes managed Diary. |
-| 422 | `diary-recovery-identity-required` | Generic recovery cannot create managed Diary. |
+| Surface / operation | Transport and status | Stable code | Client behavior |
+| --- | --- | --- | --- |
+| Diary body read/save/create/resource without a current lease | HTTP `423` | `diary-locked` | Advance the Diary epoch synchronously, clear Diary holders, show the existing unlock flow, and publish no body. |
+| Diary History body log/file/diff/content-hashes/restore | HTTP `422` | `diary-history-encrypted-unsupported` | Keep the session, show unavailable, and perform no Git/filesystem mutation. |
+| Generic recovery targeting managed Diary identity | HTTP `422` | `diary-recovery-identity-required` | Show unavailable and create no recovery state. |
+| Managed document rename/move | HTTP `422` | `diary-encrypted-rename-unsupported` | Show unavailable; do not read raw content or mutate journal/staging/filesystem/index state. |
+| Managed folder rename/move or reference rewrite footprint | HTTP `422` | `diary-encrypted-reference-unsupported` | Show unavailable; reject the complete footprint with no partial Note mutation. |
+| Managed document delete, or folder/bulk delete whose footprint contains managed Diary | HTTP `422` | `diary-encrypted-delete-unsupported` | Show unavailable; reject before raw read, staging, journal, metadata, filesystem, or index mutation. |
+| Managed private metadata migration/archive/tag mutation | HTTP `422` | `diary-private-metadata-unsupported` | Show unavailable; no private-field read or backup mutation. Public structural projection remains `200`. |
+| Managed AI live context | HTTP `422` | `diary-ai-context-unsupported` | Reject before raw read or provider call; no context publication. |
+| Managed AI summary fallback | HTTP `422` | `diary-ai-summary-unsupported` | Reject before raw read or provider call. |
+| Managed AI commit-message body collection | HTTP `422` | `diary-ai-commit-message-unsupported` | Reject before Git collection or provider call. |
+| Managed Diary draft/recovery IDB write, discovery, or read | Client-only rejection; no HTTP request | `diary-draft-recovery-unsupported` | Make no IndexedDB call, clear candidate refs, and show “Diary recovery unavailable.” |
+| Search, LinkIndex, tree, and list projections | HTTP `200` filtered response | No error code | Return structural data only; clear managed derived state on epoch changes. |
+| Stale client body operation, conflict, PDF, or clipboard after epoch advance | Client-only rejection; no HTTP request | `diary-session-invalidated` | Discard the result, clear the relevant holder, and never retry or publish body; a server request that loses its lease is handled as `423 diary-locked`. |
 
-Names to approve before implementation (do not invent ad hoc strings in a
-route) are:
-
-```text
-diary-draft-recovery-unsupported
-diary-private-metadata-unsupported
-diary-ai-context-unsupported
-diary-ai-summary-unsupported
-diary-ai-commit-message-unsupported
-diary-session-invalidated
-```
-
-Filtered search/link/list endpoints return no body-derived Diary data rather
-than exposing an error body. Every error response is `no-store`, contains only
-stable code/message/path identity, and never includes raw content, envelope,
-keys, or provider context. Unknown/malformed/identity-mismatched/auth-failed
-envelopes stop at the adapter and are not passed to downstream parsers.
+Unknown, malformed, identity-mismatched, or authentication-failed envelopes
+stop at the adapter and are never passed to downstream parsers.
 
 ## 23. STOP conditions
 
@@ -548,7 +588,7 @@ the following are evidenced:
 D8.4 owns legacy inventory and migration: plaintext primary files, legacy Git
 history, IndexedDB drafts/conflicts, SQLite private metadata and
 `frontmatter_backup`, mixed encrypted/plaintext state, idempotent migration,
-rollback/recovery proof, and any approved encrypted Diary History/search/
-LinkIndex/draft design. D8.3 may classify legacy state and prevent new leakage,
-but it must not silently migrate, delete, rewrite, purge, or claim retroactive
-protection.
+rollback/recovery proof, adapter-owned Diary delete, and any approved encrypted
+Diary History/search/LinkIndex/draft design. D8.3 may classify legacy state and
+prevent new leakage, but it must not silently migrate, delete, rewrite, purge,
+or claim retroactive protection.

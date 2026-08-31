@@ -1,7 +1,8 @@
 # D8.3 — Privacy Enforcement Implementation Plan
 
-Status: `PLAN-READY`; no implementation is included in this document-only
-planning task. See the companion [D8.3 Privacy Enforcement PRD](./diary-encryption-d8.3-privacy-enforcement-prd.md)
+Status: `PLAN-READY`; docs-only planning-review remediation is applied and
+planning re-review is pending; no implementation is included in this
+document-only planning task. See the companion [D8.3 Privacy Enforcement PRD](./diary-encryption-d8.3-privacy-enforcement-prd.md)
 for the product/security contract.
 
 ## 1. Exact baseline
@@ -40,7 +41,7 @@ leave untouched. Evidence names concrete symbols and call edges.
 
 | Invariant/surface | Entry → owner | Current source evidence | D8.3 owner boundary |
 | --- | --- | --- | --- |
-| Diary crypto | route → body lease → envelope | `server/routes/diary.ts` and `server/routes/posts.ts:saveManagedDiary` call `withDiaryBodyOperation`; `server/diaryAccess/body.ts` owns AES-GCM envelope/AEAD; `service.ts` owns capability/lease | Keep one adapter/lease; no plaintext fallback owner. |
+| Diary crypto | route → body lease → envelope | `server/routes/diary.ts` and `server/routes/posts.ts:saveManagedDiary` call `withDiaryBodyOperation`; `server/diaryAccess/body.ts` owns AES-GCM envelope/AEAD; `service.ts` owns capability/lease and the live/unwrapped DEK | Keep one adapter/lease and one server-side DEK owner; the client is never a DEK owner and has no plaintext fallback owner. |
 | Client session | auth/lock event → session | `src/composables/diary/useDiaryAccessSession.ts` owns state, epoch, generation and clear; `src/lib/auth-session.ts` owns auth generations/locked-response listeners | All derived holders consume this epoch; no second unlock boolean/generation authority. |
 | Server session | request → lease | `server/diaryAccess/service.ts:withBodyOperation`, `dropCapability`, quiescence | A lease must close before invalidated operation publishes. |
 | Git mutation | history route → mutation | `server/history/routes.ts` → `server/history/git.ts:addAndCommit` → `hash-object`, `git add`, `update-index`, `write-tree`, `commit-tree`, `update-ref`; temp index via `fs.mkdtemp` | Reject managed paths inside `addAndCommit` before any Git/temp side effect. |
@@ -67,9 +68,11 @@ leave untouched. Evidence names concrete symbols and call edges.
 
 1. A normalized managed path is enough to select the existing Diary adapter; no
    component may infer authorization from a local flag.
-2. Only the existing session/capability owner can issue or revoke body access.
-   All derived request tokens are subordinate to the authoritative session
-   epoch, never a replacement for it.
+2. Only the existing session/capability owner can issue or revoke body access,
+   and the server-side Diary access service is the sole owner of the
+   live/unwrapped DEK. The client holds only existing session/capability state
+   and necessary transient input, never a DEK. All derived request tokens are
+   subordinate to the authoritative session epoch, never a replacement for it.
 3. Plaintext exists only in an authorized operation or unlocked in-memory UI.
    Any durable writer, journal, Git primitive, IndexedDB API, SQLite backup,
    index, log, trace, or artifact receives ciphertext, approved structural
@@ -90,18 +93,22 @@ leave untouched. Evidence names concrete symbols and call edges.
     and outside automatic deletion/wipe guarantees.
 11. D8.4 owns all legacy plaintext migration/cleanup; D8.3 prevents new leaks
     and does not silently rewrite/delete legacy state.
-12. Ordinary Note behavior is a regression contract for every shared seam.
+12. Ordinary Note behavior is a regression contract for every shared seam;
+    the sole deliberate D8.3 projection exception is suppression of
+    cross-scope `Note → managed Diary` LinkIndex edges. Note-to-Note links and
+    all other Note semantics remain unchanged.
 
 ## 4. Architecture decisions
 
 ### 4.1 Fail closed before new infrastructure
 
 Do not create an encrypted IndexedDB adapter, encrypted Git history, a second
-Diary LinkIndex, a second search database, or a second session owner in D8.3.
+Diary LinkIndex, a second search database, or a second key/DEK/session owner in
+D8.3.
 Disable persistent managed-Diary drafts/recovery, body search, body-derived
-LinkIndex, private metadata migration, generic Diary rename/move, Diary History,
-and AI body context. Keep the existing D8.2 primary adapter and Native Vault
-workspace.
+LinkIndex, private metadata migration, generic Diary rename/move/delete, Diary
+History, and AI body context. Keep the existing D8.2 primary adapter and Native
+Vault workspace.
 
 ### 4.2 One structural projection
 
@@ -109,7 +116,10 @@ workspace.
 must agree on canonical date/path, existence, stable id, and Mood. Title,
 summary, tags, frontmatter, links, and snippets are private/body-derived for
 managed Diary. Existing SQLite rows are not deleted in D8.3; locked APIs filter
-them and D8.4 inventories/cleans them.
+them and D8.4 inventories/cleans them. Ordinary Note projections remain
+unchanged, with one deliberate D8.3 exception: cross-scope `Note → managed
+Diary` LinkIndex edges are suppressed because the target relation is
+body-derived; Note-to-Note edges remain unchanged.
 
 ### 4.3 One teardown coordinator
 
@@ -120,12 +130,10 @@ coordinator owns cancellation/clear ordering, not a new session state machine.
 
 ### 4.4 Stable errors and no body in errors
 
-Reuse existing `423 diary-locked`, `422 diary-history-encrypted-unsupported`,
-`422 diary-encrypted-rename-unsupported`,
-`422 diary-encrypted-reference-unsupported`, and
-`422 diary-recovery-identity-required`. Approve proposed names in section 10
-before implementation; route code must not invent strings ad hoc. All errors
-are `no-store` and contain no raw body, envelope, key, or provider context.
+Section 10 freezes the complete D8.3 status/code/client-invalidation matrix;
+implementation must not select alternate statuses or invent route strings.
+All HTTP errors are `no-store` and contain no raw body, envelope, key, or
+provider context. Client-only rejections never become HTTP `409` responses.
 
 ### 4.5 AI and explicit external copies
 
@@ -170,7 +178,9 @@ files” checklists; each has a security owner and an entry/exit proof.
 * Make every cold rebuild and incremental update skip managed Diary body bytes.
 * Return structural paths only; filter managed source/target edges and titles
   in snapshots/backlinks/rename impact.
-* Clear client `useLinkIndex` state on lock; preserve Note-to-Note links.
+* Clear client `useLinkIndex` state on lock. Preserve all Note behavior,
+  including Note-to-Note links; intentionally suppress only cross-scope
+  `Note → managed Diary` edges as the D8.3 privacy exception.
 
 ### D8.3-E — Tree/list/metadata projection hardening
 
@@ -184,7 +194,9 @@ files” checklists; each has a security owner and an entry/exit proof.
 
 * Ensure document, folder, bulk, delete, and reference operations preflight the
   entire footprint and reject managed Diary before raw read, journal, stage,
-  metadata, LinkIndex, or filesystem mutation.
+  metadata, LinkIndex, or filesystem mutation. Direct Diary delete and any
+  folder/bulk delete touching Diary are intentionally unavailable in D8.3;
+  see the rationale and future re-enable gate in the PRD §15.1.
 * Keep generic Note rename/move/rewrite/delete behavior unchanged.
 
 ### D8.3-G — External conflict and derived UI state
@@ -231,7 +243,7 @@ made by the current task.
 | File / module | Current responsibility | Planned change | Security invariant |
 | --- | --- | --- | --- |
 | `server/history/git.ts` | Generic Git index/tree/commit mutation | Preflight all normalized paths in `addAndCommit` before temp index or Git command | No new managed Diary revision in Git. |
-| `server/history/routes.ts` | HTTP History guards and route orchestration | Preserve stable 422/no-store; reject before body/diff payload construction | Locked/unsupported History is fail closed. |
+| `server/history/routes.ts` | HTTP History guards and route orchestration | Preserve HTTP `422 diary-history-encrypted-unsupported`/`no-store`; reject before body/diff payload construction | Locked/unsupported History is fail closed. |
 | `server/history/restore.ts` | Historical raw restore/atomic write | Add service-level managed-path rejection | No raw Git body restore. |
 | `server/history/metadataRevisions.ts` | SQLite raw history metadata journals (`before_raw`, `target_raw`) | Ensure managed routes never call capture/restore; classify legacy rows for D8.4 | No new managed raw journal. |
 | `server/routes/posts.ts` | Diary save/read, generic create, rename, delete, recovery | Keep adapter path; add delete/footprint preflight; prevent LinkIndex raw update; preserve Note behavior | No plaintext durable/index/journal side effect. |
@@ -299,8 +311,8 @@ Existing D8.2 adapter + session epoch
 
 Concrete order:
 
-1. Approve invariant/error names and add characterization/negative tests (no
-   behavior change yet).
+1. Freeze the invariant/error matrix in §10 and add
+   characterization/negative tests (no behavior change yet).
 2. Land A’s mutation-owner rejection and B’s no-write draft guard; these stop
    new durable leakage before UI work.
 3. Land E and D together where LinkIndex/list contracts meet; do not merge a
@@ -319,9 +331,9 @@ Concrete order:
 | Managed save/create | Normalize identity; body lease; decrypt/CAS in memory; encrypt envelope | `prepareAtomicTextWrite/Create` writes ciphertext; metadata transaction; no Git/Diary LinkIndex body update | Auth/tag/identity failure leaves original bytes/metadata unchanged; temp cleanup; LinkIndex structural update only. |
 | History commit | Inspect every path, reject if any managed Diary | Only Note paths reach temp index/Git commands | Reject before `mkdtemp`, `hash-object`, `git add`, tree/ref; no rollback needed because no mutation. |
 | History restore | Reject managed path before reading historical raw | Note restore uses existing atomic/journal path | Managed rejection leaves file/metadata/index untouched; Note rollback unchanged. |
-| Draft save/conflict | Classify path and session epoch | Managed: no IDB transaction; Note: existing IDB transaction | Managed call returns unsupported/no-op with telemetry-free code; no legacy record deletion. |
+| Draft save/conflict | Classify path and session epoch | Managed: no IDB transaction; Note: existing IDB transaction | Managed call returns client-only `diary-draft-recovery-unsupported`; no legacy record deletion. |
 | Search/index update | Filter managed path before body fetch/parse | Note index/cache update; structural Diary path only | Stale result discarded; on lock clear caches/results. |
-| Rename/move/reference/delete | Plan complete footprint; reject if any managed Diary | Only Note footprint reaches journals/stage/fs/index | Rejection occurs before raw reads/journal/stage; mixed request has no partial mutation. |
+| Rename/move/reference/delete | Plan complete footprint; reject if any managed Diary | Only Note footprint reaches journals/stage/fs/index | Rename/move uses the frozen `422` codes; direct or mixed managed delete uses `422 diary-encrypted-delete-unsupported`; rejection occurs before raw reads/journal/stage and mixed requests have no partial mutation. |
 | Conflict resolution | Check current epoch, tab identity, request token and lease | Authorized in-memory save only | Epoch mismatch returns `diary-session-invalidated`; no save, draft, index, or dialog publication. |
 | PDF | Check unlocked epoch before and after render | Browser DOM clone and user download | Lock aborts/removes DOM; late result cannot call download. Downloaded file remains external. |
 | Clipboard | Check unlocked epoch immediately before copy | OS clipboard write | Lock does not promise clipboard wipe; no automatic persistence by Docus. |
@@ -330,6 +342,16 @@ Concrete order:
 No operation may “repair” an encrypted envelope by parsing it as Markdown. Any
 unknown version, malformed bytes, AAD mismatch, or authentication failure stops
 at the adapter with no downstream side effect.
+
+Delete is deliberately fail-closed for D8.3. Although the primary bytes are
+ciphertext, the existing generic document/folder delete pipeline stages
+`.docus-delete-inflight-*` data and can capture raw/metadata for rollback,
+reindex, or journal recovery. Without an adapter-owned ciphertext-only delete
+transaction, D8.3 cannot prove that direct deletion is free of plaintext or
+derived-state side effects. Therefore direct managed-Diary delete and any
+folder/bulk delete whose footprint contains Diary return the frozen
+`422 diary-encrypted-delete-unsupported` before staging; Note-only delete is
+unchanged. Re-enablement requires the PRD §15.1 future transaction proof.
 
 ## 9. Lock teardown sequencing
 
@@ -357,31 +379,26 @@ editor dispose, and restart (restart reconstructs no body/key from storage).
 
 ## 10. Error contracts
 
-Existing contracts to preserve:
+The following matrix is frozen at Gate 0. Implementation must use these exact
+statuses, codes, and client invalidation actions; it must not invent ad hoc
+route strings or turn a client-only rejection into HTTP `409`. Every HTTP error
+is `Cache-Control: no-store` and contains no raw/envelope/key/provider data.
 
-| HTTP | Code | Semantics | Body policy |
+| Surface / operation | Transport and status | Stable code | Client behavior |
 | --- | --- | --- | --- |
-| 423 | `diary-locked` | No current body lease/capability | `Cache-Control: no-store`; no body content. |
-| 422 | `diary-history-encrypted-unsupported` | Managed Diary History body operation | Stable code/path only. |
-| 422 | `diary-encrypted-rename-unsupported` | Managed document rename/move | No journal/fs/index side effect. |
-| 422 | `diary-encrypted-reference-unsupported` | Reference/folder footprint includes managed Diary | No raw reference payload. |
-| 422 | `diary-recovery-identity-required` | Generic recovery cannot create managed Diary | No recovery raw. |
-
-Approve these names before implementation if a response is needed:
-
-| Proposed code | Use | Preferred behavior |
-| --- | --- | --- |
-| `diary-draft-recovery-unsupported` | Managed IDB draft/recovery | Stable 422 or explicit UI unavailable; no body. |
-| `diary-private-metadata-unsupported` | Managed private metadata/migration/archive | Stable 422 or filtered projection. |
-| `diary-ai-context-unsupported` | Live-context/body AI request | Stable 422 before provider call. |
-| `diary-ai-summary-unsupported` | Managed summary fallback | Stable 422 before raw read/provider call. |
-| `diary-ai-commit-message-unsupported` | Managed commit-message body collection | Stable 422 before Git/provider call. |
-| `diary-session-invalidated` | Stale client operation/export | Local rejection or 409; never publish body. |
-
-Search, LinkIndex, tree, and list endpoints should filter unsupported Diary body
-data rather than return a misleading body-bearing error. All responses are
-`no-store` where body access is possible and contain no raw/envelope/key/provider
-data.
+| Diary body read/save/create/resource without a current lease | HTTP `423` | `diary-locked` | Advance the Diary epoch synchronously, clear Diary holders, show the existing unlock flow, and publish no body. |
+| Diary History body log/file/diff/content-hashes/restore | HTTP `422` | `diary-history-encrypted-unsupported` | Keep the session, show unavailable, and perform no Git/filesystem mutation. |
+| Generic recovery targeting managed Diary identity | HTTP `422` | `diary-recovery-identity-required` | Show unavailable and create no recovery state. |
+| Managed document rename/move | HTTP `422` | `diary-encrypted-rename-unsupported` | Show unavailable; do not read raw content or mutate journal/staging/filesystem/index state. |
+| Managed folder rename/move or reference rewrite footprint | HTTP `422` | `diary-encrypted-reference-unsupported` | Show unavailable; reject the complete footprint with no partial Note mutation. |
+| Managed document delete, or folder/bulk delete whose footprint contains managed Diary | HTTP `422` | `diary-encrypted-delete-unsupported` | Show unavailable; reject before raw read, staging, journal, metadata, filesystem, or index mutation. |
+| Managed private metadata migration/archive/tag mutation | HTTP `422` | `diary-private-metadata-unsupported` | Show unavailable; no private-field read or backup mutation. Public structural projection remains `200`. |
+| Managed AI live context | HTTP `422` | `diary-ai-context-unsupported` | Reject before raw read or provider call; no context publication. |
+| Managed AI summary fallback | HTTP `422` | `diary-ai-summary-unsupported` | Reject before raw read or provider call. |
+| Managed AI commit-message body collection | HTTP `422` | `diary-ai-commit-message-unsupported` | Reject before Git collection or provider call. |
+| Managed Diary draft/recovery IDB write, discovery, or read | Client-only rejection; no HTTP request | `diary-draft-recovery-unsupported` | Make no IndexedDB call, clear candidate refs, and show “Diary recovery unavailable.” |
+| Search, LinkIndex, tree, and list projections | HTTP `200` filtered response | No error code | Return structural data only; clear managed derived state on epoch changes. |
+| Stale client body operation, conflict, PDF, or clipboard after epoch advance | Client-only rejection; no HTTP request | `diary-session-invalidated` | Discard the result, clear the relevant holder, and never retry or publish body; a server request that loses its lease is handled as `423 diary-locked`. |
 
 ## 11. Security negative tests
 
@@ -390,7 +407,7 @@ observable-artifact assertions:
 
 | Scenario | Expected assertion |
 | --- | --- |
-| Locked History log/file/diff/restore | `423`/stable `422`; no raw response; no Git/fs mutation. |
+| Locked History log/file/diff/restore | HTTP `422 diary-history-encrypted-unsupported`; no raw response; no Git/fs mutation. |
 | Diary create/save/recovery/restore/rename/move | No new Git commit/object/tree/ref; unsupported operation leaves bytes/metadata unchanged. |
 | Mixed Note + Diary History or folder batch | Whole request rejected before temp index/journal/stage; Note not partially committed. |
 | IndexedDB Diary draft/conflict write | No `drafts`/`draftConflicts` record; no pagehide/dispose flush; Note record still works. |
@@ -399,10 +416,12 @@ observable-artifact assertions:
 | Paused search result `E1`, lock → `E2`, resolve | Result ignored; cache/UI remain empty. |
 | Cold LinkIndex on encrypted envelope | Envelope is never sent to gray-matter/link parser; only structural path remains. |
 | Warm LinkIndex after lock | Managed edges/title/backlinks are absent or query fails closed; client snapshot cleared. |
-| Ordinary Note backlinks | Note-to-Note link unchanged; no regression from filtering. |
+| Ordinary Note backlinks | Note-to-Note link unchanged; cross-scope `Note → managed Diary` edge is intentionally suppressed by the D8.3 projection rule; no other Note regression. |
 | Tree/list/metadata/tag locked | Date/path/existence/id/Mood allowed; no private title/summary/tags/frontmatter/backup. |
 | Metadata migration startup/API | Managed Diary raw not scanned/backed up; legacy records filtered while locked. |
-| Managed delete/rename/folder/reference | Stable unsupported response before raw read/journal/stage/fs/index; no partial state. |
+| Managed delete/rename/folder/reference | Exact frozen `422` code for the operation before raw read/journal/stage/fs/index; no partial state. |
+| Direct Diary delete | HTTP `422 diary-encrypted-delete-unsupported` before staging; intentional temporary feature degradation is visible in the UI. |
+| Mixed folder/bulk delete | HTTP `422 diary-encrypted-delete-unsupported` for any managed footprint; no Note subset is partially deleted. |
 | External conflict/CAS | Plaintext conflict is memory-only while authorized; stale confirm/save cannot commit. |
 | Envelope bytes in diff/reader/recovery | Never rendered/parsed as Markdown; malformed/unknown/auth-failed envelope stops. |
 | Lock/logout/expiry/replacement | Every raw/cache/model/dialog/ref is cleared; server lease quiesces; no late publication. |
@@ -528,7 +547,7 @@ and show the intermediate test proof; never land a temporary plaintext path.
 
 ### Gate 0 — Plan approval
 
-Review this plan/PRD, source evidence, statuses, proposed error codes,
+Review this plan/PRD, source evidence, statuses, the frozen error matrix,
 unsupported semantics, and D8.4 boundary. Confirm no production code changed.
 
 ### Gate 1 — Owner-level security review
