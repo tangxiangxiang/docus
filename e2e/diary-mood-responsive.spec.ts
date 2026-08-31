@@ -1,7 +1,13 @@
 import { expect, test, type APIRequestContext, type Page } from './fixtures/diary'
 import { clearDraftDatabase, gotoVaultReady } from './helpers/edit-program'
+import {
+  CALENDAR_TEST_DATE,
+  CALENDAR_TEST_TIME_ZONE,
+  calendarDay,
+  calendarMoodButton,
+} from './helpers/calendar-clock'
 
-const TEST_TIME_ZONE = 'Asia/Shanghai'
+const TEST_TIME_ZONE = CALENDAR_TEST_TIME_ZONE
 const RUN_ID = String(Date.now())
 
 test.use({
@@ -33,17 +39,7 @@ const CANONICAL_MOOD_IDS = [
 ] as const
 
 function localCivilDate(): string {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: TEST_TIME_ZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(new Date())
-  const year = parts.find((part) => part.type === 'year')?.value
-  const month = parts.find((part) => part.type === 'month')?.value
-  const day = parts.find((part) => part.type === 'day')?.value
-  if (!year || !month || !day) throw new Error('unable to resolve the E2E local civil date')
-  return `${year}-${month}-${day}`
+  return CALENDAR_TEST_DATE
 }
 
 function diaryPath(date: string): string {
@@ -109,7 +105,7 @@ async function moveCalendarToMonth(page: Page, date: string): Promise<void> {
   for (let attempt = 0; attempt < 24; attempt += 1) {
     const currentMonth = await calendar.getAttribute('data-month')
     if (currentMonth === targetMonth) {
-      await expect(calendar.locator(`[data-diary-day-content][data-date="${date}"]`)).toHaveCount(1)
+      await expect(calendarDay(calendar, date)).toHaveCount(1)
       return
     }
     if (!currentMonth) throw new Error('Calendar did not expose its current month')
@@ -328,12 +324,13 @@ async function readCalendarMetrics(page: Page, date: string): Promise<CalendarMe
       && left.bottom > right.top + 0.5
     )
     const root = document.querySelector<HTMLElement>('[data-testid="diary-calendar"]')
-    const dateButton = root?.querySelector<HTMLElement>(`[data-diary-day-content][data-date="${targetDate}"]`) ?? null
-    const moodButton = root?.querySelector<HTMLElement>(`[data-testid="diary-calendar-mood"][data-date="${targetDate}"]`) ?? null
+    const activeLayout = root?.querySelector<HTMLElement>('.vc-pane-layout:not([class*="leave"])') ?? null
+    const dateButton = activeLayout?.querySelector<HTMLElement>(`[data-diary-day-content][data-date="${targetDate}"]`) ?? null
+    const moodButton = activeLayout?.querySelector<HTMLElement>(`[data-testid="diary-calendar-mood"][data-date="${targetDate}"]`) ?? null
     const dateBox = toBox(dateButton)
     const moodBox = toBox(moodButton)
     const moodCell = moodButton?.closest('.vc-day')
-    const neighborDateButtons = [...(root?.querySelectorAll<HTMLElement>('[data-diary-day-content]') ?? [])]
+    const neighborDateButtons = [...(activeLayout?.querySelectorAll<HTMLElement>('[data-diary-day-content]') ?? [])]
       .filter((button) => button !== dateButton && button.closest('.vc-day') !== moodCell)
       .map((button) => toBox(button))
     return {
@@ -395,8 +392,8 @@ async function assertNativeDiaryNoOverflow(page: Page, date: string, viewport: V
 async function runResponsiveMatrix(page: Page, date: string): Promise<void> {
   const calendar = page.getByTestId('diary-calendar')
   const surface = page.getByTestId('diary-calendar-surface')
-  const dateButton = () => surface.locator(`[data-diary-day-content][data-date="${date}"]`)
-  const moodButton = () => surface.locator(`[data-testid="diary-calendar-mood"][data-date="${date}"]`)
+  const dateButton = () => calendarDay(surface, date)
+  const moodButton = () => calendarMoodButton(surface, date)
 
   for (const viewport of D75_VIEWPORTS) {
     await page.setViewportSize({ width: viewport.width, height: viewport.height })
@@ -479,10 +476,10 @@ test.describe('English dark and ordinary Vault responsive smoke', () => {
       for (const viewport of [D75_VIEWPORTS[0]!, D75_VIEWPORTS[3]!]) {
         await page.setViewportSize({ width: viewport.width, height: viewport.height })
         await expect(page.getByTestId('diary-calendar')).toBeVisible()
-        await expect(page.locator(`[data-testid="diary-calendar-mood"][data-date="${date}"]`)).toBeVisible()
+        await expect(calendarMoodButton(page.getByTestId('diary-calendar'), date)).toBeVisible()
         await assertNoPageHorizontalOverflow(page, `${viewport.name} dark Calendar Home`)
         assertCalendarGeometry(await readCalendarMetrics(page, date), viewport)
-        await page.locator(`[data-testid="diary-calendar-mood"][data-date="${date}"]`).click()
+        await calendarMoodButton(page.getByTestId('diary-calendar'), date).click()
         await expect(page.getByTestId('diary-mood-picker')).toBeVisible()
         const metrics = await readPickerMetrics(page)
         assertPickerGeometry(metrics, viewport)

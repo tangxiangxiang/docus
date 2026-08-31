@@ -4,6 +4,7 @@ import type { BrowserContext, Page } from '@playwright/test'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import nodePath from 'node:path'
+import { freezeCalendarClock } from '../helpers/calendar-clock'
 
 type StorageState = Awaited<ReturnType<BrowserContext['storageState']>>
 type PlaywrightApi = typeof import('playwright-core')
@@ -438,6 +439,9 @@ export const test = authTest.extend<{}, {
   // that process, while preserving the scope the test was already using.
   page: async ({ page, playwright, baseURL, diaryConfigReady }, use, testInfo) => {
     void diaryConfigReady
+    // Install the browser clock before any test navigation. DiaryCalendar
+    // derives its current civil date from browser-side `new Date()`.
+    await freezeCalendarClock(page)
     const origin = resolvedBaseURL(baseURL)
     const originalGoto = page.goto.bind(page)
     const originalReload = page.reload.bind(page)

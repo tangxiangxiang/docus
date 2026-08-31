@@ -12,8 +12,9 @@ import {
   interceptAutosaveHeld,
   reloadApp,
 } from './helpers/edit-program'
+import { CALENDAR_TEST_DATE, CALENDAR_TEST_TIME_ZONE, calendarDay } from './helpers/calendar-clock'
 
-const TEST_TIME_ZONE = 'Asia/Shanghai'
+const TEST_TIME_ZONE = CALENDAR_TEST_TIME_ZONE
 const RUN_ID = String(Date.now())
 const E2E_VAULT = process.env.DOCUS_DRAFT_E2E_VAULT ?? nodePath.join('src', 'content')
 
@@ -36,17 +37,7 @@ type DiaryPost = {
 }
 
 function localCivilDate(): string {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: TEST_TIME_ZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(new Date())
-  const year = parts.find((part) => part.type === 'year')?.value
-  const month = parts.find((part) => part.type === 'month')?.value
-  const day = parts.find((part) => part.type === 'day')?.value
-  if (!year || !month || !day) throw new Error('unable to resolve the E2E local civil date')
-  return `${year}-${month}-${day}`
+  return CALENDAR_TEST_DATE
 }
 
 function civilParts(value: string): { year: number; month: number; day: number } {
@@ -273,7 +264,7 @@ async function moveToMonth(page: Page, date: string): Promise<void> {
 
 async function clickDiaryDate(page: Page, date: string): Promise<void> {
   await moveToMonth(page, date)
-  const button = page.locator(`[data-diary-day-content][data-date="${date}"]`)
+  const button = calendarDay(page.getByTestId('diary-calendar'), date)
   await expect(button).toBeVisible()
   await button.click()
 }

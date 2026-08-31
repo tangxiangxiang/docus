@@ -1,6 +1,14 @@
 import { expect, test, type APIRequestContext, type Page } from './fixtures/diary'
+import {
+  CALENDAR_TEST_DATE,
+  CALENDAR_TEST_MONTH,
+  CALENDAR_TEST_TIME_ZONE,
+  calendarDay,
+  calendarMoodButton,
+  freezeCalendarClock,
+} from './helpers/calendar-clock'
 
-const TEST_TIME_ZONE = 'Asia/Shanghai'
+const TEST_TIME_ZONE = CALENDAR_TEST_TIME_ZONE
 
 test.use({
   timezoneId: TEST_TIME_ZONE,
@@ -15,17 +23,7 @@ async function expectDiaryTestTimeZone(page: Page): Promise<void> {
 }
 
 function localCivilDate(): string {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: TEST_TIME_ZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(new Date())
-  const year = parts.find((part) => part.type === 'year')?.value
-  const month = parts.find((part) => part.type === 'month')?.value
-  const day = parts.find((part) => part.type === 'day')?.value
-  if (!year || !month || !day) throw new Error('unable to resolve the E2E local civil date')
-  return `${year}-${month}-${day}`
+  return CALENDAR_TEST_DATE
 }
 
 function nextCivilDate(value: string): string {
@@ -115,7 +113,7 @@ async function moveCalendarToMonth(page: Page, date: string): Promise<void> {
   for (let attempt = 0; attempt < 24; attempt += 1) {
     const currentMonth = await calendar.getAttribute('data-month')
     if (currentMonth === targetMonth) {
-      await expect(calendar.locator(`[data-diary-day-content][data-date="${date}"]`)).toHaveCount(1)
+      await expect(calendarDay(calendar, date)).toHaveCount(1)
       return
     }
     if (!currentMonth) throw new Error('Calendar did not expose its current month')
@@ -160,6 +158,7 @@ test('Diary scope shows the Calendar-first surface and month navigation', async 
   await expect(page.getByTestId('diary-calendar-surface-empty')).toBeVisible()
 
   const monthBefore = await calendar.getAttribute('data-month')
+  expect(monthBefore).toBe(CALENDAR_TEST_MONTH)
   await page.getByTestId('diary-calendar-next').click()
   await expect(calendar).not.toHaveAttribute('data-month', monthBefore ?? '')
   await page.getByTestId('diary-calendar-previous').click()
@@ -174,6 +173,51 @@ test('Diary scope shows the Calendar-first surface and month navigation', async 
   await expect.poll(async () => page.evaluate(() => (
     document.documentElement.scrollWidth <= window.innerWidth + 1
   ))).toBe(true)
+})
+
+test('Calendar date identity stays stable through a frozen month boundary', async ({ page, request }) => {
+  const edgeDate = '2026-08-31'
+
+  try {
+    await seedExistingDiary(request, edgeDate, '# Frozen month boundary\n')
+    await freezeCalendarClock(page, '2026-08-31T12:00:00+08:00')
+    await page.goto('/vault')
+    await expect(page.locator('.file-tree')).toBeVisible()
+    await page.locator('.scope-chip').filter({ hasText: 'diary' }).click()
+
+    const calendar = page.getByTestId('diary-calendar')
+    await expect(calendar).toHaveAttribute('data-month', '2026-08')
+    await expect(calendarDay(calendar, edgeDate)).toHaveCount(1)
+
+    await page.getByTestId('diary-calendar-next').click()
+    await expect(calendar).toHaveAttribute('data-month', '2026-09')
+    await page.getByTestId('diary-calendar-previous').click()
+    await expect(calendar).toHaveAttribute('data-month', '2026-08')
+
+    const edgeDay = calendarDay(calendar, edgeDate)
+    await expect(edgeDay).toHaveCount(1)
+    await edgeDay.click()
+    await expect(page).toHaveURL(/\/vault\/diary\/2026-08-31(?:[?#]|$)/)
+  } finally {
+    await deleteDiaryDate(request, edgeDate)
+  }
+})
+
+test('Calendar year navigation remains deterministic at a frozen December boundary', async ({ page }) => {
+  await freezeCalendarClock(page, '2026-12-31T12:00:00+08:00')
+  await page.goto('/vault')
+  await expect(page.locator('.file-tree')).toBeVisible()
+  await page.locator('.scope-chip').filter({ hasText: 'diary' }).click()
+
+  const calendar = page.getByTestId('diary-calendar')
+  await expect(calendar).toHaveAttribute('data-month', '2026-12')
+  await expect(calendarDay(calendar, '2026-12-31')).toHaveCount(1)
+  await page.getByTestId('diary-calendar-next').click()
+  await expect(calendar).toHaveAttribute('data-month', '2027-01')
+  await expect(calendarDay(calendar, '2027-01-01')).toHaveCount(1)
+  await page.getByTestId('diary-calendar-previous').click()
+  await expect(calendar).toHaveAttribute('data-month', '2026-12')
+  await expect(calendarDay(calendar, '2026-12-31')).toHaveCount(1)
 })
 
 test('Calendar click opens an existing Diary through the native Vault reading surface', async ({ page, request }) => {
@@ -195,9 +239,9 @@ test('Calendar click opens an existing Diary through the native Vault reading su
 
     const surface = page.getByTestId('diary-calendar-surface')
     await expect(surface).toBeVisible()
-    const dateButton = surface.locator(`[data-diary-day-content][data-date="${date}"]`)
+    const dateButton = calendarDay(surface, date)
     await expect(dateButton).toBeVisible()
-    const unsetMoodButton = surface.locator(`[data-testid="diary-calendar-mood"][data-date="${date}"]`)
+    const unsetMoodButton = calendarMoodButton(surface, date)
     await expect(unsetMoodButton).toHaveCount(1)
     await expect(unsetMoodButton).toHaveText('?')
     await unsetMoodButton.click()
@@ -254,12 +298,12 @@ test('Calendar Mood picker closes before existing-date navigation hides Calendar
     await page.locator('.scope-chip').filter({ hasText: 'diary' }).click()
 
     const surface = page.getByTestId('diary-calendar-surface')
-    const moodButton = surface.locator(`[data-testid="diary-calendar-mood"][data-date="${date}"]`)
+    const moodButton = calendarMoodButton(surface, date)
     await moodButton.click()
     const picker = page.getByTestId('diary-mood-picker')
     await expect(picker).toBeVisible()
 
-    await surface.locator(`[data-diary-day-content][data-date="${neighbor}"]`).click()
+    await calendarDay(surface, neighbor).click()
     await expect(page).toHaveURL(new RegExp(`/vault/diary/${neighbor.replace('-', '\\-')}`))
     await expect(picker).toHaveCount(0)
   } finally {
@@ -280,7 +324,7 @@ test('Calendar Mood picker closes when month navigation changes the Calendar con
     await page.locator('.scope-chip').filter({ hasText: 'diary' }).click()
 
     const surface = page.getByTestId('diary-calendar-surface')
-    await surface.locator(`[data-testid="diary-calendar-mood"][data-date="${date}"]`).click()
+    await calendarMoodButton(surface, date).click()
     const picker = page.getByTestId('diary-mood-picker')
     await expect(picker).toBeVisible()
 
@@ -316,7 +360,7 @@ test('Calendar click on a missing future Diary is a browser-visible no-op', asyn
     const routeBefore = new URL(page.url()).pathname
     const tabsBefore = await page.locator('.tabs').count()
     await moveCalendarToMonth(page, future)
-    const dateButton = surface.locator(`[data-diary-day-content][data-date="${future}"]`)
+    const dateButton = calendarDay(surface, future)
     await expect(dateButton).toBeVisible()
     const probeResponse = page.waitForResponse((response) => {
       const url = new URL(response.url())
@@ -372,7 +416,7 @@ test('missing future Diary does not overwrite the user FileTree filter', async (
     await page.locator('.scope-chip').filter({ hasText: 'diary' }).click()
 
     const routeBefore = new URL(page.url()).pathname
-    const dateButton = page.locator(`[data-diary-day-content][data-date="${future}"]`)
+    const dateButton = calendarDay(page.getByTestId('diary-calendar'), future)
     await moveCalendarToMonth(page, future)
     await expect(dateButton).toBeVisible()
     const probeResponse = page.waitForResponse((response) => {
@@ -445,7 +489,7 @@ test('Mood-first creation keeps Calendar visible until Mood CAS succeeds', async
     await expect(surface).toBeVisible()
     await moveCalendarToMonth(page, date)
 
-    const dateButton = surface.locator(`[data-diary-day-content][data-date="${date}"]`)
+    const dateButton = calendarDay(surface, date)
     await expect(dateButton).toBeVisible()
     await dateButton.click()
     const picker = page.getByTestId('diary-mood-picker')
@@ -470,7 +514,7 @@ test('Mood-first creation keeps Calendar visible until Mood CAS succeeds', async
     const createdBody = await created.json() as { metadata?: { mood?: string | null } }
     expect(createdBody.metadata?.mood ?? null).toBeNull()
 
-    const repairMood = surface.locator(`[data-testid="diary-calendar-mood"][data-date="${date}"]`)
+    const repairMood = calendarMoodButton(surface, date)
     await expect(repairMood).toHaveText('?')
     await repairMood.click()
     await expect(page.getByTestId('diary-mood-picker')).toBeVisible()
@@ -536,7 +580,7 @@ test('failed Mood-first repair intent is invalidated by explicit Diary navigatio
     await expect(surface).toBeVisible()
     await moveCalendarToMonth(page, date)
 
-    const dateButton = surface.locator(`[data-diary-day-content][data-date="${date}"]`)
+    const dateButton = calendarDay(surface, date)
     await expect(dateButton).toBeVisible()
     await dateButton.click()
     const picker = page.getByTestId('diary-mood-picker')
@@ -554,7 +598,7 @@ test('failed Mood-first repair intent is invalidated by explicit Diary navigatio
     const createdBody = await created.json() as { metadata?: { mood?: string | null } }
     expect(createdBody.metadata?.mood ?? null).toBeNull()
 
-    const repairMood = surface.locator(`[data-testid="diary-calendar-mood"][data-date="${date}"]`)
+    const repairMood = calendarMoodButton(surface, date)
     await expect(repairMood).toHaveText('?')
 
     // Explicit date navigation abandons the failed repair intent. Closing the
@@ -630,7 +674,7 @@ test('missing today and past dates require Mood before create and then open the 
 
     const surface = page.getByTestId('diary-calendar-surface')
     for (const date of dates) {
-      const dateButton = surface.locator(`[data-diary-day-content][data-date="${date}"]`)
+      const dateButton = calendarDay(surface, date)
       await expect(dateButton).toBeVisible()
       await dateButton.click()
       const picker = page.getByTestId('diary-mood-picker')
@@ -670,7 +714,7 @@ test('cancelling Mood-first creation leaves a missing date untouched', async ({ 
     await page.goto('/vault')
     await page.locator('.scope-chip').filter({ hasText: 'diary' }).click()
     const surface = page.getByTestId('diary-calendar-surface')
-    await surface.locator(`[data-diary-day-content][data-date="${date}"]`).click()
+    await calendarDay(surface, date).click()
     const picker = page.getByTestId('diary-mood-picker')
     await expect(picker).toBeVisible()
     await page.keyboard.press('Escape')
@@ -710,7 +754,7 @@ test('Calendar Mood emoji is the only picker entry and never navigates the date'
     await page.locator('.scope-chip').filter({ hasText: 'diary' }).click()
 
     const surface = page.getByTestId('diary-calendar-surface')
-    const moodButton = surface.locator(`[data-testid="diary-calendar-mood"][data-date="${date}"]`)
+    const moodButton = calendarMoodButton(surface, date)
     await expect(moodButton).toBeVisible()
     await expect(moodButton).toBeEnabled()
     await expect(moodButton.locator('img')).toHaveCount(1)
@@ -718,7 +762,7 @@ test('Calendar Mood emoji is the only picker entry and never navigates the date'
     await expect(surface.locator('text=+')).toHaveCount(0)
     await expect(surface.locator('text=✎')).toHaveCount(0)
 
-    const dateButton = surface.locator(`[data-diary-day-content][data-date="${date}"]`)
+    const dateButton = calendarDay(surface, date)
     await expect(dateButton.locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " vc-day ")]').locator('.vc-dot')).toBeHidden()
     const hoverBox = await dateButton.boundingBox()
     expect(hoverBox).not.toBeNull()
@@ -747,7 +791,7 @@ test('Calendar Mood emoji is the only picker entry and never navigates the date'
     for (const viewport of [{ width: 1280, height: 720 }, { width: 375, height: 812 }, { width: 320, height: 700 }]) {
       await page.setViewportSize(viewport)
       await expect(surface).toBeVisible()
-      const dateBox = await surface.locator(`[data-diary-day-content][data-date="${date}"]`).boundingBox()
+      const dateBox = await calendarDay(surface, date).boundingBox()
       const moodBox = await moodButton.boundingBox()
       expect(dateBox).not.toBeNull()
       expect(moodBox).not.toBeNull()
@@ -768,7 +812,7 @@ test('Calendar Mood emoji is the only picker entry and never navigates the date'
     await page.getByTestId('diary-mood-picker').getByTestId('diary-mood-clear').click()
     await expect.poll(() => readMood()).toBeNull()
     await expect(page.getByTestId('diary-mood-picker')).toHaveCount(0)
-    const clearedMoodButton = surface.locator(`[data-testid="diary-calendar-mood"][data-date="${date}"]`)
+    const clearedMoodButton = calendarMoodButton(surface, date)
     await expect(clearedMoodButton).toHaveCount(1)
     await expect(clearedMoodButton).toHaveText('?')
     await clearedMoodButton.click()

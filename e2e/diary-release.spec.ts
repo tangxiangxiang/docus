@@ -1,21 +1,12 @@
 import { expect, test, type APIRequestContext, type Page } from './fixtures/diary'
+import { CALENDAR_TEST_DATE, CALENDAR_TEST_MONTH, CALENDAR_TEST_TIME_ZONE, calendarDay } from './helpers/calendar-clock'
 
-const TEST_TIME_ZONE = 'Asia/Shanghai'
+const TEST_TIME_ZONE = CALENDAR_TEST_TIME_ZONE
 
-test.use({ trace: 'off', screenshot: 'only-on-failure' })
+test.use({ timezoneId: TEST_TIME_ZONE, trace: 'off', screenshot: 'only-on-failure' })
 
 function localCivilDate(): string {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: TEST_TIME_ZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(new Date())
-  const year = parts.find((part) => part.type === 'year')?.value
-  const month = parts.find((part) => part.type === 'month')?.value
-  const day = parts.find((part) => part.type === 'day')?.value
-  if (!year || !month || !day) throw new Error('unable to resolve the E2E local civil date')
-  return `${year}-${month}-${day}`
+  return CALENDAR_TEST_DATE
 }
 
 function diaryPath(date: string): string {
@@ -238,7 +229,7 @@ test('Diary Calendar navigation exposes keyboard-only focus indicators', async (
       { width: 375, height: 812 },
     ]) {
       await page.setViewportSize(viewport)
-      await expect(title).toHaveText('2026-08')
+      await expect(title).toHaveText(CALENDAR_TEST_MONTH)
       await focusPreviousWithKeyboard()
       await assertKeyboardFocus(previous)
 
@@ -263,7 +254,7 @@ test('Diary scope keeps Calendar hidden while managed document tabs are open', a
     await seedOrdinaryNote(request, note)
     await openDiaryScope(page)
 
-    await page.locator(`[data-diary-day-content][data-date="${date}"]`).click()
+    await calendarDay(page.getByTestId('diary-calendar'), date).click()
     await expect(page.locator(`[role="tab"][data-tab-id="${diary}"]`)).toHaveCount(1)
 
     await page.locator('.scope-chip').filter({ hasText: 'note' }).click()
@@ -325,7 +316,7 @@ test('Diary Calendar keyboard flow does not strand focus in the hidden surface',
     const surface = page.getByTestId('diary-calendar-surface')
     const previous = page.locator('.vc-prev')
     const next = page.locator('.vc-next')
-    const dateButton = surface.locator(`[data-diary-day-content][data-date="${date}"]`)
+    const dateButton = calendarDay(surface, date)
 
     await expect(page.getByTestId('diary-calendar')).toBeVisible()
     await expect(previous).toHaveAccessibleName('Previous month')
@@ -379,7 +370,7 @@ test('Diary markers remain structural when managed delete is fail-closed', async
 
   try {
     await openDiaryScope(page)
-    const dayButton = page.locator(`[data-diary-day-content][data-date="${date}"]`)
+    const dayButton = calendarDay(page.getByTestId('diary-calendar'), date)
     await expect(dayButton).toBeVisible()
     await expect(dayButton.locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " vc-day ")]').locator('.vc-dot')).toHaveCount(1)
     await expect(dayButton).toHaveAccessibleName(/Diary exists/i)
@@ -389,7 +380,7 @@ test('Diary markers remain structural when managed delete is fail-closed', async
     expect(await rejected.json()).toMatchObject({ code: 'diary-encrypted-delete-unsupported' })
     await page.reload()
     await openDiaryScope(page)
-    const retainedDayButton = page.locator(`[data-diary-day-content][data-date="${date}"]`)
+    const retainedDayButton = calendarDay(page.getByTestId('diary-calendar'), date)
     await expect(retainedDayButton).toBeVisible()
     await expect(retainedDayButton.locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " vc-day ")]').locator('.vc-dot')).toHaveCount(1)
     await expect(retainedDayButton).toHaveAccessibleName(/Diary exists/i)
@@ -407,7 +398,7 @@ test('Existing Diary lifecycle remains stable across five repeated opens', async
     for (let run = 0; run < 5; run += 1) {
       await openDiaryScope(page)
       const path = diaryPath(date)
-      await page.locator(`[data-diary-day-content][data-date="${date}"]`).click()
+      await calendarDay(page.getByTestId('diary-calendar'), date).click()
       const tab = page.locator(`[role="tab"][data-tab-id="${path}"]`)
       await expect(tab).toHaveCount(1)
       await expect(page.getByTestId('diary-reader-dialog')).toHaveCount(0)

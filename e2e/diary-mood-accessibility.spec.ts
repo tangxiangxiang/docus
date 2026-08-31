@@ -1,6 +1,7 @@
 import { expect, test, type APIRequestContext, type Page } from './fixtures/diary'
+import { CALENDAR_TEST_DATE, CALENDAR_TEST_TIME_ZONE, calendarDay, calendarMoodButton } from './helpers/calendar-clock'
 
-const TEST_TIME_ZONE = 'Asia/Shanghai'
+const TEST_TIME_ZONE = CALENDAR_TEST_TIME_ZONE
 const RUN_ID = String(Date.now())
 
 test.use({
@@ -10,17 +11,7 @@ test.use({
 })
 
 function localCivilDate(): string {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: TEST_TIME_ZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(new Date())
-  const year = parts.find((part) => part.type === 'year')?.value
-  const month = parts.find((part) => part.type === 'month')?.value
-  const day = parts.find((part) => part.type === 'day')?.value
-  if (!year || !month || !day) throw new Error('unable to resolve the E2E local civil date')
-  return `${year}-${month}-${day}`
+  return CALENDAR_TEST_DATE
 }
 
 function previousCivilDate(value: string): string {
@@ -360,7 +351,7 @@ test('missing past date enters Mood-first picker by keyboard and Escape creates 
     await deleteDiaryDate(request, date)
     await openDiaryHome(page)
     await moveCalendarToMonth(page, date)
-    const dateButton = page.locator(`[data-diary-day-content][data-date="${date}"]`)
+    const dateButton = calendarDay(page.getByTestId('diary-calendar'), date)
     await expect(dateButton).toBeVisible()
     // VCalendar exposes the custom date button as the actual keyboard owner,
     // but its generated day matrix does not include every out-of-month target
@@ -396,8 +387,8 @@ test('Calendar Mood trigger exposes truthful popup semantics and complete radio 
     await seedExistingDiary(request, date, 'happy')
     await openDiaryHome(page)
     const calendar = page.getByTestId('diary-calendar')
-    const dateButton = page.locator(`[data-diary-day-content][data-date="${date}"]`)
-    const moodButton = page.locator(`[data-testid="diary-calendar-mood"][data-date="${date}"]`)
+    const dateButton = calendarDay(calendar, date)
+    const moodButton = calendarMoodButton(calendar, date)
     await expect(calendar).toHaveAccessibleName(/日记日历|Diary calendar/)
     await expect(dateButton).toHaveAccessibleName(/有日记|Diary exists/)
     await expect(moodButton).toHaveAccessibleName(/心情|mood/i)

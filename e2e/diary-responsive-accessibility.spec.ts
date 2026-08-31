@@ -4,11 +4,12 @@ import {
   clearDraftDatabase,
   gotoVaultReady,
 } from './helpers/edit-program'
+import { CALENDAR_TEST_DATE, CALENDAR_TEST_TIME_ZONE, calendarDay } from './helpers/calendar-clock'
 
-const TEST_TIME_ZONE = 'Asia/Shanghai'
+const TEST_TIME_ZONE = CALENDAR_TEST_TIME_ZONE
 const RUN_ID = String(Date.now())
 
-test.use({ trace: 'off', screenshot: 'only-on-failure' })
+test.use({ timezoneId: TEST_TIME_ZONE, trace: 'off', screenshot: 'only-on-failure' })
 
 type Viewport = { name: string; width: number; height: number }
 
@@ -31,17 +32,7 @@ const DOCUMENT_VIEWPORTS: Viewport[] = [
 ]
 
 function localCivilDate(): string {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: TEST_TIME_ZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(new Date())
-  const year = parts.find((part) => part.type === 'year')?.value
-  const month = parts.find((part) => part.type === 'month')?.value
-  const day = parts.find((part) => part.type === 'day')?.value
-  if (!year || !month || !day) throw new Error('unable to resolve the E2E local civil date')
-  return `${year}-${month}-${day}`
+  return CALENDAR_TEST_DATE
 }
 
 function diaryPath(date: string): string {
@@ -114,7 +105,7 @@ async function moveToMonth(page: Page, date: string): Promise<void> {
 
 async function activateDiaryDate(page: Page, date: string, method: 'mouse' | 'keyboard' = 'mouse'): Promise<void> {
   await moveToMonth(page, date)
-  const day = page.locator(`[data-diary-day-content][data-date="${date}"]`)
+  const day = calendarDay(page.getByTestId('diary-calendar'), date)
   await expect(day).toBeVisible()
   if (method === 'mouse') await day.click()
   else {
@@ -330,7 +321,7 @@ test('Calendar Home semantics and layout pass the full responsive matrix', async
     const calendar = page.getByTestId('diary-calendar')
     const previous = page.locator('.vc-pane-header-wrapper .vc-prev')
     const next = page.locator('.vc-pane-header-wrapper .vc-next')
-    const dateButton = page.locator(`[data-diary-day-content][data-date="${date}"]`)
+    const dateButton = calendarDay(page.getByTestId('diary-calendar'), date)
 
     await expect(surface).toHaveAttribute('role', 'region')
     await expect(surface).toHaveAccessibleName(/Diary calendar workspace|日记日历工作区/i)
@@ -739,7 +730,7 @@ test('ten mixed Calendar focus cycles remain stable without VCalendar runtime er
     await openDiaryHome(page)
     const calendar = page.getByTestId('diary-calendar')
     const tab = page.locator(`[role="tab"][data-tab-id="${path}"]`)
-    const day = page.locator(`[data-diary-day-content][data-date="${date}"]`)
+    const day = calendarDay(calendar, date)
 
     for (let cycle = 0; cycle < 10; cycle += 1) {
       await page.setViewportSize(cycle % 2 === 0
@@ -796,7 +787,7 @@ test.describe('English Calendar accessibility labels', () => {
       await expect(calendar).toHaveAccessibleName('Diary calendar')
       await expect(page.locator('.vc-prev')).toHaveAccessibleName('Previous month')
       await expect(page.locator('.vc-next')).toHaveAccessibleName('Next month')
-      await expect(page.locator(`[data-diary-day-content][data-date="${date}"]`)).toHaveAccessibleName(/Diary exists/)
+      await expect(calendarDay(calendar, date)).toHaveAccessibleName(/Diary exists/)
 
       await expect(calendar).toHaveAttribute('data-theme', 'light')
       await page.getByRole('button', { name: /Theme: Light/ }).click()
@@ -827,7 +818,7 @@ test.describe('Chinese Calendar accessibility labels', () => {
       await expect(calendar).toHaveAccessibleName('日记日历')
       await expect(page.locator('.vc-prev')).toHaveAccessibleName('上个月')
       await expect(page.locator('.vc-next')).toHaveAccessibleName('下个月')
-      await expect(page.locator(`[data-diary-day-content][data-date="${date}"]`)).toHaveAccessibleName(/有日记/)
+      await expect(calendarDay(calendar, date)).toHaveAccessibleName(/有日记/)
 
       await activateDiaryDate(page, date)
       await assertNativeRead(page, date)

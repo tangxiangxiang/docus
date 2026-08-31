@@ -1,10 +1,11 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { expect, test, type APIRequestContext, type Page } from './fixtures/diary'
+import { CALENDAR_TEST_DATE, CALENDAR_TEST_TIME_ZONE, calendarDay } from './helpers/calendar-clock'
 
-const TEST_TIME_ZONE = 'Asia/Shanghai'
+const TEST_TIME_ZONE = CALENDAR_TEST_TIME_ZONE
 
-test.use({ trace: 'off', screenshot: 'only-on-failure' })
+test.use({ timezoneId: TEST_TIME_ZONE, trace: 'off', screenshot: 'only-on-failure' })
 
 function civilParts(value: string): { year: number; month: number; day: number } {
   const [year, month, day] = value.split('-').map(Number)
@@ -18,17 +19,7 @@ function daysInMonth(year: number, month: number): number {
 }
 
 function localCivilDate(): string {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: TEST_TIME_ZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(new Date())
-  const year = parts.find((part) => part.type === 'year')?.value
-  const month = parts.find((part) => part.type === 'month')?.value
-  const day = parts.find((part) => part.type === 'day')?.value
-  if (!year || !month || !day) throw new Error('unable to resolve the E2E local civil date')
-  return `${year}-${month}-${day}`
+  return CALENDAR_TEST_DATE
 }
 
 function shiftCivilDate(value: string, amount: -1 | 1): string {
@@ -122,9 +113,7 @@ async function moveToMonth(page: Page, date: string): Promise<void> {
 async function clickDiaryDate(page: Page, date: string): Promise<void> {
   await moveToMonth(page, date)
   // VCalendar can retain the outgoing month during its page transition. Use
-  // the current rendered occurrence rather than making the helper strict over
-  // both transition panes.
-  const button = page.locator(`[data-diary-day-content][data-date="${date}"]`).last()
+  const button = calendarDay(page.getByTestId('diary-calendar'), date)
   await expect(button).toBeVisible()
   await button.click()
 }
