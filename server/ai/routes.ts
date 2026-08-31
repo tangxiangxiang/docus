@@ -61,6 +61,7 @@ import {
 import type { Message, AssistantBlocks } from '../../src/lib/ai-api.js'
 
 function bad(c: any, msg: string, status = 400, errorCode?: string) {
+  c.header('Cache-Control', 'no-store')
   return c.json({
     error: msg,
     ...(errorCode ? { code: errorCode } : {}),
@@ -518,11 +519,15 @@ ai.post('/slug', async (c) => {
 // Generate a document summary from the current Markdown body. This is
 // deliberately independent from Git so it also works for clean documents.
 ai.post('/summary', async (c) => {
+  c.header('Cache-Control', 'no-store')
   const body = await c.req.json().catch(() => null) as
     | { path?: unknown; content?: unknown; documentId?: unknown; language?: unknown }
     | null
   if (!body || typeof body.path !== 'string' || !isValidPathSyntax(body.path)) {
     return bad(c, 'valid path required')
+  }
+  if (classifyDiaryPath(normalizeLogicalContentPath(body.path) ?? body.path) === 'managed') {
+    return bad(c, 'AI summary is unavailable for managed Diary bodies', 422, 'diary-ai-summary-unsupported')
   }
   const bodyAccess = requireDiaryBodyAccess(c, body.path)
   if (bodyAccess) return bodyAccess
@@ -580,6 +585,7 @@ ai.post('/summary', async (c) => {
 // Lightweight helper for the History composer. It does not create a chat
 // session; it reads the selected notes and returns a single subject line.
 ai.post('/commit-message', async (c) => {
+  c.header('Cache-Control', 'no-store')
   const body = await c.req.json().catch(() => null) as
     | { paths?: unknown; selectedPath?: unknown; diffText?: unknown; language?: unknown }
     | null
@@ -589,6 +595,9 @@ ai.post('/commit-message', async (c) => {
   if (paths.length > MAX_COMMIT_MESSAGE_PATHS) return bad(c, 'too many paths', 413)
   if (new Set(paths).size !== paths.length) return bad(c, 'duplicate paths')
   if (paths.length === 0) return bad(c, 'at least one path required')
+  if (paths.some((filePath) => classifyDiaryPath(filePath.replace(/\.md$/, '')) === 'managed')) {
+    return bad(c, 'AI commit-message generation is unavailable for managed Diary bodies', 422, 'diary-ai-commit-message-unsupported')
+  }
   for (const filePath of paths) {
     const bodyAccess = requireDiaryBodyAccess(c, filePath)
     if (bodyAccess) return bodyAccess
@@ -649,18 +658,8 @@ ai.post('/commit-message', async (c) => {
 
 // ---- /chat ----
 ai.post('/chat', async (c) => {
+  c.header('Cache-Control', 'no-store')
   const db = getDb()
-  let runtimeConfig: ReturnType<typeof resolveAiRuntimeConfig>
-  try {
-    runtimeConfig = resolveAiRuntimeConfig(db)
-  } catch (error) {
-    const response = aiKeyErrorResponse(c, error)
-    if (response) return response
-    throw error
-  }
-  if (!runtimeConfig.apiKey) {
-    return c.json({ ok: false, reason: 'no-api-key' }, 503)
-  }
   const body = (await c.req.json().catch(() => null)) as
     | {
         sessionId?: unknown
@@ -709,6 +708,44 @@ ai.post('/chat', async (c) => {
     ctx = { kind: 'legacy-path', currentNotePath: body.currentNotePath, ...contextOptions }
   } else {
     ctx = { kind: 'none', ...contextOptions }
+  }
+
+  // The AI provider is not an adapter-aware body owner in D8.3. Reject
+  // managed Diary paths in every context transport, including the legacy
+  // currentNotePath hint and attached contextPaths. Checking only the live
+  // snapshot would leave old clients able to ask read_file for an opaque
+  // Diary envelope. Do this before provider/client construction or SSE.
+  const managedContextPath = [
+    ctx.kind === 'live'
+      ? ctx.liveContext.identity.path
+      : ctx.kind === 'legacy-path'
+        ? ctx.currentNotePath
+        : undefined,
+    ...(ctx.contextPaths ?? []),
+  ]
+    .map((candidate) => {
+      if (typeof candidate !== 'string') return null
+      return normalizeLogicalContentPath(candidate) ?? candidate
+    })
+    .find((candidate) => candidate && classifyDiaryPath(candidate) === 'managed')
+  if (managedContextPath) {
+    return bad(c, 'Diary AI context is unavailable while encrypted Diary bodies are managed', 422, 'diary-ai-context-unsupported')
+  }
+
+  // Resolve provider credentials only after the privacy boundary above. A
+  // managed-Diary context must deterministically return its 422 even when AI
+  // is not configured; no provider/client setup may observe its bytes.
+  let runtimeConfig: ReturnType<typeof resolveAiRuntimeConfig>
+  try {
+    runtimeConfig = resolveAiRuntimeConfig(db)
+  } catch (error) {
+    const response = aiKeyErrorResponse(c, error)
+    if (response) return response
+    throw error
+  }
+  if (!runtimeConfig.apiKey) {
+    c.header('Cache-Control', 'no-store')
+    return c.json({ ok: false, reason: 'no-api-key' }, 503)
   }
 
   // We don't pre-validate the session here — runChat throws

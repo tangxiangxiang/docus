@@ -52,7 +52,7 @@ function diaryPath(date: string): string {
 
 async function deletePost(request: APIRequestContext, path: string): Promise<void> {
   const response = await request.delete(`/api/posts/${path}`)
-  expect([200, 404]).toContain(response.status())
+  expect(path.startsWith('diary/') ? [200, 404, 422] : [200, 404]).toContain(response.status())
 }
 
 async function seedDiary(request: APIRequestContext, date: string): Promise<void> {

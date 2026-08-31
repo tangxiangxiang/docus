@@ -37,6 +37,7 @@ import {
 import {
   HistoryRestoreConflictError,
   HistoryRestoreNotFoundError,
+  ManagedDiaryHistoryRestoreUnsupportedError,
   restoreHistoricalDocument,
 } from './restore.js'
 import { FolderMovePathOwnedError } from '../folderMoveJournalOwnership.js'
@@ -120,6 +121,7 @@ function repoRoot(): string {
 }
 
 function bad(c: any, msg: string, status = 400, errorCode?: string, details?: unknown) {
+  c.header('Cache-Control', 'no-store')
   return c.json({ error: msg, ...(errorCode ? { code: errorCode } : {}), ...(details !== undefined ? { details } : {}) }, status)
 }
 
@@ -146,6 +148,7 @@ const STABLE_HISTORY_ERROR_CODES = new Set([
   'HISTORY_METADATA_REVISION_WITHDRAWN',
   'HISTORY_METADATA_TREE_MISMATCH',
   'HISTORY_METADATA_BODY_MISMATCH',
+  'diary-history-encrypted-unsupported',
 ])
 
 function stableErrorCode(error: unknown): string | undefined {
@@ -665,16 +668,19 @@ history.post('/restore', async (c) => {
   } catch (e: any) {
     const msg = e.message ?? 'restore failed'
     if (e instanceof HistoryRestoreConflictError) {
-      return c.json({ error: msg, code: e.code }, 409)
+      return bad(c, msg, 409, e.code)
     }
     if (e instanceof HistoryMetadataError) {
       return bad(c, msg, 409, e.code)
     }
     if (e instanceof FolderMovePathOwnedError) {
-      return c.json({ error: msg, code: 'HISTORY_PATH_MOVED' }, 409)
+      return bad(c, msg, 409, 'HISTORY_PATH_MOVED')
     }
     if (e instanceof HistoryRestoreNotFoundError) {
       return bad(c, msg, 404)
+    }
+    if (e instanceof ManagedDiaryHistoryRestoreUnsupportedError) {
+      return bad(c, msg, 422, e.code)
     }
     if (e instanceof DocumentMutationPolicyError) {
       return bad(c, msg, 422, e.code)

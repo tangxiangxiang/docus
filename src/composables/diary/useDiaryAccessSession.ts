@@ -25,6 +25,19 @@ export interface DiaryAccessSession {
   readonly clear: () => void
 }
 
+export type DiaryTeardownReason =
+  | 'lock'
+  | 'logout'
+  | 'auth-invalidated'
+  | 'capability-expired'
+  | 'capability-replaced'
+  | 'reset'
+
+export type DiaryTeardownEvent = {
+  generation: number
+  reason: DiaryTeardownReason
+}
+
 const state = ref<DiaryAccessState>('UNINITIALIZED')
 const epoch = ref<number | null>(null)
 const statusResolved = ref(false)
@@ -34,9 +47,21 @@ let statusRequest: { generation: number; promise: Promise<DiaryAccessState> } | 
 let authWatchWired = false
 let expiryUnsubscribe: (() => void) | null = null
 let serverLockUnsubscribe: (() => void) | null = null
+const teardownListeners = new Set<(event: DiaryTeardownEvent) => void>()
 
-function clear(): void {
+function notifyTeardown(reason: DiaryTeardownReason): void {
+  // `generation` is the existing session owner's monotonic invalidation
+  // token. Advance it before clearing any holder so every listener can fence
+  // late work synchronously; listeners must not own the session or DEK.
   generation += 1
+  const event = { generation, reason }
+  for (const listener of [...teardownListeners]) {
+    try { listener(event) } catch { /* one cleanup must not block others */ }
+  }
+}
+
+function clear(reason: DiaryTeardownReason = 'auth-invalidated'): void {
+  notifyTeardown(reason)
   statusRequest = null
   clearDiaryCapability()
   epoch.value = null
@@ -49,6 +74,13 @@ async function ensureStatus(): Promise<DiaryAccessState> {
   const pending = getDiaryAccessStatus()
     .then((status) => {
       if (requestGeneration !== generation) return state.value
+      // Status reconciliation is also an authoritative lock boundary. A
+      // session can be locked elsewhere without emitting the local auth
+      // event, so advance the same generation before replacing UNLOCKED
+      // state; derived holders must not survive this poll response.
+      if (state.value === 'UNLOCKED' && status.state !== 'UNLOCKED') {
+        notifyTeardown('auth-invalidated')
+      }
       state.value = status.state
       epoch.value = status.epoch ?? null
       statusResolved.value = true
@@ -64,7 +96,9 @@ async function ensureStatus(): Promise<DiaryAccessState> {
 }
 
 async function setup(password: string): Promise<void> {
-  const requestGeneration = ++generation
+  const requestGeneration = state.value === 'UNLOCKED'
+    ? (notifyTeardown('capability-replaced'), generation)
+    : ++generation
   statusRequest = null
   const result = await setupDiaryAccess(password)
   if (requestGeneration !== generation) return
@@ -75,7 +109,9 @@ async function setup(password: string): Promise<void> {
 }
 
 async function unlock(password: string): Promise<void> {
-  const requestGeneration = ++generation
+  const requestGeneration = state.value === 'UNLOCKED'
+    ? (notifyTeardown('capability-replaced'), generation)
+    : ++generation
   statusRequest = null
   const result = await unlockDiaryAccess(password)
   if (requestGeneration !== generation) return
@@ -86,7 +122,8 @@ async function unlock(password: string): Promise<void> {
 }
 
 async function lock(): Promise<void> {
-  const requestGeneration = ++generation
+  notifyTeardown('lock')
+  const requestGeneration = generation
   statusRequest = null
   clearDiaryCapability()
   epoch.value = null
@@ -113,10 +150,10 @@ export function useDiaryAccessSession(): DiaryAccessSession {
   if (!authWatchWired) {
     const auth = useAuth()
     watch(auth.state, (next) => {
-      if (next !== 'authenticated') clear()
+      if (next !== 'authenticated') clear('logout')
     }, { immediate: true })
-    expiryUnsubscribe = auth.onSessionExpired(clear)
-    serverLockUnsubscribe = subscribeDiaryAccessLocked(clear)
+    expiryUnsubscribe = auth.onSessionExpired(() => clear('capability-expired'))
+    serverLockUnsubscribe = subscribeDiaryAccessLocked(() => clear('auth-invalidated'))
     authWatchWired = true
   }
   void expiryUnsubscribe
@@ -124,11 +161,28 @@ export function useDiaryAccessSession(): DiaryAccessSession {
   return coordinator
 }
 
+/** Subscribe to the authoritative session owner's synchronous teardown.
+ * Derived caches/models may clear themselves here; they must not mutate the
+ * session state or access the server DEK. */
+export function subscribeDiaryTeardown(
+  listener: (event: DiaryTeardownEvent) => void,
+): () => void {
+  teardownListeners.add(listener)
+  return () => teardownListeners.delete(listener)
+}
+
+/** Capture the existing session generation for stale-result fencing. */
+export function captureDiarySessionGeneration(): number { return generation }
+
+export function isDiarySessionGenerationCurrent(value: number): boolean {
+  return value === generation
+}
+
 export function resetDiaryAccessSessionForTesting(): void {
+  notifyTeardown('reset')
   clearDiaryCapability()
   state.value = 'UNINITIALIZED'
   epoch.value = null
   statusResolved.value = false
-  generation += 1
   statusRequest = null
 }

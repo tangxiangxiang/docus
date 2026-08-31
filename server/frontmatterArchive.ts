@@ -17,6 +17,7 @@ import {
   metadataSourceHash,
 } from './metadataMigration.js'
 import { filePathFor } from './paths.js'
+import { isManagedDiaryPath } from '../shared/diaryProtocol.js'
 
 export interface FrontmatterCleanupCandidate {
   path: string
@@ -45,6 +46,21 @@ export interface FrontmatterMutationResult {
 // `aliases` is deprecated, but remains recognized so cleanup can archive and remove
 // it from legacy Frontmatter instead of treating it as an unknown custom field.
 const STANDARD_FIELDS = new Set(['title', 'summary', 'tags', 'aliases', 'created', 'updated', 'date'])
+
+export class ManagedDiaryPrivateMetadataUnsupportedError extends Error {
+  readonly code = 'diary-private-metadata-unsupported'
+
+  constructor(path: string) {
+    super(`private managed Diary metadata is unsupported: ${path}`)
+    this.name = 'ManagedDiaryPrivateMetadataUnsupportedError'
+  }
+}
+
+function assertPrivateMetadataPath(documentPath: string): void {
+  if (isManagedDiaryPath(documentPath.replace(/\.md$/, ''))) {
+    throw new ManagedDiaryPrivateMetadataUnsupportedError(documentPath)
+  }
+}
 
 function date(value: number): string {
   return new Date(value).toISOString().slice(0, 10)
@@ -77,6 +93,10 @@ export async function previewFrontmatterCleanup(
 ): Promise<FrontmatterCleanupPreview> {
   const preview: FrontmatterCleanupPreview = { candidates: [], blocked: [] }
   for (const record of listMetadataMigrationRecords(db)) {
+    // Managed Diary rows may contain legacy private backups. Keep them
+    // classified for D8.4, but never open the encrypted envelope or expose
+    // the backup through this generic archive surface.
+    if (isManagedDiaryPath(record.path)) continue
     if (record.status === 'orphaned') continue
     let raw: string
     try {
@@ -120,6 +140,7 @@ export function exportDocumentFrontmatter(
   path: string,
   mode: 'canonical' | 'original',
 ): string | null {
+  assertPrivateMetadataPath(path)
   if (mode === 'original') return getMetadataMigrationRecord(db, path)?.frontmatterBackup || null
   const metadata = getDocumentMetadata(db, path)
   return metadata ? renderCanonicalFrontmatter(metadata) : null
@@ -159,6 +180,7 @@ export async function cleanDocumentFrontmatter(
   const result: FrontmatterMutationResult = { changed: [], failed: [] }
   const candidates = new Map((await previewFrontmatterCleanup(db)).candidates.map((item) => [item.path, item]))
   for (const path of [...new Set(paths)]) {
+    assertPrivateMetadataPath(path)
     if (!candidates.has(path)) {
       result.failed.push({ path, reason: 'document is not currently safe to clean' })
       continue
@@ -203,6 +225,7 @@ export async function restoreDocumentFrontmatter(
 ): Promise<FrontmatterMutationResult> {
   const result: FrontmatterMutationResult = { changed: [], failed: [] }
   for (const path of [...new Set(paths)]) {
+    assertPrivateMetadataPath(path)
     try {
       await withDocumentWriteLock(path, async () => {
       const record = getMetadataMigrationRecord(db, path)

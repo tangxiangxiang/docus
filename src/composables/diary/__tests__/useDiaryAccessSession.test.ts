@@ -23,6 +23,7 @@ import {
 import { getDiaryCapability } from '../../../lib/diary-capability'
 import {
   resetDiaryAccessSessionForTesting,
+  subscribeDiaryTeardown,
   useDiaryAccessSession,
 } from '../useDiaryAccessSession'
 
@@ -96,5 +97,22 @@ describe('D8.1 Diary client transition generation', () => {
     access.clear()
     expect(access.state.value).toBe('LOCKED')
     expect(access.statusResolved.value).toBe(true)
+  })
+
+  it('fences derived holders when status polling observes an external lock', async () => {
+    vi.mocked(getDiaryAccessStatus)
+      .mockResolvedValueOnce({ state: 'UNLOCKED', epoch: 7 })
+      .mockResolvedValueOnce({ state: 'LOCKED' })
+    const events: string[] = []
+    const unsubscribe = subscribeDiaryTeardown((event) => events.push(event.reason))
+    const access = useDiaryAccessSession()
+
+    await access.ensureStatus()
+    await access.ensureStatus()
+
+    unsubscribe()
+    expect(events).toContain('auth-invalidated')
+    expect(access.isUnlocked.value).toBe(false)
+    expect(getDiaryCapability()).toBeNull()
   })
 })

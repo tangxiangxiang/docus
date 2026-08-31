@@ -2,6 +2,8 @@ import type { Ref } from 'vue'
 import type { Tab } from '../../../components/vault/tabs'
 import { getFileStates, getPost, recoverPost, type PostSummary } from '../../../lib/api'
 import type { VaultFileChanges } from '../context/fileChanges'
+import { classifyDiaryPath } from '../../../../shared/diaryProtocol'
+import { captureDiarySessionGeneration, isDiarySessionGenerationCurrent } from '../../diary/useDiaryAccessSession'
 
 export function useDiskFileChanges(options: {
   tabs: Ref<Tab[]>
@@ -113,6 +115,11 @@ export function useDiskFileChanges(options: {
       && latestTab.externalKind === externalKind
   }
 
+  function sessionStillCurrent(path: string, generation: number): boolean {
+    return classifyDiaryPath(path.replace(/\.md$/, '')) !== 'managed'
+      || isDiarySessionGenerationCurrent(generation)
+  }
+
   async function pollExternalChanges() {
     const loaded = options.tabs.value.filter((tab) =>
       !tab.loading
@@ -170,8 +177,10 @@ export function useDiskFileChanges(options: {
       const requestedExternalRaw = tab.externalRaw
       const requestedLoadError = tab.loadError
       const requestedTab = tab
+      const sessionGeneration = captureDiarySessionGeneration()
       try {
         const post = await getPost(requestedPath)
+        if (!sessionStillCurrent(requestedPath, sessionGeneration)) continue
         if (!isCurrentDiskRead(requestedPath, readId)) continue
         const latestTab = options.tabs.value.find((item) => item.path === requestedPath)
         if (
@@ -222,6 +231,7 @@ export function useDiskFileChanges(options: {
         latestTab.error = null
         latestTab.externalKind = null
       } catch {
+        if (!sessionStillCurrent(requestedPath, sessionGeneration)) continue
         if (!isCurrentDiskRead(requestedPath, readId)) continue
         const latestTab = options.tabs.value.find((item) => item.path === requestedPath)
         if (
@@ -257,6 +267,7 @@ export function useDiskFileChanges(options: {
     if (!tab || tab.saveStatus !== 'external') return
     if (tab.externalKind === 'deleted' && strategy === 'disk') return
     const requestedExternalKind = tab.externalKind
+    const sessionGeneration = captureDiarySessionGeneration()
     const resolutionId = beginExternalResolution(path)
     try {
     if (tab.externalKind === 'unreadable') {
@@ -265,6 +276,7 @@ export function useDiskFileChanges(options: {
       const requestedRevision = tab.revision
       try {
         const post = await getPost(requestedPath)
+        if (!sessionStillCurrent(requestedPath, sessionGeneration)) return
         if (!isCurrentExternalResolution(
           requestedPath,
           resolutionId,
@@ -296,6 +308,7 @@ export function useDiskFileChanges(options: {
           return
         }
       } catch {
+        if (!sessionStillCurrent(requestedPath, sessionGeneration)) return
         if (!isCurrentExternalResolution(
           requestedPath,
           resolutionId,
@@ -310,8 +323,10 @@ export function useDiskFileChanges(options: {
       }
     }
     if (strategy === 'disk') {
+      if (!sessionStillCurrent(path, sessionGeneration)) return
       const diskRaw = tab.externalRaw
       const post = diskRaw === null ? await getPost(path) : null
+      if (!sessionStillCurrent(path, sessionGeneration)) return
       const resolvedRaw = diskRaw ?? post!.raw
       tab.raw = resolvedRaw
       tab.originalRaw = resolvedRaw
@@ -326,6 +341,7 @@ export function useDiskFileChanges(options: {
       let recovered: Awaited<ReturnType<typeof recoverPost>>
       try {
         recovered = await recoverPost(path, sentRaw)
+        if (!sessionStillCurrent(path, sessionGeneration)) return
         // Concurrent deleted keep-local requests express the same intent. If an
         // older request is the one that recreates the file, applying that
         // successful transaction also settles any newer duplicate request.
@@ -350,6 +366,7 @@ export function useDiskFileChanges(options: {
         )) return
         try {
           const post = await getPost(path)
+          if (!sessionStillCurrent(path, sessionGeneration)) return
           if (!isCurrentExternalResolution(
             path,
             resolutionId,
@@ -398,6 +415,7 @@ export function useDiskFileChanges(options: {
         options.scheduleSave(path, 0)
       }
     } else {
+      if (!sessionStillCurrent(path, sessionGeneration)) return
       const diskRaw = tab.externalRaw
       if (diskRaw == null) return
       tab.originalRaw = diskRaw
@@ -411,6 +429,7 @@ export function useDiskFileChanges(options: {
         options.scheduleSave(path, 0)
       }
     }
+    if (!sessionStillCurrent(path, sessionGeneration)) return
     tab.externalRaw = null
     tab.externalKind = null
     tab.error = null

@@ -1,5 +1,6 @@
 import { computed, ref } from 'vue'
 import { getDiff, WORKTREE_REF, type FileDiff, type StatusEntry } from '../../lib/history-api'
+import { isManagedDiaryPath } from '../../../shared/diaryProtocol'
 
 export type WorkingTreeDiffStatus = 'loading' | 'ready' | 'error'
 
@@ -107,6 +108,17 @@ export function useWorkingTreeDiffs(options: WorkingTreeDiffOptions = {}) {
     activeDiffId.value = null
   }
 
+  /** Fence outstanding diff reads and drop raw diff snapshots during an
+   *  authoritative Diary teardown. */
+  function clearSensitiveState(): void {
+    const managedIds = new Set(diffs.value
+      .filter((diff) => isManagedDiaryPath(diff.documentPath))
+      .map((diff) => diff.tabId))
+    for (const tabId of managedIds) nextRequestId(tabId)
+    diffs.value = diffs.value.filter((diff) => !managedIds.has(diff.tabId))
+    if (activeDiffId.value && managedIds.has(activeDiffId.value)) activeDiffId.value = null
+  }
+
   function closeDiff(tabId: string): void {
     nextRequestId(tabId)
     diffs.value = diffs.value.filter((diff) => diff.tabId !== tabId)
@@ -129,6 +141,7 @@ export function useWorkingTreeDiffs(options: WorkingTreeDiffOptions = {}) {
     refreshDiff,
     refreshDocumentDiff,
     deactivate,
+    clearSensitiveState,
     closeDiff,
     closeDiffs,
   }

@@ -1314,7 +1314,7 @@ async function recoverRenameReferencesJournal(
             const identity = journal.identities!.find((item) => item.path === sourceIdentityPath)
             const moveSourcePath = `${journal.destRel}/${documentSuffix}`
             return identity ? { documentId: identity.id, documentPath: moveSourcePath } : null
-          })
+          }, journal.destRel)
           moveEntries = enumerated.entries
           moveDirectories = enumerated.directories
           moveDirectoryGenerations = enumerated.directoryGenerations

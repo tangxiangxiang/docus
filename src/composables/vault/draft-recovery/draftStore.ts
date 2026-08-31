@@ -9,6 +9,7 @@ import {
   type DraftConflictRecord,
   type UnsavedDraft,
 } from './draftTypes'
+import { isManagedDiaryPath } from '../../../../shared/diaryProtocol'
 
 const DATABASE_NAME = 'docus-draft-recovery'
 const DATABASE_VERSION = 2
@@ -16,6 +17,12 @@ const DRAFT_STORE_NAME = 'drafts'
 const CONFLICT_STORE_NAME = 'draftConflicts'
 const VAULT_UPDATED_INDEX = 'vaultUpdatedAt'
 const CONFLICT_VAULT_INDEX = 'vaultId'
+
+export const DIARY_DRAFT_RECOVERY_UNSUPPORTED_CODE = 'diary-draft-recovery-unsupported' as const
+
+function isManagedDraftPath(value: unknown): boolean {
+  return typeof value === 'string' && isManagedDiaryPath(value.replace(/\.md$/, ''))
+}
 
 type SaveResult = 'saved' | 'stale' | 'conflict' | 'unsupported' | 'path-mismatch'
 type SaveDecision =
@@ -197,7 +204,7 @@ export interface DraftStorageBackend {
     vaultId: string,
     documentId: string,
     conflictId: string,
-  ): Promise<'deleted' | 'missing'>
+  ): Promise<'deleted' | 'missing' | 'unsupported'>
   deleteConflictIfUnchanged(
     expected: DraftConflictRecord,
   ): Promise<ConditionalDeleteResult>
@@ -480,7 +487,7 @@ export interface DraftStore {
     vaultId: string,
     documentId: string,
     conflictId: string,
-  ): Promise<'deleted' | 'missing' | 'failed'>
+  ): Promise<'deleted' | 'missing' | 'unsupported' | 'failed'>
   deleteConflictDraftIfUnchanged(
     expected: DraftConflictRecord,
   ): Promise<DraftConditionalDeleteOutcome>
@@ -604,6 +611,15 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
 
   return {
     async saveDraft(draft) {
+      if (isManagedDraftPath((draft as any)?.documentPath)) {
+        // Classification is before any backend transaction. D8.3 does not
+        // introduce encrypted IndexedDB drafts; keep the edit in tab memory.
+        return {
+          status: 'unsupported' as const,
+          familyPath: null,
+          reason: 'unsupported-primary' as const,
+        }
+      }
       // A malformed draft carries no reliable identity — there is no
       // family to probe a path for; the incoming primary itself is
       // what cannot be persisted.
@@ -693,7 +709,7 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
       if (!isDraftIdentity(vaultId, documentId)) return null
       try {
         const value = await backend.get(draftKey(vaultId, documentId))
-        return isUnsavedDraft(value) ? cloneDraft(value) : null
+        return isUnsavedDraft(value) && !isManagedDraftPath(value.documentPath) ? cloneDraft(value) : null
       } catch {
         return null
       }
@@ -703,7 +719,7 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
       if (vaultId.trim().length === 0) return []
       try {
         return (await backend.list(vaultId))
-          .filter(isUnsavedDraft)
+          .filter((value): value is UnsavedDraft => isUnsavedDraft(value) && !isManagedDraftPath(value.documentPath))
           .map(cloneDraft)
           .sort((left, right) => (
             right.updatedAt - left.updatedAt
@@ -727,9 +743,11 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
       }
       try {
         const raw = await backend.inspect(vaultId)
-        const primary = raw.primary.filter(isUnsavedDraft).map(cloneDraft)
+        const primary = raw.primary
+          .filter((value): value is UnsavedDraft => isUnsavedDraft(value) && !isManagedDraftPath(value.documentPath))
+          .map(cloneDraft)
         const conflicts = raw.conflicts
-          .filter(isDraftConflictRecord)
+          .filter((value): value is DraftConflictRecord => isDraftConflictRecord(value) && !isManagedDraftPath(value.documentPath))
           .map(cloneConflictRecord)
         return {
           status: 'ok' as const,
@@ -755,7 +773,7 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
     },
 
     async deleteDraftIfUnchanged(expected) {
-      if (!isUnsavedDraft(expected)) return { status: 'failed' }
+      if (!isUnsavedDraft(expected) || isManagedDraftPath(expected.documentPath)) return { status: 'failed' }
       try {
         return { status: await backend.deleteIfUnchanged(cloneDraft(expected)) }
       } catch {
@@ -764,6 +782,7 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
     },
 
     async moveDraft(vaultId, oldDocumentId, newDocumentId, newPath) {
+      if (isManagedDraftPath(newPath)) return { status: 'unsupported' as const }
       if (!isDraftIdentity(vaultId, oldDocumentId)
         || !isDraftIdentity(vaultId, newDocumentId)
         || newPath.trim().length === 0) {
@@ -783,6 +802,7 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
     },
 
     async moveConflicts(vaultId, oldDocumentId, newDocumentId, newPath) {
+      if (isManagedDraftPath(newPath)) return 0
       if (!isDraftIdentity(vaultId, oldDocumentId)
         || !isDraftIdentity(vaultId, newDocumentId)
         || newPath.trim().length === 0) {
@@ -801,6 +821,7 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
     },
 
     async moveDraftFamily(vaultId, documentId, newPath) {
+      if (isManagedDraftPath(newPath)) return { status: 'unsupported' as const, movedConflicts: 0 }
       if (!isDraftIdentity(vaultId, documentId) || newPath.trim().length === 0) {
         return { status: 'failed', movedConflicts: 0 }
       }
@@ -816,6 +837,9 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
     },
 
     async moveDraftFamilyIfAtPath(vaultId, documentId, expectedFamilyPath, newPath) {
+      if (isManagedDraftPath(expectedFamilyPath) || isManagedDraftPath(newPath)) {
+        return { status: 'unsupported' as const }
+      }
       if (!isDraftIdentity(vaultId, documentId)
         || expectedFamilyPath.trim().length === 0
         || newPath.trim().length === 0) {
@@ -896,6 +920,7 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
 
     async saveConflictDraft(record) {
       if (!isDraftConflictRecord(record)) return { status: 'unsupported' }
+      if (isManagedDraftPath(record.documentPath)) return { status: 'unsupported' }
       if (record.vaultId.trim().length === 0
         || record.documentId.trim().length === 0
         || record.conflictId.trim().length === 0) {
@@ -915,6 +940,9 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
       // machine treats it as a fail-closed family condition, mirroring
       // saveConflictDraft's pre-validation.
       if (!isDraftConflictRecord(record)) {
+        return { status: 'unsupported', familyPath: null, reason: 'unsupported-conflict' }
+      }
+      if (isManagedDraftPath(record.documentPath)) {
         return { status: 'unsupported', familyPath: null, reason: 'unsupported-conflict' }
       }
       if (record.vaultId.trim().length === 0
@@ -937,6 +965,7 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
       if (vaultId.trim().length === 0) return []
       try {
         return readConflicts(await backend.listConflicts(vaultId))
+          .filter((record) => !isManagedDraftPath(record.documentPath))
       } catch {
         return []
       }
@@ -945,7 +974,11 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
     async listConflictDraftsStrict(vaultId, documentId) {
       if (vaultId.trim().length === 0) return { status: 'ok' as const, records: [] }
       try {
-        return await strictConflictRead(vaultId, documentId)
+        const result = await strictConflictRead(vaultId, documentId)
+        if (result.status === 'ok') {
+          result.records = result.records.filter((record) => !isManagedDraftPath(record.documentPath))
+        }
+        return result
       } catch {
         // A read error is not an empty store. Report a structured
         // failure so file transactions fail closed (keep the identity
@@ -973,7 +1006,7 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
     },
 
     async deleteConflictDraftIfUnchanged(expected) {
-      if (!isDraftConflictRecord(expected)) return { status: 'failed' }
+      if (!isDraftConflictRecord(expected) || isManagedDraftPath(expected.documentPath)) return { status: 'failed' }
       try {
         return { status: await backend.deleteConflictIfUnchanged(cloneConflictRecord(expected)) }
       } catch {
@@ -1023,6 +1056,7 @@ export function createMemoryDraftBackend(): MemoryDraftStorageBackend {
   return {
     async save(draft) {
       consumeFailure('save')
+      if (isManagedDraftPath(draft.documentPath)) return 'unsupported'
       const familyKey = serializedKey(draft.vaultId, draft.documentId)
       const current = records.get(familyKey)
       const decision = decideSave(current, draft)
@@ -1088,6 +1122,7 @@ export function createMemoryDraftBackend(): MemoryDraftStorageBackend {
       const key = serializedKey(vaultId, documentId)
       const value = records.get(key)
       if (value === undefined || value === null) return 'missing'
+      if (isManagedDraftPath(recordField(value, 'documentPath'))) return 'unsupported'
       if (!isUnsavedDraft(value)) return 'unsupported'
       records.delete(key)
       return 'deleted'
@@ -1098,6 +1133,7 @@ export function createMemoryDraftBackend(): MemoryDraftStorageBackend {
       const key = serializedKey(expected.vaultId, expected.documentId)
       const value = records.get(key)
       if (value === undefined || value === null) return 'missing'
+      if (isManagedDraftPath(recordField(value, 'documentPath'))) return 'unsupported'
       if (!isUnsavedDraft(value)) return 'unsupported'
       if (!draftsEqual(value, expected)) return 'stale'
       records.delete(key)
@@ -1110,6 +1146,8 @@ export function createMemoryDraftBackend(): MemoryDraftStorageBackend {
       const newKey = serializedKey(vaultId, newDocumentId)
       const source = records.get(oldKey)
       const target = oldKey === newKey ? undefined : records.get(newKey)
+      if (isManagedDraftPath(recordField(source, 'documentPath'))
+        || isManagedDraftPath(newPath)) return 'unsupported'
       const decision = decideMove(source, target, newDocumentId, newPath)
       if (decision.result !== 'moved') return decision.result
 
@@ -1120,11 +1158,18 @@ export function createMemoryDraftBackend(): MemoryDraftStorageBackend {
 
     async moveConflicts(vaultId, oldDocumentId, newDocumentId, newPath) {
       consumeFailure('moveConflicts')
+      if (isManagedDraftPath(newPath)) return 0
+      const family = [...conflictRecords.values()].filter((value) => (
+        recordField(value, 'vaultId') === vaultId
+        && recordField(value, 'documentId') === oldDocumentId
+      ))
+      if (family.some((value) => (
+        isManagedDraftPath(recordField(value, 'documentPath'))
+        || !isDraftConflictRecord(value)
+      ))) return 0
       let moved = 0
-      for (const value of [...conflictRecords.values()]) {
-        if (!isDraftConflictRecord(value)
-          || value.vaultId !== vaultId
-          || value.documentId !== oldDocumentId) continue
+      for (const value of family) {
+        if (!isDraftConflictRecord(value)) continue
         const updated: DraftConflictRecord = {
           ...value,
           documentId: newDocumentId,
@@ -1146,8 +1191,12 @@ export function createMemoryDraftBackend(): MemoryDraftStorageBackend {
 
     async moveFamily(vaultId, documentId, newPath) {
       consumeFailure('moveFamily')
+      if (isManagedDraftPath(newPath)) return { status: 'unsupported', movedConflicts: 0 }
       const familyKey = serializedKey(vaultId, documentId)
       const source = records.get(familyKey)
+      if (isManagedDraftPath(recordField(source, 'documentPath'))) {
+        return { status: 'unsupported', movedConflicts: 0 }
+      }
       // A rename never changes the documentId identity, so there is no
       // target record to collide with — decideMove only classifies the
       // source here.
@@ -1169,6 +1218,9 @@ export function createMemoryDraftBackend(): MemoryDraftStorageBackend {
       for (const value of [...conflictRecords.values()]) {
         if (recordField(value, 'vaultId') !== vaultId
           || recordField(value, 'documentId') !== documentId) continue
+        if (isManagedDraftPath(recordField(value, 'documentPath'))) {
+          return { status: 'unsupported', movedConflicts: 0 }
+        }
         if (!isDraftConflictRecord(value)) {
           return { status: 'unsupported', movedConflicts: 0 }
         }
@@ -1193,8 +1245,14 @@ export function createMemoryDraftBackend(): MemoryDraftStorageBackend {
 
     async moveFamilyIfAtPath(vaultId, documentId, expectedFamilyPath, newPath) {
       consumeFailure('moveFamilyIfAtPath')
+      if (isManagedDraftPath(expectedFamilyPath) || isManagedDraftPath(newPath)) {
+        return { status: 'unsupported' }
+      }
       const familyKey = serializedKey(vaultId, documentId)
       const source = records.get(familyKey)
+      if (isManagedDraftPath(recordField(source, 'documentPath'))) {
+        return { status: 'unsupported' }
+      }
       const decision = decideMove(source, undefined, documentId, newPath)
       // Pre-flight the WHOLE family before writing anything, exactly
       // like moveFamily: an unsupported primary blocks the move — its
@@ -1213,6 +1271,9 @@ export function createMemoryDraftBackend(): MemoryDraftStorageBackend {
       for (const value of [...conflictRecords.values()]) {
         if (recordField(value, 'vaultId') !== vaultId
           || recordField(value, 'documentId') !== documentId) continue
+        if (isManagedDraftPath(recordField(value, 'documentPath'))) {
+          return { status: 'unsupported' }
+        }
         if (!isDraftConflictRecord(value)) {
           return { status: 'unsupported' }
         }
@@ -1257,12 +1318,14 @@ export function createMemoryDraftBackend(): MemoryDraftStorageBackend {
     async clear(vaultId) {
       consumeFailure('clear')
       for (const [key, value] of records) {
-        if (isUnsavedDraft(value) && value.vaultId === vaultId) records.delete(key)
+        if (isUnsavedDraft(value) && value.vaultId === vaultId
+          && !isManagedDraftPath(value.documentPath)) records.delete(key)
       }
     },
 
     async saveConflict(record) {
       consumeFailure('saveConflict')
+      if (isManagedDraftPath(record.documentPath)) return
       const key = serializedConflictKey(record.vaultId, record.documentId, record.conflictId)
       if (conflictRecords.has(key)) throw new Error('Draft conflict record already exists')
       conflictRecords.set(key, cloneConflictRecord(record))
@@ -1270,6 +1333,9 @@ export function createMemoryDraftBackend(): MemoryDraftStorageBackend {
 
     async saveConflictCandidate(record) {
       consumeFailure('saveConflictCandidate')
+      if (isManagedDraftPath(record.documentPath)) {
+        return { status: 'unsupported', familyPath: null, reason: 'unsupported-conflict' }
+      }
       // Derive the family path from the RAW rows BEFORE writing —
       // mirroring the IndexedDB backend's both-store transaction,
       // where the derivation and the add run inside one readwrite
@@ -1322,6 +1388,7 @@ export function createMemoryDraftBackend(): MemoryDraftStorageBackend {
       const key = serializedConflictKey(vaultId, documentId, conflictId)
       const value = conflictRecords.get(key)
       if (value === undefined || value === null) return 'missing'
+      if (isManagedDraftPath(recordField(value, 'documentPath'))) return 'unsupported'
       conflictRecords.delete(key)
       return 'deleted'
     },
@@ -1333,6 +1400,7 @@ export function createMemoryDraftBackend(): MemoryDraftStorageBackend {
       )
       const value = conflictRecords.get(key)
       if (value === undefined || value === null) return 'missing'
+      if (isManagedDraftPath(recordField(value, 'documentPath'))) return 'unsupported'
       if (!isDraftConflictRecord(value)) return 'unsupported'
       if (!conflictDraftsEqual(value, expected)) return 'stale'
       conflictRecords.delete(key)
@@ -1342,7 +1410,8 @@ export function createMemoryDraftBackend(): MemoryDraftStorageBackend {
     async clearConflicts(vaultId) {
       consumeFailure('clearConflicts')
       for (const [key, value] of conflictRecords) {
-        if (isDraftConflictRecord(value) && value.vaultId === vaultId) {
+        if (isDraftConflictRecord(value) && value.vaultId === vaultId
+          && !isManagedDraftPath(value.documentPath)) {
           conflictRecords.delete(key)
         }
       }
@@ -1414,6 +1483,7 @@ export function createIndexedDbDraftBackend(
   return {
     async save(draft) {
       const db = await database()
+      if (isManagedDraftPath(draft.documentPath)) return 'unsupported'
       // ONE transaction across both stores: the family pre-flight below
       // must read the same-identity conflict rows and write the primary
       // record atomically, mirroring the memory backend (and the family
@@ -1543,6 +1613,10 @@ export function createIndexedDbDraftBackend(
         await transactionDone(transaction)
         return 'missing'
       }
+      if (isManagedDraftPath(recordField(value, 'documentPath'))) {
+        await transactionDone(transaction)
+        return 'unsupported'
+      }
       if (!isUnsavedDraft(value)) {
         await transactionDone(transaction)
         return 'unsupported'
@@ -1560,6 +1634,7 @@ export function createIndexedDbDraftBackend(
       const value = await request(store.get(key))
       let result: ConditionalDeleteResult
       if (value === undefined || value === null) result = 'missing'
+      else if (isManagedDraftPath(recordField(value, 'documentPath'))) result = 'unsupported'
       else if (!isUnsavedDraft(value)) result = 'unsupported'
       else if (!draftsEqual(value, expected)) result = 'stale'
       else {
@@ -1580,6 +1655,11 @@ export function createIndexedDbDraftBackend(
       const target = oldDocumentId === newDocumentId
         ? undefined
         : await request(store.get(newKey))
+      if (isManagedDraftPath(recordField(source, 'documentPath'))
+        || isManagedDraftPath(newPath)) {
+        await transactionDone(transaction)
+        return 'unsupported'
+      }
       const decision = decideMove(source, target, newDocumentId, newPath)
       if (decision.result === 'moved') {
         store.put(cloneDraft(decision.draft))
@@ -1591,16 +1671,25 @@ export function createIndexedDbDraftBackend(
 
     async moveConflicts(vaultId, oldDocumentId, newDocumentId, newPath) {
       const db = await database()
+      if (isManagedDraftPath(newPath)) return 0
       const transaction = db.transaction(CONFLICT_STORE_NAME, 'readwrite')
       const store = transaction.objectStore(CONFLICT_STORE_NAME)
       const values = await request(
         store.index(CONFLICT_VAULT_INDEX).getAll(vaultId),
       )
+      const family = values.filter((value) => (
+        recordField(value, 'documentId') === oldDocumentId
+      ))
+      if (family.some((value) => (
+        isManagedDraftPath(recordField(value, 'documentPath'))
+        || !isDraftConflictRecord(value)
+      ))) {
+        await transactionDone(transaction)
+        return 0
+      }
       let moved = 0
-      for (const value of values) {
-        if (!isDraftConflictRecord(value) || value.documentId !== oldDocumentId) {
-          continue
-        }
+      for (const value of family) {
+        if (!isDraftConflictRecord(value)) continue
         // Preserve conflictId, body, baseline, timestamps, and origin;
         // only the identity/path follow the rename. Same-documentId
         // renames keep the compound key and update in place.
@@ -1621,6 +1710,7 @@ export function createIndexedDbDraftBackend(
 
     async moveFamily(vaultId, documentId, newPath) {
       const db = await database()
+      if (isManagedDraftPath(newPath)) return { status: 'unsupported', movedConflicts: 0 }
       // ONE transaction across both stores: if anything fails, the whole
       // family move aborts and rolls back — the primary can never end up
       // renamed while its conflict candidates are stranded on the
@@ -1633,6 +1723,10 @@ export function createIndexedDbDraftBackend(
       const conflictStore = transaction.objectStore(CONFLICT_STORE_NAME)
       const familyKey = idbKey(vaultId, documentId)
       const source = await request(draftStore.get(familyKey))
+      if (isManagedDraftPath(recordField(source, 'documentPath'))) {
+        await transactionDone(transaction)
+        return { status: 'unsupported', movedConflicts: 0 }
+      }
       // A rename never changes the documentId identity, so there is no
       // target record — decideMove only classifies the source here.
       const decision = decideMove(source, undefined, documentId, newPath)
@@ -1652,6 +1746,10 @@ export function createIndexedDbDraftBackend(
       )
       for (const value of values) {
         if (recordField(value, 'documentId') !== documentId) continue
+        if (isManagedDraftPath(recordField(value, 'documentPath'))) {
+          await transactionDone(transaction)
+          return { status: 'unsupported', movedConflicts: 0 }
+        }
         // A future-version or corrupt row for THIS identity blocks the
         // whole move: migrating the valid rows would strand the
         // unreadable one on the pre-rename path — silently, with no
@@ -1685,6 +1783,9 @@ export function createIndexedDbDraftBackend(
 
     async moveFamilyIfAtPath(vaultId, documentId, expectedFamilyPath, newPath) {
       const db = await database()
+      if (isManagedDraftPath(expectedFamilyPath) || isManagedDraftPath(newPath)) {
+        return { status: 'unsupported' }
+      }
       // ONE transaction across both stores: the current-path derivation
       // and the move must be atomic — a moveDraftFamily committed by
       // another context serializes against this transaction, so the CAS
@@ -1700,6 +1801,10 @@ export function createIndexedDbDraftBackend(
       const conflictStore = transaction.objectStore(CONFLICT_STORE_NAME)
       const familyKey = idbKey(vaultId, documentId)
       const source = await request(draftStore.get(familyKey))
+      if (isManagedDraftPath(recordField(source, 'documentPath'))) {
+        await transactionDone(transaction)
+        return { status: 'unsupported' }
+      }
       const decision = decideMove(source, undefined, documentId, newPath)
       // Pre-flight the whole family BEFORE writing anything (same
       // rationale as moveFamily).
@@ -1720,6 +1825,10 @@ export function createIndexedDbDraftBackend(
       )
       for (const value of values) {
         if (recordField(value, 'documentId') !== documentId) continue
+        if (isManagedDraftPath(recordField(value, 'documentPath'))) {
+          await transactionDone(transaction)
+          return { status: 'unsupported' }
+        }
         if (!isDraftConflictRecord(value)) {
           await transactionDone(transaction)
           return { status: 'unsupported' }
@@ -1765,7 +1874,8 @@ export function createIndexedDbDraftBackend(
       const store = transaction.objectStore(DRAFT_STORE_NAME)
       const values = await request(store.getAll())
       for (const value of values) {
-        if (isUnsavedDraft(value) && value.vaultId === vaultId) {
+        if (isUnsavedDraft(value) && value.vaultId === vaultId
+          && !isManagedDraftPath(value.documentPath)) {
           store.delete(idbKey(value.vaultId, value.documentId))
         }
       }
@@ -1774,6 +1884,7 @@ export function createIndexedDbDraftBackend(
 
     async saveConflict(record) {
       const db = await database()
+      if (isManagedDraftPath(record.documentPath)) return
       const transaction = db.transaction(CONFLICT_STORE_NAME, 'readwrite')
       const store = transaction.objectStore(CONFLICT_STORE_NAME)
       store.add(cloneConflictRecord(record))
@@ -1782,6 +1893,9 @@ export function createIndexedDbDraftBackend(
 
     async saveConflictCandidate(record) {
       const db = await database()
+      if (isManagedDraftPath(record.documentPath)) {
+        return { status: 'unsupported', familyPath: null, reason: 'unsupported-conflict' }
+      }
       // ONE readwrite transaction across both stores: the family-path
       // derivation reads the primary record AND the same-identity
       // conflict rows, and the add runs ONLY after validation. A
@@ -1847,6 +1961,10 @@ export function createIndexedDbDraftBackend(
         await transactionDone(transaction)
         return 'missing'
       }
+      if (isManagedDraftPath(recordField(value, 'documentPath'))) {
+        await transactionDone(transaction)
+        return 'unsupported'
+      }
       store.delete(key)
       await transactionDone(transaction)
       return 'deleted'
@@ -1863,6 +1981,10 @@ export function createIndexedDbDraftBackend(
       if (value === undefined || value === null) {
         await transactionDone(transaction)
         return 'missing'
+      }
+      if (isManagedDraftPath(recordField(value, 'documentPath'))) {
+        await transactionDone(transaction)
+        return 'unsupported'
       }
       if (!isDraftConflictRecord(value)) {
         await transactionDone(transaction)
@@ -1883,7 +2005,8 @@ export function createIndexedDbDraftBackend(
       const store = transaction.objectStore(CONFLICT_STORE_NAME)
       const values = await request(store.getAll())
       for (const value of values) {
-        if (isDraftConflictRecord(value) && value.vaultId === vaultId) {
+        if (isDraftConflictRecord(value) && value.vaultId === vaultId
+          && !isManagedDraftPath(value.documentPath)) {
           store.delete(idbConflictKey(value.vaultId, value.documentId, value.conflictId))
         }
       }

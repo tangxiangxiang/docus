@@ -13,6 +13,8 @@ import type {
   UnsavedDraftPersistence,
 } from '../draft-recovery/useUnsavedDraftPersistence'
 import type { UnsavedDraft } from '../draft-recovery/draftTypes'
+import { classifyDiaryPath } from '../../../../shared/diaryProtocol'
+import { captureDiarySessionGeneration, isDiarySessionGenerationCurrent } from '../../diary/useDiaryAccessSession'
 
 export interface DocumentMutationBarrier {
   readonly paths: readonly string[]
@@ -84,6 +86,7 @@ export function useDocumentSave(options: {
   }
 
   function scheduleDraft(tab: Tab): void {
+    if (classifyDiaryPath(tab.path) === 'managed') return
     const identity = draftIdentity(tab)
     if (!identity || tab.loading || tab.loadError) return
     const owner = options.draftPersistence?.schedule({
@@ -109,6 +112,7 @@ export function useDocumentSave(options: {
 
   async function discardDocumentDrafts(paths: readonly string[]): Promise<void> {
     await Promise.all(paths.map(async (path) => {
+      if (classifyDiaryPath(path) === 'managed') return
       const tab = options.tabs.value.find((candidate) => candidate.path === path)
       if (!tab) return
       const owner = draftOwners.get(tab)
@@ -177,6 +181,7 @@ export function useDocumentSave(options: {
     const sentRevision = barrier?.revision ?? tab.revision
     const sentVersion = barrier?.raw ?? tab.raw
     const sentBaseRaw = tab.originalRaw
+    const sessionGeneration = captureDiarySessionGeneration()
     tab.savingRevision = sentRevision
     tab.saveStatus = 'saving'
     tab.error = null
@@ -185,6 +190,15 @@ export function useDocumentSave(options: {
       data = await savePost(path, sentVersion, sentBaseRaw)
     } catch (error) {
       if (disposed) return
+      if (classifyDiaryPath(path) === 'managed' && !isDiarySessionGenerationCurrent(sessionGeneration)) {
+        // The authoritative Diary session was torn down while this request
+        // was in flight. Never publish its stale conflict/error payload.
+        tab.externalRaw = null
+        tab.externalKind = null
+        tab.error = null
+        tab.savingRevision = null
+        return
+      }
       if (error instanceof SavePostConflictError) {
         tab.externalRaw = error.current.raw
         tab.externalKind = 'modified'
@@ -202,6 +216,13 @@ export function useDocumentSave(options: {
     }
 
     if (disposed) return
+    if (classifyDiaryPath(path) === 'managed' && !isDiarySessionGenerationCurrent(sessionGeneration)) {
+      tab.externalRaw = null
+      tab.externalKind = null
+      tab.error = null
+      tab.savingRevision = null
+      return
+    }
 
     try {
       const externalAppearedDuringSave = hasUnresolvedExternal(tab)
@@ -307,7 +328,7 @@ export function useDocumentSave(options: {
   async function applyRecoveredDraft(
     input: ApplyRecoveredDraftInput,
   ): Promise<ApplyRecoveredDraftResult> {
-    if (disposed) return { status: 'missing' }
+    if (disposed || classifyDiaryPath(input.draft.documentPath) === 'managed') return { status: 'missing' }
     const tab = options.tabs.value.find(
       (candidate) => candidate.documentId === input.draft.documentId,
     )
@@ -600,6 +621,25 @@ export function useDocumentSave(options: {
     authTransitionPromise = null
   }
 
+  /** Synchronously clear body/conflict holders for managed Diary tabs before
+   * the workspace closes them. No persistence operation is started. */
+  function clearSensitiveState(paths?: readonly string[]): void {
+    const allowed = paths ? new Set(paths) : null
+    for (const tab of options.tabs.value) {
+      if (classifyDiaryPath(tab.path) !== 'managed' || (allowed && !allowed.has(tab.path))) continue
+      cancelScheduledSave(tab.path)
+      tab.raw = ''
+      tab.originalRaw = ''
+      tab.externalRaw = null
+      tab.externalKind = null
+      tab.error = null
+      tab.savingRevision = null
+      tab.revision = tab.savedRevision
+      const identity = draftIdentity(tab)
+      if (identity) options.draftPersistence?.invalidate(identity.vaultId, identity.documentId)
+    }
+  }
+
   return {
     scheduleSave,
     doSave,
@@ -616,6 +656,7 @@ export function useDocumentSave(options: {
     prepareDocumentClose,
     discardDocumentDraft,
     discardDocumentDrafts,
+    clearSensitiveState,
     disposeDocumentSave,
   }
 }

@@ -24,6 +24,7 @@ import {
 } from '../../lib/api'
 import { getFallbackVaultFileChanges, type VaultFileChanges } from './context/fileChanges'
 import { useOptionalVaultContext } from './context/useVaultContext'
+import { isManagedDiaryPath } from '../../../shared/diaryProtocol'
 
 // Module-level state: a single shallowRef shared by every
 // component. `paths` is a Set for O(1) existence checks; `outgoing`
@@ -41,6 +42,7 @@ interface LinkIndexStore {
   state: ShallowRef<LinkIndexState>
   activeStop: (() => void) | null
   subInstallCount: number
+  generation: number
 }
 
 let stores = new WeakMap<VaultFileChanges, LinkIndexStore>()
@@ -57,7 +59,7 @@ function getStore(fileChanges?: VaultFileChanges): LinkIndexStore {
   const owner = resolveFileChanges(fileChanges)
   let store = stores.get(owner)
   if (!store) {
-    store = { state: shallowRef(makeInitialState()), activeStop: null, subInstallCount: 0 }
+    store = { state: shallowRef(makeInitialState()), activeStop: null, subInstallCount: 0, generation: 0 }
     stores.set(owner, store)
   }
   return store
@@ -72,12 +74,23 @@ export function getLinkIndex(fileChanges?: VaultFileChanges): ShallowRef<LinkInd
  *  transient network failure just leaves the previous state in
  *  place; the next bus event will retry. */
 export async function refreshLinkIndex(fileChanges?: VaultFileChanges): Promise<void> {
+  const owner = resolveFileChanges(fileChanges)
+  const store = getStore(owner)
+  const generation = store.generation
   try {
     const snap: LinkIndexSnapshot = await getLinkIndexSnapshot()
+    if (store.generation !== generation) return
+    const outgoing = Object.fromEntries(Object.entries(snap.outgoing ?? {})
+      .filter(([source]) => !isManagedDiaryPath(source))
+      .map(([source, links]) => [source, links.filter((link) => !isManagedDiaryPath(link.target))]))
+    const titles = Object.fromEntries(Object.entries(snap.titles ?? {}).map(([path, title]) => [
+      path,
+      isManagedDiaryPath(path) ? (path.split('/').pop() ?? path) : title,
+    ]))
     const next: LinkIndexState = {
       paths: new Set(snap.paths),
-      outgoing: snap.outgoing,
-      titles: snap.titles ?? {},
+      outgoing,
+      titles,
       lastFetched: Date.now(),
     }
     // Always initialize this Vault's store (so a refresh called before
@@ -86,6 +99,15 @@ export async function refreshLinkIndex(fileChanges?: VaultFileChanges): Promise<
   } catch {
     // ignore — keep the previous state
   }
+}
+
+/** Synchronously drop all body-derived client index state for this vault.
+ * A generation fence makes any in-flight response captured before lock a
+ * no-op when it resolves. */
+export function clearLinkIndex(fileChanges?: VaultFileChanges): void {
+  const store = getStore(fileChanges)
+  store.generation += 1
+  store.state.value = makeInitialState()
 }
 
 /** Test-only escape hatch: drop the legacy fallback so the next
@@ -170,5 +192,6 @@ export function __resetLinkIndexSubscriptionForTesting(): void {
 // shape for notes with many incoming links). Fetched on demand
 // per-path. The LinksPanel calls this when its `path` prop changes.
 export async function fetchBacklinks(path: string): Promise<BacklinkRecord[]> {
+  if (isManagedDiaryPath(path.replace(/\.md$/, ''))) return []
   return getBacklinks(path)
 }

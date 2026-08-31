@@ -26,6 +26,7 @@ import path from 'node:path'
 import os from 'node:os'
 import { createHash, randomUUID } from 'node:crypto'
 import { readSafeRelativeFile } from '../paths.js'
+import { isManagedDiaryPath } from '../../shared/diaryProtocol.js'
 
 const DEFAULT_GIT_TIMEOUT_MS = 15_000
 const MAX_CAPTURE_BYTES = 10 * 1024 * 1024
@@ -56,6 +57,24 @@ export class HistoryResourceLimitError extends Error {
     super(message)
     this.name = 'HistoryResourceLimitError'
   }
+}
+
+/**
+ * Mutation-owner rejection for encrypted managed Diary history.  Routes keep
+ * their user-facing 422 guard, but the Git owner must enforce the same rule
+ * before it creates a temporary index or invokes any Git plumbing command.
+ */
+export class ManagedDiaryHistoryUnsupportedError extends Error {
+  readonly code = 'diary-history-encrypted-unsupported'
+
+  constructor(path: string) {
+    super(`managed Diary History is unsupported: ${path}`)
+    this.name = 'ManagedDiaryHistoryUnsupportedError'
+  }
+}
+
+function isManagedDiaryHistoryPath(filePath: string): boolean {
+  return isManagedDiaryPath(filePath.replace(/\.md$/, ''))
 }
 
 function vaultIdPath(repoRoot: string): string {
@@ -1376,6 +1395,11 @@ export async function addAndCommit(
   if (message.trim().length === 0) {
     throw new Error('addAndCommit: message must not be empty')
   }
+  // This is deliberately before withRepoMutation(), mkdtemp(), and every
+  // Git command.  Check the complete batch first so a Note + managed Diary
+  // selection is rejected atomically rather than committing a Note subset.
+  const managedPath = paths.find(isManagedDiaryHistoryPath)
+  if (managedPath) throw new ManagedDiaryHistoryUnsupportedError(managedPath)
   return withRepoMutation(repoRoot, async () => {
   await assertRepositoryIdle(repoRoot)
   await ensureIndexRepairStorageReady(repoRoot)

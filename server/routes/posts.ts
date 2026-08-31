@@ -103,15 +103,21 @@ async function saveManagedDiary(
     } catch (error) {
       return diaryBodyError(c, error)
     }
-    const conflict = () => c.json({
-      error: 'document changed on disk',
-      code: 'EDIT_CONFLICT' as const,
-      current: {
-        raw: current.raw,
-        mtime: Number(current.stat.mtimeMs),
-        size: Number(current.stat.size),
-      },
-    }, 409)
+    const conflict = () => {
+      // A lease can be revoked while the read/compare work above is in
+      // flight. Never return the managed plaintext conflict snapshot after
+      // teardown; the 423 is the only safe response once ownership is lost.
+      if (!operation.isCurrent()) return bad(c, 'Diary access is locked', 423, 'diary-locked')
+      return c.json({
+        error: 'document changed on disk',
+        code: 'EDIT_CONFLICT' as const,
+        current: {
+          raw: current.raw,
+          mtime: Number(current.stat.mtimeMs),
+          size: Number(current.stat.size),
+        },
+      }, 409)
+    }
     if (current.raw === requestedRaw) {
       operation.assertCurrent()
       return c.json({
@@ -138,6 +144,7 @@ async function saveManagedDiary(
       if (error instanceof AtomicTextWriteTargetMissingError) return bad(c, 'not found', 404)
       if (error instanceof AtomicTextWritePostCommitExternalMutationError
         || error instanceof AtomicTextWriteCleanupError) {
+        c.header('Cache-Control', 'no-store')
         return c.json({ error: error.message, code: error.code }, 409)
       }
       throw error
@@ -164,8 +171,10 @@ async function saveManagedDiary(
     operation.assertCurrent()
     try {
       const index = await getLinkIndex()
-      index.applyWrite(logicalPath, requestedRaw)
-    } catch { /* D8.3 owns memory-index teardown on lock */ }
+      // Keep only structural existence. Never pass the authorized plaintext
+      // body into the process-wide LinkIndex.
+      index.registerPath(logicalPath)
+    } catch { /* best effort; next rebuild repairs structural state */ }
     return c.json({
       ok: true,
       raw: requestedRaw,
@@ -361,15 +370,18 @@ postRoutes.put('/api/posts/*', async (c) => {
   return withDocumentWriteLock(splat, async () => {
     if (!await exists(abs)) return bad(c, 'not found', 404)
 
-    const conflict = (snapshot: StableTextSnapshot) => c.json({
-      error: 'document changed on disk',
-      code: 'EDIT_CONFLICT' as const,
-      current: {
-        raw: snapshot.raw,
-        mtime: Number(snapshot.stat.mtimeMs),
-        size: Number(snapshot.stat.size),
-      },
-    }, 409)
+    const conflict = (snapshot: StableTextSnapshot) => {
+      c.header('Cache-Control', 'no-store')
+      return c.json({
+        error: 'document changed on disk',
+        code: 'EDIT_CONFLICT' as const,
+        current: {
+          raw: snapshot.raw,
+          mtime: Number(snapshot.stat.mtimeMs),
+          size: Number(snapshot.stat.size),
+        },
+      }, 409)
+    }
     let current: StableTextSnapshot
     try {
       current = await readStableTextSnapshot(abs)
@@ -440,6 +452,7 @@ postRoutes.put('/api/posts/*', async (c) => {
       }
       if (error instanceof AtomicTextWritePostCommitExternalMutationError
         || error instanceof AtomicTextWriteCleanupError) {
+        c.header('Cache-Control', 'no-store')
         return c.json({ error: error.message, code: error.code }, 409)
       }
       throw error
@@ -570,6 +583,12 @@ postRoutes.put('/api/recover/*', async (c) => {
 postRoutes.patch('/api/posts/*', async (c) => {
   const splat = c.req.path.replace(/^\/api\/posts\//, '')
   const srcPath = splat
+  // Managed Diary identity is AAD-bound and has no generic rebind
+  // transaction in D8.3. Reject before capability checks, path reads, or any
+  // rename/reference planning.
+  if (classifyDiaryPath(srcPath) === 'managed') {
+    return bad(c, 'managed Diary encrypted-body rename is unavailable until an adapter-aware owner exists', 422, 'diary-encrypted-rename-unsupported')
+  }
   const sourceBodyAccess = requireDiaryBodyAccess(c, srcPath)
   if (sourceBodyAccess) return sourceBodyAccess
   let src: string
@@ -602,6 +621,9 @@ postRoutes.patch('/api/posts/*', async (c) => {
     if (dest !== src && body.targetPath!.startsWith(srcPath + '/')) {
       return bad(c, 'cannot move into descendant', 422)
     }
+  }
+  if (classifyDiaryPath(destPath) === 'managed') {
+    return bad(c, 'managed Diary encrypted-body rename is unavailable until an adapter-aware owner exists', 422, 'diary-encrypted-rename-unsupported')
   }
   try {
     validateDocumentMutation({ operation: 'rename', sourcePath: srcPath, destinationPath: destPath })
@@ -867,6 +889,12 @@ postRoutes.patch('/api/posts/*', async (c) => {
 // path validation and the reserved-root contract remain in force.
 postRoutes.delete('/api/posts/*', async (c) => {
   const splat = c.req.path.replace(/^\/api\/posts\//, '')
+  // Direct managed-Diary deletion is deliberately disabled. This structural
+  // check precedes body access, path resolution, staging, journals, metadata,
+  // and LinkIndex mutation.
+  if (classifyDiaryPath(splat) === 'managed') {
+    return bad(c, 'managed Diary encrypted delete is unavailable until an adapter-aware owner exists', 422, 'diary-encrypted-delete-unsupported')
+  }
   const bodyAccess = requireDiaryBodyAccess(c, splat)
   if (bodyAccess) return bodyAccess
   let abs: string

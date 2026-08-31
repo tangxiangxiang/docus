@@ -40,7 +40,7 @@ import {
 import { useWorkingTreeDiffs } from '../composables/vault/useWorkingTreeDiffs'
 import type { StatusEntry } from '../lib/history-api'
 import { useScopeFilter } from '../composables/vault/useScopeFilter'
-import { getLinkIndex, refreshLinkIndex, useLinkIndexSubscription } from '../composables/vault/useLinkIndex'
+import { clearLinkIndex, getLinkIndex, refreshLinkIndex, useLinkIndexSubscription } from '../composables/vault/useLinkIndex'
 import { createDiaryDate, getPost, type DocumentMetadata, type PostSummary } from '../lib/api'
 import { formatHistoryDate } from '../lib/history-date'
 import { isSlugSegment } from '../lib/slug'
@@ -51,6 +51,7 @@ import {
   liveEditorForPath,
   type AiLiveContextCapture,
 } from '../composables/vault/aiLiveContext'
+import { invalidateDocumentSearchState } from '../lib/searchResults'
 import { createVaultContext } from '../composables/vault/context/createVaultContext'
 import { provideVaultContext } from '../composables/vault/context/useVaultContext'
 import { createVaultFileChanges } from '../composables/vault/context/fileChanges'
@@ -60,7 +61,12 @@ import { applyMetadataToPostSummary } from './metadataPostSummary'
 import { useDiaryDateCommand, type DiaryDateCommandResult } from '../composables/diary/useDiaryDateCommand'
 import { useDiaryMoodCommand } from '../composables/diary/useDiaryMoodCommand'
 import { useDiaryWorkspacePresentation } from '../composables/diary/useDiaryWorkspacePresentation'
-import { useDiaryAccessSession } from '../composables/diary/useDiaryAccessSession'
+import {
+  captureDiarySessionGeneration,
+  isDiarySessionGenerationCurrent,
+  subscribeDiaryTeardown,
+  useDiaryAccessSession,
+} from '../composables/diary/useDiaryAccessSession'
 import { DiaryAccessContextKey } from '../composables/diary/diaryAccessContext'
 import { localCivilToday } from '../components/diary/diaryCalendarAdapter'
 import { classifyDiaryPath, diaryLogicalPathForDate, type DiaryDate } from '../../shared/diaryProtocol'
@@ -105,6 +111,7 @@ import {
   copyTextToClipboard,
   revealWorkspacePath,
 } from '../components/vault/workspaceTabActions'
+import { disposeManagedDiaryModels } from '../components/vault/monacoModels'
 import StatusBar from '../components/vault/StatusBar.vue'
 import CommandPalette from '../components/vault/CommandPalette.vue'
 import { requireVaultId } from '../lib/vault-identity'
@@ -1631,12 +1638,23 @@ async function createMissingWikiNote(ref: string) {
 }
 
 async function copyActiveContent() {
+  const sessionGeneration = captureDiarySessionGeneration()
+  const activeViewerPath = activeDraftRecovery.value?.documentPath
+    ?? activeHistoryComparison.value?.documentPath
+    ?? activeWorkingTreeDiff.value?.documentPath
+    ?? activeTab.value?.path
+    ?? null
+  const managedViewer = activeViewerPath !== null
+    && classifyDiaryPath(activeViewerPath.replace(/\.md$/, '')) === 'managed'
+  if (managedViewer && !diaryAccess.isUnlocked.value) return
   const raw = activeDraftRecovery.value?.draftRaw
     ?? activeHistoryComparison.value?.afterRaw
     ?? activeTab.value?.raw
   if (raw === undefined) return
+  if (managedViewer && (!diaryAccess.isUnlocked.value || !isDiarySessionGenerationCurrent(sessionGeneration))) return
   try {
     await navigator.clipboard.writeText(raw)
+    if (managedViewer && (!diaryAccess.isUnlocked.value || !isDiarySessionGenerationCurrent(sessionGeneration))) return
     toast.success(t('vault.content_copied'))
   } catch { toast.error(t('vault.copy_failed')) }
 }
@@ -2194,6 +2212,7 @@ interface PdfExportRequest {
   path: string
   raw: string
   title: string
+  sessionGeneration: number
 }
 
 interface PdfRenderWaiter {
@@ -2223,6 +2242,12 @@ const pdfWikiResolver = (ref: string, _anchor?: string, context?: { sourcePath?:
 
 function waitForPdfArticle(request: PdfExportRequest): Promise<HTMLElement> {
   return new Promise((resolve, reject) => {
+    const managed = classifyDiaryPath(request.path.replace(/\.md$/, '')) === 'managed'
+    if (managed && (!diaryAccess.isUnlocked.value
+      || !isDiarySessionGenerationCurrent(request.sessionGeneration))) {
+      reject(new Error('DIARY_SESSION_INVALIDATED'))
+      return
+    }
     const timeout = window.setTimeout(() => {
       if (pdfRenderWaiter?.id !== request.id) return
       pdfRenderWaiter = null
@@ -2294,7 +2319,12 @@ async function exportPdfDocument(path: string): Promise<void> {
 
   pdfExportBusy.value = true
   const id = ++pdfExportSequence
+  const sessionGeneration = captureDiarySessionGeneration()
+  const managed = classifyDiaryPath(path.replace(/\.md$/, '')) === 'managed'
   try {
+    if (managed && !diaryAccess.isUnlocked.value) {
+      throw new Error('DIARY_SESSION_INVALIDATED')
+    }
     const liveTab = tabs.value.find((tab) => tab.path === path)
     const summary = posts.value.find((post) => post.path === path)
     let raw = ''
@@ -2306,20 +2336,26 @@ async function exportPdfDocument(path: string): Promise<void> {
       raw = liveTab.raw
     } else {
       const post = await getPost(path)
+      if (managed && !isDiarySessionGenerationCurrent(sessionGeneration)) throw new Error('DIARY_SESSION_INVALIDATED')
       raw = post.raw
       title = post.metadata?.title?.trim() || title
     }
 
-    const request: PdfExportRequest = { id, path, raw, title }
+    if (managed && !isDiarySessionGenerationCurrent(sessionGeneration)) throw new Error('DIARY_SESSION_INVALIDATED')
+    const request: PdfExportRequest = { id, path, raw, title, sessionGeneration }
     const article = await waitForPdfArticle(request)
+    if (managed && !isDiarySessionGenerationCurrent(sessionGeneration)) throw new Error('DIARY_SESSION_INVALIDATED')
     await waitForPdfWidgets(article)
+    if (managed && !isDiarySessionGenerationCurrent(sessionGeneration)) throw new Error('DIARY_SESSION_INVALIDATED')
     await waitForPdfImages(article)
+    if (managed && !isDiarySessionGenerationCurrent(sessionGeneration)) throw new Error('DIARY_SESSION_INVALIDATED')
     const label = resolvePdfDocumentLabel({ raw, documentTitle: title, documentPath: path })
     await downloadPdfDocument({
       title: label,
       articleHtml: preparePdfArticleHtml(article),
     })
   } catch (error) {
+    if (error instanceof Error && error.message === 'DIARY_SESSION_INVALIDATED') return
     toast.error(t(
       error instanceof Error && (error.message === 'PDF_RENDER_TIMEOUT' || error.message === 'PDF_WIDGET_TIMEOUT')
         ? 'file_tree.export_not_ready'
@@ -2331,6 +2367,33 @@ async function exportPdfDocument(path: string): Promise<void> {
     pdfExportBusy.value = false
   }
 }
+
+// DiaryAccessSession is the sole teardown authority. Every subordinate
+// surface subscribes to its synchronous generation fence so a lock/logout
+// clears decrypted holders before late network/render work can publish again.
+const stopDiaryTeardown = subscribeDiaryTeardown(() => {
+  clearManagedDiaryWorkspace()
+  draftPersistence.clearSensitiveState()
+  draftRecovery.clearSensitiveState()
+  recoveryTabs.clearSensitiveState()
+  historyComparisons.clearSensitiveState()
+  workingTreeDiffs.clearSensitiveState()
+  clearLinkIndex(fileChanges)
+  invalidateDocumentSearchState()
+  disposeManagedDiaryModels()
+  vaultContext.toc.tocHeadings.value = []
+  vaultContext.toc.tocActiveId.value = ''
+  vaultContext.toc.tocScrollTo.value = null
+  vaultContext.toc.linksEmpty.value = true
+  pdfExportSequence += 1
+  if (pdfRenderWaiter) {
+    pdfRenderWaiter.reject(new Error('DIARY_SESSION_INVALIDATED'))
+    pdfRenderWaiter = null
+  }
+  pdfExportRequest.value = null
+  pdfExportBusy.value = false
+})
+onBeforeUnmount(stopDiaryTeardown)
 
 watch(() => navSearch?.tick.value, () => openSearch())
 

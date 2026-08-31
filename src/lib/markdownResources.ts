@@ -1,6 +1,7 @@
 import type MarkdownIt from 'markdown-it'
 import { authFetchForPath } from './diary-request'
 import { findMarkdownInlineSourceOwnership } from './markdownInlineSource'
+import { isManagedDiaryPath } from '../../shared/diaryProtocol'
 
 export const MAX_SNIPPET_BYTES = 256 * 1024
 export const MAX_INCLUDE_BYTES = 512 * 1024
@@ -13,6 +14,9 @@ export type MarkdownResourceKind = 'snippet' | 'include' | 'image'
 export interface MarkdownResourceReadRequest {
   kind: MarkdownResourceKind
   path: string
+  /** Source document identity used to apply the existing Diary body lease
+   *  when a managed Diary renders an otherwise ordinary resource. */
+  sourcePath?: string
   signal?: AbortSignal
 }
 
@@ -177,6 +181,9 @@ export function markdownResourceImageUrl(
   const canonical = resolveLogicalResourceReference(sourcePath, trimmed)
   if (!canonical || !isAllowedResourcePath('image', canonical)) return null
   const query = new URLSearchParams({ kind: 'image', path: canonical })
+  if (sourcePath && isManagedDiaryPath(sourcePath.replace(/\.md$/, ''))) {
+    query.set('source', sourcePath.replace(/\.md$/, ''))
+  }
   return `/api/markdown-resources?${query.toString()}`
 }
 
@@ -519,12 +526,18 @@ async function readTextResource(
   context: ExpansionContext,
   kind: 'snippet' | 'include',
   resourcePath: string,
+  sourcePath?: string,
 ): Promise<string> {
   if (!context.resolver) throw new MarkdownResourceError('resource-resolver-unavailable')
-  const key = `${kind}:${resourcePath}`
+  const key = `${kind}:${sourcePath ?? ''}:${resourcePath}`
   let pending = context.cache.get(key)
   if (!pending) {
-    pending = context.resolver.read({ kind, path: resourcePath, signal: context.signal }).then((result) => {
+    pending = context.resolver.read({
+      kind,
+      path: resourcePath,
+      ...(sourcePath && isManagedDiaryPath(sourcePath.replace(/\.md$/, '')) ? { sourcePath } : {}),
+      signal: context.signal,
+    }).then((result) => {
       if (typeof result.content !== 'string') throw new MarkdownResourceError('resource-not-text')
       return result.content
     })
@@ -603,7 +616,7 @@ async function expandSource(
         throw new MarkdownResourceError('include-cycle')
       }
 
-      const raw = await readTextResource(context, current.kind, resourcePath)
+      const raw = await readTextResource(context, current.kind, resourcePath, sourcePath)
       const maxSelectedBytes = current.kind === 'snippet' ? MAX_SNIPPET_BYTES : MAX_INCLUDE_BYTES
       const selected = selectResourceContent(
         raw,
@@ -676,7 +689,14 @@ async function readJsonError(response: Response): Promise<never> {
 export const authenticatedMarkdownResourceResolver: MarkdownResourceResolver = {
   async read(request): Promise<MarkdownResourceReadResult> {
     const query = new URLSearchParams({ kind: request.kind, path: request.path })
-    const response = await authFetchForPath(request.path, `/api/markdown-resources?${query.toString()}`, {
+    if (request.sourcePath && isManagedDiaryPath(request.sourcePath.replace(/\.md$/, ''))) {
+      query.set('source', request.sourcePath.replace(/\.md$/, ''))
+    }
+    // A managed Diary source authorizes the resource expansion through the
+    // existing Diary capability even when the included/snippet resource is an
+    // ordinary path. Selecting auth by resource path alone would omit that
+    // capability and incorrectly fail every unlocked cross-file resource.
+    const response = await authFetchForPath(request.sourcePath ?? request.path, `/api/markdown-resources?${query.toString()}`, {
       method: 'GET',
       credentials: 'same-origin',
       signal: request.signal,

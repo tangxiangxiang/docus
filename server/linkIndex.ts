@@ -24,7 +24,7 @@ import { listPostsFlat } from './tree.js'
 import { CONTENT_DIR, filePathFor } from './paths.js'
 import { resolveWikiTarget } from '../shared/linkResolve.js'
 import { getDb } from './db.js'
-import { classifyDiaryPath } from '../shared/diaryProtocol.js'
+import { classifyDiaryPath, isManagedDiaryPath } from '../shared/diaryProtocol.js'
 
 /** Raised when a body-scanning index build is requested without access to a
  * managed Diary body. */
@@ -200,7 +200,10 @@ export class LinkIndex {
     const posts = await listPostsFlat(rootDir, useMetadataDb ? getDb() : null)
     for (const p of posts) {
       this.paths.add(p.path)
-      this.titles.set(p.path, p.title)
+      // Structural projections expose only the canonical managed basename;
+      // metadata-owned private titles must never enter this process-level
+      // index, even transiently during a cold rebuild.
+      this.titles.set(p.path, isManagedDiaryPath(p.path) ? nameFromPath(p.path) : p.title)
     }
     const allPaths = Array.from(this.paths)
     if (canReadBody) {
@@ -209,6 +212,12 @@ export class LinkIndex {
       if (denied) throw new LinkIndexBodyAccessError(denied.path)
     }
     for (const p of posts) {
+      // Managed Diary bytes are ciphertext envelopes.  Structural listing
+      // already registered the path/title above, so deliberately skip the
+      // body read and Markdown parser for this class of document.  This is
+      // the generic cold-rebuild boundary: even an unlocked session must not
+      // turn Diary plaintext into a long-lived process-level index.
+      if (isManagedDiaryPath(p.path)) continue
       const abs = filePathFor(p.path)
       let raw: string
       try {
@@ -229,11 +238,13 @@ export class LinkIndex {
    *  before writing a file that links to it). */
   registerPath(path: string, title = nameFromPath(path)): void {
     this.paths.add(path)
-    this.titles.set(path, title)
+    this.titles.set(path, isManagedDiaryPath(path) ? nameFromPath(path) : title)
   }
 
   setTitle(path: string, title: string): void {
-    if (this.paths.has(path)) this.titles.set(path, title)
+    if (this.paths.has(path)) {
+      this.titles.set(path, isManagedDiaryPath(path) ? nameFromPath(path) : title)
+    }
   }
 
   /** Re-extract links for a single file. Used after a write or after
@@ -241,6 +252,13 @@ export class LinkIndex {
   applyWrite(path: string, raw: string): void {
     this.forward.delete(path)
     this.paths.add(path)
+    if (isManagedDiaryPath(path)) {
+      // Structural/no-op semantics for managed Diary.  The caller may have
+      // an authorized plaintext buffer in memory, but it must never enter
+      // this process-wide derived state.
+      this.titles.set(path, nameFromPath(path))
+      return
+    }
     this.titles.set(path, titleFromRaw(path, raw))
     const allPaths = Array.from(this.paths)
     const links = extractLinks(raw, path, allPaths)
@@ -296,10 +314,15 @@ export class LinkIndex {
    *  `extractLinks`, so a source that links to the same target twice
    *  appears here only once. */
   getBacklinks(target: string): BacklinkRecord[] {
+    // A managed Diary target is private body-derived relation data.  The
+    // structural index intentionally exposes no backlinks for it, including
+    // Note → Diary edges.  Managed sources are likewise never retained.
+    if (isManagedDiaryPath(target)) return []
     const out: BacklinkRecord[] = []
     for (const [source, links] of this.forward) {
+      if (isManagedDiaryPath(source)) continue
       for (const l of links) {
-        if (l.target === target) {
+        if (!isManagedDiaryPath(l.target) && l.target === target) {
           out.push({ source, alias: l.alias, anchor: l.anchor, kind: l.kind })
           break
         }
@@ -316,13 +339,38 @@ export class LinkIndex {
 
   /** Wire shape for `GET /api/links/index`. */
   snapshot(): LinkIndexSnapshot {
+    this.purgeManagedDiaryState()
     const outgoing: Record<string, Link[]> = {}
-    for (const [k, v] of this.forward) outgoing[k] = v.slice()
+    for (const [k, v] of this.forward) {
+      if (isManagedDiaryPath(k)) continue
+      const filtered = v.filter((link) => !isManagedDiaryPath(link.target))
+      if (filtered.length > 0) outgoing[k] = filtered.slice()
+    }
     const titles: Record<string, string> = {}
     for (const p of this.paths) {
-      titles[p] = this.titles.get(p) ?? nameFromPath(p)
+      titles[p] = isManagedDiaryPath(p)
+        ? nameFromPath(p)
+        : this.titles.get(p) ?? nameFromPath(p)
     }
     return { paths: Array.from(this.paths), outgoing, titles }
+  }
+
+  /** Remove any legacy managed-Diary body-derived state that may have been
+   *  retained by a pre-D8.3 warm index. Filtering only at the response layer
+   *  would still leave private links/titles in process memory. */
+  purgeManagedDiaryState(): void {
+    for (const [source, links] of this.forward) {
+      if (isManagedDiaryPath(source)) {
+        this.forward.delete(source)
+        continue
+      }
+      const filtered = links.filter((link) => !isManagedDiaryPath(link.target))
+      if (filtered.length === 0) this.forward.delete(source)
+      else if (filtered.length !== links.length) this.forward.set(source, filtered)
+    }
+    for (const path of this.paths) {
+      if (isManagedDiaryPath(path)) this.titles.set(path, nameFromPath(path))
+    }
   }
 }
 
@@ -350,7 +398,10 @@ function startIndexRebuild(canReadBody?: (path: string) => boolean): Promise<Lin
 /** Lazy singleton. The first call triggers a full rebuild from
  *  CONTENT_DIR; subsequent calls return the cached instance. */
 export async function getIndex(): Promise<LinkIndex> {
-  if (_index) return _index
+  if (_index) {
+    _index.purgeManagedDiaryState()
+    return _index
+  }
   if (_indexPromise) return _indexPromise
   return startIndexRebuild()
 }
@@ -362,7 +413,10 @@ export async function getIndex(): Promise<LinkIndex> {
 export async function getIndexForBodyOperation(
   canReadBody: (path: string) => boolean,
 ): Promise<LinkIndex> {
-  if (_index) return _index
+  if (_index) {
+    _index.purgeManagedDiaryState()
+    return _index
+  }
   if (_indexPromise) return _indexPromise
   return startIndexRebuild(canReadBody)
 }

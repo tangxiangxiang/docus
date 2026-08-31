@@ -5,6 +5,8 @@ import type { VaultFileChanges } from '../context/fileChanges'
 import { useI18n } from '../../useI18n'
 import { getPost } from '../../../lib/api'
 import { makeEmptyTab } from './tabState'
+import { classifyDiaryPath } from '../../../../shared/diaryProtocol'
+import { captureDiarySessionGeneration, isDiarySessionGenerationCurrent } from '../../diary/useDiaryAccessSession'
 
 export function useExternalFileChanges(options: {
   tabs: Ref<Tab[]>
@@ -43,6 +45,23 @@ export function useExternalFileChanges(options: {
     // The event is for History, links, and other derived Vault consumers only.
     if (event.source === 'editor-lifecycle') return
 
+    const managedEvent = [event.path, event.oldPath]
+      .filter((value): value is string => typeof value === 'string')
+      .some((value) => classifyDiaryPath(value.replace(/\.md$/, '')) === 'managed')
+    const sessionGeneration = managedEvent ? captureDiarySessionGeneration() : null
+    const sessionStillCurrent = () => (
+      sessionGeneration === null || isDiarySessionGenerationCurrent(sessionGeneration)
+    )
+    if (!sessionStillCurrent()) return
+
+    // Managed Diary file-change events carry filesystem bytes only for
+    // transport between server-side owners. Never copy those bytes into an
+    // editor tab: they are ciphertext envelopes, not editor content. The
+    // managed path is re-read through getPost/openPost when an authorized
+    // session is still current; ordinary Note events retain their existing
+    // authoritative newRaw behavior.
+    const eventRaw = managedEvent ? undefined : event.newRaw
+
     // Record this event as the latest authority for its path so any in-flight
     // write confirm can detect staleness and silently discard its application.
     // This covers ALL event types — rename, editor-save, history-restore,
@@ -78,9 +97,10 @@ export function useExternalFileChanges(options: {
       // source proxy, Monaco model, and source position.
       if (!options.renameOpenDocument) {
         const confirmed = await options.closeTab(event.oldPath!)
-        if (!renameIsCurrent() || confirmed === false) return
-        if (event.newRaw == null) {
+        if (!renameIsCurrent() || !sessionStillCurrent() || confirmed === false) return
+        if (eventRaw == null) {
           await options.openPost(event.path)
+          if (!sessionStillCurrent()) return
           options.toastInfo(t('editor.ai_renamed', { from: event.oldPath ?? '', to: event.path }))
           return
         }
@@ -96,8 +116,8 @@ export function useExternalFileChanges(options: {
             && !existing.loadError
             && (existing.saveStatus === 'idle' || existing.saveStatus === 'saved')
           if (isClean) {
-            existing.raw = event.newRaw
-            existing.originalRaw = event.newRaw
+            existing.raw = eventRaw
+            existing.originalRaw = eventRaw
             existing.serverMtime = event.newMtime ?? existing.serverMtime
             existing.revision += 1
             existing.savedRevision = existing.revision
@@ -109,7 +129,7 @@ export function useExternalFileChanges(options: {
             existing.error = null
           } else {
             existing.serverMtime = event.newMtime ?? existing.serverMtime
-            existing.externalRaw = event.newRaw
+            existing.externalRaw = eventRaw
             existing.externalKind = 'modified'
             existing.saveStatus = 'external'
             existing.loadError = null
@@ -117,8 +137,8 @@ export function useExternalFileChanges(options: {
           }
         } else {
           const newTab = makeEmptyTab(event.path)
-          newTab.raw = event.newRaw
-          newTab.originalRaw = event.newRaw
+          newTab.raw = eventRaw
+          newTab.originalRaw = eventRaw
           newTab.serverMtime = event.newMtime ?? 0
           newTab.loading = false
           options.tabs.value.push(newTab)
@@ -138,12 +158,13 @@ export function useExternalFileChanges(options: {
         const targetRevision = target?.revision
         const targetRaw = target?.raw
 
-        let authoritativeRaw = event.newRaw
+        let authoritativeRaw = eventRaw
         let authoritativeMtime = event.newMtime
         let authoritativeTitle: string | null = null
         if (authoritativeRaw == null) {
           try {
             const post = await getPost(event.path)
+            if (!sessionStillCurrent()) return false
             authoritativeRaw = post.raw
             authoritativeMtime = post.mtime
             authoritativeTitle = post.metadata?.title
@@ -154,7 +175,7 @@ export function useExternalFileChanges(options: {
           }
         }
 
-        if (!renameIsCurrent()) return false
+        if (!renameIsCurrent() || !sessionStillCurrent()) return false
         if (!options.tabs.value.includes(source)
             || source.path !== event.oldPath
             || source.revision !== sourceRevision
@@ -221,6 +242,7 @@ export function useExternalFileChanges(options: {
             applyRename,
           )
         : await applyRename()
+      if (!sessionStillCurrent()) return
       if (applied) {
         options.toastInfo(t('editor.ai_renamed', { from: event.oldPath ?? '', to: event.path }))
       }
@@ -280,6 +302,7 @@ export function useExternalFileChanges(options: {
       const ok = await options.confirm(
         t('editor.ai_overwrite', { path: event.path }),
       )
+      if (!sessionStillCurrent()) return
       if (!ok) {
         // Only update mtime if no newer event arrived AND the tab state is
         // completely unchanged. If a poll set external state, the user
@@ -347,8 +370,8 @@ export function useExternalFileChanges(options: {
         // it correctly).
         if (latestTab.saveStatus !== 'external') {
           latestTab.serverMtime = event.newMtime ?? latestTab.serverMtime
-          if (event.newRaw != null) {
-            latestTab.externalRaw = event.newRaw
+          if (eventRaw != null) {
+            latestTab.externalRaw = eventRaw
           }
           latestTab.externalKind = 'modified'
           latestTab.saveStatus = 'external'
@@ -358,13 +381,14 @@ export function useExternalFileChanges(options: {
         return
       }
     }
-    if (event.newRaw != null) {
+    if (!sessionStillCurrent()) return
+    if (eventRaw != null) {
       // Invalidate any in-flight disk poll read AND state observation so a
       // pending getPost or getFileStates cannot overwrite the externally
       // written content once it returns.
       options.invalidateDiskObservation?.(event.path)
-      tab.raw = event.newRaw
-      tab.originalRaw = event.newRaw
+      tab.raw = eventRaw
+      tab.originalRaw = eventRaw
     }
     tab.serverMtime = event.newMtime ?? tab.serverMtime
     // Fully converge tab state: accepting an authoritative external write

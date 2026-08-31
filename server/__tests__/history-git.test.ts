@@ -863,6 +863,34 @@ describeHistoryIntegration('addAndCommit + log', () => {
     const log = await git.log(root)
     expect(log).toEqual([])
   })
+
+  it('rejects managed Diary paths before any Git mutation, including mixed batches', async () => {
+    await write('seed.md', '# seed\n')
+    await git.addAndCommit(root, ['seed.md'], 'seed')
+    const beforeHead = (await git.run(root, ['rev-parse', 'HEAD'])).stdout.trim()
+    await write('ordinary.md', '# ordinary\n')
+    await write('diary/2026-08-31.md', 'D8_3_BODY_SECRET_not-markdown\n')
+
+    await expect(git.addAndCommit(
+      root,
+      ['ordinary.md', 'diary/2026-08-31.md'],
+      'must reject mixed Diary batch',
+    )).rejects.toMatchObject({ code: 'diary-history-encrypted-unsupported' })
+
+    // The owner rejects before temporary-index creation, staging, commit-tree,
+    // or ref movement: neither the Note subset nor the managed path changes
+    // repository state, and the working tree bytes remain untouched.
+    expect((await git.run(root, ['rev-parse', 'HEAD'])).stdout.trim()).toBe(beforeHead)
+    expect(await git.rawAt(root, 'HEAD', 'ordinary.md')).toBeNull()
+    expect(await git.rawAt(root, 'HEAD', 'diary/2026-08-31.md')).toBeNull()
+    expect(await fs.readFile(path.join(root, 'ordinary.md'), 'utf8')).toBe('# ordinary\n')
+    expect(await fs.readFile(path.join(root, 'diary/2026-08-31.md'), 'utf8'))
+      .toBe('D8_3_BODY_SECRET_not-markdown\n')
+    expect(await git.status(root)).toEqual(expect.arrayContaining([
+      { index: '?', worktree: '?', path: 'ordinary.md' },
+      { index: '?', worktree: '?', path: 'diary/2026-08-31.md' },
+    ]))
+  })
 })
 
 describeHistoryIntegration('dropHeadCommit', () => {

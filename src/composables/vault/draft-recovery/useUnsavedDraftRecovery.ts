@@ -18,6 +18,7 @@ import {
   type DraftConflictRecord,
   type UnsavedDraft,
 } from './draftTypes'
+import { isManagedDiaryPath } from '../../../../shared/diaryProtocol'
 
 export type DraftRecoveryItemStatus =
   | 'unresolved'
@@ -51,6 +52,9 @@ export interface UnsavedDraftRecovery {
   removeIdentity(vaultId: string, documentId: string): void
   dismissForSession(recoveryId: string): void
   selectRecovery(recoveryId: string | null): void
+  /** Clear in-memory recovery items and fence all outstanding classification
+   *  work while keeping this coordinator reusable after a later unlock. */
+  clearSensitiveState(): void
   dispose(): void
 }
 
@@ -223,6 +227,13 @@ export function createUnsavedDraftRecovery(
   }
 
   async function readDisk(draft: UnsavedDraft): Promise<RecoveryDiskSnapshot> {
+    if (isManagedDiaryPath(draft.documentPath.replace(/\.md$/, ''))) {
+      return {
+        status: 'unreadable',
+        documentPath: draft.documentPath,
+        error: 'diary-draft-recovery-unsupported',
+      }
+    }
     try {
       const post = await loadPost(draft.documentPath)
       return {
@@ -302,8 +313,10 @@ export function createUnsavedDraftRecovery(
         error: null,
         discoverGeneration: generation,
         classifyGeneration: 0,
-      }))
-      discovered.push(...conflicts.map((conflict): OwnedItem => ({
+      })).filter((item) => !isManagedDiaryPath(item.draft.documentPath.replace(/\.md$/, '')))
+      discovered.push(...conflicts
+        .filter((conflict) => !isManagedDiaryPath(conflict.documentPath.replace(/\.md$/, '')))
+        .map((conflict): OwnedItem => ({
         recoveryId: conflictRecoveryId(conflict),
         draft: conflictDraft(conflict),
         source: 'conflict',
@@ -313,7 +326,7 @@ export function createUnsavedDraftRecovery(
         error: null,
         discoverGeneration: generation,
         classifyGeneration: 0,
-      })))
+        })))
       mutableItems.value = discovered
 
       let cursor = 0
@@ -401,6 +414,7 @@ export function createUnsavedDraftRecovery(
         || identityRefreshGenerations.get(id) !== generation) return
       const relevantConflicts = conflicts.filter((candidate) => (
         candidate.documentId === documentId
+        && !isManagedDiaryPath(candidate.documentPath.replace(/\.md$/, ''))
       ))
       const wanted = new Map<string, {
         draft: UnsavedDraft
@@ -505,6 +519,23 @@ export function createUnsavedDraftRecovery(
       : null
   }
 
+  function clearSensitiveState(): void {
+    const managedIds = new Set(mutableItems.value
+      .filter((item) => isManagedDiaryPath(item.draft.documentPath.replace(/\.md$/, '')))
+      .map((item) => item.recoveryId))
+    // Fence and remove only managed-Diary viewers. Ordinary Note recovery
+    // remains available across a Diary lock/logout, preserving its existing
+    // lifecycle semantics; any in-flight managed classifier can no longer
+    // publish because its item is removed and its generation advances.
+    for (const item of mutableItems.value) {
+      if (managedIds.has(item.recoveryId)) item.classifyGeneration += 1
+    }
+    mutableItems.value = mutableItems.value.filter((item) => !managedIds.has(item.recoveryId))
+    if (activeRecoveryId.value && managedIds.has(activeRecoveryId.value)) {
+      activeRecoveryId.value = null
+    }
+  }
+
   function dispose(): void {
     if (disposed) return
     disposed = true
@@ -540,6 +571,7 @@ export function createUnsavedDraftRecovery(
     removeIdentity,
     dismissForSession,
     selectRecovery,
+    clearSensitiveState,
     dispose,
   }
 }

@@ -1,6 +1,7 @@
 import MiniSearch from 'minisearch'
 import type { PostSummary } from './api'
 import { authFetchForPath } from './diary-request'
+import { isManagedDiaryPath } from '../../shared/diaryProtocol'
 
 /**
  * 客户端搜索:基于 minisearch,索引 PostSummary(path/title/tags/summary),
@@ -30,6 +31,32 @@ interface BodyCacheEntry {
   mtime: number
 }
 let bodyCache: Map<string, BodyCacheEntry> = new Map()
+let searchEpoch = 0
+
+function managedTitle(path: string): string {
+  return path.split('/').pop() ?? path
+}
+
+/** Capture/invalidate the search lifecycle token at the existing Diary
+ * session teardown seam. This is a subordinate cache token, never a second
+ * authorization/session owner. */
+export function captureSearchEpoch(): number { return searchEpoch }
+
+export function invalidateSearchState(): void {
+  searchEpoch += 1
+  // Body search is ordinary-Note state.  Managed Diary bodies are never
+  // admitted to this cache, but remove any legacy/test residue by
+  // classification rather than clearing every Note entry on a Diary lock.
+  // The epoch still drops stale provider results; preserving the Note cache
+  // keeps the shared search surface behavior unchanged after teardown.
+  for (const key of [...bodyCache.keys()]) {
+    if (isManagedDiaryPath(key)) bodyCache.delete(key)
+  }
+}
+
+export function bodyCachePathsForTesting(): string[] {
+  return [...bodyCache.keys()]
+}
 
 function makeIndex(): MiniSearch<SearchDoc> {
   return new MiniSearch<SearchDoc>({
@@ -48,12 +75,17 @@ export function buildIndex(posts: PostSummary[]): void {
   const docs: SearchDoc[] = posts.map((p) => ({
     id: p.path,
     path: p.path,
-    title: p.title,
-    tags: (p.tags ?? []).join(' '),
-    summary: p.summary ?? '',
+    // Managed Diary contributes structural path/date only. Private title,
+    // tags, and summary stay out of MiniSearch even while unlocked.
+    title: isManagedDiaryPath(p.path) ? managedTitle(p.path) : p.title,
+    tags: isManagedDiaryPath(p.path) ? '' : (p.tags ?? []).join(' '),
+    summary: isManagedDiaryPath(p.path) ? '' : (p.summary ?? ''),
   }))
   mini = makeIndex()
   mini.addAll(docs)
+  for (const key of [...bodyCache.keys()]) {
+    if (isManagedDiaryPath(key) || !docs.some((doc) => doc.path === key)) bodyCache.delete(key)
+  }
 }
 
 /** 重建索引(在 posts 列表变化后调用) */
@@ -68,7 +100,9 @@ export function rebuildIndex(posts: PostSummary[]): void {
 
 /** 拉正文并缓存(供 body 搜索用) */
 export async function primeBody(posts: PostSummary[]): Promise<void> {
+  const capturedEpoch = searchEpoch
   const stale = posts.filter((post) => {
+    if (isManagedDiaryPath(post.path)) return false
     const cached = bodyCache.get(post.path)
     return !cached || cached.mtime !== post.mtime
   })
@@ -89,6 +123,7 @@ export async function primeBody(posts: PostSummary[]): Promise<void> {
         const res = await authFetchForPath(p.path, `/api/posts/${encodeURI(p.path)}`)
         if (!res.ok) return
         const data = (await res.json()) as { content: string }
+        if (capturedEpoch !== searchEpoch || isManagedDiaryPath(p.path)) return
         // A slower request for an older revision must not overwrite a
         // newer body that finished first.
         const current = bodyCache.get(p.path)
@@ -114,9 +149,19 @@ function snippet(body: string, q: string): string {
 export function search(query: string, limit = 12): SearchHit[] {
   if (!mini || !query.trim()) return []
   const q = query.trim()
-  const titleHits = mini.search(q).slice(0, limit)
-  const seen = new Set(titleHits.map((h) => h.path))
   const needle = q.toLowerCase()
+  // MiniSearch fuzzy matching is useful for ordinary Notes, but it can make
+  // an unrelated query hit a managed Diary basename.  Managed entries may
+  // only match the structural path/date projection that we intentionally
+  // indexed; never let fuzzy scoring turn that projection into a broad
+  // private-metadata side channel.
+  const titleHits = mini.search(q).filter((h) => {
+    if (!isManagedDiaryPath(String(h.path ?? ''))) return true
+    const path = String(h.path ?? '').toLowerCase()
+    const title = String(h.title ?? '').toLowerCase()
+    return path.includes(needle) || title.includes(needle)
+  }).slice(0, limit)
+  const seen = new Set(titleHits.map((h) => h.path))
   const hits: SearchHit[] = titleHits.map((h) => {
     const title = String(h.title ?? '')
     const path = String(h.path ?? '')
@@ -132,6 +177,7 @@ export function search(query: string, limit = 12): SearchHit[] {
   // 正文补充:在 title 没吃饱时去 body 找
   if (hits.length < limit) {
     for (const [path, cached] of bodyCache) {
+      if (isManagedDiaryPath(path)) continue
       if (seen.has(path)) continue
       const body = cached.body
       if (body.toLowerCase().includes(q.toLowerCase())) {
@@ -146,6 +192,7 @@ export function search(query: string, limit = 12): SearchHit[] {
 
 /** 释放全部(用于测试 / 热重载场景) */
 export function dispose(): void {
+  searchEpoch += 1
   mini = null
   bodyCache.clear()
 }

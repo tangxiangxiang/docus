@@ -684,6 +684,21 @@ describe('POST /api/ai/chat', () => {
       expect(opts.ctx).toEqual({ kind: 'legacy-path', currentNotePath: 'archive/old.md' })
     })
 
+    it.each([
+      ['legacy currentNotePath', { currentNotePath: 'diary/2026-08-30' }],
+      ['attached contextPath', { contextPaths: ['diary/2026-08-30'] }],
+    ])('rejects managed Diary paths in %s before provider setup', async (_label, fields) => {
+      const created = (await (await call('POST', '/sessions')).json()) as { id: number }
+      const r = await call('POST', '/chat', { sessionId: created.id, content: 'hi', ...fields })
+      expect(r.status).toBe(422)
+      expect(r.headers.get('cache-control')).toBe('no-store')
+      expect(await r.json()).toEqual({
+        error: 'Diary AI context is unavailable while encrypted Diary bodies are managed',
+        code: 'diary-ai-context-unsupported',
+      })
+      expect(chatModule.runChat).not.toHaveBeenCalled()
+    })
+
     it('lets liveContext win when both fields are present (legacy fully ignored)', async () => {
       const created = (await (await call('POST', '/sessions')).json()) as { id: number }
       const liveContext = liveDocument()

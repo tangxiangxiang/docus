@@ -5,6 +5,7 @@ import {
 } from './monacoModelRegistry'
 export {
   disposeMarkdownModel,
+  disposeManagedDiaryModels,
   renameMarkdownModel,
   resetMarkdownModelsForTesting,
 } from './monacoModelRegistry'

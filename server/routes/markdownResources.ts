@@ -10,6 +10,15 @@ const markdownResourceRoutes = new Hono()
 markdownResourceRoutes.get('/api/markdown-resources', async (c) => {
   try {
     const resourcePath = c.req.query('path')
+    const sourcePath = c.req.query('source')
+    // A managed Diary may render ordinary resources only while its existing
+    // body-operation lease is current. This reuses the same guard rather than
+    // introducing a second resource authorization model; ordinary Markdown
+    // callers remain unchanged when no managed source is supplied.
+    if (typeof sourcePath === 'string') {
+      const bodyAccess = requireDiaryBodyAccess(c, sourcePath)
+      if (bodyAccess) return bodyAccess
+    }
     if (typeof resourcePath === 'string') {
       const bodyAccess = requireDiaryBodyAccess(c, resourcePath)
       if (bodyAccess) return bodyAccess

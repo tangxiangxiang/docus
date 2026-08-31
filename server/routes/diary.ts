@@ -234,15 +234,21 @@ diaryRoutes.post('/api/diary/dates', async (c) => {
       const post = postSummary(logicalPath, stat, metadata)
       try {
         const index = await getLinkIndex()
-        index.applyWrite(logicalPath, raw)
-        index.setTitle(logicalPath, metadata.title)
-      } catch { /* D8.3 clears this projection on lock */ }
+        // Managed Diary contributes structural existence only. The plaintext
+        // body remains inside the adapter operation and never enters the
+        // process-wide LinkIndex.
+        index.registerPath(logicalPath)
+      } catch { /* best effort; next rebuild repairs structural state */ }
       return c.json({ date, path: logicalPath, created: true, post }, 201)
     } catch (error) {
       const failures: unknown[] = [error]
       try {
         if (committed) {
-          if (await exists(absolutePath)) await atomicRemoveTextIfUnchanged(absolutePath, physicalRaw!)
+          if (await exists(absolutePath)) {
+            // This is the narrowly-scoped rollback for a just-created encrypted
+            // Diary file; public delete paths remain fail-closed.
+            await atomicRemoveTextIfUnchanged(absolutePath, physicalRaw!, { allowManagedDiary: true })
+          }
         } else {
           await prepared?.rollback()
         }

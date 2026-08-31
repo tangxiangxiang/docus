@@ -29,6 +29,7 @@ import {
   createFolderMoveGateProof,
   FOLDER_MOVE_JOURNAL_VERSION,
   listPhysicalMoveEntries,
+  ManagedDiaryFolderMoveUnsupportedError,
   reviveMetadataSnapshot,
   serializeMetadataSnapshot,
   type FolderMoveJournalV4,
@@ -269,11 +270,18 @@ folderRoutes.patch('/api/folders/*', async (c) => {
   // the whole transaction instead of slipping a new child in between
   // the enumeration and the lock acquisition.
   return withVaultMutation(CONTENT_DIR, () => withVaultStructureLock(async () => {
+  // A generic reference planner cannot inspect managed Diary bodies. When
+  // reference updates are requested, conservatively reject a vault that has
+  // any managed Diary file before LinkIndex planning (locked callers retain
+  // the normal 423 response).
   if (body.updateReferences !== false) {
     const referenceError = await rejectManagedDiaryReferenceFootprint(c)
     if (referenceError) return referenceError
   }
   const plannedOldPaths = await listSubtreePaths(CONTENT_DIR, srcPath)
+  if (plannedOldPaths.some((value) => classifyDiaryPath(value) === 'managed')) {
+    return bad(c, 'folder rename reference footprint contains an encrypted managed Diary body', 422, 'diary-encrypted-reference-unsupported')
+  }
   const plannedReferencePaths = body.updateReferences
     ? Object.entries((await getLinkIndex()).snapshot().outgoing)
       .filter(([, links]) => links.some((link) => plannedOldPaths.includes(link.target)))
@@ -426,12 +434,20 @@ folderRoutes.patch('/api/folders/*', async (c) => {
     // replays). Identities ride along for the markdown documents only.
     // Directories (including empty ones) are journaled too so the move
     // recreates the full visible tree shape (round-8 P1).
-    const physical = await listPhysicalMoveEntries(src, (relativeFilePath) => {
-      if (!relativeFilePath.endsWith('.md')) return null
-      const documentPath = `${srcPath}/${relativeFilePath.slice(0, -'.md'.length)}`
-      const identity = getDocumentMetadata(metadataDb(), documentPath)
-      return identity ? { documentId: identity.id, documentPath } : null
-    })
+    let physical: Awaited<ReturnType<typeof listPhysicalMoveEntries>>
+    try {
+      physical = await listPhysicalMoveEntries(src, (relativeFilePath) => {
+        if (!relativeFilePath.endsWith('.md')) return null
+        const documentPath = `${srcPath}/${relativeFilePath.slice(0, -'.md'.length)}`
+        const identity = getDocumentMetadata(metadataDb(), documentPath)
+        return identity ? { documentId: identity.id, documentPath } : null
+      }, srcPath)
+    } catch (error) {
+      if (error instanceof ManagedDiaryFolderMoveUnsupportedError) {
+        return bad(c, 'folder rename reference footprint contains an encrypted managed Diary body', 422, error.code)
+      }
+      throw error
+    }
     // v4 entry shape: mandatory (sourceDev, sourceIno, sourceHash).
     const physicalEntriesV4: import('../folderMoveTransaction.js').FolderMoveJournalEntryV4[] = physical.entries.map((e) => ({
       relativeFilePath: e.relativeFilePath,
@@ -1092,6 +1108,9 @@ folderRoutes.delete('/api/folders/*', async (c) => {
   // membership-stable world (see the rename route for the full note).
   return withVaultMutation(CONTENT_DIR, () => withVaultStructureLock(async () => {
   const planned = await listSubtreePaths(CONTENT_DIR, folderP)
+  if (planned.some((value) => classifyDiaryPath(value) === 'managed')) {
+    return bad(c, 'managed Diary encrypted delete is unavailable until an adapter-aware owner exists', 422, 'diary-encrypted-delete-unsupported')
+  }
   for (const bodyPath of planned) {
     const bodyAccess = requireDiaryBodyAccess(c, bodyPath)
     if (bodyAccess) return bodyAccess
@@ -1101,6 +1120,9 @@ folderRoutes.delete('/api/folders/*', async (c) => {
   if (!await exists(abs)) return bad(c, 'not found', 404)
   const all = await listSubtreePaths(CONTENT_DIR, folderP)
   if (all.join('\0') !== planned.join('\0')) return bad(c, 'folder contents changed while delete was being prepared; retry', 409)
+  if (all.some((value) => classifyDiaryPath(value) === 'managed')) {
+    return bad(c, 'managed Diary encrypted delete is unavailable until an adapter-aware owner exists', 422, 'diary-encrypted-delete-unsupported')
+  }
   if (__folderRaceHooks?.afterDeleteRecheck) await __folderRaceHooks.afterDeleteRecheck()
   if (all.length > 0 && !recursive) {
     return bad(c, 'folder is not empty; pass ?recursive=true to delete', 400)
@@ -1143,7 +1165,13 @@ folderRoutes.delete('/api/folders/*', async (c) => {
       const idx = await getLinkIndex()
       idx.applyFolderDelete(all)
       for (const p of await listSubtreePaths(CONTENT_DIR, folderP)) {
-        idx.applyWrite(p, await fs.readFile(filePathFor(p), 'utf8'))
+        if (classifyDiaryPath(p) === 'managed') {
+          // Managed Diary bodies remain opaque even in rollback reindexing;
+          // retain only the structural path/title projection.
+          idx.registerPath(p)
+        } else {
+          idx.applyWrite(p, await fs.readFile(filePathFor(p), 'utf8'))
+        }
       }
     }
     if (await exists(staged)) {
@@ -1178,7 +1206,7 @@ folderRoutes.delete('/api/folders/*', async (c) => {
             const docPath = `${folderP}/${relativeFilePath.slice(0, -'.md'.length)}`
             const doc = databaseSnapshot.documents.find((d) => String(d.path) === docPath)
             return doc ? { documentId: String(doc.id), documentPath: docPath } : null
-          })
+          }, folderP)
           rollbackPhysicalEntriesV4 = rollbackPhysical.entries.map((e) => ({
             relativeFilePath: e.relativeFilePath,
             sourceDev: e.sourceDev ?? '',

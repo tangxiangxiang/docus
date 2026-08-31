@@ -17,6 +17,7 @@ import type {
   DraftPathMapping,
 } from './useDraftFileTransactions'
 import { MAX_DRAFT_CONTENT_BYTES, draftContentBytes } from './draftCleanup'
+import { isManagedDiaryPath } from '../../../../shared/diaryProtocol'
 
 export const DRAFT_PERSIST_DEBOUNCE_MS = 800
 
@@ -89,6 +90,10 @@ export interface UnsavedDraftPersistence {
   getDraftCleanupProtection(vaultId: string): DraftCleanupProtection
   invalidateOwner(owner: DraftOwner): void
   invalidate(vaultId: string, documentId: string): void
+  /** Synchronously fence and clear all in-memory managed-Diary draft state.
+   *  Existing durable records are intentionally left untouched for the
+   *  explicit D8.4 cleanup/migration owner. */
+  clearSensitiveState(): void
   dispose(): Promise<void>
 }
 
@@ -2337,6 +2342,7 @@ export function createUnsavedDraftPersistence(
   function schedule(snapshot: DraftBufferSnapshot): DraftOwner | null {
     if (disposed
       || snapshot.loaded === false
+      || isManagedDiaryPath(snapshot.documentPath.replace(/\.md$/, ''))
       || !validIdentity(snapshot.vaultId, snapshot.documentId)
       || snapshot.documentPath.trim().length === 0) {
       return null
@@ -2399,6 +2405,14 @@ export function createUnsavedDraftPersistence(
   ): Promise<boolean> {
     const entry = entries.get(key(vaultId, documentId))
     if (!entry || (!allowDisposed && disposed)) return false
+    if (isManagedDiaryPath(entry.latestSnapshot?.documentPath?.replace(/\.md$/, '') ?? entry.persistedDraft?.documentPath?.replace(/\.md$/, '') ?? '')) {
+      clearTimer(entry)
+      entry.latestSnapshot = null
+      entry.latestSnapshotNeedsWrite = false
+      // Do not delete a legacy managed record; D8.4 owns explicit discard.
+      requestInactiveEntryRelease(entry)
+      return false
+    }
     if (entry.fileTransaction) return false
     clearTimer(entry)
     const snapshot = entry.latestSnapshot
@@ -2433,6 +2447,13 @@ export function createUnsavedDraftPersistence(
 
   async function flushAllInternal(allowDisposed = false): Promise<boolean> {
     const results = await Promise.all([...entries.entries()].map(async ([serialized, entry]) => {
+      if (isManagedDiaryPath(entry.latestSnapshot?.documentPath?.replace(/\.md$/, '') ?? entry.persistedDraft?.documentPath?.replace(/\.md$/, '') ?? '')) {
+        clearTimer(entry)
+        entry.latestSnapshot = null
+        entry.latestSnapshotNeedsWrite = false
+        requestInactiveEntryRelease(entry)
+        return false
+      }
       if (!entry.latestSnapshot) {
         if (!entry.pendingWrite) {
           return entry.mode.kind !== 'primary' || entry.persistedDraft === null
@@ -2648,6 +2669,43 @@ export function createUnsavedDraftPersistence(
     requestInactiveEntryRelease(entry)
   }
 
+  function clearSensitiveState(): void {
+    for (const entry of entries.values()) {
+      const modePaths = entry.mode.kind === 'conflict'
+        ? [entry.mode.familyPath]
+        : entry.mode.kind === 'move-quarantine'
+          ? [entry.mode.familyPath, entry.mode.serverPath]
+          : entry.mode.kind === 'move-indeterminate'
+            ? [entry.mode.serverPath]
+            : []
+      const candidatePaths = [
+        entry.latestSnapshot?.documentPath,
+        entry.persistedDraft?.documentPath,
+        entry.emptyFamilyRecovery?.move.oldPath,
+        entry.emptyFamilyRecovery?.move.newPath,
+        entry.emptyFamilyRecovery?.anchorPath,
+        ...modePaths,
+      ]
+      if (!candidatePaths.some((value) => (
+        typeof value === 'string'
+        && isManagedDiaryPath(value.replace(/\.md$/, ''))
+      ))) continue
+      clearTimer(entry)
+      // Advance the owner generation before dropping buffers. Any already
+      // queued async store operation must therefore fail its ownership check
+      // and cannot republish a managed plaintext snapshot after teardown.
+      entry.generation += 1
+      entry.latestSnapshot = null
+      entry.latestSnapshotNeedsWrite = false
+      entry.persistedDraft = null
+      entry.emptyFamilyRecovery = null
+      entry.fileTransaction = null
+      entry.settleRetryAttempt = null
+      enterPrimaryMode(entry)
+      requestInactiveEntryRelease(entry)
+    }
+  }
+
   async function discard(owner: DraftOwner): Promise<boolean> {
     if (disposed) return false
     return deleteOwned(owner)
@@ -2660,7 +2718,7 @@ export function createUnsavedDraftPersistence(
   }
 
   async function discardIdentityIfUnchanged(expected: UnsavedDraft): Promise<boolean> {
-    if (disposed || !isUnsavedDraft(expected)) return false
+    if (disposed || !isUnsavedDraft(expected) || isManagedDiaryPath(expected.documentPath.replace(/\.md$/, ''))) return false
     const entry = entryFor(expected.vaultId, expected.documentId)
     return deleteOwned({
       vaultId: expected.vaultId,
@@ -2687,6 +2745,8 @@ export function createUnsavedDraftPersistence(
   ): Promise<DraftOwner | null> {
     if (disposed
       || !isUnsavedDraft(expected)
+      || isManagedDiaryPath(expected.documentPath.replace(/\.md$/, ''))
+      || isManagedDiaryPath(snapshot.documentPath.replace(/\.md$/, ''))
       || snapshot.loaded === false
       || expected.vaultId !== snapshot.vaultId
       || expected.documentId !== snapshot.documentId
@@ -2763,6 +2823,7 @@ export function createUnsavedDraftPersistence(
     }>()
 
     for (const identity of identities) {
+      if (isManagedDiaryPath(identity.documentPath.replace(/\.md$/, ''))) continue
       if (!validIdentity(identity.vaultId, identity.documentId)) continue
       const entry = entryFor(identity.vaultId, identity.documentId)
       if (entry.fileTransaction) continue
@@ -3295,7 +3356,9 @@ export function createUnsavedDraftPersistence(
               deletion.documentId,
               conflictId,
             )
-            if (conflictOutcome === 'failed') failedConflictIds.push(conflictId)
+            if (conflictOutcome === 'failed' || conflictOutcome === 'unsupported') {
+              failedConflictIds.push(conflictId)
+            }
           }
           // Anything still on the conflict store for this identity — a
           // frozen row whose delete failed, or a candidate recorded
@@ -3824,6 +3887,7 @@ export function createUnsavedDraftPersistence(
     hasPendingWrites,
     invalidateOwner,
     invalidate,
+    clearSensitiveState,
     dispose,
   }
 }

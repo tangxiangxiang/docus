@@ -27,7 +27,9 @@ import { isMoodId, type MoodId } from '../../shared/diaryMood.js'
 import { bad, ensureMetadata, exists, metadataDb } from './shared.js'
 import {
   hasDiaryBodyAccess,
+  hasManagedDiaryFiles,
   requireDiaryBodyAccess,
+  rejectManagedDiaryPrivateMetadata,
   requireDiaryVaultBodyAccess,
 } from '../diaryAccess/guard.js'
 import { DIARY_ACCESS_CAPABILITY_HEADER } from '../diaryAccess/service.js'
@@ -62,16 +64,36 @@ function runMetadataMigration() {
 }
 
 metadataRoutes.get('/api/metadata/migration', (c) => {
+  // Legacy managed-Diary migration rows may still exist for D8.4, but their
+  // private backup/error payloads are not part of this generic projection.
   const records = listMetadataMigrationRecords(metadataDb())
+    .filter((record) => classifyDiaryPath(record.path) !== 'managed')
+  const counts = records.reduce<Record<string, number>>((acc, record) => {
+    acc[record.status] = (acc[record.status] ?? 0) + 1
+    return acc
+  }, {})
+  const summary = {
+    total: records.length,
+    legacy: counts.legacy ?? 0,
+    imported: counts.imported ?? 0,
+    verified: counts.verified ?? 0,
+    cleaned: counts.cleaned ?? 0,
+    failed: counts.failed ?? 0,
+    orphaned: counts.orphaned ?? 0,
+  }
   return c.json({
     running: activeMetadataMigration !== null,
-    summary: getMetadataMigrationSummary(metadataDb()),
+    summary,
     failures: records.filter((record) => record.status === 'failed'),
     cleanedPaths: records.filter((record) => record.status === 'cleaned').map((record) => record.path),
   })
 })
 
 metadataRoutes.post('/api/metadata/migrate', async (c) => {
+  if (await hasManagedDiaryFiles()) {
+    const response = rejectManagedDiaryPrivateMetadata(c)
+    if (response) return response
+  }
   const bodyAccess = requireDiaryVaultBodyAccess(c)
   if (bodyAccess) return bodyAccess
   const report = await runMetadataMigration()
@@ -80,6 +102,10 @@ metadataRoutes.post('/api/metadata/migrate', async (c) => {
 })
 
 metadataRoutes.get('/api/metadata/cleanup/preview', async (c) => {
+  if (await hasManagedDiaryFiles()) {
+    const response = rejectManagedDiaryPrivateMetadata(c)
+    if (response) return response
+  }
   const bodyAccess = requireDiaryVaultBodyAccess(c)
   if (bodyAccess) return bodyAccess
   return c.json(await previewFrontmatterCleanup(metadataDb()))
@@ -89,6 +115,8 @@ metadataRoutes.get('/api/metadata/export', (c) => {
   const documentPath = c.req.query('path')
   const mode = c.req.query('mode') ?? 'canonical'
   if (!documentPath) return bad(c, 'path required')
+  const privateMetadataError = rejectManagedDiaryPrivateMetadata(c, documentPath)
+  if (privateMetadataError) return privateMetadataError
   const bodyAccess = requireDiaryBodyAccess(c, documentPath)
   if (bodyAccess) return bodyAccess
   if (mode !== 'canonical' && mode !== 'original') return bad(c, 'invalid export mode')
@@ -110,6 +138,8 @@ metadataRoutes.post('/api/metadata/cleanup', async (c) => {
   const paths = confirmedPaths(await c.req.json().catch(() => null), 'REMOVE_FRONTMATTER')
   if (!paths) return bad(c, 'explicit confirmation and paths are required')
   for (const documentPath of paths) {
+    const privateMetadataError = rejectManagedDiaryPrivateMetadata(c, documentPath)
+    if (privateMetadataError) return privateMetadataError
     const bodyAccess = requireDiaryBodyAccess(c, documentPath)
     if (bodyAccess) return bodyAccess
   }
@@ -123,6 +153,8 @@ metadataRoutes.post('/api/metadata/restore', async (c) => {
   if (!paths) return bad(c, 'explicit confirmation and paths are required')
   if (mode !== 'original' && mode !== 'canonical') return bad(c, 'invalid restore mode')
   for (const documentPath of paths) {
+    const privateMetadataError = rejectManagedDiaryPrivateMetadata(c, documentPath)
+    if (privateMetadataError) return privateMetadataError
     const bodyAccess = requireDiaryBodyAccess(c, documentPath)
     if (bodyAccess) return bodyAccess
   }
@@ -157,8 +189,8 @@ metadataRoutes.patch('/api/metadata/documents/*', async (c) => {
     || Object.hasOwn(body, 'summary')
     || Object.hasOwn(body, 'tags')
   if (isManagedDiary && hasPrivateChange) {
-    const bodyAccess = requireDiaryBodyAccess(c, documentPath)
-    if (bodyAccess) return bodyAccess
+    const privateMetadataError = rejectManagedDiaryPrivateMetadata(c, documentPath)
+    if (privateMetadataError) return privateMetadataError
   }
 
   // Validate the Diary-only field before ensureMetadata() can create a live
@@ -169,25 +201,30 @@ metadataRoutes.patch('/api/metadata/documents/*', async (c) => {
   if (Object.hasOwn(body, 'mood')) {
     hasMoodChange = true
     if (logicalPath === null || classifyDiaryPath(logicalPath) !== 'managed') {
-      return c.json({
-        error: 'mood is only available for canonical managed Diary dates',
-        code: 'INVALID_MOOD',
-      }, 400)
+      return bad(c, 'mood is only available for canonical managed Diary dates', 400, 'INVALID_MOOD')
     }
     if (body.mood === null) {
       requestedMood = null
     } else if (isMoodId(body.mood)) {
       requestedMood = body.mood
     } else {
-      return c.json({
-        error: 'mood must be one of the canonical Mood IDs or null',
-        code: 'INVALID_MOOD',
-      }, 400)
+      return bad(c, 'mood must be one of the canonical Mood IDs or null', 400, 'INVALID_MOOD')
     }
   }
 
   const currentMetadata = getDocumentMetadata(metadataDb(), documentPath)
   if (!currentMetadata) {
+    // A canonical encrypted Diary without its identity row cannot be safely
+    // reconstructed by this generic metadata route: doing so would require
+    // reading/parsing the opaque envelope outside the Diary adapter and could
+    // mint a mismatched stable document id. Keep Mood fail-closed for this
+    // malformed/legacy state rather than materializing ciphertext through
+    // ensureMetadata().
+    if (isManagedDiary) {
+      const bodyAccess = requireDiaryBodyAccess(c, documentPath)
+      if (bodyAccess) return bodyAccess
+      return bad(c, 'Diary metadata identity is unavailable', 422, 'diary-private-metadata-unsupported')
+    }
     const bodyAccess = requireDiaryBodyAccess(c, documentPath)
     if (bodyAccess) return bodyAccess
     const [raw, nextStat] = await Promise.all([fs.readFile(abs, 'utf8'), fs.stat(abs)])
@@ -229,7 +266,7 @@ metadataRoutes.patch('/api/metadata/documents/*', async (c) => {
       const status = error.code === 'METADATA_VERSION_CONFLICT' ? 409
         : error.code === 'METADATA_NOT_FOUND' ? 404
           : 400
-      return c.json({ error: error.message, code: error.code }, status)
+      return bad(c, error.message, status, error.code)
     }
     throw error
   }

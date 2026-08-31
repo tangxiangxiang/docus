@@ -23,6 +23,8 @@ import { ref, watchEffect, type Ref } from 'vue'
 import { parseDoc } from '../../lib/frontmatter'
 import { render, type MarkdownRenderOptions } from '../../lib/markdown'
 import type { Resolver as WikiResolver } from '../../lib/wikiLinks'
+import { isManagedDiaryPath } from '../../../shared/diaryProtocol'
+import { captureDiarySessionGeneration, isDiarySessionGenerationCurrent } from '../diary/useDiaryAccessSession'
 
 export interface Heading {
   id: string
@@ -104,6 +106,9 @@ export function useMarkdownRender(
 
   watchEffect(async (onCleanup) => {
     const raw = typeof source === 'function' ? source() : source.value
+    const managed = Boolean(options.sourcePath
+      && isManagedDiaryPath(options.sourcePath.replace(/\.md$/, '')))
+    const renderGeneration = managed ? captureDiarySessionGeneration() : null
     ready.value = false
     /* Cancel any in-flight render when source changes again. Without
        this, a slow render from the previous document can resolve
@@ -123,7 +128,11 @@ export function useMarkdownRender(
         ? `# ${title}\n\n${content.replace(/^\n+/, '')}`
         : content
       const rendered = await render(body, { ...options, resolver, signal: controller.signal })
-      if (cancelled) return
+      // A managed-Diary render may have awaited a resource request while the
+      // authoritative session was locked/replaced. Do not publish that E1
+      // HTML/TOC into the reader after the generation advanced; ordinary Note
+      // renders retain their existing cancellation semantics.
+      if (cancelled || (renderGeneration !== null && !isDiarySessionGenerationCurrent(renderGeneration))) return
       html.value = rendered
       headings.value = extractHeadings(rendered)
       error.value = null

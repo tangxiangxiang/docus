@@ -675,7 +675,7 @@ describe('AI Diary mutation contract', () => {
   beforeEach(() => { contentDir = makeTempContentDir(); setContentDir(contentDir); __resetLinkIndexForTesting() })
   afterEach(() => { setContentDir(ORIGINAL_CONTENT_DIR); __resetLinkIndexForTesting(); fs.rmSync(path.dirname(contentDir), { recursive: true, force: true }) })
 
-  it('blocks generic Diary creation and identity changes while allowing edit/delete', async () => {
+  it('blocks generic Diary creation, identity changes, and delete', async () => {
     fs.mkdirSync(path.join(contentDir, 'diary'), { recursive: true })
     writeFile('diary/2000-05-01.md', '# 2000-05-01\n')
     writeFile('diary/legacy.md', '# legacy external\n')
@@ -717,9 +717,11 @@ describe('AI Diary mutation contract', () => {
     expect(renameInUnmanaged.content).toMatch(/Diary namespace/)
     expect(cleanupOut.isError).toBe(false)
     expect(write.isError).toBe(true)
-    expect(deleted.isError).toBe(false)
+    expect(deleted.isError).toBe(true)
+    expect(deleted.content).toMatch(/diary-encrypted-delete-unsupported/)
     expect(fs.existsSync(path.join(contentDir, 'diary', 'generic.md'))).toBe(false)
     expect(fs.existsSync(path.join(contentDir, 'diary', 'missing.md'))).toBe(false)
+    expect(fs.existsSync(path.join(contentDir, 'diary', '2000-05-01.md'))).toBe(true)
     expect(fs.existsSync(path.join(contentDir, 'inbox', 'source.md'))).toBe(true)
     expect(fs.existsSync(path.join(contentDir, 'diary', 'unmanaged.md'))).toBe(false)
     expect(fs.existsSync(path.join(contentDir, 'diary', 'legacy.md'))).toBe(false)

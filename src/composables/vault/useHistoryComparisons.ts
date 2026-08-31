@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import * as historyApi from '../../lib/history-api'
 import { computeFileDiff } from '../../../shared/file-diff'
+import { isManagedDiaryPath } from '../../../shared/diaryProtocol'
 import type { FileDiff } from '../../lib/history-api'
 
 export type HistoryComparisonStatus = 'loading' | 'ready' | 'error'
@@ -326,6 +327,20 @@ export function useHistoryComparisons(options: HistoryComparisonOptions) {
     activeComparisonId.value = null
   }
 
+  /** Fence outstanding historical reads and drop comparison bodies. A Diary
+   *  teardown must not leave decrypted before/after snapshots reachable from
+   *  a hidden comparison tab. */
+  function clearSensitiveState(): void {
+    const managedIds = new Set(comparisons.value
+      .filter((comparison) => isManagedDiaryPath(comparison.documentPath.replace(/\.md$/, '')))
+      .map((comparison) => comparison.tabId))
+    for (const tabId of managedIds) nextRequestId(tabId)
+    comparisons.value = comparisons.value.filter((comparison) => !managedIds.has(comparison.tabId))
+    if (activeComparisonId.value && managedIds.has(activeComparisonId.value)) {
+      activeComparisonId.value = null
+    }
+  }
+
   function closeComparison(tabId: string): void {
     nextRequestId(tabId)
     comparisons.value = comparisons.value.filter((comparison) => comparison.tabId !== tabId)
@@ -352,6 +367,7 @@ export function useHistoryComparisons(options: HistoryComparisonOptions) {
     refreshComparison,
     refreshDocumentComparison,
     deactivate,
+    clearSensitiveState,
     closeComparison,
     closeComparisons,
   }

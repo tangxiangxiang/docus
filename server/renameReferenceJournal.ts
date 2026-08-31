@@ -10,6 +10,19 @@ import {
   writeDurableRecoveryPayload,
 } from './atomicTextWrite.js'
 import { isPhysicallyContained } from './documentFileLifecycle.js'
+import { isManagedDiaryPath } from '../shared/diaryProtocol.js'
+
+/** The journal payload contains before/after Markdown bytes. A generic
+ *  reference transaction must reject any managed-Diary identity before it
+ *  hashes, serializes, or writes those payloads. */
+export class ManagedDiaryReferenceJournalUnsupportedError extends Error {
+  readonly code = 'diary-encrypted-reference-unsupported'
+
+  constructor(path: string) {
+    super(`managed Diary reference journal is unsupported: ${path}`)
+    this.name = 'ManagedDiaryReferenceJournalUnsupportedError'
+  }
+}
 export type RenameReferencePlan = {
   path: string
   beforeRaw: string
@@ -124,6 +137,17 @@ type PrepareRenameReferenceJournalInput = {
 })
 
 export async function prepareRenameReferenceJournal(input: PrepareRenameReferenceJournalInput): Promise<PreparedRenameReferenceJournal | null> {
+  const candidatePaths = [
+    input.srcRel,
+    input.destRel,
+    ...input.references.map((reference) => reference.path),
+    ...(input.referenceIdentities?.flatMap((identity) => [identity.sourcePath, identity.writePath]) ?? []),
+    ...(input.op === 'folder-rename-references' ? input.identities.map((identity) => identity.path) : []),
+  ]
+  const managedPath = candidatePaths
+    .map((value) => value.replace(/\.md$/, ''))
+    .find((value) => isManagedDiaryPath(value))
+  if (managedPath) throw new ManagedDiaryReferenceJournalUnsupportedError(managedPath)
   if (!input.references.length) return null
   if (input.op === 'document-rename-references' && !input.documentId) {
     throw new Error('document rename reference journal requires a documentId')

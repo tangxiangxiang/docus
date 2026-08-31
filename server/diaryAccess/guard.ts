@@ -50,6 +50,34 @@ export function requireDiaryBodyAccess(c: any, path: string): Response | null {
   return lockedResponse(c)
 }
 
+/** Structural probe used by operations that are intentionally disabled for
+ * managed Diary (private metadata migration/tag/archive and mixed folder
+ * deletes). It enumerates names only and never opens a body. */
+export async function hasManagedDiaryFiles(): Promise<boolean> {
+  try {
+    const diaryRoot = path.dirname(filePathFor('diary/2000-01-01'))
+    const entries = await fs.readdir(diaryRoot, { withFileTypes: true })
+    return entries.some((entry) =>
+      entry.isFile()
+      && entry.name.endsWith('.md')
+      && isManagedDiaryBodyPath(`diary/${entry.name.slice(0, -3)}`),
+    )
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+    throw error
+  }
+}
+
+/** Stable 422 for private managed-Diary metadata operations. */
+export function rejectManagedDiaryPrivateMetadata(c: any, documentPath?: string): Response | null {
+  if (documentPath !== undefined && !isManagedDiaryBodyPath(documentPath)) return null
+  c.header('Cache-Control', 'no-store')
+  return c.json({
+    error: 'Private managed Diary metadata is unavailable until an adapter-aware owner exists.',
+    code: 'diary-private-metadata-unsupported',
+  }, 422)
+}
+
 /**
  * Fail closed before a generic reference-rewrite planner asks LinkIndex to
  * scan body files. The directory enumeration is structural only; no Diary

@@ -7,6 +7,7 @@ import {
   validatePersistentTag,
   type PersistentTagValidation,
 } from '../shared/tagNormalization.js'
+import { isManagedDiaryPath } from '../shared/diaryProtocol.js'
 import {
   beginTagUndoRecording,
   captureTagUndoCreatedDestinationDeltas,
@@ -80,6 +81,7 @@ export type TagManagementErrorCode =
   | 'TAG_MANAGEMENT_UNAVAILABLE'
   | 'PREVIEW_REQUIRED'
   | 'PREVIEW_STALE'
+  | 'diary-private-metadata-unsupported'
   | 'TRANSACTION_FAILED'
 
 export type TagManagementErrorDetails = Record<string, string | number | null>
@@ -480,8 +482,20 @@ function readResolvedTags(
 }
 
 function readAffectedDocuments(db: DatabaseT, sourceTagId: number): FingerprintDocument[] {
+  // Keep the planner at a constant three statements while still preventing
+  // private managed-Diary fields from entering the generic planner. The SQL
+  // projection emits empty placeholders for canonical Diary paths; the
+  // shared TypeScript path guard below remains authoritative (including date
+  // validity) before any title/summary value is consumed.
   const documents = db.prepare(`
-    SELECT d.id, d.path, d.title, d.summary, d.created_at, d.updated_at
+    SELECT d.id, d.path,
+      CASE WHEN d.path GLOB 'diary/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+        AND date(substr(d.path, 7)) = substr(d.path, 7)
+        THEN '' ELSE d.title END AS title,
+      CASE WHEN d.path GLOB 'diary/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+        AND date(substr(d.path, 7)) = substr(d.path, 7)
+        THEN '' ELSE d.summary END AS summary,
+      d.created_at, d.updated_at
     FROM documents d
     JOIN (
       SELECT DISTINCT document_id
@@ -490,6 +504,12 @@ function readAffectedDocuments(db: DatabaseT, sourceTagId: number): FingerprintD
     ) source_documents ON source_documents.document_id = d.id
     ORDER BY d.id COLLATE BINARY
   `).all(sourceTagId) as DatabaseDocumentRow[]
+  if (documents.some((document) => isManagedDiaryPath(document.path))) {
+    throw new TagManagementError(
+      'diary-private-metadata-unsupported',
+      'tag operations are unavailable for managed Diary metadata',
+    )
+  }
   plannerTestHook?.('after-affected-document-read')
 
   const associations = db.prepare(`
@@ -727,10 +747,28 @@ export function listManagedTags(db: DatabaseT): ManagedTag[] {
     ORDER BY t.normalized_name COLLATE BINARY, t.id
   `).all() as Array<DatabaseTagRow & { document_count: number }>
   rows.forEach(assertCanonicalTagRow)
-  return rows.map((row) => ({
-    ...databaseTagToView(row),
-    documentCount: Number(row.document_count),
-  }))
+  // Managed Diary associations are private metadata and must not contribute
+  // to the public tag counts. Keep this structural-only: no Diary body is
+  // opened or parsed while building the projection.
+  const managedCounts = new Map<number, number>()
+  const associations = db.prepare(`
+    SELECT dt.tag_id, d.path
+    FROM document_tags dt
+    JOIN documents d ON d.id = dt.document_id
+  `).all() as Array<{ tag_id: number; path: string }>
+  for (const association of associations) {
+    if (!isManagedDiaryPath(association.path)) continue
+    managedCounts.set(association.tag_id, (managedCounts.get(association.tag_id) ?? 0) + 1)
+  }
+  return rows.flatMap((row) => {
+    const totalCount = Number(row.document_count)
+    const documentCount = Math.max(0, totalCount - (managedCounts.get(row.id) ?? 0))
+    // A tag attached only to private managed-Diary metadata is itself a
+    // private association. Hide that tag row entirely; retain true orphan
+    // tags (totalCount === 0) and tags also used by public Notes.
+    if (totalCount > 0 && documentCount === 0) return []
+    return [{ ...databaseTagToView(row), documentCount }]
+  })
 }
 
 export function isPlanFingerprint(value: unknown): value is string {

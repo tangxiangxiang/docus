@@ -351,6 +351,37 @@ describe('LinkIndex', () => {
     })
   })
 
+  it('never parses a managed Diary envelope or retains cross-scope edges', async () => {
+    await writeFile('diary/2026-08-31.md', 'DOCUS-DIARY-ENC-V1\n{"ciphertext":"[[note]]"}\n')
+    await writeFile('note.md', '# Note\nsee [[diary/2026-08-31]]\n')
+    await writeFile('other.md', '# Other\n')
+
+    const idx = new LinkIndex()
+    await idx.rebuild(sandbox)
+
+    const snapshot = idx.snapshot()
+    expect(snapshot.paths).toEqual(expect.arrayContaining(['diary/2026-08-31', 'note', 'other']))
+    expect(snapshot.titles['diary/2026-08-31']).toBe('2026-08-31')
+    expect(snapshot.outgoing['diary/2026-08-31']).toBeUndefined()
+    expect(snapshot.outgoing.note).toBeUndefined()
+    expect(idx.getBacklinks('diary/2026-08-31')).toEqual([])
+  })
+
+  it('preserves Note-to-Note links while suppressing managed Diary targets', () => {
+    const idx = new LinkIndex()
+    idx.registerPath('diary/2026-08-31')
+    idx.registerPath('note')
+    idx.registerPath('other')
+    idx.applyWrite('note', 'see [[diary/2026-08-31]] and [[other]]')
+    idx.applyWrite('diary/2026-08-31', 'private body [[note]]')
+
+    expect(idx.snapshot().outgoing.note).toEqual([
+      { target: 'other', alias: undefined, anchor: undefined, kind: 'wiki' },
+    ])
+    expect(idx.getBacklinks('other').map((backlink) => backlink.source)).toEqual(['note'])
+    expect(idx.getBacklinks('diary/2026-08-31')).toEqual([])
+  })
+
   it('applyFolderRename moves every file in the subtree', () => {
     const idx = new LinkIndex()
     // Pre-register all paths so resolution during applyWrite works

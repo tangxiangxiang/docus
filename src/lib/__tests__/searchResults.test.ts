@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createDocumentSearchProvider, createLatestSearchRunner, searchEverywhere, type SearchProvider, type SearchResultSection } from '../searchResults'
+import { createDocumentSearchProvider, createLatestSearchRunner, invalidateDocumentSearchState, searchEverywhere, type SearchProvider, type SearchResultSection } from '../searchResults'
 import { dispose } from '../search'
 import type { PostSummary } from '../api'
 
@@ -68,5 +68,28 @@ describe('Search Everywhere document provider', () => {
     resolveOld({ id: 'files', label: 'Files', results: [{ id: 'file:old', type: 'file', title: 'Old', score: 1, payload: { path: 'old' } }] })
     await old
     expect(applied[0].results[0].title).toBe('New')
+  })
+
+  it('drops a result that resolves after the Diary search epoch advances', async () => {
+    let resolveSearch!: (section: SearchResultSection) => void
+    const delayed = new Promise<SearchResultSection>((resolve) => { resolveSearch = resolve })
+    const provider: SearchProvider = () => delayed
+    let applied: SearchResultSection[] = []
+    const run = createLatestSearchRunner(() => [provider], (sections) => { applied = sections })
+    const request = run('D8_3_BODY_SECRET')
+    invalidateDocumentSearchState()
+    resolveSearch({
+      id: 'files',
+      label: 'Files',
+      results: [{
+        id: 'file:diary/2026-08-31',
+        type: 'file',
+        title: '2026-08-31',
+        score: 1,
+        payload: { path: 'diary/2026-08-31', match: 'path' },
+      }],
+    })
+    await request
+    expect(applied).toEqual([])
   })
 })

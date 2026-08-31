@@ -12,9 +12,50 @@ import {
   matchesDurableDirectoryIdentity,
   type DurableDirectoryIdentity,
 } from './durableDirectoryIdentity.js'
+import { CONTENT_DIR } from './paths.js'
+import { isManagedDiaryPath } from '../shared/diaryProtocol.js'
+import { DIARY_BODY_ENVELOPE_MAGIC } from './diaryAccess/body.js'
 
 export function sha256Hex(raw: string): string {
   return createHash('sha256').update(raw, 'utf8').digest('hex')
+}
+
+function managedDiaryTarget(targetPath: string): boolean {
+  const relative = path.relative(CONTENT_DIR, path.resolve(targetPath)).split(path.sep).join('/')
+  if (!relative || relative.startsWith('../') || relative === '..' || path.isAbsolute(relative)) return false
+  const logical = relative.endsWith('.md') ? relative.slice(0, -3) : relative
+  return isManagedDiaryPath(logical)
+}
+
+/** Raised by the lowest-level durable writer when a managed Diary target is
+ * about to receive anything other than the authenticated envelope. This is
+ * defense in depth for non-route callers: plaintext must never reach a temp,
+ * staged, or final managed-Diary pathname. */
+export class ManagedDiaryPlaintextWriteError extends Error {
+  readonly code = 'diary-plaintext-write-rejected'
+
+  constructor(targetPath: string) {
+    super(`managed Diary writes require an encrypted envelope: ${targetPath}`)
+    this.name = 'ManagedDiaryPlaintextWriteError'
+  }
+}
+
+/** Generic text removal has no adapter-owned encrypted delete transaction.
+ * Keep this guard at the durable writer too, so a non-route caller cannot
+ * stage/delete an opaque managed-Diary file through the regular pipeline. */
+export class ManagedDiaryDeleteUnsupportedError extends Error {
+  readonly code = 'diary-encrypted-delete-unsupported'
+
+  constructor(targetPath: string) {
+    super(`managed Diary deletion requires an adapter-aware owner: ${targetPath}`)
+    this.name = 'ManagedDiaryDeleteUnsupportedError'
+  }
+}
+
+function assertManagedDiaryBytes(targetPath: string, raw: string): void {
+  if (managedDiaryTarget(targetPath) && !raw.startsWith(DIARY_BODY_ENVELOPE_MAGIC)) {
+    throw new ManagedDiaryPlaintextWriteError(targetPath)
+  }
 }
 
 /** Content proof for ANY file the folder mover touches — including
@@ -705,6 +746,7 @@ export async function prepareAtomicTextWrite(
   raw: string,
   options: { mode?: number } = {},
 ): Promise<PreparedAtomicTextReplace> {
+  assertManagedDiaryBytes(targetPath, raw)
   const ownedTemporary = await writeTemporaryTextFile(targetPath, raw, options)
   const temporaryPath = ownedTemporary.path
   const { parentPath, fileIdentity: temporaryIdentity, parentIdentity } = ownedTemporary
@@ -1077,7 +1119,11 @@ export async function atomicReplaceTextIfUnchanged(
 export async function atomicRemoveTextIfUnchanged(
   targetPath: string,
   expectedRaw: string,
+  options: { allowManagedDiary?: boolean } = {},
 ): Promise<AtomicRemoveResult> {
+  if (managedDiaryTarget(targetPath) && options.allowManagedDiary !== true) {
+    throw new ManagedDiaryDeleteUnsupportedError(targetPath)
+  }
   let target: { artifact: OwnedArtifact; snapshot: StableTextSnapshot }
   try {
     target = await captureOwnedTextArtifact(targetPath, targetPath)
@@ -1189,6 +1235,7 @@ export async function atomicReplaceText(
   raw: string,
   options: { mode?: number } = {},
 ): Promise<void> {
+  assertManagedDiaryBytes(targetPath, raw)
   const ownedTemporary = await writeTemporaryTextFile(targetPath, raw, options)
   try {
     await __atomicWriteTestHooks?.beforeUnconditionalReplaceRename?.(ownedTemporary.path)

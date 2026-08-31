@@ -37,6 +37,20 @@ import {
 } from './durableDirectoryIdentity.js'
 import type { DocumentMetadataMutationSnapshot } from './documentMetadata.js'
 import { UnsupportedDirectoryMoveError } from './documentFileLifecycle.js'
+import { isManagedDiaryPath } from '../shared/diaryProtocol.js'
+
+/** Mutation-owner rejection for a folder transaction that would otherwise
+ * read/hash or journal an encrypted managed-Diary file. Routes perform the
+ * same preflight for user-facing semantics; this owner check protects
+ * recovery and future non-HTTP callers. */
+export class ManagedDiaryFolderMoveUnsupportedError extends Error {
+  readonly code = 'diary-encrypted-reference-unsupported'
+
+  constructor(path: string) {
+    super(`folder operations touching managed Diary are unsupported: ${path}`)
+    this.name = 'ManagedDiaryFolderMoveUnsupportedError'
+  }
+}
 
 /** One physically moved file in a folder-move journal (schema v2/v3).
  * `relativeFilePath` keeps the real extension — recovery never appends
@@ -707,6 +721,10 @@ export function isValidDeleteRollbackSnapshot(snapshot: unknown, destRel: string
 export async function listPhysicalMoveEntries(
   dirAbs: string,
   identityFor?: (relativeFilePath: string) => { documentId: string; documentPath: string } | null,
+  /** Logical path of `dirAbs` in the content tree. Supplying this lets the
+   *  owner classify canonical managed-Diary children even when a legacy
+   *  metadata row is absent (for example, during rollback recovery). */
+  logicalRoot?: string,
 ): Promise<FolderMoveEnumeration> {
   const rootIdentity = await captureDurableDirectoryIdentity(dirAbs)
   const entries: FolderMoveJournalEntry[] = []
@@ -734,6 +752,15 @@ export async function listPhysicalMoveEntries(
           throw new Error('folder move source changed during durable enumeration')
         }
       } else if (entry.isFile() && stat.isFile() && !stat.isSymbolicLink()) {
+        const identity = identityFor?.(entryRel)
+        const derivedLogicalPath = logicalRoot !== undefined && entryRel.endsWith('.md')
+          ? (logicalRoot ? `${logicalRoot}/${entryRel.slice(0, -'.md'.length)}` : entryRel.slice(0, -'.md'.length))
+          : identity?.documentPath
+        if (derivedLogicalPath && isManagedDiaryPath(derivedLogicalPath.replace(/\.md$/, ''))) {
+          // Classification is deliberately before fs.readFile: encrypted
+          // Diary bytes must not enter this generic hash/journal owner.
+          throw new ManagedDiaryFolderMoveUnsupportedError(derivedLogicalPath)
+        }
         const raw = await fs.readFile(entryAbs)
         const item: FolderMoveJournalEntry = {
           relativeFilePath: entryRel,
@@ -741,7 +768,6 @@ export async function listPhysicalMoveEntries(
           sourceDev: stat.dev.toString(),
           sourceIno: stat.ino.toString(),
         }
-        const identity = identityFor?.(entryRel)
         if (identity) {
           item.documentId = identity.documentId
           item.documentPath = identity.documentPath

@@ -1,0 +1,135 @@
+# D8.3 — Privacy Enforcement Implementation Evidence
+
+Status: `IMPLEMENTING`; implementation is complete locally and exact-head CI is pending.
+Planning approval is the D8.3 planning-review baseline at `99f693b` (the
+docs-only remediation checkpoint). This document records implementation
+evidence only; it does not claim an independent review or `REVIEW-CLOSED`.
+
+## Baseline and lineage
+
+```text
+branch: main
+starting HEAD: 99f693b02080127c16911869c17edcb2fa38fe3c
+starting worktree: clean
+planning CI baseline: #590 / run 33352478819 / attempt 3
+planning baseline result: Ubuntu Node 22/24, macOS Node 24, Windows Node 24,
+  auth-browser, tags-scale, visual, docker-smoke — 8/8 success
+implementation commit: pending local commit
+final implementation/evidence HEAD: pending push
+```
+
+The implementation keeps D8.2's existing Diary adapter and lifecycle owners.
+The server-side `server/diaryAccess/service.ts` remains the sole owner of the
+live/unwrapped DEK. The client owns only the existing session/capability state
+and transient authorized UI input; it never owns a DEK.
+
+## Security invariants implemented
+
+- Managed identity remains the canonical `diary/YYYY-MM-DD` logical path and
+  the existing DocumentMetadata `documentId` remains authoritative.
+- Generic durable writers reject plaintext at the managed path and generic
+  delete rejects without an adapter-aware owner. Diary create rollback is the
+  only narrowly-scoped internal encrypted-delete exception.
+- Managed bodies are never parsed as ordinary Markdown by generic tree/list,
+  LinkIndex, search, metadata migration, archive, tag, History, or rename
+  owners.
+- The authoritative Diary session generation advances synchronously before
+  derived holders are cleared; stale managed completions are ignored.
+- Existing Note behavior remains intact except for the deliberate
+  `Note → managed Diary` LinkIndex edge suppression. `Note → Note` remains
+  indexed.
+- D8.4 owns legacy plaintext migration and cleanup. D8.3 does not silently
+  migrate, purge, rewrite, or claim retroactive protection for old state.
+
+## Surface matrix
+
+| Surface | D8.3 behavior | Evidence owner |
+| --- | --- | --- |
+| Git mutation / History restore | Managed paths rejected before temp index, Git plumbing, historical raw publication, or filesystem mutation; mixed Note+Diary batches reject atomically. | `server/history/git.ts`, `server/history/restore.ts` and `server/__tests__/history-git.test.ts` |
+| Primary body read/save/create/resource | Existing Diary body-operation lease and server adapter remain the only body owner; invalid lease returns HTTP `423 diary-locked` with `no-store`. | `server/diaryAccess`, `server/routes/diary.ts`, `server/routes/posts.ts`, `server/routes/markdownResources.ts` |
+| Draft / Recovery | Managed persistent Draft/Recovery writes, conflict candidates, move/persistence flushes, pagehide/dispose flushes, and UI recovery viewers are disabled or filtered with client-only `diary-draft-recovery-unsupported`; legacy records are left for D8.4. | `draftStore.ts`, `useUnsavedDraftPersistence.ts`, `useUnsavedDraftRecovery.ts`, `useDraftRecoveryTabs.ts` |
+| Tree / list / structural metadata | Managed entries expose canonical path/date/existence, stable identity and Mood only; private title/summary/tags/frontmatter are not part of locked structural projection. | `server/tree.ts`, metadata routes, `src/views/metadataPostSummary.ts` |
+| LinkIndex | Cold and warm state retain structural paths only; managed body/title/edges are skipped or purged. `Note → managed Diary` is suppressed; `Note → Note` is preserved. | `server/linkIndex.ts`, `useLinkIndex.ts`, `server/__tests__/linkIndex.test.ts` |
+| Search / body cache | Managed title/summary/tags/body are excluded; managed structural date/path search remains possible; no managed body priming/cache; stale result epoch is dropped. | `src/lib/search.ts`, `src/lib/searchResults.ts`, `src/lib/__tests__/search.test.ts`, `searchResults.test.ts` |
+| Metadata migration / archive / tags | New managed scans/backups are skipped; private managed metadata migration/archive/tag mutation returns HTTP `422 diary-private-metadata-unsupported`; public structural projections filter private associations. | `metadataMigration.ts`, `frontmatterArchive.ts`, `tagManagement.ts`, metadata/tag routes |
+| Rename / move / reference | Managed document rename/move returns HTTP `422 diary-encrypted-rename-unsupported`; any managed folder/reference footprint returns HTTP `422 diary-encrypted-reference-unsupported` before planning, journaling, staging, or filesystem mutation. | posts/folders routes, `renameReferences.ts`, `renameReferenceJournal.ts`, `folderMoveTransaction.ts` |
+| Delete | Direct, mixed, and folder deletes touching managed Diary return HTTP `422 diary-encrypted-delete-unsupported` before staging, journal, metadata, filesystem, or LinkIndex mutation. Note-only delete is unchanged. | posts/folders routes, `atomicTextWrite.ts` |
+| Conflict / teardown | Managed tab raw/original/external/conflict state, recovery, history/working diffs, TOC, client LinkIndex, search state, Monaco models, route mirror, AI context, and pending PDF state are fenced and cleared on the authoritative generation event. | `useDiaryAccessSession.ts`, `VaultView.vue`, related Vault composables |
+| AI | Managed live context, summary, commit-message body collection, body tools, delete, and private metadata tools are fail-closed before provider or mutation work. | `server/ai/routes.ts`, `server/ai/tools.ts`, `aiLiveContext.ts` |
+| PDF / clipboard | Explicit user-created copies remain allowed only for the current managed session generation; lock during render/copy prevents stale completion/download. | `VaultView.vue` |
+| Diagnostics / resources | Resource reads reuse the existing body lease; HTTP errors use `Cache-Control: no-store` and stable codes without raw/envelope/key/provider payloads. | markdown resource route, shared route helpers, AI/history/posts/metadata/tag routes |
+
+## Intentional feature degradation
+
+Managed direct and mixed deletes are deliberately disabled in D8.3. The
+existing generic delete protocol stages `.docus-delete-inflight-*`, captures
+rollback metadata, updates indexes, and can create recovery manifests. D8.3
+has no reviewed adapter-owned ciphertext-only delete transaction that can
+preserve the encrypted identity, rollback semantics, and all derived-state
+ownership guarantees together. Returning `422 diary-encrypted-delete-unsupported`
+is therefore safer than directly unlinking opaque ciphertext or allowing a
+generic rollback/journal owner to handle it. A future adapter-aware owner may
+restore this capability; D8.4 does not implicitly do so.
+
+Folder rename/reference updates use a conservative fail-closed policy when a
+managed Diary footprint could be involved, because generic planners cannot
+inspect encrypted Diary references safely. This is an intentional temporary
+Note-folder functionality reduction, recorded for a future reviewed owner;
+ordinary Note-only operations without that footprint remain unchanged.
+
+## Local validation
+
+Local validation completed for the implementation worktree includes:
+
+- `npm run test:unit -- --exclude src/router/__tests__/index.test.ts` — 241
+  files, 3,600 tests passed, 9 skipped.
+- `npx vitest run src/router/__tests__/index.test.ts` — 7/7 passed in
+  isolation. The unmodified full unit run has one pre-existing, intermittent
+  5-second timeout in the external-redirect case; no D8.3 assertion failed.
+- `npm run test:history-integration` — 5 files, 175/175 passed.
+- `npm run test:recovery-integration` — 5 files, 193/193 passed.
+- D8.3 History/LinkIndex/Search/teardown focused run — 8 files, 166/166
+  passed.
+- Diary route/mood/AI focused run — 3 files, 147/147 passed.
+- Link API/client LinkIndex run — 2 files, 43/43 passed.
+- Client Draft/Recovery/Search/History/Diff/CurrentNote run — 15 files,
+  284/284 passed.
+- Tag management/undo/API run — 3 files, 135/135 passed.
+- Markdown resource and atomic writer run — 2 files, 59/59 passed.
+- `npm run test:e2e` — 153 tests, 146 passed, 7 skipped.
+- `npm run test:e2e:draft-store` — 38/38 passed.
+- `npm run test:e2e:auth` — 2/2 passed.
+- Markdown visual browser lane — 3/3 passed.
+- `npm run test:tags-scale` — 2 files, 6/6 passed.
+- `npm run test:deployment-auth` — Docker authentication smoke passed.
+- `npm run typecheck` — passed.
+- `npm run build` — passed; only existing Rolldown annotation/chunk-size
+  warnings.
+- `git diff --check` — passed.
+
+## GitHub CI exact-head evidence
+
+```text
+implementation/evidence HEAD: pending push
+run number / run ID / attempt: pending
+Ubuntu Node 22: pending
+Ubuntu Node 24: pending
+macOS Node 24: pending
+Windows Node 24: pending
+auth-browser: pending
+tags-scale: pending
+visual: pending
+docker-smoke: pending
+```
+
+## Remaining risks and D8.4 boundary
+
+- Independent review is pending; this record must not be read as a review
+  pass.
+- Legacy plaintext files, Git history, IndexedDB rows, SQLite private metadata
+  rows, and `frontmatter_backup` are classified/hidden or left untouched for
+  D8.4. D8.3 does not claim retroactive cleanup.
+- Explicit PDF/clipboard export is an external copy and is outside automatic
+  OS/browser clipboard or downloaded-file wiping guarantees.
+- The final evidence-sync commit and exact-head CI result must replace the
+  pending markers above before D8.3 can move to `REVIEW-READY`.

@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import type { DraftRecoveryDecisionKind } from './draftRecoveryDecision'
 import type { DraftRecoveryItem } from './useUnsavedDraftRecovery'
+import { isManagedDiaryPath } from '../../../../shared/diaryProtocol'
 
 export interface DraftRecoveryTab {
   tabId: string
@@ -45,7 +46,8 @@ export function useDraftRecoveryTabs() {
   )
 
   function open(item: DraftRecoveryItem, view: 'content' | 'diff'): DraftRecoveryTab | null {
-    if (item.status !== 'ready' || !item.decision) return null
+    if (item.status !== 'ready' || !item.decision
+      || isManagedDiaryPath(item.draft.documentPath.replace(/\.md$/, ''))) return null
     const id = recoveryTabId(
       item.draft.vaultId,
       item.draft.documentId,
@@ -113,6 +115,14 @@ export function useDraftRecoveryTabs() {
       .map((tab) => tab.tabId))
   }
 
+  /** Remove only managed-Diary recovery viewers at the authoritative
+   *  teardown boundary. Ordinary Note recovery tabs remain untouched. */
+  function clearSensitiveState(): void {
+    closeMany(tabs.value
+      .filter((tab) => isManagedDiaryPath(tab.documentPath.replace(/\.md$/, '')))
+      .map((tab) => tab.tabId))
+  }
+
   return {
     tabs,
     activeTabId,
@@ -123,5 +133,6 @@ export function useDraftRecoveryTabs() {
     close,
     closeMany,
     closeRecovery,
+    clearSensitiveState,
   }
 }

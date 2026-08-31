@@ -15,6 +15,7 @@ import {
 import type { DraftConditionalDeleteOutcome, DraftRecoveryInventory, DraftStore } from './draftStore'
 import type { DraftCleanupProtection } from './useUnsavedDraftPersistence'
 import type { UnsavedDraftRecovery } from './useUnsavedDraftRecovery'
+import { isManagedDiaryPath } from '../../../../shared/diaryProtocol'
 
 export type RecoveryDeleteStatus = DraftConditionalDeleteOutcome['status'] | 'protected'
 
@@ -113,8 +114,12 @@ export function createDraftRecoveryManagement(
 
   function inventoryRecords(inventory: DraftRecoveryInventory): RecoveryRecordRef[] {
     return [
-      ...inventory.primary.map(primaryRecoveryRecord),
-      ...inventory.conflicts.map(conflictRecoveryRecord),
+      ...inventory.primary
+        .filter((record) => !isManagedDiaryPath(record.documentPath.replace(/\.md$/, '')))
+        .map(primaryRecoveryRecord),
+      ...inventory.conflicts
+        .filter((record) => !isManagedDiaryPath(record.documentPath.replace(/\.md$/, '')))
+        .map(conflictRecoveryRecord),
     ].sort(compareRecoveryNewestFirst)
   }
 

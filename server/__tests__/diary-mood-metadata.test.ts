@@ -139,7 +139,7 @@ describe('Diary Mood live metadata', () => {
     expect(getDocumentMetadata(db, 'diary/2026-08-30')).toBeNull()
   })
 
-  it('preserves an unknown stored Mood through reads and unrelated metadata writes', async () => {
+  it('keeps an unknown stored Mood private when managed metadata writes are blocked', async () => {
     const logicalPath = 'diary/2026-08-25'
     await write(logicalPath, '# Diary\n')
     const initial = saveDocumentMetadata(db, {
@@ -148,25 +148,20 @@ describe('Diary Mood live metadata', () => {
     db.prepare('UPDATE documents SET mood = ? WHERE id = ?').run('future-mood-v3', initial.id)
 
     const update = await call('PATCH', `/api/metadata/documents/${logicalPath}`, { title: 'After' })
-    expect(update.status).toBe(200)
-    expect(await update.json()).toMatchObject({ title: 'After', mood: 'future-mood-v3' })
-    expect(getDocumentMetadata(db, logicalPath)?.mood).toBe('future-mood-v3')
+    expect(update.status).toBe(422)
+    expect(await update.json()).toMatchObject({ code: 'diary-private-metadata-unsupported' })
 
-    const afterTitle = getDocumentMetadata(db, logicalPath)!
-    const summaryUpdate = await call('PATCH', `/api/metadata/documents/${logicalPath}`, { summary: 'Updated summary' })
-    expect(summaryUpdate.status).toBe(200)
-    expect(await summaryUpdate.json()).toMatchObject({ summary: 'Updated summary', mood: 'future-mood-v3' })
-
-    const afterSummary = getDocumentMetadata(db, logicalPath)!
     const tagsUpdate = await call('PATCH', `/api/metadata/documents/${logicalPath}`, {
-      tags: ['next-tag'], expectedUpdatedAt: afterSummary.updatedAt,
+      tags: ['next-tag'], expectedUpdatedAt: initial.updatedAt,
     })
-    expect(tagsUpdate.status).toBe(200)
-    expect(await tagsUpdate.json()).toMatchObject({ tags: ['next-tag'], mood: 'future-mood-v3' })
-    expect(afterTitle.updatedAt).toBeLessThan(afterSummary.updatedAt)
+    expect(tagsUpdate.status).toBe(422)
+    expect(await tagsUpdate.json()).toMatchObject({ code: 'diary-private-metadata-unsupported' })
+    expect(getDocumentMetadata(db, logicalPath)).toMatchObject({
+      title: 'Before', summary: 'Keep', tags: ['tag'], mood: 'future-mood-v3',
+    })
 
     const byId = await call('GET', `/api/metadata/documents/${initial.id}`)
-    expect(await byId.json()).toMatchObject({ mood: 'future-mood-v3' })
+    expect(await byId.json()).toMatchObject({ title: 'Before', mood: 'future-mood-v3' })
   })
 
   it('keeps an unknown Mood opaque in bulk projection until explicit replace or clear', async () => {

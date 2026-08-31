@@ -325,7 +325,8 @@ describe('Diary REST mutation contract', () => {
     const lockedPrivatePatch = await callWithoutDiaryCapability('PATCH', `/api/metadata/documents/${pathName}`, {
       title: 'still-private',
     })
-    expect(lockedPrivatePatch.status).toBe(423)
+    expect(lockedPrivatePatch.status).toBe(422)
+    expect(await lockedPrivatePatch.json()).toMatchObject({ code: 'diary-private-metadata-unsupported' })
 
     const unlockedById = await call('GET', `/api/metadata/documents/${privateMetadata.id}`)
     expect(await unlockedById.json()).toMatchObject({
@@ -348,7 +349,7 @@ describe('Diary REST mutation contract', () => {
     await expect(fs.stat(path.join(vault, 'diary', '2026'))).rejects.toThrow()
   })
 
-  it('allows managed edit/delete but blocks rename, move-in, and move-out', async () => {
+  it('allows managed edit but blocks rename, move-in, move-out, and delete', async () => {
     const date = '2000-04-01'
     const created = await call('POST', '/api/diary/dates', { date, timeZone: TIME_ZONE })
     expect(created.status).toBe(201)
@@ -374,8 +375,9 @@ describe('Diary REST mutation contract', () => {
     expect(moveOut.status).toBe(422)
     expect(generic.status).toBe(201)
     expect(moveIn.status).toBe(422)
-    expect(deleted.status).toBe(200)
-    await expect(fs.stat(path.join(vault, 'diary', `${date}.md`))).rejects.toThrow()
+    expect(deleted.status).toBe(422)
+    expect(await deleted.json()).toMatchObject({ code: 'diary-encrypted-delete-unsupported' })
+    await expect(fs.stat(path.join(vault, 'diary', `${date}.md`))).resolves.toBeTruthy()
     await expect(fs.stat(path.join(vault, 'inbox', 'moved-in.md'))).resolves.toBeTruthy()
   })
 

@@ -333,6 +333,23 @@ function diaryEncryptedBodyUnsupportedError(
   return null
 }
 
+function diaryEncryptedDeleteUnsupportedError(
+  name: string,
+  paths: readonly unknown[],
+): ToolResult | null {
+  if (name !== 'delete_file' && name !== 'update_metadata') return null
+  for (const value of paths) {
+    const diaryPath = canonicalManagedDiaryPath(value)
+    if (diaryPath) {
+      const code = name === 'delete_file'
+        ? 'diary-encrypted-delete-unsupported'
+        : 'diary-private-metadata-unsupported'
+      return err(`Tool blocked: ${code}. ${name} is disabled for managed Diary path ${diaryPath} until an adapter-aware owner is available.`)
+    }
+  }
+  return null
+}
+
 function executeReadFile(input: { path?: string }, db: DatabaseT): ToolResult {
   if (typeof input.path !== 'string' || input.path.length === 0) {
     return err('read_file: `path` is required')
@@ -1214,6 +1231,10 @@ export async function executeToolCall(
       ? diaryEncryptedBodyUnsupportedError(name, [target.path])
       : null
   if (encryptedBodyError) return encryptedBodyError
+  const encryptedMutationError = name === 'delete_file' || name === 'update_metadata'
+    ? diaryEncryptedDeleteUnsupportedError(name, target.kind === 'single-path' ? [target.path] : [input.path])
+    : null
+  if (encryptedMutationError) return encryptedMutationError
   if (target.kind === 'none' || target.kind === 'unknown') {
     return dispatchToolCall(name, input, db)
   }

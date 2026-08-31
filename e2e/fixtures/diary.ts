@@ -1,6 +1,9 @@
 import { test as authTest, expect, type APIRequestContext } from './auth'
 import { sanitizeDiagnosticText } from '../../shared/sanitize-diagnostic'
 import type { BrowserContext, Page } from '@playwright/test'
+import { promises as fs } from 'node:fs'
+import os from 'node:os'
+import nodePath from 'node:path'
 
 type StorageState = Awaited<ReturnType<BrowserContext['storageState']>>
 type PlaywrightApi = typeof import('playwright-core')
@@ -32,6 +35,63 @@ interface DiaryBootstrapDiagnosticContext {
 const DEFAULT_BASE_URL = 'http://127.0.0.1:4174'
 const DIARY_PASSWORD = 'e2e-diary-access-password-strong-123'
 export const DIARY_ACCESS_CAPABILITY_HEADER = 'X-Docus-Diary-Capability'
+
+/**
+ * D8.3 deliberately rejects the public managed-Diary delete endpoint. E2E
+ * tests still need deterministic isolation, so cleanup is performed only for
+ * the explicitly test-owned temporary vault/database that the Playwright
+ * configs provision. This helper is never part of the application runtime.
+ */
+export async function resetManagedDiaryFixture(): Promise<void> {
+  const tempRoot = nodePath.resolve(os.tmpdir())
+  const vaultValue = process.env.DOCUS_DRAFT_E2E_VAULT?.trim()
+  if (!vaultValue) return
+  const vault = nodePath.resolve(vaultValue)
+  if (!vault.startsWith(`${tempRoot}${nodePath.sep}`)) return
+
+  const diaryRoot = nodePath.join(vault, 'diary')
+  try {
+    const entries = await fs.readdir(diaryRoot, { withFileTypes: true })
+    await Promise.all(entries
+      .filter((entry) => entry.isFile() && /^\d{4}-\d{2}-\d{2}\.md$/u.test(entry.name))
+      .map((entry) => fs.rm(nodePath.join(diaryRoot, entry.name), { force: true })))
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+
+  const dbValue = process.env.DOCUS_E2E_DB_PATH?.trim()
+  if (!dbValue) return
+  const dbPath = nodePath.resolve(dbValue)
+  if (!dbPath.startsWith(`${tempRoot}${nodePath.sep}`)) return
+  try {
+    const { default: Database } = await import('better-sqlite3')
+    const db = new Database(dbPath)
+    try {
+      db.pragma('busy_timeout = 5000')
+      db.pragma('foreign_keys = ON')
+      db.exec('BEGIN IMMEDIATE')
+      db.exec(`
+        DELETE FROM tag_undo_association_deltas
+        WHERE document_id IN (SELECT id FROM documents WHERE path LIKE 'diary/%');
+        DELETE FROM history_metadata_revisions WHERE path_at_revision LIKE 'diary/%';
+        DELETE FROM history_metadata_document_tombstones
+        WHERE original_path LIKE 'diary/%';
+        DELETE FROM metadata_migrations
+        WHERE path LIKE 'diary/%' OR original_path LIKE 'diary/%';
+        DELETE FROM documents WHERE path LIKE 'diary/%';
+        DELETE FROM tags WHERE id NOT IN (SELECT tag_id FROM document_tags);
+      `)
+      db.exec('COMMIT')
+    } catch (error) {
+      try { db.exec('ROLLBACK') } catch { /* preserve the original failure */ }
+      throw error
+    } finally {
+      db.close()
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+}
 
 function resolvedBaseURL(baseURL: string | undefined): string {
   return baseURL ?? process.env.DOCUS_PUBLIC_ORIGIN ?? DEFAULT_BASE_URL
@@ -318,7 +378,15 @@ async function logoutBrowserContext(
   }
 }
 
-export const test = authTest.extend<{}, { diaryConfigReady: void }>({
+export const test = authTest.extend<{}, {
+  diaryConfigReady: void
+  diaryFixtureReset: void
+}>({
+  diaryFixtureReset: [async ({}, use) => {
+    await resetManagedDiaryFixture()
+    await use()
+  }, { auto: true }],
+
   diaryConfigReady: [async ({ playwright }, use) => {
     const origin = resolvedBaseURL(undefined)
     await ensureDiaryConfiguration(playwright, origin)

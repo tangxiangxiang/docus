@@ -16,12 +16,14 @@
 // falls back to the server-saved version otherwise, with the
 // file-change bus subscription keeping it in sync with writes made by
 // the AI's own tools (write_file / patch_file / rename_file).
-import { ref, watch, type Ref } from 'vue'
+import { onBeforeUnmount, ref, watch, type Ref } from 'vue'
 import { useRoute, type RouteLocationNormalizedLoaded } from 'vue-router'
 import { getPost } from '../../lib/api'
 import { getFallbackVaultFileChanges } from './context/fileChanges'
 import { useOptionalVaultContext } from './context/useVaultContext'
 import type { VaultContext } from './context/types'
+import { isManagedDiaryPath } from '../../../shared/diaryProtocol'
+import { captureDiarySessionGeneration, isDiarySessionGenerationCurrent, subscribeDiaryTeardown } from '../diary/useDiaryAccessSession'
 
 export interface CurrentNote {
   path: Ref<string | null>
@@ -73,6 +75,18 @@ export function useCurrentNote(): CurrentNote {
     const contextContent = vaultContext?.editor.getLiveContent(p)
     if (contextContent !== null && contextContent !== undefined) return contextContent
     const tab = liveTabs?.value.find((t) => t.path === p)
+    // Managed Diary bodies are never read from a generic tab mirror.  If the
+    // route mirror needs a body, go back through the existing authenticated
+    // GET/adapter path; a locked or expired capability therefore returns an
+    // empty mirror instead of exposing tab.raw through this secondary seam.
+    if (isManagedDiaryPath(p)) {
+      try {
+        const post = await getPost(p)
+        return post.content
+      } catch {
+        return ''
+      }
+    }
     if (tab && !tab.loading) return tab.raw
     try {
       const post = await getPost(p)
@@ -81,6 +95,11 @@ export function useCurrentNote(): CurrentNote {
       return ''
     }
   }
+
+  const stopTeardown = subscribeDiaryTeardown(() => {
+    if (isManagedDiaryPath(path.value ?? '')) content.value = ''
+  })
+  onBeforeUnmount(stopTeardown)
 
   watch(
     // fullPath is the safest source: it's a string that vue-router
@@ -97,7 +116,11 @@ export function useCurrentNote(): CurrentNote {
         content.value = ''
         return
       }
-      content.value = await resolveContent(p)
+      const managed = isManagedDiaryPath(p)
+      const requestGeneration = managed ? captureDiarySessionGeneration() : null
+      const resolved = await resolveContent(p)
+      if (requestGeneration !== null && !isDiarySessionGenerationCurrent(requestGeneration)) return
+      content.value = resolved
     },
     { immediate: true, deep: true },
   )
@@ -114,6 +137,9 @@ export function useCurrentNote(): CurrentNote {
     (events) => {
       const p = path.value
       if (!p) return
+      // Managed Diary route bodies are owned by the editor/adapter; the
+      // generic mirror must not rehydrate them from a late bus event.
+      if (isManagedDiaryPath(p)) return
       for (const e of events) {
         if (e.seq <= lastSeenSeq) continue
         if (

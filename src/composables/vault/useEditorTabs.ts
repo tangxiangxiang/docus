@@ -127,6 +127,7 @@ export function useEditorTabs(opts: {
     saveAllForActiveLogout,
     discardDocumentDraft,
     discardDocumentDrafts,
+    clearSensitiveState,
     disposeDocumentSave,
   } = useDocumentSave({
     tabs,
@@ -288,7 +289,7 @@ export function useEditorTabs(opts: {
       .filter((tab) => classifyDiaryPath(tab.path) === 'managed')
       .map((tab) => tab.path)
     if (!paths.length) return
-    void discardDocumentDrafts(paths)
+    clearSensitiveState(paths)
     closeManyConfirmed(paths)
   }
 

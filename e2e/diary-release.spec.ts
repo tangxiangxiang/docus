@@ -24,7 +24,7 @@ function diaryPath(date: string): string {
 
 async function deleteDiaryDate(request: APIRequestContext, date: string): Promise<void> {
   const response = await request.delete(`/api/posts/${diaryPath(date)}`)
-  expect([200, 404]).toContain(response.status())
+  expect([200, 404, 422]).toContain(response.status())
 }
 
 async function seedExistingDiary(request: APIRequestContext, date: string): Promise<void> {
@@ -373,7 +373,7 @@ test('Diary Calendar keyboard flow does not strand focus in the hidden surface',
   expect(state.consoleErrors).toEqual([])
 })
 
-test('Diary markers appear after create and disappear after managed delete', async ({ page, request }) => {
+test('Diary markers remain structural when managed delete is fail-closed', async ({ page, request }) => {
   const date = localCivilDate()
   await seedExistingDiary(request, date)
 
@@ -384,13 +384,15 @@ test('Diary markers appear after create and disappear after managed delete', asy
     await expect(dayButton.locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " vc-day ")]').locator('.vc-dot')).toHaveCount(1)
     await expect(dayButton).toHaveAccessibleName(/Diary exists/i)
 
-    await deleteDiaryDate(request, date)
+    const rejected = await request.delete(`/api/posts/${diaryPath(date)}`)
+    expect(rejected.status(), await rejected.text()).toBe(422)
+    expect(await rejected.json()).toMatchObject({ code: 'diary-encrypted-delete-unsupported' })
     await page.reload()
     await openDiaryScope(page)
-    const deletedDayButton = page.locator(`[data-diary-day-content][data-date="${date}"]`)
-    await expect(deletedDayButton).toBeVisible()
-    await expect(deletedDayButton.locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " vc-day ")]').locator('.vc-dot')).toHaveCount(0)
-    await expect(deletedDayButton).not.toHaveAccessibleName(/Diary exists/i)
+    const retainedDayButton = page.locator(`[data-diary-day-content][data-date="${date}"]`)
+    await expect(retainedDayButton).toBeVisible()
+    await expect(retainedDayButton.locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " vc-day ")]').locator('.vc-dot')).toHaveCount(1)
+    await expect(retainedDayButton).toHaveAccessibleName(/Diary exists/i)
   } finally {
     await deleteDiaryDate(request, date)
   }

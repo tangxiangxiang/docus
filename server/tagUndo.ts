@@ -17,6 +17,7 @@ import {
   TAG_IDENTITY_CONTRACT_VERSION,
   validatePersistentTag,
 } from '../shared/tagNormalization.js'
+import { isManagedDiaryPath } from '../shared/diaryProtocol.js'
 
 export type TagUndoRecordingFailureStage =
   | 'parent-insert'
@@ -555,6 +556,7 @@ export type TagUndoPlannerErrorCode =
   | 'UNDO_ALREADY_APPLIED'
   | 'UNDO_RECORD_CORRUPT'
   | 'TAG_MANAGEMENT_UNAVAILABLE'
+  | 'diary-private-metadata-unsupported'
   | 'TRANSACTION_FAILED'
 
 export class TagUndoPlannerError extends Error {
@@ -956,6 +958,15 @@ function readRenameDocuments(db: DatabaseT, tagId: number): TagUndoDocumentRow[]
     WHERE dt.tag_id = ?
     ORDER BY d.id COLLATE BINARY
   `).all(tagId) as TagUndoDocumentRow[]
+}
+
+function assertNoManagedUndoDocuments(documents: readonly TagUndoDocumentRow[]): void {
+  if (documents.some((document) => isManagedDiaryPath(document.path))) {
+    throw new TagUndoPlannerError(
+      'diary-private-metadata-unsupported',
+      'tag Undo is unavailable for managed Diary metadata',
+    )
+  }
 }
 
 function readDeltaDocuments(
@@ -1409,6 +1420,7 @@ function buildUndoPlanInTransaction(
       addConflict('UNDO_SOURCE_IDENTITY_OCCUPIED')
     }
     requiredDocuments = readRenameDocuments(db, record.source_tag_id)
+    assertNoManagedUndoDocuments(requiredDocuments)
     requiredDocumentIds = requiredDocuments.map((document) => document.id)
   } else {
     sourceCurrent = readCanonicalCurrentTag(db, record.source_tag_id, addConflict)
@@ -1432,6 +1444,7 @@ function buildUndoPlanInTransaction(
     const deltaDocuments = readDeltaDocuments(db, record.record_id, deltas)
     requiredDocumentIds = deltaDocuments.ids
     requiredDocuments = deltaDocuments.documents
+    assertNoManagedUndoDocuments(requiredDocuments)
     if (deltaDocuments.missing.length > 0) addConflict('UNDO_MISSING_DOCUMENT')
 
     if (record.kind === 'merge') {

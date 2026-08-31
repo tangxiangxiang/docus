@@ -176,6 +176,48 @@ describe('draftStore characterization', () => {
     expect(await store.getDraft('vault-a', 'valid')).toBeNull()
   })
 
+  it('leaves legacy managed Diary drafts and conflicts untouched', async () => {
+    const managed = draft('diary-day', 30, {
+      documentPath: 'diary/2026-08-31',
+      content: 'legacy plaintext must remain for D8.4',
+    })
+    const managedConflict: DraftConflictRecord = {
+      version: 1,
+      conflictId: 'legacy-conflict',
+      vaultId: 'vault-a',
+      documentId: 'diary-day',
+      documentPath: 'diary/2026-08-31',
+      content: 'legacy conflict plaintext must remain for D8.4',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 10,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: null,
+      recordedAt: 31,
+    }
+    await backend.seedRaw(managed)
+    await backend.seedRawConflict(managedConflict)
+
+    expect(await store.deleteDraft('vault-a', 'diary-day'))
+      .toEqual({ status: 'unsupported' })
+    expect(await store.deleteConflictDraft('vault-a', 'diary-day', 'legacy-conflict'))
+      .toBe('unsupported')
+    expect(await store.moveDraft('vault-a', 'diary-day', 'renamed', 'notes/renamed'))
+      .toEqual({ status: 'unsupported' })
+    expect(await store.moveConflicts('vault-a', 'diary-day', 'renamed', 'notes/renamed'))
+      .toBe(0)
+    expect((await store.moveDraftFamily('vault-a', 'diary-day', 'notes/renamed')).status)
+      .toBe('unsupported')
+    expect(await store.clearVaultDrafts('vault-a')).toBe(true)
+    expect(await store.clearVaultConflictDrafts('vault-a')).toBe(true)
+
+    expect(await backend.get(['vault-a', 'diary-day'])).toEqual(managed)
+    expect(await backend.listConflicts('vault-a')).toEqual([managedConflict])
+    expect(await store.listDrafts('vault-a')).toEqual([])
+    expect(await store.listConflictDrafts('vault-a')).toEqual([])
+  })
+
   it('lists safe-integer record timestamps and accepts finite filesystem mtimes', async () => {
     const unsafe = Number.MAX_SAFE_INTEGER + 1
 

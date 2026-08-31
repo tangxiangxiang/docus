@@ -5,6 +5,7 @@ import type { VaultContext } from './types'
 import type { VaultFileChanges } from './fileChanges'
 import { createVaultTocState } from '../useTocState'
 import type { DocumentLifecycle } from '../useDocumentLifecycle'
+import { isManagedDiaryPath } from '../../../../shared/diaryProtocol'
 
 export function createVaultContext(options: {
   vaultId: Ref<string | null>
@@ -34,6 +35,7 @@ export function createVaultContext(options: {
       activeTab: options.activeTab,
       openPost: options.openPost,
       getLiveContent(path: string): string | null {
+        if (isManagedDiaryPath(path.replace(/\.md$/, ''))) return null
         const tab = options.tabs.value.find((candidate) => candidate.path === path)
         return tab && !tab.loading ? tab.raw : null
       },

@@ -49,7 +49,7 @@ async function deleteDiaryDate(request: APIRequestContext, date: string): Promis
 
 async function deletePost(request: APIRequestContext, path: string): Promise<void> {
   const response = await request.delete(`/api/posts/${path}`)
-  expect([200, 404]).toContain(response.status())
+  expect(path.startsWith('diary/') ? [200, 404, 422] : [200, 404]).toContain(response.status())
 }
 
 async function seedDiary(
@@ -214,7 +214,9 @@ test('Native Editor dirty lifecycle preserves identity and reveals Calendar only
     await appendEditorText(page, dirtyMarker)
     const dirtyRaw = `${savedRaw}\n${dirtyMarker}`
     await expect(page.locator(`[data-tab-id="${path}"][data-save-status="dirty"]`)).toBeVisible({ timeout: 15_000 })
-    await expect.poll(() => draftRowCount(page, dirtyMarker), { timeout: 15_000 }).toBeGreaterThanOrEqual(1)
+    // D8.3 disables managed-Diary persistent Draft Store writes; the dirty
+    // body remains only in the authorized editor tab until explicit save.
+    await expect.poll(() => draftRowCount(page, dirtyMarker), { timeout: 15_000 }).toBe(0)
 
     const calendar = page.getByTestId('diary-calendar')
     await expect(calendar).toBeHidden()

@@ -1,3 +1,5 @@
+import { isManagedDiaryPath } from '../../../shared/diaryProtocol'
+
 interface DisposableModel {
   isDisposed: () => boolean
   dispose: () => void
@@ -25,6 +27,15 @@ export function renameMarkdownModel(fromPath: string, toPath: string): void {
   // to retaining a model whose URI no longer matches the document path.
   disposeMarkdownModel(fromPath)
   disposeMarkdownModel(toPath)
+}
+
+/** Dispose every managed-Diary Monaco model without touching ordinary Note
+ *  models. This is called synchronously from the Diary session teardown
+ *  owner, before hidden editor surfaces can retain a decrypted buffer. */
+export function disposeManagedDiaryModels(): void {
+  for (const path of [...models.keys()]) {
+    if (isManagedDiaryPath(path.replace(/\.md$/, ''))) disposeMarkdownModel(path)
+  }
 }
 
 export function resetMarkdownModelsForTesting(): void {

@@ -567,6 +567,9 @@ describe('tag management input safety and query complexity', () => {
       },
     }) as Database.Database
     buildTagOperationPlan(countedDb, { kind: 'remove', sourceTagId: 7 })
+    // The path-guarded metadata projection keeps the planner at three
+    // bounded statements; query count remains constant rather than scaling
+    // with the number of affected documents.
     expect(preparedStatements).toHaveLength(3)
     expect(preparedStatements.some((sql) => sql.includes('IN (?, ?,'))).toBe(false)
   })

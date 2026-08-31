@@ -102,7 +102,7 @@ async function readDiary(request: APIRequestContext, date: string): Promise<Diar
 
 async function deletePost(request: APIRequestContext, path: string): Promise<void> {
   const response = await request.delete(`/api/posts/${path}`)
-  expect([200, 404]).toContain(response.status())
+  expect(path.startsWith('diary/') ? [200, 404, 422] : [200, 404]).toContain(response.status())
 }
 
 async function findUnusedDiaryDate(
@@ -343,7 +343,9 @@ test('Mood set/change/clear stays separate from a dirty native Diary body', asyn
     autosaveInstalled = true
     await appendEditorText(page, dirtyMarker)
     await expect(page.locator(`[data-tab-id="${path}"][data-save-status="dirty"]`)).toBeVisible({ timeout: 15_000 })
-    await expect.poll(() => draftRowCount(page, dirtyMarker), { timeout: 15_000 }).toBeGreaterThanOrEqual(1)
+    // Managed Diary drafts are memory-only in D8.3; no IndexedDB row may be
+    // created while the tab is dirty.
+    await expect.poll(() => draftRowCount(page, dirtyMarker), { timeout: 15_000 }).toBe(0)
 
     const dirtySet = await setDiaryMood(request, date, 'happy')
     const dirtyChanged = await setDiaryMood(request, date, 'angry', dirtySet.updatedAt)
@@ -461,7 +463,9 @@ test('external metadata conflict leaves a dirty native body untouched', async ({
     autosaveInstalled = true
     await appendEditorText(page, dirtyMarker)
     await expect(page.locator(`[data-tab-id="${path}"][data-save-status="dirty"]`)).toBeVisible({ timeout: 15_000 })
-    await expect.poll(() => draftRowCount(page, dirtyMarker), { timeout: 15_000 }).toBeGreaterThanOrEqual(1)
+    // Managed Diary drafts are memory-only in D8.3; no IndexedDB row may be
+    // created while the tab is dirty.
+    await expect.poll(() => draftRowCount(page, dirtyMarker), { timeout: 15_000 }).toBe(0)
 
     const stale = await readDiary(request, date)
     expect(stale.metadata.mood).toBe('happy')
@@ -857,7 +861,7 @@ test.skip('D8.2: managed Diary Mood divergent Recovery waits for an encrypted re
   expect(state.consoleErrors).toEqual([])
 })
 
-test('Mood CAS rejects stale metadata and delete/recreate creates a fresh Diary generation', async ({ request }) => {
+test('Mood CAS rejects stale metadata and managed delete remains fail-closed', async ({ request }) => {
   const date = await findUnusedDiaryDate(request)
   const path = diaryPath(date)
 
@@ -877,18 +881,12 @@ test('Mood CAS rejects stale metadata and delete/recreate creates a fresh Diary 
     expect(current.metadata.mood).toBe('sad')
     expect(changed.id).toBe(original.documentId)
 
-    await deletePost(request, path)
-    const recreated = await request.post('/api/diary/dates', {
-      data: { date, timeZone: TEST_TIME_ZONE },
-    })
-    expect(recreated.status(), await recreated.text()).toBe(201)
-    const newGeneration = await readDiary(request, date)
-    expect(newGeneration.metadata.id).not.toBe(original.documentId)
-    expect(newGeneration.metadata.mood).toBeNull()
-
-    const finalMood = await setDiaryMood(request, date, 'angry')
-    expect(finalMood.id).toBe(newGeneration.metadata.id)
-    expect((await readDiary(request, date)).metadata.mood).toBe('angry')
+    const rejected = await request.delete(`/api/posts/${path}`)
+    expect(rejected.status(), await rejected.text()).toBe(422)
+    expect(await rejected.json()).toMatchObject({ code: 'diary-encrypted-delete-unsupported' })
+    const retained = await readDiary(request, date)
+    expect(retained.metadata.id).toBe(original.documentId)
+    expect(retained.metadata.mood).toBe('sad')
   } finally {
     await deletePost(request, path)
   }
@@ -1278,7 +1276,9 @@ test('dirty Diary body survives generic tab selection without losing Mood or ide
     autosaveInstalled = true
     await appendEditorText(page, dirtyMarker)
     await expect(page.locator(`[data-tab-id="${firstPath}"][data-save-status="dirty"]`)).toBeVisible({ timeout: 15_000 })
-    await expect.poll(() => draftRowCount(page, dirtyMarker), { timeout: 15_000 }).toBeGreaterThanOrEqual(1)
+    // Managed Diary drafts are memory-only in D8.3; no IndexedDB row may be
+    // created while the tab is dirty.
+    await expect.poll(() => draftRowCount(page, dirtyMarker), { timeout: 15_000 }).toBe(0)
 
     const beforeSelection = await readDiary(request, firstDate)
     expect(beforeSelection.raw).toBe(baseRaw)

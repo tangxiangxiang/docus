@@ -8,7 +8,7 @@
 // (which awaits ensureIndexed, including primeBody) instead of calling
 // search() directly.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { buildIndex, search, dispose } from '../search'
+import { bodyCachePathsForTesting, buildIndex, dispose, primeBody, search } from '../search'
 import type { PostSummary } from '../api'
 
 const post: PostSummary = {
@@ -126,5 +126,31 @@ describe('search', () => {
     expect(seenUrls).toHaveLength(1)
     expect(seenUrls[0]).toBe('/api/posts/inbox/markdown-syntax')
     expect(seenUrls[0]).not.toContain('%2F')
+  })
+
+  it('keeps managed Diary body/title metadata out of search and bodyCache', async () => {
+    const diary: PostSummary = {
+      ...post,
+      path: 'diary/2026-08-31',
+      title: 'Private Diary title',
+      tags: ['private-tag'],
+      summary: 'D8_3_BODY_SECRET_summary',
+      mtime: 1,
+    }
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ content: 'D8_3_BODY_SECRET_content' }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    buildIndex([diary])
+
+    await primeBody([diary])
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(bodyCachePathsForTesting()).not.toContain(diary.path)
+    expect(search('Private Diary title')).toEqual([])
+    expect(search('D8_3_BODY_SECRET_summary')).toEqual([])
+    expect(search('D8_3_BODY_SECRET_content')).toEqual([])
+    expect(search('2026-08-31')[0]?.path).toBe(diary.path)
   })
 })

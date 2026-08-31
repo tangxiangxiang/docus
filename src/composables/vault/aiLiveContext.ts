@@ -13,6 +13,7 @@
 
 import type { ExternalChangeKind, SaveStatus } from '../../components/vault/tabs'
 import type { DraftRecoveryDecisionKind } from './draft-recovery/draftRecoveryDecision'
+import { isManagedDiaryPath } from '../../../shared/diaryProtocol'
 
 // ─── Snapshot types (client → server wire contract, v: 1) ──────────
 
@@ -248,6 +249,11 @@ export function captureAiLiveContext(
   // Priority 1: Recovery viewer.
   const recovery = input.recoveryTabs.find((tab) => tab.tabId === activeId)
   if (recovery) {
+    if (isManagedDiaryPath(recovery.documentPath.replace(/\.md$/, ''))) {
+      // Never copy managed Diary draft/disk bytes into the AI wire snapshot;
+      // the server-side Diary access service is the sole DEK/body owner.
+      return { status: 'unavailable', reason: 'stale-workspace' }
+    }
     if (recovery.status !== 'ready') {
       return { status: 'unavailable', reason: 'load-error' }
     }
@@ -285,6 +291,9 @@ export function captureAiLiveContext(
   // Priority 2: Diff (history comparison) viewer.
   const comparison = input.historyComparisons.find((tab) => tab.tabId === activeId)
   if (comparison) {
+    if (isManagedDiaryPath(comparison.documentPath.replace(/\.md$/, ''))) {
+      return { status: 'unavailable', reason: 'stale-workspace' }
+    }
     if (comparison.status === 'loading') {
       return { status: 'unavailable', reason: 'loading' }
     }
@@ -335,6 +344,9 @@ export function captureAiLiveContext(
   // Priority 3: Document editor tab (id === path).
   const doc = input.documentTabs.find((tab) => tab.path === activeId)
   if (doc) {
+    if (isManagedDiaryPath(doc.path.replace(/\.md$/, ''))) {
+      return { status: 'unavailable', reason: 'stale-workspace' }
+    }
     if (doc.loading) {
       return { status: 'unavailable', reason: 'loading' }
     }
@@ -383,6 +395,7 @@ export function liveEditorForPath(
   tabs: readonly AiDocumentSource[],
   path: string,
 ): AiLiveEditorDocument | null {
+  if (isManagedDiaryPath(path.replace(/\.md$/, ''))) return null
   const tab = tabs.find((candidate) => candidate.path === path)
   if (!tab || tab.loading || tab.loadError) return null
   return {

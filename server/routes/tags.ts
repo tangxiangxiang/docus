@@ -30,6 +30,7 @@ import { metadataDb } from './shared.js'
 const tagRoutes = new Hono()
 
 function managementUnavailable(c: any, code: string | undefined) {
+  c.header('Cache-Control', 'no-store')
   return c.json({
     error: 'Tag management is temporarily unavailable.',
     code: 'TAG_MANAGEMENT_UNAVAILABLE',
@@ -49,7 +50,8 @@ async function requireManagementHealth(c: any): Promise<Response | null> {
 
 function domainError(c: any, error: TagManagementError, apply = false): Response {
   if (error.code === 'TRANSACTION_FAILED') return unexpectedError(c)
-  const status = error.code === 'TAG_NOT_FOUND' ? 404
+  const status = error.code === 'diary-private-metadata-unsupported' ? 422
+    : error.code === 'TAG_NOT_FOUND' ? 404
     : error.code === 'TAG_MANAGEMENT_UNAVAILABLE' || error.code === 'TAG_IDENTITY_CONFLICT' ? 503
       : error.code === 'PREVIEW_STALE'
         || error.code === 'PREVIEW_REQUIRED'
@@ -57,6 +59,7 @@ function domainError(c: any, error: TagManagementError, apply = false): Response
         || error.code === 'SOURCE_DESTINATION_SAME'
         || (apply && error.code === 'INVALID_OPERATION') ? 409
           : 400
+  c.header('Cache-Control', 'no-store')
   return c.json({
     error: error.message,
     code: error.code,
@@ -75,6 +78,7 @@ function unexpectedError(c: any): Response {
   const method = typeof c.req.method === 'string' ? c.req.method.slice(0, 16) : 'UNKNOWN'
   const route = typeof c.req.path === 'string' ? c.req.path.slice(0, 128) : '/api/tags'
   console.error(`[tag-management] ${correlationId} ${method} ${route} TRANSACTION_FAILED`)
+  c.header('Cache-Control', 'no-store')
   return c.json({
     error: 'Tag management operation failed.',
     code: 'TRANSACTION_FAILED',
@@ -261,11 +265,13 @@ const UNDO_ERROR_CODES = new Set([
   'TAG_MANAGEMENT_UNAVAILABLE',
   'INVALID_OPERATION',
   'TRANSACTION_FAILED',
+  'diary-private-metadata-unsupported',
 ] as const)
 
 type UndoRouteErrorCode = typeof UNDO_ERROR_CODES extends Set<infer T> ? T : never
 
 function undoRouteErrorCode(error: TagUndoPlannerError): UndoRouteErrorCode {
+  if (error.code === 'diary-private-metadata-unsupported') return 'diary-private-metadata-unsupported'
   if (error.code === 'INVALID_PREVIEW') return 'INVALID_OPERATION'
   if (error.code === 'UNDO_TARGET_UNAVAILABLE') return 'UNDO_UNAVAILABLE'
   if (error.code === 'UNDO_CONFLICT') {
@@ -285,6 +291,9 @@ function undoRouteErrorCode(error: TagUndoPlannerError): UndoRouteErrorCode {
 }
 
 function undoRouteErrorMessage(code: UndoRouteErrorCode): string {
+  if (code === 'diary-private-metadata-unsupported') {
+    return 'Tag management is unavailable for managed Diary metadata.'
+  }
   if (code === 'INVALID_OPERATION') return 'Invalid Undo request.'
   if (code === 'TAG_MANAGEMENT_UNAVAILABLE') return 'Tag management is temporarily unavailable.'
   if (code === 'TRANSACTION_FAILED') return 'Undo operation failed.'
@@ -330,9 +339,11 @@ function undoErrorDetails(error: TagUndoPlannerError): Record<string, string | n
 function undoDomainError(c: any, error: TagUndoPlannerError): Response {
   const code = undoRouteErrorCode(error)
   if (code === 'TRANSACTION_FAILED') return unexpectedError(c)
-  const status = code === 'TAG_MANAGEMENT_UNAVAILABLE' ? 503
+  const status = code === 'diary-private-metadata-unsupported' ? 422
+    : code === 'TAG_MANAGEMENT_UNAVAILABLE' ? 503
     : code === 'INVALID_OPERATION' ? 400
       : 409
+  c.header('Cache-Control', 'no-store')
   return c.json({
     error: undoRouteErrorMessage(code),
     code,

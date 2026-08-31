@@ -18,6 +18,7 @@ export function metadataDb(): DatabaseT {
 }
 
 export function bad(c: any, msg: string, code = 400, errorCode?: string) {
+  c.header('Cache-Control', 'no-store')
   return c.json({ error: msg, ...(errorCode ? { code: errorCode } : {}) }, code)
 }
 

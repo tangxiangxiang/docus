@@ -1,5 +1,6 @@
 import type { PostSummary } from './api'
-import { buildIndex, primeBody, rebuildIndex, search } from './search'
+import { buildIndex, captureSearchEpoch, invalidateSearchState, primeBody, rebuildIndex, search } from './search'
+import { isManagedDiaryPath } from '../../shared/diaryProtocol'
 
 export type SearchResultType = 'file' | 'heading' | 'tag' | 'alias' | 'command' | 'ai' | 'recent-file'
 export interface SearchResult<T = unknown> { id: string; type: SearchResultType; title: string; subtitle?: string; icon?: string; score: number; payload: T }
@@ -8,7 +9,7 @@ export type SearchProvider = (query: string) => SearchResultSection | Promise<Se
 export interface DocumentSearchPayload { path: string; match: 'title' | 'path' | 'tag' | 'summary' | 'body'; snippet?: string }
 
 function postsSignature(posts: PostSummary[]): string {
-  return posts.map((post) => `${post.path}\0${post.title}\0${post.mtime}\0${post.summary ?? ''}\0${post.tags.join(',')}`).join('\u0001')
+  return posts.map((post) => `${post.path}\0${isManagedDiaryPath(post.path) ? '' : post.title}\0${post.mtime}\0${isManagedDiaryPath(post.path) ? '' : (post.summary ?? '')}\0${isManagedDiaryPath(post.path) ? '' : post.tags.join(',')}`).join('\u0001')
 }
 
 export function createDocumentSearchProvider(getPosts: () => PostSummary[]): SearchProvider {
@@ -17,6 +18,7 @@ export function createDocumentSearchProvider(getPosts: () => PostSummary[]): Sea
   let priming: Promise<void> | null = null
 
   return async (query) => {
+    const requestEpoch = captureSearchEpoch()
     const posts = getPosts()
     const nextSignature = postsSignature(posts)
     if (!indexed) {
@@ -30,8 +32,12 @@ export function createDocumentSearchProvider(getPosts: () => PostSummary[]): Sea
     }
 
     if (!query.trim()) {
-      const results = [...posts].sort((a, b) => a.title.localeCompare(b.title)).slice(0, 12).map<SearchResult<DocumentSearchPayload>>((post) => ({
-        id: `file:${post.path}`, type: 'file', title: post.title, subtitle: post.path, score: 0,
+      const displayTitle = (post: PostSummary): string =>
+        isManagedDiaryPath(post.path) ? (post.path.split('/').pop() ?? post.path) : post.title
+      const results = [...posts].sort((a, b) => displayTitle(a).localeCompare(displayTitle(b))).slice(0, 12).map<SearchResult<DocumentSearchPayload>>((post) => ({
+        id: `file:${post.path}`, type: 'file',
+        title: displayTitle(post),
+        subtitle: post.path, score: 0,
         payload: { path: post.path, match: 'title' },
       }))
       return { id: 'files', label: 'Files', results }
@@ -39,6 +45,9 @@ export function createDocumentSearchProvider(getPosts: () => PostSummary[]): Sea
 
     if (!priming) priming = primeBody(posts)
     await priming
+    if (requestEpoch !== captureSearchEpoch()) {
+      return { id: 'files', label: 'Files', results: [] }
+    }
     const results = search(query, 12).map<SearchResult<DocumentSearchPayload>>((hit) => ({
       id: `file:${hit.path}`, type: 'file', title: hit.title, subtitle: hit.path, score: hit.score,
       payload: { path: hit.path, match: hit.match, snippet: hit.snippet },
@@ -59,7 +68,13 @@ export function createLatestSearchRunner(
   let version = 0
   return async (query: string): Promise<void> => {
     const requestVersion = ++version
+    const requestEpoch = captureSearchEpoch()
     const sections = await searchEverywhere(query, getProviders())
-    if (requestVersion === version) apply(sections)
+    if (requestVersion === version && requestEpoch === captureSearchEpoch()) apply(sections)
   }
+}
+
+/** Public teardown seam used by VaultView/session coordination. */
+export function invalidateDocumentSearchState(): void {
+  invalidateSearchState()
 }

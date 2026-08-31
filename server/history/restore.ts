@@ -44,11 +44,22 @@ import {
 } from './metadataRevisions.js'
 import { ensureRepoWithinVaultMutation } from './repo.js'
 import { validateDocumentMutation } from '../documentMutationPolicy.js'
+import { isManagedDiaryPath } from '../../shared/diaryProtocol.js'
 
 export class HistoryRestoreNotFoundError extends Error {
   constructor(message: string) {
     super(message)
     this.name = 'HistoryRestoreNotFoundError'
+  }
+}
+
+/** Service-level defense in depth for encrypted managed Diary History. */
+export class ManagedDiaryHistoryRestoreUnsupportedError extends Error {
+  readonly code = 'diary-history-encrypted-unsupported'
+
+  constructor(path: string) {
+    super(`managed Diary History restore is unsupported: ${path}`)
+    this.name = 'ManagedDiaryHistoryRestoreUnsupportedError'
   }
 }
 
@@ -98,6 +109,11 @@ export async function restoreHistoricalDocument(input: {
   afterCommit?: () => void | Promise<void>
 }): Promise<HistoryRestoreResult> {
   const logicalPath = input.path.slice(0, -'.md'.length)
+  // Reject before withVaultMutation, metadata reconciliation, vault-id reads,
+  // locks, historical raw reads, journals, or any filesystem mutation.
+  if (isManagedDiaryPath(logicalPath)) {
+    throw new ManagedDiaryHistoryRestoreUnsupportedError(logicalPath)
+  }
   return withVaultMutation(input.repoRoot, async () => {
     await ensureRepoWithinVaultMutation(input.repoRoot)
     await reconcileHistoryMetadata(input.db, input.repoRoot)
