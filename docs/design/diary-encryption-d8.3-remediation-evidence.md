@@ -188,3 +188,30 @@ and no vault-wide unrelated-Diary Note-rename block.
 
 This is remediation evidence only. `D8.3-IR-P1-1` and `D8.3-IR-P1-2` remain
 historical findings awaiting an Independent Re-review.
+
+## Final D8.3 closure
+
+The remediation checkpoint above remains historical evidence and is not
+rewritten. This appended section records the subsequent independent
+re-review and docs-only lifecycle closure.
+
+```text
+D8.3 Independent Review       = CHANGES REQUIRED (0/2/0) [historical]
+D8.3 remediation               = COMPLETE
+D8.3 Independent Re-review     = PASS (0/0/0)
+D8.3-IR-P1-1                  = CLOSED
+D8.3-IR-P1-2                  = CLOSED
+Re-review evidence             = 1a8ef24ce32a7f7185ef8de25897680ca6b17c20
+Re-review evidence CI          = #596 / 33388268886 / attempt 1 / 8/8 PASS
+D8.3                          = REVIEW-CLOSED
+D8.4                          = NOT STARTED
+```
+
+D8.3 is `REVIEW-CLOSED`. The original Independent Review remains the separate
+historical `CHANGES REQUIRED (0/2/0)` event; the two findings were remediated
+at `b49b51d` and independently re-reviewed as closed with no new P0/P1/P2
+findings. This closure does not restore intentionally disabled D8.3 surfaces
+or imply legacy cleanup. Legacy plaintext, Git/history, IndexedDB,
+SQLite/private-metadata and mixed-state migration responsibilities remain
+D8.4 scope. This docs-only closure changes no production code, tests,
+dependencies, CI configuration, or security contract.

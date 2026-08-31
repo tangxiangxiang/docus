@@ -279,10 +279,74 @@ D8.2             = REVIEW-CLOSED
 D8.2 Self-review = PASS (0/0/0)
 D8.2 Independent Review = PASS (0/0/0)
 D8.2 closure     = REVIEW-CLOSED
-D8.3             = NOT STARTED
+D8.3 Planning    = APPROVED
+D8.3 implementation = COMPLETE
+D8.3 Self-review = PASS (0/0/0)
+D8.3 Independent Review = CHANGES REQUIRED (0/2/0) [historical]
+D8.3 remediation = COMPLETE
+D8.3 Independent Re-review = PASS (0/0/0)
+D8.3-IR-P1-1 = CLOSED
+D8.3-IR-P1-2 = CLOSED
+D8.3             = REVIEW-CLOSED
 D8.4             = NOT STARTED
 ```
 
-The canonical D8.3 entry point is this D8.2 `REVIEW-CLOSED` boundary. D8.3
-remains `NOT STARTED`; this lifecycle sync does not authorize D8.3 or D8.4
-implementation before their own gates.
+The canonical D8.3 entry point is now the final closure record below. The
+earlier D8.2 boundary and D8.3 planning/implementation documents remain
+historical checkpoints; they are not rewritten to erase their creation-time
+states.
+
+## 14. D8.3 final closure record
+
+This docs-only synchronization records the already-completed implementation,
+independent review, remediation, and independent re-review chain. It changes
+the authoritative current lifecycle to `D8.3 = REVIEW-CLOSED`; it does not
+change production code, tests, dependencies, CI configuration, or the D8.3
+product/security contract.
+
+```text
+D8.3 — REVIEW-CLOSED
+
+Planning:
+APPROVED
+Planning remediation baseline: 99f693b02080127c16911869c17edcb2fa38fe3c
+
+Implementation:
+584cf770111bc2f5ee86be08ecda7ea50586bc87
+Final original implementation checkpoint:
+6308947cd6fd758cd6055a687a1d4e49891a5e2c
+CI #592 / 33369599249 / attempt 1 / 8/8 PASS
+
+Independent Review:
+CHANGES REQUIRED (P0/P1/P2 = 0/2/0) [historical]
+Review evidence: 50683a4ed46b57a7159ee6c6151f9efd26809d9c
+
+Remediation:
+b49b51d5a56608479f0b46086eef739d77308d20
+CI #594 / 33378116031 / attempt 1 / 8/8 PASS
+Remediation evidence:
+8e346c776d6f11152e58f0106836f252306aa77a
+
+Independent Re-review:
+PASS (P0/P1/P2 = 0/0/0)
+D8.3-IR-P1-1 = CLOSED
+D8.3-IR-P1-2 = CLOSED
+Re-review evidence:
+1a8ef24ce32a7f7185ef8de25897680ca6b17c20
+Re-review evidence CI:
+#596 / 33388268886 / attempt 1 / 8/8 PASS
+
+Final lifecycle:
+D8.3 = REVIEW-CLOSED
+D8.4 = NOT STARTED
+```
+
+The historical Independent Review remains `CHANGES REQUIRED (0/2/0)`; the
+later Independent Re-review is the separate `PASS (0/0/0)` event. D8.3 closes
+the reviewed privacy-enforcement contract, not legacy data. Legacy plaintext
+migration, legacy Git/history cleanup, legacy Draft/Recovery cleanup, SQLite
+private-metadata cleanup, mixed-state migration, migration rollback/idempotency,
+and release/migration closure remain D8.4 scope. Intentional D8.3 feature
+degradations remain in force, including managed generic History, persistent
+Draft/Recovery, body search, body-derived LinkIndex projections, managed
+rename/move, managed generic delete, and managed body AI surfaces.

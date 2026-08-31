@@ -140,3 +140,31 @@ docker-smoke: PASS
   OS/browser clipboard or downloaded-file wiping guarantees.
 - The evidence-sync commit that records this exact-head result is docs-only;
   it does not change the implementation checkpoint validated by CI #592.
+
+## Final D8.3 closure
+
+The preceding status and validation sections are retained as the
+implementation/evidence checkpoint narrative. This appended section records
+the later lifecycle synchronization; it does not rewrite that earlier
+`REVIEW-READY` state or the historical review timeline.
+
+```text
+D8.3 Independent Review       = CHANGES REQUIRED (0/2/0) [historical]
+D8.3 remediation               = COMPLETE
+D8.3 Independent Re-review     = PASS (0/0/0)
+D8.3-IR-P1-1                  = CLOSED
+D8.3-IR-P1-2                  = CLOSED
+Re-review evidence             = 1a8ef24ce32a7f7185ef8de25897680ca6b17c20
+Re-review evidence CI          = #596 / 33388268886 / attempt 1 / 8/8 PASS
+D8.3                          = REVIEW-CLOSED
+D8.4                          = NOT STARTED
+```
+
+D8.3 is `REVIEW-CLOSED`: the reviewed privacy-enforcement contract is
+complete and accepted after remediation and independent re-review. This does
+not claim retroactive protection or cleanup. Legacy plaintext primary files,
+legacy Git/history copies, legacy IndexedDB drafts/conflicts, SQLite private
+metadata and `frontmatter_backup`, mixed-state migration, migration
+rollback/idempotency, and release/migration closure remain D8.4 scope.
+Production code, tests, dependencies, CI configuration, and the product/security
+contract are unchanged by this closure synchronization.
