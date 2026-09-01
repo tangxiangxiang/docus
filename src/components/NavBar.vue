@@ -39,7 +39,7 @@ const SCOPE_CHIPS = [
 ] as const
 
 function scopeLabel(scope: ScopeKey, label: string): string {
-  return activeScope.value === scope
+  return isScopeActive(scope)
     ? t('nav.scope_active', { scope: label })
     : t('nav.scope_only', { scope: label })
 }
@@ -58,7 +58,26 @@ const isReadMode = computed(() => viewModeApi?.mode.value === 'read')
 const { activeScope, selectScope } = useScopeFilter()
 const diaryAccess = inject(DiaryAccessContextKey, null)
 
+function isScopeActive(scope: ScopeKey): boolean {
+  return isBills.value ? scope === 'ledger' : activeScope.value === scope
+}
+
 function onScopeClick(scope: ScopeKey): void {
+  if (scope === 'ledger') {
+    if (!isBills.value) void router.push({ name: 'bills' })
+    return
+  }
+  if (isBills.value) {
+    if (scope === 'diary' && diaryAccess) {
+      void diaryAccess.requestScopeChange(scope).then(() => {
+        if (activeScope.value === scope) void router.push({ name: 'vault' })
+      })
+      return
+    }
+    selectScope(scope)
+    void router.push({ name: 'vault' })
+    return
+  }
   if (scope === 'diary' && diaryAccess) {
     void diaryAccess.requestScopeChange(scope)
     return
@@ -139,7 +158,7 @@ onBeforeUnmount(() => {
 
 <template>
   <header
-    :class="['navbar', { 'is-vault': props.isVault, 'diary-calendar-mode': props.isVault && activeScope === 'diary' }]"
+    :class="['navbar', { 'is-vault': props.isVault, 'bills-nav-mode': isBills, 'diary-calendar-mode': props.isVault && activeScope === 'diary' }]"
     :inert="props.logoutBusy || undefined"
     :aria-busy="props.logoutBusy || undefined"
   >
@@ -155,28 +174,16 @@ onBeforeUnmount(() => {
         <img class="brand-logo" :src="'/logo-48.png'" :alt="t('nav.logo_alt')" width="24" height="24" />
         <span class="brand-wordmark">Docus</span>
       </button>
-      <button
-        class="nav-module-link"
-        :class="{ active: isBills }"
-        type="button"
-        :aria-current="isBills ? 'page' : undefined"
-        :title="t('nav.bills_hint')"
-        data-testid="bills-nav-link"
-        @click="router.push('/bills')"
-      >
-        <span class="nav-module-icon" v-html="ICON_SCOPE_LEDGER" aria-hidden="true" />
-        <span class="nav-module-label">{{ t('nav.bills') }}</span>
-      </button>
       <!-- Scope filter: lives in the navbar (the file tree header is too
-           narrow on 150px sidebars). Hidden outside the vault since the
-           rest of the app doesn't have a file tree to filter. -->
-      <div v-if="props.isVault" class="scope-chips" role="tablist" :aria-label="t('nav.scope_label')">
+           narrow on 150px sidebars). Ledger is the Bills entry, so these
+           chips stay available on both the Vault and Bills surfaces. -->
+      <div v-if="props.isVault || isBills" class="scope-chips" role="tablist" :aria-label="t('nav.scope_label')">
         <button
           v-for="chip in SCOPE_CHIPS"
           :key="chip.scope"
           class="scope-chip"
-          :class="{ active: activeScope === chip.scope }"
-          :aria-pressed="activeScope === chip.scope"
+          :class="{ active: isScopeActive(chip.scope) }"
+          :aria-pressed="isScopeActive(chip.scope)"
           :aria-label="scopeLabel(chip.scope, chip.label)"
           :title="scopeLabel(chip.scope, chip.label)"
           @click="onScopeClick(chip.scope)"

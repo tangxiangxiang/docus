@@ -656,12 +656,11 @@ body.brand-constellation-active * {
   height: 18px;
 }
 
-/* Scope filter chips (vault roots: inbox / literature / archive).
-   Rendered in the navbar in vault mode because the file tree's header
-   is too narrow on 150px sidebars to fit three chips alongside the
-   folder icon. Sits between the brand and the nav-spacer; uses global
-   tokens (--text-muted / --bg-soft / --accent) so it inherits the
-   navbar's light/dark palette naturally. */
+/* Scope navigation chips (note / diary / ledger).
+   Rendered in the navbar because the file tree's header is too narrow on
+   150px sidebars to fit three chips alongside the folder icon. In Vault the
+   chips filter content; ledger also serves as the Bills route entry. Sits
+   between the brand and the nav-spacer and inherits the navbar palette. */
 .navbar .scope-chips {
   display: inline-flex;
   align-items: center;
@@ -737,36 +736,6 @@ main.container.auth-page-shell {
    Bills is a full-width, scrollable workspace surface. The components keep
    their own small visual vocabulary while borrowing Docus' neutral tokens,
    rounded controls, and accent-driven focus states. */
-.nav-module-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 30px;
-  padding: 4px 10px;
-  border: 1px solid transparent;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--text-muted);
-  font: inherit;
-  font-size: 0.82rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: color 0.15s, border-color 0.15s, background 0.15s;
-}
-.nav-module-link:hover,
-.nav-module-link.active {
-  border-color: color-mix(in srgb, var(--accent) 26%, var(--border));
-  background: color-mix(in srgb, var(--accent) 8%, var(--bg-soft));
-  color: var(--accent);
-}
-.nav-module-icon {
-  display: inline-flex;
-  width: 16px;
-  height: 16px;
-  align-items: center;
-  justify-content: center;
-}
-.nav-module-icon svg { width: 16px; height: 16px; }
 .bills-page {
   --bills-surface: #ffffff;
   --bills-surface-soft: #f8fafc;
@@ -1259,8 +1228,9 @@ main.container.auth-page-shell {
   .bills-content-grid .bills-transactions-card { min-height: auto; }
 }
 @media (max-width: 900px) {
-  .navbar.is-vault .nav-module-label { display: none; }
-  .navbar.is-vault .nav-module-link { padding-right: 7px; padding-left: 7px; }
+  .navbar.bills-nav-mode .scope-chip-label { display: none; }
+  .navbar.bills-nav-mode .scope-chips { gap: 0; margin-left: 0; }
+  .navbar.bills-nav-mode .scope-chip { padding-right: 6px; padding-left: 6px; }
 }
 @media (max-width: 760px) {
   .bills-page { padding: 30px 16px 50px; }
@@ -1271,8 +1241,6 @@ main.container.auth-page-shell {
   .bills-filter-buttons { width: 100%; }
 }
 @media (max-width: 560px) {
-  .navbar:not(.is-vault) .nav-module-label { display: none; }
-  .navbar:not(.is-vault) .nav-module-link { padding: 5px 7px; }
   .bills-page { padding-right: 12px; padding-left: 12px; }
   .bills-hero-card { min-height: 360px; }
   .bills-hero-content { width: 76%; padding: 26px 0 25px 24px; }

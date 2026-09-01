@@ -111,6 +111,63 @@ describe('NavBar — scope chips', () => {
     expect(chips[1].attributes('aria-pressed')).toBe('true')
     expect(chips[1].attributes('aria-label')).toBe('Current scope: diary')
   })
+
+  it('uses the ledger scope chip as the Bills entry', async () => {
+    const api = makeViewModeApi()
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/vault', name: 'vault', component: { template: '<div />' } },
+        { path: '/bills', name: 'bills', component: { template: '<div />' } },
+      ],
+    })
+    await router.push('/vault')
+    await router.isReady()
+
+    const wrapper = mount(NavBar, {
+      props: { isVault: true },
+      global: {
+        plugins: [router],
+        provide: { [VaultViewModeKey as symbol]: api },
+      },
+    })
+
+    expect(wrapper.find('[data-testid="bills-nav-link"]').exists()).toBe(false)
+    await wrapper.findAll('.scope-chip')[2].trigger('click')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(router.currentRoute.value.name).toBe('bills')
+  })
+
+  it('keeps the ledger chip active on Bills and exposes the other scopes for return navigation', async () => {
+    const api = makeViewModeApi()
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/vault', name: 'vault', component: { template: '<div />' } },
+        { path: '/bills', name: 'bills', component: { template: '<div />' } },
+      ],
+    })
+    await router.push('/bills')
+    await router.isReady()
+
+    const wrapper = mount(NavBar, {
+      props: { isVault: false },
+      global: {
+        plugins: [router],
+        provide: { [VaultViewModeKey as symbol]: api },
+      },
+    })
+    const chips = wrapper.findAll('.scope-chip')
+
+    expect(chips).toHaveLength(3)
+    expect(chips[2].attributes('aria-pressed')).toBe('true')
+    expect(chips[0].attributes('aria-pressed')).toBe('false')
+
+    await chips[0].trigger('click')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(router.currentRoute.value.name).toBe('vault')
+  })
 })
 
 describe('NavBar — brand constellation', () => {

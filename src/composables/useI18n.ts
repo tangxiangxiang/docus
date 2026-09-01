@@ -25,8 +25,6 @@ type Strings = Record<string, Record<Locale, string>>
 const STRINGS: Strings = {
   'nav.home': { zh: 'Docus 首页', en: 'Docus home' },
   'nav.logo_alt': { zh: 'Docus 标志', en: 'Docus logo' },
-  'nav.bills': { zh: '账单', en: 'Bills' },
-  'nav.bills_hint': { zh: '打开账单', en: 'Open Bills' },
   'nav.scope_label': { zh: '范围过滤', en: 'Scope filter' },
   'nav.scope_active': { zh: '当前范围：{scope}', en: 'Current scope: {scope}' },
   'nav.scope_only': { zh: '只看 {scope}', en: 'Show only {scope}' },
