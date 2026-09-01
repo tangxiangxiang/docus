@@ -2,10 +2,11 @@
 
 ## 1. Scope and lifecycle
 
-This file records the docs-only D8.4 Planning Remediation Round 1 and Round 2
-evidence. Round 2 remediates exactly the two findings left open by the
-Independent Planning Re-review (`D8.4-IPR-P1-2` and `D8.4-IPR-P2-3`). It does
-not implement D8.4 and does not edit either immutable review record.
+This file records the docs-only D8.4 Planning Remediation Round 1, Round 2
+and Round 3 evidence. Round 3 remediates exactly the one finding left open by
+Independent Planning Re-review Round 2 (`D8.4-IPR-P1-2`). It does not
+implement D8.4, does not reopen the seven closed findings and does not edit
+either immutable review record.
 
 ```text
 D8.0 = REVIEW-CLOSED
@@ -18,7 +19,9 @@ D8.4 Independent Planning Review = CHANGES REQUIRED (0/5/3) [historical]
 D8.4 Planning Remediation Round 1 = COMPLETE
 D8.4 Independent Planning Re-review = CHANGES REQUIRED (0/1/1) [historical]
 D8.4 Planning Remediation Round 2 = COMPLETE
-D8.4 Independent Planning Re-review Round 2 = PENDING
+D8.4 Independent Planning Re-review Round 2 = CHANGES REQUIRED (0/1/0) [historical]
+D8.4 Planning Remediation Round 3 = COMPLETE
+D8.4 Independent Planning Re-review Round 3 = PENDING
 D8.4 implementation = BLOCKED / NOT STARTED
 D8.4 = NOT REVIEW-CLOSED
 ```
@@ -622,3 +625,198 @@ After this remediation commit and its exact-head CI are green, request
 **D8.4 Independent Planning Re-review Round 2**. Only that reviewer may close
 P1-2/P2-3 and approve planning. D8.4 implementation remains
 `BLOCKED / NOT STARTED`.
+
+## 8. Planning Remediation Round 3 — P1-2 only
+
+### 8.1 Scope, authority and provenance
+
+Round 3 is a separate docs-only remediation of exactly
+`D8.4-IPR-P1-2`. It replaces the impossible POSIX exact-source mutation
+contract with a platform-real product protocol. It does not reopen
+`D8.4-IPR-P2-3` or any of the seven findings already closed by the Round-2
+re-review, and it does not edit the immutable Round-2 re-review record.
+
+| Evidence | Value |
+| --- | --- |
+| Starting HEAD | `cf661cd` (`docs(diary): record D8.4 Independent Planning Re-review Round 2`) |
+| Starting parent | `250aeec` (Round-2 planning remediation) |
+| Branch / tracking state | `main` / local `github/main` at `cf661cd` before remediation |
+| Starting working tree | clean |
+| Round-2 review authority | `docs/design/diary-encryption-d8.4-independent-planning-rereview-round2.md`, committed at `cf661cd` |
+| Round-2 verdict | `CHANGES REQUIRED (0/1/0)`; `D8.4-IPR-P1-2 = OPEN`; `D8.4-IPR-P2-3 = CLOSED` |
+| Round-3 scope | `D8.4-IPR-P1-2` only |
+
+The required lineage is preserved:
+
+```text
+cbd5424 -> 9f8d06d -> 9ae4492 -> 4c90b46 -> 1be58a3
+  -> 250aeec -> cf661cd (Round-2 re-review, CHANGES REQUIRED 0/1/0)
+  -> <Round-3 remediation>
+```
+
+### 8.2 P1-2 root cause and decision
+
+Round 2 described ideal Linux/macOS source-transition and quarantine-unlink
+semantics under historical names that do not map to stock public kernel/API
+operations. Linux `renameat2` and `unlinkat` select a source by directory fd
+plus pathname; `openat2`/`statx` improve safe resolution and observation but do
+not make a later pathname mutation conditional on a captured file handle.
+`open_by_handle_at` can reopen an object on some filesystems with privilege,
+but does not rename or unlink that object by handle. macOS `renameatx_np` also
+selects the source by parent fd plus pathname; public file-handle reopening does
+not provide the required captured-vnode conditional rename/unlink. A wrapper
+cannot manufacture missing kernel atomicity.
+
+The frozen Round-3 product decision is therefore:
+
+```text
+Windows supported handle/reparse/sharing/durability contract
+    -> AUTOMATIC_HANDLE_BOUND
+Linux/macOS supported stock filesystem
+    -> USER_FINALIZE_REQUIRED
+Candidate durability/authentication unavailable
+    -> UNSUPPORTED
+Windows guarantee lost at runtime
+    -> USER_FINALIZE_REQUIRED (never pathname fallback)
+```
+
+The public source record is linked from the current PRD/Plan: Linux
+[`renameat2(2)`](https://man7.org/linux/man-pages/man2/renameat2.2.html),
+[`openat2(2)`](https://man7.org/linux/man-pages/man2/openat2.2.html),
+[`open_by_handle_at(2)`](https://man7.org/linux/man-pages/man2/open_by_handle_at.2.html)
+and [`unlinkat(2)`](https://man7.org/linux/man-pages/man2/unlink.2.html);
+macOS [`rename`](https://man.freebsd.org/cgi/man.cgi?manpath=macOS+26.6.1&query=rename&sektion=2),
+[`getfh(2)`](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/getfh.2.html)
+and [`fhopen(2)`](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/fhopen.2.html);
+and Windows
+[`SetFileInformationByHandle`](https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-setfileinformationbyhandle),
+[`FILE_RENAME_INFO`](https://learn.microsoft.com/windows/win32/api/winbase/ns-winbase-file_rename_info),
+[`FILE_ID_INFO`](https://learn.microsoft.com/windows/win32/api/winbase/ns-winbase-file_id_info)
+and [`OpenFileById`](https://learn.microsoft.com/windows/win32/api/winbase/nf-winbase-openfilebyid).
+
+### 8.3 Linux/macOS candidate and handoff contract
+
+The exact POSIX transaction is inventory -> encrypted candidate preparation ->
+user handoff. Docus canonicalizes and structurally captures the reviewed
+source generation, obtains the existing Diary body lease, encrypts and
+authenticates in memory, creates one same-filesystem ciphertext-only candidate
+named `.docus-diary-migration-ciphertext-<transactionId>`, fsyncs the candidate
+and required parent directory, records only structural provenance/internal
+ciphertext fingerprint, and revalidates the source generation. A changed
+generation is `CONSENT_REQUIRED`; the old preparation never authorizes it.
+
+After successful preparation the item is exactly
+`USER_FINALIZE_REQUIRED` with stable API code
+`diary-migration-user-finalize-required` (HTTP 409). This state is not
+`PUBLISHED`, `CLEANUP_PENDING` or `COMPLETE`. The legacy canonical plaintext
+remains authoritative. Search, AI, History, LinkIndex, locked body display and
+automatic save remain blocked for the managed item; resume requiring body
+verification requires unlock. The candidate is excluded from tree/search/
+LinkIndex/History/Note parsing and may safely remain across restart.
+
+The UI instructs the user to stop Docus body mutation, close external editors
+and sync writers, replace the canonical file with the prepared candidate using
+the documented OS file operation, disclose any retained plaintext copy, and
+reopen/resume verification. Users handle filenames/files only; Docus never
+asks for decrypting, re-encrypting, envelope editing, body copying or a Docus
+shell command. Docus does not add an endpoint that runs `mv`, `rename` or `rm`.
+
+### 8.4 Verification, conflicts and residuals
+
+`POST /api/diary/migration/resume` never performs the POSIX replacement. It
+checks canonical regular/non-symlink/non-reparse path, exact prepared
+ciphertext fingerprint, vault/document/path identity, V1/AES-GCM/AAD
+authentication under the existing body lease and required durability. A new
+inode after user replacement is expected; same-inode continuity is not
+required. The exact classifications are:
+
+| Observed state | Result |
+| --- | --- |
+| Reviewed plaintext remains | `USER_FINALIZE_REQUIRED` / `diary-migration-user-finalize-required` |
+| New plaintext generation before acceptance | `CONSENT_REQUIRED` / `diary-migration-consent-required`; invalidate old preparation |
+| Exact candidate fingerprint + authenticated identity | `PUBLISHED`, then forward cleanup |
+| Different valid encrypted bytes | `NEEDS_ATTENTION` / `diary-migration-candidate-mismatch` |
+| Malformed/unknown envelope | `NEEDS_ATTENTION` / existing malformed/unknown code |
+| Missing canonical | `NEEDS_ATTENTION` / `diary-migration-primary-missing` |
+| Symlink/reparse/unsafe type or wrong identity | `NEEDS_ATTENTION` / `diary-migration-unsafe-path` |
+
+The user-mediated operation is an explicit external trust boundary. If a user
+installs a stale candidate after an unobserved writer created another
+plaintext generation, Docus can authenticate only the bytes now present; it
+cannot reconstruct lost bytes or prove that external generation was untouched.
+Any moved/copied plaintext backup outside the canonical managed path is
+`USER_CONTROLLED_PLAINTEXT_RESIDUAL`: it is disclosed, never claimed erased,
+and never searched for or deleted automatically. The no-new-plaintext
+invariant remains strict: Docus itself creates no second durable plaintext
+body copy, plaintext rollback payload or plaintext quarantine.
+
+### 8.5 Restart and crash semantics
+
+POSIX restart has no plaintext quarantine or process-local ownership token to
+reacquire. Before candidate durability, the legacy primary remains
+authoritative and only exact transaction-owned ciphertext cleanup may remove a
+partial candidate. After candidate durability, crash/restart restores
+`USER_FINALIZE_REQUIRED` with candidate and plaintext retained. After an
+external user finalize, crash/restart inspects actual canonical state and does
+not assume the user operation occurred. Exact candidate/authentication may
+advance to `PUBLISHED`; unchanged plaintext remains pending and all other
+states use the exact conflict/attention table above. No plaintext is restored,
+recreated, overwritten or automatically deleted.
+
+Windows retains the reviewed automatic handle-bound transition, fail-if-exists
+publication, reparse/sharing rules, durability and restart proof. If its
+guarantee is unavailable, it selects `USER_FINALIZE_REQUIRED` rather than a
+weaker pathname operation.
+
+P2-3 remains closed. The exact 19-hook set remains authoritative for automatic
+Windows finalize and platform-independent SQLite/IDB cleanup. On POSIX,
+candidate preparation uses the applicable journal/candidate-durability hooks;
+post-user verification uses readback/journal/cleanup hooks. Source-transition,
+ciphertext-publication and plaintext-quarantine hooks are explicitly not
+applicable and are never simulated around the user action. The deterministic
+test controller performs the documented external operation, then kills the
+child before `resume`; no fake user-action seam, sleep or timing retry is
+evidence.
+
+### 8.6 Closed-finding regression and self-review
+
+The seven previously closed findings remain closed:
+
+```text
+D8.4-IPR-P1-1  RECOVERY_AUTH_REQUIRED / no structural auth       = CLOSED
+D8.4-IPR-P1-3  immutable inventory revision/action consent       = CLOSED
+D8.4-IPR-P1-4  AI whole-session discard/retain policy            = CLOSED
+D8.4-IPR-P1-5  NULL frontmatter identity unresolved              = CLOSED
+D8.4-IPR-P2-1  no durable body size/hash/digest                  = CLOSED
+D8.4-IPR-P2-2  FIFO ordinary PUT wait + revalidation             = CLOSED
+D8.4-IPR-P2-3  deterministic 19-hook crash oracle                = CLOSED
+```
+
+Round-3 self-review answers:
+
+```text
+Does Linux automatic migration require a fictional exact-source rename? NO
+Does macOS automatic migration require a fictional exact-source rename? NO
+Can Docus automatically mutate/delete an unproven POSIX plaintext generation? NO
+Can USER_FINALIZE_REQUIRED be mistaken for PUBLISHED/COMPLETE? NO
+Does a stale candidate automatically authorize a changed source? NO
+Does Windows retain only real handle-bound primitives? YES
+Does Docus create a second durable plaintext copy? NO
+Are user-controlled residuals disclosed accurately? YES
+```
+
+### 8.7 Round-3 status and next gate
+
+```text
+D8.4-IPR-P1-2 = PLANNING REMEDIATED
+D8.4-IPR-P2-3 = CLOSED [historical Round-2 re-review]
+Round-3 remediation = COMPLETE after this docs-only commit and exact-head CI
+D8.4 Independent Planning Re-review Round 3 = PENDING
+D8.4 Planning = NOT APPROVED
+D8.4 implementation = BLOCKED / NOT STARTED
+D8.4 = NOT REVIEW-CLOSED
+```
+
+Only the independent Planning Re-review Round 3 may close P1-2 and approve
+planning. No production/runtime/test/schema/dependency/CI change is authorized
+by Round 3.

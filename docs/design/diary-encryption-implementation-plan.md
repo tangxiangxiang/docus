@@ -1,6 +1,6 @@
 # D8 — Diary Encryption Implementation Plan
 
-状态：`D8.0 REVIEW-CLOSED`；`D8.0 Self-review = PASS (P0/P1/P2 = 0/0/0)`；`D8.0 Independent Review = PASS (P0/P1/P2 = 0/0/0)`；`D8.1 REVIEW-CLOSED`；`D8.1 Independent Review = PASS (P0/P1/P2 = 0/0/0)`；`D8.2 REVIEW-CLOSED`；`D8.2 Self-review = PASS (P0/P1/P2 = 0/0/0)`；`D8.2 Independent Review = PASS (P0/P1/P2 = 0/0/0)`；`D8.3 REVIEW-CLOSED`；`D8.4 Planning = REVIEW-READY / NOT APPROVED`；`D8.4 Independent Planning Review = CHANGES REQUIRED (0/5/3) [historical]`；`D8.4 Planning Remediation Round 1 = COMPLETE`；`D8.4 Independent Planning Re-review = CHANGES REQUIRED (0/1/1) [historical]`；`D8.4 Planning Remediation Round 2 = COMPLETE`；`D8.4 Independent Planning Re-review Round 2 = PENDING`；`D8.4 implementation = BLOCKED / NOT STARTED`。
+状态：`D8.0 REVIEW-CLOSED`；`D8.0 Self-review = PASS (P0/P1/P2 = 0/0/0)`；`D8.0 Independent Review = PASS (P0/P1/P2 = 0/0/0)`；`D8.1 REVIEW-CLOSED`；`D8.1 Independent Review = PASS (P0/P1/P2 = 0/0/0)`；`D8.2 REVIEW-CLOSED`；`D8.2 Self-review = PASS (P0/P1/P2 = 0/0/0)`；`D8.2 Independent Review = PASS (P0/P1/P2 = 0/0/0)`；`D8.3 REVIEW-CLOSED`；`D8.4 Planning = REVIEW-READY / NOT APPROVED`；`D8.4 Independent Planning Review = CHANGES REQUIRED (0/5/3) [historical]`；`D8.4 Planning Remediation Round 1 = COMPLETE`；`D8.4 Independent Planning Re-review = CHANGES REQUIRED (0/1/1) [historical]`；`D8.4 Planning Remediation Round 2 = COMPLETE`；`D8.4 Independent Planning Re-review Round 2 = CHANGES REQUIRED (0/1/0) [historical]`；`D8.4 Planning Remediation Round 3 = COMPLETE`；`D8.4 Independent Planning Re-review Round 3 = PENDING`；`D8.4 implementation = BLOCKED / NOT STARTED`。
 
 基线：`1fb1389cab053d5ff72630253f509f0170e588c2`（`docs(diary): close D7 mood implementation`）。D7.0A、D7.0、D7.1、D7.2、D7.3、D7.4、D7.5、D7.6 均保持 `REVIEW-CLOSED`。D8 只从 Diary 加密边界开始，不重开 D7，也不创建独立 Private Vault。
 
@@ -198,7 +198,7 @@ Migration must be explicit and fail closed:
 
 | Existing state | D8 policy |
 | --- | --- |
-| plaintext canonical Diary file with live identity | migrate only after unlock through the D8.4 `DiaryMigrationFs` no-copy/create-only protocol; authenticate exact identity/generation before `PUBLISHED`; do not delete external backups silently |
+| plaintext canonical Diary file with live identity | prepare/authenticate one ciphertext-only candidate after unlock; Windows may use `AUTOMATIC_HANDLE_BOUND`, Linux/macOS stop at `USER_FINALIZE_REQUIRED` and perform no Docus plaintext rename/delete; verify exact candidate identity before `PUBLISHED`; disclose external backups |
 | plaintext body in existing browser Draft/Recovery stores | do not auto-read into a locked session; offer an explicit user-authorized migration or discard path; never copy it into a new plaintext store |
 | plaintext Diary in nested Git history | classify as legacy exposure; do not claim retroactive purge or silently rewrite/delete it. New managed-Diary body revisions must not enter Git at all; any history rewrite/purge needs an explicit user-controlled operation and backup policy |
 | encrypted envelope with supported version | verify tag, identity binding and metadata association before exposing body |
@@ -209,37 +209,63 @@ The migration must be resumable and idempotent per stable document identity. A f
 
 ### 8.1 D8.4 planning-remediation constraints
 
-The D8.4 planning entry point is governed by the companion PRD and plan. Their
-shared security contracts are explicit: a locked restart that may have
-published ciphertext records `RECOVERY_AUTH_REQUIRED` and never restores
-plaintext, deletes quarantine or calls a syntactic V1 envelope authenticated;
-unlock revalidates the exact internal ciphertext fingerprint/generation and
-uses the sole server-side Diary body lease for AES-GCM/AAD authentication.
-`DiaryMigrationFs` is the only migration filesystem owner. Its authoritative
-source mutation is a single native, captured-handle conditional transition
-that proves the source and expected parent generations at the namespace
-mutation; a path check followed by rename is never sufficient. The PRD and
-plan freeze the exact Linux/macOS native operation contract, the Windows
-handle-bound `FileRenameInfoEx` operation, restart reacquisition or
-`QUARANTINE_OWNERSHIP_UNPROVEN`, atomic create-only ciphertext publication,
-and explicit per-platform durability/unsupported results. No copy/delete or
-overwrite operation is permitted.
+The D8.4 planning entry point is governed by the companion PRD and Plan. The
+current Round-3 contract is platform-real and docs-only:
 
-Every destructive operation is bound to an immutable `inventoryRevision`, exact
-item/generation and independent action scope. SQLite `sessions/messages` and
-structured managed-Diary AI tool-result envelopes are inventoried; only a
-provable exposure receives explicit whole-session discard or policy-retention,
-and mixed/free text is never substring-edited. A null-ID `frontmatter_backup`
-row remains `FRONTMATTER_IDENTITY_UNRESOLVED` until a separately proven
-non-destructive identity binding; path-only cleanup is forbidden. Legacy body
-byte size is private and may be transient only, never durable or locked-visible.
-Ordinary managed PUT serializes behind the existing FIFO document lock and
-revalidates after acquisition; no migration-specific 409 is promised for mere
-lock wait. The authoritative deterministic migration hook set contains 19
-named seams. It separates quarantine unlink from the parent-directory
-durability barrier and explicitly maps `DISCARD_AI_SESSION` to the generic
-SQLite before/after commit hooks. Its durable-state oracle is mandatory
-implementation evidence.
+```text
+Windows supported handle/reparse/sharing/durability contract
+    -> AUTOMATIC_HANDLE_BOUND
+Linux/macOS supported stock filesystem
+    -> USER_FINALIZE_REQUIRED
+Candidate durability/authentication unavailable
+    -> UNSUPPORTED
+Windows guarantee lost at runtime
+    -> USER_FINALIZE_REQUIRED (never pathname fallback)
+```
+
+Docus guarantees race-safe behavior only for mutations it performs. Linux and
+macOS public namespace APIs select a source by parent/directory fd plus
+pathname; observation or reopening by handle does not add a captured-source
+conditional rename/unlink primitive. Docus therefore creates and authenticates
+one same-filesystem ciphertext-only candidate, proves candidate/file/parent
+durability, and stops before destructive plaintext namespace mutation. It
+never claims a missing kernel CAS primitive, and it never replaces the
+decision with a userspace helper, pathname revalidation, advisory lock,
+watcher or timing retry.
+
+The POSIX item state is exactly `USER_FINALIZE_REQUIRED` with stable API code
+`diary-migration-user-finalize-required` (HTTP 409). The legacy canonical
+plaintext remains authoritative; body display while locked, managed-Diary
+search/AI/History/LinkIndex and automatic save remain blocked. The candidate
+`.docus-diary-migration-ciphertext-<transactionId>` is ciphertext-only,
+same-filesystem, excluded from projections and safe across restart. Resume
+performs no POSIX rename/unlink/replace: it verifies canonical regular safe
+path, exact candidate fingerprint, vault/document/path AAD authentication and
+durability, then may write `PUBLISHED`. Different plaintext generation is
+`CONSENT_REQUIRED`; different encrypted bytes, malformed/unknown, missing or
+unsafe canonical state are exact attention codes. A new inode after external
+replacement is expected; same-inode continuity is not required.
+
+The explicit user procedure requires stopping Docus body mutation, closing
+external editors/sync writers, replacing the canonical file with the prepared
+candidate using the documented OS operation, disclosing any retained plaintext
+copy, and resuming verification. Docus never asks for envelope editing/body
+copying or executes `mv`/`rename`/`rm` for the user. A user-moved backup is
+`USER_CONTROLLED_PLAINTEXT_RESIDUAL`; Docus never claims to erase or auto-delete
+it. If a stale candidate was installed after an unobserved external writer,
+Docus can authenticate only the resulting bytes and discloses that residual
+limitation.
+
+Windows retains the real captured-handle `SetFileInformationByHandle` source
+operation, fail-if-exists publication, reparse/sharing and durability rules.
+If those guarantees are unavailable, it falls back to `USER_FINALIZE_REQUIRED`.
+
+The authoritative 19-hook crash oracle remains closed under P2-3. All 19 hooks
+remain exact for automatic Windows finalize and SQLite/IDB cleanup. POSIX
+candidate preparation uses the applicable journal/candidate-durability hooks;
+post-user verification uses readback/journal/cleanup hooks. Automatic source-
+transition, ciphertext-publication and plaintext-quarantine hooks are not
+applicable on POSIX and are not simulated around the external user action.
 
 ## 9. STOP conditions
 
@@ -327,7 +353,9 @@ D8.4 Independent Planning Review = CHANGES REQUIRED (0/5/3) [historical]
 D8.4 Planning Remediation Round 1 = COMPLETE
 D8.4 Independent Planning Re-review = CHANGES REQUIRED (0/1/1) [historical]
 D8.4 Planning Remediation Round 2 = COMPLETE
-D8.4 Independent Planning Re-review Round 2 = PENDING
+D8.4 Independent Planning Re-review Round 2 = CHANGES REQUIRED (0/1/0) [historical]
+D8.4 Planning Remediation Round 3 = COMPLETE
+D8.4 Independent Planning Re-review Round 3 = PENDING
 D8.4 implementation = BLOCKED / NOT STARTED
 D8.4             = NOT REVIEW-CLOSED
 ```
@@ -395,9 +423,10 @@ rename/move, managed generic delete, and managed body AI surfaces.
 ## 15. D8.4 planning entry point
 
 The D8.4 Planning PRD and Implementation Plan are the current entry point for
-the final planned phase. They are docs-only planning artifacts at the exact
-closure baseline `c88e99554c291181c6e3f17e695aa228f34d40b2` and do not imply
-Planning approval or implementation:
+the final planned phase. Their historical planning baseline was the exact
+closure commit `c88e99554c291181c6e3f17e695aa228f34d40b2`; subsequent
+remediation/review commits remain docs-only and do not imply Planning approval
+or implementation:
 
 ```text
 D8.4 Planning = REVIEW-READY / NOT APPROVED
@@ -405,7 +434,9 @@ D8.4 Independent Planning Review = CHANGES REQUIRED (0/5/3) [historical]
 D8.4 Planning Remediation Round 1 = COMPLETE
 D8.4 Independent Planning Re-review = CHANGES REQUIRED (0/1/1) [historical]
 D8.4 Planning Remediation Round 2 = COMPLETE
-D8.4 Independent Planning Re-review Round 2 = PENDING
+D8.4 Independent Planning Re-review Round 2 = CHANGES REQUIRED (0/1/0) [historical]
+D8.4 Planning Remediation Round 3 = COMPLETE
+D8.4 Independent Planning Re-review Round 3 = PENDING
 D8.4 implementation = BLOCKED / NOT STARTED
 D8.4 = NOT REVIEW-CLOSED
 ```
@@ -416,10 +447,11 @@ The historical Independent Planning Review at
 `9f8d06d1f0dd2223dfc2ccc3d313f4a30053c386` returned
 `CHANGES REQUIRED (0/5/3)`. The subsequent independent re-review record at
 `1be58a317c121a5fd676cd709174de7fbb6b72b7` returned
-`CHANGES REQUIRED (0/1/1)`. The docs-only Planning Remediation Round 2 now
-freezes the captured-handle source-generation mutation and restart
-reacquisition contract, the 19-hook crash oracle with separate quarantine
-unlink/directory-durability seams, and the generic SQLite mapping for
-whole-session AI disposition. It does not alter either historical review
-record or authorize implementation. The next authorized action is a separate
-D8.4 Independent Planning Re-review Round 2.
+`CHANGES REQUIRED (0/1/1)`. The docs-only Planning Remediation Round 3 now
+replaces the impossible POSIX automatic exact-source mutation with a platform
+capability model: `AUTOMATIC_HANDLE_BOUND` on supported Windows,
+`USER_FINALIZE_REQUIRED` on supported Linux/macOS, and `UNSUPPORTED` only when
+safe candidate durability is unavailable. It retains the 19-hook crash oracle
+and all closed D8.4 findings, does not alter either historical review record
+or authorize implementation, and requires a separate D8.4 Independent
+Planning Re-review Round 3. The next authorized action is that re-review.

@@ -4,7 +4,9 @@ Status: `REVIEW-READY`; D8.4 Independent Planning Review:
 `CHANGES REQUIRED (0/5/3)` [historical]; D8.4 Planning Remediation Round 1:
 `COMPLETE`; D8.4 Independent Planning Re-review:
 `CHANGES REQUIRED (0/1/1)` [historical]; D8.4 Planning Remediation Round 2:
-`COMPLETE`; D8.4 Independent Planning Re-review Round 2: `PENDING`;
+`COMPLETE`; D8.4 Independent Planning Re-review Round 2:
+`CHANGES REQUIRED (0/1/0)` [historical]; D8.4 Planning Remediation Round 3:
+`COMPLETE`; D8.4 Independent Planning Re-review Round 3: `PENDING`;
 implementation: `BLOCKED / NOT STARTED`. This is an authoritative planning
 document, not an implementation or approval record. It is intentionally
 docs-only.
@@ -24,7 +26,9 @@ D8.4 Independent Planning Review = CHANGES REQUIRED (0/5/3) [historical]
 D8.4 Planning Remediation Round 1 = COMPLETE
 D8.4 Independent Planning Re-review = CHANGES REQUIRED (0/1/1) [historical]
 D8.4 Planning Remediation Round 2 = COMPLETE
-D8.4 Independent Planning Re-review Round 2 = PENDING
+D8.4 Independent Planning Re-review Round 2 = CHANGES REQUIRED (0/1/0) [historical]
+D8.4 Planning Remediation Round 3 = COMPLETE
+D8.4 Independent Planning Re-review Round 3 = PENDING
 D8.4 implementation = BLOCKED / NOT STARTED
 D8.4 = NOT REVIEW-CLOSED
 ```
@@ -59,7 +63,9 @@ D8.1-D8.3, create a second key/session owner, or promise forensic erasure.
    plaintext primaries to the existing D8.2 envelope.
 2. Ensure migration never creates a second durable plaintext body copy.
 3. Preserve the one pre-existing legacy plaintext generation until a verified
-   encrypted publication exists, then move only forward toward cleanup.
+   encrypted publication exists; Windows may then move forward automatically,
+   while Linux/macOS require an explicit user-controlled finalize before
+   cleanup.
 4. Make identity, generation ownership, path reuse, crash recovery and
    idempotency deterministic.
 5. Dispose of legacy managed-Diary Draft/Recovery and private SQLite state by
@@ -113,7 +119,7 @@ does not mean that every row is populated in every vault.
 
 | Store/artifact | Current owner and location | Private content | Locked behavior / discovery | Stable identity | D8.4 disposition | Unlock / confirmation | Recovery owner | Residual risk |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Legacy primary `diary/YYYY-MM-DD.md` | `server/routes/diary.ts`, `server/routes/posts.ts`, filesystem under `CONTENT_DIR` | Whole plaintext body | Structural type/mtime/device identity scan is allowed locked; a transient bounded byte count may be used only in process memory for I/O limits and is never persisted, returned or displayed; body read requires a current Diary lease | Path/date plus `documents.id`; missing ID is unresolved | Classify, then migrate with the custom no-copy protocol; remove the moved pre-existing source only after encrypted verification and explicit confirmation | Unlock required for body; `MIGRATE_PRIMARY` and `REMOVE_VERIFIED_LEGACY_PRIMARY` consents bind to one reviewed inventory revision/generation | New `DiaryMigrationService` plus startup recovery hook | Existing copies outside Docus remain |
+| Legacy primary `diary/YYYY-MM-DD.md` | `server/routes/diary.ts`, `server/routes/posts.ts`, filesystem under `CONTENT_DIR` | Whole plaintext body | Structural type/mtime/device identity scan is allowed locked; a transient bounded byte count may be used only in process memory for I/O limits and is never persisted, returned or displayed; body read requires a current Diary lease | Path/date plus `documents.id`; missing ID is unresolved | Prepare and authenticate one ciphertext-only candidate. Windows may automatically finalize only with `AUTOMATIC_HANDLE_BOUND`; Linux/macOS stop at `USER_FINALIZE_REQUIRED` and never mutate the plaintext namespace automatically | Unlock required for body; `MIGRATE_PRIMARY` and `REMOVE_VERIFIED_LEGACY_PRIMARY` consents bind to one reviewed inventory revision/generation; user-finalize verification requires a fresh review | New `DiaryMigrationService` plus startup recovery hook | Existing copies and any user-retained plaintext backup outside the canonical path remain |
 | Valid V1 primary | `server/diaryAccess/body.ts` through Diary routes | Ciphertext at rest; plaintext only in lease/UI memory | Verify envelope only when unlocked; structural scan can identify magic/version without exposing body | AAD proves vault/id/path | Strict byte-for-byte no-op; no rekey | No migration confirmation for no-op | `DiaryMigrationService` verifies and records no-op | Valid encrypted body in authorized memory remains in scope of D8 threat model |
 | Malformed/unknown/AAD-invalid primary | Same as above | Bytes may be private or corrupted | Never parsed as Markdown or plaintext | Identity cannot be trusted until verification | `NEEDS_ATTENTION`; preserve bytes; no overwrite | Unlock only for authenticated repair attempt; no automatic repair | Migration journal/ledger records code only | User must repair/export through a separately authorized path |
 | Atomic temps/staging/journals | `server/atomicTextWrite.ts`, `server/crashRecovery.ts` (`.docus-save-*`, `.docus-staged-*`, `.docus-remove-*`, journals) | Ordinary protocols can contain plaintext while serving Notes | Existing recovery runs before HTTP; D8.4 migration must not route plaintext through them | Ownership hashes are generic; not sufficient for migration | Migration uses reserved ciphertext-only temp and structural migration journal; existing Note artifacts remain under current recovery | No body exposed locked | Existing `recoverInterruptedOperations` plus `DiaryMigrationService.recover` | Pre-D8 orphan artifacts may require attention |
@@ -177,6 +183,15 @@ silently migrates a legacy file.
    pending state below). They remain retained until an explicit action; the
    run cannot silently mark them complete.
 
+The Settings workflow exposes `migrationFinalizeCapability` structurally with
+ordinary-user wording: Windows may show **Ready for automatic encrypted
+migration**; Linux/macOS show **Encrypted replacement prepared — manual
+finalize required**; and an unavailable candidate path shows an unsupported
+message. The UI explains why Docus stopped, which file-only operation is
+required, why external editors/sync writers must be closed, what Docus will
+verify afterwards and what user-controlled plaintext residual may remain. It
+does not display kernel/API terminology.
+
 ### 7.2 Explicit item actions
 
 The only body-bearing legacy Draft/Recovery actions are:
@@ -209,6 +224,16 @@ missing-primary, deferred-auth or null-identity items, the action is
 `acknowledge-attention` or `retry-item` after the user has repaired the
 external condition; acknowledgement does not make the item `COMPLETE`.
 
+For a legacy primary on Linux/macOS, the explicit action is
+`user-finalize-required`. The UI shows the durable ciphertext candidate and
+the exact file-only procedure from §9.1d; it never performs the replacement or
+executes an operating-system command. While the item is pending, structural
+status is allowed but body display while locked, managed-Diary search/AI/
+History/LinkIndex and automatic save remain blocked. Resume performs only the
+independent verification contract; the candidate is not parsed as the primary
+before exact authenticated proof. Windows may use the automatic path only
+when `AUTOMATIC_HANDLE_BOUND` is selected.
+
 There is no automatic external export flow in D8.4. A user may use the normal
 explicit PDF/clipboard export surface while unlocked, but that copy is outside
 the migration guarantee and is not used as a cleanup proof.
@@ -216,12 +241,14 @@ the migration guarantee and is not used as a cleanup proof.
 ### 7.3 Completion screen
 
 Completion reports separate counts for `COMPLETE` (resolved/cleaned),
-`ALREADY_ENCRYPTED_VALID` (valid encrypted no-op), policy-retained private
-state (including acknowledged AI history), and `NEEDS_ATTENTION` (unresolved
-current Docus-controlled state). It separately lists policy-retained local
-Git history and external/uncontrolled copies. It states exactly which current
-Docus-controlled stores were cleaned; it never says “all plaintext removed”
-when any retained or unresolved category remains.
+`ALREADY_ENCRYPTED_VALID` (valid encrypted no-op),
+`USER_FINALIZE_REQUIRED`, policy-retained private state (including
+acknowledged AI history), and `NEEDS_ATTENTION` (unresolved current
+Docus-controlled state). It separately lists policy-retained local Git
+history, `USER_CONTROLLED_PLAINTEXT_RESIDUAL` and external/uncontrolled copies.
+It states exactly which current Docus-controlled stores were cleaned; it never
+says “all plaintext removed” when any retained, pending or unresolved category
+remains.
 
 ## 8. Managed-file classification
 
@@ -244,6 +271,8 @@ CLEANUP_PENDING
 RECOVERY_AUTH_REQUIRED
 DURABILITY_PENDING
 CONSENT_REQUIRED
+USER_FINALIZE_REQUIRED
+UNSUPPORTED
 LEGACY_DIARY_AI_HISTORY
 FRONTMATTER_IDENTITY_UNRESOLVED
 NEEDS_ATTENTION
@@ -271,8 +300,14 @@ Rules:
    yet be authenticated after a locked restart is
    `RECOVERY_AUTH_REQUIRED`; a required filesystem durability boundary that
    has not been proven is `DURABILITY_PENDING`; a new or changed row after a
-   reviewed snapshot is `CONSENT_REQUIRED`; a previously published item whose
-   cleanup did not finish is `CLEANUP_PENDING`.
+   reviewed snapshot is `CONSENT_REQUIRED`; a durable ciphertext candidate
+   whose POSIX source remains in place is `USER_FINALIZE_REQUIRED`; and a
+   previously published item whose cleanup did not finish is
+   `CLEANUP_PENDING`.
+   A durable candidate with `migrationFinalizeCapability=USER_FINALIZE_REQUIRED`
+   is reported as that real pending state rather than as a generic concurrent
+   `MIGRATION_IN_PROGRESS`; the latter is reserved for a second operation
+   attempting to own the same run/item.
 6. A structured legacy AI `read_file` tool-result envelope naming an exact
    managed path is `LEGACY_DIARY_AI_HISTORY`. Free-text resemblance is not
    sufficient. A `metadata_migrations` row with `document_id IS NULL` is
@@ -307,9 +342,10 @@ is:
    sorted `withDocumentWriteLock`, and a `withDiaryBodyOperation` lease. The
    order is vault mutation -> structure lock -> document lock -> body lease;
    no second global lock is introduced.
-4. Ask `DiaryMigrationFs.captureSourceGeneration()` for an owned source handle
-   and generation token. A transient byte count may enforce a bounded read but
-   is never durable or visible. Read plaintext only into the authorized
+4. Ask `DiaryMigrationFs.captureSourceGeneration()` for structural source
+   generation evidence (and, only on the Windows automatic path, the live
+   source/parent handles). A transient byte count may enforce a bounded read
+   but is never durable or visible. Read plaintext only into the authorized
    operation's memory.
 5. Encrypt with the existing lease-local `operation.encrypt` and the exact
    `BodyContext` (`vaultId`, `documentId`, canonical path). The service never
@@ -317,366 +353,369 @@ is:
 6. Authenticate the ciphertext immediately with `operation.decrypt`, verify
    exact plaintext equivalence in memory, and verify documentId, vaultId,
    canonical path and V1 envelope version.
-7. Write only ciphertext to the same-directory reserved temporary file through
-   `DiaryMigrationFs.writeCiphertextTemp()`. The file and required directory
-   durability result are recorded. The journal contains only structural names,
+7. Write only ciphertext to the same-directory reserved candidate
+   `.docus-diary-migration-ciphertext-<transactionId>` through
+   `DiaryMigrationFs.writeCiphertextTemp()`. The candidate is same-filesystem,
+   ciphertext-only, excluded from tree/search/LinkIndex/History/Note parsing,
+   and safe to retain across restart. File and required parent-directory
+   durability are recorded; the journal contains only structural names,
    generation/provenance (never size), phase and codes.
-8. Revalidate the source authority and expected parent authority through the
-   same owner. If the native mutation cannot compare both exact generations at
-   the mutation itself, it fails closed with `SOURCE_GENERATION_CHANGED` or
-   `diary-migration-filesystem-unsupported`; the external generation remains
-   authoritative.
-9. `DiaryMigrationFs.transitionOwnedSource()` performs the one native,
-   no-copy transition of that exact pre-existing source generation to
-   `.docus-diary-migration-source-*`. The operation is conditional on the
-   captured source authority, the expected parent authority and an initially
-   absent quarantine name; a pathname `lstat` followed by a pathname rename is
-   never an ownership proof. The result includes the exact quarantine
-   generation and recoverable structural provenance. The alternate name refers
-   to the same pre-existing inode only and is removable later only through the
-   matching native ownership operation.
-10. `DiaryMigrationFs.publishCiphertextCreateOnly()` publishes the exact
-    ciphertext artifact only when the canonical target is absent. Its
-    no-replace result is atomic: an occupied target wins and is preserved; an
-    unsupported, cross-device, open-handle or durability result is returned as
-    a stable failure and no weaker rename or copy/delete path is attempted.
-11. The helper authenticates-readback the exact target and compares its
-    internal ciphertext fingerprint and target generation. Only after the
-    required file and directory durability result is `DURABLE` may the service
-    write the durable journal phase `PUBLISHED`. A durability result of
-    `UNKNOWN` leaves `DURABILITY_PENDING`; it never advances to `PUBLISHED`.
-12. If the process restarts locked after target publication but before the
-    durable `PUBLISHED` write, recovery records `RECOVERY_AUTH_REQUIRED` (or
-    `NEEDS_ATTENTION` on provenance mismatch), never treats envelope structure
-    as authentication, never restores plaintext and never cleans. After
-    unlock, the exact target fingerprint/generation is revalidated and the
-    existing body lease performs AES-GCM/AAD authentication. Only success may
-    advance to `PUBLISHED`/`CLEANUP_PENDING`.
-13. After `PUBLISHED` and the user-confirmed, revision-bound SQLite,
-    Draft/Recovery and AI dispositions, delete the moved source inode only
-    through a live or restart-reacquired exact ownership token. If any cleanup
-    fails, retain it and mark `CLEANUP_PENDING`; never restore it as the
-    primary. Mark the item and aggregate run `COMPLETE` only after all required
-    cleanup gates, consent checks and no-new-plaintext checks succeed.
+8. Revalidate the canonical source generation against the reviewed
+   `inventoryRevision` and candidate preparation snapshot. If it changed,
+   return `CONSENT_REQUIRED` / `diary-migration-consent-required`, retain the
+   legacy canonical plaintext and candidate, and require a new unlock/review;
+   the old candidate never authorizes the new generation.
+9. Select the frozen `migrationFinalizeCapability` before any destructive
+   action. Windows on a filesystem that supports the reviewed handle contract
+   may continue with `AUTOMATIC_HANDLE_BOUND`. Linux and macOS on supported
+   stock filesystems always transition to `USER_FINALIZE_REQUIRED`; Docus
+   performs no source rename, unlink, restore or replacement there. A
+   filesystem that cannot safely prepare and durably verify the ciphertext
+   candidate is `UNSUPPORTED`; a Windows adapter that loses its handle-bound
+   guarantee falls back to `USER_FINALIZE_REQUIRED`, never to a pathname
+   fallback.
+10. For `AUTOMATIC_HANDLE_BOUND`, the Windows adapter performs the reviewed
+    captured-source-handle, fail-if-exists transition and create-only
+    ciphertext publication, then verifies the target and required durability.
+    For `USER_FINALIZE_REQUIRED`, release the body lease and migration locks
+    after candidate durability, persist the state and stable code
+    `diary-migration-user-finalize-required` (HTTP 409), and perform no
+    destructive plaintext namespace mutation. The candidate is not the
+    authoritative primary before user-finalize verification.
+11. The explicit user-finalize procedure is: stop Docus body mutation for the
+    item; close external editors/sync writers; replace the legacy canonical
+    file with the prepared ciphertext candidate using the documented
+    user-controlled file operation; disclose any separately retained plaintext
+    copy; then reopen/resume Docus verification. Docus never exposes envelope
+    fields or asks the user to decrypt, re-encrypt, edit, copy body text or
+    execute a Docus shell command.
+12. On resume or restart, Docus independently verifies the canonical path is
+    a regular non-symlink/non-reparse file and that its bytes have the exact
+    prepared ciphertext fingerprint. It then authenticates the V1 envelope
+    with vault/document/path AAD under the existing Diary body lease. A new
+    inode after manual replacement is expected; same-inode continuity is not
+    required. Only exact fingerprint plus authenticated identity may advance
+    the item to `PUBLISHED`/`CLEANUP_PENDING`.
+13. After verified publication and the revision-bound SQLite, Draft/Recovery
+    and AI dispositions, Windows may remove its owned plaintext quarantine by
+    the reviewed handle contract. Linux/macOS may clean only Docus-owned
+    ciphertext candidate, journal, SQLite/IDB/AI state and other auxiliary
+    artifacts; they never locate or delete a user-moved plaintext backup.
+    `COMPLETE` is permitted only after all required cleanup gates, consent
+    checks and no-new-plaintext checks succeed. A retained backup is recorded
+    as `USER_CONTROLLED_PLAINTEXT_RESIDUAL` and prevents any universal-erasure
+    claim.
 
-The migration service must not call generic plaintext `atomicReplaceTextIfUnchanged`,
-`atomicRemoveTextIfUnchanged`, recovery payload writers, rename-reference
-journals or generic delete staging for this protocol.
+The migration service must not call generic plaintext
+`atomicReplaceTextIfUnchanged`, `atomicRemoveTextIfUnchanged`, recovery payload
+writers, rename-reference journals or generic delete staging. It must not
+expose an endpoint that runs `mv`, `rename` or `rm` for the user. On
+Linux/macOS the only Docus-controlled filesystem write to the legacy primary
+workflow is ciphertext-candidate preparation; the final destructive file
+operation remains explicitly user-mediated and is verified after the fact.
 
-### 9.1a Authority taxonomy and invariant
+### 9.1a Finalize capability and threat-model boundary
 
-Four authorities are distinct and are never substituted for one another:
-
-| Authority | Contents | What it can prove | What it cannot prove |
-| --- | --- | --- | --- |
-| Logical identity | `vaultId`, `documentId`, canonical path, schema version | Which migration item and AAD tuple is being discussed | Which current inode/file generation occupies the path |
-| Filesystem generation identity | device/volume plus inode/file ID, parent identity and an available birth/generation token or equivalent structural provenance | Which generation was observed; it is safe structural evidence only | Destructive authority, even when it matches a ledger row |
-| Live mutation authority | An open source/parent/quarantine handle pair and the native conditional operation that consumes them | Authority for one exact namespace mutation while the process owns the handles | Recovery after a crash; process memory is not durable authority |
-| Restart recovery authority | Durable non-secret provenance plus a fresh native exact-reacquisition proof | Whether a new process may regain authority for the same generation | Ownership based on a pathname, metadata equality or a stale token alone |
-
-The invariant is frozen: a pathname, prior `lstat`, prior handle comparison,
-process-local token or directory lock is never by itself destructive authority.
-A source transition, quarantine restoration or quarantine removal is permitted
-only when the filesystem primitive that performs the directory mutation itself
-proves that the entry being mutated is the exact generation owned by the
-transaction. If the filesystem cannot provide that condition, the operation
-fails closed.
-
-### 9.1b Authoritative source-transition primitive
-
-`DiaryMigrationFs` is the one migration filesystem owner. It exposes only
-these semantic operations: `captureSourceGeneration`,
-`transitionOwnedSource`, `writeCiphertextTemp`,
-`publishCiphertextCreateOnly`, `verifyCiphertextArtifact`,
-`removeOwnedQuarantineGeneration` and `syncDurability`.
-
-The source operation has this exact contract:
+The migration service selects one immutable `migrationFinalizeCapability` for
+each item before any destructive action:
 
 ```text
-transitionOwnedSource(
-  capturedSourceAuthority,
-  expectedParentAuthority,
-  reservedQuarantineName
-) -> {
-  sourceGeneration,
-  parentGeneration,
-  quarantineGeneration,
-  quarantineParentGeneration,
-  durability
-}
+AUTOMATIC_HANDLE_BOUND
+USER_FINALIZE_REQUIRED
+UNSUPPORTED
 ```
 
-The native operation is one kernel-authoritative conditional namespace
-mutation. It must, as part of that mutation (not as a preceding check):
+The capability is structural state, not an implementation-time choice:
 
-1. compare the source directory entry with the captured source handle/file
-   generation;
-2. compare the parent directory with the expected parent handle/generation;
-3. require the reserved quarantine name to be absent under that same parent;
-4. rebind the exact existing source inode/file object to the quarantine name
-   without copying, deleting-and-recreating, or overwriting; and
-5. return a handle-bound quarantine generation and the structural provenance
-   needed for a later durable journal record.
+| Platform/filesystem result | Capability | Docus behavior |
+| --- | --- | --- |
+| Windows adapter proves the reviewed captured-source-handle, fail-if-exists and durability contract | `AUTOMATIC_HANDLE_BOUND` | Docus may perform the automatic plaintext transition and encrypted publication. |
+| Linux or macOS stock filesystem can safely prepare and durably verify a ciphertext candidate but exposes no accepted captured-source conditional namespace mutation | `USER_FINALIZE_REQUIRED` | Docus prepares the candidate and stops before destructive plaintext namespace mutation. |
+| Any platform/filesystem cannot safely create, authenticate and durably retain the ciphertext candidate | `UNSUPPORTED` | No migration mutation; retain the legacy source and structural journal with a stable unsupported code. |
+| A Windows filesystem/runtime loses a required handle-bound guarantee | `USER_FINALIZE_REQUIRED` | Fall back to the same manual workflow; never use a pathname fallback. |
 
-If any comparison fails, no source or quarantine entry may be mutated. The
-operation may not fall back to a pathname rename, hard-link-plus-unlink,
-copy/delete, overwrite rename, or a second plaintext artifact. Quarantine
-removal uses the same rule through
-`removeOwnedQuarantineGeneration(quarantineAuthority, expectedParentAuthority,
-reservedQuarantineName)`: the unlinking primitive itself compares the exact
-quarantine generation and parent and cannot delete a replacement.
+Docus guarantees race-safe behavior only for mutations Docus itself performs.
+It cannot provide a kernel compare-and-swap primitive that the host does not
+expose. A user-mediated filesystem change is verified after the fact and is
+never represented as a Docus-atomic operation. No userspace helper, native
+addon, advisory lock, watcher, lease or timing window may manufacture missing
+namespace atomicity.
 
-Ciphertext publication is a separate proof. It uses an atomic create-only
-operation against the canonical target and never relies on the source
-transition's authority. An occupied target is preserved; no source handle is
-ever used to justify target overwrite.
+The four authority domains remain distinct:
 
-### 9.1c Per-platform native semantics and stable outcomes
+| Authority | Contents | Permitted proof |
+| --- | --- | --- |
+| Logical identity | `vaultId`, `documentId`, canonical logical path, schema version | Selects the migration item and the D8.2 AAD tuple only. |
+| Filesystem generation identity | device/volume, inode/file ID, parent identity and available structural generation evidence | Identifies the generation observed during inventory or candidate preparation; never grants destructive authority. |
+| Docus automatic mutation authority | A captured source/parent handle pair consumed by the Windows native operation, only for `AUTOMATIC_HANDLE_BOUND` | Authorizes one exact Windows namespace mutation while the process owns the handles. It does not apply to Linux/macOS manual finalize. |
+| User-finalize verification authority | Durable candidate fingerprint plus authenticated V1 envelope and current structural checks | Proves what canonical bytes exist after the external user action; it cannot prove that an external process did not alter another generation during that action. |
 
-The following are implementation-grade contracts, not a list of choices. The
-named native ABI is the only implementation surface and must implement these
-semantics exactly; a platform/filesystem without them is unsupported.
+A pathname, prior `lstat`/`stat`, matching inode metadata, process token or
+directory lock is never destructive authority. On Linux/macOS Docus therefore
+does not attempt to rename, unlink, restore, replace or quarantine the legacy
+plaintext primary automatically.
 
-**Linux.** `captureSourceGeneration` opens the expected parent with
-`openat2(2)` beneath the vault root using `RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS`
-and opens the final source with `O_PATH|O_NOFOLLOW|O_CLOEXEC`. It records
-`statx` device/inode, parent identity and the filesystem's stable file-handle
-generation from `name_to_handle_at` when available. `renameat2(RENAME_NOREPLACE)`
-is authoritative only for ciphertext publication. The mandatory source
-primitive is `D8_DIARY_RENAME_BY_HANDLE`: the native binding
-`docus_diary_transition_owned_source_linux` must invoke that single
-kernel-supported conditional operation with the captured `O_PATH` source fd,
-expected parent dirfd, expected file-handle generation and reserved name;
-`docus_diary_remove_owned_quarantine_linux` uses its matching unlink form.
-The operation must prove the source dirent still references that fd's
-generation at mutation time. `openat2` plus a pathname `renameat2`, or a
-`name_to_handle_at`/`open_by_handle_at` sequence, is explicitly insufficient
-and is not an implementation of `D8_DIARY_RENAME_BY_HANDLE`. The corresponding
-`D8_DIARY_REACQUIRE_BY_HANDLE` operation may produce a fresh restart token only
-after it verifies the persisted parent/name/file-handle tuple. If the running
-kernel/filesystem has no `D8_DIARY_RENAME_BY_HANDLE` and
-`D8_DIARY_REACQUIRE_BY_HANDLE`, return `ENOSYS`, `EOPNOTSUPP` or `EINVAL` as
-`FILESYSTEM_UNSUPPORTED` before changing the namespace.
+### 9.1b Linux/macOS migration phases
 
-For Linux, `ESTALE` or `ENOENT` after the native identity comparison means
-`SOURCE_GENERATION_CHANGED`/`PARENT_GENERATION_CHANGED` (an external
-generation won); `EEXIST` or `ENOTEMPTY` means `TARGET_OCCUPIED` for the
-reserved name; `EXDEV` means `CROSS_DEVICE`; and `EBUSY`, `EAGAIN` or
-`EWOULDBLOCK` means retryable `SOURCE_BUSY`. Required `fsync` failures are
-`DURABILITY_UNKNOWN` or `DURABILITY_FAILED`, never silent success.
+For `USER_FINALIZE_REQUIRED`, the exact transaction is:
 
-**macOS.** `captureSourceGeneration` opens the parent directory with
-`openat(..., O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC)` and the source with
-`openat(..., O_RDONLY|O_NOFOLLOW|O_CLOEXEC)`, then records the vnode/file ID,
-parent vnode ID and available birth/generation provenance with `fstat`/the
-native file-id query. `renameatx_np(RENAME_EXCL)` is authoritative only for
-create-only ciphertext publication. The mandatory source primitive is
-`D8_DIARY_RENAME_BY_VNODE`; the native bindings
-`docus_diary_transition_owned_source_macos` and
-`docus_diary_remove_owned_quarantine_macos` must invoke that single
-vnode-handle conditional operation with the captured source fd, expected parent
-fd/vnode and reserved name. The kernel operation itself must compare the source
-dirent's vnode/file ID and parent vnode to the captured authorities before
-rebinding; a prior `fstat` followed by ordinary `rename` is not acceptable.
-The corresponding `D8_DIARY_REACQUIRE_BY_VNODE` operation must verify the
-persisted parent/name/vnode tuple before returning a fresh restart token. On a
-filesystem whose kernel interface cannot provide these named operations,
-return `ENOTSUP` or `EINVAL` as `FILESYSTEM_UNSUPPORTED` before mutation.
-`ENOENT` or
-`ESTALE` after comparison means external generation won,
-`EEXIST`/`ENOTEMPTY` means `TARGET_OCCUPIED`, `EXDEV` means `CROSS_DEVICE`, and
-`EBUSY`/`EAGAIN` means retryable `SOURCE_BUSY`. `fsync`/directory durability
-failure remains `DURABILITY_UNKNOWN` or `DURABILITY_FAILED`.
+**Phase A — inventory.**
 
-**Windows.** `captureSourceGeneration` opens the source with `CreateFileW`
-using `OPEN_EXISTING`, `FILE_FLAG_OPEN_REPARSE_POINT|FILE_FLAG_BACKUP_SEMANTICS`,
-and `FILE_SHARE_READ|FILE_SHARE_WRITE` (not `FILE_SHARE_DELETE`) so an external
-delete/rename cannot silently replace the generation while the owned handle is
-live. The parent directory is opened with the same reparse-safe and
-backup-semantics flags, and `GetFileInformationByHandleEx(FileIdInfo)` records
-volume identity and file ID. Any source or parent reparse/junction is rejected
-before mutation; a case-folded collision is treated as occupied, never as a
-new spelling.
+1. Canonicalize the managed path with the shared Diary classifier and reject
+   symlink/reparse traversal.
+2. Resolve stable `DocumentMetadata` and record an immutable
+   `inventoryRevision`.
+3. Capture the current primary generation structurally and require explicit
+   `MIGRATE_PRIMARY` consent tied to that revision and generation.
+4. Obtain the existing Diary body lease and read legacy plaintext only into
+   authorized memory. No destructive namespace mutation occurs.
 
-The authoritative source transition is
-`SetFileInformationByHandle(FileRenameInfoEx)` on the captured source handle,
-with `RootDirectory` set to the captured parent handle, the reserved name as a
-relative destination, and the replace-if-exists flag omitted. This is a
-handle-bound, fail-if-exists operation: it mutates the object represented by
-the captured handle, not a later occupant of the source pathname. The same
-handle-bound operation, with the original canonical name and no replace, is
-the only permitted pre-publication restoration; quarantine removal uses an
-identity-checked handle operation. Ciphertext publication independently uses
-`FileRenameInfoEx` with fail-if-exists semantics on the ciphertext temp handle.
-`ERROR_FILE_NOT_FOUND`/`ERROR_PATH_NOT_FOUND` after identity comparison means
-`SOURCE_GENERATION_CHANGED` or `PARENT_GENERATION_CHANGED`;
-`ERROR_FILE_EXISTS`/`ERROR_ALREADY_EXISTS` means `TARGET_OCCUPIED`;
-`ERROR_NOT_SAME_DEVICE` means `CROSS_DEVICE`; and
-`ERROR_SHARING_VIOLATION`/`ERROR_LOCK_VIOLATION` means retryable
-`SOURCE_BUSY`. `ERROR_INVALID_FUNCTION`, `ERROR_NOT_SUPPORTED` or an invalid
-parameter for a required flag is `FILESYSTEM_UNSUPPORTED`. Antivirus or an
-already-open incompatible handle is never bypassed with a pathname fallback.
-`FlushFileBuffers` must succeed for the ciphertext/source file and the
-required parent-directory handle; an unavailable or failed directory flush is
-`DURABILITY_UNKNOWN`/`DURABILITY_FAILED` and blocks `PUBLISHED`.
+**Phase B — ciphertext preparation.**
 
-All adapters return the same semantic outcomes:
-`SOURCE_GENERATION_CHANGED`, `PARENT_GENERATION_CHANGED`, `TARGET_OCCUPIED`,
-`FILESYSTEM_UNSUPPORTED`, `CROSS_DEVICE`, `SOURCE_BUSY`, `DURABLE`,
-`DURABILITY_UNKNOWN` or `DURABILITY_FAILED`. Unsupported, cross-device, busy,
-identity-loss and durability outcomes retain every unproven generation and
-map to the stable migration attention/error matrix. No operation silently
-weakens its primitive.
+5. Encrypt with the existing server-side Diary access owner and immediately
+   authenticate the result with the same lease and D8.2 AAD.
+6. Create a same-filesystem, ciphertext-only candidate named
+   `.docus-diary-migration-ciphertext-<transactionId>` with create-only
+   semantics. The name is excluded from tree, search, LinkIndex, History,
+   Note parsing and automatic body mutation.
+7. Fsync the candidate file and required parent directory. Record only the
+   candidate generation, durability result and internal ciphertext fingerprint
+   in the structural journal; never record body size, body hash, plaintext or
+   keys.
+8. Re-read/revalidate the canonical source generation against the reviewed
+   snapshot before handoff. If it changed, mark `CONSENT_REQUIRED` with
+   `diary-migration-consent-required`, retain both generations and require a
+   new unlock/review. The old candidate never authorizes the new source.
 
-### 9.1d Durable provenance and restart authority
+**Phase C — handoff.**
 
-Before the source transition is attempted, the structural journal records the
-immutable inventory revision, vault/document/canonical logical identity,
-transaction/schema version, expected parent generation, captured source
-generation, reserved quarantine name and publication phase. After a successful
-transition, the helper returns and the parent directory is synchronized before
-the journal records the exact quarantine generation and its parent generation.
-The record may contain only non-secret structural provenance: device/volume,
-inode/file ID, native file-handle generation when the platform exposes one,
-parent identity, available birth/mtime provenance, reserved names, phase,
-durability result, target generation and the internal ciphertext fingerprint.
-It never contains plaintext, body length, body hash/digest, keys,
-capabilities or message content. A live fd/handle token is process-memory-only
-and is never treated as durable proof.
+9. Persist item state `USER_FINALIZE_REQUIRED`, HTTP/API code
+   `diary-migration-user-finalize-required`, the candidate fingerprint and
+   candidate durability. Release the body lease and migration mutation locks
+   according to the existing epoch/quiescence rules.
+10. Docus performs no source rename, unlink, restore, overwrite or shell
+    command on Linux/macOS. The canonical legacy plaintext remains the
+    authoritative primary until a user action is independently verified.
 
-The restart state machine is:
+The workflow is safe to resume because it creates only the existing plaintext
+primary plus one ciphertext candidate. It never creates a plaintext staging
+file, rollback payload, quarantine copy or backup.
 
-```text
-owned live source
-  -> source transitioned to quarantine
-  -> live token lost by crash
-  -> structural recovery
-  -> attempt exact native quarantine reacquisition
-       -> REACQUIRED_EXACT_QUARANTINE
-            (forward cleanup may continue after publication/auth gates)
-       -> QUARANTINE_OWNERSHIP_UNPROVEN
-            -> NEEDS_ATTENTION
-```
+### 9.1c Source-backed platform decision record
 
-`REACQUIRED_EXACT_QUARANTINE` is possible only when the durable provenance
-contains the expected parent, reserved name and exact generation and the
-platform's native reacquisition operation opens that parent and quarantine
-without symlink/reparse traversal, compares the generation and parent in the
-same authority domain, and returns a new handle-bound mutation token. Matching
-`dev/inode`, file ID or timestamps in a ledger without this native proof is
-never enough. If the provenance was not durably recorded, the parent was
-replaced, the quarantine path is missing, the path was recreated with a
-different generation, or the native reacquisition primitive is unavailable,
-the process enters `QUARANTINE_OWNERSHIP_UNPROVEN`/`NEEDS_ATTENTION`; it does
-not delete, restore, overwrite or recreate plaintext.
+The Round 3 decision is based on the public platform contracts, not on a
+native wrapper name. The relevant references are Linux
+[`renameat2(2)`](https://man7.org/linux/man-pages/man2/renameat2.2.html),
+[`openat2(2)`](https://man7.org/linux/man-pages/man2/openat2.2.html),
+[`open_by_handle_at(2)`](https://man7.org/linux/man-pages/man2/open_by_handle_at.2.html)
+and [`unlinkat(2)`](https://man7.org/linux/man-pages/man2/unlink.2.html);
+macOS [`rename`](https://man.freebsd.org/cgi/man.cgi?manpath=macOS+26.6.1&query=rename&sektion=2),
+[`getfh(2)`](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/getfh.2.html)
+and [`fhopen(2)`](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/fhopen.2.html);
+and Windows
+[`SetFileInformationByHandle`](https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-setfileinformationbyhandle),
+[`FILE_RENAME_INFO`](https://learn.microsoft.com/windows/win32/api/winbase/ns-winbase-file_rename_info),
+[`FILE_ID_INFO`](https://learn.microsoft.com/windows/win32/api/winbase/ns-winbase-file_id_info)
+and [`OpenFileById`](https://learn.microsoft.com/windows/win32/api/winbase/nf-winbase-openfilebyid).
 
-For pre-publication restoration, only `REACQUIRED_EXACT_QUARANTINE` plus a
-durably proven pre-publication journal and an empty canonical destination may
-authorize the same native no-replace transition from quarantine back to the
-canonical name. A destination occupant always wins and is preserved. For
-post-publication cleanup, the same exact reacquisition is required before
-quarantine removal. If an external actor removes the quarantine and recreates
-the same reserved name, a different generation is an external occupant and
-remains untouched; an absent name is not evidence of ownership. There is no
-“probably ours” restart state.
+**Linux.** `renameat2` selects its source by directory fd plus source
+pathname; `RENAME_NOREPLACE` protects only the destination. `openat2` and
+`O_PATH|O_NOFOLLOW` are retained for safe candidate-path resolution and
+structural inspection. `open_by_handle_at` can reopen an object on some
+filesystems with additional privilege, but it does not provide rename-by-file
+handle or unlink-by-file-handle namespace mutation. Therefore Linux uses
+`renameat2(RENAME_NOREPLACE)` only to publish the Docus-created ciphertext
+candidate and never uses it to move or delete the legacy plaintext.
 
-Durability boundaries are independent and ordered, never inferred from a
-later success: (1) the ciphertext temp file is synced, then its parent
-directory; (2) the source namespace transition is performed and the source
-parent/quarantine directory is synced before quarantine provenance is recorded;
-(3) ciphertext publication is a separate no-replace namespace mutation, then
-the target file and target parent directory are synced; (4) authenticated
-readback and the durable `PUBLISHED` journal write follow those target proofs;
-and (5) post-publication quarantine unlink is followed by its own parent
-directory barrier. A failed or unknown barrier records
-`DURABILITY_FAILED`/`DURABILITY_UNKNOWN`, keeps the corresponding journal and
-artifacts, and cannot be represented as `PUBLISHED` or as durable quarantine
-removal. The unlink syscall and its directory barrier remain separate crash
-seams even after target publication.
+**macOS.** `renameatx_np`/`rename` likewise select the source by parent fd plus
+pathname; exclusive-destination flags protect the destination only. Public
+file-handle reopening does not supply a captured-vnode conditional rename or
+unlink operation accepted by this plan. `openat(..., O_NOFOLLOW)` and `fstat`
+are retained for safe candidate resolution and structural checks; a
+create-only `renameatx_np(RENAME_EXCL)` may publish the ciphertext candidate,
+but Docus never destructively mutates the legacy plaintext namespace.
 
-### 9.1e Adversarial source-ownership matrix
+**Windows.** The reviewed automatic path remains feasible: reparse-safe
+`CreateFileW` opens the source and parent without `FILE_SHARE_DELETE`,
+`GetFileInformationByHandleEx(FileIdInfo)` captures identity, and
+`SetFileInformationByHandle(FileRenameInfoEx)` operates on the captured source
+handle with the captured parent as `RootDirectory` and replace-if-exists
+omitted. Ciphertext publication is independently fail-if-exists and all
+required file/parent durability barriers must succeed. If any required flag,
+handle or filesystem guarantee is unavailable, the adapter selects
+`USER_FINALIZE_REQUIRED` rather than a pathname fallback.
 
-The following outcomes are normative for both PRD and Implementation Plan:
+Stable outcomes are `SOURCE_GENERATION_CHANGED`,
+`PARENT_GENERATION_CHANGED`, `TARGET_OCCUPIED`, `CONSENT_REQUIRED`,
+`USER_FINALIZE_REQUIRED`, `FILESYSTEM_UNSUPPORTED`, `CROSS_DEVICE`,
+`SOURCE_BUSY`, `DURABLE`, `DURABILITY_UNKNOWN` and `DURABILITY_FAILED`.
+Linux/macOS candidate preparation maps failed/unknown fsync or an unsafe path
+to `FILESYSTEM_UNSUPPORTED`/`DURABILITY_PENDING`; no such result is a
+permission to touch the plaintext source. Windows preserves the existing
+handle-bound error mappings for its automatic path.
 
-| Adversarial case | Operation permitted? | Stable result/state | Artifact preservation | Retry/attention behavior |
-| --- | --- | --- | --- | --- |
-| Source replaced before transition | No | `SOURCE_GENERATION_CHANGED` | External source and all unproven temps retained | New scan/review; no stale consent reuse |
-| Source replaced at transition boundary | No | Native compare fails; `EXTERNAL_PATH_CONFLICT` | Replacement is never moved or deleted | Surface attention; retry only after new revision |
-| Source pathname replaced after captured handle | No | Handle-bound mutation refuses replacement | Captured generation and external generation remain distinct | No pathname fallback; attention |
-| Source becomes junction/reparse point | No | `FILESYSTEM_UNSUPPORTED`/attention | Reparse object and migration artifacts preserved | Repair and retry with fresh provenance |
-| Expected parent directory replaced | No | `PARENT_GENERATION_CHANGED` | New parent and source are preserved | Attention; fresh scan required |
-| Quarantine destination already exists | No | `TARGET_OCCUPIED` | Existing quarantine occupant and source preserved | Do not overwrite; new reviewed name only |
-| Quarantine name reused after crash with different generation | No | `QUARANTINE_OWNERSHIP_UNPROVEN`/attention | Replacement is never deleted or restored | Manual attention; no path-only cleanup |
-| Quarantine name disappears after crash | No destructive action | Ownership unproven until exact reacquisition | No plaintext recreation; target and ledger retained | Inspect namespace; attention if proof is absent |
-| Target appears before ciphertext publish | No | `TARGET_OCCUPIED`/`EXTERNAL_PATH_CONFLICT` | External target, source quarantine and ciphertext temp preserved | No overwrite; reviewed retry only |
-| Cross-device source/target or temp | No | `CROSS_DEVICE`/unsupported | Source and ciphertext artifacts retained | No copy/delete; attention |
-| Required no-replace primitive unsupported | No | `FILESYSTEM_UNSUPPORTED` | No namespace mutation; journal retained | Attention; no weaker primitive |
-| Required exact-source primitive unsupported | No | `FILESYSTEM_UNSUPPORTED` | Source remains canonical; no quarantine mutation | Attention; platform/FS change required |
-| Windows sharing violation | No | `SOURCE_BUSY` | Owned source and external handle preserved | Retry while same generation is proven; then attention |
-| Antivirus/open-handle denial | No | `SOURCE_BUSY` or unsupported | No forced close or fallback; artifacts retained | Retry/attention according to stable error |
-| Case-fold collision | No | `TARGET_OCCUPIED`/identity conflict | Existing case-fold occupant preserved | Fresh reviewed name or attention; never overwrite |
-| Directory durability failure/unknown | No `PUBLISHED` | `DURABILITY_PENDING`/`NEEDS_ATTENTION` | Journal, ciphertext and quarantine retained | Re-prove durability; no cleanup/restore after publication |
-| Live token lost by crash | No immediate delete/restore | Recovery enters exact reacquisition | All artifacts retained | Only native reacquisition can continue |
-| Restart cannot reacquire quarantine authority | No | `QUARANTINE_OWNERSHIP_UNPROVEN`/`NEEDS_ATTENTION` | Replacement/unknown artifact preserved | Manual attention; no guessed ownership |
+### 9.1d Exact user-finalize protocol and verification
 
-This matrix also governs `removeOwnedQuarantineGeneration`; a successful
-source transition never turns a quarantine pathname into delete authority.
+The UI exposes one explicit, platform-neutral user-finalize procedure for a
+`USER_FINALIZE_REQUIRED` item. It is available only when all of these
+preconditions hold: the item is in `USER_FINALIZE_REQUIRED`; the candidate
+fingerprint and generation are durably recorded; the canonical generation is
+the reviewed generation; candidate file and parent durability are proven; and
+no Docus body operation for the item is active. Immediately before showing the
+procedure, Docus rescans and invalidates stale consent rather than relying on
+the earlier snapshot.
+
+The user is instructed to: (1) stop Docus body mutation for the item; (2) close
+external editors and sync writers touching the managed path; (3) replace the
+legacy canonical file with the prepared ciphertext candidate using the
+documented OS file operation; (4) keep or remove any old plaintext copy only
+under the user's explicit procedure and acknowledge that residual; and (5)
+reopen/resume Docus verification. The user manipulates filenames/files only.
+Docus never asks the user to decrypt, re-encrypt, edit an envelope, copy body
+text, paste plaintext, modify nonce/tag/AAD or run a Docus shell command.
+
+On resume/restart Docus independently verifies, in this order:
+
+1. the canonical path is present, regular, canonical and not a symlink or
+   reparse point;
+2. the bytes have the exact prepared ciphertext fingerprint for this
+   transaction (no other valid encrypted generation is accepted);
+3. the authenticated V1 envelope has the expected vault/document/path identity
+   and version and passes AES-GCM/AAD authentication under the existing Diary
+   body lease; and
+4. the resulting ciphertext and required parent-directory durability are
+   proven before the durable `PUBLISHED` journal phase is written.
+
+The final file may have a new inode/generation; same-inode continuity is not
+required after an external replacement. The exact candidate fingerprint plus
+authenticated envelope is the sole acceptance rule. The result classes are:
+
+| Observed canonical state | Exact result | Docus action |
+| --- | --- | --- |
+| Still the reviewed plaintext generation | `USER_FINALIZE_REQUIRED` / `diary-migration-user-finalize-required` | Keep candidate and plaintext; do not publish or clean. |
+| New plaintext generation detected before verification | `CONSENT_REQUIRED` / `diary-migration-consent-required` | Invalidate old consent and candidate acceptance; require a new reviewed preparation after unlock. |
+| Exact prepared ciphertext fingerprint and authenticated identity | `PUBLISHED` then applicable cleanup | Advance only after durability and all action-scoped cleanup gates. |
+| Different valid encrypted bytes | `NEEDS_ATTENTION` / `diary-migration-candidate-mismatch` | Preserve the file and candidate; never treat another ciphertext as this transaction. |
+| Malformed or unknown envelope | `NEEDS_ATTENTION` / existing malformed/unknown code | Preserve bytes; no overwrite or cleanup. |
+| Missing canonical file | `NEEDS_ATTENTION` / `diary-migration-primary-missing` | Preserve candidate and journal; do not synthesize a primary. |
+| Symlink/reparse, wrong path identity or unsafe type | `NEEDS_ATTENTION` / `diary-migration-unsafe-path` | Preserve the object and all artifacts. |
+
+If a user installs a stale candidate after an external writer created a new
+plaintext generation, Docus can detect the conflict only when the new
+generation is observed before acceptance. Once the user has externally
+replaced the canonical path, Docus cannot reconstruct bytes that were lost or
+prove that an external process did not change another generation during the
+manual operation. This is disclosed as a user-mediated residual risk, not as
+an automatic external-generation guarantee.
+
+### 9.1e Candidate cleanup, restart and external-writer semantics
+
+On Linux/macOS, restart never needs plaintext quarantine reacquisition because
+Docus has not moved the plaintext source. Durable state contains the legacy
+canonical generation (if still present), the ciphertext candidate name and
+generation, candidate fingerprint, inventory revision, transaction, phase and
+durability. It contains no body, size, plaintext digest, key, capability or
+message content.
+
+The restart/crash oracle is:
+
+| Event | Required result |
+| --- | --- |
+| Crash before candidate durability | Legacy plaintext remains authoritative; a partial candidate may be removed only by exact transaction-owned ciphertext provenance, then preparation may retry. |
+| Candidate durable, then crash before handoff | Candidate remains durable and the item restores to `USER_FINALIZE_REQUIRED`; plaintext is untouched. |
+| User completes external replacement, then crash before resume | Fresh process inspects actual canonical state and restores `USER_FINALIZE_REQUIRED` or the exact conflict class; it never assumes the user action occurred. |
+| Exact candidate is authenticated after resume | Advance to `PUBLISHED`, then clean only Docus-owned candidate/journal/SQLite/IDB/AI artifacts under the reviewed gates. |
+| User retains a moved/copied plaintext backup outside the canonical managed path | Record `USER_CONTROLLED_PLAINTEXT_RESIDUAL`; disclose it and never search for or delete it automatically. |
+
+The manual operation is not wrapped in a Docus crash hook. The deterministic
+test controller performs the documented external file operation, then kills
+the child before `resume`; restart verifies the actual namespace. The existing
+19-hook oracle remains authoritative for the automatic Windows path and for
+SQLite/IDB cleanup. On POSIX, source-transition, ciphertext-publication and
+plaintext-quarantine-unlink hooks are marked not applicable rather than
+simulated around the user action; candidate durability and post-user
+verification use the applicable candidate/readback/journal hooks.
+
+The cross-platform security outcome is identical even though the filesystem
+algorithm differs: Docus never destroys an unproven external generation. On
+Linux/macOS it achieves this by refusing the unsupported automatic destructive
+operation; on Windows it uses the real captured-handle contract.
+
+The `USER_FINALIZE_REQUIRED` state is not `PUBLISHED`, `CLEANUP_PENDING` or
+`COMPLETE`. While it exists, structural migration status is allowed, Diary
+body display while locked is forbidden, managed-Diary search/AI/History/
+LinkIndex remains blocked, automatic save for that item is blocked, and any
+resume that needs body verification requires unlock. Its only forward path is
+the exact user-finalize verification in §9.1d or an explicit new scan that
+invalidates the stale candidate.
 
 ### 9.2 Commit point and monotonicity
 
-The security linearization rule is exact: once the create-only ciphertext
-publication syscall may have succeeded, plaintext restoration to the canonical
-path is permanently forbidden, even if target durability or authenticated
-readback has not yet been confirmed. `PUBLISHED` is a later, stronger state:
-the exact target fingerprint/generation has been read back and authenticated
-with the current Diary DEK/AAD, and the required file and directory durability
-has been established before the durable journal write. Before the publication
-syscall, failure may restore the same pre-existing inode only through its
-`DiaryMigrationFs` ownership token. After the syscall may have succeeded:
+The security meaning of publication is platform-specific but the safety result
+is common. For `AUTOMATIC_HANDLE_BOUND` Windows migration, the linearization
+point is the create-only ciphertext publication syscall: after it may have
+succeeded, plaintext is never restored to the canonical path and the target is
+never overwritten. `PUBLISHED` still requires exact target fingerprint,
+authenticated V1/AAD readback and all required durability barriers.
 
-```text
-target is never overwritten or replaced by plaintext
-plaintext is never restored to the canonical path
-locked recovery = RECOVERY_AUTH_REQUIRED when provenance matches but crypto is
-  not yet available; NEEDS_ATTENTION when provenance is absent/mismatched
-cleanup is forbidden until post-unlock authentication and PUBLISHED
-state = CLEANUP_PENDING only after PUBLISHED when a required cleanup is incomplete
-```
+For `USER_FINALIZE_REQUIRED`, durable candidate preparation is not publication
+and does not make the candidate authoritative. The legacy canonical plaintext
+remains authoritative until the user performs the documented external file
+replacement. Docus then verifies the actual canonical bytes and writes
+`PUBLISHED` only after exact fingerprint, identity, authentication and
+durability proof. Docus never performs the external replacement itself and
+never claims that the manual operation had Docus's automatic race guarantee.
 
-The migration journal stores a transaction ID, canonical target, vault/document
-identity, non-secret ciphertext/envelope SHA-256 fingerprint, target generation
-identity (never byte size), phase and codes. A crash between publication and
-journal update is therefore recoverable structurally without declaring the
-envelope authenticated. After unlock, the body lease must compare the exact
-fingerprint/generation and perform AES-GCM/AAD authentication before the item
-can advance to `PUBLISHED`; a forged syntactic V1 or wrong transaction yields
-`NEEDS_ATTENTION` with target and quarantine preserved. No plaintext rollback
-payload is stored.
+Before candidate durability, a failed preparation may remove only the
+transaction-owned ciphertext candidate. After candidate durability, restart
+retains the candidate and returns `USER_FINALIZE_REQUIRED`; it never recreates
+plaintext, copies plaintext or treats the candidate as the primary. After
+verified publication, cleanup is forward-only. A candidate still present at
+its reserved name may be removed only by the transaction-owned ciphertext
+cleanup operation after exact fingerprint verification; a separately moved
+plaintext backup is never searched for or removed.
 
-### 9.3 External-writer contract
+The migration journal stores only transaction ID, canonical identity,
+inventory revision, candidate/target generation, internal ciphertext
+fingerprint, capability, phase and durability. It never stores body bytes,
+body size, plaintext digest, keys, capabilities or message content. Locked
+status never returns the fingerprint or generation details.
 
-At every phase, an external generation wins unless exact ownership is proven:
+### 9.3 External-writer and save contract
+
+For every Docus-controlled automatic action, an unproven external generation
+always wins and is never deleted, overwritten, renamed or replaced by Docus:
 
 | Race | Required result |
 | --- | --- |
-| Edit before classification/read | Reclassify the new generation; do not use stale bytes. |
-| Edit after read/encryption | Source generation mismatch; discard ciphertext temp, restore the moved original only if the exact `DiaryMigrationFs` token proves pre-publication ownership, and mark `EXTERNAL_PATH_CONFLICT`/`NEEDS_ATTENTION`. |
-| Replace/delete before source move | Create-only/generation check fails; never overwrite or delete external bytes. |
-| Target occupied during publish | Preserve the occupant, quarantine ciphertext and any moved source, mark `EXTERNAL_PATH_CONFLICT`. |
-| Crash after source move before target publish | Startup restores the same source inode only through the native ownership primitive when the target is empty and directory identity matches; unsupported proof yields attention. |
-| External replace after encrypted publish | Preserve external target. Retain verified encrypted generation/quarantine and mark `NEEDS_ATTENTION`; never delete the external file. |
-| Path reused by another document ID | `METADATA_AMBIGUOUS`/`EXTERNAL_PATH_CONFLICT`; no destructive cleanup. |
+| Edit before classification or encryption | Reclassify the new generation; the old consent and candidate are stale. |
+| Edit during Linux/macOS candidate preparation | Stop before handoff with `CONSENT_REQUIRED`; retain the legacy source and candidate, and require a new reviewed preparation. |
+| Candidate name occupied or candidate durability fails | Preserve the occupant/artifacts; return `TARGET_OCCUPIED`, `DURABILITY_PENDING` or `FILESYSTEM_UNSUPPORTED`; never overwrite. |
+| Windows source/parent/target race during automatic finalize | Use only the real captured-handle and create-only operations; return the frozen generation/occupied/busy outcome and preserve the external generation. |
+| Canonical remains plaintext after user handoff | Remain `USER_FINALIZE_REQUIRED`; no Docus mutation or cleanup. |
+| New plaintext generation observed before user verification | `CONSENT_REQUIRED`; invalidate the old preparation and require a new unlock/review. |
+| User installs the exact candidate after an unobserved external change | Authenticate and accept only the exact candidate, but disclose that Docus cannot prove the lost/changed external generation was not affected by the user-mediated operation. |
+| Canonical is a different encrypted file, malformed, missing or unsafe | `NEEDS_ATTENTION` with the exact stable code; preserve the file and candidate. |
+| User retains a plaintext backup outside the managed path | Record `USER_CONTROLLED_PLAINTEXT_RESIDUAL`; never auto-search or delete it. |
 
-Normal managed-Diary save/create uses the existing FIFO document lock and
-serializes behind migration; the plan does not promise a migration-specific
-409 merely because that lock is held. Once the ordinary save acquires the
-lock, it revalidates session/CAS/primary state and either proceeds or returns
-the existing semantic conflict. If the item is `RECOVERY_AUTH_REQUIRED`, body
-read/write and same-date creation return `423 diary-migration-auth-required`.
-Only competing migration-control requests may return
-`409 diary-migration-in-progress`. New Diary creation at a different date may
-continue and is immediately classified as `ALREADY_ENCRYPTED_VALID` by the
-normal D8.2 create path.
+While an item is `USER_FINALIZE_REQUIRED`, ordinary managed-Diary save for
+that item is blocked, and the UI exposes only structural migration status and
+the explicit finalize instructions. Search, AI, History, LinkIndex, locked
+body display and automatic save remain blocked by the existing D8.3 managed-
+Diary boundary. A user-finalize resume requires unlock for body
+authentication. Ordinary Note save/create/history/search/Draft behavior is
+unchanged. A FIFO document lock still serializes Docus operations; it is not a
+substitute for filesystem authority and does not produce a migration-specific
+409 merely because another operation is queued.
+
+The threat-model boundary is explicit: Docus guarantees race-safe behavior
+for mutations it performs. Linux/macOS manual replacement belongs to the
+user-controlled filesystem trust boundary and is verified after the fact.
+If the product requires Docus itself to replace arbitrary POSIX plaintext
+while guaranteeing exact-generation movement against a non-cooperating
+external writer, the current architecture cannot satisfy that requirement;
+filesystem mediation, managed storage or a changed threat model would require
+a separately approved architecture.
 
 ## 10. Legacy Draft/Recovery contract
 
@@ -765,7 +804,7 @@ transaction. The stable document ID is preserved. The exact field policy is:
 | `tag_undo_association_deltas` | Delete deltas proven to reference managed IDs. | Unchanged. |
 | `tag_undo_records` | Delete records whose deltas and bounded `operation_json` prove managed-only; mixed or invalid JSON is `NEEDS_ATTENTION`, never broad-deleted. | Unchanged. |
 | `tag_undo_state` | Advance/retain state only through existing tag-undo owner; no body-derived field is added. | Unchanged. |
-| migration ledger | Contains structural state only; no body, byte size, title/summary/tag value, backup, message content, plaintext hash or digest. It records inventory/consent revision, action scope, item/generation provenance and internal ciphertext fingerprint only. | No Note row is inserted. |
+| migration ledger | Contains structural state only; no body, byte size, title/summary/tag value, backup, message content, plaintext hash or digest. It records inventory/consent revision, action scope, `migrationFinalizeCapability`, candidate/source/target generation provenance, internal ciphertext fingerprint and explicit user-residual state. Windows-only quarantine fields are nullable and never populated for POSIX. | No Note row is inserted. |
 
 If SQLite cleanup fails after publication, the primary remains encrypted and
 the ledger item is `CLEANUP_PENDING`. If cleanup succeeds but a later primary
@@ -831,8 +870,8 @@ classifier converges the following states deterministically:
 | --- | --- |
 | Fresh vault/no Diary | Run completes with zero items after Git/auxiliary inventory. |
 | All valid encrypted | Every item is `ALREADY_ENCRYPTED_VALID`; bytes remain unchanged. |
-| All legacy plaintext | Each identity-resolved item follows §9; unresolved items remain attention. |
-| Mixed plaintext/encrypted | Plaintext items migrate; valid encrypted items no-op; aggregate waits for attention/cleanup. |
+| All legacy plaintext | Windows items may finalize automatically; Linux/macOS items prepare a candidate and remain `USER_FINALIZE_REQUIRED` until the explicit user operation is verified. |
+| Mixed plaintext/encrypted | Plaintext items follow the selected platform capability; valid encrypted items no-op; aggregate waits for user-finalize, attention and cleanup. |
 | Encrypted + malformed/unknown | Valid items no-op; invalid items remain `NEEDS_ATTENTION`; no plaintext interpretation. |
 | Plaintext + missing metadata | Path/date is safe to show; item waits for explicit `adopt-metadata`. |
 | Valid encrypted + stale metadata | AAD/ID mismatch is attention; metadata is not rewritten by path alone. |
@@ -841,10 +880,11 @@ classifier converges the following states deterministically:
 | SQLite metadata only | Cleanup is independent but still requires identity and user confirmation. |
 | Git history only | Disclosure/acknowledgment; no rewrite. |
 | Cleanup pending/journal exists | Startup resumes forward from the durable phase; no plaintext rollback after a possible publication. If the target may be published but is not authenticated while locked, state is `RECOVERY_AUTH_REQUIRED`; no cleanup occurs. |
+| Durable POSIX ciphertext candidate with canonical plaintext still present | `USER_FINALIZE_REQUIRED`; candidate is retained and excluded from all projections; no Docus rename/unlink/restore/replace occurs. |
 | New/changed row after reviewed scan | `CONSENT_REQUIRED`; the prior inventory revision/action scope cannot authorize it. |
 | AI structured managed-Diary tool result | `LEGACY_DIARY_AI_HISTORY`; explicit whole-session discard or policy retention, otherwise attention. |
 | Null-ID frontmatter backup | `FRONTMATTER_IDENTITY_UNRESOLVED`; retain until verified identity binding, never path-only cleanup. |
-| Unsupported filesystem/durability | `DURABILITY_PENDING` or `NEEDS_ATTENTION`; retain journal/artifacts and never claim `PUBLISHED` without the required proof. |
+| Unsupported candidate durability or unsafe path | `UNSUPPORTED`, `DURABILITY_PENDING` or `NEEDS_ATTENTION`; retain journal/artifacts and never claim `PUBLISHED` without the required proof. |
 | Orphan temp/staging artifact | Existing recovery handles generic artifacts; migration service handles only its reserved structural pattern and quarantines ambiguity. |
 | External path reuse | External bytes win; migration artifacts are retained/quarantined and attention is surfaced. |
 | Vault copied under a new identity | `getVaultId()` changes; all items are re-inventoried under the new vault tuple, and old ledger rows are not reused as proof. |
@@ -855,10 +895,13 @@ unacknowledged. The user may explicitly acknowledge an attention item without
 changing its item state; the item remains visible as `NEEDS_ATTENTION` and is
 included in the completion summary. `COMPLETE` is permitted only when every
 item is terminal (`COMPLETE`, valid-encrypted no-op, or explicitly
-acknowledged `NEEDS_ATTENTION`), each policy-retained AI session is separately
-acknowledged, and the Git-retention acknowledgment is recorded. The final
-summary distinguishes resolved/cleaned state, valid encrypted no-op,
-policy-retained private AI state, unresolved attention, policy-retained Git
+acknowledged `NEEDS_ATTENTION`), no item is still
+`USER_FINALIZE_REQUIRED`, each policy-retained AI session is separately
+acknowledged, and the Git-retention acknowledgment is recorded. A verified
+POSIX finalize may reach `COMPLETE` even when a separately disclosed
+`USER_CONTROLLED_PLAINTEXT_RESIDUAL` remains. The final summary distinguishes
+resolved/cleaned state, valid encrypted no-op, policy-retained private AI
+state, unresolved attention, pending user-finalize, policy-retained Git
 history and external/uncontrolled copies.
 
 ## 15. Crash/restart semantics
@@ -869,36 +912,58 @@ run before HTTP in both `server/prod.ts` and `server/vite-plugin.ts`. D8.4 adds
 and before ordinary metadata scans. It never logs body bytes and never guesses
 ownership.
 
-At startup recovery may use only structural/non-secret evidence. If the target
-is absent and the journal proves pre-publication, it may restore the exact
-quarantined source only after `REACQUIRED_EXACT_QUARANTINE` returns a fresh
-native ownership token; a process-local token from before the crash is gone.
-If the target exists and publication may have happened, recovery never
-restores plaintext, never deletes quarantine and never marks `PUBLISHED` from
-envelope parsing. A matching non-secret transaction fingerprint becomes
-`RECOVERY_AUTH_REQUIRED`; a mismatch or missing provenance is
-`NEEDS_ATTENTION`, with the external target preserved. After unlock, the
-existing `DiaryBodyOperation` revalidates target identity and performs exact
-AES-GCM/AAD authentication. Only success may advance to `PUBLISHED` or
-`CLEANUP_PENDING`; failure is `NEEDS_ATTENTION` with no overwrite or cleanup.
+At startup recovery uses only structural/non-secret evidence. On Linux/macOS
+there is no plaintext quarantine to reacquire: the legacy canonical remains
+authoritative and a durable ciphertext candidate restores
+`USER_FINALIZE_REQUIRED`. A candidate or canonical file is never promoted by
+syntax alone. After unlock, the existing `DiaryBodyOperation` revalidates the
+exact candidate fingerprint, path identity and AES-GCM/AAD authentication;
+only exact proof may advance to `PUBLISHED` or `CLEANUP_PENDING`. On Windows,
+the automatic path retains its captured-handle quarantine/restart rules; if
+exact reacquisition is unavailable it falls back to `USER_FINALIZE_REQUIRED`
+before any weaker mutation. Any mismatch or missing provenance is
+`NEEDS_ATTENTION`, with external bytes preserved.
 
 The locked recovery matrix is frozen as:
 
 | Case | Structural evidence | Locked result |
 | --- | --- | --- |
-| A | Target absent, journal pre-publication, exact owned source quarantine present | Restore the exact pre-existing source generation only through the frozen `DiaryMigrationFs` ownership primitive; otherwise `NEEDS_ATTENTION`. |
-| B | Target exists and publication may have happened | Preserve target and quarantine; never restore plaintext, delete quarantine or mark `PUBLISHED` from syntax; matching fingerprint is `RECOVERY_AUTH_REQUIRED`, absent/mismatched provenance is `NEEDS_ATTENTION`. |
-| C | Target generation/provenance does not match transaction evidence | Preserve the external target and every unproven artifact; `NEEDS_ATTENTION`; no cleanup. |
+| POSIX-A | Candidate absent or not durable; canonical legacy plaintext remains | Retry candidate preparation only after exact transaction ownership checks; no plaintext recovery is needed and no namespace mutation is attempted. |
+| POSIX-B | Candidate durable; canonical remains the reviewed plaintext generation | Restore `USER_FINALIZE_REQUIRED`; preserve candidate and plaintext; no publish, restore, replace or cleanup. |
+| POSIX-C | User may have replaced canonical path externally | Inspect actual canonical state on resume. Exact candidate + authenticated AAD may reach `PUBLISHED`; unchanged plaintext remains `USER_FINALIZE_REQUIRED`; all other states are the exact conflict/attention class. |
+| WINDOWS-A | Target absent, pre-publication journal, exact owned source quarantine reacquired | Restore the same source object only through the reviewed Windows handle-bound operation and an empty destination; unavailable proof is `QUARANTINE_OWNERSHIP_UNPROVEN`/`NEEDS_ATTENTION`. |
+| WINDOWS-B | Target exists and publication may have happened | Preserve target and quarantine; never restore plaintext or mark `PUBLISHED` from syntax; locked uncertainty is `RECOVERY_AUTH_REQUIRED`. |
+| WINDOWS-C | Generation/provenance does not match transaction evidence | Preserve external target and every unproven artifact; `NEEDS_ATTENTION`; no cleanup. |
 
 The deterministic crash oracle uses one authoritative set of **19 hooks**.
-The same names and semantics appear in the Implementation Plan. A child
-Docus server runs against an isolated temporary vault; at the selected hook
-it signals the parent, the parent terminates the child without graceful
+The same names and semantics appear in the Implementation Plan. The full set
+is applicable to the automatic Windows path and to platform-independent
+SQLite/IDB cleanup. On Linux/macOS, candidate preparation uses
+`AFTER_JOURNAL_PREPARED` and `AFTER_CIPHERTEXT_TEMP_FSYNC`; post-user
+verification uses `AFTER_AUTHENTICATED_READBACK`,
+`BEFORE_PUBLISHED_JOURNAL`, `AFTER_PUBLISHED_JOURNAL` and the cleanup hooks.
+`BEFORE_SOURCE_TRANSITION`, `AFTER_SOURCE_TRANSITION`,
+`BEFORE_CIPHERTEXT_PUBLISH`, `AFTER_CIPHERTEXT_PUBLISH_SYSCALL`,
+`AFTER_TARGET_DURABILITY`, `BEFORE_SOURCE_QUARANTINE_UNLINK`,
+`AFTER_SOURCE_QUARANTINE_UNLINK_BEFORE_DIR_DURABILITY` and
+`AFTER_SOURCE_QUARANTINE_DIR_DURABILITY` are explicitly **not applicable** to
+the POSIX manual workflow; no fake seam is emitted around a user action. A
+child Docus server runs against an isolated temporary vault; at an applicable
+hook it signals the parent, the parent terminates the child without graceful
 cleanup, and a fresh process restarts against the same durable state. No
-sleep, `waitForTimeout`, timing guess or random kill is evidence. The
-quarantine hooks deliberately distinguish the unlink syscall from the parent
-directory durability barrier. The two SQLite hooks explicitly cover the
-whole-session `DISCARD_AI_SESSION` operation as mapped below.
+sleep, `waitForTimeout`, timing guess or random kill is evidence. The two
+SQLite hooks explicitly cover the whole-session `DISCARD_AI_SESSION` operation
+as mapped below.
+
+Applicability is frozen by operation, not guessed at runtime:
+
+| Hook family | Automatic Windows finalize | Linux/macOS `USER_FINALIZE_REQUIRED` |
+| --- | --- | --- |
+| `AFTER_JOURNAL_PREPARED`, `AFTER_CIPHERTEXT_TEMP_FSYNC` | Applicable | Applicable to candidate preparation |
+| `BEFORE_SOURCE_TRANSITION`, `AFTER_SOURCE_TRANSITION`, `BEFORE_CIPHERTEXT_PUBLISH`, `AFTER_CIPHERTEXT_PUBLISH_SYSCALL`, `AFTER_TARGET_DURABILITY` | Applicable | **Not applicable**; no Docus plaintext namespace mutation or fake seam |
+| `AFTER_AUTHENTICATED_READBACK`, `BEFORE_PUBLISHED_JOURNAL`, `AFTER_PUBLISHED_JOURNAL` | Applicable | Applicable after external user finalize verification |
+| `BEFORE_SQLITE_CLEANUP_COMMIT`, `AFTER_SQLITE_CLEANUP_COMMIT`, `BEFORE_IDB_DISPOSITION_COMMIT`, `AFTER_IDB_DISPOSITION_COMMIT`, `BEFORE_ITEM_COMPLETE`, `AFTER_ITEM_COMPLETE` | Applicable | Applicable after exact post-user verification |
+| `BEFORE_SOURCE_QUARANTINE_UNLINK`, `AFTER_SOURCE_QUARANTINE_UNLINK_BEFORE_DIR_DURABILITY`, `AFTER_SOURCE_QUARANTINE_DIR_DURABILITY` | Applicable | **Not applicable**; POSIX creates no Docus plaintext quarantine |
 
 | Hook | Filesystem state | Journal / SQLite ledger | IDB | Locked restart / authoritative generation | Allowed / forbidden action; next state |
 | --- | --- | --- | --- | --- | --- |
@@ -922,14 +987,16 @@ whole-session `DISCARD_AI_SESSION` operation as mapped below.
 | `BEFORE_ITEM_COMPLETE` | Authenticated target; no owned plaintext quarantine | all required cleanup durable | dispositions durable | locked; target authoritative | Revalidate consent/provenance; no cleanup guess; `CLEANUP_PENDING` |
 | `AFTER_ITEM_COMPLETE` | Authenticated target; no owned plaintext artifact | item COMPLETE durable | dispositions durable | locked; target authoritative | Idempotent no-op; aggregate may complete only with all consents/residuals |
 
-For the quarantine-removal rows, the idempotent restart rule is exact: after
+For the quarantine-removal rows, the idempotent restart rule applies only to
+the automatic Windows path: after
 `AFTER_SOURCE_QUARANTINE_UNLINK_BEFORE_DIR_DURABILITY`, an absent name is not
-recreated; the new process fsyncs the parent and records durable absence. If
-the name is still present, it may retry unlink only after exact native
-reacquisition proves the recorded quarantine generation. A different
-generation is an external occupant and is preserved with `NEEDS_ATTENTION`.
-After `AFTER_SOURCE_QUARANTINE_DIR_DURABILITY`, an absent quarantine is a
-committed forward state and cleanup never waits for plaintext.
+recreated; the new process flushes the parent and records durable absence. If
+the name is still present, it may retry unlink only after the reviewed
+handle-bound operation proves the recorded generation. A different generation
+is an external occupant and is preserved with `NEEDS_ATTENTION`. After
+`AFTER_SOURCE_QUARANTINE_DIR_DURABILITY`, an absent Windows quarantine is a
+committed forward state. Linux/macOS have no Docus-created plaintext
+quarantine and these three hooks are not applicable.
 
 ### 15.1 AI whole-session disposition mapping
 
@@ -948,29 +1015,26 @@ set at the same apparent ID is external state, not an owned continuation.
 `RETAIN_AI_HISTORY` uses no destructive SQLite hook; it records explicit
 policy retention and remains visible in the completion summary.
 
-On an unlocked restart, every hook first revalidates the current epoch,
-inventory consent and exact native generations. The pre-publication hooks
-(`AFTER_JOURNAL_PREPARED`, `AFTER_CIPHERTEXT_TEMP_FSYNC`,
-`BEFORE_SOURCE_TRANSITION`, `AFTER_SOURCE_TRANSITION`,
-`BEFORE_CIPHERTEXT_PUBLISH`) may retry only their recorded phase with the
-exact source/parent/quarantine proof. The publication hooks
-(`AFTER_CIPHERTEXT_PUBLISH_SYSCALL`, `AFTER_TARGET_DURABILITY`,
-`AFTER_AUTHENTICATED_READBACK`, `BEFORE_PUBLISHED_JOURNAL`) must authenticate
-the exact target before writing `PUBLISHED`; failure remains attention and
-never restores plaintext. The post-publication SQLite, IDB and quarantine
-hooks continue only the exact pending action after scope/generation checks;
-the unlink-before-directory-durability hook inspects namespace rather than
-recreating it, and `AFTER_ITEM_COMPLETE` is an idempotent no-op. This is the
-unlocked counterpart of every locked-restart row above.
+On an unlocked restart, every applicable hook first revalidates the current
+epoch and inventory consent. Windows automatic pre-publication hooks may retry
+only the recorded phase with the captured handle/parent proof; its publication
+hooks authenticate the exact target before writing `PUBLISHED`, and its
+quarantine hooks continue only after exact handle-bound checks. Linux/macOS
+candidate hooks may retry candidate preparation; after a user action, the
+readback and journal hooks authenticate the exact candidate and then continue
+forward. The POSIX source-transition/publication/quarantine hooks are skipped,
+not simulated. SQLite, IDB and `AFTER_ITEM_COMPLETE` remain idempotent after
+scope/generation checks. This is the unlocked counterpart of every applicable
+locked-restart row above.
 
-Lock/logout/expiry/capability replacement aborts pre-publication operations and
-fences late results. Once the publication syscall may have passed,
-authorization loss does not undo ciphertext; a new unlocked run performs
-deferred authentication and then completes cleanup. Every hook row has a
-precondition, completed/not-durable boundary, durable ledger expectation,
-filesystem/SQLite/IDB observation, locked and unlocked restart rule,
-forbidden transition and idempotent rerun result. The 19 hook names and the AI
-mapping above are normative for the future test plan and implementation
+Lock/logout/expiry/capability replacement aborts candidate preparation and
+fences late results. Windows publication remains monotonic once its syscall may
+have passed. A POSIX user action is outside Docus authorization; a new
+unlocked run verifies actual bytes before any journal advancement. Every hook
+row has a precondition, completed/not-durable boundary, durable ledger
+expectation, filesystem/SQLite/IDB observation, locked and unlocked restart
+rule, forbidden transition and idempotent rerun result. The 19 hook names and
+the AI mapping above are normative for the future test plan and implementation
 evidence.
 
 ## 16. Privacy/logging requirements
@@ -1014,19 +1078,24 @@ D8.4 completion guarantees that, for Docus-controlled current managed-Diary
 surfaces, every supported legacy plaintext primary and auxiliary private store
 (including SQLite `sessions/messages` and structured managed-Diary AI
 tool-result envelopes) is in one explicitly reported category: resolved and
-cleaned, valid encrypted no-op, policy-retained private state, or unresolved
-`NEEDS_ATTENTION`. A provable AI exposure is never omitted from inventory or
-closure; retention is Docus-controlled policy state, not an external residual.
-No D8.4 migration transaction creates a new durable plaintext Diary-body copy.
-Valid V1 encrypted files remain unchanged, new D8.2/D8.3 boundaries remain
-active, and ordinary Note behavior is regression-tested.
+cleaned, valid encrypted no-op, policy-retained private state,
+`USER_FINALIZE_REQUIRED`, or unresolved `NEEDS_ATTENTION`. A provable AI
+exposure is never omitted from inventory or closure; retention is
+Docus-controlled policy state, not an external residual. No D8.4 migration
+transaction creates a new durable plaintext Diary-body copy. Linux/macOS
+candidate preparation never claims encrypted-at-rest closure until the user
+finalize is verified. Valid V1 encrypted files remain unchanged, new D8.2/D8.3
+boundaries remain active, and ordinary Note behavior is regression-tested.
 
 Completion does not guarantee cryptographic erasure from remote clones,
 third-party backups, external editor copies, downloaded PDFs, OS clipboard
 history, CI artifacts already exported, or arbitrary storage media. It does not
 claim that legacy Git plaintext was purged; the chosen Git policy retains it as
-an explicitly acknowledged policy-retained local exposure. The completion
-screen and evidence must separately disclose policy-retained AI history,
+an explicitly acknowledged policy-retained local exposure. A user-moved or
+user-retained plaintext backup outside the canonical managed path is recorded
+as `USER_CONTROLLED_PLAINTEXT_RESIDUAL`; Docus never claims to erase it. The
+completion screen and evidence must separately disclose policy-retained AI
+history, pending user-finalize, user-controlled plaintext residuals,
 unresolved Docus-controlled attention and external/uncontrolled copies.
 
 ## 19. Explicit residual risks
@@ -1049,21 +1118,22 @@ The future implementation is acceptable only when all are true:
 - Every managed file is classified before generic parsing; all 23 planning
   decisions are implemented without a second key/session owner.
 - Locked restart never treats a syntactic V1 envelope as authenticated:
-  possible publication enters `RECOVERY_AUTH_REQUIRED`, unlock performs exact
-  ciphertext-fingerprint/generation/AES-GCM/AAD reconciliation, and failed
-  authentication preserves target/quarantine with `NEEDS_ATTENTION`.
+  Windows possible publication enters `RECOVERY_AUTH_REQUIRED`; Linux/macOS
+  candidate durability restores `USER_FINALIZE_REQUIRED`; unlock performs
+  exact ciphertext-fingerprint/generation/AES-GCM/AAD reconciliation, and
+  failed authentication preserves all artifacts with `NEEDS_ATTENTION`.
 - Plaintext happy path, valid encrypted no-op, repeat/idempotency, malformed,
   unknown, auth/AAD/vault mismatch, missing/stale/ambiguous metadata,
   external races, lock/logout/expiry and restart tests pass.
 - Filesystem inspection proves no new plaintext body in temp, staging, journal,
-  rollback, recovery, quarantine, SQLite ledger, new Git commit, log or test
+  rollback, recovery, candidate, SQLite ledger, new Git commit, log or test
   artifact at every phase.
-- `DiaryMigrationFs` is the sole native ownership/publication owner on Linux,
-  macOS and Windows; the source mutation is a captured-handle conditional
-  generation check at the namespace operation, no unsupported operation falls
-  back to copy/delete or overwrite rename, restart uses exact reacquisition or
-  `QUARANTINE_OWNERSHIP_UNPROVEN`, and unknown directory durability never
-  becomes `PUBLISHED`.
+- `DiaryMigrationFs` is the sole migration filesystem owner. Windows automatic
+  finalize uses the reviewed captured-handle conditional generation operation;
+  Linux/macOS use only safe candidate preparation and
+  `USER_FINALIZE_REQUIRED`. No unsupported operation falls back to
+  copy/delete or overwrite rename, no Docus POSIX operation mutates the
+  plaintext namespace, and unknown durability never becomes `PUBLISHED`.
 - Every destructive action is bound to an immutable `inventoryRevision`, exact
   item/generation and action scope; a new/changed row requires new consent.
 - Legacy Draft/Recovery rows are never silently deleted; valid rows are
@@ -1080,9 +1150,15 @@ The future implementation is acceptable only when all are true:
   occurs, and retained exposure is explicitly acknowledged.
 - Crash/restart recovery, rerun convergence and cross-platform filesystem
   behavior pass on Linux, macOS and Windows using the exact 19-hook
-  deterministic oracle in §15, including the unlink-before-directory-fsync
-  boundary and whole-session AI disposition mapping; no timing sleeps are
-  accepted.
+  deterministic oracle in §15, including the Windows unlink-before-directory-
+  fsync boundary, POSIX candidate-durable -> `USER_FINALIZE_REQUIRED` and
+  post-user-finalize verification, and whole-session AI disposition mapping;
+  no timing sleeps or fake hooks around user actions are accepted.
+- Linux/macOS release evidence proves candidate preparation works, no Docus
+  plaintext rename/delete occurs, `USER_FINALIZE_REQUIRED` survives restart,
+  stale source/candidate conflicts are detected, authenticated user-finalize
+  verification works, and ordinary Notes are unchanged. Windows evidence
+  proves handle-bound automatic migration, races, restart and durability.
 - Typecheck, build, full unit/integration, History, Recovery, browser E2E,
   Draft Store, auth, tags-scale, visual and Docker smoke suites are green.
 - Implementation evidence, exact-head CI, residual-risk statement,
@@ -1096,8 +1172,11 @@ move, delete or reference rewriting; broad SQLite schema redesign; automatic
 external-copy deletion; secure media erase; unrelated D7/D8.0-D8.3 reopening;
 and any implementation work before Independent Planning Review approval.
 
-The next authorized phase is **D8.4 Independent Planning Re-review Round 2**.
-It must revisit the two historical open findings (`D8.4-IPR-P1-2` and
-`D8.4-IPR-P2-3`) against this PRD, the companion Implementation Plan and the
-immutable review evidence, while regression-checking the six findings already
-closed, before any production change begins.
+The next authorized phase is **D8.4 Independent Planning Re-review Round 3**.
+It must determine whether the impossible POSIX automatic exact-source
+mutation has been removed from current authority, whether
+`USER_FINALIZE_REQUIRED` is coherent and safely verified, whether Windows
+automatic migration remains feasible, whether all residual guarantees are
+accurately scoped, and whether the seven previously closed findings remain
+closed. Only `PASS (0/0/0)` may approve planning; no production change begins
+before that separate approval.
