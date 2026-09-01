@@ -30,6 +30,8 @@ const themeTitle = computed<string>(() => {
   return t('nav.theme', { current, next })
 })
 
+const isBills = computed(() => route?.path?.startsWith('/bills') ?? false)
+
 const SCOPE_CHIPS = [
   { scope: 'note', label: 'note', icon: ICON_SCOPE_NOTE },
   { scope: 'diary', label: 'diary', icon: ICON_SCOPE_DIARY },
@@ -152,6 +154,18 @@ onBeforeUnmount(() => {
       >
         <img class="brand-logo" :src="'/logo-48.png'" :alt="t('nav.logo_alt')" width="24" height="24" />
         <span class="brand-wordmark">Docus</span>
+      </button>
+      <button
+        class="nav-module-link"
+        :class="{ active: isBills }"
+        type="button"
+        :aria-current="isBills ? 'page' : undefined"
+        :title="t('nav.bills_hint')"
+        data-testid="bills-nav-link"
+        @click="router.push('/bills')"
+      >
+        <span class="nav-module-icon" v-html="ICON_SCOPE_LEDGER" aria-hidden="true" />
+        <span class="nav-module-label">{{ t('nav.bills') }}</span>
       </button>
       <!-- Scope filter: lives in the navbar (the file tree header is too
            narrow on 150px sidebars). Hidden outside the vault since the

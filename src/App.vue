@@ -26,15 +26,13 @@ const toast = useToast()
 const diaryAccess = useDiaryAccessSession()
 const { activeScope, selectScope } = useScopeFilter()
 /* Vault routes AND dev previews both set `fullWidth: true` so the
-   navbar sits at its shorter height. But only vault routes should
-   lock the outer scroll — the dev previews (/__icon-preview,
-   /__markdown-test, /__editor-test) are standalone pages that
-   need to scroll vertically through their full content. The
-   `/__` path prefix is the marker; adding new dev previews
-   under that prefix automatically inherits the correct behavior. */
+   navbar sits at its shorter height. Bills also uses a full-width
+   page container, but it is a normal scrollable workspace surface and
+   must not inherit Vault's locked outer scroll. Only the `/vault` path
+   is the marker for the compact Vault chrome and scroll lock. */
 const isVault = computed(() =>
   route.meta.fullWidth === true
-  && !route.path.startsWith('/__')
+  && route.path.startsWith('/vault')
   && auth.state.value === 'authenticated'
   && vaultIdentity.state.value === 'ready',
 )

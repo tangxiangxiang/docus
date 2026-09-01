@@ -56,6 +56,18 @@ const router = createRouter({
       component: () => import('../views/VaultView.vue'),
       meta: { fullWidth: true, workspace: true },
     },
+    {
+      path: '/bills',
+      name: 'bills',
+      component: () => import('../views/BillsView.vue'),
+      meta: { fullWidth: true, workspace: true },
+    },
+    {
+      path: '/bills/transactions',
+      name: 'bills-transactions',
+      component: () => import('../views/BillsTransactionsView.vue'),
+      meta: { fullWidth: true, workspace: true },
+    },
     { path: '/:pathMatch(.*)*', redirect: '/vault', meta: { workspace: true } },
   ],
   scrollBehavior() {

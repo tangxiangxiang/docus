@@ -66,6 +66,15 @@ describe('authentication router guard', () => {
     expect(router.currentRoute.value.query.redirect).toBe('/vault/a/b?x=1#test')
   })
 
+  it('preserves a Bills deep link for an unauthenticated owner', async () => {
+    vi.mocked(getAuthStatus).mockResolvedValue({ authenticated: false, setupRequired: false })
+
+    await router.push('/bills/transactions?period=month')
+
+    expect(router.currentRoute.value.name).toBe('login')
+    expect(router.currentRoute.value.query.redirect).toBe('/bills/transactions?period=month')
+  })
+
   it('rejects an external redirect when an authenticated owner visits an auth page', async () => {
     vi.mocked(getAuthStatus).mockResolvedValue({
       authenticated: true,

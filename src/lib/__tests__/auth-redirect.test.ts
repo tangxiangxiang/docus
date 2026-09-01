@@ -7,6 +7,8 @@ describe('safe internal auth redirects', () => {
     '/vault',
     '/vault/a/b',
     '/vault/a?view=read#section',
+    '/bills',
+    '/bills/transactions?period=month',
   ])('accepts %s', (value) => {
     expect(safeInternalRedirect(value)).toBe(value)
     expect(isSafeInternalRedirect(value)).toBe(true)
