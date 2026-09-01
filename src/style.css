@@ -958,7 +958,7 @@ main.container.auth-page-shell {
 .bills-heading-icon svg { width: 16px; height: 16px; }
 .bills-heading-icon-teal { background: var(--bills-income-soft); color: var(--bills-income); }
 .bills-heading-icon-violet { background: var(--bills-expense-soft); color: var(--bills-expense); }
-.bills-asset-totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; margin: 20px 0 11px; }
+.bills-asset-totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; margin: 15px 0 16px; }
 .bills-asset-total { min-width: 0; padding: 12px 11px; border-radius: 11px; background: var(--bills-surface-soft); }
 .bills-asset-total-primary { background: linear-gradient(145deg, #f1f0ff, #fafaff); }
 .bills-asset-label { display: block; color: var(--bills-muted); font-size: .66rem; }
