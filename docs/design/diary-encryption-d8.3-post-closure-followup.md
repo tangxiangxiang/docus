@@ -133,3 +133,74 @@ D8.3 post-closure follow-up:  IMPLEMENTED / REVIEW-READY
 Independent follow-up review: NOT YET PERFORMED
 D8.4:                         do not claim IMPLEMENTED or REVIEW-CLOSED
 ```
+
+## Post-closure E2E remediation and CI closure
+
+This section extends the follow-up evidence; it does not rewrite the
+historical D8.3 closure. Cross-platform CI `#607` (`33468893504`) exposed four
+deterministic browser assertions that still encoded the historical
+direct-delete rejection after the opaque direct-delete owner had become the
+authoritative contract.
+
+```text
+Starting HEAD:              1b50537ff12b23d5cdc4ef0cbc7583b7cbf0454a
+Implementation/Test commit: 03cf19da9387fcbf8e1c59cafda37957d0df1e8f
+Evidence/Docs commit:       recorded by this document's commit
+Final exact-head CI:        verified after the evidence commit is pushed; see the completion report
+Independent follow-up review: NOT YET PERFORMED
+```
+
+### Root cause and remediation
+
+No production defect was found. `server/diaryAccess/delete.ts`, the posts and
+folders routes, mutation policy, History guards, and the D8.3 authority all
+agreed on the current boundary: unlocked direct managed-document delete is
+supported, while folder/bulk delete, rename/move/reference mutation, and
+Diary History remain fail-closed.
+
+The stale browser coverage was synchronized with that already-authoritative
+contract:
+
+* `e2e/diary-access-fixture.spec.ts` now treats its created document cleanup as
+  a successful direct managed delete and proves the path is subsequently 404.
+* `e2e/diary-mood-lifecycle-regression.spec.ts` retains its Mood CAS identity
+  checks, then proves direct delete returns `200 {"ok":true}` and removes the
+  document.
+* `e2e/diary-release.spec.ts` proves the Calendar marker disappears after a
+  direct delete, then recreates the managed document and proves recursive
+  deletion of the protected Diary folder is rejected with 422 while the
+  managed document and structural marker remain.
+* `e2e/diary-reader.spec.ts` preserves the valid `503
+  diary-metadata-unavailable` contract for the deliberately injected
+  physical-only future file. Only the isolated test-owned temporary-vault
+  fixture is removed directly after that exact response; the test does not
+  broaden or hide the production outcome.
+* `e2e/fixtures/diary.ts` now documents why temporary-vault cleanup still has
+  to cover physical-only, metadata-less test fixtures.
+
+No retry, skip, quarantine, status wildcard, CI bypass, or production-code
+change was introduced. Existing browser coverage continues to prove all
+managed History endpoints reject with `422 diary-history-encrypted-unsupported`.
+The server/unit coverage continues to prove History Changes filtering and the
+managed file-History UI capability guard.
+
+### Validation
+
+| Area | Result |
+| --- | --- |
+| Four directly affected browser specs | 31 passed, 3 pre-existing explicit D8.2 skips |
+| Managed delete / History / context menu / crash recovery | 4 files, 259 tests passed |
+| Typecheck | `npm run typecheck` passed (client and server) |
+| Production build | `npm run build` passed; existing dependency annotation and chunk-size warnings only |
+| Standard unit suite | 242 files, 3,615 passed, 9 pre-existing skips |
+| History integration | 5 files, 178 passed |
+| Recovery/crash integration | 5 files, 198 passed |
+| Full Chromium browser/E2E | 148 passed, 7 pre-existing explicit D8.2 skips |
+| Local platform scope | macOS Chromium only; Linux, Windows, Node 22, Docker, auth, visual, and tags-scale conclusions are owned by exact-head CI |
+
+CI `#607` itself remains a historical failed run for starting HEAD
+`1b50537ff12b23d5cdc4ef0cbc7583b7cbf0454a`: all four verify jobs failed only
+in cross-platform browser E2E with the same four contract mismatches, while
+typecheck, build, full unit/integration, visual, tags-scale, Docker smoke, and
+auth-browser passed. The final pushed evidence HEAD and every required job are
+verified separately before this remediation is reported complete.
