@@ -141,7 +141,7 @@ describe('VaultView editor tab wiring', () => {
   it('keeps the editor and tabs mounted while the History sidebar is active', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
 
-    expect(source).toContain('v-else-if="activePanel === \'history\'"')
+    expect(source).toContain('v-else-if="workspaceSidebarVisible && activePanel === \'history\'"')
     expect(source).toContain('@open-revision="openHistoryComparison"')
     expect(source).not.toContain('import DiffView')
     expect(source).not.toContain("activePanel !== 'history' && tabs.length > 0")
@@ -607,7 +607,7 @@ describe('VaultView D3.2 Diary surface wiring', () => {
     expect(branch).toContain(':error="treeError"')
     expect(source).toContain('<FileTree')
     expect(source).toContain(':tree="tree"')
-    expect(source).toContain("v-if=\"activePanel === 'files'\"")
+    expect(source).toContain("v-if=\"workspaceSidebarVisible && activePanel === 'files'\"")
   })
 
   it('routes D3.2 date intent to the D4 lifecycle owner', () => {
@@ -702,11 +702,13 @@ describe('VaultView D3.2 Diary surface wiring', () => {
     expect(source).toContain("'diary-calendar-mode': isDiaryCalendarVisible")
     expect(source).toContain('v-if="isDiaryCalendarMounted"')
     expect(source).toContain('v-show="!isDiaryPresentationPrimary"')
-    expect(styles).toContain('.vault.diary-calendar-mode')
-    expect(styles).toContain('.vault.diary-calendar-mode > :is(.file-tree, .tag-panel, .history-panel, .recovery-center)')
-    expect(styles).toContain('.vault.diary-calendar-mode > .right-rail-slot')
-    expect(styles).toContain('.vault.diary-calendar-mode > .status-bar-row')
-    expect(styles).toContain('.vault.diary-calendar-mode .diary-calendar-content')
+    expect(source).toContain('const routeSidebarVisible = computed(() => route.meta.sidebar !== false)')
+    expect(source).toContain('const workspaceSidebarVisible = computed(() => routeSidebarVisible.value && !isDiaryCalendarVisible.value)')
+    expect(source).toContain('useVaultLayout({ sidebarVisible: sidebarLayoutVisible })')
+    expect(source).toContain('v-if="workspaceSidebarVisible"')
+    expect(styles).not.toContain('.vault.diary-calendar-mode > :is(.file-tree, .tag-panel, .history-panel, .recovery-center)')
+    expect(styles).not.toContain('.vault.diary-calendar-mode > .right-rail-slot')
+    expect(styles).not.toContain('.vault.diary-calendar-mode > .status-bar-row')
     expect(styles).not.toContain('.vault.diary-reader-mode')
   })
 

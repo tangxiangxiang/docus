@@ -37,7 +37,8 @@ async function unmountTagManagementHarness(page: Page): Promise<void> {
 }
 
 async function openProductionTagManagementPanel(page: Page): Promise<Locator> {
-  await page.locator('button.ab-btn-settings').click()
+  await page.locator('.navbar [data-testid="account-button"]').click()
+  await page.locator('[data-testid="account-settings"]').click()
   const settings = page.locator('.settings-modal')
   await expect(settings).toBeVisible()
   await settings.getByRole('button', { name: /^(tags|标签)$/i }).click()
@@ -308,7 +309,7 @@ test('authenticated Rename transport preserves Markdown and Git boundaries', asy
     const finalProductionDialog = await openProductionTagManagementPanel(page)
     await expect(finalProductionDialog.locator('[data-operation="remove"]')).toHaveCount(1)
     await closeProductionTagManagementPanel(page, finalProductionDialog)
-    await expect(page.locator('button.ab-btn-settings')).toBeFocused()
+    await expect(page.locator('.navbar [data-testid="account-button"]')).toBeFocused()
   } finally {
     await cleanupCreatedPaths(request, createdPaths)
   }

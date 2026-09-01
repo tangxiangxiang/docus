@@ -9,10 +9,26 @@ import { ICON_EDIT, ICON_EYE, ICON_PANEL_RIGHT_OPEN, ICON_SCOPE_NOTE, ICON_SCOPE
 import { useVaultLayout } from '../composables/vault/useVaultLayout'
 import { useI18n } from '../composables/useI18n'
 import { DiaryAccessContextKey } from '../composables/diary/diaryAccessContext'
+import AccountMenu from './vault/AccountMenu.vue'
 
-const props = defineProps<{ isVault?: boolean; logoutBusy?: boolean }>()
+const props = withDefaults(defineProps<{
+  isVault?: boolean
+  username?: string | null
+  logoutBusy?: boolean
+  diaryUnlocked?: boolean
+  diaryLockBusy?: boolean
+}>(), {
+  isVault: false,
+  username: '',
+  logoutBusy: false,
+  diaryUnlocked: false,
+  diaryLockBusy: false,
+})
 const emit = defineEmits<{
   'open-search': []
+  'open-settings': []
+  logout: []
+  'lock-diary': []
 }>()
 
 const { theme, toggle } = useTheme()
@@ -222,6 +238,16 @@ onBeforeUnmount(() => {
         >
           <span class="right-rail-toggle-icon" aria-hidden="true" v-html="ICON_PANEL_RIGHT_OPEN" />
         </button>
+        <AccountMenu
+          v-if="props.isVault"
+          :username="props.username"
+          :logout-busy="props.logoutBusy"
+          :diary-unlocked="props.diaryUnlocked"
+          :diary-lock-busy="props.diaryLockBusy"
+          @open-settings="emit('open-settings')"
+          @logout="emit('logout')"
+          @lock-diary="emit('lock-diary')"
+        />
       </div>
     </div>
   </header>

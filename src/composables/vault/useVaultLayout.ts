@@ -36,6 +36,15 @@ export interface VaultLayout {
   rightRailCollapsed: boolean
 }
 
+export interface UseVaultLayoutOptions {
+  /**
+   * Whether the workspace chrome should reserve its left activity/sidebar
+   * tracks. Calendar Home passes its presentation state here so the layout
+   * can remove the tracks instead of hiding them with a page-level CSS hack.
+   */
+  sidebarVisible?: Readonly<Ref<boolean>>
+}
+
 const STORAGE_KEY = 'docus.vault.layout'
 const DEFAULTS: VaultLayout = {
   activePanel: 'files',
@@ -90,7 +99,8 @@ export function __resetVaultLayoutState(): void {
   _rightRailCollapsed.value = DEFAULTS.rightRailCollapsed
 }
 
-export function useVaultLayout() {
+export function useVaultLayout(options: UseVaultLayoutOptions = {}) {
+  const sidebarVisible = options.sidebarVisible ?? ref(true)
   // useStorage handles the deep-compare-and-skip-noop write for us, so the
   // bidirectional watcher below doesn't ping-pong on rehydration. The
   // serializer.read keeps the old {fileTreeOpen, fileTreeWidth} shape
@@ -202,16 +212,20 @@ export function useVaultLayout() {
     // are load-bearing — they separate the splitter tracks from
     // `1fr` in the template literal below. Don't normalize the
     // whitespace.
-    const left = sidePanelOpen.value ? `${sidePanelWidth.value}px 1px ` : ''
+    const left = sidebarVisible.value && sidePanelOpen.value ? `${sidePanelWidth.value}px 1px ` : ''
     // Keep the stored width stable while allowing the rendered track to
     // yield space on compact Vault windows. The 38vw cap only becomes
     // meaningful below the normal desktop range; max(280px, ...) keeps
     // the rail usable on very narrow screens.
     const railTrack = `minmax(280px, max(280px, min(${rightRailWidth.value}px, 560px, 38vw)))`
-    const right = !rightRailCollapsed.value ? ` 1px ${railTrack}` : ''
+    // Calendar Home is a canvas-first surface. Its right rail is not mounted
+    // while the same presentation flag is false, so do not reserve a hidden
+    // rail track here either.
+    const right = sidebarVisible.value && !rightRailCollapsed.value ? ` 1px ${railTrack}` : ''
+    const activity = sidebarVisible.value ? '40px ' : ''
     return {
-      gridTemplateColumns: `40px ${left}1fr${right}`,
-      gridTemplateRows: '1fr 24px',
+      gridTemplateColumns: `${activity}${left}1fr${right}`,
+      gridTemplateRows: sidebarVisible.value ? '1fr 24px' : '1fr',
     }
   })
   // Template ref to the outer .vault element lives in VaultView.vue (so

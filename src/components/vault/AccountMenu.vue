@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from '../../composables/useI18n'
-import { ICON_AB_USER, ICON_LOGOUT } from './icons'
+import { ICON_AB_SETTINGS, ICON_AB_USER, ICON_LOGOUT } from './icons'
 
 const props = withDefaults(defineProps<{
   username?: string | null
@@ -16,6 +16,7 @@ const props = withDefaults(defineProps<{
 })
 
 const emit = defineEmits<{
+  'open-settings': []
   logout: []
   'lock-diary': []
 }>()
@@ -65,6 +66,18 @@ function handleLogout(): void {
   if (props.logoutBusy) return
   closeAccountMenu(true)
   emit('logout')
+}
+
+async function handleSettings(): Promise<void> {
+  if (props.logoutBusy) return
+  // Settings is rendered outside this menu. Close and unmount the popover
+  // first, then restore focus to the stable account trigger before notifying
+  // the shell. The SettingsModal focus trap can therefore capture the real
+  // trigger and return focus here when it closes.
+  closeAccountMenu()
+  await nextTick()
+  buttonRef.value?.focus()
+  emit('open-settings')
 }
 
 function handleLockDiary(): void {
@@ -165,10 +178,22 @@ onBeforeUnmount(() => {
       @keydown="onMenuKeydown"
     >
       <div class="account-menu-summary">
-        <span class="account-menu-summary-label">{{ t('activity.current_user') }}</span>
+        <span class="account-menu-summary-label">{{ t('activity.account') }}</span>
         <span class="account-menu-username" :title="displayUsername">{{ displayUsername }}</span>
       </div>
       <div class="account-menu-divider" role="separator" />
+      <button
+        type="button"
+        class="account-menu-item"
+        role="menuitem"
+        tabindex="-1"
+        :disabled="props.logoutBusy"
+        data-testid="account-settings"
+        @click="handleSettings"
+      >
+        <span class="account-menu-item-icon" v-html="ICON_AB_SETTINGS" aria-hidden="true" />
+        <span>{{ t('activity.settings') }}</span>
+      </button>
       <button
         v-if="props.diaryUnlocked"
         type="button"

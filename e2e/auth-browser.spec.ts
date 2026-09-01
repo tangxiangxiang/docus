@@ -73,9 +73,8 @@ test('real setup, logout, and login UI paths establish the session', async ({ pa
 
   await expect(page).toHaveURL(/\/vault(?:$|\?)/)
   await expect(page.locator('.vault')).toBeVisible({ timeout: 15_000 })
-  const activityButtons = page.locator('.activity-bar .ab-btn')
-  const activityButtonClasses = await activityButtons.evaluateAll((buttons) => buttons.map((button) => button.className))
-  expect(activityButtonClasses.slice(-2)).toEqual(['ab-btn ab-btn-account', 'ab-btn ab-btn-settings'])
+  await expect(page.locator('.activity-bar [data-testid="account-button"]')).toHaveCount(0)
+  await expect(page.locator('.activity-bar .ab-btn-settings')).toHaveCount(0)
   const identityAfterSetup = await page.request.get('/api/vault/identity')
   expect(identityAfterSetup.status()).toBe(200)
   expect((await identityAfterSetup.json()).vaultId).toMatch(/^[0-9a-f]{12}$/)
@@ -91,7 +90,7 @@ test('real setup, logout, and login UI paths establish the session', async ({ pa
   expect(JSON.stringify(browserStorage)).not.toContain('browser-owner-password-strong-123')
 
   await expect(page.locator('.nav-logout')).toHaveCount(0)
-  const accountButton = page.locator('[data-testid="account-button"]')
+  const accountButton = page.locator('.navbar [data-testid="account-button"]')
   await expect(accountButton).toBeVisible()
   await accountButton.click()
   const accountMenu = page.locator('[data-testid="account-menu"]')
@@ -99,13 +98,11 @@ test('real setup, logout, and login UI paths establish the session', async ({ pa
   await expect(accountMenu).toContainText(OWNER_USERNAME)
   const accountBox = await accountButton.boundingBox()
   const menuBox = await accountMenu.boundingBox()
-  const settingsBox = await page.locator('.ab-btn-settings').boundingBox()
   expect(accountBox).not.toBeNull()
   expect(menuBox).not.toBeNull()
-  expect(settingsBox).not.toBeNull()
-  expect(menuBox!.x).toBeGreaterThan(accountBox!.x)
-  expect(menuBox!.y).toBeLessThan(accountBox!.y)
-  expect(menuBox!.y + menuBox!.height).toBeLessThan(settingsBox!.y)
+  expect(menuBox!.x + menuBox!.width).toBeLessThanOrEqual(accountBox!.x + accountBox!.width + 1)
+  expect(menuBox!.y).toBeGreaterThanOrEqual(accountBox!.y + accountBox!.height - 1)
+  await expect(page.locator('[data-testid="account-settings"]')).toBeVisible()
   await accountMenu.locator('[data-testid="account-logout"]').click()
   await expect(page).toHaveURL(/\/login(?:\?|$)/)
   expect((await page.request.get('/api/vault/identity')).status()).toBe(401)
@@ -201,7 +198,8 @@ test('real revoked session preserves a browser draft through expiry, login, and 
     const url = new URL(response.url())
     return response.request().method() === 'GET' && url.pathname === '/api/ai/settings'
   })
-  await page.locator('button.ab-btn-settings').click()
+  await page.locator('.navbar [data-testid="account-button"]').click()
+  await page.locator('[data-testid="account-settings"]').click()
   const protectedResponse = await protectedResponsePromise
   expect(protectedResponse.status()).toBe(401)
   const protectedBody = await protectedResponse.json() as { code?: string }

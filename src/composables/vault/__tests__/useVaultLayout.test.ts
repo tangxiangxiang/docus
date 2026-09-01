@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { defineComponent, h, nextTick } from 'vue'
+import { defineComponent, h, nextTick, ref } from 'vue'
 import { mount } from '@vue/test-utils'
 import { __resetVaultLayoutState, useVaultLayout } from '../useVaultLayout'
 
@@ -84,6 +84,24 @@ describe('useVaultLayout', () => {
     const { layout } = setup()
     layout.rightRailCollapsed.value = true
     expect(layout.vaultStyle.value.gridTemplateColumns).toBe('40px 260px 1px 1fr')
+  })
+
+  it('removes all workspace chrome tracks when the sidebar is hidden', () => {
+    const sidebarVisible = ref(false)
+    let layout!: ReturnType<typeof useVaultLayout>
+    const wrapper = mount(defineComponent({
+      setup() {
+        layout = useVaultLayout({ sidebarVisible })
+        return () => h('div')
+      },
+    }))
+
+    expect(layout.vaultStyle.value.gridTemplateColumns).toBe('1fr')
+    expect(layout.vaultStyle.value.gridTemplateRows).toBe('1fr')
+
+    sidebarVisible.value = true
+    expect(layout.vaultStyle.value.gridTemplateColumns).toContain('40px')
+    wrapper.unmount()
   })
 
   it('persists only the unified right rail fields', async () => {

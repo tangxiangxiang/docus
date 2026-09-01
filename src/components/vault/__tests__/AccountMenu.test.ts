@@ -38,11 +38,16 @@ describe('AccountMenu', () => {
     await wrapper.vm.$nextTick()
     expect(button.attributes('aria-expanded')).toBe('true')
     expect(wrapper.get('[data-testid="account-menu"]').text()).toContain('xiangxiang')
+    const settings = wrapper.get('[data-testid="account-settings"]')
+    expect(settings.text()).toContain('Settings')
+    expect(settings.attributes('role')).toBe('menuitem')
+    expect(settings.attributes('tabindex')).toBe('-1')
+    expect(document.activeElement).toBe(settings.element)
     const logout = wrapper.get('[data-testid="account-logout"]')
     expect(logout.text()).toContain('Log out')
     expect(logout.attributes('role')).toBe('menuitem')
     expect(logout.attributes('tabindex')).toBe('-1')
-    expect(document.activeElement).toBe(logout.element)
+    expect(document.activeElement).not.toBe(logout.element)
 
     await button.trigger('click')
     expect(wrapper.find('[data-testid="account-menu"]').exists()).toBe(false)
@@ -66,10 +71,10 @@ describe('AccountMenu', () => {
 
     await button.trigger('click')
     await wrapper.vm.$nextTick()
-    const logout = wrapper.get('[data-testid="account-logout"]')
-    expect(document.activeElement).toBe(logout.element)
+    const settings = wrapper.get('[data-testid="account-settings"]')
+    expect(document.activeElement).toBe(settings.element)
 
-    logout.element.dispatchEvent(new KeyboardEvent('keydown', {
+    settings.element.dispatchEvent(new KeyboardEvent('keydown', {
       key: 'Escape',
       bubbles: true,
       cancelable: true,
@@ -87,6 +92,7 @@ describe('AccountMenu', () => {
 
       await button.trigger('click')
       await wrapper.vm.$nextTick()
+      const settings = wrapper.get('[data-testid="account-settings"]')
       const logout = wrapper.get('[data-testid="account-logout"]')
       const event = new KeyboardEvent('keydown', {
         key,
@@ -94,10 +100,12 @@ describe('AccountMenu', () => {
         cancelable: true,
       })
 
-      logout.element.dispatchEvent(event)
+      settings.element.dispatchEvent(event)
 
       expect(event.defaultPrevented).toBe(true)
-      expect(document.activeElement).toBe(logout.element)
+      expect(document.activeElement).toBe(
+        key === 'Home' ? settings.element : logout.element,
+      )
       expect(wrapper.find('[data-testid="account-menu"]').exists()).toBe(true)
     },
   )
@@ -134,6 +142,16 @@ describe('AccountMenu', () => {
     expect(wrapper.find('[data-testid="account-menu"]').exists()).toBe(false)
     expect(fetchSpy).not.toHaveBeenCalled()
     fetchSpy.mockRestore()
+  })
+
+  it('emits an open-settings intent from the account menu', async () => {
+    const wrapper = mountAccount()
+
+    await wrapper.get('[data-testid="account-button"]').trigger('click')
+    await wrapper.get('[data-testid="account-settings"]').trigger('click')
+
+    expect(wrapper.emitted('open-settings')).toHaveLength(1)
+    expect(wrapper.find('[data-testid="account-menu"]').exists()).toBe(false)
   })
 
   it('disables the account entry and prevents duplicate logout intents while busy', async () => {

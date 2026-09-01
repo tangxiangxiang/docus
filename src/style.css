@@ -1369,35 +1369,9 @@ main.container.auth-page-shell {
   --accent-bg: var(--vs-accent-bg);
 }
 
-/* D6.2 Diary Home is a primary presentation surface. Collapse document
-   chrome visually while Home is primary, without changing any of the
-   underlying panel/tab state. The scope-only v-if remains the Calendar's
-   mount boundary; this class only controls presentation. */
-.vault.diary-calendar-mode {
-  grid-template-columns: 40px minmax(0, 1fr) !important;
-}
-
-.vault.diary-calendar-mode > :is(.file-tree, .tag-panel, .history-panel, .recovery-center),
-.vault.diary-calendar-mode > .splitter,
-.vault.diary-calendar-mode > .right-rail-slot,
-.vault.diary-calendar-mode > .status-bar-row {
-  display: none !important;
-}
-
-.vault.diary-calendar-mode .editor-area {
-  grid-column: 2;
-  min-width: 0;
-}
-
-.vault.diary-calendar-mode .diary-calendar-content,
-.vault.diary-calendar-mode .diary-workspace-shell,
-.vault.diary-calendar-mode .diary-workspace-home {
-  width: 100%;
-  max-width: none;
-}
-
-/* On compact screens the same Home policy keeps the ActivityBar and Calendar
-   usable without allowing hidden document columns to reserve space. */
+/* On compact screens Calendar Home uses the full content canvas. The
+   visibility and grid tracks are owned by VaultView/useVaultLayout; this
+   media block only keeps the global navbar controls compact. */
 @media (max-width: 900px) {
   .navbar.is-vault.diary-calendar-mode .navbar-inner {
     gap: 8px;
@@ -1425,21 +1399,6 @@ main.container.auth-page-shell {
     gap: 2px;
   }
 
-  .vault.diary-calendar-mode {
-    grid-template-columns: 40px minmax(0, 1fr) !important;
-  }
-}
-
-/* On phone-sized Calendar-first surfaces, the side panel is not a second
-   product surface: it only steals the width needed by the seven-column
-   calendar. Hide the active side-panel implementation and its splitter only
-   while the Diary Calendar is the empty-workspace surface. The grid override
-   is intentionally scoped to the same mode, so opening a document or leaving
-   Diary restores the ordinary Vault layout. */
-@media (max-width: 420px) {
-  .vault.diary-calendar-mode {
-    grid-template-columns: 40px minmax(0, 1fr) !important;
-  }
 }
 
 /* Native Diary documents use the ordinary Vault chrome. On phone widths the
@@ -1474,18 +1433,14 @@ main.container.auth-page-shell {
   gap: 0;
   border-right: 1px solid var(--vs-border);
 }
-.activity-bar .ab-spacer {
-  flex: 1 1 auto;
-}
-
 .account-menu-root {
   position: relative;
   z-index: 2;
   flex: 0 0 36px;
 }
 .account-menu-root .ab-btn-account[aria-expanded='true'] {
-  color: var(--vs-text-1);
-  background: var(--vs-hover-bg);
+  color: var(--vs-text-1, var(--text-h));
+  background: var(--vs-hover-bg, var(--bg-soft));
 }
 .account-popover {
   position: absolute;
@@ -1494,11 +1449,11 @@ main.container.auth-page-shell {
   width: 200px;
   box-sizing: border-box;
   padding: 6px;
-  color: var(--vs-text-1);
-  background: var(--vs-bg-1);
-  border: 1px solid var(--vs-border);
+  color: var(--vs-text-1, var(--text-h));
+  background: var(--vs-bg-1, var(--bg));
+  border: 1px solid var(--vs-border, var(--border));
   border-radius: 7px;
-  box-shadow: 0 10px 24px color-mix(in srgb, var(--vs-text-1) 20%, transparent);
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--vs-text-1, var(--text-h)) 20%, transparent);
   z-index: 1000;
 }
 .account-menu-summary {
@@ -1509,13 +1464,13 @@ main.container.auth-page-shell {
   padding: 5px 8px 7px;
 }
 .account-menu-summary-label {
-  color: var(--vs-text-2);
+  color: var(--vs-text-2, var(--text-muted));
   font-size: 0.68rem;
   line-height: 1.25;
 }
 .account-menu-username {
   overflow: hidden;
-  color: var(--vs-text-1);
+  color: var(--vs-text-1, var(--text-h));
   font-size: 0.78rem;
   line-height: 1.35;
   text-overflow: ellipsis;
@@ -1524,7 +1479,7 @@ main.container.auth-page-shell {
 .account-menu-divider {
   height: 1px;
   margin: 0 2px 4px;
-  background: var(--vs-border);
+  background: var(--vs-border, var(--border));
 }
 .account-menu-item {
   display: flex;
@@ -1533,7 +1488,7 @@ main.container.auth-page-shell {
   width: 100%;
   min-height: 32px;
   padding: 0 8px;
-  color: var(--vs-text-1);
+  color: var(--vs-text-1, var(--text-h));
   font: inherit;
   font-size: 0.76rem;
   text-align: left;
@@ -1543,6 +1498,10 @@ main.container.auth-page-shell {
   cursor: pointer;
 }
 .account-menu-item:hover:not(:disabled) {
+  color: var(--vs-text-1, var(--text-h));
+  background: var(--vs-hover-bg, var(--bg-soft));
+}
+.account-menu-item[data-testid='account-logout']:hover:not(:disabled) {
   color: var(--vs-danger, #d73a49);
   background: color-mix(in srgb, var(--vs-danger, #d73a49) 10%, transparent);
 }
@@ -1561,6 +1520,30 @@ main.container.auth-page-shell {
   display: block;
   width: 14px;
   height: 14px;
+}
+
+/* In the global navbar AccountMenu behaves like the other 28px icon actions
+   rather than reserving the ActivityBar's former 36px column. */
+.nav-actions .account-menu-root {
+  flex: 0 0 28px;
+}
+.nav-actions .account-menu-root .ab-btn-account {
+  width: 28px;
+  height: 28px;
+  border-left: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-muted);
+}
+.nav-actions .account-menu-root .ab-btn-account:hover {
+  color: var(--text-h);
+  border-color: var(--border);
+  background: var(--bg-soft);
+}
+.nav-actions .account-menu-root .account-popover {
+  top: calc(100% + 7px);
+  right: 0;
+  bottom: auto;
+  left: auto;
 }
 
 /* History is a commit-first timeline in the standard side-panel column. */

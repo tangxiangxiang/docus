@@ -9,6 +9,7 @@ declare module 'vue-router' {
     publicDevPreview?: boolean
     workspace?: boolean
     fullWidth?: boolean
+    sidebar?: boolean
   }
 }
 
@@ -48,13 +49,13 @@ const router = createRouter({
       path: '/vault',
       name: 'vault',
       component: () => import('../views/VaultView.vue'),
-      meta: { fullWidth: true, workspace: true },
+      meta: { fullWidth: true, workspace: true, sidebar: true },
     },
     {
       path: '/vault/:pathMatch(.*)*',
       name: 'vault-doc',
       component: () => import('../views/VaultView.vue'),
-      meta: { fullWidth: true, workspace: true },
+      meta: { fullWidth: true, workspace: true, sidebar: true },
     },
     {
       path: '/bills',

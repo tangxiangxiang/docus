@@ -641,7 +641,7 @@ export const ICON_LOGOUT = `
   <path d="m10.5 5 3 3-3 3"/>
 </svg>`
 
-// ICON_AB_SETTINGS — activity-bar button that opens the settings modal.
+// ICON_AB_SETTINGS — settings action used inside the account menu.
 // The classic gear silhouette.
 export const ICON_AB_SETTINGS = `
 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">

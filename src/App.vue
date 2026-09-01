@@ -14,6 +14,7 @@ import { useToast } from './composables/useToast'
 import { useScopeFilter } from './composables/vault/useScopeFilter'
 import { useDiaryAccessSession } from './composables/diary/useDiaryAccessSession'
 import { DiaryAccessContextKey } from './composables/diary/diaryAccessContext'
+import { AppShellContextKey } from './composables/appShellContext'
 import DiaryAccessDialog from './components/diary/DiaryAccessDialog.vue'
 import type { ScopeKey } from '../shared/scopeProtocol'
 
@@ -25,6 +26,13 @@ const { t } = useI18n()
 const toast = useToast()
 const diaryAccess = useDiaryAccessSession()
 const { activeScope, selectScope } = useScopeFilter()
+const settingsRequestTick = ref(0)
+
+function requestSettings(): void {
+  settingsRequestTick.value += 1
+}
+
+provide(AppShellContextKey, { settingsRequestTick })
 /* Vault routes AND dev previews both set `fullWidth: true` so the
    navbar sits at its shorter height. Bills uses a full-width, scrollable
    workspace surface; it intentionally renders without the global chrome
@@ -86,6 +94,7 @@ async function onLogout(): Promise<void> {
 
 const diaryAccessOpen = ref(false)
 const diaryAccessBusy = ref(false)
+const diaryLockBusy = ref(false)
 const diaryAccessError = ref('')
 const diaryAccessMode = computed<'setup' | 'unlock'>(() => (
   diaryAccess.state.value === 'UNINITIALIZED' ? 'setup' : 'unlock'
@@ -164,11 +173,14 @@ function cancelDiaryAccess(): void {
 }
 
 async function lockDiary(): Promise<void> {
-  if (!diaryAccess.isUnlocked.value) return
+  if (diaryLockBusy.value || !diaryAccess.isUnlocked.value) return
+  diaryLockBusy.value = true
   try {
     await diaryAccess.lock()
   } catch {
     toast.error(t('diary_access.unavailable'))
+  } finally {
+    diaryLockBusy.value = false
   }
 }
 
@@ -254,8 +266,14 @@ provide(VaultViewModeKey, { mode: viewMode, set: setViewMode, toggle: toggleView
   <NavBar
     v-if="showNormalChrome"
     :is-vault="isVault"
+    :username="auth.user.value?.username"
     :logout-busy="auth.transitionKind.value === 'logout'"
+    :diary-unlocked="diaryAccess.isUnlocked.value"
+    :diary-lock-busy="diaryLockBusy"
     @open-search="onOpenSearch"
+    @open-settings="requestSettings"
+    @logout="onLogout"
+    @lock-diary="lockDiary"
   />
   <section
     v-if="!showRoutedContent"

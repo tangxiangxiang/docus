@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, inject, shallowRef, watch, computed, defineAsyncComponent, onBeforeUnmount, nextTick } from 'vue'
 import { useStorage } from '@vueuse/core'
+import { useRoute } from 'vue-router'
 import { useShortcutDisplay } from '../composables/useShortcutDisplay'
 import { useVaultLayout } from '../composables/vault/useVaultLayout'
 import { useSplitterDrag } from '../composables/vault/useSplitterDrag'
@@ -68,6 +69,7 @@ import {
   useDiaryAccessSession,
 } from '../composables/diary/useDiaryAccessSession'
 import { DiaryAccessContextKey } from '../composables/diary/diaryAccessContext'
+import { AppShellContextKey } from '../composables/appShellContext'
 import { localCivilToday } from '../components/diary/diaryCalendarAdapter'
 import { classifyDiaryPath, diaryLogicalPathForDate, type DiaryDate } from '../../shared/diaryProtocol'
 import type { MoodId } from '../../shared/diaryMood'
@@ -151,6 +153,12 @@ const EditorPane = defineAsyncComponent(() => import('../components/vault/Editor
    CommandPalette. We watch the tick and call show() each time. */
 const navSearch = inject<{ tick: ReturnType<typeof ref<number>>; trigger: () => void } | null>('openSearch', null)
 const settingsOpen = ref(false)
+const appShell = inject(AppShellContextKey, null)
+const route = useRoute()
+// The layout composable owns the grid tracks. VaultView only supplies the
+// current presentation visibility, so Calendar Home can remove the activity
+// and side-panel columns without a Diary-specific CSS offset.
+const sidebarLayoutVisible = ref(true)
 const editorFocusWidth = useStorage('docus.editor.focus-width', true)
 const emit = defineEmits<{
   logout: []
@@ -184,7 +192,7 @@ const {
   selectPanel,
   rightRailTab,
   rightRailCollapsed,
-} = useVaultLayout()
+} = useVaultLayout({ sidebarVisible: sidebarLayoutVisible })
 
 /* Splitter drag lives in its own composable — it mutates the same
    width/ratio refs useVaultLayout returns, so the grid updates
@@ -214,7 +222,6 @@ const auth = useAuth()
 const diaryAccess = useDiaryAccessSession()
 const diaryAccessContext = inject(DiaryAccessContextKey, null)
 const { activeScope, selectScope } = useScopeFilter()
-const diaryLockBusy = ref(false)
 
 async function authorizeDiaryDocumentPath(path: string): Promise<boolean> {
   if (classifyDiaryPath(path) !== 'managed') return true
@@ -225,16 +232,6 @@ async function authorizeDiaryDocumentPath(path: string): Promise<boolean> {
   return granted
 }
 
-async function lockDiaryFromWorkspace(): Promise<void> {
-  if (diaryLockBusy.value || !diaryAccess.isUnlocked.value) return
-  diaryLockBusy.value = true
-  try {
-    if (diaryAccessContext) await diaryAccessContext.lock()
-    else await diaryAccess.lock()
-  } finally {
-    diaryLockBusy.value = false
-  }
-}
 const emptyActions = computed(() => [
   { label: t('vault.command_palette'), keys: shortcuts.format('mod+P') },
   { label: t('vault.toggle_sidebar'), keys: shortcuts.format('mod+B') },
@@ -1696,6 +1693,20 @@ const isDiaryCalendarVisible = computed(() => (
   isDiaryCalendarMode.value && !hasOpenDiaryDocument.value
 ))
 const isDiaryPresentationPrimary = computed(() => isDiaryCalendarVisible.value)
+const routeSidebarVisible = computed(() => route.meta.sidebar !== false)
+const workspaceSidebarVisible = computed(() => routeSidebarVisible.value && !isDiaryCalendarVisible.value)
+
+watch(workspaceSidebarVisible, (visible) => {
+  sidebarLayoutVisible.value = visible
+}, { immediate: true })
+
+// NavBar lives above RouterView, while SettingsModal remains owned by this
+// view because its embedded sections use the live Vault context. Bridge the
+// global menu action through the App shell tick instead of moving or
+// duplicating the modal implementation.
+watch(() => appShell?.settingsRequestTick.value, (tick, previous) => {
+  if (tick !== undefined && tick !== previous) settingsOpen.value = true
+})
 type DiaryFilterOwnership = 'none' | 'calendar' | 'user'
 
 // Persist both the Calendar seed and who owns the current query. A plain
@@ -2428,15 +2439,9 @@ watch(isReadMode, async (reading) => {
     @keydown="onVaultKeydown"
   >
     <ActivityBar
+      v-if="workspaceSidebarVisible"
       :active-panel="activePanel"
-      :username="auth.user.value?.username"
-      :logout-busy="auth.transitionKind.value === 'logout'"
-      :diary-unlocked="diaryAccess.isUnlocked.value"
-      :diary-lock-busy="diaryLockBusy"
       @select-panel="selectActivityPanel"
-      @open-settings="settingsOpen = true"
-      @logout="emit('logout')"
-      @lock-diary="lockDiaryFromWorkspace"
     />
 
     <SettingsModal
@@ -2471,7 +2476,7 @@ watch(isReadMode, async (reading) => {
     />
 
     <FileTree
-      v-if="activePanel === 'files'"
+      v-if="workspaceSidebarVisible && activePanel === 'files'"
       ref="fileTreeRef"
       :filter="filesFilter"
       :tree="tree"
@@ -2485,7 +2490,7 @@ watch(isReadMode, async (reading) => {
       @open-history="openFileHistory"
     />
     <TagPanel
-      v-else-if="activePanel === 'tags'"
+      v-else-if="workspaceSidebarVisible && activePanel === 'tags'"
       v-model:filter="tagsFilter"
       :posts="posts"
       :selected-tag="selectedTag"
@@ -2494,7 +2499,7 @@ watch(isReadMode, async (reading) => {
       @open="openPost"
     />
     <HistoryPanel
-      v-else-if="activePanel === 'history'"
+      v-else-if="workspaceSidebarVisible && activePanel === 'history'"
       :history="history"
       :commit="historyCommit"
       :withdraw="historyWithdraw"
@@ -2506,7 +2511,7 @@ watch(isReadMode, async (reading) => {
       @open-diff="openWorkingTreeDiff"
     />
     <DraftRecoveryCenter
-      v-else-if="activePanel === 'recovery'"
+      v-else-if="workspaceSidebarVisible && activePanel === 'recovery'"
       :records="recoveryManagement.records.value"
       :items="draftRecovery.items.value"
       :capacity="recoveryManagement.capacity.value"
@@ -2524,7 +2529,7 @@ watch(isReadMode, async (reading) => {
     />
 
     <div
-      v-show="sidePanelOpen"
+      v-if="workspaceSidebarVisible && sidePanelOpen"
       class="splitter"
       role="separator"
       aria-orientation="vertical"
@@ -2681,7 +2686,7 @@ watch(isReadMode, async (reading) => {
     </section>
 
     <div
-      v-if="rightRailVisible"
+      v-if="workspaceSidebarVisible && rightRailVisible"
       class="splitter splitter-toc"
       role="separator"
       aria-orientation="vertical"
@@ -2689,6 +2694,7 @@ watch(isReadMode, async (reading) => {
       @pointerdown="startDrag(vaultRef!, 'rightRail', $event)"
     />
     <RightRail
+      v-if="workspaceSidebarVisible"
       v-show="rightRailVisible"
       class="right-rail-slot"
       :path="metadataPath"
@@ -2707,6 +2713,7 @@ watch(isReadMode, async (reading) => {
     />
 
     <StatusBar
+      v-if="workspaceSidebarVisible"
       class="status-bar-row"
       :path="activeDraftRecovery?.documentPath ?? activeHistoryComparison?.documentPath ?? activeWorkingTreeDiff?.documentPath ?? activePath"
       :save="activeSavePresentation"

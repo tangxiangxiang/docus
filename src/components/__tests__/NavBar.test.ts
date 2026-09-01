@@ -82,6 +82,18 @@ describe('NavBar — view-toggle button', () => {
     const { wrapper } = mountNavBar('read')
     expect(wrapper.find('[data-testid="view-toggle"]').attributes('aria-label')).toBe('Switch to edit')
   })
+
+  it('places the account entry in the navbar actions and forwards settings', async () => {
+    const { wrapper } = mountNavBar()
+
+    expect(wrapper.find('.nav-actions [data-testid="account-button"]').exists()).toBe(true)
+    expect(wrapper.find('.nav-actions [data-testid="account-button"]').element.closest('.activity-bar')).toBeNull()
+
+    await wrapper.find('[data-testid="account-button"]').trigger('click')
+    await wrapper.find('[data-testid="account-settings"]').trigger('click')
+
+    expect(wrapper.emitted('open-settings')).toHaveLength(1)
+  })
 })
 
 describe('NavBar — scope chips', () => {

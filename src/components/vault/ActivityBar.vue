@@ -11,25 +11,14 @@ import { useHistory } from '../../composables/vault/useHistory.js'
 import { useI18n } from '../../composables/useI18n'
 import {
   ICON_AB_GIT_HISTORY,
-  ICON_AB_SETTINGS,
   ICON_FOLDER,
   ICON_TAG,
 } from './icons'
-import AccountMenu from './AccountMenu.vue'
 export type SidePanel = 'files' | 'tags' | 'history' | 'recovery'
 
-const props = defineProps<{
-  activePanel: SidePanel | null
-  username?: string | null
-  logoutBusy?: boolean
-  diaryUnlocked?: boolean
-  diaryLockBusy?: boolean
-}>()
+defineProps<{ activePanel: SidePanel | null }>()
 const emit = defineEmits<{
   'select-panel': [panel: SidePanel]
-  'open-settings': []
-  logout: []
-  'lock-diary': []
 }>()
 
 const h = useHistory()
@@ -72,23 +61,6 @@ const { t } = useI18n()
         class="ab-badge"
         :aria-label="t('history.changed_files', { count: h.dirtyCount.value })"
       >{{ h.dirtyCount.value }}</span>
-    </button>
-    <div class="ab-spacer" aria-hidden="true" />
-    <AccountMenu
-      :username="props.username"
-      :logout-busy="props.logoutBusy"
-      @logout="emit('logout')"
-      :diary-unlocked="props.diaryUnlocked"
-      :diary-lock-busy="props.diaryLockBusy"
-      @lock-diary="emit('lock-diary')"
-    />
-    <button
-      class="ab-btn ab-btn-settings"
-      :title="t('activity.settings')"
-      :aria-label="t('activity.settings')"
-      @click="emit('open-settings')"
-    >
-      <span class="ab-btn-icon" v-html="ICON_AB_SETTINGS" aria-hidden="true" />
     </button>
   </aside>
 </template>
