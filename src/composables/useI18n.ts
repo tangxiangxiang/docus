@@ -48,7 +48,6 @@ const STRINGS: Strings = {
   'diary.calendar.loading': { zh: '正在加载日历…', en: 'Loading calendar…' },
   'diary.surface.label': { zh: '日记日历工作区', en: 'Diary calendar workspace' },
   'diary.surface.title': { zh: '日记', en: 'Diary' },
-  'diary.surface.empty': { zh: '暂无日记条目。', en: 'No diary entries yet.' },
   'diary.future_missing': { zh: '未来日期尚未创建。到达该日期后才能新建日记。', en: 'Future diary dates are not created until that date arrives.' },
   'diary.open_busy': { zh: '该日期正在处理中，请稍后重试。', en: 'That Diary date is already being processed. Try again shortly.' },
   'diary.open_failed': { zh: '无法打开日记：{error}', en: 'Could not open Diary: {error}' },

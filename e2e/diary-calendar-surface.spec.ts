@@ -155,7 +155,7 @@ test('Diary scope shows the Calendar-first surface and month navigation', async 
   const calendar = page.getByTestId('diary-calendar')
   await expect(surface).toBeVisible()
   await expect(calendar).toBeVisible()
-  await expect(page.getByTestId('diary-calendar-surface-empty')).toBeVisible()
+  await expect(page.getByTestId('diary-calendar-surface-empty')).toHaveCount(0)
 
   const monthBefore = await calendar.getAttribute('data-month')
   expect(monthBefore).toBe(CALENDAR_TEST_MONTH)

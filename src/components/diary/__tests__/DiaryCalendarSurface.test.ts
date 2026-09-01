@@ -122,7 +122,7 @@ describe('DiaryCalendarSurface', () => {
     const empty = mountSurface(treeWith(), { loading: false })
     await flushPromises()
     expect(empty.find('.vc-monthly').exists()).toBe(true)
-    expect(empty.get('[data-testid="diary-calendar-surface-empty"]').text()).toContain('No diary entries')
+    expect(empty.find('[data-testid="diary-calendar-surface-empty"]').exists()).toBe(false)
 
     const loading = mountSurface(treeWith(), { loading: true, error: 'Tree unavailable' })
     await flushPromises()

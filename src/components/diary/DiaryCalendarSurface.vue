@@ -55,16 +55,6 @@ defineExpose({ focusDate, closeMoodPicker })
     :aria-label="t('diary.surface.label')"
     :aria-busy="props.loading || undefined"
   >
-    <p
-      v-if="!props.loading && !props.error && days.length === 0"
-      class="diary-calendar-surface-empty"
-      data-testid="diary-calendar-surface-empty"
-      role="status"
-      aria-live="polite"
-    >
-      {{ t('diary.surface.empty') }}
-    </p>
-
     <DiaryCalendar
       ref="calendarRef"
       :days="days"
@@ -95,14 +85,4 @@ defineExpose({ focusDate, closeMoodPicker })
   color: var(--vs-text-1, var(--text, #1f1f1f));
 }
 
-.diary-calendar-surface-empty {
-  position: absolute;
-  top: 52px;
-  left: 16px;
-  z-index: 2;
-  margin: 0;
-  color: var(--vs-text-2, var(--text-muted, #6b6b6b));
-  font-size: 0.875rem;
-  pointer-events: none;
-}
 </style>
