@@ -138,7 +138,10 @@ async function clickDiaryDate(page: Page, date: string): Promise<void> {
 async function assertDiaryHome(page: Page): Promise<void> {
   await expect(page.getByTestId('diary-workspace-shell')).toHaveAttribute('data-presentation-mode', 'home')
   await expect(page.getByTestId('diary-calendar')).toBeVisible()
-  await expect(page.locator('.search-input')).toHaveCount(1)
+  // Calendar Home is a full-viewport presentation, so the workspace sidebar
+  // is intentionally absent until a native document is opened.
+  await expect(page.locator('.activity-bar')).toHaveCount(0)
+  await expect(page.locator('.file-tree')).toHaveCount(0)
 }
 
 async function assertNativeDiary(page: Page, date: string, expectedFilter?: string): Promise<void> {

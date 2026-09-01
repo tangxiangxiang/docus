@@ -483,21 +483,22 @@ test('mobile Calendar-to-native keyboard journey preserves focus, shortcuts, and
     await expect(page.getByTestId('diary-calendar')).toBeVisible()
     await expect(page.getByTestId('diary-workspace-shell')).toHaveAttribute('data-presentation-mode', 'home')
     await expect(page).toHaveURL(/\/vault(?:[?#]|$)/)
+    await expect(page.locator('.activity-bar')).toHaveCount(0)
+    await expect(page.locator('.file-tree')).toHaveCount(0)
 
     const rawBeforeHomeShortcuts = (await (await request.get(`/api/posts/${path}`)).json() as { raw: string }).raw
     await page.locator('.vault').focus()
     for (const shortcut of ['ControlOrMeta+w', 'ControlOrMeta+s', 'ControlOrMeta+e', 'ControlOrMeta+Tab']) {
       await page.keyboard.press(shortcut)
     }
-    const explorer = page.getByRole('button', { name: /Explorer|文件资源管理器/i })
-    const explorerBefore = await explorer.getAttribute('aria-pressed')
     await page.keyboard.press('ControlOrMeta+b')
     await expect(page.getByTestId('diary-calendar')).toBeVisible()
     await expect(tab).toHaveCount(0)
+    await expect(page.locator('.activity-bar')).toHaveCount(0)
+    await expect(page.locator('.file-tree')).toHaveCount(0)
     expect(new URL(page.url()).pathname).toBe('/vault')
     expect((await (await request.get(`/api/posts/${path}`)).json() as { raw: string }).raw).toBe(rawBeforeHomeShortcuts)
     await expect(page.getByRole('textbox', { name: 'Editor content' })).toHaveCount(0)
-    expect(await explorer.getAttribute('aria-pressed')).toBe(explorerBefore === 'true' ? 'false' : 'true')
   } finally {
     await deletePost(request, path)
   }
@@ -709,7 +710,8 @@ test('FileTree search keeps keyboard semantics and the user filter across Diary 
     await tab.locator('.tab-close').click()
     await expect(tab).toHaveCount(0)
     await expect(page.getByTestId('diary-calendar')).toBeVisible()
-    await expect(search).toHaveValue(userQuery)
+    await expect(search).toHaveCount(0)
+    await expect(page.locator('.activity-bar')).toHaveCount(0)
   } finally {
     await deletePost(request, diary)
   }

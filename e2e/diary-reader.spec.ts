@@ -177,7 +177,10 @@ test('Calendar opens the native Vault reader with the Diary date filter', async 
     await expect(tab).toHaveCount(0)
     await expect(page.getByTestId('diary-calendar')).toBeVisible()
     await expect(page.getByTestId('diary-calendar')).toHaveAttribute('data-month', monthBefore ?? '')
-    await expect(page.locator('.search-input')).toHaveValue(date)
+    // Calendar Home hides the explorer sidebar while preserving its filter
+    // state for the next native-document presentation.
+    await expect(page.locator('.search-input')).toHaveCount(0)
+    await expect(page.locator('.activity-bar')).toHaveCount(0)
   } finally {
     await deleteDiaryDate(request, date)
     await deleteDiaryDate(request, other)

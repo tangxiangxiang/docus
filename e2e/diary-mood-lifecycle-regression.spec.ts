@@ -1190,7 +1190,9 @@ test('refresh, deep link, and browser Back/Forward preserve Diary identity, Mood
     // FileTree state and is not replaced by a route-derived date.
     await page.locator(`[role="tab"][data-tab-id="${path}"] .tab-close`).click()
     await expect(page.getByTestId('diary-calendar')).toBeVisible()
-    await expect(page.locator('.file-tree .search-input')).toHaveValue(customQuery)
+    await expect(page.locator('.file-tree .search-input')).toHaveCount(0)
+    await expect.poll(() => page.evaluate(() => localStorage.getItem('docus.file-tree.filter')))
+      .toBe(customQuery)
 
     // A direct canonical route is handled by the generic Vault lifecycle.
     await page.goto(`/vault/${path}`)

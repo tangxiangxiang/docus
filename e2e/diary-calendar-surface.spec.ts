@@ -428,7 +428,10 @@ test('missing future Diary does not overwrite the user FileTree filter', async (
     expect((await probeResponse).status()).toBe(404)
 
     await expect.poll(() => mutationRequests).toEqual([])
-    await expect(search).toHaveValue(customQuery)
+    // Calendar Home intentionally occupies the full workspace without the
+    // explorer sidebar. The user-owned filter still remains persisted for
+    // when the explorer is restored after leaving Calendar.
+    await expect(search).toHaveCount(0)
     await expect.poll(() => page.evaluate(() => localStorage.getItem('docus.file-tree.filter')))
       .toBe(customQuery)
     await expect(page).toHaveURL(new RegExp(`${routeBefore.replace('/', '\\/')}(?:[?#]|$)`))
