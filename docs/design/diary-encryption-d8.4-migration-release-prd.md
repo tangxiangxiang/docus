@@ -1,10 +1,13 @@
 # D8.4 Migration, Legacy Cleanup & Release Closure PRD
 
 Status: `REVIEW-READY`; D8.4 Independent Planning Review:
-`CHANGES REQUIRED (0/5/3)` [historical]; D8.4 Planning Remediation:
-`COMPLETE`; D8.4 Independent Planning Re-review: `PENDING`; implementation:
-`NOT STARTED`. This is an authoritative planning document, not an
-implementation or approval record. It is intentionally docs-only.
+`CHANGES REQUIRED (0/5/3)` [historical]; D8.4 Planning Remediation Round 1:
+`COMPLETE`; D8.4 Independent Planning Re-review:
+`CHANGES REQUIRED (0/1/1)` [historical]; D8.4 Planning Remediation Round 2:
+`COMPLETE`; D8.4 Independent Planning Re-review Round 2: `PENDING`;
+implementation: `BLOCKED / NOT STARTED`. This is an authoritative planning
+document, not an implementation or approval record. It is intentionally
+docs-only.
 
 ## 1. Status
 
@@ -18,9 +21,11 @@ The D8.4 planning state is:
 ```text
 D8.4 Planning = REVIEW-READY / NOT APPROVED
 D8.4 Independent Planning Review = CHANGES REQUIRED (0/5/3) [historical]
-D8.4 Planning Remediation = COMPLETE
-D8.4 Independent Planning Re-review = PENDING
-D8.4 implementation = NOT STARTED
+D8.4 Planning Remediation Round 1 = COMPLETE
+D8.4 Independent Planning Re-review = CHANGES REQUIRED (0/1/1) [historical]
+D8.4 Planning Remediation Round 2 = COMPLETE
+D8.4 Independent Planning Re-review Round 2 = PENDING
+D8.4 implementation = BLOCKED / NOT STARTED
 D8.4 = NOT REVIEW-CLOSED
 ```
 
@@ -316,17 +321,20 @@ is:
    `DiaryMigrationFs.writeCiphertextTemp()`. The file and required directory
    durability result are recorded. The journal contains only structural names,
    generation/provenance (never size), phase and codes.
-8. Revalidate the source handle token and directory identity through the same
-   owner. If the helper cannot bind the next operation to that exact
-   generation, it fails closed with `SOURCE_GENERATION_CHANGED` or
+8. Revalidate the source authority and expected parent authority through the
+   same owner. If the native mutation cannot compare both exact generations at
+   the mutation itself, it fails closed with `SOURCE_GENERATION_CHANGED` or
    `diary-migration-filesystem-unsupported`; the external generation remains
    authoritative.
-9. `DiaryMigrationFs.transitionSourceToQuarantine()` performs one native,
-   handle-/directory-relative, no-copy transition of that exact pre-existing
-   source generation to `.docus-diary-migration-source-*`. A pathname lstat
-   followed by a pathname rename is not an ownership proof. The alternate
-   name refers to the same pre-existing inode only and is deleted later by an
-   ownership token, never by pathname alone.
+9. `DiaryMigrationFs.transitionOwnedSource()` performs the one native,
+   no-copy transition of that exact pre-existing source generation to
+   `.docus-diary-migration-source-*`. The operation is conditional on the
+   captured source authority, the expected parent authority and an initially
+   absent quarantine name; a pathname `lstat` followed by a pathname rename is
+   never an ownership proof. The result includes the exact quarantine
+   generation and recoverable structural provenance. The alternate name refers
+   to the same pre-existing inode only and is removable later only through the
+   matching native ownership operation.
 10. `DiaryMigrationFs.publishCiphertextCreateOnly()` publishes the exact
     ciphertext artifact only when the canonical target is absent. Its
     no-replace result is atomic: an occupied target wins and is preserved; an
@@ -346,53 +354,273 @@ is:
     advance to `PUBLISHED`/`CLEANUP_PENDING`.
 13. After `PUBLISHED` and the user-confirmed, revision-bound SQLite,
     Draft/Recovery and AI dispositions, delete the moved source inode only
-    through its ownership token. If any cleanup fails, retain it and mark
-    `CLEANUP_PENDING`; never restore it as the primary. Mark the item and
-    aggregate run `COMPLETE` only after all required cleanup gates, consent
-    checks and no-new-plaintext checks succeed.
+    through a live or restart-reacquired exact ownership token. If any cleanup
+    fails, retain it and mark `CLEANUP_PENDING`; never restore it as the
+    primary. Mark the item and aggregate run `COMPLETE` only after all required
+    cleanup gates, consent checks and no-new-plaintext checks succeed.
 
 The migration service must not call generic plaintext `atomicReplaceTextIfUnchanged`,
 `atomicRemoveTextIfUnchanged`, recovery payload writers, rename-reference
 journals or generic delete staging for this protocol.
 
-### 9.1a Authoritative filesystem safety contract
+### 9.1a Authority taxonomy and invariant
+
+Four authorities are distinct and are never substituted for one another:
+
+| Authority | Contents | What it can prove | What it cannot prove |
+| --- | --- | --- | --- |
+| Logical identity | `vaultId`, `documentId`, canonical path, schema version | Which migration item and AAD tuple is being discussed | Which current inode/file generation occupies the path |
+| Filesystem generation identity | device/volume plus inode/file ID, parent identity and an available birth/generation token or equivalent structural provenance | Which generation was observed; it is safe structural evidence only | Destructive authority, even when it matches a ledger row |
+| Live mutation authority | An open source/parent/quarantine handle pair and the native conditional operation that consumes them | Authority for one exact namespace mutation while the process owns the handles | Recovery after a crash; process memory is not durable authority |
+| Restart recovery authority | Durable non-secret provenance plus a fresh native exact-reacquisition proof | Whether a new process may regain authority for the same generation | Ownership based on a pathname, metadata equality or a stale token alone |
+
+The invariant is frozen: a pathname, prior `lstat`, prior handle comparison,
+process-local token or directory lock is never by itself destructive authority.
+A source transition, quarantine restoration or quarantine removal is permitted
+only when the filesystem primitive that performs the directory mutation itself
+proves that the entry being mutated is the exact generation owned by the
+transaction. If the filesystem cannot provide that condition, the operation
+fails closed.
+
+### 9.1b Authoritative source-transition primitive
 
 `DiaryMigrationFs` is the one migration filesystem owner. It exposes only
 these semantic operations: `captureSourceGeneration`,
-`transitionSourceToQuarantine`, `writeCiphertextTemp`,
+`transitionOwnedSource`, `writeCiphertextTemp`,
 `publishCiphertextCreateOnly`, `verifyCiphertextArtifact`,
-`removeOwnedQuarantineGeneration` and `syncDurability`. Each operation is
-directory-handle-/file-handle-relative and receives the opaque generation
-token returned by the previous operation. A path-only lstat followed by a
-pathname rename, a copy+delete, and an overwrite-capable rename are not valid
-implementations of this contract.
+`removeOwnedQuarantineGeneration` and `syncDurability`.
 
-The implementation must use one narrowly scoped native helper with adapters
-that provide identical semantics on all release platforms:
+The source operation has this exact contract:
 
-| Platform | Required adapter semantics | Refusal/result |
-| --- | --- | --- |
-| Linux | `openat2`/directory-handle resolution with no symlink traversal; handle-bound source transition through the native helper; `renameat2(RENAME_NOREPLACE)` for ciphertext publication; file and directory `fsync` | Missing kernel/filesystem guarantee, cross-device or identity loss is `diary-migration-filesystem-unsupported` / `NEEDS_ATTENTION`; no pathname alternate |
-| macOS | `openat`/directory-handle resolution with `O_NOFOLLOW`; handle-bound source transition through the native helper; `renameatx_np(RENAME_EXCL)` or an equivalent helper with atomic no-replace semantics; file and directory `fsync` | Same stable unsupported/attention result; no ordinary overwrite rename or copy operation |
-| Windows | `CreateFileW` with reparse-point rejection and handle identity; `SetFileInformationByHandle(FileRenameInfoEx)` with fail-if-exists semantics for publication; handle-bound source transition; `FlushFileBuffers` on file and directory handles where required | Junction/reparse race, missing `O_NOFOLLOW` equivalent, sharing/antivirus handle, case-folded identity ambiguity, unsupported hard-link/no-replace or unavailable flush semantics is `diary-migration-filesystem-unsupported` (HTTP 503); no weak pathname operation |
+```text
+transitionOwnedSource(
+  capturedSourceAuthority,
+  expectedParentAuthority,
+  reservedQuarantineName
+) -> {
+  sourceGeneration,
+  parentGeneration,
+  quarantineGeneration,
+  quarantineParentGeneration,
+  durability
+}
+```
 
-The helper returns exact outcomes: `SOURCE_GENERATION_CHANGED`,
-`TARGET_OCCUPIED` (the occupant wins and is preserved),
+The native operation is one kernel-authoritative conditional namespace
+mutation. It must, as part of that mutation (not as a preceding check):
+
+1. compare the source directory entry with the captured source handle/file
+   generation;
+2. compare the parent directory with the expected parent handle/generation;
+3. require the reserved quarantine name to be absent under that same parent;
+4. rebind the exact existing source inode/file object to the quarantine name
+   without copying, deleting-and-recreating, or overwriting; and
+5. return a handle-bound quarantine generation and the structural provenance
+   needed for a later durable journal record.
+
+If any comparison fails, no source or quarantine entry may be mutated. The
+operation may not fall back to a pathname rename, hard-link-plus-unlink,
+copy/delete, overwrite rename, or a second plaintext artifact. Quarantine
+removal uses the same rule through
+`removeOwnedQuarantineGeneration(quarantineAuthority, expectedParentAuthority,
+reservedQuarantineName)`: the unlinking primitive itself compares the exact
+quarantine generation and parent and cannot delete a replacement.
+
+Ciphertext publication is a separate proof. It uses an atomic create-only
+operation against the canonical target and never relies on the source
+transition's authority. An occupied target is preserved; no source handle is
+ever used to justify target overwrite.
+
+### 9.1c Per-platform native semantics and stable outcomes
+
+The following are implementation-grade contracts, not a list of choices. The
+named native ABI is the only implementation surface and must implement these
+semantics exactly; a platform/filesystem without them is unsupported.
+
+**Linux.** `captureSourceGeneration` opens the expected parent with
+`openat2(2)` beneath the vault root using `RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS`
+and opens the final source with `O_PATH|O_NOFOLLOW|O_CLOEXEC`. It records
+`statx` device/inode, parent identity and the filesystem's stable file-handle
+generation from `name_to_handle_at` when available. `renameat2(RENAME_NOREPLACE)`
+is authoritative only for ciphertext publication. The mandatory source
+primitive is `D8_DIARY_RENAME_BY_HANDLE`: the native binding
+`docus_diary_transition_owned_source_linux` must invoke that single
+kernel-supported conditional operation with the captured `O_PATH` source fd,
+expected parent dirfd, expected file-handle generation and reserved name;
+`docus_diary_remove_owned_quarantine_linux` uses its matching unlink form.
+The operation must prove the source dirent still references that fd's
+generation at mutation time. `openat2` plus a pathname `renameat2`, or a
+`name_to_handle_at`/`open_by_handle_at` sequence, is explicitly insufficient
+and is not an implementation of `D8_DIARY_RENAME_BY_HANDLE`. The corresponding
+`D8_DIARY_REACQUIRE_BY_HANDLE` operation may produce a fresh restart token only
+after it verifies the persisted parent/name/file-handle tuple. If the running
+kernel/filesystem has no `D8_DIARY_RENAME_BY_HANDLE` and
+`D8_DIARY_REACQUIRE_BY_HANDLE`, return `ENOSYS`, `EOPNOTSUPP` or `EINVAL` as
+`FILESYSTEM_UNSUPPORTED` before changing the namespace.
+
+For Linux, `ESTALE` or `ENOENT` after the native identity comparison means
+`SOURCE_GENERATION_CHANGED`/`PARENT_GENERATION_CHANGED` (an external
+generation won); `EEXIST` or `ENOTEMPTY` means `TARGET_OCCUPIED` for the
+reserved name; `EXDEV` means `CROSS_DEVICE`; and `EBUSY`, `EAGAIN` or
+`EWOULDBLOCK` means retryable `SOURCE_BUSY`. Required `fsync` failures are
+`DURABILITY_UNKNOWN` or `DURABILITY_FAILED`, never silent success.
+
+**macOS.** `captureSourceGeneration` opens the parent directory with
+`openat(..., O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC)` and the source with
+`openat(..., O_RDONLY|O_NOFOLLOW|O_CLOEXEC)`, then records the vnode/file ID,
+parent vnode ID and available birth/generation provenance with `fstat`/the
+native file-id query. `renameatx_np(RENAME_EXCL)` is authoritative only for
+create-only ciphertext publication. The mandatory source primitive is
+`D8_DIARY_RENAME_BY_VNODE`; the native bindings
+`docus_diary_transition_owned_source_macos` and
+`docus_diary_remove_owned_quarantine_macos` must invoke that single
+vnode-handle conditional operation with the captured source fd, expected parent
+fd/vnode and reserved name. The kernel operation itself must compare the source
+dirent's vnode/file ID and parent vnode to the captured authorities before
+rebinding; a prior `fstat` followed by ordinary `rename` is not acceptable.
+The corresponding `D8_DIARY_REACQUIRE_BY_VNODE` operation must verify the
+persisted parent/name/vnode tuple before returning a fresh restart token. On a
+filesystem whose kernel interface cannot provide these named operations,
+return `ENOTSUP` or `EINVAL` as `FILESYSTEM_UNSUPPORTED` before mutation.
+`ENOENT` or
+`ESTALE` after comparison means external generation won,
+`EEXIST`/`ENOTEMPTY` means `TARGET_OCCUPIED`, `EXDEV` means `CROSS_DEVICE`, and
+`EBUSY`/`EAGAIN` means retryable `SOURCE_BUSY`. `fsync`/directory durability
+failure remains `DURABILITY_UNKNOWN` or `DURABILITY_FAILED`.
+
+**Windows.** `captureSourceGeneration` opens the source with `CreateFileW`
+using `OPEN_EXISTING`, `FILE_FLAG_OPEN_REPARSE_POINT|FILE_FLAG_BACKUP_SEMANTICS`,
+and `FILE_SHARE_READ|FILE_SHARE_WRITE` (not `FILE_SHARE_DELETE`) so an external
+delete/rename cannot silently replace the generation while the owned handle is
+live. The parent directory is opened with the same reparse-safe and
+backup-semantics flags, and `GetFileInformationByHandleEx(FileIdInfo)` records
+volume identity and file ID. Any source or parent reparse/junction is rejected
+before mutation; a case-folded collision is treated as occupied, never as a
+new spelling.
+
+The authoritative source transition is
+`SetFileInformationByHandle(FileRenameInfoEx)` on the captured source handle,
+with `RootDirectory` set to the captured parent handle, the reserved name as a
+relative destination, and the replace-if-exists flag omitted. This is a
+handle-bound, fail-if-exists operation: it mutates the object represented by
+the captured handle, not a later occupant of the source pathname. The same
+handle-bound operation, with the original canonical name and no replace, is
+the only permitted pre-publication restoration; quarantine removal uses an
+identity-checked handle operation. Ciphertext publication independently uses
+`FileRenameInfoEx` with fail-if-exists semantics on the ciphertext temp handle.
+`ERROR_FILE_NOT_FOUND`/`ERROR_PATH_NOT_FOUND` after identity comparison means
+`SOURCE_GENERATION_CHANGED` or `PARENT_GENERATION_CHANGED`;
+`ERROR_FILE_EXISTS`/`ERROR_ALREADY_EXISTS` means `TARGET_OCCUPIED`;
+`ERROR_NOT_SAME_DEVICE` means `CROSS_DEVICE`; and
+`ERROR_SHARING_VIOLATION`/`ERROR_LOCK_VIOLATION` means retryable
+`SOURCE_BUSY`. `ERROR_INVALID_FUNCTION`, `ERROR_NOT_SUPPORTED` or an invalid
+parameter for a required flag is `FILESYSTEM_UNSUPPORTED`. Antivirus or an
+already-open incompatible handle is never bypassed with a pathname fallback.
+`FlushFileBuffers` must succeed for the ciphertext/source file and the
+required parent-directory handle; an unavailable or failed directory flush is
+`DURABILITY_UNKNOWN`/`DURABILITY_FAILED` and blocks `PUBLISHED`.
+
+All adapters return the same semantic outcomes:
+`SOURCE_GENERATION_CHANGED`, `PARENT_GENERATION_CHANGED`, `TARGET_OCCUPIED`,
 `FILESYSTEM_UNSUPPORTED`, `CROSS_DEVICE`, `SOURCE_BUSY`, `DURABLE`,
-`DURABILITY_UNKNOWN` or `DURABILITY_FAILED`. `FILESYSTEM_UNSUPPORTED`,
-`CROSS_DEVICE` and `SOURCE_BUSY` retain all unproven generations and map to
-stable migration attention/errors. `DURABILITY_UNKNOWN` or
-`DURABILITY_FAILED` retains the journal and ciphertext artifact, sets
-`DURABILITY_PENDING` or `NEEDS_ATTENTION`, and never writes `PUBLISHED`.
-No operation silently weakens its primitive.
+`DURABILITY_UNKNOWN` or `DURABILITY_FAILED`. Unsupported, cross-device, busy,
+identity-loss and durability outcomes retain every unproven generation and
+map to the stable migration attention/error matrix. No operation silently
+weakens its primitive.
 
-The pre-existing plaintext is transitioned as the same generation (one inode,
-never a second plaintext data copy) to the reserved quarantine name. The
-quarantine pathname is not ownership: only its opaque token plus a fresh
-handle identity check can authorize removal. A reused name, an external
-replacement, a junction/reparse point, an open-handle error, or a target race
-preserves the external generation and yields attention. The security invariant
-is that D8.4 never allocates a second plaintext body artifact.
+### 9.1d Durable provenance and restart authority
+
+Before the source transition is attempted, the structural journal records the
+immutable inventory revision, vault/document/canonical logical identity,
+transaction/schema version, expected parent generation, captured source
+generation, reserved quarantine name and publication phase. After a successful
+transition, the helper returns and the parent directory is synchronized before
+the journal records the exact quarantine generation and its parent generation.
+The record may contain only non-secret structural provenance: device/volume,
+inode/file ID, native file-handle generation when the platform exposes one,
+parent identity, available birth/mtime provenance, reserved names, phase,
+durability result, target generation and the internal ciphertext fingerprint.
+It never contains plaintext, body length, body hash/digest, keys,
+capabilities or message content. A live fd/handle token is process-memory-only
+and is never treated as durable proof.
+
+The restart state machine is:
+
+```text
+owned live source
+  -> source transitioned to quarantine
+  -> live token lost by crash
+  -> structural recovery
+  -> attempt exact native quarantine reacquisition
+       -> REACQUIRED_EXACT_QUARANTINE
+            (forward cleanup may continue after publication/auth gates)
+       -> QUARANTINE_OWNERSHIP_UNPROVEN
+            -> NEEDS_ATTENTION
+```
+
+`REACQUIRED_EXACT_QUARANTINE` is possible only when the durable provenance
+contains the expected parent, reserved name and exact generation and the
+platform's native reacquisition operation opens that parent and quarantine
+without symlink/reparse traversal, compares the generation and parent in the
+same authority domain, and returns a new handle-bound mutation token. Matching
+`dev/inode`, file ID or timestamps in a ledger without this native proof is
+never enough. If the provenance was not durably recorded, the parent was
+replaced, the quarantine path is missing, the path was recreated with a
+different generation, or the native reacquisition primitive is unavailable,
+the process enters `QUARANTINE_OWNERSHIP_UNPROVEN`/`NEEDS_ATTENTION`; it does
+not delete, restore, overwrite or recreate plaintext.
+
+For pre-publication restoration, only `REACQUIRED_EXACT_QUARANTINE` plus a
+durably proven pre-publication journal and an empty canonical destination may
+authorize the same native no-replace transition from quarantine back to the
+canonical name. A destination occupant always wins and is preserved. For
+post-publication cleanup, the same exact reacquisition is required before
+quarantine removal. If an external actor removes the quarantine and recreates
+the same reserved name, a different generation is an external occupant and
+remains untouched; an absent name is not evidence of ownership. There is no
+“probably ours” restart state.
+
+Durability boundaries are independent and ordered, never inferred from a
+later success: (1) the ciphertext temp file is synced, then its parent
+directory; (2) the source namespace transition is performed and the source
+parent/quarantine directory is synced before quarantine provenance is recorded;
+(3) ciphertext publication is a separate no-replace namespace mutation, then
+the target file and target parent directory are synced; (4) authenticated
+readback and the durable `PUBLISHED` journal write follow those target proofs;
+and (5) post-publication quarantine unlink is followed by its own parent
+directory barrier. A failed or unknown barrier records
+`DURABILITY_FAILED`/`DURABILITY_UNKNOWN`, keeps the corresponding journal and
+artifacts, and cannot be represented as `PUBLISHED` or as durable quarantine
+removal. The unlink syscall and its directory barrier remain separate crash
+seams even after target publication.
+
+### 9.1e Adversarial source-ownership matrix
+
+The following outcomes are normative for both PRD and Implementation Plan:
+
+| Adversarial case | Operation permitted? | Stable result/state | Artifact preservation | Retry/attention behavior |
+| --- | --- | --- | --- | --- |
+| Source replaced before transition | No | `SOURCE_GENERATION_CHANGED` | External source and all unproven temps retained | New scan/review; no stale consent reuse |
+| Source replaced at transition boundary | No | Native compare fails; `EXTERNAL_PATH_CONFLICT` | Replacement is never moved or deleted | Surface attention; retry only after new revision |
+| Source pathname replaced after captured handle | No | Handle-bound mutation refuses replacement | Captured generation and external generation remain distinct | No pathname fallback; attention |
+| Source becomes junction/reparse point | No | `FILESYSTEM_UNSUPPORTED`/attention | Reparse object and migration artifacts preserved | Repair and retry with fresh provenance |
+| Expected parent directory replaced | No | `PARENT_GENERATION_CHANGED` | New parent and source are preserved | Attention; fresh scan required |
+| Quarantine destination already exists | No | `TARGET_OCCUPIED` | Existing quarantine occupant and source preserved | Do not overwrite; new reviewed name only |
+| Quarantine name reused after crash with different generation | No | `QUARANTINE_OWNERSHIP_UNPROVEN`/attention | Replacement is never deleted or restored | Manual attention; no path-only cleanup |
+| Quarantine name disappears after crash | No destructive action | Ownership unproven until exact reacquisition | No plaintext recreation; target and ledger retained | Inspect namespace; attention if proof is absent |
+| Target appears before ciphertext publish | No | `TARGET_OCCUPIED`/`EXTERNAL_PATH_CONFLICT` | External target, source quarantine and ciphertext temp preserved | No overwrite; reviewed retry only |
+| Cross-device source/target or temp | No | `CROSS_DEVICE`/unsupported | Source and ciphertext artifacts retained | No copy/delete; attention |
+| Required no-replace primitive unsupported | No | `FILESYSTEM_UNSUPPORTED` | No namespace mutation; journal retained | Attention; no weaker primitive |
+| Required exact-source primitive unsupported | No | `FILESYSTEM_UNSUPPORTED` | Source remains canonical; no quarantine mutation | Attention; platform/FS change required |
+| Windows sharing violation | No | `SOURCE_BUSY` | Owned source and external handle preserved | Retry while same generation is proven; then attention |
+| Antivirus/open-handle denial | No | `SOURCE_BUSY` or unsupported | No forced close or fallback; artifacts retained | Retry/attention according to stable error |
+| Case-fold collision | No | `TARGET_OCCUPIED`/identity conflict | Existing case-fold occupant preserved | Fresh reviewed name or attention; never overwrite |
+| Directory durability failure/unknown | No `PUBLISHED` | `DURABILITY_PENDING`/`NEEDS_ATTENTION` | Journal, ciphertext and quarantine retained | Re-prove durability; no cleanup/restore after publication |
+| Live token lost by crash | No immediate delete/restore | Recovery enters exact reacquisition | All artifacts retained | Only native reacquisition can continue |
+| Restart cannot reacquire quarantine authority | No | `QUARANTINE_OWNERSHIP_UNPROVEN`/`NEEDS_ATTENTION` | Replacement/unknown artifact preserved | Manual attention; no guessed ownership |
+
+This matrix also governs `removeOwnedQuarantineGeneration`; a successful
+source transition never turns a quarantine pathname into delete authority.
 
 ### 9.2 Commit point and monotonicity
 
@@ -643,10 +871,11 @@ ownership.
 
 At startup recovery may use only structural/non-secret evidence. If the target
 is absent and the journal proves pre-publication, it may restore the exact
-quarantined source only through the `DiaryMigrationFs` ownership token. If the
-target exists and publication may have happened, recovery never restores
-plaintext, never deletes quarantine and never marks `PUBLISHED` from envelope
-parsing. A matching non-secret transaction fingerprint becomes
+quarantined source only after `REACQUIRED_EXACT_QUARANTINE` returns a fresh
+native ownership token; a process-local token from before the crash is gone.
+If the target exists and publication may have happened, recovery never
+restores plaintext, never deletes quarantine and never marks `PUBLISHED` from
+envelope parsing. A matching non-secret transaction fingerprint becomes
 `RECOVERY_AUTH_REQUIRED`; a mismatch or missing provenance is
 `NEEDS_ATTENTION`, with the external target preserved. After unlock, the
 existing `DiaryBodyOperation` revalidates target identity and performs exact
@@ -661,11 +890,15 @@ The locked recovery matrix is frozen as:
 | B | Target exists and publication may have happened | Preserve target and quarantine; never restore plaintext, delete quarantine or mark `PUBLISHED` from syntax; matching fingerprint is `RECOVERY_AUTH_REQUIRED`, absent/mismatched provenance is `NEEDS_ATTENTION`. |
 | C | Target generation/provenance does not match transaction evidence | Preserve the external target and every unproven artifact; `NEEDS_ATTENTION`; no cleanup. |
 
-The deterministic crash oracle uses the exact hook enum below. A child Docus
-server runs against an isolated temporary vault; at the selected hook it
-signals the parent, the parent terminates the child without graceful cleanup,
-and a fresh process restarts against the same durable state. No sleep,
-waitForTimeout, timing guess or random kill is evidence.
+The deterministic crash oracle uses one authoritative set of **19 hooks**.
+The same names and semantics appear in the Implementation Plan. A child
+Docus server runs against an isolated temporary vault; at the selected hook
+it signals the parent, the parent terminates the child without graceful
+cleanup, and a fresh process restarts against the same durable state. No
+sleep, `waitForTimeout`, timing guess or random kill is evidence. The
+quarantine hooks deliberately distinguish the unlink syscall from the parent
+directory durability barrier. The two SQLite hooks explicitly cover the
+whole-session `DISCARD_AI_SESSION` operation as mapped below.
 
 | Hook | Filesystem state | Journal / SQLite ledger | IDB | Locked restart / authoritative generation | Allowed / forbidden action; next state |
 | --- | --- | --- | --- | --- | --- |
@@ -679,20 +912,65 @@ waitForTimeout, timing guess or random kill is evidence.
 | `AFTER_AUTHENTICATED_READBACK` | Exact target authenticated; quarantine may exist | target proof recorded, journal not PUBLISHED | unchanged | locked; target authoritative but ledger pending | Resume journal only after current lease; `PUBLISHED` pending |
 | `BEFORE_PUBLISHED_JOURNAL` | Authenticated target; quarantine may exist | journal write not started | unchanged | locked; target authoritative | No plaintext restore; write journal after durability; `PUBLISHED` pending |
 | `AFTER_PUBLISHED_JOURNAL` | Authenticated target; quarantine may exist | durable PUBLISHED | unchanged | locked; target authoritative | Cleanup forward only; `PUBLISHED`/`CLEANUP_PENDING` |
-| `BEFORE_SQLITE_CLEANUP_COMMIT` | Authenticated target; quarantine may exist | PUBLISHED; SQLite transaction open | unchanged | locked; target authoritative | Rollback transaction; no target overwrite; `CLEANUP_PENDING` |
-| `AFTER_SQLITE_CLEANUP_COMMIT` | Authenticated target; quarantine may exist | SQLite cleanup committed | unchanged | locked; target authoritative | Resume remaining confirmed gates; `CLEANUP_PENDING` |
+| `BEFORE_SQLITE_CLEANUP_COMMIT` | Authenticated target; quarantine may exist | `PUBLISHED`; SQLite transaction open and not committed (including a whole-session AI disposition) | unchanged | locked; target authoritative | Kill rolls back the transaction; no target overwrite; `CLEANUP_PENDING` |
+| `AFTER_SQLITE_CLEANUP_COMMIT` | Authenticated target; quarantine may exist | SQLite transaction committed; migration ledger may still lag (including committed whole-session AI disposition) | unchanged | locked; target authoritative | Reconcile exact rows idempotently; never recreate/delete a replacement; `CLEANUP_PENDING` |
 | `BEFORE_IDB_DISPOSITION_COMMIT` | Authenticated target; quarantine may exist | PUBLISHED/cleanup pending | exact rows unchanged; IDB transaction open | locked; target authoritative | Abort/rollback IDB; changed rows require consent; `CLEANUP_PENDING` |
 | `AFTER_IDB_DISPOSITION_COMMIT` | Authenticated target; quarantine may exist | ledger pending auxiliary completion | exact confirmed rows deleted or retained | locked; target authoritative | Re-read idempotently; no second destructive action; `CLEANUP_PENDING` |
-| `BEFORE_SOURCE_QUARANTINE_REMOVE` | Authenticated target; exact source quarantine | cleanup pending | confirmed dispositions durable | locked; target authoritative | Remove only by token; otherwise attention; `CLEANUP_PENDING` |
-| `AFTER_SOURCE_QUARANTINE_REMOVE` | Authenticated target; owned quarantine absent | cleanup pending | confirmed dispositions durable | locked; target authoritative | Verify no new plaintext; `CLEANUP_PENDING`/`COMPLETE` |
+| `BEFORE_SOURCE_QUARANTINE_UNLINK` | Authenticated target; exact owned quarantine exists | cleanup pending; unlink not invoked | confirmed dispositions durable | locked; target authoritative; exact quarantine authority required | Unlink only through native exact-generation operation; otherwise attention; `CLEANUP_PENDING` |
+| `AFTER_SOURCE_QUARANTINE_UNLINK_BEFORE_DIR_DURABILITY` | Authenticated target; unlink syscall returned; parent-directory durability barrier not completed | cleanup pending; `quarantine_unlink=COMPLETED`, `quarantine_dir_durability=UNKNOWN` | confirmed dispositions durable | locked; target authoritative; namespace may be durable or uncertain | On restart inspect actual namespace; never recreate plaintext or delete a replacement; `DURABILITY_PENDING`/`CLEANUP_PENDING` |
+| `AFTER_SOURCE_QUARANTINE_DIR_DURABILITY` | Authenticated target; unlink returned and parent-directory durability barrier completed | cleanup pending; `quarantine_removal_durable=COMMITTED` | confirmed dispositions durable | locked; target authoritative; owned quarantine is durably absent | Forward-only verification; never require/recreate quarantine; `CLEANUP_PENDING`/`COMPLETE` |
 | `BEFORE_ITEM_COMPLETE` | Authenticated target; no owned plaintext quarantine | all required cleanup durable | dispositions durable | locked; target authoritative | Revalidate consent/provenance; no cleanup guess; `CLEANUP_PENDING` |
 | `AFTER_ITEM_COMPLETE` | Authenticated target; no owned plaintext artifact | item COMPLETE durable | dispositions durable | locked; target authoritative | Idempotent no-op; aggregate may complete only with all consents/residuals |
+
+For the quarantine-removal rows, the idempotent restart rule is exact: after
+`AFTER_SOURCE_QUARANTINE_UNLINK_BEFORE_DIR_DURABILITY`, an absent name is not
+recreated; the new process fsyncs the parent and records durable absence. If
+the name is still present, it may retry unlink only after exact native
+reacquisition proves the recorded quarantine generation. A different
+generation is an external occupant and is preserved with `NEEDS_ATTENTION`.
+After `AFTER_SOURCE_QUARANTINE_DIR_DURABILITY`, an absent quarantine is a
+committed forward state and cleanup never waits for plaintext.
+
+### 15.1 AI whole-session disposition mapping
+
+`DISCARD_AI_SESSION` is not covered by vague generic AI crash wording. It
+uses the generic SQLite hook family above with the following exact operation
+class and oracle:
+
+| Hook | Preconditions and operation boundary | SQLite state after a kill at the seam | Ledger/consent state | Restart and unlocked resume | Forbidden/idempotent result |
+| --- | --- | --- | --- | --- | --- |
+| `BEFORE_SQLITE_CLEANUP_COMMIT` with `operationClass=DISCARD_AI_SESSION` | `PUBLISHED`; exact consent, session row generation and message-ID snapshot selected; `BEGIN IMMEDIATE` transaction has deleted neither row yet and is immediately before `COMMIT` | Session row and every inventoried message row still exist unchanged; transaction rolls back | Item remains `CLEANUP_PENDING` (or `PUBLISHED` before cleanup starts); consent remains valid only for the same inventory revision/generation and is not consumed as completed | Fresh process sees the whole original session; after unlock it may retry the same exact action or require a new consent if any row/generation changed | Never delete selected messages only, never substring-edit, never treat a typed phrase as authority; rerun is one whole-session CAS/action |
+| `AFTER_SQLITE_CLEANUP_COMMIT` with `operationClass=DISCARD_AI_SESSION` | The same exact whole-session transaction returned success; migration ledger disposition update has not necessarily committed | Session row absent and all inventoried message rows absent; no recreation is attempted | Ledger may still say `CLEANUP_PENDING`; consent/action record is reconciled to the committed transaction ID, not used against a later row | Fresh process records the already-completed disposition idempotently without recreating data. If a session/message row with the same numeric ID has a different captured row generation, it is a new/external session: old consent cannot delete it and the item becomes `CONSENT_REQUIRED`/`NEEDS_ATTENTION` | Never delete a replacement/new session, never infer completion from ID alone, and never re-run a destructive delete when the exact rows are already absent |
+
+The consent snapshot therefore includes the exact session row generation,
+message-ID set and inventory revision. A replacement/new session or message
+set at the same apparent ID is external state, not an owned continuation.
+`RETAIN_AI_HISTORY` uses no destructive SQLite hook; it records explicit
+policy retention and remains visible in the completion summary.
+
+On an unlocked restart, every hook first revalidates the current epoch,
+inventory consent and exact native generations. The pre-publication hooks
+(`AFTER_JOURNAL_PREPARED`, `AFTER_CIPHERTEXT_TEMP_FSYNC`,
+`BEFORE_SOURCE_TRANSITION`, `AFTER_SOURCE_TRANSITION`,
+`BEFORE_CIPHERTEXT_PUBLISH`) may retry only their recorded phase with the
+exact source/parent/quarantine proof. The publication hooks
+(`AFTER_CIPHERTEXT_PUBLISH_SYSCALL`, `AFTER_TARGET_DURABILITY`,
+`AFTER_AUTHENTICATED_READBACK`, `BEFORE_PUBLISHED_JOURNAL`) must authenticate
+the exact target before writing `PUBLISHED`; failure remains attention and
+never restores plaintext. The post-publication SQLite, IDB and quarantine
+hooks continue only the exact pending action after scope/generation checks;
+the unlink-before-directory-durability hook inspects namespace rather than
+recreating it, and `AFTER_ITEM_COMPLETE` is an idempotent no-op. This is the
+unlocked counterpart of every locked-restart row above.
 
 Lock/logout/expiry/capability replacement aborts pre-publication operations and
 fences late results. Once the publication syscall may have passed,
 authorization loss does not undo ciphertext; a new unlocked run performs
-deferred authentication and then completes cleanup. The same hook names and
-oracle table are normative for the future test plan and implementation
+deferred authentication and then completes cleanup. Every hook row has a
+precondition, completed/not-durable boundary, durable ledger expectation,
+filesystem/SQLite/IDB observation, locked and unlocked restart rule,
+forbidden transition and idempotent rerun result. The 19 hook names and the AI
+mapping above are normative for the future test plan and implementation
 evidence.
 
 ## 16. Privacy/logging requirements
@@ -781,8 +1059,11 @@ The future implementation is acceptable only when all are true:
   rollback, recovery, quarantine, SQLite ledger, new Git commit, log or test
   artifact at every phase.
 - `DiaryMigrationFs` is the sole native ownership/publication owner on Linux,
-  macOS and Windows; no unsupported operation falls back to copy/delete or
-  overwrite rename, and unknown directory durability never becomes `PUBLISHED`.
+  macOS and Windows; the source mutation is a captured-handle conditional
+  generation check at the namespace operation, no unsupported operation falls
+  back to copy/delete or overwrite rename, restart uses exact reacquisition or
+  `QUARANTINE_OWNERSHIP_UNPROVEN`, and unknown directory durability never
+  becomes `PUBLISHED`.
 - Every destructive action is bound to an immutable `inventoryRevision`, exact
   item/generation and action scope; a new/changed row requires new consent.
 - Legacy Draft/Recovery rows are never silently deleted; valid rows are
@@ -798,8 +1079,10 @@ The future implementation is acceptable only when all are true:
 - Git inventory covers all required ref/object classes, no rewrite/force-push
   occurs, and retained exposure is explicitly acknowledged.
 - Crash/restart recovery, rerun convergence and cross-platform filesystem
-  behavior pass on Linux, macOS and Windows using the exact deterministic hook
-  enum/oracle in §15; no timing sleeps are accepted.
+  behavior pass on Linux, macOS and Windows using the exact 19-hook
+  deterministic oracle in §15, including the unlink-before-directory-fsync
+  boundary and whole-session AI disposition mapping; no timing sleeps are
+  accepted.
 - Typecheck, build, full unit/integration, History, Recovery, browser E2E,
   Draft Store, auth, tags-scale, visual and Docker smoke suites are green.
 - Implementation evidence, exact-head CI, residual-risk statement,
@@ -813,7 +1096,8 @@ move, delete or reference rewriting; broad SQLite schema redesign; automatic
 external-copy deletion; secure media erase; unrelated D7/D8.0-D8.3 reopening;
 and any implementation work before Independent Planning Review approval.
 
-The next authorized phase is **D8.4 Independent Planning Re-review**. It must
-revisit the historical `CHANGES REQUIRED (0/5/3)` findings against this PRD,
-the companion Implementation Plan and the immutable review evidence before
-any production change begins.
+The next authorized phase is **D8.4 Independent Planning Re-review Round 2**.
+It must revisit the two historical open findings (`D8.4-IPR-P1-2` and
+`D8.4-IPR-P2-3`) against this PRD, the companion Implementation Plan and the
+immutable review evidence, while regression-checking the six findings already
+closed, before any production change begins.

@@ -1,6 +1,6 @@
 # D8 — Diary Encryption Implementation Plan
 
-状态：`D8.0 REVIEW-CLOSED`；`D8.0 Self-review = PASS (P0/P1/P2 = 0/0/0)`；`D8.0 Independent Review = PASS (P0/P1/P2 = 0/0/0)`；`D8.1 REVIEW-CLOSED`；`D8.1 Independent Review = PASS (P0/P1/P2 = 0/0/0)`；`D8.2 REVIEW-CLOSED`；`D8.2 Self-review = PASS (P0/P1/P2 = 0/0/0)`；`D8.2 Independent Review = PASS (P0/P1/P2 = 0/0/0)`；`D8.3 REVIEW-CLOSED`；`D8.4 Planning = REVIEW-READY / NOT APPROVED`；`D8.4 Independent Planning Review = CHANGES REQUIRED (0/5/3) [historical]`；`D8.4 Planning Remediation = COMPLETE`；`D8.4 Independent Planning Re-review = PENDING`；`D8.4 implementation = NOT STARTED`。
+状态：`D8.0 REVIEW-CLOSED`；`D8.0 Self-review = PASS (P0/P1/P2 = 0/0/0)`；`D8.0 Independent Review = PASS (P0/P1/P2 = 0/0/0)`；`D8.1 REVIEW-CLOSED`；`D8.1 Independent Review = PASS (P0/P1/P2 = 0/0/0)`；`D8.2 REVIEW-CLOSED`；`D8.2 Self-review = PASS (P0/P1/P2 = 0/0/0)`；`D8.2 Independent Review = PASS (P0/P1/P2 = 0/0/0)`；`D8.3 REVIEW-CLOSED`；`D8.4 Planning = REVIEW-READY / NOT APPROVED`；`D8.4 Independent Planning Review = CHANGES REQUIRED (0/5/3) [historical]`；`D8.4 Planning Remediation Round 1 = COMPLETE`；`D8.4 Independent Planning Re-review = CHANGES REQUIRED (0/1/1) [historical]`；`D8.4 Planning Remediation Round 2 = COMPLETE`；`D8.4 Independent Planning Re-review Round 2 = PENDING`；`D8.4 implementation = BLOCKED / NOT STARTED`。
 
 基线：`1fb1389cab053d5ff72630253f509f0170e588c2`（`docs(diary): close D7 mood implementation`）。D7.0A、D7.0、D7.1、D7.2、D7.3、D7.4、D7.5、D7.6 均保持 `REVIEW-CLOSED`。D8 只从 Diary 加密边界开始，不重开 D7，也不创建独立 Private Vault。
 
@@ -215,10 +215,15 @@ published ciphertext records `RECOVERY_AUTH_REQUIRED` and never restores
 plaintext, deletes quarantine or calls a syntactic V1 envelope authenticated;
 unlock revalidates the exact internal ciphertext fingerprint/generation and
 uses the sole server-side Diary body lease for AES-GCM/AAD authentication.
-`DiaryMigrationFs` is the only migration filesystem owner and must provide
-handle-/directory-relative no-copy source transition, atomic create-only
-ciphertext publication and explicit Linux/macOS/Windows durability or
-unsupported results; no copy/delete or overwrite operation is permitted.
+`DiaryMigrationFs` is the only migration filesystem owner. Its authoritative
+source mutation is a single native, captured-handle conditional transition
+that proves the source and expected parent generations at the namespace
+mutation; a path check followed by rename is never sufficient. The PRD and
+plan freeze the exact Linux/macOS native operation contract, the Windows
+handle-bound `FileRenameInfoEx` operation, restart reacquisition or
+`QUARANTINE_OWNERSHIP_UNPROVEN`, atomic create-only ciphertext publication,
+and explicit per-platform durability/unsupported results. No copy/delete or
+overwrite operation is permitted.
 
 Every destructive operation is bound to an immutable `inventoryRevision`, exact
 item/generation and independent action scope. SQLite `sessions/messages` and
@@ -230,8 +235,11 @@ non-destructive identity binding; path-only cleanup is forbidden. Legacy body
 byte size is private and may be transient only, never durable or locked-visible.
 Ordinary managed PUT serializes behind the existing FIFO document lock and
 revalidates after acquisition; no migration-specific 409 is promised for mere
-lock wait. The exact deterministic migration crash hooks and durable-state
-oracle are mandatory implementation evidence.
+lock wait. The authoritative deterministic migration hook set contains 19
+named seams. It separates quarantine unlink from the parent-directory
+durability barrier and explicitly maps `DISCARD_AI_SESSION` to the generic
+SQLite before/after commit hooks. Its durable-state oracle is mandatory
+implementation evidence.
 
 ## 9. STOP conditions
 
@@ -316,9 +324,11 @@ D8.3-IR-P1-2 = CLOSED
 D8.3             = REVIEW-CLOSED
 D8.4 Planning    = REVIEW-READY / NOT APPROVED
 D8.4 Independent Planning Review = CHANGES REQUIRED (0/5/3) [historical]
-D8.4 Planning Remediation = COMPLETE
-D8.4 Independent Planning Re-review = PENDING
-D8.4 implementation = NOT STARTED
+D8.4 Planning Remediation Round 1 = COMPLETE
+D8.4 Independent Planning Re-review = CHANGES REQUIRED (0/1/1) [historical]
+D8.4 Planning Remediation Round 2 = COMPLETE
+D8.4 Independent Planning Re-review Round 2 = PENDING
+D8.4 implementation = BLOCKED / NOT STARTED
 D8.4             = NOT REVIEW-CLOSED
 ```
 
@@ -392,9 +402,11 @@ Planning approval or implementation:
 ```text
 D8.4 Planning = REVIEW-READY / NOT APPROVED
 D8.4 Independent Planning Review = CHANGES REQUIRED (0/5/3) [historical]
-D8.4 Planning Remediation = COMPLETE
-D8.4 Independent Planning Re-review = PENDING
-D8.4 implementation = NOT STARTED
+D8.4 Planning Remediation Round 1 = COMPLETE
+D8.4 Independent Planning Re-review = CHANGES REQUIRED (0/1/1) [historical]
+D8.4 Planning Remediation Round 2 = COMPLETE
+D8.4 Independent Planning Re-review Round 2 = PENDING
+D8.4 implementation = BLOCKED / NOT STARTED
 D8.4 = NOT REVIEW-CLOSED
 ```
 
@@ -402,10 +414,12 @@ See [D8.4 Migration, Legacy Cleanup & Release Closure PRD](./diary-encryption-d8
 and [D8.4 Implementation Plan](./diary-encryption-d8.4-implementation-plan.md).
 The historical Independent Planning Review at
 `9f8d06d1f0dd2223dfc2ccc3d313f4a30053c386` returned
-`CHANGES REQUIRED (0/5/3)`. The docs-only Planning Remediation freezes the
-deferred-auth recovery state, one cross-platform `DiaryMigrationFs` ownership
-contract, immutable inventory/action consent scopes, AI-history and null-ID
-frontmatter disposition, no-body-size ledger privacy, FIFO ordinary-save
-concurrency and deterministic crash hooks. It does not alter the historical
-review record or authorize implementation. The next authorized action is a
-separate D8.4 Independent Planning Re-review.
+`CHANGES REQUIRED (0/5/3)`. The subsequent independent re-review record at
+`1be58a317c121a5fd676cd709174de7fbb6b72b7` returned
+`CHANGES REQUIRED (0/1/1)`. The docs-only Planning Remediation Round 2 now
+freezes the captured-handle source-generation mutation and restart
+reacquisition contract, the 19-hook crash oracle with separate quarantine
+unlink/directory-durability seams, and the generic SQLite mapping for
+whole-session AI disposition. It does not alter either historical review
+record or authorize implementation. The next authorized action is a separate
+D8.4 Independent Planning Re-review Round 2.

@@ -1,10 +1,13 @@
 # D8.4 Migration, Legacy Cleanup & Release Closure — Implementation Plan
 
 Status: `REVIEW-READY`; D8.4 Independent Planning Review:
-`CHANGES REQUIRED (0/5/3)` [historical]; D8.4 Planning Remediation:
-`COMPLETE`; D8.4 Independent Planning Re-review: `PENDING`; implementation:
-`NOT STARTED`. This plan is the implementation authority after Planning
-Review approval. It contains no production implementation.
+`CHANGES REQUIRED (0/5/3)` [historical]; D8.4 Planning Remediation Round 1:
+`COMPLETE`; D8.4 Independent Planning Re-review:
+`CHANGES REQUIRED (0/1/1)` [historical]; D8.4 Planning Remediation Round 2:
+`COMPLETE`; D8.4 Independent Planning Re-review Round 2: `PENDING`;
+implementation: `BLOCKED / NOT STARTED`. This plan is the implementation
+authority after Planning Review approval. It contains no production
+implementation.
 
 ## 1. Status / lifecycle
 
@@ -15,9 +18,11 @@ D8.2 = REVIEW-CLOSED
 D8.3 = REVIEW-CLOSED
 D8.4 Planning = REVIEW-READY / NOT APPROVED
 D8.4 Independent Planning Review = CHANGES REQUIRED (0/5/3) [historical]
-D8.4 Planning Remediation = COMPLETE
-D8.4 Independent Planning Re-review = PENDING
-D8.4 implementation = NOT STARTED
+D8.4 Planning Remediation Round 1 = COMPLETE
+D8.4 Independent Planning Re-review = CHANGES REQUIRED (0/1/1) [historical]
+D8.4 Planning Remediation Round 2 = COMPLETE
+D8.4 Independent Planning Re-review Round 2 = PENDING
+D8.4 implementation = BLOCKED / NOT STARTED
 D8.4 = NOT REVIEW-CLOSED
 ```
 
@@ -65,7 +70,7 @@ production change is part of Planning.
 | Primary read/create/save | `server/routes/diary.ts`, `server/routes/posts.ts` (`saveManagedDiary`), `server/diaryAccess/guard.ts` | Migration service is the only legacy body reader; normal D8.2 routes keep their owner and are blocked per document while migration runs. |
 | Diary access/encryption | `server/diaryAccess/service.ts` (`DiaryAccessService`, `withBodyOperation`), `server/diaryAccess/body.ts` | Reuse the existing lease-local `encrypt`/`decrypt`; no raw DEK or new capability owner. |
 | Vault identity | `server/vaultIdentity.ts:getVaultId()` | Stable vault tuple component; copying a vault changes identity and invalidates old ledger proof. |
-| Atomic durability / migration filesystem | `server/atomicTextWrite.ts` is the existing Note owner; future `DiaryMigrationFs` is the sole D8.4 native filesystem owner | Do not use the generic plaintext replace path for migration. `DiaryMigrationFs` must provide one handle-/directory-relative no-copy source transition, create-only ciphertext publication, exact artifact verification and explicit durability/unsupported results on Linux, macOS and Windows. |
+| Atomic durability / migration filesystem | `server/atomicTextWrite.ts` is the existing Note owner; future `DiaryMigrationFs` is the sole D8.4 native filesystem owner | Do not use the generic plaintext replace path for migration. `DiaryMigrationFs` must provide one captured-handle conditional source transition whose native mutation compares source and parent generations, create-only ciphertext publication, exact artifact verification and explicit durability/unsupported results on Linux, macOS and Windows. |
 | Crash recovery | `server/crashRecovery.ts:recoverInterruptedOperations`, called by `server/prod.ts` and `server/vite-plugin.ts` before HTTP | Extend startup with `DiaryMigrationService.recover`; generic Note recovery remains unchanged. |
 | Document metadata | `server/documentMetadata.ts` (`createDocumentMetadata`, `getDocumentMetadata`, snapshots/restore) | Preserve stable id/path/timestamps/Mood; minimal adoption row is created only by explicit action. |
 | SQLite connection/migrations | `server/db.ts`, migrations 0001-0011 (including `0001_ai_history.sql`) | Future migration 0012 adds only the structural D8.4 ledger and AI/frontmatter consent provenance; cleanup is one `BEGIN IMMEDIATE` transaction. |
@@ -90,13 +95,13 @@ context, not an implementation choice left open.
 | 3 | State machine | Item states are `DISCOVERED`, `NEEDS_UNLOCK`, `READY`, `PREPARING`, `ENCRYPTED_VERIFIED`, `PUBLISHING`, `RECOVERY_AUTH_REQUIRED`, `DURABILITY_PENDING`, `CONSENT_REQUIRED`, `PUBLISHED`, `CLEANUP_PENDING`, `COMPLETE`, `NEEDS_ATTENTION`; aggregate states are `NOT_STARTED`, `INVENTORIED`, `NEEDS_UNLOCK`, `RUNNING`, `ATTENTION_REQUIRED`, `COMPLETE`, `FAILED`. A syntactic V1 target is never `PUBLISHED`; policy-retained AI history is a separately recorded terminal disposition. |
 | 4 | Ledger storage/schema | Future SQLite migration `0012` adds `diary_migration_runs`, `diary_migration_items` and action-scoped consent/provenance records with structural fields only: immutable `inventoryRevision`, reviewed generation, action scope, exact ciphertext fingerprint, AI session identity and frontmatter binding CAS; no plaintext/body size. Exact proposal is §6. |
 | 5 | Stable idempotency identity | Resolved item key is `(vaultId, documentId, canonicalLogicalPath, migrationSchemaVersion=1)`. Unresolved path inventory rows cannot authorize mutation and are replaced by the resolved tuple after `adopt-metadata`. |
-| 6 | Plaintext primary protocol | `DiaryMigrationFs` is the sole native owner: capture an exact source handle/token, encrypt in memory, write ciphertext-only temp, transition the same pre-existing inode to reserved quarantine without copying, publish the exact ciphertext with atomic no-replace, verify and clean. Generic pathname rename/copy/delete and weaker alternate primitives are forbidden. |
+| 6 | Plaintext primary protocol | `DiaryMigrationFs` is the sole native owner: capture an exact source/parent authority, encrypt in memory, write ciphertext-only temp, perform the one captured-handle conditional transition of the same pre-existing inode to reserved quarantine, publish the exact ciphertext with atomic no-replace, verify and clean. Generic pathname rename/copy/delete and weaker alternate primitives are forbidden. |
 | 7 | Durable commit point | Security linearization is the moment ciphertext publication may have succeeded: plaintext restoration is permanently forbidden from that point. `PUBLISHED` requires exact ciphertext fingerprint/generation, AES-GCM/AAD authenticated readback with the unlocked body lease, and required file/directory durability before the durable journal write. Locked uncertainty is `RECOVERY_AUTH_REQUIRED`, never `PUBLISHED`. |
-| 8 | Monotonic rollback | Before the publication syscall, restore the same original inode only through the `DiaryMigrationFs` ownership token. After the syscall may have succeeded, never restore plaintext or overwrite a target; defer authentication, use `RECOVERY_AUTH_REQUIRED`/`DURABILITY_PENDING`/`CLEANUP_PENDING`, or surface attention. |
-| 9 | No-new-plaintext artifacts | Migration temp, journal, ledger, rollback/recovery payload and quarantine created by D8.4 contain ciphertext or structural ownership only. The only allowed plaintext quarantine is the one pre-existing source inode transitioned without a second data copy; pathname reuse never authorizes deletion. |
+| 8 | Monotonic rollback | Before the publication syscall, restore the same original inode only through a live or exact restart-reacquired `DiaryMigrationFs` ownership token. After the syscall may have succeeded, never restore plaintext or overwrite a target; defer authentication, use `RECOVERY_AUTH_REQUIRED`/`DURABILITY_PENDING`/`CLEANUP_PENDING`, or surface attention. |
+| 9 | No-new-plaintext artifacts | Migration temp, journal, ledger, rollback/recovery payload and quarantine created by D8.4 contain ciphertext or structural ownership only. The only allowed plaintext quarantine is the one pre-existing source inode transitioned without a second data copy; a quarantine pathname or matching metadata never authorizes deletion. |
 | 10 | Missing metadata | Canonical path/date is validated first. The item waits for explicit `adopt-metadata`; `DocumentMetadata` creates a UUID row with date title, empty summary/tags and null Mood without parsing body. Ambiguous/stale identity and null-ID frontmatter ownership are attention; adoption never binds a backup by path alone. |
 | 11 | Malformed/unknown envelope | Magic-present malformed, auth failure, unknown version, wrong vault/id/path are never plaintext. Preserve bytes, return stable non-secret code, classify `NEEDS_ATTENTION`, and do not overwrite. |
-| 12 | External-writer races | All source transition, quarantine removal and target publication use `DiaryMigrationFs` handle-/directory-relative ownership. External generation wins; unsupported, junction/reparse, cross-device, open-handle or durability results fail closed and retain artifacts. |
+| 12 | External-writer races | All source transition, quarantine removal and target publication use the frozen `DiaryMigrationFs` native contracts. The mutation itself proves exact source/parent generation; external generation wins; unsupported, junction/reparse, cross-device, open-handle or durability results fail closed and retain artifacts. |
 | 13 | Legacy Draft/Recovery | Locked structural inventory only. After unlock, each valid family has exactly `import-to-primary` or typed `discard-draft`, each bound to an immutable inventory revision/generation and action scope; ambiguous/changed families remain attention. No silent delete. |
 | 14 | Encrypted Draft Store V2 | Out. D8.4 only disposes/migrates legacy rows; new managed persistent Draft/Recovery stays disabled. |
 | 15 | Private SQLite metadata | Preserve structural identity/timestamps/Mood; normalize title to date; clear summary, managed tags/embeddings and proven managed history raw/payload rows after encrypted publication and action-scoped confirmation. Inventory `0001` AI sessions/messages; provable managed-Diary tool results get explicit whole-session discard or policy retention/attention. Mixed ownership remains attention. |
@@ -131,7 +136,7 @@ implemented by this plan.
 | `DISCOVERED -> COMPLETE` | Valid encrypted no-op after authenticated verification | No body exposure for no-op; missing primary remains attention | Idempotent status. |
 | `READY -> PREPARING` | Revision-bound action consent, lease and all locks acquired; journal created | Vault mutation -> structure -> document -> body lease | Crash before source transition leaves source unchanged; retry. |
 | `PREPARING -> ENCRYPTED_VERIFIED` | Ciphertext temp durable and decrypt/readback matches transient plaintext | Body lease remains current | Temp/journal replayable; no body in durable state. |
-| `ENCRYPTED_VERIFIED -> PUBLISHING` | `DiaryMigrationFs` proves exact source token and transitions same inode to quarantine | Same locks and lease | Unsupported/identity mismatch stops before publication. |
+| `ENCRYPTED_VERIFIED -> PUBLISHING` | `DiaryMigrationFs.transitionOwnedSource` performs the captured-source/expected-parent conditional mutation and returns exact quarantine provenance | Same locks and live native authorities | Unsupported/identity mismatch/occupied quarantine stops before publication; no pathname fallback. |
 | `PUBLISHING -> DURABILITY_PENDING` | Publication or directory durability may have happened but required durability result is unknown | No cleanup; target not overwritten | Retain artifacts/journal; retry verified durability. |
 | `PUBLISHING -> RECOVERY_AUTH_REQUIRED` | Target may have been published; transaction fingerprint/generation matches but server is locked | No cleanup/body mutation | Unlock reconciliation required; never call syntactic V1 valid. |
 | `PUBLISHING -> PUBLISHED` | Create-only target publish, required durability and authenticated readback succeed | Lease must be current for auth; post-publication is monotonic | Target authoritative; cleanup forward only. |
@@ -163,6 +168,55 @@ valid-encrypted no-op, explicitly acknowledged `NEEDS_ATTENTION`, or explicit
 policy-retained AI state) plus Git-retention and AI-retention acknowledgments.
 Any unexpected storage failure is `FAILED` with a resumable ledger/journal; it
 is not success.
+
+### 5.3 Restart authority state machine
+
+Logical identity, observed filesystem generation, live mutation authority and
+restart recovery authority are separate types. The item key
+`(vaultId, documentId, canonicalPath, schemaVersion)` selects an item only; it
+never authorizes a mutation. Device/volume plus inode/file ID, parent identity
+and available birth/generation provenance identify an observed generation, but
+matching those fields to a ledger row is still not destructive authority. A
+live source/parent/quarantine handle pair is authority only for the one native
+conditional operation that consumes it. A crash destroys that process-local
+authority.
+
+The required restart transitions are:
+
+```text
+owned live source
+    -> source transitioned to quarantine
+    -> live token lost by crash
+    -> structural recovery
+    -> exact native quarantine reacquisition
+       -> REACQUIRED_EXACT_QUARANTINE
+          (forward cleanup may continue after publication/auth gates)
+       -> QUARANTINE_OWNERSHIP_UNPROVEN
+          -> NEEDS_ATTENTION
+```
+
+Before source transition, the durable journal records the reviewed
+`inventoryRevision`, logical identity, transaction/schema version, expected
+parent generation, captured source generation, reserved quarantine name and
+phase. After the native transition and parent durability barrier, the helper's
+returned quarantine generation and parent generation are durably recorded.
+These records contain only structural provenance (including a platform file
+handle/generation when it is non-secret and restart-reacquirable), reserved
+names, phase, durability and internal ciphertext fingerprint. They never store
+body, body length, body hash/digest, keys, capabilities or message content.
+
+Restart may enter `REACQUIRED_EXACT_QUARANTINE` only when a platform-native
+operation opens the expected parent and reserved name without symlink/reparse
+traversal, compares the persisted generation and parent in the same authority
+domain, and returns a new handle-bound token. Missing post-transition
+provenance, a missing quarantine, a parent replacement, a same-name different
+generation, or an unavailable native reacquisition primitive enters
+`QUARANTINE_OWNERSHIP_UNPROVEN` and `NEEDS_ATTENTION`; it never deletes,
+restores, overwrites or recreates plaintext. A pre-publication restore also
+requires a durable pre-publication journal and an empty canonical destination;
+an external destination occupant wins. Post-publication quarantine removal
+uses the same exact reacquisition proof. There is no path-only or “probably
+ours” recovery state.
 
 ## 6. Migration ledger
 
@@ -208,7 +262,13 @@ CREATE TABLE diary_migration_items (
     'CLEANUP_PENDING','COMPLETE','NEEDS_ATTENTION'
   )),
   source_generation_json TEXT,
+  source_parent_generation_json TEXT,
+  quarantine_name TEXT,
   quarantine_generation_json TEXT,
+  quarantine_parent_generation_json TEXT,
+  quarantine_durability TEXT CHECK (quarantine_durability IN (
+    'NOT_STARTED','UNKNOWN','DURABLE','FAILED'
+  )),
   target_generation_json TEXT,
   transaction_id TEXT,
   ciphertext_fingerprint TEXT,
@@ -259,12 +319,16 @@ immutable `inventory_revision`; a rescan appends a new revision and marks new
 or changed tuples `CONSENT_REQUIRED`.
 
 Generation JSON contains only regular-file type, device/inode or Windows file
-ID, mtime/mtimeNs when available and directory identity. The live helper handle
-token is process-memory-only and is never serialized. The JSON contains no byte
-size, body hash, plaintext digest or content. A ciphertext fingerprint is
-SHA-256 of the randomized encrypted
-artifact and is classified as internal non-secret transaction provenance; it
-is never returned in a locked response and cannot authorize mutation alone.
+ID, available birth/generation provenance, mtime/mtimeNs when available and
+directory identity. `source_parent_generation_json`, `quarantine_name`,
+`quarantine_generation_json` and `quarantine_parent_generation_json` make the
+restart provenance explicit; `quarantine_durability` records whether the
+parent-directory barrier is known. The live helper handle token is
+process-memory-only and is never serialized. The JSON contains no byte size,
+body hash, plaintext digest or content. A ciphertext fingerprint is SHA-256
+of the randomized encrypted artifact and is classified as internal non-secret
+transaction provenance; it is never returned in a locked response and cannot
+authorize mutation alone.
 `frontmatter_row_cas_json` contains structural row status/updated-at/nullness
 only; any existing source hash used as a CAS is compared transiently inside
 the SQLite transaction and is never copied to this ledger. The ledger forbids
@@ -316,20 +380,109 @@ ownership-checked names. The source name is a moved pre-existing inode, never a
 copy; it is removed only after the confirmed post-publication cleanup gate.
 
 `DiaryMigrationFs` is the sole native filesystem owner. Its exact operations
-are `captureSourceGeneration`, `transitionSourceToQuarantine`,
+are `captureSourceGeneration`, `transitionOwnedSource`,
 `writeCiphertextTemp`, `publishCiphertextCreateOnly`,
 `verifyCiphertextArtifact`, `removeOwnedQuarantineGeneration` and
-`syncDurability`. Linux uses directory-handle resolution plus `openat2` and
-`renameat2(RENAME_NOREPLACE)` semantics; macOS uses `openat`/`O_NOFOLLOW` and
-`renameatx_np(RENAME_EXCL)` or an equivalent native no-replace helper; Windows
-uses reparse-rejecting `CreateFileW`, handle identity and native fail-if-exists
-rename/`FlushFileBuffers` semantics. All adapters must bind the destructive
-source operation to the captured handle/generation, not a final pathname
-check. If an adapter cannot provide the exact semantics, it returns
-`diary-migration-filesystem-unsupported` (HTTP 503) and never uses copy/delete,
-overwrite rename or a weaker alternate operation. Cross-device, source-busy,
-target-occupied, junction/reparse and directory durability outcomes are
-stable and retain unproven artifacts.
+`syncDurability`. `transitionOwnedSource(capturedSourceAuthority,
+expectedParentAuthority, reservedQuarantineName)` is one native conditional
+namespace mutation: the mutation itself compares the captured source
+generation and expected parent generation, requires the quarantine name to be
+absent, moves the same existing inode/file object without copying or
+overwriting, and returns exact quarantine generation/provenance. A pathname
+check followed by rename, hard-link-plus-unlink, copy/delete and overwrite
+rename are forbidden. `removeOwnedQuarantineGeneration` applies the same
+handle-bound comparison at unlink time.
+
+The platform contracts are fixed, not selectable. Linux resolves parent/source
+with `openat2(RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS)` and
+`O_PATH|O_NOFOLLOW`, uses `statx`/native file handles for evidence, and
+requires the named `D8_DIARY_RENAME_BY_HANDLE` primitive, bound by
+`docus_diary_transition_owned_source_linux`, for the conditional
+rename-by-handle ABI; `renameat2(RENAME_NOREPLACE)` is only ciphertext
+publication and `open_by_handle_at` is only a possible restart reacquisition
+after the named exact tuple check. A composed `openat2`/pathname-rename
+sequence is not an implementation of the primitive; the named
+`D8_DIARY_REACQUIRE_BY_HANDLE` must verify the persisted tuple before returning
+a restart token.
+macOS resolves parent/source with `openat` and `O_NOFOLLOW`, records vnode
+identity, and requires the named `D8_DIARY_RENAME_BY_VNODE` primitive, bound by
+`docus_diary_transition_owned_source_macos`, for the vnode-handle conditional
+rename; `renameatx_np(RENAME_EXCL)` is only ciphertext publication. The named
+`D8_DIARY_REACQUIRE_BY_VNODE` verifies the persisted parent/name/vnode tuple
+before returning a restart token. Windows opens
+source and parent with reparse-safe `CreateFileW`, omits
+`FILE_SHARE_DELETE`, records `FileIdInfo`, and performs the source transition
+with `SetFileInformationByHandle(FileRenameInfoEx)` on the captured source
+handle, `RootDirectory` set to the captured parent and replace-if-exists
+omitted. Publication uses the same API on the ciphertext temp with
+fail-if-exists semantics. A platform/filesystem that cannot supply its exact
+conditional operation returns `diary-migration-filesystem-unsupported`
+(HTTP 503) before mutation; no weaker operation is allowed.
+
+Because the source fd/handle and expected parent authority are consumed by the
+same conditional namespace operation, a source replacement between capture and
+mutation, a parent replacement, and a quarantine-name race cannot cause an
+unowned generation to be moved or removed; the operation returns the frozen
+external/occupied/unsupported result instead.
+
+Stable outcomes are `SOURCE_GENERATION_CHANGED`,
+`PARENT_GENERATION_CHANGED`, `TARGET_OCCUPIED`, `FILESYSTEM_UNSUPPORTED`,
+`CROSS_DEVICE`, `SOURCE_BUSY`, `DURABLE`, `DURABILITY_UNKNOWN` and
+`DURABILITY_FAILED`. Linux `ESTALE`/post-compare `ENOENT`, macOS
+`ENOENT`/`ESTALE`, and Windows `ERROR_FILE_NOT_FOUND`/
+`ERROR_PATH_NOT_FOUND` mean an external generation won. `EEXIST`/
+`ENOTEMPTY` or `ERROR_FILE_EXISTS`/`ERROR_ALREADY_EXISTS` mean occupied
+destination; `EXDEV`/`ERROR_NOT_SAME_DEVICE` means cross-device;
+`EBUSY`/`EAGAIN`/`EWOULDBLOCK` or Windows sharing/lock violations mean
+retryable source busy; missing required APIs/flags map to unsupported.
+Required file and parent-directory durability failures remain unknown/failed
+and never become `PUBLISHED`.
+
+The live fd/handle token is process-memory-only. Before the source mutation,
+the journal durably records inventory revision, logical identity, source and
+parent generations, reserved name and phase; after the mutation and parent
+durability barrier it records the returned quarantine and parent generations.
+On restart, only a fresh `D8_DIARY_REACQUIRE_BY_HANDLE`,
+`D8_DIARY_REACQUIRE_BY_VNODE` or the Windows handle reopen plus exact
+`FileIdInfo` comparison may produce `REACQUIRED_EXACT_QUARANTINE`; otherwise the item is
+`QUARANTINE_OWNERSHIP_UNPROVEN`/`NEEDS_ATTENTION` and no delete, restore,
+overwrite or plaintext recreation is allowed. A same-name different
+generation is external state. Pre-publication restoration requires exact
+reacquisition and an empty canonical destination; post-publication cleanup
+uses the same proof. Generation records never contain body size, body hash,
+plaintext digest, keys, capabilities or message content.
+
+Durability is an ordered set of independent proofs: sync the ciphertext temp
+file and its parent before source transition; perform the source namespace
+transition and sync its parent before recording quarantine provenance; publish
+the ciphertext target with no-replace and sync the target file and target
+parent; authenticate readback and write durable `PUBLISHED`; then unlink the
+quarantine and sync its parent in a separate cleanup barrier. An unknown or
+failed barrier is `DURABILITY_PENDING`/attention and never becomes
+`PUBLISHED` or durable quarantine removal. The unlink syscall and directory
+barrier therefore remain distinct crash seams.
+
+The source-transition adversarial oracle is explicit (and is identical to the
+normative matrix in PRD §9.1e):
+
+| Case | Permitted? | Result/state | Preservation and retry rule |
+| --- | --- | --- | --- |
+| Source replaced before or at transition | No | `SOURCE_GENERATION_CHANGED`/`EXTERNAL_PATH_CONFLICT` | External generation is never moved or deleted; new revision required |
+| Source pathname replaced after capture | No | Native captured-handle compare refuses replacement | No pathname fallback; preserve both generations; attention |
+| Source or parent becomes junction/reparse | No | `FILESYSTEM_UNSUPPORTED`/attention | Preserve object/artifacts; repair and rescan |
+| Parent directory replaced | No | `PARENT_GENERATION_CHANGED` | Preserve new parent/source; fresh provenance required |
+| Quarantine destination exists or is case-fold collision | No | `TARGET_OCCUPIED`/identity conflict | Occupant wins; no overwrite or same-name retry |
+| Quarantine name reused after crash | No unless exact reacquired | `QUARANTINE_OWNERSHIP_UNPROVEN` | Different generation/absent name is never deleted or recreated |
+| Target appears before publication | No | `TARGET_OCCUPIED`/`EXTERNAL_PATH_CONFLICT` | Preserve target, temp and quarantine; no overwrite |
+| Cross-device operation | No | `CROSS_DEVICE`/unsupported | Retain artifacts; never copy/delete |
+| Missing no-replace or exact-source primitive | No | `FILESYSTEM_UNSUPPORTED` | No namespace mutation; attention, no weaker fallback |
+| Windows sharing/antivirus/open-handle denial | No | `SOURCE_BUSY` or unsupported | Do not force close; retry only with exact generation, then attention |
+| Directory durability fails or is unknown | No `PUBLISHED` | `DURABILITY_PENDING`/attention | Retain journal/ciphertext/quarantine; no cleanup or plaintext restore |
+| Live token lost by crash | No immediate action | Exact reacquisition attempted | All artifacts retained until native proof |
+| Restart cannot reacquire quarantine authority | No | `QUARANTINE_OWNERSHIP_UNPROVEN`/`NEEDS_ATTENTION` | Manual attention; no guessed delete/restore/overwrite |
+
+The same oracle applies to quarantine removal. A successful source transition
+does not turn its pathname or matching ledger metadata into delete authority.
 
 The existing body lease performs encryption, decryption and `assertCurrent()`.
 Publication records an internal ciphertext SHA-256 fingerprint and target
@@ -455,19 +608,24 @@ HTTP listener
 directory/file ownership and non-secret transaction fingerprint/generation,
 but it cannot authenticate AES-GCM while the service is locked. If a target
 may have been published, it records `RECOVERY_AUTH_REQUIRED`; a provenance
-mismatch is `NEEDS_ATTENTION`. It never logs body bytes, never deletes
-quarantine and never restores plaintext over a possible target. After unlock,
-the existing `DiaryBodyOperation` revalidates exact target identity and
-authenticates the V1 envelope with vault/document/path AAD before writing
-`PUBLISHED` or starting cleanup. Generic `.docus-staged-*` and
-`.docus-delete-inflight-*` remain owned by existing recovery and are not
-repurposed for Diary migration. The locked matrix is exact: (A) target absent
-plus pre-publication journal plus exact owned quarantine permits token-bound
-source restoration only; otherwise attention; (B) target exists and
-publication may have happened preserves target/quarantine and records
-`RECOVERY_AUTH_REQUIRED` when fingerprint matches, never plaintext restore or
-cleanup; (C) generation/provenance mismatch preserves the external target and
-records `NEEDS_ATTENTION`.
+mismatch is `NEEDS_ATTENTION`. It never logs body bytes, deletes quarantine or
+restores plaintext over a possible target. A process-local source/quarantine
+token is destroyed by a crash. On restart, recovery may obtain a new token
+only through the platform-specific native exact reacquisition proof described
+in Workstream B; otherwise it records
+`QUARANTINE_OWNERSHIP_UNPROVEN`/`NEEDS_ATTENTION` and performs no delete,
+restore, overwrite or plaintext recreation. After unlock, the existing
+`DiaryBodyOperation` revalidates exact target identity and authenticates the V1
+envelope with vault/document/path AAD before writing `PUBLISHED` or starting
+cleanup. Generic `.docus-staged-*` and `.docus-delete-inflight-*` remain owned
+by existing recovery and are not repurposed for Diary migration. The locked
+matrix is exact: (A) target absent plus pre-publication journal plus
+`REACQUIRED_EXACT_QUARANTINE` permits token-bound source restoration only;
+otherwise attention; (B) target exists and publication may have happened
+preserves target/quarantine and records `RECOVERY_AUTH_REQUIRED` when
+fingerprint matches, never plaintext restore or cleanup; (C)
+generation/provenance mismatch preserves the external target and records
+`NEEDS_ATTENTION`.
 
 ## 14. Workstream H — migration UX/API
 
@@ -506,6 +664,7 @@ content for diagnostics or export.
 | 409 | `diary-migration-durability-pending` | Publication/directory durability cannot yet be proven; item is not `PUBLISHED`. |
 | 409 | `diary-migration-source-busy` | A required handle-bound source transition cannot proceed because an open/shared handle owns the generation. |
 | 409 | `diary-migration-cross-device` | The required same-filesystem no-copy operation cannot be performed. |
+| 409 | `diary-migration-quarantine-ownership-unproven` | Restart cannot reacquire the exact quarantine generation and parent; no delete, restore or overwrite is permitted. |
 | 409 | `diary-migration-draft-decision-required` | Legacy Draft/Recovery action is not chosen. |
 | 409 | `diary-migration-git-decision-required` | Retention acknowledgment is absent. |
 | 409 | `diary-migration-attention-required` | Run has unresolved attention items. |
@@ -616,12 +775,14 @@ many dates, large bounded bodies, many IDB rows and large Git histories.
 ## 18. Cross-platform validation
 
 Run Linux, macOS and Windows jobs against the same `DiaryMigrationFs` contract.
-Verify the declared native adapter's handle-bound source transition,
-create-only publication, junction/reparse rejection, open-handle/antivirus
-behavior, case-folded path identity, cross-device refusal and file/directory
-durability. Linux and macOS require directory `fsync`; Windows requires the
-declared directory-handle flush. If any required primitive or durability proof
-is unavailable, return `diary-migration-filesystem-unsupported` or
+Verify the declared native adapter's captured-handle conditional source
+transition, create-only publication, junction/reparse rejection,
+open-handle/antivirus behavior, case-folded path identity, cross-device
+refusal and file/directory durability. Linux and macOS require directory
+`fsync`; Windows requires the declared directory-handle flush. A pathname
+check/use pair is not a source proof. If any required conditional mutation,
+reacquisition primitive or durability proof is unavailable, return
+`diary-migration-filesystem-unsupported` or
 `diary-migration-durability-pending`, retain the journal/artifacts and do not
 advance to `PUBLISHED`; no timing retry, copy/delete or overwrite operation is
 permitted.
@@ -629,10 +790,12 @@ permitted.
 ## 19. Failure/rollback matrix and deterministic hook oracle
 
 The only automatic rollback is pre-publication restoration of the same
-pre-existing inode through its `DiaryMigrationFs` token. Once the ciphertext
-publication syscall may have succeeded, no recovery path writes plaintext to
-the canonical path. Every hook is a deterministic fault-injection seam, not a
-sleep or timing window:
+pre-existing inode through a live or exact restart-reacquired
+`DiaryMigrationFs` token. Once the ciphertext publication syscall may have
+succeeded, no recovery path writes plaintext to the canonical path. The
+authoritative hook set contains exactly **19 named seams**, identical to the
+PRD §15 list. Every hook is a deterministic fault-injection seam, not a sleep
+or timing window:
 
 | Hook | Filesystem state | Journal / SQLite ledger | IDB state | Locked restart / authoritative generation | Allowed recovery / forbidden action / next state |
 | --- | --- | --- | --- | --- | --- |
@@ -646,14 +809,52 @@ sleep or timing window:
 | `AFTER_AUTHENTICATED_READBACK` | Exact target authenticated; quarantine may exist | proof recorded; journal not PUBLISHED | unchanged | locked; target authoritative; ledger pending | Resume journal only with current lease; PUBLISHED pending |
 | `BEFORE_PUBLISHED_JOURNAL` | Authenticated target; quarantine may exist | journal write not started | unchanged | locked; target authoritative | Write only after durability proof; no plaintext restore; PUBLISHED pending |
 | `AFTER_PUBLISHED_JOURNAL` | Authenticated target; quarantine may exist | durable PUBLISHED | unchanged | locked; target authoritative | Cleanup forward only; `PUBLISHED`/`CLEANUP_PENDING` |
-| `BEFORE_SQLITE_CLEANUP_COMMIT` | Authenticated target; quarantine may exist | PUBLISHED; SQLite transaction open | unchanged | locked; target authoritative | Rollback transaction; no target overwrite; `CLEANUP_PENDING` |
-| `AFTER_SQLITE_CLEANUP_COMMIT` | Authenticated target; quarantine may exist | SQLite cleanup committed | unchanged | locked; target authoritative | Resume remaining confirmed gates; `CLEANUP_PENDING` |
+| `BEFORE_SQLITE_CLEANUP_COMMIT` | Authenticated target; quarantine may exist | `PUBLISHED`; SQLite transaction open and not committed (including a whole-session AI disposition) | unchanged | locked; target authoritative | Kill rolls back the transaction; no target overwrite; `CLEANUP_PENDING` |
+| `AFTER_SQLITE_CLEANUP_COMMIT` | Authenticated target; quarantine may exist | SQLite transaction committed; migration ledger may still lag (including committed whole-session AI disposition) | unchanged | locked; target authoritative | Reconcile exact rows idempotently; never recreate/delete a replacement; `CLEANUP_PENDING` |
 | `BEFORE_IDB_DISPOSITION_COMMIT` | Authenticated target; quarantine may exist | PUBLISHED/cleanup pending | exact rows unchanged; IDB transaction open | locked; target authoritative | Abort/rollback IDB; changed rows need consent; `CLEANUP_PENDING` |
 | `AFTER_IDB_DISPOSITION_COMMIT` | Authenticated target; quarantine may exist | ledger pending auxiliary completion | confirmed rows deleted or retained | locked; target authoritative | Re-read idempotently; no second destructive action; `CLEANUP_PENDING` |
-| `BEFORE_SOURCE_QUARANTINE_REMOVE` | Authenticated target; exact quarantine | cleanup pending | confirmed dispositions durable | locked; target authoritative | Token-only removal; otherwise attention; `CLEANUP_PENDING` |
-| `AFTER_SOURCE_QUARANTINE_REMOVE` | Authenticated target; owned quarantine absent | cleanup pending | confirmed dispositions durable | locked; target authoritative | Verify no new plaintext; `CLEANUP_PENDING`/`COMPLETE` |
+| `BEFORE_SOURCE_QUARANTINE_UNLINK` | Authenticated target; exact owned quarantine exists | cleanup pending; unlink not invoked | confirmed dispositions durable | locked; target authoritative; exact quarantine authority required | Unlink only through native exact-generation operation; otherwise attention; `CLEANUP_PENDING` |
+| `AFTER_SOURCE_QUARANTINE_UNLINK_BEFORE_DIR_DURABILITY` | Authenticated target; unlink syscall returned; parent-directory durability barrier not completed | cleanup pending; `quarantine_unlink=COMPLETED`, `quarantine_dir_durability=UNKNOWN` | confirmed dispositions durable | locked; target authoritative; namespace may be durable or uncertain | On restart inspect actual namespace; never recreate plaintext or delete a replacement; `DURABILITY_PENDING`/`CLEANUP_PENDING` |
+| `AFTER_SOURCE_QUARANTINE_DIR_DURABILITY` | Authenticated target; unlink returned and parent-directory durability barrier completed | cleanup pending; `quarantine_removal_durable=COMMITTED` | confirmed dispositions durable | locked; target authoritative; owned quarantine is durably absent | Forward-only verification; never require/recreate quarantine; `CLEANUP_PENDING`/`COMPLETE` |
 | `BEFORE_ITEM_COMPLETE` | Authenticated target; no owned plaintext quarantine | all required cleanup durable | dispositions durable | locked; target authoritative | Revalidate consent/provenance; no guess; `CLEANUP_PENDING` |
 | `AFTER_ITEM_COMPLETE` | Authenticated target; no owned plaintext artifact | item COMPLETE durable | dispositions durable | locked; target authoritative | Idempotent no-op; aggregate requires all scopes/residuals |
+
+For `BEFORE_SOURCE_QUARANTINE_UNLINK`, the quarantine entry must still exist
+and the native exact-generation unlink is the only next operation. For
+`AFTER_SOURCE_QUARANTINE_UNLINK_BEFORE_DIR_DURABILITY`, an unlink syscall has
+returned but the parent barrier has not; restart inspects the actual namespace,
+never recreates plaintext, fsyncs the parent if the name is absent, and retries
+only an exact-reacquired generation if the name remains. A different
+generation is preserved as external state. For
+`AFTER_SOURCE_QUARANTINE_DIR_DURABILITY`, absence is durably committed and
+forward cleanup never requires the plaintext quarantine.
+
+`DISCARD_AI_SESSION` maps to the two SQLite hooks with
+`operationClass=DISCARD_AI_SESSION`. At the before-commit seam the exact
+session row and every inventoried message row still exist, the transaction
+rolls back on kill, the item remains `CLEANUP_PENDING`, and the same consent
+is usable only if its inventory revision, session row generation and message
+ID set still match. At the after-commit seam the session and all inventoried
+messages are absent while the migration ledger may lag; restart records the
+already-completed whole-session disposition idempotently and never recreates
+data. A replacement/new row with the same numeric ID is a changed generation,
+requires new consent and is never deleted by the old action. `RETAIN_AI_HISTORY`
+has no destructive hook and remains an explicit policy-retained state.
+
+On an unlocked restart, every hook first revalidates the current epoch,
+inventory consent and exact native generations. The pre-publication hooks
+(`AFTER_JOURNAL_PREPARED`, `AFTER_CIPHERTEXT_TEMP_FSYNC`,
+`BEFORE_SOURCE_TRANSITION`, `AFTER_SOURCE_TRANSITION`,
+`BEFORE_CIPHERTEXT_PUBLISH`) may retry only their recorded phase with the
+exact source/parent/quarantine proof. The publication hooks
+(`AFTER_CIPHERTEXT_PUBLISH_SYSCALL`, `AFTER_TARGET_DURABILITY`,
+`AFTER_AUTHENTICATED_READBACK`, `BEFORE_PUBLISHED_JOURNAL`) must authenticate
+the exact target before writing `PUBLISHED`; failure remains attention and
+never restores plaintext. The post-publication SQLite, IDB and quarantine
+hooks continue only the exact pending action after scope/generation checks;
+the unlink-before-directory-durability hook inspects namespace rather than
+recreating it, and `AFTER_ITEM_COMPLETE` is an idempotent no-op. This is the
+unlocked counterpart of every locked-restart row above.
 
 The harness launches a child Docus server against an isolated temporary vault,
 signals the parent exactly when a selected enum seam is reached, terminates
@@ -675,15 +876,18 @@ The D8.4 implementation gate requires all of:
 5. locked publication uncertainty enters `RECOVERY_AUTH_REQUIRED`, unlock
    proves exact ciphertext fingerprint/generation/AES-GCM/AAD, and no plaintext
    restore/cleanup occurs before authentication;
-6. `DiaryMigrationFs` proves the same handle-bound, no-copy, create-only and
-   durability semantics on Linux/macOS/Windows, with unsupported outcomes
-   fail-closed;
+6. `DiaryMigrationFs` proves the same captured-handle conditional, no-copy,
+   create-only and durability semantics on Linux/macOS/Windows, with
+   unsupported outcomes fail-closed and restart exact-reacquisition or
+   `QUARANTINE_OWNERSHIP_UNPROVEN`;
 7. every destructive action is bound to immutable `inventoryRevision`, exact
    item/generation and action scope; a new/changed row cannot inherit consent;
 8. legacy Draft/Recovery, SQLite private metadata, AI `sessions/messages` and
    `frontmatter_backup` follow the frozen action and preserve Note rows;
 9. Git policy is applied as read-only disclosure and retention is acknowledged;
-10. crash/restart and rerun idempotency proofs pass for every exact hook enum;
+10. crash/restart and rerun idempotency proofs pass for every exact 19-hook
+    enum, including unlink-before-directory-durability and the mapped
+    whole-session AI disposition;
 11. ordinary Note read/write/history/search/Draft behavior passes regression;
 12. Linux/macOS/Windows cross-platform tests pass;
 13. typecheck, build, full unit/integration, History, Recovery, browser E2E,
@@ -700,9 +904,12 @@ The future implementation evidence must record: starting HEAD and planning
 approval commit; implementation commits; immutable inventory revisions and
 action-scoped consents; per-store inventory including AI sessions/messages;
 every state transition including `RECOVERY_AUTH_REQUIRED`,
-`DURABILITY_PENDING` and `CONSENT_REQUIRED`; ciphertext fingerprint/generation
-proof without body size; no-new-plaintext canary proof; the exact hook oracle
-crash/restart and idempotency proof; Draft/Recovery disposition;
+`DURABILITY_PENDING`, `CONSENT_REQUIRED` and
+`QUARANTINE_OWNERSHIP_UNPROVEN`; ciphertext fingerprint/generation proof
+without body size; no-new-plaintext canary proof; the exact 19-hook oracle
+crash/restart and idempotency proof, including quarantine unlink versus
+directory durability and the mapped AI whole-session disposition;
+Draft/Recovery disposition;
 SQLite/`frontmatter_backup` cleanup and null-ID binding; AI whole-session
 disposition; Git policy proof; ordinary Note regression; cross-platform
 counts; exact-head CI run; residual-risk categories; Independent Review
@@ -710,12 +917,14 @@ verdict; remediation/re-review if any; and final docs-only closure lineage.
 
 ## 22. Review/closure lifecycle
 
-After this planning-remediation commit, stop. The historical Independent
-Planning Review remains `CHANGES REQUIRED (0/5/3)`; the next action is D8.4
-Independent Planning Re-review. That reviewer must verify the actual source
-owners, all 23 frozen decisions, the deferred-auth recovery, one
-`DiaryMigrationFs` contract, immutable consent scopes, AI/frontmatter
-disposition, no-body-size ledger, exact API/error contracts, deterministic
+After this Round-2 planning-remediation commit, stop. The historical
+Independent Planning Review remains `CHANGES REQUIRED (0/5/3)` and the first
+Independent Planning Re-review remains `CHANGES REQUIRED (0/1/1)`; the next
+action is D8.4 Independent Planning Re-review Round 2. That reviewer must
+verify the actual source owners, all 23 frozen decisions, the deferred-auth
+recovery, the exact captured-generation `DiaryMigrationFs` contract and
+restart reacquisition, immutable consent scopes, AI/frontmatter disposition,
+no-body-size ledger, exact API/error contracts, the 19-hook deterministic
 crash oracle, Note non-regression and release gate. Only a separate approval
 may authorize implementation.
 

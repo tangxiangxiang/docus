@@ -2,10 +2,10 @@
 
 ## 1. Scope and lifecycle
 
-This is a docs-only D8.4 Planning Remediation. It remediates exactly the five
-historical P1 findings and three historical P2 findings from the Independent
-Planning Review. It does not implement D8.4 and does not edit the immutable
-review record.
+This file records the docs-only D8.4 Planning Remediation Round 1 and Round 2
+evidence. Round 2 remediates exactly the two findings left open by the
+Independent Planning Re-review (`D8.4-IPR-P1-2` and `D8.4-IPR-P2-3`). It does
+not implement D8.4 and does not edit either immutable review record.
 
 ```text
 D8.0 = REVIEW-CLOSED
@@ -15,9 +15,11 @@ D8.3 = REVIEW-CLOSED
 
 D8.4 Planning = REVIEW-READY / NOT APPROVED
 D8.4 Independent Planning Review = CHANGES REQUIRED (0/5/3) [historical]
-D8.4 Planning Remediation = COMPLETE
-D8.4 Independent Planning Re-review = PENDING
-D8.4 implementation = NOT STARTED
+D8.4 Planning Remediation Round 1 = COMPLETE
+D8.4 Independent Planning Re-review = CHANGES REQUIRED (0/1/1) [historical]
+D8.4 Planning Remediation Round 2 = COMPLETE
+D8.4 Independent Planning Re-review Round 2 = PENDING
+D8.4 implementation = BLOCKED / NOT STARTED
 D8.4 = NOT REVIEW-CLOSED
 ```
 
@@ -122,20 +124,19 @@ Plan decisions 6, 8, 9, 12, Workstream B, cross-platform §18, hook oracle §19
 and API/error §14; canonical D8 plan §8.1.
 
 **New frozen contract.** `DiaryMigrationFs` is the sole migration filesystem
-owner and exposes capture, handle-/directory-relative same-generation source
-transition, ciphertext-temp write, atomic create-only publication, artifact
-verification, token-bound quarantine removal and durability synchronization.
-Linux uses `openat2`/directory handles and `renameat2(RENAME_NOREPLACE)`;
-macOS uses `openat`/`O_NOFOLLOW` and `renameatx_np(RENAME_EXCL)` or an equivalent
-native helper; Windows uses reparse-rejecting `CreateFileW`, handle identity,
-native fail-if-exists rename and declared file/directory flushing. Junction,
-reparse, case-folding, cross-device, source-busy, open-handle/antivirus,
-unsupported hard-link/no-replace or durability uncertainty is a stable
-fail-closed outcome (`diary-migration-filesystem-unsupported` HTTP 503,
+owner and exposes capture, a captured-handle conditional same-generation
+source transition, ciphertext-temp write, atomic create-only publication,
+artifact verification, token-bound quarantine removal and durability
+synchronization. Round 2 below supplies the exact Linux/macOS/Windows native
+operation and restart-reacquisition semantics; no implementation choice may
+fall back to a pathname check/use pair. Junction, reparse, case-folding,
+cross-device, source-busy, open-handle/antivirus, unsupported exact-source or
+no-replace primitive, and durability uncertainty are stable fail-closed
+outcomes (`diary-migration-filesystem-unsupported` HTTP 503,
 `diary-migration-durability-pending` or attention). No copy/delete, overwrite
 rename or weaker alternate primitive is permitted. The sole plaintext
 quarantine pathname refers to the exact pre-existing inode and is removable
-only with its opaque ownership token.
+only after the exact live or restart-reacquired native authority proves it.
 
 **Owner rationale.** Existing generic atomic writers remain Note-only. The
 future native helper is the single place where platform semantics are selected;
@@ -317,7 +318,8 @@ prove the publication/ledger boundary.
 **Planning sections changed.** PRD §15 and §20; Implementation Plan §§17–21,
 especially the exact hook oracle in §19.
 
-**New frozen contract.** The exact seams are
+**New frozen contract.** Round 1's exact seams are superseded by a single
+authoritative set of 19 seams:
 `AFTER_JOURNAL_PREPARED`, `AFTER_CIPHERTEXT_TEMP_FSYNC`,
 `BEFORE_SOURCE_TRANSITION`, `AFTER_SOURCE_TRANSITION`,
 `BEFORE_CIPHERTEXT_PUBLISH`, `AFTER_CIPHERTEXT_PUBLISH_SYSCALL`,
@@ -325,8 +327,11 @@ especially the exact hook oracle in §19.
 `BEFORE_PUBLISHED_JOURNAL`, `AFTER_PUBLISHED_JOURNAL`,
 `BEFORE_SQLITE_CLEANUP_COMMIT`, `AFTER_SQLITE_CLEANUP_COMMIT`,
 `BEFORE_IDB_DISPOSITION_COMMIT`, `AFTER_IDB_DISPOSITION_COMMIT`,
-`BEFORE_SOURCE_QUARANTINE_REMOVE`, `AFTER_SOURCE_QUARANTINE_REMOVE`,
-`BEFORE_ITEM_COMPLETE` and `AFTER_ITEM_COMPLETE`. Each has a durable
+`BEFORE_SOURCE_QUARANTINE_UNLINK`,
+`AFTER_SOURCE_QUARANTINE_UNLINK_BEFORE_DIR_DURABILITY`,
+`AFTER_SOURCE_QUARANTINE_DIR_DURABILITY`, `BEFORE_ITEM_COMPLETE` and
+`AFTER_ITEM_COMPLETE`. The two SQLite hooks explicitly cover
+`DISCARD_AI_SESSION` whole-session deletion; each has a durable
 filesystem/journal/SQLite/IDB observation, lock state, authoritative
 generation, allowed/forbidden action and next state in the oracle table. A
 child server signals the parent at the selected seam; the parent terminates
@@ -378,7 +383,7 @@ D8.4-IPR-P2-3 = PLANNING REMEDIATED
 These are not `CLOSED`; only the separate Independent Planning Re-review may
 close them.
 
-## 6. Remediation commit and next gate
+## 6. Round-1 remediation commit and next gate (historical)
 
 Planning remediation commit: this docs-only commit (exact SHA is recorded by
 the final Git HEAD and release response).
@@ -387,8 +392,233 @@ Planning remediation CI: pending the exact-head CI run after push; the future
 re-review target must have a green normal 8-job CI. Historical CI #599 remains
 `FAILURE` and is preserved above.
 
-Independent Planning Re-review: `PENDING`.
+At the time of Round 1 this re-review was `PENDING`; it was later recorded as
+`CHANGES REQUIRED (0/1/1)` in the immutable re-review document.
 
-The next authorized action is D8.4 Independent Planning Re-review. No D8.4
-implementation, schema migration or runtime change is authorized by this
+The Round-1 next action was D8.4 Independent Planning Re-review. No D8.4
+implementation, schema migration or runtime change was authorized by that
 remediation.
+
+## 7. Planning Remediation Round 2 — P1-2 / P2-3
+
+### 7.1 Scope and authority
+
+Round 2 is a separate docs-only remediation of exactly the two findings left
+open by the independent re-review. It does not reopen the six findings already
+closed by that re-review and it does not edit either independent review record.
+
+| Evidence | Value |
+| --- | --- |
+| Starting HEAD | `1be58a317c121a5fd676cd709174de7fbb6b72b7` |
+| Starting parent | `4c90b46c1bdb37626530fc63529bf3903a6f151d` |
+| Branch / `github/main` | `main` / `1be58a317c121a5fd676cd709174de7fbb6b72b7` |
+| Starting working tree | clean |
+| Review authority | `1be58a317c121a5fd676cd709174de7fbb6b72b7` |
+| Review verdict | `D8.4 Independent Planning Re-review = CHANGES REQUIRED (0/1/1)` |
+| Round-2 scope | `D8.4-IPR-P1-2` and `D8.4-IPR-P2-3` only |
+
+The immutable lineage is `cbd5424 -> 9f8d06d -> 9ae4492 -> 4c90b46c ->
+1be58a3 -> Round-2 remediation`. No D8.4 runtime implementation, test,
+schema, migration, dependency or CI change is authorized.
+
+### 7.2 D8.4-IPR-P1-2 — exact-source ownership and restart authority
+
+**Defect closed by planning remediation.** Round 1 named a future native
+helper but left the implementation free to choose a pathname check/use pair
+and did not define how a process regains authority after a crash destroys the
+live token. That left the exact source generation and quarantine reuse race
+open.
+
+**Four non-interchangeable authorities.** Logical identity
+(`vaultId`/`documentId`/canonical path/schema) selects an item only. Filesystem
+generation identity (device/volume, inode/file ID, parent identity and
+available birth/generation provenance) is evidence only. Live mutation
+authority is an open source/parent/quarantine handle pair consumed by one
+native conditional operation. Restart recovery authority is durable
+non-secret provenance plus a fresh native exact-reacquisition proof. A
+pathname, prior `lstat`, prior handle comparison, process-local token or
+directory lock never grants destructive authority alone.
+
+**Exact source operation.** Both authority documents now freeze
+`transitionOwnedSource(capturedSourceAuthority, expectedParentAuthority,
+reservedQuarantineName)`. The native operation itself atomically compares the
+source directory entry with the captured file generation, compares the parent
+with the expected parent generation, requires an absent reserved destination,
+rebinds the same existing inode/file object without copy/delete or overwrite,
+and returns the exact quarantine generation plus parent provenance. A failed
+comparison performs no namespace mutation. `removeOwnedQuarantineGeneration`
+uses the same captured-handle conditional comparison at unlink time. Ciphertext
+publication remains an independent atomic create-only proof.
+
+**Platform contracts.** Linux resolves with `openat2` beneath the vault and
+`RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS`, captures `O_PATH|O_NOFOLLOW` plus
+`statx`/native file-handle generation, and requires the named native
+conditional rename-by-handle ABI; `renameat2(RENAME_NOREPLACE)` is publication
+only, and `open_by_handle_at` is reacquisition evidence only. macOS resolves
+parent/source with `openat` and `O_NOFOLLOW`, captures vnode/file identity and
+requires the named native vnode-handle conditional rename; `renameatx_np`
+`RENAME_EXCL` is publication only. Windows opens source/parent with
+reparse-safe `CreateFileW`, omits `FILE_SHARE_DELETE`, captures volume/file ID,
+and uses `SetFileInformationByHandle(FileRenameInfoEx)` on the captured source
+handle with the expected parent `RootDirectory` and fail-if-exists semantics.
+Its publication is independently fail-if-exists. A filesystem without the
+required exact operation is unsupported before mutation; no weaker pathname
+operation is allowed.
+
+Stable native results are frozen: post-compare `ESTALE`/`ENOENT` (Linux),
+`ENOENT`/`ESTALE` (macOS) and `ERROR_FILE_NOT_FOUND`/`ERROR_PATH_NOT_FOUND`
+(Windows) mean an external generation won; `EEXIST`/`ENOTEMPTY` and
+`ERROR_FILE_EXISTS`/`ERROR_ALREADY_EXISTS` mean destination occupied;
+`EXDEV`/`ERROR_NOT_SAME_DEVICE` means cross-device; `EBUSY`/`EAGAIN`/
+`EWOULDBLOCK` and Windows sharing/lock violations mean retryable source busy;
+missing required APIs/flags map to `FILESYSTEM_UNSUPPORTED`. File and
+parent-directory durability failure or uncertainty maps to
+`DURABILITY_FAILED`/`DURABILITY_UNKNOWN` and never to `PUBLISHED`.
+
+**Durable provenance and restart.** Before transition, the journal durably
+records the inventory revision, logical identity, transaction/schema, expected
+parent generation, captured source generation, reserved name and phase. After
+the native transition and parent barrier, it records the returned quarantine
+and parent generations. Only structural non-secret values are allowed; body,
+byte size, hash/digest, keys, capabilities and message content are forbidden.
+The restart state machine is:
+
+```text
+owned live source
+  -> source transitioned to quarantine
+  -> live token lost by crash
+  -> structural recovery
+  -> exact native quarantine reacquisition
+       -> REACQUIRED_EXACT_QUARANTINE
+       -> QUARANTINE_OWNERSHIP_UNPROVEN -> NEEDS_ATTENTION
+```
+
+`REACQUIRED_EXACT_QUARANTINE` requires a fresh no-symlink/no-reparse native
+open of the expected parent and reserved name, an exact generation/parent
+comparison and a new handle-bound token. Missing provenance, a missing path,
+parent replacement, same-name different generation or unavailable native
+reacquisition is `QUARANTINE_OWNERSHIP_UNPROVEN`/`NEEDS_ATTENTION`; there is
+no path-only or “probably ours” state. Pre-publication restore additionally
+requires a durably pre-publication journal and an empty canonical destination;
+post-publication cleanup uses the same proof. A replacement quarantine is
+never deleted and a disappeared quarantine is never recreated as plaintext.
+
+**Adversarial proof categories and required outcomes.** Source replacement at
+or after capture, parent replacement, junction/reparse, quarantine occupancy
+or reuse, target appearance, cross-device operation, unsupported exact-source
+or no-replace operation, Windows sharing/antivirus denial, case-fold collision,
+directory durability failure, live-token loss and failed restart reacquisition
+all fail closed, preserve the external/unknown generation, and require a new
+revision or `NEEDS_ATTENTION`. Only a native exact-generation proof can permit
+the corresponding transition; no row is implementation-defined.
+
+**Status.** `D8.4-IPR-P1-2 = PLANNING REMEDIATED / pending independent
+re-review`; it is not `CLOSED` here.
+
+### 7.3 D8.4-IPR-P2-3 — deterministic unlink/durability and AI oracles
+
+**Defect closed by planning remediation.** Round 1 had a real child-process
+hook framework but collapsed quarantine unlink with parent-directory durability
+and did not map AI whole-session deletion to an exact named seam.
+
+**Authoritative hook set.** PRD and Implementation Plan now contain the same
+exact **19-hook** set:
+
+```text
+authoritative hook count = 19
+PRD hook count = 19
+Implementation Plan hook count = 19
+```
+
+```text
+AFTER_JOURNAL_PREPARED
+AFTER_CIPHERTEXT_TEMP_FSYNC
+BEFORE_SOURCE_TRANSITION
+AFTER_SOURCE_TRANSITION
+BEFORE_CIPHERTEXT_PUBLISH
+AFTER_CIPHERTEXT_PUBLISH_SYSCALL
+AFTER_TARGET_DURABILITY
+AFTER_AUTHENTICATED_READBACK
+BEFORE_PUBLISHED_JOURNAL
+AFTER_PUBLISHED_JOURNAL
+BEFORE_SQLITE_CLEANUP_COMMIT
+AFTER_SQLITE_CLEANUP_COMMIT
+BEFORE_IDB_DISPOSITION_COMMIT
+AFTER_IDB_DISPOSITION_COMMIT
+BEFORE_SOURCE_QUARANTINE_UNLINK
+AFTER_SOURCE_QUARANTINE_UNLINK_BEFORE_DIR_DURABILITY
+AFTER_SOURCE_QUARANTINE_DIR_DURABILITY
+BEFORE_ITEM_COMPLETE
+AFTER_ITEM_COMPLETE
+```
+
+**Quarantine oracle.** `BEFORE_SOURCE_QUARANTINE_UNLINK` means the exact
+quarantine entry still exists and only the native token-bound unlink may be
+attempted. `AFTER_SOURCE_QUARANTINE_UNLINK_BEFORE_DIR_DURABILITY` means the
+unlink syscall returned but the parent barrier did not; the ledger records
+unlink complete and durability unknown. Restart inspects actual namespace,
+never recreates plaintext, fsyncs an absent parent entry, and retries only an
+exact-reacquired same generation if it remains. A different generation is
+external and preserved. `AFTER_SOURCE_QUARANTINE_DIR_DURABILITY` means unlink
+and the parent barrier are committed; absence is forward-only and cleanup never
+requires plaintext quarantine. Each boundary has explicit filesystem, ledger,
+locked/unlocked restart, forbidden-action and idempotent-rerun expectations in
+both authority documents.
+
+**AI oracle.** `DISCARD_AI_SESSION` uses
+`BEFORE_SQLITE_CLEANUP_COMMIT`/`AFTER_SQLITE_CLEANUP_COMMIT` with
+`operationClass=DISCARD_AI_SESSION`. Before commit, the exact session row and
+all inventoried message rows exist unchanged, the transaction rolls back on
+kill, the item remains `CLEANUP_PENDING`, and the same action is retryable only
+for the same inventory revision, session row generation and message-ID set.
+After commit, the session and all inventoried messages are absent while the
+migration ledger may lag; restart records the already-completed whole-session
+disposition without recreation. A replacement/new row at the same numeric ID
+is a changed generation, requires new consent and is never deleted by the old
+action. No substring surgery is allowed; `RETAIN_AI_HISTORY` is explicit
+non-destructive policy retention and has no destructive hook.
+
+The child process signals the parent only after the selected seam; the parent
+terminates it without graceful cleanup and a fresh process observes the same
+isolated state. Sleep, `waitForTimeout`, random timing and retry-until-crash
+are forbidden.
+
+**Status.** `D8.4-IPR-P2-3 = PLANNING REMEDIATED / pending independent
+re-review`; it is not `CLOSED` here.
+
+### 7.4 Closed-finding and lifecycle regression
+
+Round 2 preserves the six previously closed findings:
+
+```text
+D8.4-IPR-P1-1 RECOVERY_AUTH_REQUIRED              = CLOSED
+D8.4-IPR-P1-3 immutable inventory consent         = CLOSED
+D8.4-IPR-P1-4 AI whole-session/retain policy      = CLOSED
+D8.4-IPR-P1-5 NULL frontmatter identity           = CLOSED
+D8.4-IPR-P2-1 no durable body size/hash            = CLOSED
+D8.4-IPR-P2-2 FIFO ordinary PUT behavior          = CLOSED
+```
+
+It also preserves D8.0–D8.3 ownership: the server-side Diary access service
+remains the sole live DEK owner; no new key/session/body owner, managed-Diary
+History/Draft/Search/LinkIndex bypass, generic encrypted delete/rename, or
+ordinary Note semantic change is introduced.
+
+### 7.5 Round-2 self-review
+
+```text
+Can an implementer choose between two security-sensitive source primitives? NO
+Can restart delete/restore by path or matching metadata alone? NO
+Can a crash occur after unlink but before directory durability without a named oracle? NO
+Can AI whole-session deletion commit without an exact named crash seam? NO
+```
+
+Both P1-2 and P2-3 therefore remain `PLANNING REMEDIATED` pending the next
+independent re-review, not closed by this evidence.
+
+### 7.6 Next gate
+
+After this remediation commit and its exact-head CI are green, request
+**D8.4 Independent Planning Re-review Round 2**. Only that reviewer may close
+P1-2/P2-3 and approve planning. D8.4 implementation remains
+`BLOCKED / NOT STARTED`.
