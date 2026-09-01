@@ -958,15 +958,13 @@ main.container.auth-page-shell {
 .bills-heading-icon svg { width: 16px; height: 16px; }
 .bills-heading-icon-teal { background: var(--bills-income-soft); color: var(--bills-income); }
 .bills-heading-icon-violet { background: var(--bills-expense-soft); color: var(--bills-expense); }
-.bills-asset-totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; margin: 26px 0 19px; }
+.bills-asset-totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; margin: 18px 0 19px; }
 .bills-asset-total { min-width: 0; padding: 12px 11px; border-radius: 11px; background: var(--bills-surface-soft); }
 .bills-asset-total-primary { background: linear-gradient(145deg, #f1f0ff, #fafaff); }
 .bills-asset-label { display: block; color: var(--bills-muted); font-size: .66rem; }
 .bills-asset-total strong { display: block; margin-top: 4px; overflow: hidden; color: var(--bills-text); font-size: clamp(.86rem, 1.35vw, 1.08rem); letter-spacing: -.025em; text-overflow: ellipsis; white-space: nowrap; }
 .bills-asset-total strong.debt { color: #d97706; }
 .bills-asset-total strong.net { color: var(--bills-income); }
-.bills-asset-trend, .bills-asset-note { display: block; margin-top: 5px; color: var(--bills-income); font-size: .61rem; }
-.bills-asset-trend span, .bills-asset-note { color: var(--bills-subtle); }
 .bills-account-list { display: grid; max-height: 125px; gap: 1px; overflow-y: auto; padding-right: 4px; scrollbar-color: var(--bills-border) transparent; scrollbar-width: thin; }
 .bills-account-row { display: grid; grid-template-columns: 9px minmax(0, 1fr) auto; align-items: center; gap: 9px; min-height: 34px; border-top: 1px solid var(--bills-border); }
 .bills-account-mark { width: 7px; height: 7px; border-radius: 50%; }

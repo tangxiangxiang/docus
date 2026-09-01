@@ -28,17 +28,14 @@ function formatAccountBalance(account: BillsAccount): string {
       <div class="bills-asset-total bills-asset-total-primary">
         <span class="bills-asset-label">总资产</span>
         <strong>{{ formatCurrency(summary.assets) }}</strong>
-        <span class="bills-asset-trend">+4.8% <span>本月</span></span>
       </div>
       <div class="bills-asset-total">
         <span class="bills-asset-label">总负债</span>
         <strong class="debt">{{ formatCurrency(summary.debt) }}</strong>
-        <span class="bills-asset-note">信用卡与分期</span>
       </div>
       <div class="bills-asset-total">
         <span class="bills-asset-label">净资产</span>
         <strong class="net">{{ formatCurrency(summary.netAssets) }}</strong>
-        <span class="bills-asset-note">资产 - 负债</span>
       </div>
     </div>
     <div class="bills-account-list" aria-label="账户列表">

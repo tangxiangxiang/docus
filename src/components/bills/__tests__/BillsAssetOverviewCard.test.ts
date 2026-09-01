@@ -27,6 +27,7 @@ describe('BillsAssetOverviewCard', () => {
     expect(totals.text()).toContain('¥32,800.00')
     expect(totals.text()).toContain('净资产')
     expect(totals.text()).toContain('¥27,481.26')
+    expect(totals.findAll('.bills-asset-trend, .bills-asset-note')).toHaveLength(0)
     expect(wrapper.findAll('.bills-account-row')).toHaveLength(accounts.length)
     expect(wrapper.text()).toContain('招商银行')
     expect(wrapper.text()).toContain('¥38,520.00')
