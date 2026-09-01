@@ -930,7 +930,7 @@ main.container.auth-page-shell {
 }
 .bills-top-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; width: min(100%, 1240px); margin: 0 auto; }
 .bills-asset-section { min-width: 0; }
-.bills-category-card { min-height: 300px; padding: 22px 24px 18px; }
+.bills-category-card { height: 321px; min-height: 321px; padding: 22px 24px 18px; }
 .bills-category-charts { display: grid; flex: 1; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: center; gap: 18px; margin-top: 10px; }
 .bills-category-card { display: flex; flex-direction: column; }
 .bills-category-chart { display: grid; grid-template-columns: 88px minmax(0, 1fr); align-items: center; gap: 10px; }
@@ -965,7 +965,7 @@ main.container.auth-page-shell {
 .bills-asset-total strong { display: block; margin-top: 4px; overflow: hidden; color: var(--bills-text); font-size: clamp(.86rem, 1.35vw, 1.08rem); letter-spacing: -.025em; text-overflow: ellipsis; white-space: nowrap; }
 .bills-asset-total strong.debt { color: #d97706; }
 .bills-asset-total strong.net { color: var(--bills-income); }
-.bills-account-list { display: grid; max-height: 125px; gap: 1px; overflow-y: auto; padding-right: 4px; scrollbar-color: var(--bills-border) transparent; scrollbar-width: thin; }
+.bills-account-list { display: grid; max-height: 102px; gap: 1px; overflow-y: auto; padding-right: 4px; scrollbar-color: var(--bills-border) transparent; scrollbar-width: thin; }
 .bills-account-row { display: grid; grid-template-columns: 9px minmax(0, 1fr) auto; align-items: center; gap: 9px; min-height: 34px; border-top: 1px solid var(--bills-border); }
 .bills-account-mark { width: 7px; height: 7px; border-radius: 50%; }
 .bills-account-name { min-width: 0; }
