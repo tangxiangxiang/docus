@@ -1,5 +1,6 @@
 import type {
   BillsAccount,
+  BillsAccountBalanceSummary,
   BillsAssetSummary,
   BillsCategorySlice,
   BillsCashflowSummary,
@@ -14,10 +15,24 @@ export function sumMoney(values: readonly number[]): number {
 }
 
 /** The total balance is always derived from the accounts rendered in the UI. */
-export function aggregateAccountBalances(accounts: readonly BillsAccount[]): BillsAssetSummary {
+export function aggregateAccountBalances(accounts: readonly BillsAccount[]): BillsAccountBalanceSummary {
+  const totalBalance = sumMoney(accounts.map((account) => account.balance))
   return {
     accountCount: accounts.length,
-    totalBalance: sumMoney(accounts.map((account) => account.balance)),
+    totalBalance,
+  }
+}
+
+export function aggregateAssetSummary(
+  accounts: readonly BillsAccount[],
+  debt = 0,
+): BillsAssetSummary {
+  const { accountCount, totalBalance } = aggregateAccountBalances(accounts)
+  return {
+    accountCount,
+    assets: totalBalance,
+    debt: sumMoney([debt]),
+    netAssets: sumMoney([totalBalance, -debt]),
   }
 }
 

@@ -1,6 +1,9 @@
+import { aggregateAssetSummary } from './aggregations'
+
 export type BillsTransactionType = 'expense' | 'income'
 export interface BillsAccount { id: string; name: string; kind: string; balance: number; accent: string }
-export interface BillsAssetSummary { accountCount: number; totalBalance: number }
+export interface BillsAccountBalanceSummary { accountCount: number; totalBalance: number }
+export interface BillsAssetSummary { accountCount: number; assets: number; debt: number; netAssets: number }
 
 export interface BillsCashflowSummary { income: number; expense: number; balance: number }
 
@@ -88,6 +91,7 @@ const yearExpenseCategories = [
 
 export const billsMockData = {
   accounts: billsAccounts,
+  assetSummary: aggregateAssetSummary(billsAccounts, 32800),
   periods: billsPeriods,
   categoryBreakdowns: {
     all: { income: yearIncomeCategories, expense: yearExpenseCategories },

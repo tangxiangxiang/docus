@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   aggregateAccountBalances,
+  aggregateAssetSummary,
   percentageOf,
   summarizeCashflow,
 } from '../aggregations'
@@ -29,6 +30,17 @@ describe('Bills aggregation contracts', () => {
 
     expect(summary.accountCount).toBe(accounts.length)
     expect(summary.totalBalance).toBe(60281.26)
+  })
+
+  it('derives the restored asset metrics from the same displayed account set', () => {
+    const accounts = [account('bank', 38520), account('alipay', 12680.26), account('wechat', 6581), account('cash', 2500)]
+
+    expect(aggregateAssetSummary(accounts, 32800)).toEqual({
+      accountCount: 4,
+      assets: 60281.26,
+      debt: 32800,
+      netAssets: 27481.26,
+    })
   })
 
   it('does not hide an extra account in the aggregate', () => {
@@ -66,5 +78,11 @@ describe('Bills aggregation contracts', () => {
         balance: Math.round((period!.income - period!.expense) * 100) / 100,
       })
     }
+  })
+
+  it('keeps the mock asset summary aligned with its rendered accounts', () => {
+    expect(aggregateAssetSummary(billsMockData.accounts, billsMockData.assetSummary.debt)).toEqual(
+      billsMockData.assetSummary,
+    )
   })
 })
