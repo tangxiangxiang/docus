@@ -18,8 +18,8 @@ function openTransactions(): void {
 <template>
   <div class="bills-page bills-dashboard" data-testid="bills-page">
     <section class="bills-top-grid" aria-label="资产概览">
-      <div class="bills-asset-section"><BillsAssetOverviewCard :summary="data.assetSummary" :accounts="data.accounts" /></div>
-      <BillsCategoryBreakdownCard />
+      <div class="bills-asset-section"><BillsAssetOverviewCard :accounts="data.accounts" /></div>
+      <BillsCategoryBreakdownCard :breakdowns="data.categoryBreakdowns" />
     </section>
     <section class="bills-period-grid" aria-label="时间段摘要">
       <BillsPeriodCard v-for="period in data.periods" :key="period.id" :period="period" />

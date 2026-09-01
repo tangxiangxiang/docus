@@ -1,6 +1,22 @@
 export type BillsTransactionType = 'expense' | 'income'
 export interface BillsAccount { id: string; name: string; kind: string; balance: number; accent: string }
-export interface BillsAssetSummary { accountCount: number; assets: number; debt: number; netAssets: number }
+export interface BillsAssetSummary { accountCount: number; totalBalance: number }
+
+export interface BillsCashflowSummary { income: number; expense: number; balance: number }
+
+export interface BillsCategorySlice {
+  id: string
+  label: string
+  amount: number
+  color: string
+}
+
+export interface BillsCategoryBreakdown {
+  income: BillsCategorySlice[]
+  expense: BillsCategorySlice[]
+}
+
+export type BillsLedgerScope = 'all' | 'year' | 'month'
 
 export interface BillsPeriodSummary {
   id: string
@@ -34,20 +50,50 @@ export interface BillsTransaction {
  * Labels and amounts are intentionally fixed so screenshots and UI tests are
  * repeatable while the UI remains entirely local and persistence-free.
  */
+const billsAccounts = [
+  { id: 'cash', name: '现金', kind: '现金账户', balance: 2860.5, accent: '#f59e0b' },
+  { id: 'boc', name: '中国银行', kind: '储蓄卡 · 8824', balance: 89420, accent: '#3b82f6' },
+  { id: 'alipay', name: '支付宝', kind: '数字钱包', balance: 12640, accent: '#14b8a6' },
+  { id: 'wechat', name: '微信钱包', kind: '数字钱包', balance: 81500, accent: '#8b5cf6' },
+] satisfies BillsAccount[]
+
+const billsPeriods = [
+  { id: 'today', title: '今天', dateLabel: '8月28日', expense: 268.4, income: 0, icon: 'calendar', tone: 'blue' },
+  { id: 'week', title: '本周', dateLabel: '8月24日 – 28日', expense: 1842.7, income: 1200, icon: 'trend', tone: 'violet' },
+  { id: 'month', title: '本月', dateLabel: '8月1日 – 28日', expense: 12486.2, income: 21800, icon: 'month', tone: 'amber' },
+  { id: 'year', title: '今年', dateLabel: '1月1日 – 8月28日', expense: 84290.6, income: 168400, icon: 'year', tone: 'teal' },
+] satisfies BillsPeriodSummary[]
+
+const monthIncomeCategories = [
+  { id: 'salary', label: '工资', amount: 17876, color: '#0f9d8e' },
+  { id: 'other-income', label: '其他', amount: 3924, color: '#bfe9e3' },
+] satisfies BillsCategorySlice[]
+
+const monthExpenseCategories = [
+  { id: 'living', label: '生活', amount: 5743.65, color: '#7c5ce6' },
+  { id: 'transport', label: '交通', amount: 3870.72, color: '#c3b6ed' },
+  { id: 'other-expense', label: '其他', amount: 2871.83, color: '#e3def5' },
+] satisfies BillsCategorySlice[]
+
+const yearIncomeCategories = [
+  { id: 'salary', label: '工资', amount: 138088, color: '#0f9d8e' },
+  { id: 'other-income', label: '其他', amount: 30312, color: '#bfe9e3' },
+] satisfies BillsCategorySlice[]
+
+const yearExpenseCategories = [
+  { id: 'living', label: '生活', amount: 38773.68, color: '#7c5ce6' },
+  { id: 'transport', label: '交通', amount: 26130.09, color: '#c3b6ed' },
+  { id: 'other-expense', label: '其他', amount: 19386.83, color: '#e3def5' },
+] satisfies BillsCategorySlice[]
+
 export const billsMockData = {
-  assetSummary: { accountCount: 4, assets: 186420.5, debt: 32800, netAssets: 153620.5 } satisfies BillsAssetSummary,
-  accounts: [
-    { id: 'cash', name: '现金', kind: '现金账户', balance: 2860.5, accent: '#f59e0b' },
-    { id: 'boc', name: '中国银行', kind: '储蓄卡 · 8824', balance: 89420, accent: '#3b82f6' },
-    { id: 'alipay', name: '支付宝', kind: '数字钱包', balance: 12640, accent: '#14b8a6' },
-    { id: 'wechat', name: '微信钱包', kind: '数字钱包', balance: 81500, accent: '#8b5cf6' },
-  ] satisfies BillsAccount[],
-  periods: [
-    { id: 'today', title: '今天', dateLabel: '8月28日', expense: 268.4, income: 0, icon: 'calendar', tone: 'blue' },
-    { id: 'week', title: '本周', dateLabel: '8月24日 – 28日', expense: 1842.7, income: 1200, icon: 'trend', tone: 'violet' },
-    { id: 'month', title: '本月', dateLabel: '8月1日 – 28日', expense: 12486.2, income: 21800, icon: 'month', tone: 'amber' },
-    { id: 'year', title: '今年', dateLabel: '1月1日 – 8月28日', expense: 84290.6, income: 168400, icon: 'year', tone: 'teal' },
-  ] satisfies BillsPeriodSummary[],
+  accounts: billsAccounts,
+  periods: billsPeriods,
+  categoryBreakdowns: {
+    all: { income: yearIncomeCategories, expense: yearExpenseCategories },
+    year: { income: yearIncomeCategories, expense: yearExpenseCategories },
+    month: { income: monthIncomeCategories, expense: monthExpenseCategories },
+  } satisfies Record<BillsLedgerScope, BillsCategoryBreakdown>,
   trend: [
     { label: '3月', income: 16800, expense: 10280 },
     { label: '4月', income: 18400, expense: 11860 },

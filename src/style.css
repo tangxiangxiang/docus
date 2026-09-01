@@ -930,54 +930,47 @@ main.container.auth-page-shell {
 }
 .bills-top-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; width: min(100%, 1240px); margin: 0 auto; }
 .bills-asset-section { min-width: 0; }
-.bills-category-card { min-height: 336px; padding: 27px 24px 23px; }
+.bills-category-card { min-height: 300px; padding: 22px 24px 18px; }
 .bills-category-charts { display: grid; flex: 1; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: center; gap: 18px; margin-top: 10px; }
 .bills-category-card { display: flex; flex-direction: column; }
-.bills-category-chart { display: grid; grid-template-columns: 104px minmax(0, 1fr); align-items: center; gap: 12px; }
-.bills-donut { display: grid; width: 104px; height: 104px; place-items: center; border-radius: 50%; position: relative; }
-.bills-donut::after { width: 64px; height: 64px; border-radius: 50%; background: var(--bills-surface); content: ''; }
+.bills-category-chart { display: grid; grid-template-columns: 88px minmax(0, 1fr); align-items: center; gap: 10px; }
+.bills-donut { display: grid; width: 88px; height: 88px; place-items: center; border-radius: 50%; position: relative; }
+.bills-donut::after { width: 54px; height: 54px; border-radius: 50%; background: var(--bills-surface); content: ''; }
 .bills-donut span { position: absolute; z-index: 1; color: var(--bills-muted); font-size: .66rem; }
-.bills-donut-income { background: conic-gradient(var(--bills-income) 0 82%, #bfe9e3 82% 100%); }
-.bills-donut-expense { background: conic-gradient(var(--bills-expense) 0 46%, #c3b6ed 46% 77%, #e3def5 77% 100%); }
 .bills-category-legend { display: grid; gap: 7px; color: var(--bills-muted); font-size: .65rem; }
 .bills-category-legend span { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
 .bills-category-legend i { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; }
-.income-a { background: var(--bills-income); } .income-b { background: #bfe9e3; }
-.expense-a { background: var(--bills-expense); } .expense-b { background: #c3b6ed; } .expense-c { background: #e3def5; }
-.bills-category-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--bills-border); }
+.bills-category-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 14px; padding-top: 11px; border-top: 1px solid var(--bills-border); }
 .bills-category-metrics span { display:block; color: var(--bills-subtle); font-size: .62rem; }
 .bills-category-metrics strong { display:block; margin-top: 4px; color: var(--bills-text); font-size: .78rem; }
 .bills-category-metrics .income-text { color: var(--bills-income); } .bills-category-metrics .expense-text { color: var(--bills-expense); }
-.bills-category-bars { display:grid; gap:7px; margin-top:12px; }
+.bills-category-metrics .negative-text { color: #c45555; }
+.bills-category-bars { display:grid; gap:7px; margin-top:10px; }
 .bills-category-bars > div { display:grid; grid-template-columns: 30px 1fr 28px; align-items:center; gap:7px; color:var(--bills-subtle); font-size:.6rem; }
 .bills-category-bars i { height:4px; overflow:hidden; border-radius:99px; background:var(--bills-surface-muted); }
-.bills-category-bars b { display:block; height:100%; border-radius:inherit; background:var(--bills-expense); opacity:.7; }
+.bills-category-bars b { display:block; height:100%; border-radius:inherit; opacity:.7; }
 .bills-category-bars b.income-bar { background:var(--bills-income); }
+.bills-category-bars b.expense-bar { background:var(--bills-expense); }
 .bills-category-bars em { font-style:normal; text-align:right; }
 .bills-dashboard .bills-period-grid { margin-top: 18px; }
-.bills-asset-card { min-height: 336px; padding: 27px 28px 23px; }
+.bills-asset-card { min-height: 300px; padding: 22px 28px 18px; }
 .bills-heading-icon { display: inline-flex; width: 28px; height: 28px; align-items: center; justify-content: center; border-radius: 9px; font-size: .9rem; font-weight: 800; }
 .bills-heading-icon svg { width: 16px; height: 16px; }
 .bills-heading-icon-teal { background: var(--bills-income-soft); color: var(--bills-income); }
 .bills-heading-icon-violet { background: var(--bills-expense-soft); color: var(--bills-expense); }
-.bills-asset-totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; margin: 26px 0 19px; }
-.bills-asset-total { min-width: 0; padding: 12px 11px; border-radius: 11px; background: var(--bills-surface-soft); }
-.bills-asset-total-primary { background: linear-gradient(145deg, #f1f0ff, #fafaff); }
+.bills-asset-balance { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 18px 0 13px; padding: 13px 14px 12px; border-radius: 10px; background: var(--bills-surface-soft); }
 .bills-asset-label { display: block; color: var(--bills-muted); font-size: .66rem; }
-.bills-asset-total strong { display: block; margin-top: 4px; overflow: hidden; color: var(--bills-text); font-size: clamp(.86rem, 1.35vw, 1.08rem); letter-spacing: -.025em; text-overflow: ellipsis; white-space: nowrap; }
-.bills-asset-total strong.debt { color: #d97706; }
-.bills-asset-total strong.net { color: var(--bills-income); }
-.bills-asset-trend, .bills-asset-note { display: block; margin-top: 5px; color: var(--bills-income); font-size: .61rem; }
-.bills-asset-trend span, .bills-asset-note { color: var(--bills-subtle); }
+.bills-asset-balance strong { display: block; margin-top: 3px; overflow: hidden; color: var(--bills-text); font-size: clamp(1rem, 1.5vw, 1.28rem); letter-spacing: -.025em; text-overflow: ellipsis; white-space: nowrap; }
+.bills-asset-note { display: block; color: var(--bills-subtle); font-size: .61rem; white-space: nowrap; }
 .bills-account-list { display: grid; gap: 1px; }
-.bills-account-row { display: grid; grid-template-columns: 9px minmax(0, 1fr) auto; align-items: center; gap: 9px; min-height: 34px; border-top: 1px solid var(--bills-border); }
+.bills-account-row { display: grid; grid-template-columns: 9px minmax(0, 1fr) auto; align-items: center; gap: 9px; min-height: 31px; border-top: 1px solid var(--bills-border); }
 .bills-account-mark { width: 7px; height: 7px; border-radius: 50%; }
 .bills-account-name { min-width: 0; }
 .bills-account-name strong, .bills-account-name small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bills-account-name strong { color: var(--bills-text); font-size: .72rem; font-weight: 650; }
 .bills-account-name small { color: var(--bills-subtle); font-size: .61rem; }
 .bills-account-balance { color: var(--bills-text); font-size: .72rem; font-weight: 700; }
-.bills-trend-card { min-height: 386px; padding: 26px 25px 16px; }
+.bills-trend-card { min-height: 340px; padding: 22px 25px 14px; }
 .bills-trend-heading { align-items: center; }
 .bills-chart-legend { display: flex; gap: 14px; color: var(--bills-muted); font-size: 0.67rem; }
 .bills-chart-legend span { display: inline-flex; align-items: center; gap: 5px; }
@@ -985,7 +978,7 @@ main.container.auth-page-shell {
 .legend-income { background: var(--bills-income); }
 .legend-expense { background: var(--bills-expense); }
 .bills-chart-wrap { width: 100%; margin-top: 16px; }
-.bills-chart { display: block; width: 100%; height: auto; min-height: 285px; overflow: visible; }
+.bills-chart { display: block; width: 100%; height: auto; min-height: 250px; overflow: visible; }
 .bills-chart-grid line { stroke: #edf0f3; stroke-dasharray: 2 5; stroke-width: 1; }
 .bills-chart-axis-labels text { fill: var(--bills-subtle); font-family: var(--sans); font-size: 11px; }
 .bills-chart-area { stroke: none; }
@@ -997,7 +990,7 @@ main.container.auth-page-shell {
 .bills-chart-dot { stroke: var(--bills-surface); stroke-width: 2; pointer-events: none; }
 .bills-chart-dot.income { fill: var(--bills-income); }
 .bills-chart-dot.expense { fill: var(--bills-expense); }
-.bills-transactions-card { min-height: 386px; padding: 26px 23px 16px; }
+.bills-transactions-card { min-height: 340px; padding: 22px 23px 14px; }
 .bills-text-button { display: inline-flex; align-items: center; gap: 3px; padding: 4px 0; border: 0; background: transparent; color: var(--bills-primary); font: inherit; font-size: 0.7rem; font-weight: 700; cursor: pointer; }
 .bills-text-button:hover { color: var(--bills-primary-dark); }
 .bills-transaction-list { margin-top: 18px; }
