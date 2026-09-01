@@ -953,7 +953,7 @@ main.container.auth-page-shell {
 .bills-category-bars b.expense-bar { background:var(--bills-expense); }
 .bills-category-bars em { font-style:normal; text-align:right; }
 .bills-dashboard .bills-period-grid { margin-top: 18px; }
-.bills-asset-card { min-height: 336px; padding: 27px 28px 23px; }
+.bills-asset-card { height: 336px; min-height: 336px; padding: 27px 28px 23px; overflow: hidden; }
 .bills-heading-icon { display: inline-flex; width: 28px; height: 28px; align-items: center; justify-content: center; border-radius: 9px; font-size: .9rem; font-weight: 800; }
 .bills-heading-icon svg { width: 16px; height: 16px; }
 .bills-heading-icon-teal { background: var(--bills-income-soft); color: var(--bills-income); }
@@ -967,7 +967,7 @@ main.container.auth-page-shell {
 .bills-asset-total strong.net { color: var(--bills-income); }
 .bills-asset-trend, .bills-asset-note { display: block; margin-top: 5px; color: var(--bills-income); font-size: .61rem; }
 .bills-asset-trend span, .bills-asset-note { color: var(--bills-subtle); }
-.bills-account-list { display: grid; gap: 1px; }
+.bills-account-list { display: grid; max-height: 125px; gap: 1px; overflow-y: auto; padding-right: 4px; scrollbar-color: var(--bills-border) transparent; scrollbar-width: thin; }
 .bills-account-row { display: grid; grid-template-columns: 9px minmax(0, 1fr) auto; align-items: center; gap: 9px; min-height: 34px; border-top: 1px solid var(--bills-border); }
 .bills-account-mark { width: 7px; height: 7px; border-radius: 50%; }
 .bills-account-name { min-width: 0; }
@@ -975,6 +975,7 @@ main.container.auth-page-shell {
 .bills-account-name strong { color: var(--bills-text); font-size: .72rem; font-weight: 650; }
 .bills-account-name small { color: var(--bills-subtle); font-size: .61rem; }
 .bills-account-balance { color: var(--bills-text); font-size: .72rem; font-weight: 700; }
+.bills-account-row-liability .bills-account-balance { color: #c45555; }
 .bills-trend-card { min-height: 340px; padding: 22px 25px 14px; }
 .bills-trend-heading { align-items: center; }
 .bills-chart-legend { display: flex; gap: 14px; color: var(--bills-muted); font-size: 0.67rem; }

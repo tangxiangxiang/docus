@@ -24,7 +24,7 @@ const category = (id: string, amount: number): BillsCategorySlice => ({
 })
 
 describe('Bills aggregation contracts', () => {
-  it('derives the headline balance from every displayed account', () => {
+  it('derives the headline asset balance from every displayed asset account', () => {
     const accounts = [account('bank', 38520), account('alipay', 12680.26), account('wechat', 6581), account('cash', 2500)]
     const summary = aggregateAccountBalances(accounts)
 
@@ -40,6 +40,21 @@ describe('Bills aggregation contracts', () => {
       assets: 60281.26,
       debt: 32800,
       netAssets: 27481.26,
+    })
+  })
+
+  it('separates liability accounts from assets when calculating net assets', () => {
+    const accounts = [
+      { ...account('bank', 38520), accountType: 'asset' as const },
+      { ...account('credit-card', 18000), accountType: 'liability' as const },
+      { ...account('installment', 8800), accountType: 'liability' as const },
+    ]
+
+    expect(aggregateAssetSummary(accounts)).toEqual({
+      accountCount: 3,
+      assets: 38520,
+      debt: 26800,
+      netAssets: 11720,
     })
   })
 

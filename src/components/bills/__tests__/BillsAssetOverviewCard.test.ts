@@ -43,4 +43,21 @@ describe('BillsAssetOverviewCard', () => {
     expect(wrapper.findAll('.bills-account-row[tabindex]')).toHaveLength(0)
     expect(wrapper.findAll('.bills-account-row[aria-label]')).toHaveLength(0)
   })
+
+  it('shows liability accounts as negative, visually distinct balances', () => {
+    const liabilityAccounts: BillsAccount[] = [
+      ...accounts,
+      { id: 'credit-card', name: '招商银行信用卡', kind: '信用卡 · 5566', balance: 18000, accent: '#d97706', accountType: 'liability' },
+      { id: 'huabei', name: '花呗', kind: '消费信贷', balance: 8800, accent: '#c45555', accountType: 'liability' },
+    ]
+    const wrapper = mount(BillsAssetOverviewCard, {
+      props: { summary: aggregateAssetSummary(liabilityAccounts), accounts: liabilityAccounts },
+    })
+
+    expect(wrapper.get('[data-testid="bills-account-count"]').text()).toBe('6')
+    expect(wrapper.findAll('[data-account-type="liability"]')).toHaveLength(2)
+    expect(wrapper.text()).toContain('-¥18,000.00')
+    expect(wrapper.text()).toContain('-¥8,800.00')
+    expect(wrapper.findAll('.bills-account-row-liability .bills-account-balance')).toHaveLength(2)
+  })
 })

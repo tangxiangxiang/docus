@@ -1,7 +1,8 @@
 import { aggregateAssetSummary } from './aggregations'
 
 export type BillsTransactionType = 'expense' | 'income'
-export interface BillsAccount { id: string; name: string; kind: string; balance: number; accent: string }
+export type BillsAccountType = 'asset' | 'liability'
+export interface BillsAccount { id: string; name: string; kind: string; balance: number; accent: string; accountType?: BillsAccountType }
 export interface BillsAccountBalanceSummary { accountCount: number; totalBalance: number }
 export interface BillsAssetSummary { accountCount: number; assets: number; debt: number; netAssets: number }
 
@@ -54,10 +55,13 @@ export interface BillsTransaction {
  * repeatable while the UI remains entirely local and persistence-free.
  */
 const billsAccounts = [
-  { id: 'cash', name: '现金', kind: '现金账户', balance: 2860.5, accent: '#f59e0b' },
-  { id: 'boc', name: '中国银行', kind: '储蓄卡 · 8824', balance: 89420, accent: '#3b82f6' },
-  { id: 'alipay', name: '支付宝', kind: '数字钱包', balance: 12640, accent: '#14b8a6' },
-  { id: 'wechat', name: '微信钱包', kind: '数字钱包', balance: 81500, accent: '#8b5cf6' },
+  { id: 'cash', name: '现金', kind: '现金账户', balance: 2860.5, accent: '#f59e0b', accountType: 'asset' },
+  { id: 'boc', name: '中国银行', kind: '储蓄卡 · 8824', balance: 89420, accent: '#3b82f6', accountType: 'asset' },
+  { id: 'alipay', name: '支付宝', kind: '数字钱包', balance: 12640, accent: '#14b8a6', accountType: 'asset' },
+  { id: 'wechat', name: '微信钱包', kind: '数字钱包', balance: 81500, accent: '#8b5cf6', accountType: 'asset' },
+  { id: 'cmb-credit', name: '招商银行信用卡', kind: '信用卡 · 5566', balance: 18000, accent: '#d97706', accountType: 'liability' },
+  { id: 'huabei', name: '花呗', kind: '消费信贷', balance: 8800, accent: '#c45555', accountType: 'liability' },
+  { id: 'jd-baitiao', name: '京东白条', kind: '消费信贷', balance: 6000, accent: '#e76f51', accountType: 'liability' },
 ] satisfies BillsAccount[]
 
 const billsPeriods = [
@@ -91,7 +95,7 @@ const yearExpenseCategories = [
 
 export const billsMockData = {
   accounts: billsAccounts,
-  assetSummary: aggregateAssetSummary(billsAccounts, 32800),
+  assetSummary: aggregateAssetSummary(billsAccounts),
   periods: billsPeriods,
   categoryBreakdowns: {
     all: { income: yearIncomeCategories, expense: yearExpenseCategories },

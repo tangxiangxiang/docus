@@ -10,6 +10,10 @@ const props = defineProps<{ summary: BillsAssetSummary; accounts: BillsAccount[]
 // side is still derived from the exact account rows rendered below. This
 // prevents a stale summary from silently including an undisplayed account.
 const summary = computed(() => aggregateAssetSummary(props.accounts, props.summary.debt))
+
+function formatAccountBalance(account: BillsAccount): string {
+  return formatCurrency(account.accountType === 'liability' ? -account.balance : account.balance)
+}
 </script>
 
 <template>
@@ -38,7 +42,7 @@ const summary = computed(() => aggregateAssetSummary(props.accounts, props.summa
       </div>
     </div>
     <div class="bills-account-list" aria-label="账户列表">
-      <div v-for="account in accounts" :key="account.id" class="bills-account-row"><span class="bills-account-mark" :style="{ background: account.accent }" aria-hidden="true" /><span class="bills-account-name"><strong>{{ account.name }}</strong><small>{{ account.kind }}</small></span><span class="bills-account-balance">{{ formatCurrency(account.balance) }}</span></div>
+      <div v-for="account in accounts" :key="account.id" class="bills-account-row" :class="{ 'bills-account-row-liability': account.accountType === 'liability' }" :data-account-type="account.accountType ?? 'asset'"><span class="bills-account-mark" :style="{ background: account.accent }" aria-hidden="true" /><span class="bills-account-name"><strong>{{ account.name }}</strong><small>{{ account.kind }}</small></span><span class="bills-account-balance">{{ formatAccountBalance(account) }}</span></div>
     </div>
   </article>
 </template>

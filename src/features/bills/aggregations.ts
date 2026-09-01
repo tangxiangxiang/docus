@@ -6,6 +6,10 @@ import type {
   BillsCashflowSummary,
 } from './mockData'
 
+export function isLiabilityAccount(account: BillsAccount): boolean {
+  return account.accountType === 'liability'
+}
+
 /**
  * Sum monetary values at cent precision. Keeping this in the Bills domain
  * avoids tiny floating-point differences leaking into card totals and tests.
@@ -14,9 +18,9 @@ export function sumMoney(values: readonly number[]): number {
   return Math.round(values.reduce((total, value) => total + value, 0) * 100) / 100
 }
 
-/** The total balance is always derived from the accounts rendered in the UI. */
+/** Total assets are derived from every rendered account that is not a liability. */
 export function aggregateAccountBalances(accounts: readonly BillsAccount[]): BillsAccountBalanceSummary {
-  const totalBalance = sumMoney(accounts.map((account) => account.balance))
+  const totalBalance = sumMoney(accounts.filter((account) => !isLiabilityAccount(account)).map((account) => account.balance))
   return {
     accountCount: accounts.length,
     totalBalance,
@@ -25,9 +29,13 @@ export function aggregateAccountBalances(accounts: readonly BillsAccount[]): Bil
 
 export function aggregateAssetSummary(
   accounts: readonly BillsAccount[],
-  debt = 0,
+  fallbackDebt = 0,
 ): BillsAssetSummary {
   const { accountCount, totalBalance } = aggregateAccountBalances(accounts)
+  const liabilityAccounts = accounts.filter(isLiabilityAccount)
+  const debt = liabilityAccounts.length > 0
+    ? sumMoney(liabilityAccounts.map((account) => account.balance))
+    : sumMoney([fallbackDebt])
   return {
     accountCount,
     assets: totalBalance,
