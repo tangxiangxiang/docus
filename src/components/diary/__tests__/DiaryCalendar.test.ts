@@ -152,6 +152,19 @@ describe('DiaryCalendar presentation adapter', () => {
     expect(wrapper.emitted('month-change')).toEqual([[{ year: 2026, month: 8 }]])
   })
 
+  it('renders only the month’s actual week rows so five-week months do not reserve a blank row', async () => {
+    const fiveWeekMonth = mountCalendar([], { initialMonth: { year: 2026, month: 9 } })
+    await flushPromises()
+    expect(fiveWeekMonth.findAll('.vc-pane-layout:not([class*="leave"]) .vc-week')).toHaveLength(5)
+
+    const sixWeekMonth = mountCalendar([], { initialMonth: { year: 2026, month: 8 } })
+    await flushPromises()
+    expect(sixWeekMonth.findAll('.vc-pane-layout:not([class*="leave"]) .vc-week')).toHaveLength(6)
+
+    fiveWeekMonth.unmount()
+    sixWeekMonth.unmount()
+  })
+
   it('maps hasDiary to one dot and leaves empty dates as ordinary cells', async () => {
     const wrapper = mountCalendar([
       day('2026-08-24', true),

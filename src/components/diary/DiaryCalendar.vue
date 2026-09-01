@@ -342,6 +342,7 @@ defineExpose({ focusDate, closeMoodPicker })
     <div class="diary-calendar-host">
       <Calendar
         view="monthly"
+        trim-weeks
         borderless
         transparent
         :initial-page="initialPage"
@@ -456,7 +457,10 @@ defineExpose({ focusDate, closeMoodPicker })
   flex: 1 1 auto;
   width: 100%;
   height: 100%;
-  padding-top: 8px;
+  /* Keep the toolbar/weekday rhythm intact while reserving a small,
+     viewport-relative breathing room below the final week. The calendar
+     rows themselves still consume the remaining height. */
+  padding: 8px 0 clamp(16px, 3vh, 32px);
   box-sizing: border-box;
   min-width: 0;
   min-height: 0;

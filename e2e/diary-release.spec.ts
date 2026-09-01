@@ -161,6 +161,55 @@ test('Diary Calendar remains usable across the D5 responsive matrix', async ({ p
   await expect(page.locator('.file-tree')).toBeHidden()
 })
 
+test('Diary Calendar distributes the available height across actual week rows', async ({ page }) => {
+  await openDiaryScope(page)
+  await page.setViewportSize({ width: 1440, height: 900 })
+
+  async function readWeekGeometry(): Promise<{
+    month: string | null
+    weekCount: number
+    rowHeights: number[]
+    bottomGap: number
+  }> {
+    return page.evaluate(() => {
+      const calendar = document.querySelector<HTMLElement>('[data-testid="diary-calendar"]')
+      const layout = calendar?.querySelector<HTMLElement>('.vc-pane-layout:not([class*="leave"])')
+      const rows = [...(layout?.querySelectorAll<HTMLElement>('.vc-week') ?? [])]
+      const rowHeights = rows.map((row) => row.getBoundingClientRect().height)
+      const lastRow = rows.at(-1)
+      return {
+        month: calendar?.dataset.month ?? null,
+        weekCount: rows.length,
+        rowHeights,
+        bottomGap: lastRow ? window.innerHeight - lastRow.getBoundingClientRect().bottom : window.innerHeight,
+      }
+    })
+  }
+
+  const sixWeek = await readWeekGeometry()
+  expect(sixWeek.month).toBe('2026-08')
+  expect(sixWeek.weekCount).toBe(6)
+  expect(Math.max(...sixWeek.rowHeights) - Math.min(...sixWeek.rowHeights)).toBeLessThanOrEqual(1)
+  expect(sixWeek.bottomGap).toBeGreaterThanOrEqual(16)
+  expect(sixWeek.bottomGap).toBeLessThanOrEqual(80)
+
+  await page.getByTestId('diary-calendar-next').click()
+  await expect(page.locator('.vc-pane-layout:not([class*="leave"]) .vc-title')).toHaveText('2026-09')
+  const fiveWeek = await readWeekGeometry()
+  expect(fiveWeek.month).toBe('2026-09')
+  expect(fiveWeek.weekCount).toBe(5)
+  expect(Math.max(...fiveWeek.rowHeights) - Math.min(...fiveWeek.rowHeights)).toBeLessThanOrEqual(1)
+  expect(fiveWeek.bottomGap).toBeGreaterThanOrEqual(16)
+  expect(fiveWeek.bottomGap).toBeLessThanOrEqual(80)
+  expect(fiveWeek.rowHeights[0]).toBeGreaterThan(sixWeek.rowHeights[0])
+
+  await page.setViewportSize({ width: 1280, height: 720 })
+  const resized = await readWeekGeometry()
+  expect(resized.weekCount).toBe(5)
+  expect(resized.bottomGap).toBeGreaterThanOrEqual(16)
+  expect(resized.bottomGap).toBeLessThanOrEqual(80)
+})
+
 test('Diary Calendar navigation exposes keyboard-only focus indicators', async ({ page }) => {
   const pageErrors: string[] = []
   const consoleErrors: string[] = []
