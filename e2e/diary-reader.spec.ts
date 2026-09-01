@@ -43,7 +43,17 @@ function diaryPath(date: string): string {
 
 async function deleteDiaryDate(request: APIRequestContext, date: string): Promise<void> {
   const response = await request.delete(`/api/posts/${diaryPath(date)}`)
-  expect([200, 404, 422]).toContain(response.status())
+  if (response.status() === 503) {
+    expect(await response.json()).toMatchObject({ code: 'diary-metadata-unavailable' })
+    const vault = process.env.DOCUS_DRAFT_E2E_VAULT
+    if (!vault) throw new Error('DOCUS_DRAFT_E2E_VAULT is not configured')
+    // A deliberately injected physical-only future file has no authoritative
+    // identity, so the production owner correctly refuses to adopt/delete it.
+    // Remove only that test-owned fixture directly from the temporary vault.
+    await rm(join(vault, 'diary', `${date}.md`), { force: true })
+    return
+  }
+  expect([200, 404]).toContain(response.status())
 }
 
 async function seedExistingDiary(request: APIRequestContext, date: string, raw: string): Promise<void> {

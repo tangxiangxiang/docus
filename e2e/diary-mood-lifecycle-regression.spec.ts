@@ -852,7 +852,7 @@ test.skip('D8.2: managed Diary Mood divergent Recovery waits for an encrypted re
   expect(state.consoleErrors).toEqual([])
 })
 
-test('Mood CAS rejects stale metadata and managed delete remains fail-closed', async ({ request }) => {
+test('Mood CAS rejects stale metadata and managed direct delete removes the same identity', async ({ request }) => {
   const date = await findUnusedDiaryDate(request)
   const path = diaryPath(date)
 
@@ -872,12 +872,10 @@ test('Mood CAS rejects stale metadata and managed delete remains fail-closed', a
     expect(current.metadata.mood).toBe('sad')
     expect(changed.id).toBe(original.documentId)
 
-    const rejected = await request.delete(`/api/posts/${path}`)
-    expect(rejected.status(), await rejected.text()).toBe(422)
-    expect(await rejected.json()).toMatchObject({ code: 'diary-encrypted-delete-unsupported' })
-    const retained = await readDiary(request, date)
-    expect(retained.metadata.id).toBe(original.documentId)
-    expect(retained.metadata.mood).toBe('sad')
+    const deleted = await request.delete(`/api/posts/${path}`)
+    expect(deleted.status(), await deleted.text()).toBe(200)
+    expect(await deleted.json()).toEqual({ ok: true })
+    expect((await request.get(`/api/posts/${path}`)).status()).toBe(404)
   } finally {
     await deletePost(request, path)
   }

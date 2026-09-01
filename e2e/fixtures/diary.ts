@@ -38,10 +38,11 @@ const DIARY_PASSWORD = 'e2e-diary-access-password-strong-123'
 export const DIARY_ACCESS_CAPABILITY_HEADER = 'X-Docus-Diary-Capability'
 
 /**
- * D8.3 deliberately rejects the public managed-Diary delete endpoint. E2E
- * tests still need deterministic isolation, so cleanup is performed only for
- * the explicitly test-owned temporary vault/database that the Playwright
- * configs provision. This helper is never part of the application runtime.
+ * E2E tests need deterministic isolation, including physical-only fixtures
+ * that the public managed-Diary delete owner must reject when authoritative
+ * metadata is absent. Cleanup is restricted to the explicitly test-owned
+ * temporary vault/database that the Playwright configs provision. This helper
+ * is never part of the application runtime.
  */
 export async function resetManagedDiaryFixture(): Promise<void> {
   const tempRoot = nodePath.resolve(os.tmpdir())

@@ -168,9 +168,10 @@ test('full Diary navigation waits for route-led workspace hydration', async ({ p
     await page.unroute(hydrationApi)
     if (created) {
       await page.locator(`[role="tab"][data-tab-id="${path}"] .tab-close`).click()
-      const rejected = await request.delete(`/api/posts/${path}`)
-      expect(rejected.status(), await rejected.text()).toBe(422)
-      expect(await rejected.json()).toMatchObject({ code: 'diary-encrypted-delete-unsupported' })
+      const deleted = await request.delete(`/api/posts/${path}`)
+      expect(deleted.status(), await deleted.text()).toBe(200)
+      expect(await deleted.json()).toEqual({ ok: true })
+      expect((await request.get(`/api/posts/${path}`)).status()).toBe(404)
     }
   }
 })
