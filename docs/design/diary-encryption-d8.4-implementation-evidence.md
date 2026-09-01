@@ -12,7 +12,7 @@ D8.4 Planning Round 3 implementation authorization:
 OWNER-OVERRIDE / IMPLEMENTATION AUTHORIZED
 
 D8.4 implementation:
-IMPLEMENTED / COMPLETE LOCALLY / CI-RED (before Windows remediation)
+IMPLEMENTED / COMPLETE / FROZEN
 ```
 
 The historical planning-review findings and pending Round 3 review record are
@@ -60,6 +60,16 @@ The tests now explicitly assert the native Windows pending state, capability,
 stable error and plaintext preservation while retaining the complete POSIX
 candidate/finalize/recovery coverage. No production semantics or SQLite
 migration were changed.
+
+The remediation exact-head CI passed all required jobs:
+
+```text
+Run: 33501014729
+Head: 3f9b88e6bf7aac306e2f20f4fbfe589575c7f10c
+Required jobs: 8/8 PASS
+Windows: PASS
+Overall: PASS
+```
 
 ## Implemented owners
 
@@ -122,5 +132,5 @@ Build: PASS — Vite production build (existing dependency/chunk warnings only)
 Icon lint: PASS exit code; reports 8 hard/6 soft pre-existing violations outside D8.4
 Browser E2E: PASS — `e2e/diary-release.spec.ts` (7/7); no dedicated D8.4 migration browser config exists
 Old exact-head CI: FAIL — run `33493351525`, Windows job `99809767202`
-New exact-head CI: pending after remediation push
+New exact-head CI: PASS — run `33501014729`, head `3f9b88e6bf7aac306e2f20f4fbfe589575c7f10c`
 ```
