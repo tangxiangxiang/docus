@@ -12,7 +12,7 @@ D8.4 Planning Round 3 implementation authorization:
 OWNER-OVERRIDE / IMPLEMENTATION AUTHORIZED
 
 D8.4 implementation:
-IMPLEMENTED / COMPLETE / FROZEN
+IMPLEMENTED / COMPLETE LOCALLY / CI-RED (before Windows remediation)
 ```
 
 The historical planning-review findings and pending Round 3 review record are
@@ -31,6 +31,35 @@ The checkout had legitimately advanced from the prompt's starting SHA before
 implementation. No reset or history rewrite was performed.
 
 Implementation commit: `7d3420f` (`Implement D8.4 Diary migration and legacy cleanup`)
+
+## Windows CI remediation
+
+The first exact-head validation of the implementation commit failed only on
+Windows:
+
+```text
+Failed exact head: 19d0c677c4a6c411eb0db59b42d3a0d16ec4bcd7
+Run: 33493351525
+Windows job: 99809767202
+Failures: server/diaryMigration/service.test.ts and
+          server/routes/diaryMigration.test.ts
+```
+
+The Windows Node runtime cannot open and sync the managed Diary parent
+directory, so `DiaryMigrationFs` correctly maps the unprovable directory
+durability barrier to `diary-migration-durability-pending` (HTTP 409). The
+production path remains fail-closed: the candidate is not handed off as
+durable, the plaintext primary is not renamed/replaced/deleted, and no
+pathname fallback is attempted. The two tests had assumed the POSIX candidate
+handoff and incorrectly expected a 202 response. This was a stale test
+contract, not a production implementation or capability-detection defect.
+
+Remediation commit: `d75d7c7` (`test(diary): align D8.4 Windows durability contract`)
+
+The tests now explicitly assert the native Windows pending state, capability,
+stable error and plaintext preservation while retaining the complete POSIX
+candidate/finalize/recovery coverage. No production semantics or SQLite
+migration were changed.
 
 ## Implemented owners
 
@@ -85,10 +114,13 @@ the push. No independent-review PASS is inferred from local tests or CI.
 
 ```text
 Focused D8.4 tests: PASS — 4 files, 12 tests
+Windows remediation focused tests: PASS on POSIX — 2 files, 3 tests; native
+Windows branch is validated by the new exact-head CI run
 Full `npm test`: PASS — unit 244 files/3618 passed/9 skipped; History 5 files/178 tests; Recovery 5 files/198 tests
 Typecheck: PASS — client and server
 Build: PASS — Vite production build (existing dependency/chunk warnings only)
 Icon lint: PASS exit code; reports 8 hard/6 soft pre-existing violations outside D8.4
 Browser E2E: PASS — `e2e/diary-release.spec.ts` (7/7); no dedicated D8.4 migration browser config exists
-CI: recorded after push
+Old exact-head CI: FAIL — run `33493351525`, Windows job `99809767202`
+New exact-head CI: pending after remediation push
 ```
