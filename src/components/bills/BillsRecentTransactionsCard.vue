@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { BillsTransaction } from '../../features/bills/mockData'
 import { formatCurrency } from '../../features/bills/formatters'
-import { BILLS_ICON_ARROW_RIGHT, BILLS_ICON_TREND, TRANSACTION_ICONS } from './icons'
+import { BILLS_ICON_ARROW_RIGHT, TRANSACTION_ICONS } from './icons'
 
 withDefaults(defineProps<{
   transactions: BillsTransaction[]
@@ -19,10 +19,7 @@ defineEmits<{
   <article class="bills-card bills-transactions-card" data-testid="bills-recent-transactions">
     <div class="bills-card-heading">
       <div>
-        <div class="bills-card-title-row">
-          <span class="bills-heading-icon bills-heading-icon-violet" v-html="BILLS_ICON_TREND" aria-hidden="true" />
-          <h2>最近交易</h2>
-        </div>
+        <h2>最近交易</h2>
         <p class="bills-card-helper">最近 5 笔记账记录</p>
       </div>
       <button v-if="showViewAll" class="bills-text-button" type="button" @click="$emit('viewAll')">

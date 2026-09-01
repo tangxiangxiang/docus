@@ -139,34 +139,16 @@ describe('NavBar — scope chips', () => {
     expect(router.currentRoute.value.name).toBe('bills')
   })
 
-  it('keeps the ledger chip active on Bills and exposes the other scopes for return navigation', async () => {
+  it('only renders scope chips in the Vault chrome', () => {
     const api = makeViewModeApi()
-    const router = createRouter({
-      history: createMemoryHistory(),
-      routes: [
-        { path: '/vault', name: 'vault', component: { template: '<div />' } },
-        { path: '/bills', name: 'bills', component: { template: '<div />' } },
-      ],
-    })
-    await router.push('/bills')
-    await router.isReady()
-
     const wrapper = mount(NavBar, {
       props: { isVault: false },
       global: {
-        plugins: [router],
         provide: { [VaultViewModeKey as symbol]: api },
       },
     })
-    const chips = wrapper.findAll('.scope-chip')
 
-    expect(chips).toHaveLength(3)
-    expect(chips[2].attributes('aria-pressed')).toBe('true')
-    expect(chips[0].attributes('aria-pressed')).toBe('false')
-
-    await chips[0].trigger('click')
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(router.currentRoute.value.name).toBe('vault')
+    expect(wrapper.find('.scope-chips').exists()).toBe(false)
   })
 })
 

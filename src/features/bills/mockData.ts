@@ -1,27 +1,6 @@
 export type BillsTransactionType = 'expense' | 'income'
-
-export interface BillsAccount {
-  id: string
-  name: string
-  kind: string
-  balance: number
-  accent: string
-}
-
-export interface BillsMonthlySummary {
-  asOf: string
-  monthLabel: string
-  expense: number
-  income: number
-  previousExpense: number
-}
-
-export interface BillsAssetSummary {
-  accountCount: number
-  assets: number
-  debt: number
-  netAssets: number
-}
+export interface BillsAccount { id: string; name: string; kind: string; balance: number; accent: string }
+export interface BillsAssetSummary { accountCount: number; assets: number; debt: number; netAssets: number }
 
 export interface BillsPeriodSummary {
   id: string
@@ -52,24 +31,11 @@ export interface BillsTransaction {
 
 /**
  * Stable client-side fixtures for the first Bills UI slice.
- * The date is intentionally fixed so screenshots and UI tests are repeatable;
- * presentation helpers still derive the visible month/date labels from it.
+ * Labels and amounts are intentionally fixed so screenshots and UI tests are
+ * repeatable while the UI remains entirely local and persistence-free.
  */
 export const billsMockData = {
-  asOf: '2026-08-28',
-  monthlySummary: {
-    asOf: '2026-08-28',
-    monthLabel: '2026-08',
-    expense: 12486.2,
-    income: 21800,
-    previousExpense: 13632.8,
-  } satisfies BillsMonthlySummary,
-  assetSummary: {
-    accountCount: 4,
-    assets: 186420.5,
-    debt: 32800,
-    netAssets: 153620.5,
-  } satisfies BillsAssetSummary,
+  assetSummary: { accountCount: 4, assets: 186420.5, debt: 32800, netAssets: 153620.5 } satisfies BillsAssetSummary,
   accounts: [
     { id: 'cash', name: '现金', kind: '现金账户', balance: 2860.5, accent: '#f59e0b' },
     { id: 'boc', name: '中国银行', kind: '储蓄卡 · 8824', balance: 89420, accent: '#3b82f6' },
@@ -98,4 +64,3 @@ export const billsMockData = {
     { id: 'tx-5', merchant: '流媒体会员', category: '娱乐', account: '微信钱包', date: '8月22日', amount: 68, type: 'expense', icon: 'play' },
   ] satisfies BillsTransaction[],
 }
-

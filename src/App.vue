@@ -26,18 +26,19 @@ const toast = useToast()
 const diaryAccess = useDiaryAccessSession()
 const { activeScope, selectScope } = useScopeFilter()
 /* Vault routes AND dev previews both set `fullWidth: true` so the
-   navbar sits at its shorter height. Bills also uses a full-width
-   page container, but it is a normal scrollable workspace surface and
-   must not inherit Vault's locked outer scroll. Only the `/vault` path
-   is the marker for the compact Vault chrome and scroll lock. */
+   navbar sits at its shorter height. Bills uses a full-width, scrollable
+   workspace surface; it intentionally renders without the global chrome
+   so the Ledger dashboard can start at the top of the viewport. Only the
+   `/vault` path is the marker for the compact Vault chrome and scroll lock. */
 const isVault = computed(() =>
   route.meta.fullWidth === true
   && route.path.startsWith('/vault')
   && auth.state.value === 'authenticated'
   && vaultIdentity.state.value === 'ready',
 )
+const isBillsRoute = computed(() => route.path === '/bills' || route.path.startsWith('/bills/'))
 const isPublicDevPreview = computed(() => route.meta.publicDevPreview === true)
-const showNormalChrome = computed(() => shouldShowNormalChrome(
+const showNormalChrome = computed(() => !isBillsRoute.value && shouldShowNormalChrome(
   auth.state.value,
   route.meta.authPage === true,
   isPublicDevPreview.value,
@@ -289,7 +290,7 @@ provide(VaultViewModeKey, { mode: viewMode, set: setViewMode, toggle: toggleView
         'full-width': r.meta.fullWidth,
         'auth-page-shell': r.meta.authPage === true,
       }]"
-      :style="{ '--navbar-h': isVault ? '36px' : '56px' }"
+      :style="{ '--navbar-h': showNormalChrome ? (isVault ? '36px' : '56px') : '0px' }"
       :inert="auth.transitionKind.value !== null || undefined"
       :aria-busy="auth.transitionKind.value !== null || undefined"
     >

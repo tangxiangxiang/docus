@@ -11,8 +11,8 @@ export const BILLS_ICON_SALARY = icon('<path d="M8 2.5v11M10.5 5.25c-.4-.55-1.1-
 export const BILLS_ICON_CART = icon('<path d="M2.5 3h1.25l1.1 6.1a1.5 1.5 0 0 0 1.48 1.23h5.18a1.5 1.5 0 0 0 1.47-1.2L14 5H4.25"/><circle cx="6.75" cy="13" r=".75" fill="currentColor" stroke="none"/><circle cx="11.75" cy="13" r=".75" fill="currentColor" stroke="none"/>')
 export const BILLS_ICON_PLAY = icon('<rect x="2.5" y="3" width="11" height="10" rx="2"/><path d="m7 6 3 2-3 2z"/>')
 export const BILLS_ICON_ARROW_RIGHT = icon('<path d="M3 8h9M9 4.75 12.25 8 9 11.25"/>')
-export const BILLS_ICON_MORE = icon('<circle cx="3.5" cy="8" r=".75" fill="currentColor" stroke="none"/><circle cx="8" cy="8" r=".75" fill="currentColor" stroke="none"/><circle cx="12.5" cy="8" r=".75" fill="currentColor" stroke="none"/>')
-export const BILLS_ICON_WALLET = icon('<path d="M2.5 4.5A1.5 1.5 0 0 1 4 3h8.5a1 1 0 0 1 1 1v8.5a.5.5 0 0 1-.5.5H4a1.5 1.5 0 0 1-1.5-1.5z"/><path d="M2.5 5.5h9.75a1.25 1.25 0 0 1 0 2.5H11"/><circle cx="11" cy="7.75" r=".5" fill="currentColor" stroke="none"/>')
+export const BILLS_ICON_WALLET = icon('<path d="M2.5 4.5h11v8h-11z"/><path d="M2.5 6.5h11M10 9h1.5"/>')
+export const BILLS_ICON_CHART = icon('<path d="M8 2.5a5.5 5.5 0 1 0 5.5 5.5H8z"/><path d="M9.5 2.7a5 5 0 0 1 3.8 3.8H9.5z"/>')
 
 export const PERIOD_ICONS: Record<string, string> = {
   calendar: BILLS_ICON_CALENDAR,
