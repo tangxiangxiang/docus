@@ -33,6 +33,7 @@ import SettingsAiSection from './SettingsAiSection.vue'
 import SettingsEditorSection from './SettingsEditorSection.vue'
 import SettingsMetadataSection from './SettingsMetadataSection.vue'
 import SettingsTagsSection from './SettingsTagsSection.vue'
+import SettingsDiaryMigrationSection from './SettingsDiaryMigrationSection.vue'
 import { ICON_AI, ICON_EDIT, ICON_TAG, ICON_TOC } from './icons'
 
 const props = withDefaults(defineProps<{
@@ -77,11 +78,12 @@ const cleanedPaths = ref<string[]>([])
    so the shell stays a routing layer — no inline form templates.
    The active pane resets to AI every time the modal opens so a
    returning user always lands somewhere predictable. */
-type SectionId = 'ai' | 'editor' | 'metadata' | 'tags'
+type SectionId = 'ai' | 'editor' | 'metadata' | 'diary-migration' | 'tags'
 const SECTIONS: ReadonlyArray<{ id: SectionId; labelKey: string; icon: string }> = [
   { id: 'ai', labelKey: 'settings.ai', icon: ICON_AI },
   { id: 'editor', labelKey: 'settings.editor', icon: ICON_EDIT },
   { id: 'metadata', labelKey: 'settings.metadata', icon: ICON_TOC },
+  { id: 'diary-migration', labelKey: 'settings.diary_migration', icon: ICON_TOC },
   { id: 'tags', labelKey: 'settings.tags', icon: ICON_TAG },
 ]
 const active = ref<SectionId>('ai')
@@ -467,6 +469,7 @@ onBeforeUnmount(() => {
               @restore="restoreOriginalFrontmatter"
               @remove="removeFrontmatter"
             />
+            <SettingsDiaryMigrationSection v-else-if="active === 'diary-migration'" />
             <SettingsTagsSection v-else>
               <slot name="tags" />
             </SettingsTagsSection>

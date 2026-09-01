@@ -3,6 +3,7 @@ import aiRoutes from './ai/routes.js'
 import authRoutes from './auth/routes.js'
 import diaryRoutes from './routes/diary.js'
 import diaryAccessRoutes from './routes/diaryAccess.js'
+import diaryMigrationRoutes from './routes/diaryMigration.js'
 import historyRoutes from './history/routes.js'
 import { authBoundary } from './auth/middleware.js'
 import folderRoutes from './routes/folders.js'
@@ -32,6 +33,7 @@ app.route('/', metadataRoutes)
 app.route('/', folderRoutes)
 app.route('/', diaryRoutes)
 app.route('/', diaryAccessRoutes)
+app.route('/', diaryMigrationRoutes)
 app.route('/', postRoutes)
 app.route('/', tagRoutes)
 app.route('/', vaultRoutes)

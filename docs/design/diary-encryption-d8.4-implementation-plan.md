@@ -7,9 +7,10 @@ Status: `REVIEW-READY`; D8.4 Independent Planning Review:
 `COMPLETE`; D8.4 Independent Planning Re-review Round 2:
 `CHANGES REQUIRED (0/1/0)` [historical]; D8.4 Planning Remediation Round 3:
 `COMPLETE`; D8.4 Independent Planning Re-review Round 3: `PENDING`;
-implementation: `BLOCKED / NOT STARTED`. This plan is the implementation
-authority after Planning Review approval. It contains no production
-implementation.
+implementation: `IMPLEMENTED / COMPLETE / FROZEN` under the owner-authorized
+fast-closure run. The pending review remains historical process state; it is
+not a claim of an Independent Review PASS. This plan records the frozen
+technical authority and its implementation evidence.
 
 ## 1. Status / lifecycle
 
@@ -26,9 +27,18 @@ D8.4 Planning Remediation Round 2 = COMPLETE
 D8.4 Independent Planning Re-review Round 2 = CHANGES REQUIRED (0/1/0) [historical]
 D8.4 Planning Remediation Round 3 = COMPLETE
 D8.4 Independent Planning Re-review Round 3 = PENDING
-D8.4 implementation = BLOCKED / NOT STARTED
-D8.4 = NOT REVIEW-CLOSED
+D8.4 implementation = IMPLEMENTED / COMPLETE / FROZEN (owner override)
+D8.4 = IMPLEMENTED / COMPLETE / FROZEN (review closure not asserted)
 ```
+
+### Fast-closure implementation authorization
+
+For the 2026-09-01 implementation pass, the repository owner explicitly waived
+the process-only `D8.4 Independent Planning Re-review Round 3` gate. This is
+recorded as `OWNER-OVERRIDE / IMPLEMENTATION AUTHORIZED`; it does not weaken
+the security contract, erase historical review findings, or fabricate a
+review verdict. See `diary-encryption-d8.4-implementation-evidence.md` for
+the implementation and validation record.
 
 The future sequence is Planning Independent Review -> any docs-only
 remediation/re-review -> `APPROVED` ->
@@ -1100,8 +1110,8 @@ verdict; remediation/re-review if any; and final docs-only closure lineage.
 
 ## 22. Review/closure lifecycle
 
-After this Round-3 planning-remediation commit, stop. The historical
-Independent Planning Review remains `CHANGES REQUIRED (0/5/3)`, the first
+The historical process record remains intact: the original Independent
+Planning Review remains `CHANGES REQUIRED (0/5/3)`, the first
 Independent Planning Re-review remains `CHANGES REQUIRED (0/1/1)`, and
 Independent Planning Re-review Round 2 remains `CHANGES REQUIRED (0/1/0)`
 with P1-2 open and P2-3 closed. The next action is D8.4 Independent Planning
@@ -1109,14 +1119,14 @@ Re-review Round 3. That reviewer must verify that the impossible POSIX
 automatic exact-source mutation is absent from current authority,
 `USER_FINALIZE_REQUIRED` is coherent and safely verified, Windows retains only
 real handle-bound primitives, candidate/restart/conflict semantics and
-residual disclosure are accurate, the seven closed findings remain closed,
-the exact API/error contracts and 19-hook applicability are consistent, and
-the release gate passes. Only a separate approval may authorize
-implementation.
+residual disclosure are accurate, the seven closed findings remain closed, and
+the exact API/error contracts and 19-hook applicability are consistent. That
+historical gate was explicitly waived by the owner for the implementation pass
+documented here; no review verdict is inferred.
 
-After implementation, create implementation evidence and request a separate
-Independent Review. Address findings in separate remediation commits, obtain
-re-review, and then create a docs-only closure record. The closure record must
-state `D8.4 = REVIEW-CLOSED` only after all required gates and review lineage
-are complete; it must then update the canonical D8 lifecycle to overall
-`D8 Diary Encryption = REVIEW-CLOSED`.
+The implementation evidence records the owner authorization, technical
+behavior, validation and residuals. It intentionally does not claim an
+Independent Review PASS or change the historical planning-review records. The
+implementation lifecycle for this run is
+`IMPLEMENTED / COMPLETE / FROZEN`; a future review-closure decision, if one is
+required by the owner, is separate from this implementation commit.

@@ -7,18 +7,19 @@ Status: `REVIEW-READY`; D8.4 Independent Planning Review:
 `COMPLETE`; D8.4 Independent Planning Re-review Round 2:
 `CHANGES REQUIRED (0/1/0)` [historical]; D8.4 Planning Remediation Round 3:
 `COMPLETE`; D8.4 Independent Planning Re-review Round 3: `PENDING`;
-implementation: `BLOCKED / NOT STARTED`. This is an authoritative planning
-document, not an implementation or approval record. It is intentionally
-docs-only.
+implementation: `IMPLEMENTED / COMPLETE / FROZEN` under the owner-authorized
+fast-closure run. This document remains the technical authority; it does not
+claim an Independent Review PASS.
 
 ## 1. Status
 
 The D8.3 closure is authoritative at
-`c88e99554c291181c6e3f17e695aa228f34d40b2`. D8.3 is `REVIEW-CLOSED` and
-D8.4 has not started. D8.4 becomes `APPROVED` only after a separate
-Independent Planning Review. This document never self-declares approval.
+`c88e99554c291181c6e3f17e695aa228f34d40b2`. D8.3 is `REVIEW-CLOSED`.
+D8.4 implementation is complete under the owner-authorized fast-closure run;
+the historical planning record remains separate and this document does not
+self-declare an Independent Review PASS.
 
-The D8.4 planning state is:
+The D8.4 planning state and implementation authorization are:
 
 ```text
 D8.4 Planning = REVIEW-READY / NOT APPROVED
@@ -29,9 +30,16 @@ D8.4 Planning Remediation Round 2 = COMPLETE
 D8.4 Independent Planning Re-review Round 2 = CHANGES REQUIRED (0/1/0) [historical]
 D8.4 Planning Remediation Round 3 = COMPLETE
 D8.4 Independent Planning Re-review Round 3 = PENDING
-D8.4 implementation = BLOCKED / NOT STARTED
-D8.4 = NOT REVIEW-CLOSED
+D8.4 implementation = IMPLEMENTED / COMPLETE / FROZEN (owner override)
+D8.4 = IMPLEMENTED / COMPLETE / FROZEN (review closure not asserted)
 ```
+
+For this implementation pass, the repository owner explicitly waived the
+process-only `D8.4 Independent Planning Re-review Round 3` gate. The decision
+is `OWNER-OVERRIDE / IMPLEMENTATION AUTHORIZED`; historical review records stay
+intact and every technical/security requirement in this PRD remains binding.
+Implementation and validation evidence is recorded in
+`diary-encryption-d8.4-implementation-evidence.md`.
 
 ## 2. Background
 

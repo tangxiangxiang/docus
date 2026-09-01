@@ -10,6 +10,7 @@ import { ensureInitialFolders } from './seed.ts'
 import { getDb } from './db.ts'
 import { loadAuthConfig } from './auth/config.ts'
 import { initializeAuthRuntime } from './auth/runtime.ts'
+import { getDiaryMigrationService } from './diaryMigration/service.ts'
 import { migrateVaultMetadata } from './metadataMigration.ts'
 import { initializeTagIdentityAndHealth } from './tagIdentityMigration.ts'
 import { initializeTagUndoFoundationHealth } from './tagUndoHealth.ts'
@@ -44,6 +45,10 @@ export function serverPlugin(): Plugin {
           for (const action of recovery.actions) {
             console.log(`[docus] crash recovery: ${action.action} ${action.file}${action.detail ? ` (${action.detail})` : ''}`)
           }
+        }
+        const diaryMigrationRecovery = await getDiaryMigrationService(getDb(), CONTENT_DIR).recover()
+        if (diaryMigrationRecovery.actions.length > 0) {
+          console.log(`[docus] Diary migration recovery: ${JSON.stringify(diaryMigrationRecovery)}`)
         }
         // Keep development startup aligned with production: unresolved
         // generic History metadata journals fail closed before any request

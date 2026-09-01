@@ -26,6 +26,7 @@ import {
 import { resolveAuthOrigin, resolveServerHost } from './prodConfig.ts'
 import { loadAuthConfig } from './auth/config.ts'
 import { initializeAuthRuntime } from './auth/runtime.ts'
+import { getDiaryMigrationService } from './diaryMigration/service.ts'
 
 const PORT = Number(process.env.PORT ?? 3000)
 const HOST = resolveServerHost()
@@ -84,6 +85,10 @@ try {
     for (const action of recovery.actions) {
       console.log(`[docus] crash recovery: ${action.action} ${action.file}${action.detail ? ` (${action.detail})` : ''}`)
     }
+  }
+  const diaryMigrationRecovery = await getDiaryMigrationService(getDb(), CONTENT_DIR).recover()
+  if (diaryMigrationRecovery.actions.length > 0) {
+    console.log(`[docus] Diary migration recovery: ${JSON.stringify(diaryMigrationRecovery)}`)
   }
   // Reconcile the generic History metadata journal after filesystem crash
   // recovery and before the server accepts requests. An unresolved

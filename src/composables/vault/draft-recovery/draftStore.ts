@@ -321,6 +321,17 @@ export interface DraftRecoveryInventory {
   unsupportedConflictCount: number
 }
 
+/** Managed-Diary recovery rows are intentionally hidden from the ordinary
+ * Note recovery surface.  D8.4's Settings bridge may inspect these rows as
+ * structural/action input, while keeping their body content in the browser's
+ * short-lived memory until an explicit import or typed discard. */
+export interface ManagedDiaryRecoveryInventory {
+  primary: UnsavedDraft[]
+  conflicts: DraftConflictRecord[]
+  unsupportedPrimaryCount: number
+  unsupportedConflictCount: number
+}
+
 /** Why a recovery-inventory read failed. The IndexedDB backend
  *  classifies open/upgrade failures so the UI can tell a version
  *  upgrade blocked by another open Docus page (an old page still
@@ -416,10 +427,15 @@ export interface DraftStore {
   getDraft(vaultId: string, documentId: string): Promise<UnsavedDraft | null>
   listDrafts(vaultId: string): Promise<UnsavedDraft[]>
   inspectVaultRecovery(vaultId: string): Promise<DraftRecoveryInventoryOutcome>
+  /** D8.4-only bridge; unlike inspectVaultRecovery this includes managed
+   * Diary rows, but it never writes or sends their content to the server. */
+  inspectManagedDiaryRecovery?(vaultId: string): Promise<DraftRecoveryInventoryOutcome>
   deleteDraft(vaultId: string, documentId: string): Promise<DraftDeleteOutcome>
   deleteDraftIfUnchanged(
     expected: UnsavedDraft,
   ): Promise<DraftConditionalDeleteOutcome>
+  /** Conditional deletion for a D8.4-reviewed managed Diary draft. */
+  deleteManagedDraftIfUnchanged?(expected: UnsavedDraft): Promise<DraftConditionalDeleteOutcome>
   moveDraft(
     vaultId: string,
     oldDocumentId: string,
@@ -491,6 +507,8 @@ export interface DraftStore {
   deleteConflictDraftIfUnchanged(
     expected: DraftConflictRecord,
   ): Promise<DraftConditionalDeleteOutcome>
+  /** Conditional deletion for a D8.4-reviewed managed Diary conflict row. */
+  deleteManagedConflictDraftIfUnchanged?(expected: DraftConflictRecord): Promise<DraftConditionalDeleteOutcome>
   clearVaultConflictDrafts(vaultId: string): Promise<boolean>
 }
 
@@ -763,6 +781,39 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
       }
     },
 
+    async inspectManagedDiaryRecovery(vaultId) {
+      if (vaultId.trim().length === 0) {
+        return {
+          status: 'ok' as const,
+          inventory: {
+            primary: [], conflicts: [],
+            unsupportedPrimaryCount: 0,
+            unsupportedConflictCount: 0,
+          },
+        }
+      }
+      try {
+        const raw = await backend.inspect(vaultId)
+        const primary = raw.primary
+          .filter((value): value is UnsavedDraft => isUnsavedDraft(value) && isManagedDraftPath(value.documentPath))
+          .map(cloneDraft)
+        const conflicts = raw.conflicts
+          .filter((value): value is DraftConflictRecord => isDraftConflictRecord(value) && isManagedDraftPath(value.documentPath))
+          .map(cloneConflictRecord)
+        return {
+          status: 'ok' as const,
+          inventory: {
+            primary,
+            conflicts,
+            unsupportedPrimaryCount: raw.primary.length - primary.length - raw.primary.filter((value) => isUnsavedDraft(value) && !isManagedDraftPath(value.documentPath)).length,
+            unsupportedConflictCount: raw.conflicts.length - conflicts.length - raw.conflicts.filter((value) => isDraftConflictRecord(value) && !isManagedDraftPath(value.documentPath)).length,
+          },
+        }
+      } catch (error) {
+        return { status: 'failed' as const, reason: storageFailureReason(error) }
+      }
+    },
+
     async deleteDraft(vaultId, documentId) {
       if (!isDraftIdentity(vaultId, documentId)) return { status: 'failed' }
       try {
@@ -774,6 +825,15 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
 
     async deleteDraftIfUnchanged(expected) {
       if (!isUnsavedDraft(expected) || isManagedDraftPath(expected.documentPath)) return { status: 'failed' }
+      try {
+        return { status: await backend.deleteIfUnchanged(cloneDraft(expected)) }
+      } catch {
+        return { status: 'failed' }
+      }
+    },
+
+    async deleteManagedDraftIfUnchanged(expected) {
+      if (!isUnsavedDraft(expected) || !isManagedDraftPath(expected.documentPath)) return { status: 'failed' }
       try {
         return { status: await backend.deleteIfUnchanged(cloneDraft(expected)) }
       } catch {
@@ -1007,6 +1067,15 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
 
     async deleteConflictDraftIfUnchanged(expected) {
       if (!isDraftConflictRecord(expected) || isManagedDraftPath(expected.documentPath)) return { status: 'failed' }
+      try {
+        return { status: await backend.deleteConflictIfUnchanged(cloneConflictRecord(expected)) }
+      } catch {
+        return { status: 'failed' }
+      }
+    },
+
+    async deleteManagedConflictDraftIfUnchanged(expected) {
+      if (!isDraftConflictRecord(expected) || !isManagedDraftPath(expected.documentPath)) return { status: 'failed' }
       try {
         return { status: await backend.deleteConflictIfUnchanged(cloneConflictRecord(expected)) }
       } catch {
