@@ -1,6 +1,6 @@
 # D8 — Diary Encryption Implementation Plan
 
-状态：`D8.0 REVIEW-CLOSED`；`D8.0 Self-review = PASS (P0/P1/P2 = 0/0/0)`；`D8.0 Independent Review = PASS (P0/P1/P2 = 0/0/0)`；`D8.1 REVIEW-CLOSED`；`D8.1 Independent Review = PASS (P0/P1/P2 = 0/0/0)`；`D8.2 REVIEW-CLOSED`；`D8.2 Self-review = PASS (P0/P1/P2 = 0/0/0)`；`D8.2 Independent Review = PASS (P0/P1/P2 = 0/0/0)`；`D8.3 REVIEW-CLOSED`；`D8.4 Planning = REVIEW-READY / NOT APPROVED`；`D8.4 Independent Planning Review = CHANGES REQUIRED (0/5/3) [historical]`；`D8.4 Planning Remediation Round 1 = COMPLETE`；`D8.4 Independent Planning Re-review = CHANGES REQUIRED (0/1/1) [historical]`；`D8.4 Planning Remediation Round 2 = COMPLETE`；`D8.4 Independent Planning Re-review Round 2 = CHANGES REQUIRED (0/1/0) [historical]`；`D8.4 Planning Remediation Round 3 = COMPLETE`；`D8.4 Independent Planning Re-review Round 3 = PENDING`；`D8.4 implementation = BLOCKED / NOT STARTED`。
+状态：`D8.0 REVIEW-CLOSED`；`D8.0 Self-review = PASS (P0/P1/P2 = 0/0/0)`；`D8.0 Independent Review = PASS (P0/P1/P2 = 0/0/0)`；`D8.1 REVIEW-CLOSED`；`D8.1 Independent Review = PASS (P0/P1/P2 = 0/0/0)`；`D8.2 REVIEW-CLOSED`；`D8.2 Self-review = PASS (P0/P1/P2 = 0/0/0)`；`D8.2 Independent Review = PASS (P0/P1/P2 = 0/0/0)`；`D8.3 original closure = REVIEW-CLOSED (historical)`；`D8.3 post-closure follow-up = IMPLEMENTED / REVIEW-READY`；`D8.3 independent follow-up review = NOT YET PERFORMED`；`D8.4 Planning = REVIEW-READY / NOT APPROVED`；`D8.4 Independent Planning Review = CHANGES REQUIRED (0/5/3) [historical]`；`D8.4 Planning Remediation Round 1 = COMPLETE`；`D8.4 Independent Planning Re-review = CHANGES REQUIRED (0/1/1) [historical]`；`D8.4 Planning Remediation Round 2 = COMPLETE`；`D8.4 Independent Planning Re-review Round 2 = CHANGES REQUIRED (0/1/0) [historical]`；`D8.4 Planning Remediation Round 3 = COMPLETE`；`D8.4 Independent Planning Re-review Round 3 = PENDING`；`D8.4 implementation = BLOCKED / NOT STARTED`。
 
 基线：`1fb1389cab053d5ff72630253f509f0170e588c2`（`docs(diary): close D7 mood implementation`）。D7.0A、D7.0、D7.1、D7.2、D7.3、D7.4、D7.5、D7.6 均保持 `REVIEW-CLOSED`。D8 只从 Diary 加密边界开始，不重开 D7，也不创建独立 Private Vault。
 
@@ -411,14 +411,38 @@ D8.4 = NOT STARTED
 ```
 
 The historical Independent Review remains `CHANGES REQUIRED (0/2/0)`; the
-later Independent Re-review is the separate `PASS (0/0/0)` event. D8.3 closes
-the reviewed privacy-enforcement contract, not legacy data. Legacy plaintext
-migration, legacy Git/history cleanup, legacy Draft/Recovery cleanup, SQLite
-private-metadata cleanup, mixed-state migration, migration rollback/idempotency,
-and release/migration closure remain D8.4 scope. Intentional D8.3 feature
-degradations remain in force, including managed generic History, persistent
+later Independent Re-review is the separate `PASS (0/0/0)` event. That closure
+record remains historical. The post-closure direct managed-document delete
+follow-up is a separate `IMPLEMENTED / REVIEW-READY` checkpoint and has not
+received an independent follow-up review. Legacy plaintext migration, legacy
+Git/history cleanup, legacy Draft/Recovery cleanup, SQLite private-metadata
+cleanup, mixed-state migration, migration rollback/idempotency, and
+release/migration closure remain D8.4 scope. Intentional D8.3 feature
+degradations remain in force for managed generic History, persistent
 Draft/Recovery, body search, body-derived LinkIndex projections, managed
-rename/move, managed generic delete, and managed body AI surfaces.
+rename/move, folder/bulk delete, and managed body AI surfaces; direct managed
+document delete is owned by the follow-up.
+
+## 14.1 D8.3 post-closure follow-up checkpoint
+
+The current D8.3 follow-up is implementation-complete and review-ready, but it
+does not reopen or rewrite the historical independent review/re-review records.
+It adds the adapter-aware opaque direct managed-Diary delete owner, filters
+managed physical Diary paths from History Changes discovery, and hides the
+unsupported file-History TreeRow capability. History log/file/diff/restore/
+content-hashes/commit guards remain fail-closed. The follow-up evidence and
+exact test/CI limitations are recorded in
+[diary-encryption-d8.3-post-closure-followup.md](./diary-encryption-d8.3-post-closure-followup.md).
+
+```text
+D8.3 original closure:          REVIEW-CLOSED (historical)
+D8.3 post-closure follow-up:    IMPLEMENTED / REVIEW-READY
+Independent follow-up review:   NOT YET PERFORMED
+Starting HEAD:                  fec4860488ba5c032931ec62d15e07ea09971e59
+Implementation/Test commit:     e895217956577b69c627a7a640202bcbc8ba153a
+Evidence/Docs commit:            recorded by the follow-up docs commit
+D8.4:                            NOT REVIEW-CLOSED / NOT STARTED
+```
 
 ## 15. D8.4 planning entry point
 

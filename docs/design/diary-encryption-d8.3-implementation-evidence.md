@@ -1,11 +1,18 @@
 # D8.3 — Privacy Enforcement Implementation Evidence
 
-Status: `REVIEW-READY`; implementation and fresh diff-based self-review are
-complete. Exact-head CI for the implementation checkpoint is 8/8 success.
+Status: historical D8.3 closure evidence. The original implementation and
+fresh diff-based self-review were complete, and exact-head CI for that
+checkpoint was 8/8 success. The direct managed-Diary delete rows in this
+snapshot are superseded by the post-closure follow-up; the historical facts
+and review timeline are intentionally retained.
 Planning approval is the D8.3 planning-review baseline at `99f693b` (the
 docs-only remediation checkpoint). This document records implementation
 evidence and self-review only; it does not claim an independent review or
 `REVIEW-CLOSED`.
+
+Current follow-up authority: [D8.3 post-closure follow-up](./diary-encryption-d8.3-post-closure-followup.md).
+It records the new opaque direct-document delete owner, while History remains
+unsupported and folder/bulk delete remains fail-closed.
 
 ## Baseline and lineage
 
@@ -56,23 +63,26 @@ and transient authorized UI input; it never owns a DEK.
 | Search / body cache | Managed title/summary/tags/body are excluded; managed structural date/path search remains possible; no managed body priming/cache; stale result epoch is dropped. | `src/lib/search.ts`, `src/lib/searchResults.ts`, `src/lib/__tests__/search.test.ts`, `searchResults.test.ts` |
 | Metadata migration / archive / tags | New managed scans/backups are skipped; private managed metadata migration/archive/tag mutation returns HTTP `422 diary-private-metadata-unsupported`; public structural projections filter private associations. | `metadataMigration.ts`, `frontmatterArchive.ts`, `tagManagement.ts`, metadata/tag routes |
 | Rename / move / reference | Managed document rename/move returns HTTP `422 diary-encrypted-rename-unsupported`; any managed folder/reference footprint returns HTTP `422 diary-encrypted-reference-unsupported` before planning, journaling, staging, or filesystem mutation. | posts/folders routes, `renameReferences.ts`, `renameReferenceJournal.ts`, `folderMoveTransaction.ts` |
-| Delete | Direct, mixed, and folder deletes touching managed Diary return HTTP `422 diary-encrypted-delete-unsupported` before staging, journal, metadata, filesystem, or LinkIndex mutation. Note-only delete is unchanged. | posts/folders routes, `atomicTextWrite.ts` |
+| Delete (original closure checkpoint) | Direct, mixed, and folder deletes touching managed Diary returned HTTP `422 diary-encrypted-delete-unsupported` before staging, journal, metadata, filesystem, or LinkIndex mutation. This direct-document row is superseded by the post-closure owner; folder/bulk and Note-only semantics remain as recorded. | historical posts/folders route evidence; current owner is `server/diaryAccess/delete.ts` |
 | Conflict / teardown | Managed tab raw/original/external/conflict state, recovery, history/working diffs, TOC, client LinkIndex, search state, Monaco models, route mirror, AI context, and pending PDF state are fenced and cleared on the authoritative generation event. | `useDiaryAccessSession.ts`, `VaultView.vue`, related Vault composables |
 | AI | Managed live context, summary, commit-message body collection, body tools, delete, and private metadata tools are fail-closed before provider or mutation work. | `server/ai/routes.ts`, `server/ai/tools.ts`, `aiLiveContext.ts` |
 | PDF / clipboard | Explicit user-created copies remain allowed only for the current managed session generation; lock during render/copy prevents stale completion/download. | `VaultView.vue` |
 | Diagnostics / resources | Resource reads reuse the existing body lease; HTTP errors use `Cache-Control: no-store` and stable codes without raw/envelope/key/provider payloads. | markdown resource route, shared route helpers, AI/history/posts/metadata/tag routes |
 
-## Intentional feature degradation
+## Historical closure state (superseded for direct delete)
 
-Managed direct and mixed deletes are deliberately disabled in D8.3. The
-existing generic delete protocol stages `.docus-delete-inflight-*`, captures
-rollback metadata, updates indexes, and can create recovery manifests. D8.3
-has no reviewed adapter-owned ciphertext-only delete transaction that can
-preserve the encrypted identity, rollback semantics, and all derived-state
-ownership guarantees together. Returning `422 diary-encrypted-delete-unsupported`
-is therefore safer than directly unlinking opaque ciphertext or allowing a
-generic rollback/journal owner to handle it. A future adapter-aware owner may
-restore this capability; D8.4 does not implicitly do so.
+At the original closure checkpoint, managed direct and mixed deletes were
+deliberately disabled. The existing generic delete protocol staged
+`.docus-delete-inflight-*`, captured rollback metadata, updated indexes, and
+could create recovery manifests. The then-current D8.3 implementation had no
+reviewed adapter-owned ciphertext-only delete transaction, so returning HTTP
+`422 diary-encrypted-delete-unsupported` was safer than directly unlinking opaque
+ciphertext or allowing a generic rollback/journal owner to handle it. That is
+the historical behavior evidenced by this document; the later follow-up adds
+the owner and tests described in the linked current authority document.
+
+Folder/bulk deletes that include a managed Diary remain fail-closed under the
+same `422` contract. D8.4 still does not implicitly broaden either operation.
 
 Folder rename/reference updates use a conservative fail-closed policy when a
 managed Diary footprint could be involved, because generic planners cannot
@@ -141,7 +151,7 @@ docker-smoke: PASS
 - The evidence-sync commit that records this exact-head result is docs-only;
   it does not change the implementation checkpoint validated by CI #592.
 
-## Final D8.3 closure
+## Final D8.3 closure (historical)
 
 The preceding status and validation sections are retained as the
 implementation/evidence checkpoint narrative. This appended section records

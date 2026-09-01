@@ -1,9 +1,18 @@
 # D8.3 — Privacy Enforcement Implementation Plan
 
-Status: `PLAN-READY`; docs-only planning-review remediation is applied and
-planning re-review is pending; no implementation is included in this
-document-only planning task. See the companion [D8.3 Privacy Enforcement PRD](./diary-encryption-d8.3-privacy-enforcement-prd.md)
-for the product/security contract.
+Status: `IMPLEMENTED / REVIEW-READY` for the post-closure follow-up. The
+original planning and closure checkpoints remain historical; an independent
+follow-up review has not been performed. See the companion [D8.3 Privacy
+Enforcement PRD](./diary-encryption-d8.3-privacy-enforcement-prd.md) and the
+[post-closure follow-up evidence](./diary-encryption-d8.3-post-closure-followup.md)
+for the current product/security contract.
+
+```text
+Starting HEAD:       fec4860488ba5c032931ec62d15e07ea09971e59
+Implementation HEAD: e895217956577b69c627a7a640202bcbc8ba153a
+Evidence/docs HEAD:  recorded by the follow-up docs commit
+Independent review:  NOT YET PERFORMED
+```
 
 ## 1. Exact baseline
 
@@ -54,7 +63,7 @@ leave untouched. Evidence names concrete symbols and call edges.
 | Tree/list | scan → projection | `server/tree.ts:walk/readFrontmatter/listPostsFlat/buildTree`; managed path currently uses `emptyFrontmatter`, ordinary path uses `gray-matter` | Preserve structural projection; no envelope parsing/private metadata leak. |
 | Metadata/migration | metadata route/startup → SQLite | `server/routes/metadata.ts`; `metadataMigration.ts` scans raw and stores `frontmatter_backup`; `frontmatterArchive.ts` reads/writes raw; startup in `prod.ts`/`vite-plugin.ts` | Skip new managed scans/backups; filter locked legacy fields; D8.4 migration. |
 | Rename/move | lifecycle route → journal/fs | `posts.ts` PATCH + `documentMutationPolicy.ts`; `folders.ts` rename footprint guard; `renameReferences.ts`, `renameReferenceJournal.ts`, folder transaction modules | Reject any managed footprint before journal/stage/fs/index mutation. |
-| Delete | delete route → stage/fs/index | `posts.ts` DELETE and `folders.ts` folder delete stage `.docus-delete-inflight-*`, then `LinkIndex` update; no uniform Diary preflight | Add preflight; no mixed partial delete. |
+| Delete | delete route → managed adapter or generic stage/fs/index | `posts.ts` DELETE and `folders.ts` folder delete stage `.docus-delete-inflight-*`, then `LinkIndex` update; the follow-up adds an opaque direct-document owner | Direct managed-document delete uses the adapter-aware owner; folder/bulk footprints remain pre-mutation fail-closed; Note behavior is unchanged. |
 | External conflict | watcher/save → tab refs | `useExternalFileChanges.ts`, `useDiskFileChanges.ts`, `useDocumentSave.ts` set `externalRaw`; `SavePostConflictError` carries current raw | Memory-only authorized conflict; epoch+tab/request fence; clear on lock. |
 | History/working diff | UI loader → refs | `useHistoryComparisons.ts` (`beforeRaw/afterRaw/diff`), `useWorkingTreeDiffs.ts` request/raw refs | Clear all refs; loaders compare authoritative epoch. |
 | PDF | click → browser renderer | `pdfExport.ts:exportPdfDocument` reads live/getPost raw, DOM clone, `html2pdf().save()`; `PdfExportSurface.vue` renders | Current unlocked epoch only; abort/ignore late completion; download is external copy. |
@@ -104,11 +113,10 @@ leave untouched. Evidence names concrete symbols and call edges.
 
 Do not create an encrypted IndexedDB adapter, encrypted Git history, a second
 Diary LinkIndex, a second search database, or a second key/DEK/session owner in
-D8.3.
-Disable persistent managed-Diary drafts/recovery, body search, body-derived
-LinkIndex, private metadata migration, generic Diary rename/move/delete, Diary
-History, and AI body context. Keep the existing D8.2 primary adapter and Native
-Vault workspace.
+D8.3. Disable persistent managed-Diary drafts/recovery, body search,
+body-derived LinkIndex, private metadata migration, generic Diary rename/move,
+folder/bulk delete, Diary History, and AI body context. Keep the existing D8.2
+primary adapter and Native Vault workspace.
 
 ### 4.2 One structural projection
 
@@ -195,8 +203,9 @@ files” checklists; each has a security owner and an entry/exit proof.
 * Ensure document, folder, bulk, delete, and reference operations preflight the
   entire footprint and reject managed Diary before raw read, journal, stage,
   metadata, LinkIndex, or filesystem mutation. Direct Diary delete and any
-  folder/bulk delete touching Diary are intentionally unavailable in D8.3;
-  see the rationale and future re-enable gate in the PRD §15.1.
+  folder/bulk delete touching Diary use the current split contract: the
+  post-closure opaque owner handles a direct managed document, while folder or
+  bulk footprints remain unavailable; see the current transaction in PRD §15.1.
 * Keep generic Note rename/move/rewrite/delete behavior unchanged.
 
 ### D8.3-G — External conflict and derived UI state
@@ -237,8 +246,9 @@ files” checklists; each has a security owner and an entry/exit proof.
 
 ## 6. File-level change map
 
-This is the planned implementation map; none of these production changes are
-made by the current task.
+This is the original D8.3 implementation map. The post-closure follow-up has
+now implemented the direct managed-delete row below; the remaining rows retain
+their reviewed D8.3 owners and boundaries.
 
 | File / module | Current responsibility | Planned change | Security invariant |
 | --- | --- | --- | --- |
@@ -246,7 +256,8 @@ made by the current task.
 | `server/history/routes.ts` | HTTP History guards and route orchestration | Preserve HTTP `422 diary-history-encrypted-unsupported`/`no-store`; reject before body/diff payload construction | Locked/unsupported History is fail closed. |
 | `server/history/restore.ts` | Historical raw restore/atomic write | Add service-level managed-path rejection | No raw Git body restore. |
 | `server/history/metadataRevisions.ts` | SQLite raw history metadata journals (`before_raw`, `target_raw`) | Ensure managed routes never call capture/restore; classify legacy rows for D8.4 | No new managed raw journal. |
-| `server/routes/posts.ts` | Diary save/read, generic create, rename, delete, recovery | Keep adapter path; add delete/footprint preflight; prevent LinkIndex raw update; preserve Note behavior | No plaintext durable/index/journal side effect. |
+| `server/routes/posts.ts` | Diary save/read, generic create, rename, delete, recovery | Keep adapter path; route direct managed delete to `server/diaryAccess/delete.ts`; retain folder/footprint preflight and Note behavior | No plaintext durable/index/journal side effect. |
+| `server/diaryAccess/delete.ts` | — | Opaque direct managed-Diary delete owner: lease assertion, generation capture, ciphertext-only staging, structural index/metadata cleanup, create-only rollback and reuse quarantine | No decrypt/parse/applyWrite/body journal; foreign generation wins. |
 | `server/routes/diary.ts` | Diary date create/read/metadata/LinkIndex update | Keep encrypted write; replace raw LinkIndex update with structural/no-op policy | No body-derived server state. |
 | `server/documentMutationPolicy.ts` | Generic create/recover/rename policy | Extend/freeze managed delete/folder-footprint decisions without changing Note rules | AAD path cannot change implicitly. |
 | `server/routes/folders.ts` | Folder rename/delete planning, journals, staging | Preflight managed footprint for delete and all mutations before stage/read/index | No partial mixed operation. |
@@ -333,7 +344,7 @@ Concrete order:
 | History restore | Reject managed path before reading historical raw | Note restore uses existing atomic/journal path | Managed rejection leaves file/metadata/index untouched; Note rollback unchanged. |
 | Draft save/conflict | Classify path and session epoch | Managed: no IDB transaction; Note: existing IDB transaction | Managed call returns client-only `diary-draft-recovery-unsupported`; no legacy record deletion. |
 | Search/index update | Filter managed path before body fetch/parse | Note index/cache update; structural Diary path only | Stale result discarded; on lock clear caches/results. |
-| Rename/move/reference/delete | Plan complete footprint; reject if any managed Diary | Only Note footprint reaches journals/stage/fs/index | Rename/move uses the frozen `422` codes; direct or mixed managed delete uses `422 diary-encrypted-delete-unsupported`; rejection occurs before raw reads/journal/stage and mixed requests have no partial mutation. |
+| Rename/move/reference/delete | Classify the operation and complete footprint; direct managed document delete enters the opaque owner, any folder/bulk managed footprint rejects | Only Note footprint, or a proven direct managed delete transaction, reaches filesystem/index owners | Direct delete uses the follow-up owner and returns `200`, `423`, `404`, `503`, or `409` as specified in the PRD; folder/bulk and rename/move/reference retain frozen `422` pre-mutation rejection and mixed requests have no partial mutation. |
 | Conflict resolution | Check current epoch, tab identity, request token and lease | Authorized in-memory save only | Epoch mismatch returns `diary-session-invalidated`; no save, draft, index, or dialog publication. |
 | PDF | Check unlocked epoch before and after render | Browser DOM clone and user download | Lock aborts/removes DOM; late result cannot call download. Downloaded file remains external. |
 | Clipboard | Check unlocked epoch immediately before copy | OS clipboard write | Lock does not promise clipboard wipe; no automatic persistence by Docus. |
@@ -343,15 +354,16 @@ No operation may “repair” an encrypted envelope by parsing it as Markdown. A
 unknown version, malformed bytes, AAD mismatch, or authentication failure stops
 at the adapter with no downstream side effect.
 
-Delete is deliberately fail-closed for D8.3. Although the primary bytes are
-ciphertext, the existing generic document/folder delete pipeline stages
-`.docus-delete-inflight-*` data and can capture raw/metadata for rollback,
-reindex, or journal recovery. Without an adapter-owned ciphertext-only delete
-transaction, D8.3 cannot prove that direct deletion is free of plaintext or
-derived-state side effects. Therefore direct managed-Diary delete and any
-folder/bulk delete whose footprint contains Diary return the frozen
-`422 diary-encrypted-delete-unsupported` before staging; Note-only delete is
-unchanged. Re-enablement requires the PRD §15.1 future transaction proof.
+Direct managed-Diary deletion is now owned by the follow-up transaction in
+`server/diaryAccess/delete.ts`. It captures the source inode and structural
+identity, writes only a structural intent, moves the existing ciphertext inode
+to staging, removes only the structural LinkIndex path and authoritative
+metadata, and unlinks that same generation. Create-only inode restoration and
+structural quarantine are the only rollback/reuse paths; the owner never calls
+`reidentifyReusedPath`, parses the body, or writes a plaintext journal. A
+folder/bulk delete whose footprint contains Diary still returns the frozen
+`422 diary-encrypted-delete-unsupported` before staging, and Note-only delete
+is unchanged.
 
 ## 9. Lock teardown sequencing
 
@@ -391,7 +403,10 @@ is `Cache-Control: no-store` and contains no raw/envelope/key/provider data.
 | Generic recovery targeting managed Diary identity | HTTP `422` | `diary-recovery-identity-required` | Show unavailable and create no recovery state. |
 | Managed document rename/move | HTTP `422` | `diary-encrypted-rename-unsupported` | Show unavailable; do not read raw content or mutate journal/staging/filesystem/index state. |
 | Managed folder rename/move or reference rewrite footprint | HTTP `422` | `diary-encrypted-reference-unsupported` | Show unavailable; reject the complete footprint with no partial Note mutation. |
-| Managed document delete, or folder/bulk delete whose footprint contains managed Diary | HTTP `422` | `diary-encrypted-delete-unsupported` | Show unavailable; reject before raw read, staging, journal, metadata, filesystem, or index mutation. |
+| Managed direct document delete without a current lease | HTTP `423` | `diary-locked` | Advance the Diary epoch synchronously and publish no body. |
+| Managed direct document delete with missing/invalid metadata | HTTP `503` | `diary-metadata-unavailable` | Show unavailable; leave the ciphertext generation untouched. |
+| Managed direct document delete with external generation/path reuse | HTTP `409` | `diary-delete-path-reused` or `diary-delete-generation-changed` | Preserve the external generation; quarantine/restore only with structural ownership proof. |
+| Managed folder/bulk delete whose footprint contains managed Diary | HTTP `422` | `diary-encrypted-delete-unsupported` | Reject before raw read, staging, journal, metadata, filesystem, or index mutation. |
 | Managed private metadata migration/archive/tag mutation | HTTP `422` | `diary-private-metadata-unsupported` | Show unavailable; no private-field read or backup mutation. Public structural projection remains `200`. |
 | Managed AI live context | HTTP `422` | `diary-ai-context-unsupported` | Reject before raw read or provider call; no context publication. |
 | Managed AI summary fallback | HTTP `422` | `diary-ai-summary-unsupported` | Reject before raw read or provider call. |
@@ -419,8 +434,8 @@ observable-artifact assertions:
 | Ordinary Note backlinks | Note-to-Note link unchanged; cross-scope `Note → managed Diary` edge is intentionally suppressed by the D8.3 projection rule; no other Note regression. |
 | Tree/list/metadata/tag locked | Date/path/existence/id/Mood allowed; no private title/summary/tags/frontmatter/backup. |
 | Metadata migration startup/API | Managed Diary raw not scanned/backed up; legacy records filtered while locked. |
-| Managed delete/rename/folder/reference | Exact frozen `422` code for the operation before raw read/journal/stage/fs/index; no partial state. |
-| Direct Diary delete | HTTP `422 diary-encrypted-delete-unsupported` before staging; intentional temporary feature degradation is visible in the UI. |
+| Managed rename/folder/reference and folder/bulk delete | Exact frozen `422` code for the operation before raw read/journal/stage/fs/index; no partial state. |
+| Direct Diary delete | HTTP `200` on a valid unlocked document; `423`/`404`/`503`/`409` for the frozen lease, missing, metadata, and generation conflicts; no plaintext or body-derived side effect. |
 | Mixed folder/bulk delete | HTTP `422 diary-encrypted-delete-unsupported` for any managed footprint; no Note subset is partially deleted. |
 | External conflict/CAS | Plaintext conflict is memory-only while authorized; stale confirm/save cannot commit. |
 | Envelope bytes in diff/reader/recovery | Never rendered/parsed as Markdown; malformed/unknown/auth-failed envelope stops. |
@@ -539,6 +554,8 @@ Suggested small, reviewable commits (each with tests and no unrelated cleanup):
 9. D8.3-H explicit PDF/clipboard and D8.3-K AI/resource/tag policy.
 10. D8.3-I diagnostics/artifact canaries and cross-platform evidence.
 11. D8.3 regression/evidence sync (docs-only lifecycle status after review).
+12. Post-closure direct managed-delete owner, History status projection, and
+    TreeRow capability projection (see the follow-up evidence document).
 
 If a dependency requires combining commits, preserve one coherent invariant
 and show the intermediate test proof; never land a temporary plaintext path.
@@ -548,7 +565,9 @@ and show the intermediate test proof; never land a temporary plaintext path.
 ### Gate 0 — Plan approval
 
 Review this plan/PRD, source evidence, statuses, the frozen error matrix,
-unsupported semantics, and D8.4 boundary. Confirm no production code changed.
+unsupported semantics, and D8.4 boundary. The original Gate 0 checkpoint
+confirmed no production code changed; the later post-closure follow-up is a
+separate implementation/review-ready checkpoint.
 
 ### Gate 1 — Owner-level security review
 
@@ -606,8 +625,9 @@ The D8.3 implementation may be proposed for independent review only when:
 [ ] Epoch fencing covers lock/logout/invalidation/expiry/replacement and all
     late async paths.
 [ ] Unknown/malformed/AAD/auth failures stop before generic parsers.
-[ ] Managed rename/move/delete/reference operations are pre-mutation atomic
-    rejection; Note operations remain unchanged.
+[ ] Managed rename/move/reference and folder/bulk delete remain pre-mutation
+    atomic rejection; direct managed-document delete uses the opaque owner;
+    Note operations remain unchanged.
 [ ] Git object/tree/ref, IndexedDB, logs, traces, screenshots, attachments,
     and server output have observable negative assertions.
 [ ] Legacy migration/cleanup is explicitly deferred to D8.4.

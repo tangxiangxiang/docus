@@ -427,7 +427,9 @@ absent from the ledger.
 
 `DiaryMigrationFs` is the sole D8.4 migration filesystem owner. It may call
 the existing safe-path and durability primitives, but it must not route a
-managed Diary body through the generic Note plaintext replace/delete path. Its
+managed Diary body through the generic Note plaintext replace/delete path.
+Direct managed-document deletion is already owned by the D8.3 post-closure
+opaque delete transaction; D8.4 must not replace or bypass that owner. Its
 semantic operations are `captureSourceGeneration`, `writeCiphertextTemp`,
 `publishCiphertextCandidateCreateOnly`, `verifyCiphertextArtifact` and
 `syncDurability`; a Windows adapter additionally owns its reviewed automatic

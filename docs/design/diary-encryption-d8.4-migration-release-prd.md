@@ -108,7 +108,7 @@ The following are carried forward without redesign:
 | Git | `server/history/git.ts:addAndCommit` rejects managed paths before any Git/temp mutation; D8.3 managed History remains unavailable. |
 | Draft/Recovery | New managed-Diary persistent Draft/Recovery is disabled. Existing legacy rows are retained for this explicit D8.4 disposition workflow. |
 | Search/links | Managed Diary contributes structural path/date only. Body search and body-derived LinkIndex state remain disabled/suppressed. Note-to-Note links remain unchanged; the intentional D8.3 exception is suppression of `Note -> managed Diary` edges. |
-| Rename/move/delete | Generic managed-Diary rename/move/reference/delete remains fail-closed until a separately reviewed AAD-aware transaction exists. D8.4 migration does not broaden those operations. |
+| Rename/move/delete | The D8.3 post-closure follow-up owns direct managed-document delete through its opaque adapter-aware transaction. Managed-Diary rename/move/reference and folder/bulk delete remain fail-closed; D8.4 migration does not broaden or replace any of these operations. |
 | Export | PDF/clipboard are explicit external copies, permitted only for the current unlocked epoch and outside automatic wipe guarantees. |
 
 ## 6. Legacy-store inventory
