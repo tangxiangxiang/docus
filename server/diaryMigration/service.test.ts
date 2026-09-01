@@ -27,7 +27,7 @@ function bodyOperation() {
 }
 
 describe('D8.4 Diary migration service', () => {
-  it('prepares a ciphertext-only candidate and verifies an external POSIX finalize', async () => {
+  it('prepares a ciphertext-only candidate and verifies the platform finalize contract', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-d8-4-'))
     await fs.mkdir(path.join(root, 'diary'))
     const primary = path.join(root, 'diary', '2026-08-31.md')
@@ -57,12 +57,31 @@ describe('D8.4 Diary migration service', () => {
     await expect(service.start(inventory.runId, inventory.inventoryRevision, [{ itemKey: item!.itemKey, scope: 'MIGRATE_PRIMARY' }]))
       .rejects.toMatchObject({ code: 'diary-migration-locked', status: 423 })
 
-    const prepared = await service.start(
+    const migration = service.start(
       inventory.runId,
       inventory.inventoryRevision,
       [{ itemKey: item!.itemKey, scope: 'MIGRATE_PRIMARY' }],
       bodyOperation(),
     )
+    if (process.platform === 'win32') {
+      await expect(migration).rejects.toMatchObject({
+        code: 'diary-migration-durability-pending',
+        status: 409,
+      })
+      const pending = service.status(inventory.runId, inventory.inventoryRevision)
+      expect(pending.items.find((entry) => entry.canonicalPath === LOGICAL_PATH)).toMatchObject({
+        classification: 'UNSUPPORTED',
+        state: 'DURABILITY_PENDING',
+        migrationFinalizeCapability: 'USER_FINALIZE_REQUIRED',
+      })
+      // Windows Node cannot prove the parent-directory durability barrier;
+      // the safe result is a pending migration with the plaintext untouched.
+      expect(await fs.readFile(primary, 'utf8')).toBe(plaintext)
+      db.close()
+      await fs.rm(root, { recursive: true, force: true })
+      return
+    }
+    const prepared = await migration
     expect(prepared.items.find((entry) => entry.canonicalPath === LOGICAL_PATH)).toMatchObject({
       classification: 'USER_FINALIZE_REQUIRED',
       state: 'USER_FINALIZE_REQUIRED',

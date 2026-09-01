@@ -86,6 +86,19 @@ describe('D8.4 migration routes', () => {
       inventoryRevision: inventory.inventoryRevision,
       requestedScopes: [{ itemKey: item.itemKey, scope: 'MIGRATE_PRIMARY' }],
     }, capability)
+    if (process.platform === 'win32') {
+      expect(prepared.status).toBe(409)
+      expect(await prepared.json()).toMatchObject({ code: 'diary-migration-durability-pending' })
+      const pending = await call('GET', `/api/diary/migration/status?runId=${encodeURIComponent(inventory.runId)}`)
+      const pendingSnapshot = await pending.json() as { items: Array<{ canonicalPath: string; classification: string; state: string; migrationFinalizeCapability: string }> }
+      expect(pendingSnapshot.items.find((entry) => entry.canonicalPath === LOGICAL_PATH)).toMatchObject({
+        classification: 'UNSUPPORTED',
+        state: 'DURABILITY_PENDING',
+        migrationFinalizeCapability: 'USER_FINALIZE_REQUIRED',
+      })
+      expect(await fs.readFile(path.join(root, 'diary', '2026-08-31.md'), 'utf8')).toContain('legacy route body')
+      return
+    }
     expect(prepared.status).toBe(202)
     expect(await prepared.json()).toMatchObject({ state: 'RUNNING', inventoryRevision: inventory.inventoryRevision })
     expect((await fs.readFile(path.join(root, 'diary', '2026-08-31.md'), 'utf8'))).toContain('legacy route body')
