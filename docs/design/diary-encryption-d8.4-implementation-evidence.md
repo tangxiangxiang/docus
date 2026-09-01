@@ -28,8 +28,9 @@ Branch: main
 ```
 
 The checkout had legitimately advanced from the prompt's starting SHA before
-implementation. No reset or history rewrite was performed. The implementation
-commit SHA is recorded in the final delivery report below after commit.
+implementation. No reset or history rewrite was performed.
+
+Implementation commit: `7d3420f` (`Implement D8.4 Diary migration and legacy cleanup`)
 
 ## Implemented owners
 
@@ -90,5 +91,4 @@ Build: PASS — Vite production build (existing dependency/chunk warnings only)
 Icon lint: PASS exit code; reports 8 hard/6 soft pre-existing violations outside D8.4
 Browser E2E: PASS — `e2e/diary-release.spec.ts` (7/7); no dedicated D8.4 migration browser config exists
 CI: recorded after push
-Implementation commit: recorded after commit
 ```
