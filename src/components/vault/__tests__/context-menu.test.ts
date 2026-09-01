@@ -269,7 +269,7 @@ describe('FileTree context menu — Diary presentation guards', () => {
     w.unmount()
   })
 
-  it('hides managed Diary rename/move while retaining delete', async () => {
+  it('hides managed Diary rename/history/move while retaining export and delete', async () => {
     const w = mount(FileTree, { props: { tree: DIARY_TREE, currentPath: null }, attachTo: document.body })
     const diaryRow = w.findAll('li.tree-row').find((row: any) => row.find('.row-name')?.text() === 'diary')!
     await diaryRow.find('.chevron').trigger('click')
@@ -282,8 +282,26 @@ describe('FileTree context menu — Diary presentation guards', () => {
     const menu = document.querySelector('.tree-context-menu')
     expect(menu).not.toBeNull()
     expect(menu!.textContent).not.toContain('重命名')
+    expect(menu!.textContent).not.toContain('查看文件历史')
+    expect(menu!.textContent).toContain('导出 PDF')
     expect(menu!.textContent).toContain('删除')
     expect(managedRow.attributes('draggable')).toBe('false')
+    w.unmount()
+  })
+
+  it('keeps file history visible for an unmanaged diary file', async () => {
+    const w = mount(FileTree, { props: { tree: DIARY_TREE, currentPath: null }, attachTo: document.body })
+    const diaryRow = w.findAll('li.tree-row').find((row: any) => row.find('.row-name')?.text() === 'diary')!
+    await diaryRow.find('.chevron').trigger('click')
+    await w.vm.$nextTick()
+    const legacyRow = w.findAll('li.tree-row').find((row: any) => row.find('.row-name')?.text() === 'legacy')!
+    await legacyRow.trigger('contextmenu', { clientX: 100, clientY: 100 })
+    await w.vm.$nextTick()
+    await flushPromises()
+
+    const menu = document.querySelector('.tree-context-menu')
+    expect(menu).not.toBeNull()
+    expect(menu!.textContent).toContain('查看文件历史')
     w.unmount()
   })
 })

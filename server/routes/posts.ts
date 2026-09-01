@@ -46,7 +46,8 @@ import { listPostsFlat, readFrontmatter } from '../tree.js'
 import { bad, ensureMetadata, exists, metadataDb, recordCommittedMetadata } from './shared.js'
 import { rejectManagedDiaryReferenceFootprint, requireDiaryBodyAccess, withDiaryBodyOperation } from '../diaryAccess/guard.js'
 import { DiaryBodyCryptoError } from '../diaryAccess/body.js'
-import type { DiaryBodyOperation } from '../diaryAccess/service.js'
+import { DiaryAccessServiceError, type DiaryBodyOperation } from '../diaryAccess/service.js'
+import { deleteManagedDiaryDocument, ManagedDiaryDeleteError } from '../diaryAccess/delete.js'
 import { getVaultId } from '../vaultIdentity.js'
 
 const postRoutes = new Hono()
@@ -889,18 +890,41 @@ postRoutes.patch('/api/posts/*', async (c) => {
 // path validation and the reserved-root contract remain in force.
 postRoutes.delete('/api/posts/*', async (c) => {
   const splat = c.req.path.replace(/^\/api\/posts\//, '')
-  // Direct managed-Diary deletion is deliberately disabled. This structural
-  // check precedes body access, path resolution, staging, journals, metadata,
-  // and LinkIndex mutation.
-  if (classifyDiaryPath(splat) === 'managed') {
-    return bad(c, 'managed Diary encrypted delete is unavailable until an adapter-aware owner exists', 422, 'diary-encrypted-delete-unsupported')
-  }
-  const bodyAccess = requireDiaryBodyAccess(c, splat)
-  if (bodyAccess) return bodyAccess
   let abs: string
   try { abs = filePathFor(splat) } catch (e: any) { return bad(c, e.message) }
   try { validateDocumentMutation({ operation: 'delete', sourcePath: splat }) }
   catch (error) { return bad(c, (error as Error).message, 422) }
+
+  if (classifyDiaryPath(splat) === 'managed') {
+    // The encrypted-Diary owner deliberately receives only the existing
+    // capability-scoped lease assertion. It never receives a DEK or body.
+    return withVaultStructureLock(() => withDocumentWriteLock(splat, async () => {
+      const result = await withDiaryBodyOperation(c, async (operation) => {
+        try {
+          await deleteManagedDiaryDocument({
+            logicalPath: splat,
+            absolutePath: abs,
+            db: metadataDb(),
+            assertCurrent: operation.assertCurrent,
+          })
+          return c.json({ ok: true })
+        } catch (error) {
+          if (error instanceof ManagedDiaryDeleteError) {
+            return bad(c, error.message, error.status, error.code)
+          }
+          if (error instanceof DiaryAccessServiceError) {
+            return bad(c, 'Diary access is locked', 423, 'diary-locked')
+          }
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') return bad(c, 'not found', 404)
+          throw error
+        }
+      })
+      return result ?? bad(c, 'Diary access is locked', 423, 'diary-locked')
+    }))
+  }
+
+  const bodyAccess = requireDiaryBodyAccess(c, splat)
+  if (bodyAccess) return bodyAccess
   // Deleting a file changes tree membership: structure lock first.
   return withVaultStructureLock(() => withDocumentWriteLock(splat, async () => {
   if (!await exists(abs)) return bad(c, 'not found', 404)

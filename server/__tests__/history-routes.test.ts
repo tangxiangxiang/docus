@@ -175,6 +175,26 @@ describeHistoryIntegration('GET /api/history/status', () => {
     expect(byPath['inbox/b.md']).toEqual({ index: '?', worktree: '?', path: 'inbox/b.md' })
   })
 
+  it('filters managed Diary bodies from Changes while retaining unmanaged diary files', async () => {
+    await write('inbox/a.md', 'ordinary')
+    await write('diary/2026-08-25.md', 'opaque ciphertext envelope')
+    await write('diary/legacy.md', 'legacy external body')
+
+    const r = await call('GET', '/status')
+    expect(r.status).toBe(200)
+    const body = await r.json() as { dirty: { path: string }[] }
+    const paths = body.dirty.map((entry) => entry.path).sort()
+    expect(paths).toEqual(['diary/legacy.md', 'inbox/a.md'])
+  })
+
+  it('returns no Changes entries for a managed-Diary-only working tree', async () => {
+    await write('diary/2026-08-26.md', 'opaque ciphertext envelope')
+
+    const r = await call('GET', '/status')
+    expect(r.status).toBe(200)
+    expect(await r.json()).toMatchObject({ dirty: [] })
+  })
+
   it('hides non-Markdown files that the commit contract cannot accept', async () => {
     await write('note.md', 'note')
     await write('assets/image.png', 'not really a png')
@@ -474,6 +494,22 @@ describeHistoryIntegration('POST /api/history/commits', () => {
     expect(log.commits.map((commit) => commit.subject)).toEqual(['seed'])
     const status = await (await call('GET', '/status')).json() as { dirty: Array<{ path: string }> }
     expect(status.dirty.map((entry) => entry.path)).toContain('dirty.md')
+  })
+
+  it('rejects a mixed Note + managed Diary commit before Git mutation', async () => {
+    await write('inbox/mixed-note.md', 'ordinary')
+    await write('diary/2026-08-27.md', 'opaque ciphertext envelope')
+
+    const r = await call('POST', '/commits', {
+      paths: ['inbox/mixed-note.md', 'diary/2026-08-27.md'],
+      message: 'must reject mixed private batch',
+    })
+
+    expect(r.status).toBe(422)
+    expect(await r.json()).toMatchObject({ code: 'diary-history-encrypted-unsupported' })
+    const log = await (await call('GET', '/log')).json() as { commits: unknown[] }
+    expect(log.commits).toEqual([])
+    expect(await read('inbox/mixed-note.md')).toBe('ordinary')
   })
 
   it('commits an externally deleted selected file', async () => {

@@ -64,6 +64,7 @@ const emit = defineEmits<{
 const { t } = useI18n()
 
 const isFolder = computed(() => props.node.kind === 'folder')
+const canViewHistory = computed(() => !isFolder.value && !isManagedDiaryPath(props.node.path))
 const isActive = computed(() => !isFolder.value && props.node.path === props.currentPath)
 const isExpanded = computed(() => isFolder.value && props.expandedSet.has(props.node.path))
 // Narrow the discriminated union for the children list. The computed
@@ -392,7 +393,7 @@ function menuAction(fn: () => void) {
         <button v-if="canArchive" @click="menuAction(() => emit('archive-note', node.path))"><span class="menu-icon" v-html="ICON_ARCHIVE" />{{ t('file_tree.archive') }}</button>
         <div v-if="!isFolder" class="tree-menu-label">{{ t('file_tree.document') }}</div>
         <button v-if="!isFolder" @click="menuAction(() => emit('export-pdf', node.path))"><span class="menu-icon" v-html="ICON_FILE_PDF" />{{ t('file_tree.export_pdf') }}</button>
-        <button v-if="!isFolder" @click="menuAction(() => emit('open-history', node.path))"><span class="menu-icon" v-html="ICON_HISTORY" />{{ t('file_tree.view_history') }}</button>
+        <button v-if="canViewHistory" @click="menuAction(() => emit('open-history', node.path))"><span class="menu-icon" v-html="ICON_HISTORY" />{{ t('file_tree.view_history') }}</button>
         <div v-if="canDeleteRow" class="tree-menu-label">{{ t('file_tree.danger') }}</div>
         <button v-if="canDeleteRow" class="danger" @click="menuAction(() => emit('delete', node.path, node.kind))"><span class="menu-icon" v-html="ICON_DELETE" />{{ t('file_tree.delete') }}<kbd>Delete</kbd></button>
       </div>

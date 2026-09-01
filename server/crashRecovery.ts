@@ -78,6 +78,7 @@ import {
   type DurableDirectoryIdentity,
 } from './durableDirectoryIdentity.js'
 import { isValidPathSyntax } from './paths.js'
+import { isManagedDiaryPath } from '../shared/diaryProtocol.js'
 import {
   parseAndValidateDurableRenameReferenceBundle,
   parseRenameReferenceJournalObject,
@@ -229,11 +230,22 @@ interface FileRenameJournal {
 interface DeleteReuseManifest {
   version: 1
   op: 'delete-path-reuse'
+  /** A managed-Diary owner writes this structural intent before takeover.
+   * Legacy generic path-reuse manifests omit the phase and retain their
+   * original quarantine-only semantics. */
+  phase?: 'managed-delete-intent'
   kind: 'file' | 'folder'
   path: string
   inflight: string
   quarantine: string
   identities: Array<{ path: string; id: string }>
+  documentId?: string
+  source?: {
+    dev: string
+    ino: string
+    parentDev: string
+    parentIno: string
+  }
 }
 
 interface LegacyDeleteQuarantineManifest {
@@ -619,12 +631,21 @@ function parseDeleteReuseManifest(raw: string): DeleteReuseManifest | null {
   try {
     const entry = JSON.parse(raw) as Partial<DeleteReuseManifest>
     if (entry.version !== 1 || entry.op !== 'delete-path-reuse') return null
+    if (entry.phase !== undefined && entry.phase !== 'managed-delete-intent') return null
     if (entry.kind !== 'file' && entry.kind !== 'folder') return null
     if (typeof entry.path !== 'string' || typeof entry.inflight !== 'string' || typeof entry.quarantine !== 'string') return null
     if (!Array.isArray(entry.identities) || entry.identities.length === 0
       || !entry.identities.every((item) => item && typeof item.path === 'string' && typeof item.id === 'string' && item.id.length > 0)) return null
     if (new Set(entry.identities.map((identity) => identity.path)).size !== entry.identities.length
       || new Set(entry.identities.map((identity) => identity.id)).size !== entry.identities.length) return null
+    if (entry.phase === 'managed-delete-intent') {
+      if (entry.kind !== 'file' || !isManagedDiaryPath(entry.path)
+        || typeof entry.documentId !== 'string' || entry.documentId.length === 0
+        || !entry.source || typeof entry.source !== 'object'
+        || typeof entry.source.dev !== 'string' || typeof entry.source.ino !== 'string'
+        || typeof entry.source.parentDev !== 'string' || typeof entry.source.parentIno !== 'string') return null
+      if (!entry.identities.some((identity) => identity.path === entry.path && identity.id === entry.documentId)) return null
+    }
     return entry as DeleteReuseManifest
   } catch { return null }
 }
@@ -2700,6 +2721,113 @@ async function completeInterruptedDelete(
   note(targetAbs, 'completed-delete', 'interrupted delete completed')
 }
 
+async function managedDeleteSourceMatches(
+  stagedAbs: string,
+  parentAbs: string,
+  source: NonNullable<DeleteReuseManifest['source']>,
+): Promise<boolean> {
+  try {
+    const [file, parent] = await Promise.all([
+      fs.lstat(stagedAbs, { bigint: true }),
+      fs.lstat(parentAbs, { bigint: true }),
+    ])
+    return file.isFile()
+      && !file.isSymbolicLink()
+      && parent.isDirectory()
+      && !parent.isSymbolicLink()
+      && file.dev.toString() === source.dev
+      && file.ino.toString() === source.ino
+      && parent.dev.toString() === source.parentDev
+      && parent.ino.toString() === source.parentIno
+  } catch {
+    return false
+  }
+}
+
+/** Recover the structural intent written by the encrypted-Diary delete owner.
+ * This is deliberately separate from the legacy generic delete rule: a
+ * managed manifest carries the old documentId and source inode, so a fresh
+ * identity or foreign staged generation is never detached, adopted, or
+ * parsed. Body bytes are moved or removed opaquely with filesystem calls. */
+async function recoverManagedDeleteIntent(
+  contentDir: string,
+  db: DatabaseT,
+  dir: string,
+  targetAbs: string,
+  manifestAbs: string,
+  manifest: DeleteReuseManifest,
+  note: (absPath: string, action: RecoveryAction['action'], detail?: string) => void,
+): Promise<void> {
+  const stagedAbs = path.join(dir, manifest.inflight)
+  const quarantineAbs = path.join(dir, manifest.quarantine)
+  const metaPath = metadataPathFor(vaultRelative(contentDir, targetAbs))
+  const oldIdentity = manifest.documentId!
+  const current = getDocumentMetadata(db, metaPath)
+  const ownsCurrentIdentity = current?.id === oldIdentity
+  const targetExists = await exists(targetAbs)
+  const stagedExists = await exists(stagedAbs)
+  const quarantineExists = await exists(quarantineAbs)
+
+  if (targetExists) {
+    // A public generation won the path. Never overwrite it. If the
+    // deterministic quarantine name is already occupied, stop and leave all
+    // artifacts for a later/manual recovery rather than replacing either.
+    if (stagedExists) {
+      if (quarantineExists) throw new Error('managed delete quarantine path is already occupied')
+      await fs.rename(stagedAbs, quarantineAbs)
+      await syncParentDirectoryBestEffort(quarantineAbs)
+    }
+    // With neither staged nor quarantined old bytes, the target is already
+    // the restored/current generation (or the delete completed before an
+    // external replacement). Do not detach its live metadata on that path.
+    if ((stagedExists || quarantineExists) && ownsCurrentIdentity) {
+      deleteDocumentMetadata(db, metaPath)
+    }
+    await removeDurableJournal(manifestAbs)
+    note(quarantineAbs, 'quarantined', 'managed delete path reuse preserved external generation')
+    return
+  }
+
+  if (stagedExists) {
+    const stagedOwned = await managedDeleteSourceMatches(stagedAbs, dir, manifest.source!)
+    if (!stagedOwned) {
+      if (quarantineExists) throw new Error('managed delete quarantine path is already occupied')
+      await fs.rename(stagedAbs, quarantineAbs)
+      await syncParentDirectoryBestEffort(quarantineAbs)
+      if (ownsCurrentIdentity) deleteDocumentMetadata(db, metaPath)
+      await removeDurableJournal(manifestAbs)
+      note(quarantineAbs, 'quarantined', 'managed delete foreign staging preserved')
+      return
+    }
+    // The exact source generation is still in the reserved staging name and
+    // the public path is empty: complete the user-requested delete. Delete
+    // metadata before removing the only remaining ciphertext generation.
+    if (ownsCurrentIdentity) deleteDocumentMetadata(db, metaPath)
+    await fs.rm(stagedAbs, { force: true, recursive: false })
+    await syncParentDirectoryBestEffort(stagedAbs)
+    await removeDurableJournal(manifestAbs)
+    note(targetAbs, 'completed-delete', 'managed Diary delete completed during recovery')
+    return
+  }
+
+  if (quarantineExists) {
+    // A prior recovery/owner pass already made the path-reuse disposition.
+    // Keep that opaque quarantine permanently and only replay an identity
+    // detachment when the current row is exactly the manifest's old owner.
+    if (ownsCurrentIdentity) deleteDocumentMetadata(db, metaPath)
+    await removeDurableJournal(manifestAbs)
+    note(quarantineAbs, 'quarantined', 'managed delete quarantine identity replayed')
+    return
+  }
+
+  // The only remaining state is a completed filesystem/metadata transition
+  // whose journal cleanup was interrupted. Remove the structural intent; do
+  // not infer or create any new identity.
+  if (!targetExists && ownsCurrentIdentity) deleteDocumentMetadata(db, metaPath)
+  await removeDurableJournal(manifestAbs)
+  note(targetAbs, 'completed-delete', 'managed Diary delete journal finalized')
+}
+
 async function recoverDirectory(
   contentDir: string,
   db: DatabaseT,
@@ -2811,6 +2939,10 @@ async function recoverDirectory(
             : identity.path === manifest.path || identity.path.startsWith(`${manifest.path}/`)))
         if (!identitiesAreScoped) {
           note(manifestAbs, 'quarantined', 'delete path-reuse manifest contains out-of-scope identities')
+          continue
+        }
+        if (manifest.phase === 'managed-delete-intent') {
+          await recoverManagedDeleteIntent(contentDir, db, dir, targetAbs, manifestAbs, manifest, note)
           continue
         }
         const inflightAbs = path.join(dir, manifest.inflight)

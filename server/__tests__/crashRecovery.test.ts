@@ -616,6 +616,83 @@ describe('recoverInterruptedOperations (journal-less orphans)', () => {
 })
 
 describe('recoverInterruptedOperations (delete quarantine)', () => {
+  it('recovers a managed delete intent without detaching a fresh path identity', async () => {
+    const target = path.join(vault, 'diary', '2026-08-28.md')
+    const inflight = path.join(vault, 'diary', '2026-08-28.md.docus-delete-inflight-aaaa')
+    const quarantine = path.join(vault, 'diary', '2026-08-28.md.docus-quarantine-reuse-aaaa')
+    const manifest = path.join(vault, 'diary', '.2026-08-28.md.docus-delete-manifest-aaaa')
+    await seed({
+      'diary/2026-08-28.md': 'fresh external generation\n',
+      'diary/2026-08-28.md.docus-delete-inflight-aaaa': 'old opaque generation\n',
+    })
+    saveDocumentMetadata(db, { id: 'fresh-id', path: 'diary/2026-08-28', title: 'Fresh', updatedAt: 2 })
+    const [stagedStat, parentStat] = await Promise.all([
+      fs.lstat(inflight, { bigint: true }),
+      fs.lstat(path.dirname(inflight), { bigint: true }),
+    ])
+    await fs.writeFile(manifest, JSON.stringify({
+      version: 1,
+      op: 'delete-path-reuse',
+      phase: 'managed-delete-intent',
+      kind: 'file',
+      path: 'diary/2026-08-28',
+      inflight: path.basename(inflight),
+      quarantine: path.basename(quarantine),
+      identities: [{ path: 'diary/2026-08-28', id: 'old-id' }],
+      documentId: 'old-id',
+      source: {
+        dev: stagedStat.dev.toString(),
+        ino: stagedStat.ino.toString(),
+        parentDev: parentStat.dev.toString(),
+        parentIno: parentStat.ino.toString(),
+      },
+    }), 'utf8')
+
+    await runRecovery()
+
+    expect(await fs.readFile(target, 'utf8')).toBe('fresh external generation\n')
+    expect(getDocumentMetadata(db, 'diary/2026-08-28')?.id).toBe('fresh-id')
+    expect(await fs.readFile(quarantine, 'utf8')).toBe('old opaque generation\n')
+    await expect(fs.stat(manifest)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('completes a managed delete intent only for the original staged generation', async () => {
+    const inflight = path.join(vault, 'diary', '2026-08-29.md.docus-delete-inflight-aaaa')
+    const quarantine = path.join(vault, 'diary', '2026-08-29.md.docus-quarantine-reuse-aaaa')
+    const manifest = path.join(vault, 'diary', '.2026-08-29.md.docus-delete-manifest-aaaa')
+    await seed({ 'diary/2026-08-29.md.docus-delete-inflight-aaaa': 'old opaque generation\n' })
+    saveDocumentMetadata(db, { id: 'old-id', path: 'diary/2026-08-29', title: 'Old', updatedAt: 1 })
+    const [stagedStat, parentStat] = await Promise.all([
+      fs.lstat(inflight, { bigint: true }),
+      fs.lstat(path.dirname(inflight), { bigint: true }),
+    ])
+    await fs.writeFile(manifest, JSON.stringify({
+      version: 1,
+      op: 'delete-path-reuse',
+      phase: 'managed-delete-intent',
+      kind: 'file',
+      path: 'diary/2026-08-29',
+      inflight: path.basename(inflight),
+      quarantine: path.basename(quarantine),
+      identities: [{ path: 'diary/2026-08-29', id: 'old-id' }],
+      documentId: 'old-id',
+      source: {
+        dev: stagedStat.dev.toString(),
+        ino: stagedStat.ino.toString(),
+        parentDev: parentStat.dev.toString(),
+        parentIno: parentStat.ino.toString(),
+      },
+    }), 'utf8')
+
+    const report = await runRecovery()
+
+    await expect(fs.stat(inflight)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(fs.stat(quarantine)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(fs.stat(manifest)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(getDocumentMetadata(db, 'diary/2026-08-29')).toBeNull()
+    expect(report.actions.some((action) => action.action === 'completed-delete')).toBe(true)
+  })
+
   it('quarantines an empty-identity delete manifest without promoting or deleting artifacts', async () => {
     await seed({
       'gone.md.docus-delete-inflight-aaaa': '# old\n',

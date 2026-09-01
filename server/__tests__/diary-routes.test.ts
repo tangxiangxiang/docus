@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Database from 'better-sqlite3'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
@@ -7,7 +7,8 @@ import app, { __setMetadataDbForTesting } from '../index'
 import { applyMigrations } from '../db'
 import { ensureInitialFolders } from '../seed'
 import { deleteDocumentMetadata, getDocumentMetadata, patchDocumentMetadata } from '../documentMetadata'
-import { __resetLinkIndexForTesting } from '../linkIndex'
+import { __resetLinkIndexForTesting, getIndex, LinkIndex } from '../linkIndex'
+import { __setManagedDiaryDeleteTestHooksForTesting } from '../diaryAccess/delete'
 import { CONTENT_DIR, setContentDir } from '../paths'
 import { localDiaryDateForTimeZone } from '../routes/diary'
 import { __setAtomicWriteTestHooksForTesting } from '../atomicTextWrite'
@@ -75,6 +76,7 @@ afterEach(async () => {
   setContentDir(ORIGINAL_CONTENT_DIR)
   __resetLinkIndexForTesting()
   __setAtomicWriteTestHooksForTesting(null)
+  __setManagedDiaryDeleteTestHooksForTesting(null)
   await fs.rm(vault, { recursive: true, force: true })
 })
 
@@ -360,7 +362,7 @@ describe('Diary REST mutation contract', () => {
     await expect(fs.stat(path.join(vault, 'diary', '2026'))).rejects.toThrow()
   })
 
-  it('allows managed edit but blocks rename, move-in, move-out, and delete', async () => {
+  it('allows managed edit, blocks identity-changing moves, and deletes through the encrypted owner', async () => {
     const date = '2000-04-01'
     const created = await call('POST', '/api/diary/dates', { date, timeZone: TIME_ZONE })
     expect(created.status).toBe(201)
@@ -379,6 +381,10 @@ describe('Diary REST mutation contract', () => {
     const moveIn = await call('PATCH', '/api/posts/inbox/moved-in', {
       targetPath: 'diary/2000-04-03',
     })
+    const beforeDelete = await fs.readFile(path.join(vault, 'diary', `${date}.md`))
+    const metadataBeforeDelete = getDocumentMetadata(db, `diary/${date}`)
+    const index = await getIndex()
+    expect(index.hasPath(`diary/${date}`)).toBe(true)
     const deleted = await call('DELETE', `/api/posts/diary/${date}`)
 
     expect(edit.status).toBe(200)
@@ -386,10 +392,151 @@ describe('Diary REST mutation contract', () => {
     expect(moveOut.status).toBe(422)
     expect(generic.status).toBe(201)
     expect(moveIn.status).toBe(422)
-    expect(deleted.status).toBe(422)
-    expect(await deleted.json()).toMatchObject({ code: 'diary-encrypted-delete-unsupported' })
-    await expect(fs.stat(path.join(vault, 'diary', `${date}.md`))).resolves.toBeTruthy()
+    expect(deleted.status).toBe(200)
+    const deletedWire = await deleted.json()
+    expect(deletedWire).toEqual({ ok: true })
+    expect(JSON.stringify(deletedWire)).not.toContain(beforeDelete.toString('base64'))
+    await expect(fs.stat(path.join(vault, 'diary', `${date}.md`))).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(getDocumentMetadata(db, `diary/${date}`)).toBeNull()
+    expect(metadataBeforeDelete?.id).toBeTruthy()
+    expect(index.hasPath(`diary/${date}`)).toBe(false)
     await expect(fs.stat(path.join(vault, 'inbox', 'moved-in.md'))).resolves.toBeTruthy()
+  })
+
+  it('rejects locked managed delete without touching the encrypted generation', async () => {
+    const date = '2000-04-06'
+    expect((await call('POST', '/api/diary/dates', { date, timeZone: TIME_ZONE })).status).toBe(201)
+    const physical = path.join(vault, 'diary', `${date}.md`)
+    const before = await fs.readFile(physical)
+
+    const response = await callWithoutDiaryCapability('DELETE', `/api/posts/diary/${date}`)
+
+    expect(response.status).toBe(423)
+    expect(await response.json()).toMatchObject({ code: 'diary-locked' })
+    expect(await fs.readFile(physical)).toEqual(before)
+    expect(getDocumentMetadata(db, `diary/${date}`)).not.toBeNull()
+  })
+
+  it('fails closed when managed metadata is missing and makes a repeat delete deterministic', async () => {
+    const missingDate = '2000-04-07'
+    expect((await call('POST', '/api/diary/dates', { date: missingDate, timeZone: TIME_ZONE })).status).toBe(201)
+    const missingPhysical = path.join(vault, 'diary', `${missingDate}.md`)
+    const missingBefore = await fs.readFile(missingPhysical)
+    deleteDocumentMetadata(db, `diary/${missingDate}`)
+    const missing = await call('DELETE', `/api/posts/diary/${missingDate}`)
+    expect(missing.status).toBe(503)
+    expect(await missing.json()).toMatchObject({ code: 'diary-metadata-unavailable' })
+    expect(await fs.readFile(missingPhysical)).toEqual(missingBefore)
+
+    const deletedDate = '2000-04-08'
+    expect((await call('POST', '/api/diary/dates', { date: deletedDate, timeZone: TIME_ZONE })).status).toBe(201)
+    expect((await call('DELETE', `/api/posts/diary/${deletedDate}`)).status).toBe(200)
+    const repeated = await call('DELETE', `/api/posts/diary/${deletedDate}`)
+    expect(repeated.status).toBe(404)
+  })
+
+  it('rolls back a managed delete without reading or parsing the staged body', async () => {
+    const date = '2000-04-09'
+    expect((await call('POST', '/api/diary/dates', { date, timeZone: TIME_ZONE })).status).toBe(201)
+    const physical = path.join(vault, 'diary', `${date}.md`)
+    const before = await fs.readFile(physical)
+    const readFile = vi.spyOn(fs, 'readFile')
+    __setManagedDiaryDeleteTestHooksForTesting({
+      beforeStagedUnlink: () => { throw new Error('injected managed delete unlink failure') },
+    })
+    try {
+      const response = await call('DELETE', `/api/posts/diary/${date}`)
+      expect(response.status).toBe(409)
+      const deleteReadCalls = readFile.mock.calls.slice()
+      expect(await fs.readFile(physical)).toEqual(before)
+      expect(getDocumentMetadata(db, `diary/${date}`)).not.toBeNull()
+      expect(deleteReadCalls.some(([candidate]) => String(candidate) === physical)).toBe(false)
+    } finally {
+      readFile.mockRestore()
+      __setManagedDiaryDeleteTestHooksForTesting(null)
+    }
+  })
+
+  it('lets a reused canonical path win without adopting the old Diary identity', async () => {
+    const date = '2000-04-10'
+    expect((await call('POST', '/api/diary/dates', { date, timeZone: TIME_ZONE })).status).toBe(201)
+    const physical = path.join(vault, 'diary', `${date}.md`)
+    const oldCiphertext = await fs.readFile(physical)
+    const oldId = getDocumentMetadata(db, `diary/${date}`)!.id
+    __setManagedDiaryDeleteTestHooksForTesting({
+      afterSourceStaged: async (_staged, target) => { await fs.writeFile(target, 'foreign generation\n', 'utf8') },
+    })
+    try {
+      const response = await call('DELETE', `/api/posts/diary/${date}`)
+      expect(response.status).toBe(409)
+      expect(await response.json()).toMatchObject({ code: 'diary-delete-path-reused' })
+      expect(await fs.readFile(physical, 'utf8')).toBe('foreign generation\n')
+      expect(getDocumentMetadata(db, `diary/${date}`)).toBeNull()
+      const quarantines = (await fs.readdir(path.join(vault, 'diary')))
+        .filter((name) => name.startsWith(`${date}.md.docus-quarantine-reuse-`))
+      expect(quarantines).toHaveLength(1)
+      expect(await fs.readFile(path.join(vault, 'diary', quarantines[0]!))).toEqual(oldCiphertext)
+      expect((await getIndex()).hasPath(`diary/${date}`)).toBe(true)
+      expect(oldId).toBeTruthy()
+    } finally {
+      __setManagedDiaryDeleteTestHooksForTesting(null)
+      await fs.rm(physical, { force: true })
+      for (const name of await fs.readdir(path.join(vault, 'diary'))) {
+        if (name.startsWith(`${date}.md.docus-quarantine-reuse-`)) await fs.rm(path.join(vault, 'diary', name), { force: true })
+      }
+      deleteDocumentMetadata(db, `diary/${date}`)
+    }
+  })
+
+  it('keeps logout quiescent until an in-flight managed delete reaches its boundary', async () => {
+    const date = '2000-04-11'
+    expect((await call('POST', '/api/diary/dates', { date, timeZone: TIME_ZONE })).status).toBe(201)
+    let release!: () => void
+    const paused = new Promise<void>((resolve) => { release = resolve })
+    let staged = false
+    __setManagedDiaryDeleteTestHooksForTesting({
+      afterSourceStaged: async () => {
+        staged = true
+        await paused
+      },
+    })
+
+    const deletion = call('DELETE', `/api/posts/diary/${date}`)
+    while (!staged) await new Promise<void>((resolve) => setImmediate(resolve))
+    let logoutSettled = false
+    const logout = app.fetch(jsonRequest('/api/auth/logout', {
+      method: 'POST',
+      origin: auth.runtime.config.publicOrigin,
+      cookie: auth.cookie,
+    })).then((response) => {
+      logoutSettled = true
+      return response
+    })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(logoutSettled).toBe(false)
+    release()
+    expect((await deletion).status).toBe(200)
+    expect((await logout).status).toBe(204)
+  })
+
+  it('rolls back safely when structural LinkIndex cleanup fails', async () => {
+    const date = '2000-04-12'
+    expect((await call('POST', '/api/diary/dates', { date, timeZone: TIME_ZONE })).status).toBe(201)
+    const physical = path.join(vault, 'diary', `${date}.md`)
+    const before = await fs.readFile(physical)
+    const cleanup = vi.spyOn(LinkIndex.prototype, 'applyDelete').mockImplementationOnce(() => {
+      throw new Error('injected structural index failure')
+    })
+    try {
+      const response = await call('DELETE', `/api/posts/diary/${date}`)
+      expect(response.status).toBe(503)
+      expect(await response.json()).toMatchObject({ code: 'diary-delete-index-cleanup-failed' })
+      expect(await fs.readFile(physical)).toEqual(before)
+      expect(getDocumentMetadata(db, `diary/${date}`)).not.toBeNull()
+      expect((await getIndex()).hasPath(`diary/${date}`)).toBe(true)
+    } finally {
+      cleanup.mockRestore()
+    }
   })
 
   it('rejects an ordinary document move into Diary before any filesystem or metadata mutation', async () => {
