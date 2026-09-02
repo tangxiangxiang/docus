@@ -159,6 +159,7 @@ const route = useRoute()
 // current presentation visibility, so Calendar Home can remove the activity
 // and side-panel columns without a Diary-specific CSS offset.
 const sidebarLayoutVisible = ref(true)
+const statusBarLayoutVisible = ref(true)
 const editorFocusWidth = useStorage('docus.editor.focus-width', true)
 const emit = defineEmits<{
   logout: []
@@ -192,7 +193,10 @@ const {
   selectPanel,
   rightRailTab,
   rightRailCollapsed,
-} = useVaultLayout({ sidebarVisible: sidebarLayoutVisible })
+} = useVaultLayout({
+  sidebarVisible: sidebarLayoutVisible,
+  statusBarVisible: statusBarLayoutVisible,
+})
 
 /* Splitter drag lives in its own composable — it mutates the same
    width/ratio refs useVaultLayout returns, so the grid updates
@@ -1700,6 +1704,17 @@ watch(workspaceSidebarVisible, (visible) => {
   sidebarLayoutVisible.value = visible
 }, { immediate: true })
 
+// The empty workspace has no document status to report. Keep the layout's
+// optional footer row in sync with the same workspace-tab source that drives
+// the editor tabs, so hiding the footer also returns its 24px to the editor.
+watch(
+  [workspaceSidebarVisible, () => workspaceTabs.value.length],
+  ([sidebarVisible, workspaceTabCount]) => {
+    statusBarLayoutVisible.value = sidebarVisible && workspaceTabCount > 0
+  },
+  { immediate: true },
+)
+
 // NavBar lives above RouterView, while SettingsModal remains owned by this
 // view because its embedded sections use the live Vault context. Bridge the
 // global menu action through the App shell tick instead of moving or
@@ -2713,7 +2728,7 @@ watch(isReadMode, async (reading) => {
     />
 
     <StatusBar
-      v-if="workspaceSidebarVisible"
+      v-if="statusBarLayoutVisible"
       class="status-bar-row"
       :path="activeDraftRecovery?.documentPath ?? activeHistoryComparison?.documentPath ?? activeWorkingTreeDiff?.documentPath ?? activePath"
       :save="activeSavePresentation"

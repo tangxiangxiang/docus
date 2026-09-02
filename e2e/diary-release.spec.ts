@@ -165,6 +165,13 @@ test('Diary Calendar remains usable across the D5 responsive matrix', async ({ p
   await expect(page.locator('.file-tree')).toBeHidden()
 })
 
+test('Vault hides the status bar when no document is open', async ({ page }) => {
+  await page.goto('/vault')
+
+  await expect(page.locator('.editor-area.is-empty')).toBeVisible()
+  await expect(page.locator('.status-bar-row')).toHaveCount(0)
+})
+
 test('Diary Calendar distributes the available height across actual week rows', async ({ page }) => {
   await openDiaryScope(page)
   await page.setViewportSize({ width: 1440, height: 900 })

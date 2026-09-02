@@ -104,6 +104,23 @@ describe('useVaultLayout', () => {
     wrapper.unmount()
   })
 
+  it('removes the status-bar row when the workspace has no document', () => {
+    const statusBarVisible = ref(false)
+    let layout!: ReturnType<typeof useVaultLayout>
+    const wrapper = mount(defineComponent({
+      setup() {
+        layout = useVaultLayout({ statusBarVisible })
+        return () => h('div')
+      },
+    }))
+
+    expect(layout.vaultStyle.value.gridTemplateRows).toBe('1fr')
+
+    statusBarVisible.value = true
+    expect(layout.vaultStyle.value.gridTemplateRows).toBe('1fr 24px')
+    wrapper.unmount()
+  })
+
   it('persists only the unified right rail fields', async () => {
     const { layout } = setup()
     layout.rightRailTab.value = 'links'

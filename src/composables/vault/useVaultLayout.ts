@@ -43,6 +43,11 @@ export interface UseVaultLayoutOptions {
    * can remove the tracks instead of hiding them with a page-level CSS hack.
    */
   sidebarVisible?: Readonly<Ref<boolean>>
+  /**
+   * Whether the document status bar occupies the final grid row. Empty
+   * workspaces can omit that row so the editor surface uses the full height.
+   */
+  statusBarVisible?: Readonly<Ref<boolean>>
 }
 
 const STORAGE_KEY = 'docus.vault.layout'
@@ -101,6 +106,7 @@ export function __resetVaultLayoutState(): void {
 
 export function useVaultLayout(options: UseVaultLayoutOptions = {}) {
   const sidebarVisible = options.sidebarVisible ?? ref(true)
+  const statusBarVisible = options.statusBarVisible ?? ref(true)
   // useStorage handles the deep-compare-and-skip-noop write for us, so the
   // bidirectional watcher below doesn't ping-pong on rehydration. The
   // serializer.read keeps the old {fileTreeOpen, fileTreeWidth} shape
@@ -190,11 +196,13 @@ export function useVaultLayout(options: UseVaultLayoutOptions = {}) {
   const rightRailCollapsed: Ref<boolean> = _rightRailCollapsed
 
   const vaultStyle = computed(() => {
-    // Rows: editor-area (fills), then a 24px status-bar that spans the
-    // full width. Columns vary depending on whether the left side panel
-    // and/or the unified right rail are open. The splitter
-    // grid track is 1px (matches .vault .splitter { width: 1px }); the
-    // actual grabbable area is wider (7px) but that lives on a
+    // Rows: editor-area (fills), optionally followed by a 24px status-bar
+    // that spans the full width. Empty workspaces omit that row so the
+    // editor surface can use the recovered height. Columns vary depending
+    // on whether the left side panel and/or unified right rail are open.
+    // The splitter grid track is 1px (matches
+    // .vault .splitter { width: 1px }); the actual grabbable area is
+    // wider (7px) but that lives on a
     // transparent ::before that overflows the layout box.
     //
     // The left side panel is the file tree, tag panel, or history panel.
@@ -225,7 +233,7 @@ export function useVaultLayout(options: UseVaultLayoutOptions = {}) {
     const activity = sidebarVisible.value ? '40px ' : ''
     return {
       gridTemplateColumns: `${activity}${left}1fr${right}`,
-      gridTemplateRows: sidebarVisible.value ? '1fr 24px' : '1fr',
+      gridTemplateRows: sidebarVisible.value && statusBarVisible.value ? '1fr 24px' : '1fr',
     }
   })
   // Template ref to the outer .vault element lives in VaultView.vue (so
