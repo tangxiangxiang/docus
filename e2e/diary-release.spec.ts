@@ -147,6 +147,8 @@ test('Diary Calendar remains usable across the D5 responsive matrix', async ({ p
     await expect(page.locator('.diary-calendar-surface-header')).toHaveCount(0)
     await expect(page.locator('.diary-calendar-toolbar')).toHaveCount(0)
     await expect(page.locator('.vc-title')).toBeVisible()
+    await expect(page.getByTestId('view-toggle')).toBeDisabled()
+    await expect(page.locator('.right-rail-toggle')).toBeDisabled()
     await expect(page.locator('.file-tree')).toBeHidden()
     await expect(page.locator('.right-rail-slot')).toBeHidden()
     await expect(page.locator('.status-bar-row')).toBeHidden()
@@ -155,6 +157,8 @@ test('Diary Calendar remains usable across the D5 responsive matrix', async ({ p
 
   await page.locator('.scope-chip').filter({ hasText: 'note' }).click()
   await expect(page.getByTestId('diary-calendar-surface')).toHaveCount(0)
+  await expect(page.getByTestId('view-toggle')).toBeEnabled()
+  await expect(page.locator('.right-rail-toggle')).toBeEnabled()
   await expect(page.locator('.file-tree')).toBeVisible()
   await page.locator('.scope-chip').filter({ hasText: 'diary' }).click()
   await expect(page.getByTestId('diary-calendar-surface')).toBeVisible()
@@ -340,6 +344,8 @@ test('Diary scope keeps Calendar hidden while managed document tabs are open', a
     await expect(page.locator('.tabs')).toBeVisible()
     await expect(page.locator(`[role="tab"][data-tab-id="${diary}"]`)).toHaveCount(1)
     await expect(page.locator(`[role="tab"][data-tab-id="${note}"]`)).toHaveCount(1)
+    await expect(page.getByTestId('view-toggle')).toBeEnabled()
+    await expect(page.locator('.right-rail-toggle')).toBeEnabled()
   } finally {
     await deleteDiaryDate(request, date)
     const removed = await request.delete(`/api/posts/${note}`)

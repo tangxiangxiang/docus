@@ -6060,6 +6060,17 @@ main.container.auth-page-shell {
   border-color: var(--border);
   background: var(--bg-soft);
 }
+.right-rail-toggle:disabled,
+.view-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.right-rail-toggle:disabled:hover,
+.view-toggle:disabled:hover {
+  color: var(--text-muted);
+  border-color: transparent;
+  background: transparent;
+}
 /* The button represents the "switch to opposite mode" affordance,
    so the read state is the one that should feel selected. */
 .view-toggle.is-read {

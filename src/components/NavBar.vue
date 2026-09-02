@@ -72,6 +72,15 @@ const isReadMode = computed(() => viewModeApi?.mode.value === 'read')
 const { activeScope, selectScope } = useScopeFilter()
 const diaryAccess = inject(DiaryAccessContextKey, null)
 
+/* Calendar Home is the Diary scope at the Vault root. A Diary document has a
+   nested /vault/<path> route and keeps the normal reading/editing controls,
+   while Calendar Home has no reading surface or right rail to operate. */
+const isDiaryCalendarVisible = computed(() => (
+  props.isVault
+  && activeScope.value === 'diary'
+  && route?.name === 'vault'
+))
+
 function onScopeClick(scope: ScopeKey): void {
   if (scope === 'ledger') {
     void router.push({ name: 'bills' })
@@ -220,6 +229,7 @@ onBeforeUnmount(() => {
           class="view-toggle"
           :class="{ 'is-read': isReadMode }"
           type="button"
+          :disabled="isDiaryCalendarVisible"
           :aria-label="t(isReadMode ? 'nav.switch_edit' : 'nav.switch_read')"
           :title="t(isReadMode ? 'nav.switch_edit_hint' : 'nav.switch_read_hint')"
           data-testid="view-toggle"
@@ -231,6 +241,7 @@ onBeforeUnmount(() => {
           v-if="props.isVault"
           class="right-rail-toggle"
           type="button"
+          :disabled="isDiaryCalendarVisible"
           :title="t(rightRailCollapsed ? 'nav.right_rail_open' : 'nav.right_rail_close')"
           :aria-label="t(rightRailCollapsed ? 'nav.right_rail_open' : 'nav.right_rail_close')"
           :aria-pressed="!rightRailCollapsed"

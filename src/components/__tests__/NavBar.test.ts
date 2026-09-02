@@ -83,6 +83,35 @@ describe('NavBar — view-toggle button', () => {
     expect(wrapper.find('[data-testid="view-toggle"]').attributes('aria-label')).toBe('Switch to edit')
   })
 
+  it('disables reading and right-rail controls on Diary Calendar Home', async () => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/vault', name: 'vault', component: { template: '<div />' } }],
+    })
+    await router.push('/vault')
+    await router.isReady()
+
+    const scope = useScopeFilter()
+    scope.activeScope.value = 'diary'
+    const api = makeViewModeApi()
+    const wrapper = mount(NavBar, {
+      props: { isVault: true },
+      global: {
+        plugins: [router],
+        provide: { [VaultViewModeKey as symbol]: api },
+      },
+    })
+
+    expect(wrapper.find('[data-testid="view-toggle"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('.right-rail-toggle').attributes('disabled')).toBeDefined()
+
+    scope.activeScope.value = 'note'
+    await nextTick()
+    expect(wrapper.find('[data-testid="view-toggle"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('.right-rail-toggle').attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+  })
+
   it('places the account entry in the navbar actions and forwards settings', async () => {
     const { wrapper } = mountNavBar()
 
