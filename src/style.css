@@ -3592,6 +3592,13 @@ main.container.auth-page-shell {
 .vault .file-tree .tree {
   list-style: none; padding: 0; margin: 0;
   overflow-y: auto; flex: 1;
+  /* Keep long paths horizontally scrollable without leaving a visible
+     scrollbar in the compact tree. Firefox uses the transparent thumb;
+     WebKit gets an axis-specific zero-height scrollbar below. */
+  scrollbar-color: transparent transparent;
+}
+.vault .file-tree .tree::-webkit-scrollbar {
+  height: 0;
 }
 .vault .file-tree .tree-children {
   list-style: none; padding: 0; margin: 0;

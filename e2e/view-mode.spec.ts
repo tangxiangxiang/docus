@@ -39,6 +39,17 @@ test.describe('View mode toggle', () => {
     await expect(page.locator('[data-testid="view-toggle"]')).toHaveCount(0)
   })
 
+  test('hides the file-tree horizontal scrollbar without disabling scrolling', async ({ page }) => {
+    const tree = page.locator('.tree')
+    await expect(tree).toBeVisible()
+    const metrics = await tree.evaluate((element) => ({
+      overflowX: getComputedStyle(element).overflowX,
+      scrollbarHeight: getComputedStyle(element, '::-webkit-scrollbar').height,
+    }))
+    expect(metrics.overflowX).toBe('auto')
+    expect(metrics.scrollbarHeight).toBe('0px')
+  })
+
   test('toggles the left side panel from the top-right NavBar', async ({ page }) => {
     const toggle = page.getByTestId('left-panel-toggle')
     await expect(toggle).toHaveAttribute('aria-pressed', 'true')
