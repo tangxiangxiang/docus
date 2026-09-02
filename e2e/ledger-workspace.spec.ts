@@ -7,6 +7,8 @@ test('Ledger renders inside the shared Docus App Shell', async ({ page }) => {
   await expect(page.locator('.scope-chips')).toBeVisible()
   await expect(page.locator('.scope-chip').filter({ hasText: 'ledger' })).toHaveAttribute('aria-pressed', 'true')
   await expect(page.getByTestId('bills-page')).toBeVisible()
+  await expect(page.locator('body')).toHaveClass(/bills-mode/)
+  await expect(page.locator('html')).toHaveClass(/bills-mode/)
 
   // Ledger is a body workspace, not a second Vault shell. The global actions
   // stay in the single navbar while Vault-only controls and sidebars do not.
@@ -23,6 +25,8 @@ test('Ledger scope switches back to the shared Vault body', async ({ page }) => 
   await page.locator('.scope-chip').filter({ hasText: 'note' }).click()
 
   await expect(page).toHaveURL(/\/vault(?:[/?#]|$)/)
+  await expect(page.locator('body')).not.toHaveClass(/bills-mode/)
+  await expect(page.locator('html')).not.toHaveClass(/bills-mode/)
   await expect(page.locator('.navbar')).toHaveCount(1)
   await expect(page.locator('.scope-chip').filter({ hasText: 'note' })).toHaveAttribute('aria-pressed', 'true')
 })

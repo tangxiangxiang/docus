@@ -223,10 +223,12 @@ watch(
 
 /* The vault uses an internal scrollable surface (FileTree, Editor,
    Preview). It must NOT let the outer document scroll, otherwise
-   two scrollbars fight and the page wobbles. We toggle a body
-   class on route change so the lock applies only to vault routes. */
+   two scrollbars fight and the page wobbles. Route-scoped classes keep
+   the Vault body lock and the Bills scrollbar treatment isolated. */
 watchEffect(() => {
   document.body.classList.toggle('vault-mode', isVaultRoute.value)
+  document.body.classList.toggle('bills-mode', isBillsRoute.value)
+  document.documentElement.classList.toggle('bills-mode', isBillsRoute.value)
 })
 
 /* Global open-search trigger: incremented by NavBar, watched by the
