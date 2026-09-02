@@ -2,7 +2,7 @@
 
 ## 1. Status / baseline
 
-- **Implementation Plan status:** **Ready for Review**
+- **Implementation Plan status:** **Accepted / Ready for Implementation**
 - **Plan date:** 2026-09-03
 - **Implementation baseline / audited `main` HEAD:** `693dccf46638094cd54a369770f782d820df22f9`
 - **Ledger v1 PRD:** `docs/design/ledger-v1-prd.md`
@@ -28,8 +28,21 @@ preference. IDs remain server-generated opaque IDs and are not product
 semantics.
 
 No unresolved P0/P1 implementation decision remains in this plan. The status
-is **Implementation Plan: Ready for Review**; production implementation still
-requires independent Plan Review approval.
+is **Implementation Plan: Accepted / Ready for Implementation**. L0.1 may begin
+implementation against the frozen contracts below; this document itself still
+contains no production implementation.
+
+### 1.2 Plan Review remediation
+
+This revision closes the four findings from the Plan Review of `cad870d`:
+
+- timezone validation has a named-IANA guard before Temporal calculation;
+- Account PATCH has an explicit state/history whitelist that preserves the
+  archived zero-balance invariant;
+- Category PATCH has an explicit state/history/kind matrix and archived
+  restore-before-edit rule;
+- checked-in ISO metadata has a post-release compatibility policy that blocks
+  silent exponent reinterpretation or removal of a used currency code.
 
 ---
 
@@ -465,7 +478,12 @@ Rules:
 - an ISO entry whose official minor unit is `N.A.` cannot satisfy the integer-minor-unit exponent contract and is rejected as unsupported rather than guessed;
 - Settings responses derive `currencyExponent`;
 - clients cannot submit `currencyExponent`;
-- future ISO refresh is a reviewed metadata update, not a runtime dependency.
+- future ISO refresh is a reviewed metadata update, not a runtime dependency;
+- after a Ledger release, a SIX snapshot update must not silently remove a
+  currency code already used by a Ledger or change its exponent. Either change
+  requires an explicit compatibility/migration review before the metadata can
+  be merged; historical `amountMinor` values must never be reinterpreted by a
+  routine metadata refresh.
 
 The shared pure module can later be imported by UI without duplicating metadata; L0 does not wire the UI.
 
@@ -526,7 +544,20 @@ Rationale:
 `server/ledger/time.ts` uses Temporal:
 
 - UTC ms: `Number.isSafeInteger` + `Temporal.Instant.fromEpochMilliseconds`;
-- timezone: validate by converting a fixed Instant with `toZonedDateTimeISO(candidateZone)`;
+- timezone: `assertIanaTimeZoneId(candidateZone)` first requires a string with
+  no surrounding whitespace and applies this named-zone grammar before any
+  Temporal parsing:
+
+  ```text
+  /^(?:UTC|[A-Za-z_][A-Za-z0-9_.+-]*(?:\/[A-Za-z0-9_.+-]+)+)$/
+  ```
+
+  It therefore rejects offset-only values, ISO date-time expressions, and
+  bracketed date-time/zone expressions rather than treating Temporal's broader
+  accepted input grammar as an IANA validator;
+- after the named-IANA guard, validate the identifier by converting a fixed
+  Instant with `toZonedDateTimeISO(candidateZone)`; Temporal remains the
+  authority for the actual zone/calendar/DST calculations;
 - `openingDate`: exact `YYYY-MM-DD`, then `Temporal.PlainDate.from(..., { overflow:'reject' })`;
 - opening boundary: local date start-of-day → Instant;
 - today: local start-of-day → **next local day** start-of-day;
@@ -862,7 +893,27 @@ Validate initialized settings, exact currency, type/nature matrix, name/note lim
 
 ### 19.2 PATCH
 
-Per-field validators only; no `Object.assign`. Opening balance/date/nature changes that reinterpret established history are rejected once history exists. Currency cannot diverge from Ledger base currency.
+Per-field validators only; no `Object.assign`. `hasHistory` means that any
+`ledger_transactions` row references the Account through `account_id`,
+`from_account_id`, or `to_account_id`; soft-deleted rows count as history.
+The implementation uses this complete PATCH matrix:
+
+| Account state | History | PATCH whitelist | Required behavior |
+| --- | --- | --- | --- |
+| ACTIVE | none | `name`, `note`, `type`, `nature`, `openingBalanceMinor`, `openingDate` | validate the final `type`/`nature` pair and the opening boundary; all changes are one optimistic mutation |
+| ACTIVE | exists | `name`, `note` | reject fields that reinterpret history; balance corrections use Adjustment |
+| ARCHIVED | none or exists | `name`, `note` | reject every financial/interpretation field; restore first |
+
+`currency` is a create-time validated field and is not in any PATCH whitelist;
+it must continue to equal the frozen Ledger `baseCurrency`. `archivedAt`,
+`currentBalanceMinor`, `version`, IDs, and timestamps are never PATCH fields.
+An archived Account PATCH containing anything outside `name`/`note` returns
+`409 ledger-archived-account`; the caller must restore before changing
+`openingBalanceMinor`, `openingDate`, `nature`, `type`, or `currency`. An active
+Account with history rejects the same interpretation-changing fields with the
+deterministic field validation error. This state gate is evaluated before the
+mutation and is covered by the service/API tests, so an archived Account that
+passed the zero-balance archive gate cannot be made non-zero by PATCH.
 
 ### 19.3 Archive race
 
@@ -877,7 +928,7 @@ BEGIN IMMEDIATE
 COMMIT
 ```
 
-The zero-balance read and archive mutation cannot be separated by a competing transaction insert.
+The zero-balance read and archive mutation cannot be separated by a competing transaction insert. After archive, the Account PATCH whitelist above is the only direct edit path: `name` and `note` are harmless display/text changes, while every balance-affecting or history-reinterpreting change requires restore first.
 
 ### 19.4 Restore
 
@@ -905,7 +956,21 @@ Create/PATCH accept `name`, not `normalizedName`. Duplicate `(kind,normalized_na
 
 ### 20.2 Archive/restore/history
 
-Archive leaves identity reserved. New transactions reject archived Categories; explicit historical query by archived ID remains allowed. Restore preserves stable ID and increments version; active restore no-ops.
+`hasHistory` means any transaction row references the Category through
+`category_id`, including soft-deleted rows. The Category mutation matrix is:
+
+| Category state | History | PATCH whitelist | Required behavior |
+| --- | --- | --- | --- |
+| ACTIVE | none | `kind`, `name` | validate the final kind/name and `(kind, normalized_name)` uniqueness atomically |
+| ACTIVE | exists | `name` | `kind` is immutable after the first historical reference; rename keeps the stable ID and rechecks uniqueness |
+| ARCHIVED | none or exists | none | return `409 ledger-archived-category`; restore before any edit |
+
+Archive leaves the current `(kind, normalized_name)` identity reserved. In
+particular, an archived Category cannot be renamed to release that identity or
+change kind. New transactions reject archived Categories; explicit historical
+query by archived ID remains allowed. Restore preserves stable ID and
+increments version; active restore no-ops. Archive/restore are explicit
+lifecycle endpoints, never a PATCH of `archivedAt`.
 
 Physical delete requires no Category history, including deleted transaction rows.
 
@@ -1000,7 +1065,7 @@ Resolve all referenced Accounts:
 - income/expense/adjustment → `account_id`;
 - transfer → **both** from/to.
 
-If any is archived, PATCH is limited to non-financial text fields applicable to the type (`note`, plus `payee` for income/expense). Financial changes and DELETE are blocked until every involved archived Account is restored.
+If any is archived, PATCH is limited to non-financial text fields applicable to the type (`note`, plus `payee` for income/expense). Financial changes and DELETE are blocked until every involved archived Account is restored. This transaction rule is separate from the Account PATCH matrix in §19.2; both enforce restore-before-financial-mutation.
 
 ### 21.4 Soft delete
 
@@ -1197,7 +1262,7 @@ Prove fresh/current upgrade, migration idempotence, tables/FKs/RESTRICT/CHECK/de
 ### Money/time/validation
 
 - `money.test.ts` — safe boundaries, aggregate overflow, exponents, strict decimal conversion.
-- `time.test.ts` — IANA, Gregorian date, Monday week, `[start,end)`, DST, opening boundary, future tolerance.
+- `time.test.ts` — named-IANA validation (`Asia/Shanghai`, `America/Los_Angeles`, `UTC`), rejection of `+08:00`, `-05`, ISO date-time strings, and bracketed date-time/zone expressions, Gregorian date, Monday week, `[start,end)`, DST, opening boundary, future tolerance.
 - `validation.test.ts` — exact keys, discriminated DTOs, expectedVersion, normalization, limits.
 
 ### Balance — `balance.test.ts`
@@ -1206,9 +1271,14 @@ Full natural-balance matrix, Transfer net-worth invariant, opening+active record
 
 ### Service/replay/projections
 
-- `service.test.ts` — lifecycle/history/edit/freeze marker.
+- `service.test.ts` — lifecycle/history/edit/freeze marker; the full Account PATCH matrix; an archived zero-balance Account with no history must reject `openingBalanceMinor`, `openingDate`, `nature`, `type`, and `currency` PATCHes while still allowing `name`/`note`; the full Category PATCH/kind/archive matrix; and restore-before-edit behavior.
 - `idempotency.test.ts` — property order/default equivalence/conflict/snapshot/failure rollback.
 - `projections.test.ts` — filters/cursor/search/Overview/trend/recent/movement.
+
+The currency metadata tests also pin the checked-in snapshot policy: a
+simulated post-release refresh may add supported entries, but cannot silently
+remove a previously used code or alter its exponent; either change must fail
+the compatibility check and require explicit migration review.
 
 ### API/auth
 
@@ -1456,7 +1526,9 @@ Frozen by this plan:
 - [x] one `.transaction(fn).immediate()` write helper
 - [x] explicit finite 5000 ms busy behavior
 - [x] SIX-derived checked-in ISO exponent metadata
+- [x] post-release ISO metadata compatibility policy (no silent removal or exponent change for a used currency)
 - [x] server-side `@js-temporal/polyfill@0.5.1`
+- [x] named-IANA timezone validator distinct from Temporal's broader parser
 - [x] checked input **and aggregate-result** integer arithmetic
 - [x] discriminated Transaction model/conversion
 - [x] single natural-balance authority
@@ -1465,6 +1537,8 @@ Frozen by this plan:
 - [x] response snapshot replay authority
 - [x] expectedVersion locations/rules/error priority
 - [x] Account archive flow
+- [x] Account PATCH whitelist preserves archived zero-balance invariant
+- [x] Category PATCH/kind matrix and archived restore-before-edit rule
 - [x] Adjustment concurrency flow
 - [x] archived Transfer mutation eligibility
 - [x] per-type Transaction PATCH fields
@@ -1507,4 +1581,4 @@ Eventual L0 evidence must record:
 
 ---
 
-**Implementation Plan: Ready for Review** — implementation mechanics are fully specified against the Accepted product and architecture contracts. Production implementation remains unauthorized until this plan passes independent review.
+**Implementation Plan: Accepted / Ready for Implementation** — implementation mechanics are fully specified against the Accepted product and architecture contracts, including the Plan Review remediation. L0.1 implementation may begin; this document contains no production implementation.
