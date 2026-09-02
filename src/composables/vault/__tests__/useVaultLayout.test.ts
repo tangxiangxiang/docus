@@ -80,6 +80,24 @@ describe('useVaultLayout', () => {
     expect(layout.rightRailCollapsed.value).toBe(false)
   })
 
+  it('collapses and restores the last selected side panel', () => {
+    const { layout } = setup()
+    expect(layout.activePanel.value).toBe('files')
+
+    layout.toggleSidePanel()
+    expect(layout.activePanel.value).toBeNull()
+    expect(layout.sidePanelOpen.value).toBe(false)
+
+    layout.toggleSidePanel()
+    expect(layout.activePanel.value).toBe('files')
+
+    layout.selectPanel('tags')
+    layout.toggleSidePanel()
+    expect(layout.activePanel.value).toBeNull()
+    layout.toggleSidePanel()
+    expect(layout.activePanel.value).toBe('tags')
+  })
+
   it('removes the right rail tracks when collapsed', () => {
     const { layout } = setup()
     layout.rightRailCollapsed.value = true

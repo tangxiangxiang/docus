@@ -39,6 +39,21 @@ test.describe('View mode toggle', () => {
     await expect(page.locator('[data-testid="view-toggle"]')).toHaveCount(0)
   })
 
+  test('toggles the left side panel from the top-right NavBar', async ({ page }) => {
+    const toggle = page.getByTestId('left-panel-toggle')
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.locator('.file-tree')).toBeVisible()
+
+    await toggle.click()
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    await expect(toggle).toHaveAttribute('aria-label', 'Open left panel')
+    await expect(page.locator('.file-tree')).toHaveCount(0)
+
+    await toggle.click()
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.locator('.file-tree')).toBeVisible()
+  })
+
   test('app opens in edit mode by default', async ({ page }) => {
     await openShortcutDocument(page)
     await expect(page.locator('[data-testid="view-toggle"]')).toHaveAttribute('aria-label', 'Switch to read')

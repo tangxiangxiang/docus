@@ -147,6 +147,14 @@ export const ICON_PANEL_RIGHT_CLOSE = `
   <path d="M11.25 6.5l1.25 1.5-1.25 1.5"/>
 </svg>`
 
+// Left panel — open. Mirrors the right-panel icon so the NavBar can expose
+// the same compact affordance for collapsing the file tree or side panel.
+export const ICON_PANEL_LEFT_OPEN = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <rect x="2" y="3" width="12" height="10" rx="1.5"/>
+  <line x1="7" y1="3" x2="7" y2="13"/>
+</svg>`
+
 // History — three rows of list items (filled dot + horizontal line).
 // Reads as "session list" and lines up with VS Code / Linear / Notion's
 // history-picker convention. Lighter than the previous clock-with-

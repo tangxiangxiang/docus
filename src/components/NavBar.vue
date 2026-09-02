@@ -5,7 +5,7 @@ import { useTheme } from '../composables/useTheme'
 import { VaultViewModeKey } from '../composables/vault/viewMode'
 import { useScopeFilter } from '../composables/vault/useScopeFilter'
 import type { ScopeKey } from '../../shared/scopeProtocol'
-import { ICON_EDIT, ICON_EYE, ICON_PANEL_RIGHT_OPEN, ICON_SCOPE_NOTE, ICON_SCOPE_DIARY, ICON_SCOPE_LEDGER, ICON_SEARCH, ICON_NAV_THEME_LIGHT, ICON_NAV_THEME_DARK } from './vault/icons'
+import { ICON_EDIT, ICON_EYE, ICON_PANEL_LEFT_OPEN, ICON_PANEL_RIGHT_OPEN, ICON_SCOPE_NOTE, ICON_SCOPE_DIARY, ICON_SCOPE_LEDGER, ICON_SEARCH, ICON_NAV_THEME_LIGHT, ICON_NAV_THEME_DARK } from './vault/icons'
 import { useVaultLayout } from '../composables/vault/useVaultLayout'
 import { useI18n } from '../composables/useI18n'
 import { DiaryAccessContextKey } from '../composables/diary/diaryAccessContext'
@@ -145,7 +145,7 @@ function onScopeClick(scope: ScopeKey): void {
    state; the three tabs inside the rail own tab selection. Keeping those
    responsibilities separate means collapsing the rail never changes the
    user's selected tab. */
-const { rightRailCollapsed, toggleRightRail } = useVaultLayout()
+const { sidePanelOpen, rightRailCollapsed, toggleSidePanel, toggleRightRail } = useVaultLayout()
 
 const showBrandConstellation = ref(false)
 let brandHoverTimer: ReturnType<typeof setTimeout> | undefined
@@ -283,6 +283,18 @@ onBeforeUnmount(() => {
           @click="viewModeApi.toggle()"
         >
           <span class="view-toggle-icon" aria-hidden="true" v-html="isReadMode ? ICON_EDIT : ICON_EYE" />
+        </button>
+        <button
+          v-if="props.isVault && !isBills && !isDiaryCalendarVisible"
+          class="left-panel-toggle"
+          type="button"
+          :title="t(sidePanelOpen ? 'nav.left_panel_close' : 'nav.left_panel_open')"
+          :aria-label="t(sidePanelOpen ? 'nav.left_panel_close' : 'nav.left_panel_open')"
+          :aria-pressed="sidePanelOpen"
+          data-testid="left-panel-toggle"
+          @click="toggleSidePanel"
+        >
+          <span class="left-panel-toggle-icon" aria-hidden="true" v-html="ICON_PANEL_LEFT_OPEN" />
         </button>
         <button
           v-if="props.isVault && !isBills && !isDiaryCalendarVisible"

@@ -650,7 +650,7 @@ body.brand-constellation-active * {
   border-color: var(--border);
   background: var(--bg-soft);
 }
-.nav-actions :where(.nav-search, .theme-toggle, .right-rail-toggle, .view-toggle) svg {
+.nav-actions :where(.nav-search, .theme-toggle, .left-panel-toggle, .right-rail-toggle, .view-toggle) svg {
   display: block;
   width: 18px;
   height: 18px;
@@ -6038,8 +6038,29 @@ main.container.auth-page-shell {
   box-shadow: 0 2px 5px rgba(232, 90, 79, 0.4);
 }
 
-/* NavBar AI toggle — matches the read-mode toggle look (soft-filled
-   accent on pressed). */
+/* NavBar panel toggles — compact controls with a soft-filled accent when
+   the corresponding panel is open. */
+.left-panel-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+.left-panel-toggle:hover { background: var(--bg-soft); border-color: var(--border); color: var(--text-h); }
+.left-panel-toggle[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+}
+.left-panel-toggle .left-panel-toggle-icon { display: inline-flex; line-height: 0; }
+
 .right-rail-toggle {
   display: inline-flex;
   align-items: center;

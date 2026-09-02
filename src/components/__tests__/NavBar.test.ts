@@ -47,6 +47,7 @@ describe('NavBar — view-toggle button', () => {
       ['nav-search'],
       ['theme-toggle'],
       ['view-toggle'],
+      ['left-panel-toggle'],
       ['right-rail-toggle'],
     ])
   })
@@ -105,6 +106,7 @@ describe('NavBar — view-toggle button', () => {
     })
 
     expect(wrapper.find('[data-testid="view-toggle"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="left-panel-toggle"]').exists()).toBe(true)
 
     await router.push('/vault/inbox/kept-note')
     await nextTick()
@@ -112,7 +114,7 @@ describe('NavBar — view-toggle button', () => {
     wrapper.unmount()
   })
 
-  it('hides reading and right-rail controls on Diary Calendar Home', async () => {
+  it('hides document and side-panel controls on Diary Calendar Home', async () => {
     const router = createRouter({
       history: createMemoryHistory(),
       routes: [{ path: '/vault', name: 'vault', component: { template: '<div />' } }],
@@ -132,11 +134,13 @@ describe('NavBar — view-toggle button', () => {
     })
 
     expect(wrapper.find('[data-testid="view-toggle"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="left-panel-toggle"]').exists()).toBe(false)
     expect(wrapper.find('.right-rail-toggle').exists()).toBe(false)
 
     scope.activeScope.value = 'note'
     await nextTick()
     expect(wrapper.find('[data-testid="view-toggle"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="left-panel-toggle"]').exists()).toBe(true)
     expect(wrapper.find('.right-rail-toggle').exists()).toBe(true)
     wrapper.unmount()
   })
@@ -166,11 +170,13 @@ describe('NavBar — view-toggle button', () => {
     })
 
     expect(wrapper.find('[data-testid="view-toggle"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="left-panel-toggle"]').exists()).toBe(false)
     expect(wrapper.find('.right-rail-toggle').exists()).toBe(false)
 
     calendarVisible.value = false
     await nextTick()
     expect(wrapper.find('[data-testid="view-toggle"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="left-panel-toggle"]').exists()).toBe(true)
     expect(wrapper.find('.right-rail-toggle').exists()).toBe(true)
     wrapper.unmount()
   })

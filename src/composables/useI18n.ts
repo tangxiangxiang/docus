@@ -123,6 +123,8 @@ const STRINGS: Strings = {
   'nav.ai_panel_close': { zh: 'AI 面板（点击关闭）', en: 'AI panel (click to close)' },
   'nav.right_rail_open': { zh: '打开右侧面板', en: 'Open right panel' },
   'nav.right_rail_close': { zh: '收起右侧面板', en: 'Collapse right panel' },
+  'nav.left_panel_open': { zh: '打开左侧面板', en: 'Open left panel' },
+  'nav.left_panel_close': { zh: '收起左侧面板', en: 'Collapse left panel' },
   'activity.label': { zh: '活动栏', en: 'Activity bar' },
   'activity.explorer': { zh: '文件浏览器（Ctrl/Cmd+B）', en: 'Explorer (Ctrl/Cmd+B)' },
   'activity.tags': { zh: '标签', en: 'Tags' },

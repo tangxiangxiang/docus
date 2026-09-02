@@ -78,6 +78,9 @@ const DEFAULTS: VaultLayout = {
    consumers. localStorage is still the persistence boundary; it's
    driven by a single watcher below. */
 const _activePanel = ref<ActivePanel>(DEFAULTS.activePanel)
+// Remember the last panel the user had selected so the dedicated collapse
+// control can restore that panel instead of always forcing Files open.
+const _lastActivePanel = ref<SidePanel>(DEFAULTS.activePanel as SidePanel)
 const _sidePanelWidth = ref(DEFAULTS.sidePanelWidth)
 const _rightRailTab = ref<RightRailTab>(DEFAULTS.rightRailTab)
 const _rightRailWidth = ref(DEFAULTS.rightRailWidth)
@@ -98,6 +101,7 @@ let _hydrated = false
 export function __resetVaultLayoutState(): void {
   _hydrated = false
   _activePanel.value = DEFAULTS.activePanel
+  _lastActivePanel.value = DEFAULTS.activePanel as SidePanel
   _sidePanelWidth.value = DEFAULTS.sidePanelWidth
   _rightRailTab.value = DEFAULTS.rightRailTab
   _rightRailWidth.value = DEFAULTS.rightRailWidth
@@ -165,6 +169,7 @@ export function useVaultLayout(options: UseVaultLayoutOptions = {}) {
   if (!_hydrated) {
     _hydrated = true
     _activePanel.value = layout.value.activePanel
+    _lastActivePanel.value = layout.value.activePanel ?? DEFAULTS.activePanel as SidePanel
     _sidePanelWidth.value = layout.value.sidePanelWidth
     _rightRailTab.value = layout.value.rightRailTab
     _rightRailWidth.value = layout.value.rightRailWidth
@@ -242,7 +247,22 @@ export function useVaultLayout(options: UseVaultLayoutOptions = {}) {
   // have to assume a particular ref name or be the owner of the DOM node.
 
   function selectPanel(panel: SidePanel) {
-    activePanel.value = activePanel.value === panel ? null : panel
+    if (activePanel.value === panel) {
+      _lastActivePanel.value = panel
+      activePanel.value = null
+      return
+    }
+    _lastActivePanel.value = panel
+    activePanel.value = panel
+  }
+
+  function toggleSidePanel() {
+    if (sidePanelOpen.value) {
+      if (activePanel.value) _lastActivePanel.value = activePanel.value
+      activePanel.value = null
+      return
+    }
+    activePanel.value = _lastActivePanel.value
   }
 
   function toggleRightRail() {
@@ -258,6 +278,7 @@ export function useVaultLayout(options: UseVaultLayoutOptions = {}) {
     rightRailCollapsed,
     vaultStyle,
     selectPanel,
+    toggleSidePanel,
     toggleRightRail,
   }
 }
