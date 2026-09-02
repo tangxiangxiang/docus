@@ -187,6 +187,7 @@ const isReadMode = computed(() => viewModeApi?.mode.value === 'read')
 const {
   activePanel,
   sidePanelOpen,
+  leftSidebarVisible,
   sidePanelWidth,
   rightRailWidth,
   vaultStyle,
@@ -1699,6 +1700,7 @@ const isDiaryCalendarVisible = computed(() => (
 const isDiaryPresentationPrimary = computed(() => isDiaryCalendarVisible.value)
 const routeSidebarVisible = computed(() => route.meta.sidebar !== false)
 const workspaceSidebarVisible = computed(() => routeSidebarVisible.value && !isDiaryCalendarVisible.value)
+const workspaceLeftSidebarVisible = computed(() => workspaceSidebarVisible.value && leftSidebarVisible.value)
 
 watch(workspaceSidebarVisible, (visible) => {
   sidebarLayoutVisible.value = visible
@@ -2458,7 +2460,7 @@ watch(isReadMode, async (reading) => {
     @keydown="onVaultKeydown"
   >
     <ActivityBar
-      v-if="workspaceSidebarVisible"
+      v-if="workspaceLeftSidebarVisible"
       :active-panel="activePanel"
       @select-panel="selectActivityPanel"
     />
@@ -2495,7 +2497,7 @@ watch(isReadMode, async (reading) => {
     />
 
     <FileTree
-      v-if="workspaceSidebarVisible && activePanel === 'files'"
+      v-if="workspaceLeftSidebarVisible && activePanel === 'files'"
       ref="fileTreeRef"
       :filter="filesFilter"
       :tree="tree"
@@ -2509,7 +2511,7 @@ watch(isReadMode, async (reading) => {
       @open-history="openFileHistory"
     />
     <TagPanel
-      v-else-if="workspaceSidebarVisible && activePanel === 'tags'"
+      v-else-if="workspaceLeftSidebarVisible && activePanel === 'tags'"
       v-model:filter="tagsFilter"
       :posts="posts"
       :selected-tag="selectedTag"
@@ -2518,7 +2520,7 @@ watch(isReadMode, async (reading) => {
       @open="openPost"
     />
     <HistoryPanel
-      v-else-if="workspaceSidebarVisible && activePanel === 'history'"
+      v-else-if="workspaceLeftSidebarVisible && activePanel === 'history'"
       :history="history"
       :commit="historyCommit"
       :withdraw="historyWithdraw"
@@ -2530,7 +2532,7 @@ watch(isReadMode, async (reading) => {
       @open-diff="openWorkingTreeDiff"
     />
     <DraftRecoveryCenter
-      v-else-if="workspaceSidebarVisible && activePanel === 'recovery'"
+      v-else-if="workspaceLeftSidebarVisible && activePanel === 'recovery'"
       :records="recoveryManagement.records.value"
       :items="draftRecovery.items.value"
       :capacity="recoveryManagement.capacity.value"
@@ -2548,7 +2550,7 @@ watch(isReadMode, async (reading) => {
     />
 
     <div
-      v-if="workspaceSidebarVisible && sidePanelOpen"
+      v-if="workspaceLeftSidebarVisible && sidePanelOpen"
       class="splitter"
       role="separator"
       aria-orientation="vertical"

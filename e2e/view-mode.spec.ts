@@ -47,10 +47,12 @@ test.describe('View mode toggle', () => {
     await toggle.click()
     await expect(toggle).toHaveAttribute('aria-pressed', 'false')
     await expect(toggle).toHaveAttribute('aria-label', 'Open left panel')
+    await expect(page.locator('.activity-bar')).toHaveCount(0)
     await expect(page.locator('.file-tree')).toHaveCount(0)
 
     await toggle.click()
     await expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.locator('.activity-bar')).toBeVisible()
     await expect(page.locator('.file-tree')).toBeVisible()
   })
 

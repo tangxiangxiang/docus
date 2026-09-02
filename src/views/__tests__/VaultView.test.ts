@@ -141,7 +141,7 @@ describe('VaultView editor tab wiring', () => {
   it('keeps the editor and tabs mounted while the History sidebar is active', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
 
-    expect(source).toContain('v-else-if="workspaceSidebarVisible && activePanel === \'history\'"')
+    expect(source).toContain('v-else-if="workspaceLeftSidebarVisible && activePanel === \'history\'"')
     expect(source).toContain('@open-revision="openHistoryComparison"')
     expect(source).not.toContain('import DiffView')
     expect(source).not.toContain("activePanel !== 'history' && tabs.length > 0")
@@ -607,7 +607,7 @@ describe('VaultView D3.2 Diary surface wiring', () => {
     expect(branch).toContain(':error="treeError"')
     expect(source).toContain('<FileTree')
     expect(source).toContain(':tree="tree"')
-    expect(source).toContain("v-if=\"workspaceSidebarVisible && activePanel === 'files'\"")
+    expect(source).toContain("v-if=\"workspaceLeftSidebarVisible && activePanel === 'files'\"")
   })
 
   it('routes D3.2 date intent to the D4 lifecycle owner', () => {
@@ -704,6 +704,7 @@ describe('VaultView D3.2 Diary surface wiring', () => {
     expect(source).toContain('v-show="!isDiaryPresentationPrimary"')
     expect(source).toContain('const routeSidebarVisible = computed(() => route.meta.sidebar !== false)')
     expect(source).toContain('const workspaceSidebarVisible = computed(() => routeSidebarVisible.value && !isDiaryCalendarVisible.value)')
+    expect(source).toContain('const workspaceLeftSidebarVisible = computed(() => workspaceSidebarVisible.value && leftSidebarVisible.value)')
     expect(source).toContain('useVaultLayout({')
     expect(source).toContain('statusBarVisible: statusBarLayoutVisible')
     expect(source).toContain('v-if="workspaceSidebarVisible"')

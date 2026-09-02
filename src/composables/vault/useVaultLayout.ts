@@ -29,6 +29,8 @@ export type RightRailTab = 'toc' | 'links' | 'ai' | 'properties' | 'history'
 
 export interface VaultLayout {
   activePanel: ActivePanel
+  /* Whether the left activity bar and its side panel are collapsed. */
+  leftSidebarCollapsed: boolean
   sidePanelWidth: number
   rightRailTab: RightRailTab
   rightRailWidth: number
@@ -53,6 +55,7 @@ export interface UseVaultLayoutOptions {
 const STORAGE_KEY = 'docus.vault.layout'
 const DEFAULTS: VaultLayout = {
   activePanel: 'files',
+  leftSidebarCollapsed: false,
   sidePanelWidth: 260,
   rightRailTab: 'toc',
   rightRailWidth: 380,
@@ -81,6 +84,7 @@ const _activePanel = ref<ActivePanel>(DEFAULTS.activePanel)
 // Remember the last panel the user had selected so the dedicated collapse
 // control can restore that panel instead of always forcing Files open.
 const _lastActivePanel = ref<SidePanel>(DEFAULTS.activePanel as SidePanel)
+const _leftSidebarCollapsed = ref(DEFAULTS.leftSidebarCollapsed)
 const _sidePanelWidth = ref(DEFAULTS.sidePanelWidth)
 const _rightRailTab = ref<RightRailTab>(DEFAULTS.rightRailTab)
 const _rightRailWidth = ref(DEFAULTS.rightRailWidth)
@@ -102,6 +106,7 @@ export function __resetVaultLayoutState(): void {
   _hydrated = false
   _activePanel.value = DEFAULTS.activePanel
   _lastActivePanel.value = DEFAULTS.activePanel as SidePanel
+  _leftSidebarCollapsed.value = DEFAULTS.leftSidebarCollapsed
   _sidePanelWidth.value = DEFAULTS.sidePanelWidth
   _rightRailTab.value = DEFAULTS.rightRailTab
   _rightRailWidth.value = DEFAULTS.rightRailWidth
@@ -146,6 +151,7 @@ export function useVaultLayout(options: UseVaultLayoutOptions = {}) {
             : DEFAULTS.rightRailWidth
           return {
             activePanel: active,
+            leftSidebarCollapsed: d.leftSidebarCollapsed === true,
             sidePanelWidth: w,
             rightRailTab,
             rightRailWidth: Math.max(280, Math.min(560, rightRailWidth)),
@@ -170,6 +176,7 @@ export function useVaultLayout(options: UseVaultLayoutOptions = {}) {
     _hydrated = true
     _activePanel.value = layout.value.activePanel
     _lastActivePanel.value = layout.value.activePanel ?? DEFAULTS.activePanel as SidePanel
+    _leftSidebarCollapsed.value = layout.value.leftSidebarCollapsed
     _sidePanelWidth.value = layout.value.sidePanelWidth
     _rightRailTab.value = layout.value.rightRailTab
     _rightRailWidth.value = layout.value.rightRailWidth
@@ -179,9 +186,9 @@ export function useVaultLayout(options: UseVaultLayoutOptions = {}) {
     // (e.g. when the storage value already matches), so the round-trip
     // doesn't cause re-render storms.
     watch(
-      [_activePanel, _sidePanelWidth, _rightRailTab, _rightRailWidth, _rightRailCollapsed],
-      ([ap, w, tab, rw, rrc]) => {
-        layout.value = { activePanel: ap, sidePanelWidth: w, rightRailTab: tab, rightRailWidth: rw, rightRailCollapsed: rrc }
+      [_activePanel, _leftSidebarCollapsed, _sidePanelWidth, _rightRailTab, _rightRailWidth, _rightRailCollapsed],
+      ([ap, lsc, w, tab, rw, rrc]) => {
+        layout.value = { activePanel: ap, leftSidebarCollapsed: lsc, sidePanelWidth: w, rightRailTab: tab, rightRailWidth: rw, rightRailCollapsed: rrc }
       },
     )
   }
@@ -189,11 +196,15 @@ export function useVaultLayout(options: UseVaultLayoutOptions = {}) {
   /* Exposed as a top-level ref so the template can use it for the
      side-splitter's v-show. */
   const sidePanelOpen = computed(() =>
-    _activePanel.value === 'files' ||
-    _activePanel.value === 'tags' ||
-    _activePanel.value === 'history' ||
-    _activePanel.value === 'recovery',
+    !_leftSidebarCollapsed.value && (
+      _activePanel.value === 'files' ||
+      _activePanel.value === 'tags' ||
+      _activePanel.value === 'history' ||
+      _activePanel.value === 'recovery'
+    ),
   )
+  const leftSidebarCollapsed: Ref<boolean> = _leftSidebarCollapsed
+  const leftSidebarVisible = computed(() => sidebarVisible.value && !leftSidebarCollapsed.value)
   const activePanel: Ref<ActivePanel> = _activePanel
   const sidePanelWidth: Ref<number> = _sidePanelWidth
   const rightRailTab: Ref<RightRailTab> = _rightRailTab
@@ -225,7 +236,7 @@ export function useVaultLayout(options: UseVaultLayoutOptions = {}) {
     // are load-bearing — they separate the splitter tracks from
     // `1fr` in the template literal below. Don't normalize the
     // whitespace.
-    const left = sidebarVisible.value && sidePanelOpen.value ? `${sidePanelWidth.value}px 1px ` : ''
+    const left = leftSidebarVisible.value && sidePanelOpen.value ? `${sidePanelWidth.value}px 1px ` : ''
     // Keep the stored width stable while allowing the rendered track to
     // yield space on compact Vault windows. The 38vw cap only becomes
     // meaningful below the normal desktop range; max(280px, ...) keeps
@@ -235,7 +246,7 @@ export function useVaultLayout(options: UseVaultLayoutOptions = {}) {
     // while the same presentation flag is false, so do not reserve a hidden
     // rail track here either.
     const right = sidebarVisible.value && !rightRailCollapsed.value ? ` 1px ${railTrack}` : ''
-    const activity = sidebarVisible.value ? '40px ' : ''
+    const activity = leftSidebarVisible.value ? '40px ' : ''
     return {
       gridTemplateColumns: `${activity}${left}1fr${right}`,
       gridTemplateRows: sidebarVisible.value && statusBarVisible.value ? '1fr 24px' : '1fr',
@@ -247,6 +258,14 @@ export function useVaultLayout(options: UseVaultLayoutOptions = {}) {
   // have to assume a particular ref name or be the owner of the DOM node.
 
   function selectPanel(panel: SidePanel) {
+    // Keyboard shortcuts and other programmatic panel selections should
+    // restore the left workspace if it was collapsed from the NavBar.
+    if (leftSidebarCollapsed.value) {
+      leftSidebarCollapsed.value = false
+      _lastActivePanel.value = panel
+      activePanel.value = panel
+      return
+    }
     if (activePanel.value === panel) {
       _lastActivePanel.value = panel
       activePanel.value = null
@@ -257,12 +276,13 @@ export function useVaultLayout(options: UseVaultLayoutOptions = {}) {
   }
 
   function toggleSidePanel() {
-    if (sidePanelOpen.value) {
+    if (!leftSidebarCollapsed.value) {
       if (activePanel.value) _lastActivePanel.value = activePanel.value
-      activePanel.value = null
+      leftSidebarCollapsed.value = true
       return
     }
-    activePanel.value = _lastActivePanel.value
+    leftSidebarCollapsed.value = false
+    if (!activePanel.value) activePanel.value = _lastActivePanel.value
   }
 
   function toggleRightRail() {
@@ -272,6 +292,8 @@ export function useVaultLayout(options: UseVaultLayoutOptions = {}) {
   return {
     activePanel,
     sidePanelOpen,
+    leftSidebarCollapsed,
+    leftSidebarVisible,
     sidePanelWidth,
     rightRailTab,
     rightRailWidth,

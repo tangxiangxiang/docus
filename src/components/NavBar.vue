@@ -145,7 +145,7 @@ function onScopeClick(scope: ScopeKey): void {
    state; the three tabs inside the rail own tab selection. Keeping those
    responsibilities separate means collapsing the rail never changes the
    user's selected tab. */
-const { sidePanelOpen, rightRailCollapsed, toggleSidePanel, toggleRightRail } = useVaultLayout()
+const { leftSidebarCollapsed, leftSidebarVisible, rightRailCollapsed, toggleSidePanel, toggleRightRail } = useVaultLayout()
 
 const showBrandConstellation = ref(false)
 let brandHoverTimer: ReturnType<typeof setTimeout> | undefined
@@ -288,9 +288,9 @@ onBeforeUnmount(() => {
           v-if="props.isVault && !isBills && !isDiaryCalendarVisible"
           class="left-panel-toggle"
           type="button"
-          :title="t(sidePanelOpen ? 'nav.left_panel_close' : 'nav.left_panel_open')"
-          :aria-label="t(sidePanelOpen ? 'nav.left_panel_close' : 'nav.left_panel_open')"
-          :aria-pressed="sidePanelOpen"
+          :title="t(leftSidebarVisible ? 'nav.left_panel_close' : 'nav.left_panel_open')"
+          :aria-label="t(leftSidebarVisible ? 'nav.left_panel_close' : 'nav.left_panel_open')"
+          :aria-pressed="!leftSidebarCollapsed"
           data-testid="left-panel-toggle"
           @click="toggleSidePanel"
         >

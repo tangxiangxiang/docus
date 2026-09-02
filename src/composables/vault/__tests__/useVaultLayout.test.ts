@@ -83,17 +83,23 @@ describe('useVaultLayout', () => {
   it('collapses and restores the last selected side panel', () => {
     const { layout } = setup()
     expect(layout.activePanel.value).toBe('files')
-
-    layout.toggleSidePanel()
-    expect(layout.activePanel.value).toBeNull()
-    expect(layout.sidePanelOpen.value).toBe(false)
+    expect(layout.leftSidebarVisible.value).toBe(true)
 
     layout.toggleSidePanel()
     expect(layout.activePanel.value).toBe('files')
+    expect(layout.leftSidebarCollapsed.value).toBe(true)
+    expect(layout.leftSidebarVisible.value).toBe(false)
+    expect(layout.sidePanelOpen.value).toBe(false)
+    expect(layout.vaultStyle.value.gridTemplateColumns).toBe('1fr 1px minmax(280px, max(280px, min(380px, 560px, 38vw)))')
+
+    layout.toggleSidePanel()
+    expect(layout.activePanel.value).toBe('files')
+    expect(layout.leftSidebarCollapsed.value).toBe(false)
+    expect(layout.leftSidebarVisible.value).toBe(true)
 
     layout.selectPanel('tags')
     layout.toggleSidePanel()
-    expect(layout.activePanel.value).toBeNull()
+    expect(layout.activePanel.value).toBe('tags')
     layout.toggleSidePanel()
     expect(layout.activePanel.value).toBe('tags')
   })
@@ -150,6 +156,16 @@ describe('useVaultLayout', () => {
     expect(stored).not.toHaveProperty('aiOpen')
     expect(stored).not.toHaveProperty('aiPanelWidth')
     expect(stored).not.toHaveProperty('tocPanelWidth')
+  })
+
+  it('persists the left sidebar collapsed state', async () => {
+    const { layout } = setup()
+    layout.toggleSidePanel()
+    await nextTick()
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!)).toMatchObject({
+      activePanel: 'files',
+      leftSidebarCollapsed: true,
+    })
   })
 
   it('restores the single-file history tab from persisted layout', () => {
