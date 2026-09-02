@@ -26,3 +26,27 @@ test('Ledger scope switches back to the shared Vault body', async ({ page }) => 
   await expect(page.locator('.navbar')).toHaveCount(1)
   await expect(page.locator('.scope-chip').filter({ hasText: 'note' })).toHaveAttribute('aria-pressed', 'true')
 })
+
+test('Ledger dark theme keeps dashboard surfaces and asset totals readable', async ({ page }) => {
+  await page.goto('/bills')
+  await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'))
+
+  const colors = await page.evaluate(() => {
+    const pageElement = document.querySelector('.bills-page') as HTMLElement | null
+    const cardElement = document.querySelector('[data-testid="bills-asset-overview"]') as HTMLElement | null
+    const totalElement = document.querySelector('.bills-asset-total-primary') as HTMLElement | null
+    const totalValue = totalElement?.querySelector('strong') as HTMLElement | null
+
+    return {
+      pageBackground: pageElement ? getComputedStyle(pageElement).backgroundColor : '',
+      cardBackground: cardElement ? getComputedStyle(cardElement).backgroundColor : '',
+      totalBackground: totalElement ? getComputedStyle(totalElement).backgroundColor : '',
+      totalText: totalValue ? getComputedStyle(totalValue).color : '',
+    }
+  })
+
+  expect(colors.pageBackground).toBe('rgb(30, 30, 30)')
+  expect(colors.cardBackground).toBe('rgb(37, 37, 38)')
+  expect(colors.totalBackground).not.toBe('rgb(255, 255, 255)')
+  expect(colors.totalText).toBe('rgb(212, 212, 212)')
+})

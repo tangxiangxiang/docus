@@ -737,6 +737,7 @@ main.container.auth-page-shell {
    their own small visual vocabulary while borrowing Docus' neutral tokens,
    rounded controls, and accent-driven focus states. */
 .bills-page {
+  --bills-page-bg: #f9fafb;
   --bills-surface: #ffffff;
   --bills-surface-soft: #f8fafc;
   --bills-surface-muted: #f1f5f9;
@@ -755,7 +756,7 @@ main.container.auth-page-shell {
   min-height: calc(100vh - var(--navbar-h, 0px));
   box-sizing: border-box;
   padding: 24px clamp(20px, 4vw, 58px) 36px;
-  background: #f9fafb;
+  background: var(--bills-page-bg);
   color: var(--bills-text);
 }
 .bills-dashboard {
@@ -960,7 +961,7 @@ main.container.auth-page-shell {
 .bills-heading-icon-violet { background: var(--bills-expense-soft); color: var(--bills-expense); }
 .bills-asset-totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; margin: 15px 0 16px; }
 .bills-asset-total { min-width: 0; padding: 12px 11px; border-radius: 11px; background: var(--bills-surface-soft); }
-.bills-asset-total-primary { background: linear-gradient(145deg, #f1f0ff, #fafaff); }
+.bills-asset-total-primary { background: color-mix(in srgb, var(--bills-expense-soft) 52%, var(--bills-surface)); }
 .bills-asset-label { display: block; color: var(--bills-muted); font-size: .66rem; }
 .bills-asset-total strong { display: block; margin-top: 4px; overflow: hidden; color: var(--bills-text); font-size: clamp(.86rem, 1.35vw, 1.08rem); letter-spacing: -.025em; text-overflow: ellipsis; white-space: nowrap; }
 .bills-asset-total strong.debt { color: #d97706; }
@@ -1074,13 +1075,14 @@ main.container.auth-page-shell {
 }
 
 :root[data-theme='dark'] .bills-page {
-  --bills-surface: #1f2937;
-  --bills-surface-soft: #253246;
-  --bills-surface-muted: #334155;
-  --bills-border: #334155;
-  --bills-text: #f8fafc;
-  --bills-muted: #a7b3c5;
-  --bills-subtle: #8190a6;
+  --bills-page-bg: #1e1e1e;
+  --bills-surface: #252526;
+  --bills-surface-soft: #2d2d2d;
+  --bills-surface-muted: #333333;
+  --bills-border: #3c3c3c;
+  --bills-text: #d4d4d4;
+  --bills-muted: #a7a7a7;
+  --bills-subtle: #858585;
   --bills-primary: #9b9cf8;
   --bills-primary-dark: #b0b1ff;
   --bills-income: #48c9b8;
@@ -1088,18 +1090,26 @@ main.container.auth-page-shell {
   --bills-expense: #ad94ff;
   --bills-expense-soft: rgba(124, 92, 230, 0.18);
   --bills-shadow: none;
-  background: #111827;
+  background: var(--bills-page-bg);
 }
+:root[data-theme='dark'] .bills-asset-total-primary {
+  background: color-mix(in srgb, var(--bills-primary) 15%, var(--bills-surface-soft));
+}
+:root[data-theme='dark'] .bills-period-card.is-blue { --period-bg: color-mix(in srgb, #7188a8 18%, var(--bills-surface)); }
+:root[data-theme='dark'] .bills-period-card.is-violet { --period-bg: color-mix(in srgb, #9a8bc8 18%, var(--bills-surface)); }
+:root[data-theme='dark'] .bills-period-card.is-amber { --period-bg: color-mix(in srgb, #c9a979 18%, var(--bills-surface)); }
+:root[data-theme='dark'] .bills-period-card.is-teal { --period-bg: color-mix(in srgb, #6faaa5 18%, var(--bills-surface)); }
 :root[data-theme='dark'] .bills-secondary-button small { background: #3a2f1d; color: #f7bd72; }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) .bills-page {
-    --bills-surface: #1f2937;
-    --bills-surface-soft: #253246;
-    --bills-surface-muted: #334155;
-    --bills-border: #334155;
-    --bills-text: #f8fafc;
-    --bills-muted: #a7b3c5;
-    --bills-subtle: #8190a6;
+    --bills-page-bg: #1e1e1e;
+    --bills-surface: #252526;
+    --bills-surface-soft: #2d2d2d;
+    --bills-surface-muted: #333333;
+    --bills-border: #3c3c3c;
+    --bills-text: #d4d4d4;
+    --bills-muted: #a7a7a7;
+    --bills-subtle: #858585;
     --bills-primary: #9b9cf8;
     --bills-primary-dark: #b0b1ff;
     --bills-income: #48c9b8;
@@ -1107,8 +1117,15 @@ main.container.auth-page-shell {
     --bills-expense: #ad94ff;
     --bills-expense-soft: rgba(124, 92, 230, 0.18);
     --bills-shadow: none;
-    background: #111827;
+    background: var(--bills-page-bg);
   }
+  :root:not([data-theme='light']) .bills-asset-total-primary {
+    background: color-mix(in srgb, var(--bills-primary) 15%, var(--bills-surface-soft));
+  }
+  :root:not([data-theme='light']) .bills-period-card.is-blue { --period-bg: color-mix(in srgb, #7188a8 18%, var(--bills-surface)); }
+  :root:not([data-theme='light']) .bills-period-card.is-violet { --period-bg: color-mix(in srgb, #9a8bc8 18%, var(--bills-surface)); }
+  :root:not([data-theme='light']) .bills-period-card.is-amber { --period-bg: color-mix(in srgb, #c9a979 18%, var(--bills-surface)); }
+  :root:not([data-theme='light']) .bills-period-card.is-teal { --period-bg: color-mix(in srgb, #6faaa5 18%, var(--bills-surface)); }
   :root:not([data-theme='light']) .bills-secondary-button small { background: #3a2f1d; color: #f7bd72; }
 }
 
