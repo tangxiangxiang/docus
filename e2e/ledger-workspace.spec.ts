@@ -47,6 +47,6 @@ test('Ledger dark theme keeps dashboard surfaces and asset totals readable', asy
 
   expect(colors.pageBackground).toBe('rgb(30, 30, 30)')
   expect(colors.cardBackground).toBe('rgb(37, 37, 38)')
-  expect(colors.totalBackground).not.toBe('rgb(255, 255, 255)')
+  expect(colors.totalBackground).toBe('rgb(45, 45, 45)')
   expect(colors.totalText).toBe('rgb(212, 212, 212)')
 })

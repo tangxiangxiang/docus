@@ -961,7 +961,7 @@ main.container.auth-page-shell {
 .bills-heading-icon-violet { background: var(--bills-expense-soft); color: var(--bills-expense); }
 .bills-asset-totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; margin: 15px 0 16px; }
 .bills-asset-total { min-width: 0; padding: 12px 11px; border-radius: 11px; background: var(--bills-surface-soft); }
-.bills-asset-total-primary { background: color-mix(in srgb, var(--bills-expense-soft) 52%, var(--bills-surface)); }
+.bills-asset-total-primary { background: var(--bills-surface-soft); }
 .bills-asset-label { display: block; color: var(--bills-muted); font-size: .66rem; }
 .bills-asset-total strong { display: block; margin-top: 4px; overflow: hidden; color: var(--bills-text); font-size: clamp(.86rem, 1.35vw, 1.08rem); letter-spacing: -.025em; text-overflow: ellipsis; white-space: nowrap; }
 .bills-asset-total strong.debt { color: #d97706; }
@@ -1092,9 +1092,6 @@ main.container.auth-page-shell {
   --bills-shadow: none;
   background: var(--bills-page-bg);
 }
-:root[data-theme='dark'] .bills-asset-total-primary {
-  background: color-mix(in srgb, var(--bills-primary) 15%, var(--bills-surface-soft));
-}
 :root[data-theme='dark'] .bills-period-card.is-blue { --period-bg: color-mix(in srgb, #7188a8 18%, var(--bills-surface)); }
 :root[data-theme='dark'] .bills-period-card.is-violet { --period-bg: color-mix(in srgb, #9a8bc8 18%, var(--bills-surface)); }
 :root[data-theme='dark'] .bills-period-card.is-amber { --period-bg: color-mix(in srgb, #c9a979 18%, var(--bills-surface)); }
@@ -1118,9 +1115,6 @@ main.container.auth-page-shell {
     --bills-expense-soft: rgba(124, 92, 230, 0.18);
     --bills-shadow: none;
     background: var(--bills-page-bg);
-  }
-  :root:not([data-theme='light']) .bills-asset-total-primary {
-    background: color-mix(in srgb, var(--bills-primary) 15%, var(--bills-surface-soft));
   }
   :root:not([data-theme='light']) .bills-period-card.is-blue { --period-bg: color-mix(in srgb, #7188a8 18%, var(--bills-surface)); }
   :root:not([data-theme='light']) .bills-period-card.is-violet { --period-bg: color-mix(in srgb, #9a8bc8 18%, var(--bills-surface)); }
