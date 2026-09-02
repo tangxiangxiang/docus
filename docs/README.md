@@ -73,6 +73,7 @@ Docus is a self-hosted Markdown knowledge base with a Vue interface, a Hono serv
 - [Diary Calendar PRD](design/diary-prd.md)
 - [Ledger v1 Product Requirements](design/ledger-v1-prd.md)
 - [Ledger Foundation PRD](design/ledger-l0-foundation-prd.md)
+- [Ledger L0 Foundation Implementation Plan](design/ledger-l0-foundation-implementation-plan.md)
 - [Logo](design/logo.md)
 - [Icon System](design/icon-system.md)
 - [Icon Usage](design/icon-usage.md)
