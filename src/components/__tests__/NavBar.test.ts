@@ -84,6 +84,34 @@ describe('NavBar — view-toggle button', () => {
     expect(wrapper.find('[data-testid="view-toggle"]').attributes('aria-label')).toBe('Switch to edit')
   })
 
+  it('hides the view toggle on Vault Home until a document is open', async () => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/vault', name: 'vault', component: { template: '<div />' } },
+        { path: '/vault/:pathMatch(.*)*', name: 'vault-doc', component: { template: '<div />' } },
+      ],
+    })
+    await router.push('/vault')
+    await router.isReady()
+
+    const api = makeViewModeApi()
+    const wrapper = mount(NavBar, {
+      props: { isVault: true },
+      global: {
+        plugins: [router],
+        provide: { [VaultViewModeKey as symbol]: api },
+      },
+    })
+
+    expect(wrapper.find('[data-testid="view-toggle"]').exists()).toBe(false)
+
+    await router.push('/vault/inbox/kept-note')
+    await nextTick()
+    expect(wrapper.find('[data-testid="view-toggle"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
   it('hides reading and right-rail controls on Diary Calendar Home', async () => {
     const router = createRouter({
       history: createMemoryHistory(),
@@ -108,7 +136,7 @@ describe('NavBar — view-toggle button', () => {
 
     scope.activeScope.value = 'note'
     await nextTick()
-    expect(wrapper.find('[data-testid="view-toggle"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="view-toggle"]').exists()).toBe(false)
     expect(wrapper.find('.right-rail-toggle').exists()).toBe(true)
     wrapper.unmount()
   })

@@ -104,6 +104,14 @@ const isDiaryCalendarVisible = computed(() => (
   )
 ))
 
+/* The Vault home can have a highlighted file-tree row without an active
+   document. Reading/editing is meaningful only after a document route has
+   been opened. Keep the isolated NavBar mount fallback visible for callers
+   that do not install a router; the real app always has a named route. */
+const isVaultDocumentVisible = computed(() => (
+  !route?.name || route.name === 'vault-doc'
+))
+
 function onScopeClick(scope: ScopeKey): void {
   if (scope === 'ledger') {
     // Keep direct legacy Ledger documents usable in the Vault while the
@@ -265,7 +273,7 @@ onBeforeUnmount(() => {
         />
       </button>
         <button
-          v-if="props.isVault && !isBills && viewModeApi && !isDiaryCalendarVisible"
+          v-if="props.isVault && !isBills && viewModeApi && isVaultDocumentVisible && !isDiaryCalendarVisible"
           class="view-toggle"
           :class="{ 'is-read': isReadMode }"
           type="button"

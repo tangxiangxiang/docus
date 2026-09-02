@@ -157,7 +157,9 @@ test('Diary Calendar remains usable across the D5 responsive matrix', async ({ p
 
   await page.locator('.scope-chip').filter({ hasText: 'note' }).click()
   await expect(page.getByTestId('diary-calendar-surface')).toHaveCount(0)
-  await expect(page.getByTestId('view-toggle')).toHaveCount(1)
+  // Returning to the note scope lands on Vault Home without an active
+  // document, so the document-only view-mode control stays hidden.
+  await expect(page.getByTestId('view-toggle')).toHaveCount(0)
   await expect(page.locator('.right-rail-toggle')).toHaveCount(1)
   await expect(page.locator('.file-tree')).toBeVisible()
   await page.locator('.scope-chip').filter({ hasText: 'diary' }).click()

@@ -35,11 +35,17 @@ test.describe('View mode toggle', () => {
     await page.goto('/vault')
   })
 
+  test('hides the view toggle on Vault Home until a document is opened', async ({ page }) => {
+    await expect(page.locator('[data-testid="view-toggle"]')).toHaveCount(0)
+  })
+
   test('app opens in edit mode by default', async ({ page }) => {
+    await openShortcutDocument(page)
     await expect(page.locator('[data-testid="view-toggle"]')).toHaveAttribute('aria-label', 'Switch to read')
   })
 
   test('clicking the NavBar toggle button switches to read mode', async ({ page }) => {
+    await openShortcutDocument(page)
     await page.locator('[data-testid="view-toggle"]').click()
     await expect(page.locator('[data-testid="view-toggle"]')).toHaveAttribute('aria-label', 'Switch to edit')
     await expect(page.getByTestId('reading-export-pdf')).toHaveCount(0)
@@ -49,6 +55,7 @@ test.describe('View mode toggle', () => {
   })
 
   test('clicking again returns to edit mode', async ({ page }) => {
+    await openShortcutDocument(page)
     const btn = page.locator('[data-testid="view-toggle"]')
     await btn.click()
     await btn.click()
@@ -56,6 +63,7 @@ test.describe('View mode toggle', () => {
   })
 
   test('Cmd/Ctrl+E toggles edit↔read from the vault', async ({ page }) => {
+    await openShortcutDocument(page)
     const toggle = page.getByTestId('view-toggle')
     await expect(toggle).toHaveAttribute('aria-label', 'Switch to read')
     // Focus the vault container so that @keydown fires on it
@@ -104,6 +112,7 @@ test.describe('View mode toggle', () => {
   })
 
   test('viewMode persists across a hard refresh', async ({ page }) => {
+    await openShortcutDocument(page)
     const btn = page.locator('[data-testid="view-toggle"]')
     await btn.click()
     await expect(btn).toHaveAttribute('aria-label', 'Switch to edit')
