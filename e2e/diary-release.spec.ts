@@ -210,6 +210,26 @@ test('Diary Calendar distributes the available height across actual week rows', 
   expect(resized.bottomGap).toBeLessThanOrEqual(80)
 })
 
+test('Diary Calendar keeps the month title readable in dark theme', async ({ page }) => {
+  await openDiaryScope(page)
+  await page.getByRole('button', { name: /Theme: Light|主题：浅色/ }).click()
+  await expect(page.locator('.vc-container.vc-dark')).toBeVisible()
+
+  const title = page.locator('.vc-pane-layout:not([class*="leave"]) .vc-title')
+  const style = await title.evaluate((element) => {
+    const computed = getComputedStyle(element)
+    return {
+      color: computed.color,
+      backgroundColor: computed.backgroundColor,
+      appearance: computed.appearance,
+    }
+  })
+
+  expect(style.color).toBe('rgb(241, 245, 249)')
+  expect(style.backgroundColor).toBe('rgb(51, 65, 85)')
+  expect(style.appearance).toBe('none')
+})
+
 test('Diary Calendar navigation exposes keyboard-only focus indicators', async ({ page }) => {
   const pageErrors: string[] = []
   const consoleErrors: string[] = []

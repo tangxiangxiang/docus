@@ -589,6 +589,14 @@ defineExpose({ focusDate, closeMoodPicker })
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
+  color: var(--vc-header-title-color);
+  background: var(--vc-select-bg);
+  appearance: none;
+}
+
+.diary-calendar-host :deep(.vc-title:hover) {
+  background: var(--vc-select-hover-bg);
+  opacity: 1;
 }
 
 .diary-calendar-host :deep(.vc-pane > .vc-header) {
