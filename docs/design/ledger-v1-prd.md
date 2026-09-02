@@ -6,6 +6,7 @@
 - **日期：** 2026-09-02
 - **评审基线：** `554091bca76b71b05b4ae73f425b55477e515b79`（`main`）
 - **Remediation baseline：** `554091bca76b71b05b4ae73f425b55477e515b79`
+- **第二轮 Review baseline：** `fbab19b941a7a47277584563bad24e426a9b07c2`
 - **范围：** Ledger v1 的产品定位、领域模型、数据生命周期、信息架构和分阶段边界
 - **实现约束：** 本文及其 L0 子 PRD 只定义契约，不直接修改生产代码、SQLite migration、API、测试或 UI
 - **配套文档：** [`L0 — Ledger Foundation PRD`](ledger-l0-foundation-prd.md)
@@ -122,7 +123,7 @@ SQLite 和 API 使用整数最小货币单位，例如 CNY ¥38.50 存为 `3850`
 
 ### 5.7 Create retry 必须安全
 
-所有会创建 Ledger 持久化记录的 POST mutation 使用持久化的 `Idempotency-Key`。同一 instance、operation scope 和 key 的 canonical request 只能成功一次；服务端先查找既有 idempotency result，相同请求重试直接返回等价的 authoritative result，不再次执行领域 mutation；不同请求复用同一 key 返回确定性的 conflict。idempotency claim/result 与 financial mutation 在同一 SQLite write transaction 中提交。
+所有会创建 Ledger 持久化记录的 POST mutation 使用持久化的 `Idempotency-Key`。同一 instance、operation scope 和 key 的 canonical request 只能成功一次；idempotency record 必须保存第一次成功响应的 HTTP status 和 canonical safe JSON body，成为 response replay record，而不只是 result identity。服务端先查找既有 record，相同请求重试直接 replay 保存的 status/body，不重新执行领域 mutation，也不通过 result ID 读取可变资源来重建响应；不同请求复用同一 key 返回确定性的 conflict。session、cookie、SQL details 和 request-specific volatile headers 不进入 response snapshot。idempotency claim、response snapshot 与 financial mutation 在同一 SQLite write transaction 中提交。
 
 ## 6. v1 领域模型
 
@@ -493,7 +494,7 @@ Ledger 不写 `ledger/*.md`，也不把交易混入 Note/Diary frontmatter。数
 
 所有写操作需要 owner session，服务端使用 SQLite transaction。现有 Docus 的 auth、WAL、foreign key、备份和恢复边界继续适用。
 
-所有会创建持久化记录的 create mutation 使用 `Idempotency-Key`：Settings、Account、Category、Transaction 和 Balance Adjustment。key、operation identity/scope、canonical request fingerprint、result status/identity 都持久化在 SQLite；服务端先查找既有 idempotency result，相同 key + 相同 canonical request 重试时直接返回等价 authoritative result，不重复执行；相同 key + 不同 request 返回 `409 ledger-idempotency-conflict`。idempotency state 与 financial mutation 必须在同一个 SQLite write transaction 中提交，不能依赖内存。
+所有会创建持久化记录的 create mutation 使用 `Idempotency-Key`：Settings、Account、Category、Transaction 和 Balance Adjustment。key、operation identity/scope、canonical request fingerprint、response status、canonical safe response body 和可选的 result identity 都持久化在 SQLite；response status/body 是 replay authority，result identity 只用于关联或诊断。服务端先查找既有 idempotency record，相同 key + 相同 canonical request 重试时直接 replay 保存的原始 response，不重复执行，也不从当前可变资源重建；即使资源后来被编辑、删除或余额已改变，replay 仍返回第一次 response。相同 key + 不同 request 返回 `409 ledger-idempotency-conflict`。idempotency state 与 financial mutation 必须在同一个 SQLite write transaction 中提交，不能依赖内存；response snapshot 不随 result entity 的物理删除而级联删除。
 
 ## 10. Epic Roadmap
 

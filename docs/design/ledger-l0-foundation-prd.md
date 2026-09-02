@@ -6,6 +6,7 @@
 - **日期：** 2026-09-02
 - **依赖：** [Docus Ledger v1 Product Requirements](ledger-v1-prd.md)
 - **Remediation baseline：** `554091bca76b71b05b4ae73f425b55477e515b79`
+- **第二轮 Review baseline：** `fbab19b941a7a47277584563bad24e426a9b07c2`
 - **范围：** Ledger 的领域基础、SQLite schema 契约、API 契约、金额/时间协议、生命周期与测试门槛
 - **实现约束：** L0 不写新 UI，不切换 Dashboard 数据源，不导入 mock 数据，不一次性重命名 Bills 文件
 
@@ -248,17 +249,19 @@ existing = lookup idempotency(operation_scope, Idempotency-Key)
 if existing:
   if existing.fingerprint != requestFingerprint:
     return 409 ledger-idempotency-conflict
-  return stored authoritative result
+  return existing.response_status + deserialize(existing.response_body_json)
 actualCalculated = deriveCurrentBalance(account)
 if actualCalculated != expectedCalculatedBalanceMinor:
   return 409 ledger-balance-conflict
 delta = targetBalance - actualCalculated
 if delta == 0:
-  persist idempotency result as no-op
-  return 200 { adjustment: null, account: authoritative projection, noOp: true }
+  response = 200 { adjustment: null, account: authoritative projection, noOp: true }
+  persist response replay record as no-op
+  return response
 else:
   insert Adjustment
-  persist idempotency result and mutation atomically
+  build canonical safe response
+  persist response replay record and mutation atomically
 COMMIT
 ~~~
 
@@ -450,22 +453,24 @@ SQLite 能表达的约束应落在 schema；涉及另一张表的 category kind�
 
 ### 4.5 ledger_idempotency
 
-所有 create mutation 的 retry safety 由 SQLite 持久化状态提供，而不是进程内 Map。逻辑表至少包含：
+所有 create mutation 的 retry safety 由 SQLite 持久化状态提供，而不是进程内 Map。`ledger_idempotency` 是 response replay record，而不是只保存结果身份；逻辑表至少包含：
 
 ~~~text
 operation_scope TEXT NOT NULL
 idempotency_key TEXT NOT NULL
 request_fingerprint TEXT NOT NULL
+response_status INTEGER NOT NULL
+response_body_json TEXT NOT NULL
 result_status TEXT NOT NULL CHECK (result_status IN ('committed', 'no-op'))
-result_type TEXT NOT NULL
-result_id TEXT NOT NULL
+result_type TEXT
+result_id TEXT
 created_at INTEGER NOT NULL
 UNIQUE(operation_scope, idempotency_key)
 ~~~
 
-`Idempotency-Key` 的值是 client-generated opaque UUID/string，服务端不解释其格式。`operation_scope` 是 method + canonical operation/target 的语义范围，例如 Account Adjustment endpoint 与目标 Account 的组合；`operation_scope + idempotency_key` 是当前 single-instance Docus 的唯一 retry identity，不增加 tenant/user foreign key。`request_fingerprint` 是 canonical request（完成字段规范化、默认值处理和 stable serialization 后，不包含 Idempotency-Key header）；同一 scope/key + 相同 fingerprint 不得重复执行，必须返回与第一次语义等价的 authoritative result。`result_type/result_id/result_status` 用于在重启后重建结果；`result_id` 对普通 create 是新资源 ID，对 Adjustment no-op 是目标 Account ID，对 Settings singleton 是固定 singleton identity。这样重启后不依赖内存，也能返回 no-op 的 authoritative projection。
+`Idempotency-Key` 的值是 client-generated opaque UUID/string，服务端不解释其格式。`operation_scope` 是 method + canonical operation/target 的语义范围，例如 Account Adjustment endpoint 与目标 Account 的组合；`operation_scope + idempotency_key` 是当前 single-instance Docus 的唯一 retry identity，不增加 tenant/user foreign key。`request_fingerprint` 是 canonical request（完成字段规范化、默认值处理和 stable serialization 后，不包含 Idempotency-Key header）。`response_status` 保存第一次成功响应的 HTTP status；`response_body_json` 保存第一次响应的 canonical safe Ledger JSON body，例如创建时的 transaction/account representation，或 Adjustment no-op 的 `{ adjustment: null, account: ..., noOp: true }`。它们是 replay 的唯一 authority，不能依赖 `result_id` 重读当前资源或重建 response。snapshot 不包含 session、cookie、SQL details 或 request-specific volatile headers，也不因 result entity 后续被编辑、软删除或物理删除而变化。`result_type/result_id/result_status` 可以保留用于关联、诊断和区分 committed/no-op，但不能替代 response snapshot；`result_id` 对普通 create 可以是新资源 ID，对 Adjustment no-op 可以是目标 Account ID，对 Settings singleton 可以是固定 singleton identity。
 
-只有 committed mutation 或 committed no-op 才写入 idempotency row；validation、version conflict 和 balance conflict 不消费 key。每个 create 的事务首先查找既有 idempotency row：相同 key + 相同 fingerprint 在新的领域校验前直接返回已保存的 authoritative result，相同 key + 不同 fingerprint 返回 409 ledger-idempotency-conflict。idempotency row 与 financial mutation 必须在同一个 SQLite BEGIN IMMEDIATE transaction 中提交：要么两者都 commit，要么两者都 rollback。
+只有 committed mutation 或 committed no-op 才写入 idempotency row；validation、version conflict 和 balance conflict 不消费 key。每个 create 的事务首先查找既有 idempotency row：相同 key + 相同 fingerprint 在新的领域校验前直接返回保存的 `response_status` + `response_body_json`，不重跑 mutation、不查询当前 mutable resource，也不 resurrect 已物理删除的 result entity；相同 key + 不同 fingerprint 返回 409 ledger-idempotency-conflict。idempotency row、response snapshot 与 financial mutation 必须在同一个 SQLite `BEGIN IMMEDIATE` transaction 中提交：要么三者都 commit，要么三者都 rollback。物理删除业务实体不得级联删除其 replay record。
 
 ### 4.6 Foreign key 与物理删除
 
@@ -518,6 +523,10 @@ ledger-idempotency-conflict
 
 错误消息不能泄露 SQL、堆栈或数据库文件路径；字段级 validation details 可以返回安全的字段名和错误原因。
 
+### 5.1.1 Idempotency-Key replay
+
+Settings、Account、Category、Transaction 和 Account Adjustment 的 POST 都要求 `Idempotency-Key`。首次成功 mutation 或 no-op 必须在同一个 `BEGIN IMMEDIATE` 中写入 domain mutation、canonical safe response snapshot 和 `ledger_idempotency` row；只保存 HTTP status 与 JSON body，不保存 session、cookie、SQL details 或 request-specific volatile headers。相同 `operation_scope + key` 且 fingerprint 相同的 retry 直接返回保存的原始 status/body，不重新执行 mutation，不从当前资源重建 response，也不因资源后来被 PATCH、DELETE、物理删除或余额变化而改变；相同 key + 不同 fingerprint 返回 `409 ledger-idempotency-conflict`。失败的 validation、version conflict 和 balance conflict 不消费 key。
+
 ### 5.2 Settings
 
 ~~~text
@@ -556,7 +565,7 @@ Adjustment request：
 }
 ~~~
 
-服务端在 BEGIN IMMEDIATE 中重算 calculated balance；成功响应同时返回 adjustment transaction 和调整后的 account projection。targetBalanceMinor 与 expectedCalculatedBalanceMinor 都是必填；expectedCalculatedBalanceMinor 不匹配时返回 409 ledger-balance-conflict，不得基于新 balance 重算后继续成功。Adjustment POST 要求 Idempotency-Key，且 idempotency claim/result 与 Adjustment insert 在同一 SQLite write transaction 中提交。
+服务端在 BEGIN IMMEDIATE 中重算 calculated balance；成功响应同时返回 adjustment transaction 和调整后的 account projection。targetBalanceMinor 与 expectedCalculatedBalanceMinor 都是必填；expectedCalculatedBalanceMinor 不匹配时返回 409 ledger-balance-conflict，不得基于新 balance 重算后继续成功。Adjustment POST 要求 Idempotency-Key，且 response replay record 与 Adjustment insert 在同一 SQLite write transaction 中提交。
 
 当 targetBalanceMinor 等于 calculated balance 时，返回确定性的 200 response，不创建零金额 transaction：
 
@@ -705,7 +714,7 @@ L0 implementation plan 至少必须覆盖以下测试族。这里冻结的是必
 
 - migration 在空库和当前 schema 末端库上成功；schema_version、重复启动、foreign key、RESTRICT 和默认分类 seed 幂等；
 - schema 中不存在 current balance 或 Dashboard snapshot source-of-truth 列；Account name 没有全局 unique；Category schema 没有 `parent_id`；
-- `ledger_idempotency` 的 `(operation_scope, idempotency_key)` 唯一约束有效，重启后记录仍可读；
+- `ledger_idempotency` 的 `(operation_scope, idempotency_key)` 唯一约束有效，`response_status` 和 `response_body_json` 可在重启后读取并直接 replay；业务 result entity 的后续修改或物理删除不会改变这份 snapshot；
 - 金额、type discriminator 和 adjustment CHECK 约束拒绝非法行，尤其是 income/expense、transfer、adjustment 的字段 shape 和 delta 关系。
 
 ### 8.2 Time / currency
@@ -736,10 +745,12 @@ L0 implementation plan 至少必须覆盖以下测试族。这里冻结的是必
 
 ### 8.5 Idempotency / atomicity
 
-- 同一个 POST transaction 使用同一 key 重试只创建一行；模拟 response loss 的 retry 返回等价 authoritative result；
+- 同一个 POST transaction 使用同一 key 重试只创建一行；模拟 response loss，随后 PATCH 原 transaction，再 retry 时仍返回第一次保存的 response status/body，而不是当前 version/amount；
+- Account create 成功后物理删除该无历史 Account，再用相同 key retry，仍返回第一次保存的 Account response，不重建 Account、不返回当前 not-found；
+- Adjustment no-op 成功后改变 Account balance，再用相同 key retry，仍返回第一次保存的 `noOp: true` response 和第一次的 account projection；
 - 同一 `operation_scope + key` 使用不同 canonical payload 返回 409 `ledger-idempotency-conflict`；Settings、Account、Category、Transaction 和 Adjustment create 都遵守同一规则；
-- 关闭并重新打开 SQLite 或重启 server 后，同 key retry 仍返回原 result，不重复 mutation；
-- financial mutation 与 idempotency result 在同一写事务中原子提交，证明只能 both commit 或 both rollback；no-op 也持久化可重建 result。
+- 关闭并重新打开 SQLite 或重启 server 后，同 key retry 仍返回原 response status/body，不重复 mutation；
+- financial mutation、response replay record 与 idempotency state 在同一写事务中原子提交，证明只能 all commit 或 all rollback；no-op 也持久化原始 response snapshot。
 
 ### 8.6 Query / overview projection
 
@@ -776,7 +787,7 @@ L0 implementation plan 至少必须覆盖以下测试族。这里冻结的是必
 - [x] transaction lifecycle 已冻结为 ACTIVE → terminal DELETED；deleted transaction 不可 PATCH、不支持 restore，重复 DELETE 语义确定。
 - [x] Transaction.type 创建后 immutable；Adjustment financial semantics 创建后 immutable、只允许 note PATCH。
 - [x] Adjustment stale-write contract 已冻结：`expectedCalculatedBalanceMinor` 必填、`BEGIN IMMEDIATE` 内校验、stale 返回 `ledger-balance-conflict`、zero delta 是显式 no-op。
-- [x] idempotent create contract 已冻结：所有 create mutation 使用持久化 `Idempotency-Key`，request mismatch 返回 `ledger-idempotency-conflict`，claim/result 与 mutation 原子提交。
+- [x] idempotent create contract 已冻结为 response replay record：所有 create mutation 使用持久化 `Idempotency-Key`，保存第一次 response status/body，request mismatch 返回 `ledger-idempotency-conflict`，response snapshot 与 mutation 原子提交，retry 不从可变 resource 重建 response。
 - [x] `ledger_*` schema contract、foreign keys、RESTRICT、soft delete、row-local CHECK、无 Account name uniqueness 和 flat Category（无 `parent_id`）被接受。
 - [x] API route、request/response、owner auth、expectedVersion、Idempotency-Key 和 error codes 边界被接受。
 - [x] `accountId` filter 覆盖 transfer from/to；`categoryId` 排除 transfer/adjustment；archived category history query 语义已冻结。
