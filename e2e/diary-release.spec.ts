@@ -165,6 +165,30 @@ test('Diary Calendar remains usable across the D5 responsive matrix', async ({ p
   await expect(page.locator('.file-tree')).toBeHidden()
 })
 
+test('Diary Calendar hides navbar controls when a retained document URL remains active', async ({ page, request }) => {
+  const note = 'inbox/d6-calendar-navbar-note'
+  try {
+    await seedOrdinaryNote(request, note)
+    await openDiaryScope(page)
+
+    await page.locator('.scope-chip').filter({ hasText: 'note' }).click()
+    const noteRow = page.locator(`[data-tree-key="file:${note}"]`)
+    const inboxRow = page.locator('[data-tree-key="folder:inbox"]')
+    if (await noteRow.count() === 0 && await inboxRow.count() > 0) await inboxRow.click()
+    await expect(noteRow).toBeVisible()
+    await noteRow.click()
+    await expect(page).toHaveURL(new RegExp(`/vault/${note.replace('/', '\\/')}(?:[?#]|$)`))
+
+    await page.locator('.scope-chip').filter({ hasText: 'diary' }).click()
+    await expect(page.getByTestId('diary-calendar-surface')).toBeVisible()
+    await expect(page.getByTestId('view-toggle')).toHaveCount(0)
+    await expect(page.locator('.right-rail-toggle')).toHaveCount(0)
+  } finally {
+    const removed = await request.delete(`/api/posts/${note}`)
+    expect([200, 404]).toContain(removed.status())
+  }
+})
+
 test('Vault hides the status bar when no document is open', async ({ page }) => {
   await page.goto('/vault')
 

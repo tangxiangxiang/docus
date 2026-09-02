@@ -9,6 +9,7 @@ import { ICON_EDIT, ICON_EYE, ICON_PANEL_RIGHT_OPEN, ICON_SCOPE_NOTE, ICON_SCOPE
 import { useVaultLayout } from '../composables/vault/useVaultLayout'
 import { useI18n } from '../composables/useI18n'
 import { DiaryAccessContextKey } from '../composables/diary/diaryAccessContext'
+import { AppShellContextKey } from '../composables/appShellContext'
 import AccountMenu from './vault/AccountMenu.vue'
 
 const props = withDefaults(defineProps<{
@@ -71,14 +72,19 @@ const isReadMode = computed(() => viewModeApi?.mode.value === 'read')
    Counts are pushed in by VaultView whenever the tree changes. */
 const { activeScope, selectScope } = useScopeFilter()
 const diaryAccess = inject(DiaryAccessContextKey, null)
+const appShell = inject(AppShellContextKey, null)
 
 /* Calendar Home is the Diary scope at the Vault root. A Diary document has a
-   nested /vault/<path> route and keeps the normal reading/editing controls,
-   while Calendar Home has no reading surface or right rail to operate. */
+   nested /vault/<path> route and keeps the normal reading/editing controls.
+   VaultView publishes the resolved visibility so a retained document URL
+   cannot make Calendar Home controls appear; the route fallback keeps this
+   component correct in isolated mounts without the App shell. */
 const isDiaryCalendarVisible = computed(() => (
   props.isVault
-  && activeScope.value === 'diary'
-  && route?.name === 'vault'
+  && (
+    appShell?.diaryCalendarVisible.value === true
+    || (activeScope.value === 'diary' && route?.name === 'vault')
+  )
 ))
 
 function onScopeClick(scope: ScopeKey): void {

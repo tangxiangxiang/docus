@@ -7,6 +7,7 @@ import NavBar from '../NavBar.vue'
 import { VaultViewModeKey, type VaultViewMode } from '../../composables/vault/viewMode'
 import { useI18n } from '../../composables/useI18n'
 import { useScopeFilter } from '../../composables/vault/useScopeFilter'
+import { AppShellContextKey } from '../../composables/appShellContext'
 
 function makeViewModeApi(initial: VaultViewMode = 'edit') {
   const mode = ref<VaultViewMode>(initial)
@@ -106,6 +107,40 @@ describe('NavBar — view-toggle button', () => {
     expect(wrapper.find('.right-rail-toggle').exists()).toBe(false)
 
     scope.activeScope.value = 'note'
+    await nextTick()
+    expect(wrapper.find('[data-testid="view-toggle"]').exists()).toBe(true)
+    expect(wrapper.find('.right-rail-toggle').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('follows the resolved Calendar visibility when a document URL is retained', async () => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/vault/:pathMatch(.*)*', name: 'vault-doc', component: { template: '<div />' } }],
+    })
+    await router.push('/vault/inbox/kept-note')
+    await router.isReady()
+
+    const calendarVisible = ref(true)
+    const api = makeViewModeApi()
+    const wrapper = mount(NavBar, {
+      props: { isVault: true },
+      global: {
+        plugins: [router],
+        provide: {
+          [VaultViewModeKey as symbol]: api,
+          [AppShellContextKey as symbol]: {
+            settingsRequestTick: ref(0),
+            diaryCalendarVisible: calendarVisible,
+          },
+        },
+      },
+    })
+
+    expect(wrapper.find('[data-testid="view-toggle"]').exists()).toBe(false)
+    expect(wrapper.find('.right-rail-toggle').exists()).toBe(false)
+
+    calendarVisible.value = false
     await nextTick()
     expect(wrapper.find('[data-testid="view-toggle"]').exists()).toBe(true)
     expect(wrapper.find('.right-rail-toggle').exists()).toBe(true)

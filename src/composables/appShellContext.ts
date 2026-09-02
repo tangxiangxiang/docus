@@ -8,6 +8,14 @@ import type { InjectionKey, Ref } from 'vue'
  */
 export interface AppShellContext {
   readonly settingsRequestTick: Readonly<Ref<number>>
+  /**
+   * The Vault-owned Calendar Home is rendered below the global navbar, so the
+   * shell exposes its resolved visibility for chrome that lives above the
+   * router view. This keeps navbar controls aligned with the actual surface,
+   * even when a retained document URL is still active while Calendar Home is
+   * displayed.
+   */
+  readonly diaryCalendarVisible: Ref<boolean>
 }
 
 export const AppShellContextKey: InjectionKey<AppShellContext> = Symbol('docus.app-shell')

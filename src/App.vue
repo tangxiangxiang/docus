@@ -27,12 +27,13 @@ const toast = useToast()
 const diaryAccess = useDiaryAccessSession()
 const { activeScope, selectScope } = useScopeFilter()
 const settingsRequestTick = ref(0)
+const diaryCalendarVisible = ref(false)
 
 function requestSettings(): void {
   settingsRequestTick.value += 1
 }
 
-provide(AppShellContextKey, { settingsRequestTick })
+provide(AppShellContextKey, { settingsRequestTick, diaryCalendarVisible })
 /* Vault routes AND dev previews both set `fullWidth: true` so the
    navbar sits at its shorter height. Bills uses a full-width, scrollable
    workspace surface; it intentionally renders without the global chrome

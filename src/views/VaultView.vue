@@ -1870,11 +1870,12 @@ watch(selectedDiaryDate, (date) => {
 // from Calendar Home must close that context without trying to restore focus
 // to a trigger that is about to be hidden.
 watch(isDiaryCalendarVisible, (visible, wasVisible) => {
+  if (appShell) appShell.diaryCalendarVisible.value = visible
   if (!visible) {
     clearPendingMoodFirstPresentation()
     if (wasVisible) diaryCalendarSurfaceRef.value?.closeMoodPicker(false)
   }
-}, { flush: 'sync' })
+}, { flush: 'sync', immediate: true })
 
 const diaryMoodBusy = ref(false)
 const diaryMoodCommand = useDiaryMoodCommand({
@@ -2419,7 +2420,10 @@ const stopDiaryTeardown = subscribeDiaryTeardown(() => {
   pdfExportRequest.value = null
   pdfExportBusy.value = false
 })
-onBeforeUnmount(stopDiaryTeardown)
+onBeforeUnmount(() => {
+  stopDiaryTeardown()
+  if (appShell) appShell.diaryCalendarVisible.value = false
+})
 
 watch(() => navSearch?.tick.value, () => openSearch())
 
