@@ -1,0 +1,123 @@
+import { describe, expect, it } from 'vitest'
+import { LedgerError } from './errors.js'
+import {
+  IANA_TIME_ZONE_ID_RE,
+  LEDGER_FUTURE_SKEW_MS,
+  assertIanaTimeZoneId,
+  assertOpeningDate,
+  assertUtcMilliseconds,
+  localDateRange,
+  monthRange,
+  openingBoundaryMs,
+  periodRange,
+  periodRangesForInstant,
+  todayRange,
+  validateOccurredAt,
+  weekRange,
+  yearRange,
+} from './time.js'
+
+function iso(ms: number): string {
+  return new Date(ms).toISOString()
+}
+
+describe('Ledger named timezone and UTC primitives', () => {
+  it('accepts valid single-component and slash-separated IANA names', () => {
+    for (const timezone of ['UTC', 'CET', 'PST8PDT', 'Asia/Shanghai', 'America/Los_Angeles']) {
+      expect(IANA_TIME_ZONE_ID_RE.test(timezone)).toBe(true)
+      expect(assertIanaTimeZoneId(timezone)).toBe(timezone)
+    }
+  })
+
+  it('rejects offsets, datetime expressions, whitespace, and unknown names', () => {
+    for (const timezone of [
+      '+08:00',
+      '-05',
+      '-05:00',
+      '2026-09-03T00:00+08:00',
+      '2026-09-03T00:00+08:00[Asia/Shanghai]',
+      'Definitely/Not_A_Zone',
+      ' Asia/Shanghai',
+      'Asia/Shanghai ',
+    ]) {
+      expect(() => assertIanaTimeZoneId(timezone)).toThrow(LedgerError)
+    }
+  })
+
+  it('validates strict Gregorian opening dates and UTC milliseconds', () => {
+    expect(assertOpeningDate('2026-02-28')).toBe('2026-02-28')
+    expect(() => assertOpeningDate('2026-02-30')).toThrow()
+    expect(() => assertOpeningDate('2026-13-01')).toThrow()
+    expect(() => assertOpeningDate('2026-1-01')).toThrow()
+    expect(assertUtcMilliseconds(0)).toBe(0)
+    expect(assertUtcMilliseconds(-1)).toBe(-1)
+    expect(() => assertUtcMilliseconds(1.5)).toThrow()
+    expect(() => assertUtcMilliseconds(Number.MAX_SAFE_INTEGER)).toThrow()
+  })
+})
+
+describe('Ledger DST-safe local calendar periods', () => {
+  it('uses Monday as the week boundary and half-open ranges', () => {
+    const instant = Date.parse('2026-09-02T04:00:00.000Z')
+    const today = todayRange(instant, 'Asia/Shanghai')
+    const week = weekRange(instant, 'Asia/Shanghai')
+    const month = monthRange(instant, 'Asia/Shanghai')
+    const year = yearRange(instant, 'Asia/Shanghai')
+
+    expect(iso(today.startMs)).toBe('2026-09-01T16:00:00.000Z')
+    expect(iso(today.endMs)).toBe('2026-09-02T16:00:00.000Z')
+    expect(iso(week.startMs)).toBe('2026-08-30T16:00:00.000Z')
+    expect(iso(week.endMs)).toBe('2026-09-06T16:00:00.000Z')
+    expect(iso(month.startMs)).toBe('2026-08-31T16:00:00.000Z')
+    expect(iso(month.endMs)).toBe('2026-09-30T16:00:00.000Z')
+    expect(iso(year.startMs)).toBe('2025-12-31T16:00:00.000Z')
+    expect(iso(year.endMs)).toBe('2026-12-31T16:00:00.000Z')
+    expect(today.startMs < instant).toBe(true)
+    expect(today.endMs > instant).toBe(true)
+    expect(today.endMs - today.startMs).toBe(86_400_000)
+    expect(week.startMs < week.endMs).toBe(true)
+  })
+
+  it('returns all fixed periods from one Ledger instant', () => {
+    const periods = periodRangesForInstant(Date.parse('2026-09-02T04:00:00.000Z'), 'Asia/Shanghai')
+    expect(Object.keys(periods)).toEqual(['today', 'week', 'month', 'year'])
+    expect(iso(periods.today.startMs)).toBe('2026-09-01T16:00:00.000Z')
+    expect(iso(periods.week.startMs)).toBe('2026-08-30T16:00:00.000Z')
+    expect(iso(periods.month.startMs)).toBe('2026-08-31T16:00:00.000Z')
+    expect(iso(periods.year.startMs)).toBe('2025-12-31T16:00:00.000Z')
+  })
+
+  it('converts opening dates and local days without assuming a 24-hour day', () => {
+    expect(iso(openingBoundaryMs('2024-03-10', 'America/Los_Angeles'))).toBe('2024-03-10T08:00:00.000Z')
+    const spring = localDateRange('2024-03-10', 'America/Los_Angeles')
+    const fall = localDateRange('2024-11-03', 'America/Los_Angeles')
+    const Shanghai = localDateRange('2024-03-10', 'Asia/Shanghai')
+    expect(iso(spring.startMs)).toBe('2024-03-10T08:00:00.000Z')
+    expect(iso(spring.endMs)).toBe('2024-03-11T07:00:00.000Z')
+    expect(spring.endMs - spring.startMs).toBe(23 * 60 * 60 * 1_000)
+    expect(iso(fall.startMs)).toBe('2024-11-03T07:00:00.000Z')
+    expect(iso(fall.endMs)).toBe('2024-11-04T08:00:00.000Z')
+    expect(fall.endMs - fall.startMs).toBe(25 * 60 * 60 * 1_000)
+    expect(Shanghai.endMs - Shanghai.startMs).toBe(24 * 60 * 60 * 1_000)
+  })
+
+  it('allows exactly the configured future skew and rejects beyond it', () => {
+    const now = 1_700_000_000_000
+    expect(validateOccurredAt(now + LEDGER_FUTURE_SKEW_MS, now)).toBe(now + LEDGER_FUTURE_SKEW_MS)
+    expect(() => validateOccurredAt(now + LEDGER_FUTURE_SKEW_MS + 1, now)).toThrow()
+    expect(validateOccurredAt(now - 1, now)).toBe(now - 1)
+  })
+
+  it('uses [start,end) boundary semantics for a period', () => {
+    const range = periodRange('month', Date.parse('2026-09-02T04:00:00.000Z'), 'Asia/Shanghai')
+    const nextRange = periodRange('month', range.endMs, 'Asia/Shanghai')
+    const includes = (instant: number, candidate: { startMs: number; endMs: number }) => (
+      instant >= candidate.startMs && instant < candidate.endMs
+    )
+
+    expect(includes(range.startMs, range)).toBe(true)
+    expect(includes(range.endMs, range)).toBe(false)
+    expect(includes(range.endMs, nextRange)).toBe(true)
+    expect(nextRange.startMs).toBe(range.endMs)
+  })
+})
