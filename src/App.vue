@@ -34,20 +34,19 @@ function requestSettings(): void {
 }
 
 provide(AppShellContextKey, { settingsRequestTick, diaryCalendarVisible })
-/* Vault routes AND dev previews both set `fullWidth: true` so the
-   navbar sits at its shorter height. Bills uses a full-width, scrollable
-   workspace surface; it intentionally renders without the global chrome
-   so the Ledger dashboard can start at the top of the viewport. Only the
-   `/vault` path is the marker for the compact Vault chrome and scroll lock. */
-const isVault = computed(() =>
+/* Vault and Bills routes both use the compact workspace navbar. Only the
+   `/vault` path owns the locked, three-pane Vault surface; Bills remains a
+   normal scrollable body below the same global chrome. */
+const isVaultRoute = computed(() =>
   route.meta.fullWidth === true
   && route.path.startsWith('/vault')
   && auth.state.value === 'authenticated'
   && vaultIdentity.state.value === 'ready',
 )
 const isBillsRoute = computed(() => route.path === '/bills' || route.path.startsWith('/bills/'))
+const isWorkspaceChrome = computed(() => isVaultRoute.value || isBillsRoute.value)
 const isPublicDevPreview = computed(() => route.meta.publicDevPreview === true)
-const showNormalChrome = computed(() => !isBillsRoute.value && shouldShowNormalChrome(
+const showNormalChrome = computed(() => shouldShowNormalChrome(
   auth.state.value,
   route.meta.authPage === true,
   isPublicDevPreview.value,
@@ -227,7 +226,7 @@ watch(
    two scrollbars fight and the page wobbles. We toggle a body
    class on route change so the lock applies only to vault routes. */
 watchEffect(() => {
-  document.body.classList.toggle('vault-mode', isVault.value)
+  document.body.classList.toggle('vault-mode', isVaultRoute.value)
 })
 
 /* Global open-search trigger: incremented by NavBar, watched by the
@@ -266,7 +265,7 @@ provide(VaultViewModeKey, { mode: viewMode, set: setViewMode, toggle: toggleView
 <template>
   <NavBar
     v-if="showNormalChrome"
-    :is-vault="isVault"
+    :is-vault="isWorkspaceChrome"
     :username="auth.user.value?.username"
     :logout-busy="auth.transitionKind.value === 'logout'"
     :diary-unlocked="diaryAccess.isUnlocked.value"
@@ -309,7 +308,7 @@ provide(VaultViewModeKey, { mode: viewMode, set: setViewMode, toggle: toggleView
         'full-width': r.meta.fullWidth,
         'auth-page-shell': r.meta.authPage === true,
       }]"
-      :style="{ '--navbar-h': showNormalChrome ? (isVault ? '36px' : '56px') : '0px' }"
+      :style="{ '--navbar-h': showNormalChrome ? (isWorkspaceChrome ? '36px' : '56px') : '0px' }"
       :inert="auth.transitionKind.value !== null || undefined"
       :aria-busy="auth.transitionKind.value !== null || undefined"
     >

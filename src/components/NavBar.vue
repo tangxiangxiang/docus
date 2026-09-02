@@ -37,6 +37,10 @@ const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 
+/* Ledger is the Bills workspace. It shares this navbar with Vault, but its
+   body does not own Vault's editor/read-mode or right-rail controls. */
+const isBills = computed(() => route?.path?.startsWith('/bills') ?? false)
+
 /* Sun when current theme is dark (click to lighten),
    moon when current theme is light (click to darken). */
 const themeIcon = computed<'sun' | 'moon'>(() => (theme.value === 'dark' ? 'sun' : 'moon'))
@@ -54,7 +58,7 @@ const SCOPE_CHIPS = [
 ] as const
 
 function scopeLabel(scope: ScopeKey, label: string): string {
-  return activeScope.value === scope
+  return isScopeActive(scope)
     ? t('nav.scope_active', { scope: label })
     : t('nav.scope_only', { scope: label })
 }
@@ -74,6 +78,19 @@ const { activeScope, selectScope } = useScopeFilter()
 const diaryAccess = inject(DiaryAccessContextKey, null)
 const appShell = inject(AppShellContextKey, null)
 
+function isVaultLedgerDocument(): boolean {
+  return props.isVault
+    && !isBills.value
+    && route?.name === 'vault-doc'
+    && route.path.startsWith('/vault/ledger/')
+}
+
+function isScopeActive(scope: ScopeKey): boolean {
+  if (isBills.value) return scope === 'ledger'
+  if (scope === 'ledger' && isVaultLedgerDocument()) return true
+  return activeScope.value === scope
+}
+
 /* Calendar Home is the Diary scope at the Vault root. A Diary document has a
    nested /vault/<path> route and keeps the normal reading/editing controls.
    VaultView publishes the resolved visibility so a retained document URL
@@ -89,7 +106,24 @@ const isDiaryCalendarVisible = computed(() => (
 
 function onScopeClick(scope: ScopeKey): void {
   if (scope === 'ledger') {
-    void router.push({ name: 'bills' })
+    // Keep direct legacy Ledger documents usable in the Vault while the
+    // top-level Ledger chip opens the Bills workspace everywhere else.
+    if (isVaultLedgerDocument()) {
+      selectScope('ledger')
+      return
+    }
+    if (!isBills.value) void router.push({ name: 'bills' })
+    return
+  }
+  if (isBills.value) {
+    if (scope === 'diary' && diaryAccess) {
+      void diaryAccess.requestScopeChange(scope).then(() => {
+        if (activeScope.value === scope) void router.push({ name: 'vault' })
+      })
+      return
+    }
+    selectScope(scope)
+    void router.push({ name: 'vault' })
     return
   }
   if (scope === 'diary' && diaryAccess) {
@@ -172,7 +206,7 @@ onBeforeUnmount(() => {
 
 <template>
   <header
-    :class="['navbar', { 'is-vault': props.isVault, 'diary-calendar-mode': props.isVault && activeScope === 'diary' }]"
+    :class="['navbar', { 'is-vault': props.isVault, 'bills-nav-mode': isBills, 'diary-calendar-mode': props.isVault && activeScope === 'diary' }]"
     :inert="props.logoutBusy || undefined"
     :aria-busy="props.logoutBusy || undefined"
   >
@@ -195,8 +229,8 @@ onBeforeUnmount(() => {
           v-for="chip in SCOPE_CHIPS"
           :key="chip.scope"
           class="scope-chip"
-          :class="{ active: activeScope === chip.scope }"
-          :aria-pressed="activeScope === chip.scope"
+          :class="{ active: isScopeActive(chip.scope) }"
+          :aria-pressed="isScopeActive(chip.scope)"
           :aria-label="scopeLabel(chip.scope, chip.label)"
           :title="scopeLabel(chip.scope, chip.label)"
           @click="onScopeClick(chip.scope)"
@@ -231,7 +265,7 @@ onBeforeUnmount(() => {
         />
       </button>
         <button
-          v-if="props.isVault && viewModeApi && !isDiaryCalendarVisible"
+          v-if="props.isVault && !isBills && viewModeApi && !isDiaryCalendarVisible"
           class="view-toggle"
           :class="{ 'is-read': isReadMode }"
           type="button"
@@ -243,7 +277,7 @@ onBeforeUnmount(() => {
           <span class="view-toggle-icon" aria-hidden="true" v-html="isReadMode ? ICON_EDIT : ICON_EYE" />
         </button>
         <button
-          v-if="props.isVault && !isDiaryCalendarVisible"
+          v-if="props.isVault && !isBills && !isDiaryCalendarVisible"
           class="right-rail-toggle"
           type="button"
           :title="t(rightRailCollapsed ? 'nav.right_rail_open' : 'nav.right_rail_close')"

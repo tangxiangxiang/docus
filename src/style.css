@@ -1369,9 +1369,10 @@ main.container.auth-page-shell {
   --accent-bg: var(--vs-accent-bg);
 }
 
-/* On compact screens Calendar Home uses the full content canvas. The
-   visibility and grid tracks are owned by VaultView/useVaultLayout; this
-   media block only keeps the global navbar controls compact. */
+/* On compact screens Calendar Home uses the full content canvas. Ledger uses
+   the same compact App Shell navbar, while its body remains a normal
+   scrollable workspace; these rules only keep the shared scope navigation
+   compact on narrow screens. */
 @media (max-width: 900px) {
   .navbar.is-vault.diary-calendar-mode .navbar-inner {
     gap: 8px;
@@ -1397,6 +1398,20 @@ main.container.auth-page-shell {
   .navbar.is-vault.diary-calendar-mode .nav-actions {
     flex-shrink: 0;
     gap: 2px;
+  }
+
+  .navbar.is-vault.bills-nav-mode .scope-chip-label {
+    display: none;
+  }
+
+  .navbar.is-vault.bills-nav-mode .scope-chips {
+    gap: 0;
+    margin-left: 0;
+  }
+
+  .navbar.is-vault.bills-nav-mode .scope-chip {
+    padding-left: 6px;
+    padding-right: 6px;
   }
 
 }

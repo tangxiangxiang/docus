@@ -215,6 +215,39 @@ describe('NavBar — scope chips', () => {
     expect(router.currentRoute.value.name).toBe('bills')
   })
 
+  it('keeps the shared workspace chrome on the Bills route', async () => {
+    const api = makeViewModeApi()
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/vault', name: 'vault', component: { template: '<div />' } },
+        { path: '/bills', name: 'bills', component: { template: '<div />' } },
+      ],
+    })
+    await router.push('/bills')
+    await router.isReady()
+
+    const wrapper = mount(NavBar, {
+      props: { isVault: true },
+      global: {
+        plugins: [router],
+        provide: { [VaultViewModeKey as symbol]: api },
+      },
+    })
+
+    expect(wrapper.find('.navbar').classes()).toContain('is-vault')
+    expect(wrapper.findAll('.scope-chip')[2].attributes('aria-pressed')).toBe('true')
+    expect(wrapper.find('[data-testid="view-toggle"]').exists()).toBe(false)
+    expect(wrapper.find('.right-rail-toggle').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="account-button"]').exists()).toBe(true)
+
+    await wrapper.findAll('.scope-chip')[0].trigger('click')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(router.currentRoute.value.name).toBe('vault')
+    expect(useScopeFilter().activeScope.value).toBe('note')
+    wrapper.unmount()
+  })
+
   it('only renders scope chips in the Vault chrome', () => {
     const api = makeViewModeApi()
     const wrapper = mount(NavBar, {
