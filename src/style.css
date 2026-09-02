@@ -176,18 +176,17 @@ body.vault-mode #app { height: 100%; }
 /* Bills is the one workspace whose page intentionally scrolls below the
    shared navbar. Keep that outer scrollbar out of the visual surface while
    preserving wheel/trackpad scrolling; the account list below uses the same
-   reveal-on-hover treatment. */
+   reveal-on-hover treatment. `scrollbar-width: none` covers Firefox and the
+   WebKit rule below covers Chromium/Safari without disabling page scrolling. */
 body.bills-mode,
 html.bills-mode {
-  scrollbar-color: transparent transparent;
+  scrollbar-width: none;
 }
-body.bills-mode::-webkit-scrollbar-thumb,
-html.bills-mode::-webkit-scrollbar-thumb {
-  background: transparent;
-}
-body.bills-mode::-webkit-scrollbar-thumb:hover,
-html.bills-mode::-webkit-scrollbar-thumb:hover {
-  background: var(--sb-thumb-hover);
+body.bills-mode::-webkit-scrollbar,
+html.bills-mode::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 h1, h2, h3, h4 {

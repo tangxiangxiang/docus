@@ -9,6 +9,12 @@ test('Ledger renders inside the shared Docus App Shell', async ({ page }) => {
   await expect(page.getByTestId('bills-page')).toBeVisible()
   await expect(page.locator('body')).toHaveClass(/bills-mode/)
   await expect(page.locator('html')).toHaveClass(/bills-mode/)
+  const outerScrollbar = await page.evaluate(() => ({
+    html: getComputedStyle(document.documentElement).scrollbarWidth,
+    body: getComputedStyle(document.body).scrollbarWidth,
+  }))
+  expect(outerScrollbar.html).toBe('none')
+  expect(outerScrollbar.body).toBe('none')
 
   // Ledger is a body workspace, not a second Vault shell. The global actions
   // stay in the single navbar while Vault-only controls and sidebars do not.
