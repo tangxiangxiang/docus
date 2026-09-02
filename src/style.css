@@ -175,8 +175,8 @@ body.vault-mode #app { height: 100%; }
 
 /* Bills is the one workspace whose page intentionally scrolls below the
    shared navbar. Keep that outer scrollbar out of the visual surface while
-   preserving wheel/trackpad scrolling; the account list below uses the same
-   reveal-on-hover treatment. `scrollbar-width: none` covers Firefox and the
+   preserving wheel/trackpad scrolling; the account list below hides its own
+   scrollbar while remaining scrollable. `scrollbar-width: none` covers Firefox and the
    WebKit rule below covers Chromium/Safari without disabling page scrolling. */
 body.bills-mode,
 html.bills-mode {
@@ -982,11 +982,8 @@ main.container.auth-page-shell {
 .bills-asset-total strong { display: block; margin-top: 4px; overflow: hidden; color: var(--bills-text); font-size: clamp(.86rem, 1.35vw, 1.08rem); letter-spacing: -.025em; text-overflow: ellipsis; white-space: nowrap; }
 .bills-asset-total strong.debt { color: #d97706; }
 .bills-asset-total strong.net { color: var(--bills-income); }
-.bills-account-list { display: grid; max-height: 114px; gap: 1px; overflow-y: auto; padding-right: 4px; scrollbar-color: transparent transparent; scrollbar-width: thin; }
-.bills-account-list::-webkit-scrollbar-thumb { background: transparent; }
-.bills-account-list:hover { scrollbar-color: var(--bills-border) transparent; }
-.bills-account-list:hover::-webkit-scrollbar-thumb { background: var(--bills-border); }
-.bills-account-list::-webkit-scrollbar-thumb:hover { background: var(--bills-border); }
+.bills-account-list { display: grid; max-height: 114px; gap: 1px; overflow-y: auto; padding-right: 4px; scrollbar-width: none; }
+.bills-account-list::-webkit-scrollbar { display: none; width: 0; height: 0; }
 .bills-account-row { display: grid; grid-template-columns: 9px minmax(0, 1fr) auto; align-items: center; gap: 9px; min-height: 38px; border-top: 1px solid var(--bills-border); }
 .bills-account-mark { width: 7px; height: 7px; border-radius: 50%; }
 .bills-account-name { min-width: 0; }
