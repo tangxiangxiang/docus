@@ -549,12 +549,14 @@ Rationale:
   Temporal parsing:
 
   ```text
-  /^(?:UTC|[A-Za-z_][A-Za-z0-9_.+-]*(?:\/[A-Za-z0-9_.+-]+)+)$/
+  /^[A-Za-z_][A-Za-z0-9_.+-]*(?:\/[A-Za-z0-9_.+-]+)*$/
   ```
 
-  It therefore rejects offset-only values, ISO date-time expressions, and
-  bracketed date-time/zone expressions rather than treating Temporal's broader
-  accepted input grammar as an IANA validator;
+  It therefore accepts named single-component and slash-separated candidates
+  (`UTC`, `CET`, `PST8PDT`, `Asia/Shanghai`, `America/Los_Angeles`) while
+  rejecting offset-only values, ISO date-time expressions, and bracketed
+  date-time/zone expressions rather than treating Temporal's broader accepted
+  input grammar as an IANA validator;
 - after the named-IANA guard, validate the identifier by converting a fixed
   Instant with `toZonedDateTimeISO(candidateZone)`; Temporal remains the
   authority for the actual zone/calendar/DST calculations;
@@ -1262,7 +1264,7 @@ Prove fresh/current upgrade, migration idempotence, tables/FKs/RESTRICT/CHECK/de
 ### Money/time/validation
 
 - `money.test.ts` — safe boundaries, aggregate overflow, exponents, strict decimal conversion.
-- `time.test.ts` — named-IANA validation (`Asia/Shanghai`, `America/Los_Angeles`, `UTC`), rejection of `+08:00`, `-05`, ISO date-time strings, and bracketed date-time/zone expressions, Gregorian date, Monday week, `[start,end)`, DST, opening boundary, future tolerance.
+- `time.test.ts` — named-IANA validation (`UTC`, `CET`, `PST8PDT`, `Asia/Shanghai`, `America/Los_Angeles`), rejection of `+08:00`, `-05`, ISO date-time strings, and bracketed date-time/zone expressions, Gregorian date, Monday week, `[start,end)`, DST, opening boundary, future tolerance.
 - `validation.test.ts` — exact keys, discriminated DTOs, expectedVersion, normalization, limits.
 
 ### Balance — `balance.test.ts`
