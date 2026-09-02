@@ -225,11 +225,10 @@ onBeforeUnmount(() => {
         />
       </button>
         <button
-          v-if="props.isVault && viewModeApi"
+          v-if="props.isVault && viewModeApi && !isDiaryCalendarVisible"
           class="view-toggle"
           :class="{ 'is-read': isReadMode }"
           type="button"
-          :disabled="isDiaryCalendarVisible"
           :aria-label="t(isReadMode ? 'nav.switch_edit' : 'nav.switch_read')"
           :title="t(isReadMode ? 'nav.switch_edit_hint' : 'nav.switch_read_hint')"
           data-testid="view-toggle"
@@ -238,10 +237,9 @@ onBeforeUnmount(() => {
           <span class="view-toggle-icon" aria-hidden="true" v-html="isReadMode ? ICON_EDIT : ICON_EYE" />
         </button>
         <button
-          v-if="props.isVault"
+          v-if="props.isVault && !isDiaryCalendarVisible"
           class="right-rail-toggle"
           type="button"
-          :disabled="isDiaryCalendarVisible"
           :title="t(rightRailCollapsed ? 'nav.right_rail_open' : 'nav.right_rail_close')"
           :aria-label="t(rightRailCollapsed ? 'nav.right_rail_open' : 'nav.right_rail_close')"
           :aria-pressed="!rightRailCollapsed"

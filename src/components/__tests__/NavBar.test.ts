@@ -83,7 +83,7 @@ describe('NavBar — view-toggle button', () => {
     expect(wrapper.find('[data-testid="view-toggle"]').attributes('aria-label')).toBe('Switch to edit')
   })
 
-  it('disables reading and right-rail controls on Diary Calendar Home', async () => {
+  it('hides reading and right-rail controls on Diary Calendar Home', async () => {
     const router = createRouter({
       history: createMemoryHistory(),
       routes: [{ path: '/vault', name: 'vault', component: { template: '<div />' } }],
@@ -102,13 +102,13 @@ describe('NavBar — view-toggle button', () => {
       },
     })
 
-    expect(wrapper.find('[data-testid="view-toggle"]').attributes('disabled')).toBeDefined()
-    expect(wrapper.find('.right-rail-toggle').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-testid="view-toggle"]').exists()).toBe(false)
+    expect(wrapper.find('.right-rail-toggle').exists()).toBe(false)
 
     scope.activeScope.value = 'note'
     await nextTick()
-    expect(wrapper.find('[data-testid="view-toggle"]').attributes('disabled')).toBeUndefined()
-    expect(wrapper.find('.right-rail-toggle').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('[data-testid="view-toggle"]').exists()).toBe(true)
+    expect(wrapper.find('.right-rail-toggle').exists()).toBe(true)
     wrapper.unmount()
   })
 
