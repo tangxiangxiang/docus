@@ -86,7 +86,7 @@ onBeforeUnmount(() => { void trap.deactivate() })
           ref="passwordRef"
           v-model="password"
           type="password"
-          autocomplete="off"
+          autocomplete="new-password"
           minlength="12"
           maxlength="256"
           required
@@ -98,7 +98,7 @@ onBeforeUnmount(() => { void trap.deactivate() })
             id="diary-access-confirm"
             v-model="confirmPassword"
             type="password"
-            autocomplete="off"
+            autocomplete="new-password"
             minlength="12"
             maxlength="256"
             required

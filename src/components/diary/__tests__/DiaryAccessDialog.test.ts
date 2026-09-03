@@ -24,6 +24,8 @@ describe('DiaryAccessDialog', () => {
     const cancel = () => document.querySelector('[data-testid="diary-access-cancel"]') as HTMLButtonElement
     expect(password()).toBeTruthy()
     expect(confirmPassword()).toBeTruthy()
+    expect(password().autocomplete).toBe('new-password')
+    expect(confirmPassword().autocomplete).toBe('new-password')
 
     password().value = 'diary-password'
     password().dispatchEvent(new Event('input', { bubbles: true }))
@@ -49,6 +51,8 @@ describe('DiaryAccessDialog', () => {
       attachTo: document.body,
     })
     expect(document.getElementById('diary-access-confirm')).toBeNull()
+    expect((document.getElementById('diary-access-password') as HTMLInputElement).autocomplete)
+      .toBe('new-password')
     const form = document.querySelector('form.diary-access-dialog') as HTMLFormElement
     form.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     await wrapper.vm.$nextTick()

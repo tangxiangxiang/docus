@@ -77,6 +77,7 @@ describe('LoginView', () => {
 
     expect(wrapper.get('form').attributes('autocomplete')).toBe('off')
     expect(wrapper.get('#login-username').attributes('autocomplete')).toBe('off')
+    expect(wrapper.get('#login-password').attributes('autocomplete')).toBe('new-password')
   })
 
   it('submits username and password, including Enter/form submission', async () => {

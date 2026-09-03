@@ -96,7 +96,7 @@ onMounted(() => usernameInput.value?.focus())
             v-model="password"
             name="password"
             type="password"
-            autocomplete="current-password"
+            autocomplete="new-password"
             required
             :disabled="auth.submitting.value"
             :aria-invalid="credentialError ? 'true' : undefined"
