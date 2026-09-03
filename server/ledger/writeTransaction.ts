@@ -1,9 +1,19 @@
 import type { Database as DatabaseT } from 'better-sqlite3'
 import { LedgerError } from './errors.js'
 
+type NonPromiseResult<T> = T extends PromiseLike<unknown> ? never : T
+
+const AsyncFunctionPrototype = Object.getPrototypeOf(async function () {})
+
 function isThenable(value: unknown): value is PromiseLike<unknown> {
   if (value === null || (typeof value !== 'object' && typeof value !== 'function')) return false
   return typeof (value as { then?: unknown }).then === 'function'
+}
+
+function assertSynchronousCallback(callback: unknown): void {
+  if (typeof callback === 'function' && Object.getPrototypeOf(callback) === AsyncFunctionPrototype) {
+    throw new TypeError('Ledger write callbacks must be synchronous')
+  }
 }
 
 function invokeSynchronous<T>(callback: () => T): T {
@@ -38,7 +48,12 @@ function ledgerWriteBusyError(): LedgerError {
  * current connection transaction; only the outermost call opens an IMMEDIATE
  * transaction and owns its commit/rollback boundary.
  */
-export function runLedgerWrite<T>(db: DatabaseT, callback: () => T): T {
+export function runLedgerWrite<T>(
+  db: DatabaseT,
+  callback: () => NonPromiseResult<T>,
+): NonPromiseResult<T> {
+  assertSynchronousCallback(callback)
+
   try {
     if (db.inTransaction) return invokeSynchronous(callback)
     return db.transaction(() => invokeSynchronous(callback)).immediate()

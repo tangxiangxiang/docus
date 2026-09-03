@@ -406,15 +406,38 @@ describe('Ledger write transaction infrastructure', () => {
     expect(repository.getCategory('inner-category')).toBeNull()
   })
 
-  it('rejects an async callback and rolls back its synchronous writes', () => {
+  it('rejects an escaped async callback before invocation and prevents delayed mutation', async () => {
     const database = freshDatabase()
     const repository = createLedgerRepository(database.db)
+    let callbackExecuted = false
+    const escapedCallback = (async () => {
+      callbackExecuted = true
+      repository.insertAccount(account('async-before-await'))
+      await Promise.resolve()
+      repository.insertCategory(category('async-after-await'))
+    }) as unknown as () => unknown
 
-    expect(() => runLedgerWrite(database.db, async () => {
-      repository.insertAccount(account('async-account'))
-    })).toThrow(TypeError)
+    expect(() => runLedgerWrite(database.db, escapedCallback)).toThrow(TypeError)
+    expect(callbackExecuted).toBe(false)
 
-    expect(repository.getAccount('async-account')).toBeNull()
+    await Promise.resolve()
+    expect(repository.getAccount('async-before-await')).toBeNull()
+    expect(repository.getCategory('async-after-await')).toBeNull()
+  })
+
+  it('rejects a synchronous thenable callback and rolls back synchronous writes', () => {
+    const database = freshDatabase()
+    const repository = createLedgerRepository(database.db)
+    let callbackExecuted = false
+    const escapedCallback = (() => {
+      callbackExecuted = true
+      repository.insertAccount(account('thenable-account'))
+      return Promise.resolve()
+    }) as unknown as () => unknown
+
+    expect(() => runLedgerWrite(database.db, escapedCallback)).toThrow(TypeError)
+    expect(callbackExecuted).toBe(true)
+    expect(repository.getAccount('thenable-account')).toBeNull()
   })
 
   it('does not misclassify non-busy SQLite errors', () => {
