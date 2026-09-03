@@ -65,15 +65,19 @@ async function request(
   init: { method?: string; body?: unknown; cookie?: string; contentType?: string; origin?: string } = {},
 ): Promise<Response> {
   const headers = new Headers()
+  const body = init.body === undefined ? undefined : JSON.stringify(init.body)
   if (init.cookie !== undefined) headers.set('Cookie', init.cookie)
-  if (init.body !== undefined && init.contentType !== '') {
+  if (body !== undefined) {
+    headers.set('Content-Length', String(Buffer.byteLength(body)))
+  }
+  if (body !== undefined && init.contentType !== '') {
     headers.set('Content-Type', init.contentType ?? 'application/json')
   }
   if (init.origin !== undefined) headers.set('Origin', init.origin)
   return app.fetch(new Request(`http://localhost${urlPath}`, {
     method: init.method ?? 'GET',
     headers,
-    body: init.body === undefined ? undefined : JSON.stringify(init.body),
+    body,
   }))
 }
 

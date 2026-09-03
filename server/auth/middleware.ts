@@ -22,15 +22,16 @@ function isPublicEndpoint(method: string, path: string): boolean {
 }
 
 function requestHasBody(request: Request): boolean {
-  // Browser DELETE/fetch requests are commonly forwarded by the Vite
-  // adapter with an empty stream. Prefer the wire-level length when it is
-  // available so a bodyless mutation is not mistaken for a body-bearing one.
+  // HTTP/1.1 requests without Content-Length can still carry a body when
+  // transfer-encoding is present. A non-null Fetch Request.body alone is not
+  // reliable under Node/Hono adapters: bodyless DELETE requests may still be
+  // represented by an empty stream.
   const contentLength = request.headers.get('content-length')
   if (contentLength !== null) {
     const length = Number(contentLength)
     if (Number.isFinite(length)) return length > 0
   }
-  return request.body !== null
+  return request.headers.has('transfer-encoding')
 }
 
 /**
@@ -93,8 +94,9 @@ export const authBoundary: MiddlewareHandler = async (c, next) => {
     const csrf = checkCsrfHeaders(c.req.raw.headers, method, runtime.config)
     if (!csrf.ok) return jsonError(c, 403, csrf.message, csrf.code)
 
-    // A body-bearing mutation must be JSON. Request.body is inspected
-    // without consuming the stream, so streaming handlers remain intact.
+    // A body-bearing mutation must be JSON. Wire-level framing headers are
+    // inspected without consuming the stream, so streaming handlers remain
+    // intact.
     if (requestHasBody(c.req.raw)) {
       const content = checkJsonContentType(c.req.raw.headers)
       if (!content.ok) return jsonError(c, 415, content.message, content.code)

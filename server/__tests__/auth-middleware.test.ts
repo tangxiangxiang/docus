@@ -137,7 +137,10 @@ describe('Phase 5 central authentication boundary', () => {
 
       const missingContentType = await app.fetch(new Request('http://localhost/api/posts', {
         method: 'POST',
-        headers: { Cookie: context.cookie },
+        headers: {
+          Cookie: context.cookie,
+          'Content-Length': String(Buffer.byteLength(JSON.stringify({ path: 'blocked', title: 'Blocked' }))),
+        },
         body: JSON.stringify({ path: 'blocked', title: 'Blocked' }),
       }))
       expect(missingContentType.status).toBe(415)
@@ -153,12 +156,70 @@ describe('Phase 5 central authentication boundary', () => {
       expect(validOrigin.status).not.toBe(403)
       expect(validOrigin.headers.get('cache-control')).toBe('no-store')
 
+      const emptyStream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.close()
+        },
+      })
       const bodylessDelete = await app.fetch(new Request('http://localhost/api/posts/does-not-exist', {
         method: 'DELETE',
         headers: { Cookie: context.cookie },
+        body: emptyStream,
+        duplex: 'half',
       }))
       expect(bodylessDelete.status).not.toBe(415)
       expect(bodylessDelete.headers.get('cache-control')).toBe('no-store')
+
+      const explicitZeroLengthDelete = await app.fetch(new Request('http://localhost/api/posts/does-not-exist', {
+        method: 'DELETE',
+        headers: {
+          Cookie: context.cookie,
+          'Content-Length': '0',
+        },
+      }))
+      expect(explicitZeroLengthDelete.status).not.toBe(415)
+
+      const positiveLengthWithoutType = await app.fetch(new Request('http://localhost/api/posts/does-not-exist', {
+        method: 'DELETE',
+        headers: {
+          Cookie: context.cookie,
+          'Content-Length': '1',
+        },
+      }))
+      expect(positiveLengthWithoutType.status).toBe(415)
+      expect(await positiveLengthWithoutType.json()).toMatchObject({ code: 'invalid-content-type' })
+
+      const transferEncodedWithoutType = await app.fetch(new Request('http://localhost/api/posts/does-not-exist', {
+        method: 'DELETE',
+        headers: {
+          Cookie: context.cookie,
+          'Transfer-Encoding': 'chunked',
+        },
+      }))
+      expect(transferEncodedWithoutType.status).toBe(415)
+      expect(await transferEncodedWithoutType.json()).toMatchObject({ code: 'invalid-content-type' })
+
+      const jsonPost = await app.fetch(new Request('http://localhost/api/posts', {
+        method: 'POST',
+        headers: {
+          Cookie: context.cookie,
+          'Content-Length': '2',
+          'Content-Type': 'application/json',
+        },
+        body: '{}',
+      }))
+      expect(jsonPost.status).not.toBe(415)
+
+      const jsonPatch = await app.fetch(new Request('http://localhost/api/posts/does-not-exist', {
+        method: 'PATCH',
+        headers: {
+          Cookie: context.cookie,
+          'Content-Length': '2',
+          'Content-Type': 'application/json',
+        },
+        body: '{}',
+      }))
+      expect(jsonPatch.status).not.toBe(415)
     } finally {
       closeAuthTestContext(context)
     }
