@@ -3562,7 +3562,6 @@ main.container.auth-page-shell {
   background: var(--vs-hover-bg);
   color: var(--vs-text-1);
 }
-.vault .file-tree ul { overflow-y: auto; flex: 1; }
 /* The old `.file-tree li` / `.file-tree li.active` / `.file-tree li:hover`
    / `.entry` / `.entry-date` block was deleted: it predated the
    recursive `.tree-row` structure and targeted every `<li>` inside the
@@ -3591,7 +3590,7 @@ main.container.auth-page-shell {
 /* New recursive tree structure: TreeRow / tree-children / drop targets */
 .vault .file-tree .tree {
   list-style: none; padding: 0; margin: 0;
-  overflow-y: auto; flex: 1;
+  overflow-x: auto; overflow-y: auto; flex: 1;
   /* Keep long paths horizontally scrollable without leaving a visible
      scrollbar in the compact tree. Firefox uses the transparent thumb;
      WebKit gets an axis-specific zero-height scrollbar below. */
@@ -3604,6 +3603,11 @@ main.container.auth-page-shell {
   list-style: none; padding: 0; margin: 0;
   flex-basis: 100%;          /* force a new line in the flex parent */
   min-width: 100%;
+  /* Only the root .tree owns scrolling. A broad `ul { overflow-y: auto }`
+     makes overflow-x compute to auto too, so every expanded subtree gets
+     its own native horizontal scrollbar on Windows. Let nested content
+     contribute to the root tree's scroll area instead. */
+  overflow: visible;
 }
 .vault .file-tree .tree-row {
   display: flex; flex-wrap: wrap; align-items: stretch; gap: 0;

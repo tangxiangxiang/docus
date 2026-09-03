@@ -50,6 +50,21 @@ test.describe('View mode toggle', () => {
     expect(metrics.scrollbarHeight).toBe('0px')
   })
 
+  test('keeps expanded subtrees out of scroll ownership', async ({ page }) => {
+    const inbox = page.locator('.tree-row.folder[data-tree-path="inbox"]')
+    if (await inbox.getAttribute('aria-expanded') !== 'true') {
+      await inbox.locator('.chevron').click()
+    }
+
+    const subtree = inbox.locator(':scope > .tree-children')
+    await expect(subtree).toBeVisible()
+    const overflow = await subtree.evaluate((element) => ({
+      x: getComputedStyle(element).overflowX,
+      y: getComputedStyle(element).overflowY,
+    }))
+    expect(overflow).toEqual({ x: 'visible', y: 'visible' })
+  })
+
   test('toggles the left side panel from the top-right NavBar', async ({ page }) => {
     const toggle = page.getByTestId('left-panel-toggle')
     await expect(toggle).toHaveAttribute('aria-pressed', 'true')
