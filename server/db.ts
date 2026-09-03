@@ -28,6 +28,9 @@ const DATA_DIR = path.dirname(DB_PATH)
 // regardless of where vite/tsx was launched from.
 const MIGRATIONS_DIR = path.resolve(import.meta.dirname, 'migrations')
 
+/** Explicit production wait before SQLite reports an exhausted write lock. */
+export const SQLITE_BUSY_TIMEOUT_MS = 5_000
+
 function ensureDataDir() {
   if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true })
 }
@@ -81,7 +84,7 @@ export function getDb(): DatabaseT {
   if (_testDbOverride) return _testDbOverride
   if (_db) return _db
   ensureDataDir()
-  _db = new Database(DB_PATH)
+  _db = new Database(DB_PATH, { timeout: SQLITE_BUSY_TIMEOUT_MS })
   _db.pragma('journal_mode = WAL')
   _db.pragma('foreign_keys = ON')
   applyMigrations(_db)
