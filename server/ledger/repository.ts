@@ -9,6 +9,7 @@ import {
   type LedgerSettings,
   type LedgerTransaction,
 } from './domain.js'
+import { ledgerValidationError } from './errors.js'
 
 const SELECT_SETTINGS = `
   SELECT singleton_id, base_currency, timezone, has_created_account,
@@ -213,6 +214,27 @@ const SELECT_ACTIVE_TRANSACTIONS_FOR_ACCOUNT = `
   ORDER BY occurred_at DESC, created_at DESC, id DESC
 `
 
+const SELECT_IDEMPOTENCY_RECORD = `
+  SELECT operation_scope, idempotency_key, request_fingerprint,
+         response_status, response_body_json, result_status, result_type,
+         result_id, created_at
+  FROM ledger_idempotency
+  WHERE operation_scope = @operationScope
+    AND idempotency_key = @idempotencyKey
+`
+
+const INSERT_IDEMPOTENCY_RECORD = `
+  INSERT INTO ledger_idempotency (
+    operation_scope, idempotency_key, request_fingerprint,
+    response_status, response_body_json, result_status, result_type,
+    result_id, created_at
+  ) VALUES (
+    @operationScope, @idempotencyKey, @requestFingerprint,
+    @responseStatus, @responseBodyJson, @resultStatus, @resultType,
+    @resultId, @createdAt
+  )
+`
+
 export interface LedgerSettingsUpdateInput {
   readonly settings: LedgerSettings
   readonly expectedVersion: number
@@ -241,6 +263,20 @@ export interface LedgerTransactionSoftDeleteInput {
   readonly expectedVersion: number
 }
 
+export type LedgerIdempotencyResultStatus = 'committed' | 'no-op'
+
+export interface LedgerIdempotencyRecord {
+  readonly operationScope: string
+  readonly idempotencyKey: string
+  readonly requestFingerprint: string
+  readonly responseStatus: number
+  readonly responseBodyJson: string
+  readonly resultStatus: LedgerIdempotencyResultStatus
+  readonly resultType: string | null
+  readonly resultId: string | null
+  readonly createdAt: number
+}
+
 export interface LedgerRepository {
   getSettings(): LedgerSettings | null
   insertSettings(settings: LedgerSettings): void
@@ -265,6 +301,9 @@ export interface LedgerRepository {
   updateTransaction(input: LedgerTransactionUpdateInput): number
   softDeleteTransaction(input: LedgerTransactionSoftDeleteInput): number
   listActiveTransactionsForAccount(accountId: string): LedgerTransaction[]
+
+  getIdempotencyRecord(operationScope: string, idempotencyKey: string): LedgerIdempotencyRecord | null
+  insertIdempotencyRecord(record: LedgerIdempotencyRecord): void
 }
 
 interface SettingsParams {
@@ -343,6 +382,23 @@ interface TransactionSoftDeleteParams {
   readonly version: number
   readonly updatedAt: number
   readonly expectedVersion: number
+}
+
+interface IdempotencyLookupParams {
+  readonly operationScope: string
+  readonly idempotencyKey: string
+}
+
+interface IdempotencyParams {
+  readonly operationScope: string
+  readonly idempotencyKey: string
+  readonly requestFingerprint: string
+  readonly responseStatus: number
+  readonly responseBodyJson: string
+  readonly resultStatus: LedgerIdempotencyResultStatus
+  readonly resultType: string | null
+  readonly resultId: string | null
+  readonly createdAt: number
 }
 
 function settingsParams(settings: LedgerSettings): SettingsParams {
@@ -438,6 +494,99 @@ function transactionUpdateParams(input: LedgerTransactionUpdateInput): Transacti
   }
 }
 
+interface IdempotencyRow {
+  readonly operation_scope?: unknown
+  readonly idempotency_key?: unknown
+  readonly request_fingerprint?: unknown
+  readonly response_status?: unknown
+  readonly response_body_json?: unknown
+  readonly result_status?: unknown
+  readonly result_type?: unknown
+  readonly result_id?: unknown
+  readonly created_at?: unknown
+}
+
+function invalidIdempotencyRow(field: string, reason: string): never {
+  throw ledgerValidationError('invalid persisted Ledger idempotency row', {
+    entity: 'idempotency',
+    field,
+    reason,
+  })
+}
+
+function idempotencyRowValue(row: IdempotencyRow, field: keyof IdempotencyRow): unknown {
+  if (!Object.prototype.hasOwnProperty.call(row, field)) {
+    return invalidIdempotencyRow(field, 'column is missing')
+  }
+  return row[field]
+}
+
+function idempotencyString(row: IdempotencyRow, field: keyof IdempotencyRow, allowEmpty = false): string {
+  const value = idempotencyRowValue(row, field)
+  if (typeof value !== 'string' || (!allowEmpty && value.length === 0)) {
+    return invalidIdempotencyRow(field, 'column must be a non-empty string')
+  }
+  return value
+}
+
+function idempotencyNullableString(row: IdempotencyRow, field: keyof IdempotencyRow): string | null {
+  const value = idempotencyRowValue(row, field)
+  if (value === null) return null
+  if (typeof value !== 'string') return invalidIdempotencyRow(field, 'column must be null or a string')
+  return value
+}
+
+function idempotencySafeInteger(row: IdempotencyRow, field: keyof IdempotencyRow): number {
+  const value = idempotencyRowValue(row, field)
+  if (typeof value !== 'number' || !Number.isSafeInteger(value)) {
+    return invalidIdempotencyRow(field, 'column must be a safe integer')
+  }
+  return value
+}
+
+function idempotencyRecordFromRow(row: IdempotencyRow): LedgerIdempotencyRecord {
+  const requestFingerprint = idempotencyString(row, 'request_fingerprint')
+  if (!/^[0-9a-f]{64}$/.test(requestFingerprint)) {
+    return invalidIdempotencyRow('request_fingerprint', 'column must be a lowercase SHA-256 fingerprint')
+  }
+
+  const responseStatus = idempotencySafeInteger(row, 'response_status')
+  if (responseStatus < 100 || responseStatus > 599) {
+    return invalidIdempotencyRow('response_status', 'status must be between 100 and 599')
+  }
+
+  const resultStatus = idempotencyString(row, 'result_status')
+  if (resultStatus !== 'committed' && resultStatus !== 'no-op') {
+    return invalidIdempotencyRow('result_status', 'status must be committed or no-op')
+  }
+
+  return {
+    operationScope: idempotencyString(row, 'operation_scope'),
+    idempotencyKey: idempotencyString(row, 'idempotency_key'),
+    requestFingerprint,
+    responseStatus,
+    responseBodyJson: idempotencyString(row, 'response_body_json', true),
+    resultStatus,
+    resultType: idempotencyNullableString(row, 'result_type'),
+    resultId: idempotencyNullableString(row, 'result_id'),
+    createdAt: idempotencySafeInteger(row, 'created_at'),
+  }
+}
+
+function idempotencyParams(record: LedgerIdempotencyRecord): IdempotencyParams {
+  return {
+    operationScope: record.operationScope,
+    idempotencyKey: record.idempotencyKey,
+    requestFingerprint: record.requestFingerprint,
+    responseStatus: record.responseStatus,
+    responseBodyJson: record.responseBodyJson,
+    resultStatus: record.resultStatus,
+    resultType: record.resultType,
+    resultId: record.resultId,
+    createdAt: record.createdAt,
+  }
+}
+
 export function createLedgerRepository(db: DatabaseT): LedgerRepository {
   const statements = {
     getSettings: db.prepare(SELECT_SETTINGS),
@@ -467,6 +616,8 @@ export function createLedgerRepository(db: DatabaseT): LedgerRepository {
     listActiveTransactionsForAccount: db.prepare<{ readonly accountId: string }>(
       SELECT_ACTIVE_TRANSACTIONS_FOR_ACCOUNT,
     ),
+    getIdempotencyRecord: db.prepare<IdempotencyLookupParams, IdempotencyRow>(SELECT_IDEMPOTENCY_RECORD),
+    insertIdempotencyRecord: db.prepare<IdempotencyParams>(INSERT_IDEMPOTENCY_RECORD),
   }
 
   return {
@@ -570,6 +721,15 @@ export function createLedgerRepository(db: DatabaseT): LedgerRepository {
       return statements.listActiveTransactionsForAccount
         .all({ accountId })
         .map(ledgerTransactionFromRow)
+    },
+
+    getIdempotencyRecord(operationScope: string, idempotencyKey: string): LedgerIdempotencyRecord | null {
+      const row = statements.getIdempotencyRecord.get({ operationScope, idempotencyKey })
+      return row === undefined ? null : idempotencyRecordFromRow(row)
+    },
+
+    insertIdempotencyRecord(record: LedgerIdempotencyRecord): void {
+      statements.insertIdempotencyRecord.run(idempotencyParams(record))
     },
   }
 }
