@@ -125,4 +125,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+process.env.PORT+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["npm", "run", "start"]
+# Keep the actual Docus Node process as tini's direct child. An npm/tsx
+# launcher chain can consume Docker's SIGTERM before it reaches prod.ts,
+# preventing the Vault writer ownership file from being released.
+CMD ["node", "--import", "tsx", "server/prod.ts"]

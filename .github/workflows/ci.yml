@@ -140,6 +140,13 @@ jobs:
             DOCKER_PORT=18080 \
             npm run test:deployment-auth
 
+      - name: Run Vault writer Docker lifecycle regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          DOCKER_IMAGE=docus-ci-smoke \
+            npm run test:deployment-vault-lifecycle
+
   auth-browser:
     runs-on: ubuntu-latest
     timeout-minutes: 20

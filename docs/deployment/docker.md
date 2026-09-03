@@ -114,6 +114,31 @@ docker compose ps
 
 Image replacement does not remove the bind mount or named volume. Check the startup log for authentication, crash-recovery, and metadata-migration failures before declaring the upgrade complete. If the deployment is restored from an older or untrusted database backup, set `DOCUS_AUTH_REVOKE_SESSIONS_ON_START=1` for the first startup so restored sessions cannot be reused.
 
+### Vault Writer Lifecycle
+
+Normal `docker stop`, `docker compose down`, and Compose replacement send
+`SIGTERM` to the Docus server. The server stops accepting work, closes the HTTP
+listener, and nonce-safely removes `src/content/.docus/vault-writer.json` before
+it exits. A replacement container can therefore use its normal new Docker
+hostname; no fixed `hostname:` setting is required.
+
+`SIGKILL`, host crashes, and power loss cannot run that cleanup. If one of those
+events leaves an ownership record from another container hostname, Docus
+intentionally refuses startup instead of guessing that the previous writer is
+dead. This preserves the single-writer guarantee.
+
+Only after proving that no Docus process or container is using the Vault, move
+the stale record aside as a recoverable operator action, then start the service:
+
+```bash
+mv src/content/.docus/vault-writer.json \
+  src/content/.docus/vault-writer.json.stale
+docker compose up -d docus
+```
+
+Keep the moved record until the replacement is healthy. Never perform this
+recovery while another Docus instance may still have the Vault mounted.
+
 ## Common Problems
 
 - **Permission denied under `/app/src/content`:** correct the host directory ownership or ACL for UID/GID 1000.
