@@ -59,6 +59,26 @@ function signedAmountForRole(
 
 function assertAdjustmentEffect(transaction: AdjustmentTransaction): void {
   assertSafeMinor(transaction.amountMinor, 'amountMinor')
+  assertSafeMinor(
+    transaction.adjustmentCalculatedBalanceMinor,
+    'adjustmentCalculatedBalanceMinor',
+  )
+  assertSafeMinor(
+    transaction.adjustmentTargetBalanceMinor,
+    'adjustmentTargetBalanceMinor',
+  )
+
+  const expectedDelta = checkedSubMinor(
+    transaction.adjustmentTargetBalanceMinor,
+    transaction.adjustmentCalculatedBalanceMinor,
+  )
+  if (transaction.amountMinor !== expectedDelta) {
+    throw ledgerValidationError(
+      'Adjustment amountMinor must equal target minus calculated balance',
+      { field: 'amountMinor' },
+    )
+  }
+
   if (transaction.amountMinor === 0) {
     throw ledgerValidationError('Adjustment delta must be non-zero', { field: 'amountMinor' })
   }

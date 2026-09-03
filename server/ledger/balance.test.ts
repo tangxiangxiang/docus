@@ -384,6 +384,32 @@ describe('Ledger natural-balance transaction effects', () => {
       account('account', nature),
     )).toBe(expected)
   })
+
+  it('rejects a mismatched in-memory adjustment delta at the balance boundary', () => {
+    const malformed: AdjustmentTransaction = {
+      ...adjustment('mismatched-adjustment', 'account', 1_000, 1_200),
+      amountMinor: 500,
+    }
+
+    expectLedgerErrorCode(
+      () => transactionEffectForAccount(malformed, account('account', 'asset')),
+      'ledger-validation-failed',
+    )
+  })
+
+  it('rejects in-memory adjustment subtraction overflow with checked arithmetic', () => {
+    const malformed: AdjustmentTransaction = {
+      ...adjustment('overflow-adjustment', 'account', 0, 1),
+      amountMinor: MAX_SAFE_MINOR,
+      adjustmentCalculatedBalanceMinor: -1,
+      adjustmentTargetBalanceMinor: MAX_SAFE_MINOR,
+    }
+
+    expectLedgerErrorCode(
+      () => transactionEffectForAccount(malformed, account('account', 'asset')),
+      'ledger-money-overflow',
+    )
+  })
 })
 
 describe('Ledger current-balance derivation', () => {
