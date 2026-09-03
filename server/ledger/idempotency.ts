@@ -263,7 +263,9 @@ export function executeIdempotentLedgerCreate<
       return replayResult(existing)
     }
 
-    const mutationResult = input.mutation()
+    // Delegate the callback itself to the L0.3 helper so its runtime
+    // native-async and thenable guards also cover escaped callers.
+    const mutationResult = runLedgerWrite(db, input.mutation)
     assertMutationResult<TResponseBody>(mutationResult)
     const responseBodyJson = serializeLedgerReplayResponse(mutationResult.responseBody)
     const createdAt = input.createdAt ?? Date.now()

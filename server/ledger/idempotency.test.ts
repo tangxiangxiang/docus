@@ -597,6 +597,37 @@ describe('Ledger persistent idempotent create executor', () => {
     )).toBeNull()
   })
 
+  it('contains an escaped native async mutation before its body can execute', async () => {
+    const database = freshDatabase()
+    const repository = createLedgerRepository(database.db)
+    const escapedAccount = account('escaped-idempotency-account')
+    const escapedCategory = category('escaped-idempotency-category')
+    let callbackRan = false
+    type CommittedAccountResult = ReturnType<typeof committedAccountResult>
+    const escapedMutation = (async () => {
+      callbackRan = true
+      repository.insertAccount(escapedAccount)
+      await Promise.resolve()
+      repository.insertCategory(escapedCategory)
+      return committedAccountResult(escapedAccount)
+    }) as unknown as () => CommittedAccountResult
+
+    expect(() => executeIdempotentLedgerCreate(database.db, repository, {
+      operationScope: LEDGER_IDEMPOTENCY_OPERATION_SCOPES.accounts,
+      idempotencyKey: 'escaped-async-key',
+      request: accountRequest('Escaped async account'),
+      mutation: escapedMutation,
+    })).toThrow(TypeError)
+    expect(callbackRan).toBe(false)
+    await Promise.resolve()
+    expect(repository.getAccount(escapedAccount.id)).toBeNull()
+    expect(repository.getCategory(escapedCategory.id)).toBeNull()
+    expect(repository.getIdempotencyRecord(
+      LEDGER_IDEMPOTENCY_OPERATION_SCOPES.accounts,
+      'escaped-async-key',
+    )).toBeNull()
+  })
+
   it('maps repository idempotency fields and preserves SQLite identity constraints', () => {
     const database = freshDatabase()
     const repository = createLedgerRepository(database.db)
