@@ -81,26 +81,12 @@ describe('Tags filter', () => {
     expect(wrapper.find('.results').exists()).toBe(true)
   })
 
-  it('uses the shared document hover card for tag results', async () => {
+  it('does not render a document hover card for tag results', async () => {
     const wrapper = mountPanel({ selectedTag: 'reference' })
     await wrapper.get('.result-entry').trigger('mouseenter')
 
-    const card = document.body.querySelector('.document-hover-card')
-    expect(card?.textContent).toContain(POSTS[0].title)
-    expect(card?.textContent).toContain(POSTS[0].path)
-    expect(card?.textContent).toContain('修改于')
-    expect(card?.textContent).toContain('#markdown #reference')
-
-    const zhModified = card?.querySelector('span')?.textContent ?? ''
-    useI18n().setLocale('en')
-    await wrapper.vm.$nextTick()
-    const enModified = card?.querySelector('span')?.textContent ?? ''
-    expect(enModified).toContain('Modified')
-    expect(enModified).not.toContain('修改于')
-    expect(enModified.replace(/^Modified /, '')).not.toBe(zhModified.replace(/^修改于 /, ''))
-
-    await wrapper.get('.result-entry').trigger('mouseleave')
     expect(document.body.querySelector('.document-hover-card')).toBeNull()
+
     wrapper.unmount()
   })
 

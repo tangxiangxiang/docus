@@ -131,6 +131,15 @@ describe('FileTree', () => {
     expect(wrapper.text()).toContain('redis-note')
   })
 
+  it('does not render a document hover card for file rows', async () => {
+    const wrapper = mount(FileTree, { props: { tree: TREE, currentPath: null } })
+    await rowByName(wrapper, 'inbox').find('.row-line').trigger('click')
+    await rowByName(wrapper, 'draft').trigger('mouseenter')
+
+    expect(document.body.querySelector('.document-hover-card')).toBeNull()
+    wrapper.unmount()
+  })
+
   it('focuses the filter with Ctrl/Cmd+F while the tree is focused', async () => {
     const wrapper = mount(FileTree, { props: { tree: TREE, currentPath: null }, attachTo: document.body })
     await rowByName(wrapper, 'inbox').trigger('keydown', { key: 'f', ctrlKey: true })

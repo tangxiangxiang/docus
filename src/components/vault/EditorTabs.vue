@@ -6,7 +6,6 @@ import {
   deriveTabUiPresentation,
   type TabUiPresentation,
 } from '../../composables/vault/editor-tabs/tabPresentation'
-import { useWorkspaceTabTooltip } from '../../composables/vault/workspace-tabs/useWorkspaceTabTooltip'
 import {
   useWorkspaceTabMenu,
   type WorkspaceTabMenuAction,
@@ -39,7 +38,7 @@ const { t: translate } = useI18n()
 
 // One presentation per tab — the source of truth for title, status
 // text, status kind, and aria-label. The same object feeds the tab
-// row, the custom tooltip, and aria-label, so they cannot drift.
+// row and aria-label, so they cannot drift.
 const tabPresentations = computed<TabUiPresentation[]>(() =>
   props.tabs.map((tab) => deriveTabUiPresentation(tab, translate)),
 )
@@ -82,54 +81,8 @@ const {
 
 defineExpose({ focusTab })
 
-// --- custom tooltip --------------------------------------------------------
 const activePathRef = computed(() => props.activePath)
-const {
-  tooltipTabId,
-  tooltipStyle,
-  tooltipId,
-  show: showTooltipFor,
-  hide: hideTooltip,
-  handleEscape: handleTooltipEscape,
-} = useWorkspaceTabTooltip({
-  activeId: activePathRef,
-  tabIds,
-  isSuppressed: () => draggedId.value !== null,
-})
-
-// Active tooltip presentation — single computed so the template
-// doesn't have to re-find the tab row every render.
-const tooltipPresentation = computed<TabUiPresentation | null>(() => {
-  if (tooltipTabId.value === null) return null
-  const idx = props.tabs.findIndex((t) => t.id === tooltipTabId.value)
-  if (idx < 0) return null
-  return tabPresentations.value[idx] ?? null
-})
-
-function onTooltipAnchorEnter(tab: WorkspaceTab, event: MouseEvent | FocusEvent) {
-  const target = event.currentTarget as HTMLElement | null
-  if (target) showTooltipFor(tab.id, target)
-}
-
-function onTooltipAnchorLeave(_tab: WorkspaceTab, event: MouseEvent | FocusEvent) {
-  // Only hide on real mouseleave; on focus we rely on the explicit
-  // blur handler so keyboard users don't see the tooltip flicker.
-  if (event.type === 'mouseleave') hideTooltip()
-}
-
-function onTooltipAnchorFocus(tab: WorkspaceTab, event: FocusEvent) {
-  const target = event.currentTarget as HTMLElement | null
-  if (target) showTooltipFor(tab.id, target)
-}
-
-function onTooltipAnchorBlur(_event: FocusEvent) {
-  // relatedTarget === null on programmatic blur and when focus moves
-  // outside the document — either way the tooltip should hide.
-  hideTooltip()
-}
-
 function onTabKeydown(event: KeyboardEvent, tab: WorkspaceTab) {
-  handleTooltipEscape(event)
   if (
     event.altKey
     && event.shiftKey
@@ -148,15 +101,12 @@ function onTabKeydown(event: KeyboardEvent, tab: WorkspaceTab) {
     event.stopPropagation()
     const anchor = event.currentTarget as HTMLElement
     const rect = anchor.getBoundingClientRect()
-    hideTooltip()
     openMenu(tab.id, rect.left, rect.bottom, anchor)
   }
 }
 
-// --- tab close button click → hide tooltip before emission ---
 function onCloseClick(tab: WorkspaceTab) {
   clearBlockedDrag()
-  hideTooltip()
   emit('close', tab.id)
 }
 
@@ -168,7 +118,6 @@ function onClosePointerDown(tabId: string, event: PointerEvent): void {
 function onDragStart(event: DragEvent, tab: WorkspaceTab): void {
   if (!startReorder(event, tab.id)) return
   closeMenu(false)
-  hideTooltip()
 }
 
 function onDragOver(event: DragEvent, targetId: string): void {
@@ -192,13 +141,11 @@ function onDragEnd(): void {
 }
 
 function onTabClick(tab: WorkspaceTab): void {
-  hideTooltip()
   if (consumeSuppressedClick()) return
   emit('select', tab.id)
 }
 
 function moveTabByKeyboard(tab: WorkspaceTab, direction: -1 | 1): void {
-  hideTooltip()
   moveByKeyboard(tab.id, direction)
 }
 
@@ -243,7 +190,6 @@ const {
 function onContextMenu(e: MouseEvent, path: string) {
   e.preventDefault()
   e.stopPropagation()
-  hideTooltip()
   openMenu(path, e.clientX, e.clientY, e.currentTarget as HTMLElement)
 }
 
@@ -271,7 +217,6 @@ function onContextMenu(e: MouseEvent, path: string) {
         aria-haspopup="menu"
         :aria-expanded="menuVisible && menuTabPath === t.id ? 'true' : 'false'"
         :aria-label="tabPresentations[i].ariaLabel"
-        :aria-describedby="tooltipTabId === t.id ? tooltipId(t.id) : undefined"
         :aria-roledescription="translate('workspace_tab.draggable')"
         draggable="true"
         class="tab"
@@ -285,12 +230,8 @@ function onContextMenu(e: MouseEvent, path: string) {
           'drop-after': dropTargetId === t.id && dropPosition === 'after',
         }"
         @click="onTabClick(t)"
-        @auxclick.middle="() => { hideTooltip(); emit('close', t.id) }"
+        @auxclick.middle="() => emit('close', t.id)"
         @contextmenu="onContextMenu($event, t.id)"
-        @mouseenter="onTooltipAnchorEnter(t, $event)"
-        @mouseleave="onTooltipAnchorLeave(t, $event)"
-        @focusin="onTooltipAnchorFocus(t, $event)"
-        @focusout="onTooltipAnchorBlur($event)"
         @keydown="onTabKeydown($event, t)"
         @dragstart="onDragStart($event, t)"
         @dragover="onDragOver($event, t.id)"
@@ -335,31 +276,6 @@ function onContextMenu(e: MouseEvent, path: string) {
     >
       <slot name="context-actions" />
     </div>
-    <Teleport to="body">
-      <div
-        v-if="tooltipPresentation"
-        :id="tooltipTabId ? tooltipId(tooltipTabId) : undefined"
-        class="tab-tooltip"
-        role="tooltip"
-        :style="tooltipStyle"
-      >
-        <span class="tab-tooltip-title">{{ tooltipPresentation.displayTitle }}</span>
-        <span
-          v-if="tooltipPresentation.filenameLabel"
-          class="tab-tooltip-filename"
-        ><span class="tab-tooltip-label">{{ translate('workspace_tab.tooltip_filename') }}</span>{{ tooltipPresentation.filenameLabel }}</span>
-        <span
-          v-if="tooltipPresentation.fullPath"
-          class="tab-tooltip-path"
-        ><span class="tab-tooltip-label">{{ translate('workspace_tab.tooltip_path') }}</span>{{ tooltipPresentation.fullPath }}</span>
-        <span
-          v-if="tooltipPresentation.statusText"
-          class="tab-tooltip-status"
-          :data-status-kind="tooltipPresentation.statusKind"
-        ><span class="tab-tooltip-label">{{ translate('workspace_tab.tooltip_status') }}</span>{{ tooltipPresentation.statusText }}</span>
-        <span class="tab-tooltip-hint">{{ translate('workspace_tab.close_hint') }}</span>
-      </div>
-    </Teleport>
     <Teleport to="body">
       <div
         v-if="menuVisible"

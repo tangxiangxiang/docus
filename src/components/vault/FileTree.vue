@@ -136,11 +136,6 @@ function filterByExactPath(node: TreeNode, exactPath: string): TreeNode | null {
     .filter((child): child is TreeNode => child !== null)
   return children.length > 0 ? { ...node, children } : null
 }
-// Post metadata is used by TreeRow for secondary file information.
-const postMetadataByPath = computed<Map<string, PostSummary>>(() =>
-  new Map(props.posts.map((post) => [post.path, post])),
-)
-
 // Only ambiguous display titles pay the cost of an always-visible path hint.
 // Count across the complete tree, not the filtered result, so a search/filter
 // cannot make an otherwise ambiguous title suddenly look unique.
@@ -811,7 +806,6 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
         :search-active="Boolean(effectiveQuery) && !exactPathFilterActive"
         :compact="compactFileTree"
         :duplicate-titles="duplicateTitles"
-        :metadata-by-path="postMetadataByPath"
         @select="onSelect"
         @toggle="onToggle"
         @rename="onRename"

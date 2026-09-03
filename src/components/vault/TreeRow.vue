@@ -1,13 +1,11 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, onBeforeUnmount } from 'vue'
-import type { TreeNode, PostSummary } from '../../lib/api'
+import type { TreeNode } from '../../lib/api'
 import {
   ICON_ARCHIVE, ICON_CHEVRON, ICON_DELETE, ICON_FILE_MD, ICON_FILE_PLUS,
   ICON_FILE_PDF, ICON_FOLDER, ICON_FOLDER_OPEN, ICON_FOLDER_PLUS, ICON_HISTORY, ICON_RENAME,
 } from './icons'
 import { useI18n } from '../../composables/useI18n'
-import { useDocumentHoverCard } from '../../composables/useDocumentHoverCard'
-import DocumentHoverCard from './DocumentHoverCard.vue'
 import {
   canModify,
   canMove,
@@ -25,14 +23,13 @@ const props = defineProps<{
   searchActive?: boolean
   compact?: boolean
   duplicateTitles?: Set<string>
-  metadataByPath?: Map<string, PostSummary>
   // Path → per-file match annotation from FileTree's search filter.
   // The whole map (not just this row's entry) is passed so the
   // recursive child rows can look up their own paths without
   // threading individual matchInfo props through the recursion.
   // Files kept only because an ancestor folder matched by name are
   // absent from the map, and the lookup correctly returns undefined
-  // for them — no tooltip on those rows.
+  // for them.
   matchedFields?: Map<string, MatchInfo>
 }>()
 
@@ -94,12 +91,6 @@ const revealPath = computed(() => !isFolder.value && (
 const visiblePath = computed(() => isDuplicate.value && !props.searchActive && !isActive.value
   ? (parentPath.value ? `${parentPath.value}/` : '/')
   : props.node.path)
-const metadata = computed(() => props.metadataByPath?.get(props.node.path))
-const hoverMtime = computed(() => metadata.value?.mtime ?? (props.node.kind === 'file' ? props.node.mtime : 0))
-const { hoverCardVisible, hoverCardStyle, showHoverCard: showDocumentHoverCard, hideHoverCard } = useDocumentHoverCard()
-function showHoverCard(event: MouseEvent) {
-  if (!isFolder.value) showDocumentHoverCard(event)
-}
 // Three independent write-permission flags. Only the three reserved root
 // entries are protected; descendants, including archive content, use ordinary
 // user-content CRUD rules. Diary's date identity is a presentation guard on
@@ -302,8 +293,6 @@ function menuAction(fn: () => void) {
     @drop="onDrop"
     @contextmenu="showMenu"
     @focus="emit('focus', node.path, node.kind)"
-    @mouseenter="showHoverCard"
-    @mouseleave="hideHoverCard"
   >
     <!-- .row-line is the *row's visible content* — chevron + icon +
          name (or the rename input). It is a sibling of .tree-children,
@@ -360,16 +349,6 @@ function menuAction(fn: () => void) {
       <span v-if="isDropTarget" class="drop-hint">{{ t('file_tree.move_here') }}</span>
     </div>
 
-    <DocumentHoverCard
-      v-if="!isFolder"
-      :visible="hoverCardVisible"
-      :position="hoverCardStyle"
-      :title="displayTitle"
-      :path="node.path"
-      :mtime="hoverMtime"
-      :tags="metadata?.tags"
-    />
-
     <Teleport to="body">
       <div
         v-if="menuVisible"
@@ -412,7 +391,6 @@ function menuAction(fn: () => void) {
         :search-active="searchActive"
         :compact="compact"
         :duplicate-titles="duplicateTitles"
-        :metadata-by-path="metadataByPath"
         @select="(p) => emit('select', p)"
         @toggle="(p) => emit('toggle', p)"
         @rename="(oldP, n, kind) => emit('rename', oldP, n, kind)"

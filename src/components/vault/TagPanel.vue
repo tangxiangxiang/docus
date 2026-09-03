@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import type { PostSummary } from '../../lib/api'
 import {
   buildTagIndex,
@@ -8,8 +8,6 @@ import {
   type TagRecord,
 } from '../../lib/tags'
 import { useI18n } from '../../composables/useI18n'
-import { useDocumentHoverCard } from '../../composables/useDocumentHoverCard'
-import DocumentHoverCard from './DocumentHoverCard.vue'
 import { ICON_FILE_MD, ICON_SEARCH } from './icons'
 
 const props = defineProps<{ posts: PostSummary[]; selectedTag: string | null; path: string | null }>()
@@ -89,17 +87,6 @@ const filteredPosts = computed(() => {
   return props.posts.filter((post) => paths.has(post.path))
 })
 
-const hoveredPost = ref<PostSummary | null>(null)
-const { hoverCardVisible, hoverCardStyle, showHoverCard, hideHoverCard } = useDocumentHoverCard()
-function showPostHoverCard(post: PostSummary, event: MouseEvent) {
-  hoveredPost.value = post
-  showHoverCard(event)
-}
-function hidePostHoverCard() {
-  hideHoverCard()
-  hoveredPost.value = null
-}
-
 function onFilterKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape' && filter.value) {
     event.stopPropagation()
@@ -138,7 +125,7 @@ function onFilterKeydown(event: KeyboardEvent) {
       </header>
       <ul v-if="filteredPosts.length" class="results-list">
         <li v-for="post in filteredPosts" :key="post.path">
-          <button class="result-entry document-row" :class="{ active: post.path === path }" @click="emit('open', post.path)" @mouseenter="showPostHoverCard(post, $event)" @mouseleave="hidePostHoverCard">
+          <button class="result-entry document-row" :class="{ active: post.path === path }" @click="emit('open', post.path)">
             <span class="result-chevron-spacer" aria-hidden="true" />
             <span class="result-icon" aria-hidden="true" v-html="ICON_FILE_MD" />
             <span class="result-label">
@@ -148,15 +135,6 @@ function onFilterKeydown(event: KeyboardEvent) {
         </li>
       </ul>
       <p v-else class="empty">{{ t('tags.no_notes') }}</p>
-      <DocumentHoverCard
-        v-if="hoveredPost"
-        :visible="hoverCardVisible"
-        :position="hoverCardStyle"
-        :title="hoveredPost.title"
-        :path="hoveredPost.path"
-        :mtime="hoveredPost.mtime"
-        :tags="hoveredPost.tags"
-      />
     </div>
   </aside>
 </template>

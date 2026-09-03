@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mount, flushPromises } from '@vue/test-utils'
+import { mount } from '@vue/test-utils'
 import EditorTabs from '../EditorTabs.vue'
 import type { WorkspaceTab } from '../tabs'
 import { useI18n } from '../../../composables/useI18n'
@@ -211,7 +211,6 @@ describe('EditorTabs ARIA', () => {
   beforeEach(() => {
     useI18n().setLocale('zh')
     document.querySelectorAll('.tab-context-menu').forEach((el) => el.remove())
-    document.querySelectorAll('.tab-tooltip').forEach((el) => el.remove())
   })
 
   it('uses user-readable aria-label for each status', async () => {
@@ -242,7 +241,7 @@ describe('EditorTabs ARIA', () => {
     w.unmount()
   })
 
-  it('aria-describedby is only present while the tooltip is visible', async () => {
+  it('does not render a hover or focus information popup', async () => {
     const w = mount(EditorTabs, {
       props: { tabs: TABS, activePath: 'a.md' },
       attachTo: document.body,
@@ -250,10 +249,8 @@ describe('EditorTabs ARIA', () => {
     const tab = w.findAll('.tab').find((t) => t.find('.tab-title').text() === 'b')!
     expect(tab.attributes('aria-describedby')).toBeUndefined()
     await tab.trigger('mouseenter')
-    await flushPromises()
-    expect(tab.attributes('aria-describedby')).toBe('tab-tooltip-b_md')
-    await tab.trigger('mouseleave')
-    await flushPromises()
+    await tab.trigger('focusin')
+    expect(document.querySelector('.tab-tooltip')).toBeNull()
     expect(tab.attributes('aria-describedby')).toBeUndefined()
     w.unmount()
   })
@@ -276,89 +273,12 @@ describe('EditorTabs ARIA', () => {
     expect(rendered[0]!.attributes('aria-label')).not.toContain('已保存')
   })
 
-  it('diff tabs do not display a save status in the tooltip', async () => {
-    useI18n().setLocale('zh')
-    const tabs = [
-      makeTab('diff:a', {
-        kind: 'diff',
-        label: 'Redis (Diff)',
-        title: 'Redis (Diff)',
-      }),
-    ]
-    const w = mount(EditorTabs, {
-      props: { tabs, activePath: tabs[0]!.id },
-      attachTo: document.body,
-    })
-    const tab = w.find('.tab')
-    await tab.trigger('mouseenter')
-    await flushPromises()
-    const tooltip = document.querySelector('.tab-tooltip')!
-    expect(tooltip.querySelector('.tab-tooltip-title')!.textContent).toBe('Redis (Diff)')
-    expect(tooltip.querySelector('.tab-tooltip-status')).toBeNull()
-    w.unmount()
-  })
 })
 
 describe('EditorTabs — round-2 regression tests', () => {
   beforeEach(() => {
     useI18n().setLocale('zh')
     document.querySelectorAll('.tab-context-menu').forEach((el) => el.remove())
-    document.querySelectorAll('.tab-tooltip').forEach((el) => el.remove())
-  })
-
-  // --- P1: path appears only once even when the upstream mapping
-  // produces a title that happens to include the path. The EditorTabs
-  // contract is that `title` is the pure document title and `id` is
-  // the full path — the presentation module derives displayTitle and
-  // fullPath independently and the tooltip suppresses the path line
-  // when it would just duplicate the title. ----------------
-  it('renders a real VaultView-shaped document WorkspaceTab without repeating the path', async () => {
-    useI18n().setLocale('zh')
-    // Mirror the VaultView mapping exactly: id = full path, title =
-    // pure title (or path fallback), label = basename.
-    const tab = makeTab('inbox/test-document-1', {
-      label: 'test-document-1',
-      title: 'inbox/test-document-1', // title fallback to path
-    })
-    const w = mount(EditorTabs, {
-      props: { tabs: [tab], activePath: tab.id },
-      attachTo: document.body,
-    })
-    await w.find('.tab').trigger('mouseenter')
-    await flushPromises()
-    const tooltip = document.querySelector('.tab-tooltip')!
-    const title = tooltip.querySelector('.tab-tooltip-title')!.textContent!
-    const pathEl = tooltip.querySelector('.tab-tooltip-path')
-    // The tab strip itself must show only the basename.
-    expect(w.find('.tab-title').text()).toBe('test-document-1')
-    // The tooltip title is the basename; the full path appears at
-    // most once, never as the title.
-    expect(title).toBe('test-document-1')
-    if (pathEl) {
-      // The full path is shown at most once and never as the title.
-      const occurrences = (tooltip.textContent ?? '').split('inbox/test-document-1').length - 1
-      expect(occurrences).toBe(1)
-    }
-    w.unmount()
-  })
-
-  it('renders a Chinese title alongside the path without duplicating either', async () => {
-    useI18n().setLocale('zh')
-    const tab = makeTab('inbox/test-document-1', {
-      label: '测试列表',
-      title: '测试列表',
-    })
-    const w = mount(EditorTabs, {
-      props: { tabs: [tab], activePath: tab.id },
-      attachTo: document.body,
-    })
-    expect(w.find('.tab-title').text()).toBe('测试列表')
-    await w.find('.tab').trigger('mouseenter')
-    await flushPromises()
-    const tooltip = document.querySelector('.tab-tooltip')!
-    expect(tooltip.querySelector('.tab-tooltip-title')!.textContent).toBe('测试列表')
-    expect(tooltip.querySelector('.tab-tooltip-path')!.textContent).toContain('inbox/test-document-1')
-    w.unmount()
   })
 
   // --- P1: dirty + error/offline/external indicators both visible.
@@ -381,36 +301,8 @@ describe('EditorTabs — round-2 regression tests', () => {
     w.unmount()
   })
 
-  // --- P2: tooltip id cleanup when the parent removes the tab.
-  it('does not auto-revive a tooltip when the same id reappears later', async () => {
-    const initial = TABS
-    const w = mount(EditorTabs, {
-      props: { tabs: initial, activePath: 'a.md' },
-      attachTo: document.body,
-    })
-    const rowB = w.findAll('.tab').find((t) => t.find('.tab-title').text() === 'b')!
-    await rowB.trigger('mouseenter')
-    await flushPromises()
-    expect(document.querySelector('.tab-tooltip')!.getAttribute('id')).toBe('tab-tooltip-b_md')
-    // Parent removes b.md; activePath stays a.md so no other lifecycle
-    // path closes the tooltip.
-    await w.setProps({ tabs: TABS.filter((t) => t.id !== 'b.md'), activePath: 'a.md' })
-    await flushPromises()
-    expect(document.querySelector('.tab-tooltip')).toBeNull()
-    // Re-add b.md without any hover/focus — tooltip must stay closed.
-    await w.setProps({ tabs: [...TABS], activePath: 'a.md' })
-    await flushPromises()
-    expect(document.querySelector('.tab-tooltip')).toBeNull()
-    // Hovering b.md again opens it normally.
-    const rowBAfter = w.findAll('.tab').find((t) => t.find('.tab-title').text() === 'b')!
-    await rowBAfter.trigger('mouseenter')
-    await flushPromises()
-    expect(document.querySelector('.tab-tooltip')).not.toBeNull()
-    w.unmount()
-  })
-
-  // --- P2: close button has no native title attribute (so we don't
-  // get two tooltips on hover). The aria-label covers accessibility.
+  // Close buttons use aria-label for accessibility and intentionally have
+  // no native title popup.
   it('does not set a native title attribute on the close button', () => {
     const w = mount(EditorTabs, {
       props: { tabs: TABS, activePath: 'a.md' },
@@ -433,60 +325,6 @@ describe('EditorTabs — round-2 regression tests', () => {
     w.unmount()
   })
 
-  // --- P2: tooltip viewport clamp uses actual rendered width.
-  it('keeps the tooltip fully inside the viewport for an oversize path', async () => {
-    const longPath = 'inbox/very-long-path-that-definitely-exceeds-the-viewport-width/document.md'
-    const w = mount(EditorTabs, {
-      props: {
-        tabs: [makeTab(longPath, { title: '' })],
-        activePath: longPath,
-      },
-      attachTo: document.body,
-    })
-    const row = w.find('.tab')
-    await row.trigger('mouseenter')
-    // Allow the post-render clamp (nextTick + getBoundingClientRect) to run.
-    await flushPromises()
-    await flushPromises()
-    const tooltip = document.querySelector<HTMLElement>('.tab-tooltip')!
-    const rect = tooltip.getBoundingClientRect()
-    expect(rect.left).toBeGreaterThanOrEqual(0)
-    expect(rect.right).toBeLessThanOrEqual(window.innerWidth + 0.5)
-    w.unmount()
-  })
-
-  it('keeps the tooltip inside the viewport when anchored at the right edge', async () => {
-    const shortPath = 'a.md'
-    const w = mount(EditorTabs, {
-      props: {
-        tabs: [makeTab(shortPath, { title: '' })],
-        activePath: shortPath,
-      },
-      attachTo: document.body,
-    })
-    // Force the anchor near the right edge of the viewport.
-    const row = w.find<HTMLElement>('.tab').element
-    row.getBoundingClientRect = () => ({
-      left: window.innerWidth - 20,
-      right: window.innerWidth - 1,
-      top: 0,
-      bottom: 36,
-      width: 19,
-      height: 36,
-      x: window.innerWidth - 20,
-      y: 0,
-      toJSON: () => '',
-    })
-    await row.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
-    await flushPromises()
-    await flushPromises()
-    const tooltip = document.querySelector<HTMLElement>('.tab-tooltip')!
-    const rect = tooltip.getBoundingClientRect()
-    expect(rect.right).toBeLessThanOrEqual(window.innerWidth + 0.5)
-    expect(rect.left).toBeGreaterThanOrEqual(0)
-    w.unmount()
-  })
-
   // --- diff tabs keep the original title semantics; the change to
   // VaultView must not strip the document title from their aria-label.
   it('diff tabs continue to surface their document title', () => {
@@ -506,104 +344,12 @@ describe('EditorTabs — round-4 regression (title is primary; basename fallback
   beforeEach(() => {
     useI18n().setLocale('zh')
     document.querySelectorAll('.tab-context-menu').forEach((el) => el.remove())
-    document.querySelectorAll('.tab-tooltip').forEach((el) => el.remove())
   })
 
-  // 1. tab.title='测试文档', path='inbox/test-document-1'
-  //    tab strip = 测试文档   (metadata title wins)
-  //    tooltip 文件名 = test-document-1   (the basename is the secondary line)
-  //    tooltip 路径 = inbox/test-document-1
-  it('scenario 1 — Chinese title takes the strip; filename goes to the tooltip', async () => {
-    const tab = makeTab('inbox/test-document-1', {
-      label: 'test-document-1',
-      title: '测试文档',
-    })
-    const w = mount(EditorTabs, {
-      props: { tabs: [tab], activePath: tab.id },
-      attachTo: document.body,
-    })
-    // Strip shows the metadata title.
-    expect(w.find('.tab-title').text()).toBe('测试文档')
-    await w.find('.tab').trigger('mouseenter')
-    await flushPromises()
-    const tooltip = document.querySelector('.tab-tooltip')!
-    expect(tooltip.querySelector('.tab-tooltip-title')!.textContent).toBe('测试文档')
-    expect(tooltip.querySelector('.tab-tooltip-filename')!.textContent).toContain('test-document-1')
-    expect(tooltip.querySelector('.tab-tooltip-filename')!.textContent).toContain('文件名：')
-    expect(tooltip.querySelector('.tab-tooltip-path')!.textContent).toContain('inbox/test-document-1')
-    expect(tooltip.querySelector('.tab-tooltip-path')!.textContent).toContain('路径：')
-    // aria-label includes the title and the filename separately.
-    expect(w.find('.tab').attributes('aria-label')).toContain('测试文档')
-    expect(w.find('.tab').attributes('aria-label')).toContain('test-document-1')
-    w.unmount()
-  })
-
-  // 2. tab.title equals the full path → useless as a display title.
-  //    Strip falls back to the basename; the basename is the title,
-  //    so the tooltip filename line is suppressed.
-  it('scenario 2 — title equals the path; strip falls back to basename', async () => {
-    const tab = makeTab('inbox/test-document-1', {
-      label: 'test-document-1',
-      title: 'inbox/test-document-1',
-    })
-    const w = mount(EditorTabs, {
-      props: { tabs: [tab], activePath: tab.id },
-      attachTo: document.body,
-    })
-    expect(w.find('.tab-title').text()).toBe('test-document-1')
-    await w.find('.tab').trigger('mouseenter')
-    await flushPromises()
-    const tooltip = document.querySelector('.tab-tooltip')!
-    expect(tooltip.querySelector('.tab-tooltip-filename')).toBeNull()
-    expect(tooltip.querySelector('.tab-tooltip-path')).not.toBeNull()
-    // The full path appears at most once in the tooltip (in the
-    // "路径：" line). It MUST NOT be the title.
-    const occurrences = (tooltip.textContent ?? '').split('inbox/test-document-1').length - 1
-    expect(occurrences).toBe(1)
-    w.unmount()
-  })
-
-  // 3. tab.title equals the basename → useless as a display title.
-  //    Strip falls back to the basename; tooltip filename line
-  //    suppressed (it would duplicate).
-  it('scenario 3 — title equals the basename; tooltip filename line suppressed', async () => {
-    const tab = makeTab('inbox/test-document-1', {
-      label: 'test-document-1',
-      title: 'test-document-1',
-    })
-    const w = mount(EditorTabs, {
-      props: { tabs: [tab], activePath: tab.id },
-      attachTo: document.body,
-    })
-    expect(w.find('.tab-title').text()).toBe('test-document-1')
-    await w.find('.tab').trigger('mouseenter')
-    await flushPromises()
-    expect(document.querySelector('.tab-tooltip-filename')).toBeNull()
-    w.unmount()
-  })
-
-  // 4. Empty title — strip still shows the basename; tooltip filename
-  //    line suppressed because the strip already carries it.
-  it('scenario 4 — empty title; strip still shows the basename', async () => {
-    const tab = makeTab('inbox/test-document-1', {
-      label: 'test-document-1',
-      title: '',
-    })
-    const w = mount(EditorTabs, {
-      props: { tabs: [tab], activePath: tab.id },
-      attachTo: document.body,
-    })
-    expect(w.find('.tab-title').text()).toBe('test-document-1')
-    await w.find('.tab').trigger('mouseenter')
-    await flushPromises()
-    expect(document.querySelector('.tab-tooltip-filename')).toBeNull()
-    w.unmount()
-  })
-
-  // 5. Each tab carries its own metadata title verbatim. Strip
-  //    languages come from the metadata, with fallback to basename
-  //    only when the title is missing.
-  it('scenario 5 — strip honors each document’s own title verbatim', async () => {
+  // Each tab carries its own metadata title verbatim. Strip languages
+  // come from the metadata, with fallback to basename only when the
+  // title is missing.
+  it('strip honors each document’s own title verbatim', () => {
     useI18n().setLocale('zh')
     const tabs = [
       makeTab('inbox/a.md', { label: 'a', title: '中文标题' }),
@@ -618,41 +364,6 @@ describe('EditorTabs — round-4 regression (title is primary; basename fallback
     // Strip: tab a and b use their metadata titles; c falls back to
     // the basename.
     expect(stripTitles).toEqual(['中文标题', 'English Title', 'c'])
-    // Hover each tab in turn; the tooltip filename line is only
-    // shown when the strip is NOT already the basename.
-    const tabA = w.findAll('.tab')[0]!
-    await tabA.trigger('mouseenter')
-    await flushPromises()
-    expect(document.querySelector('.tab-tooltip-filename')!.textContent).toContain('a')
-    const tabB = w.findAll('.tab')[1]!
-    await tabB.trigger('mouseenter')
-    await flushPromises()
-    expect(document.querySelector('.tab-tooltip-filename')!.textContent).toContain('b')
-    const tabC = w.findAll('.tab')[2]!
-    await tabC.trigger('mouseenter')
-    await flushPromises()
-    expect(document.querySelector('.tab-tooltip-filename')).toBeNull()
-    w.unmount()
-  })
-
-  // 6. History / Diff keep their existing label-based semantics.
-  it('scenario 6 — diff still uses label and never exposes filename/path/status', async () => {
-    useI18n().setLocale('zh')
-    const tabs = [
-      makeTab('diff:redis', { kind: 'diff', label: 'Redis (差异)', title: 'Redis' }),
-    ]
-    const w = mount(EditorTabs, {
-      props: { tabs, activePath: tabs[0]!.id },
-      attachTo: document.body,
-    })
-    expect(w.findAll('.tab-title').map((el) => el.text())).toEqual(['Redis (差异)'])
-    await w.findAll('.tab')[0]!.trigger('mouseenter')
-    await flushPromises()
-    const tooltip = document.querySelector('.tab-tooltip')!
-    expect(tooltip.querySelector('.tab-tooltip-title')!.textContent).toBe('Redis (差异)')
-    expect(tooltip.querySelector('.tab-tooltip-filename')).toBeNull()
-    expect(tooltip.querySelector('.tab-tooltip-path')).toBeNull()
-    expect(tooltip.querySelector('.tab-tooltip-status')).toBeNull()
     w.unmount()
   })
 

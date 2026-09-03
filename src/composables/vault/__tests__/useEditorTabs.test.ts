@@ -2611,7 +2611,6 @@ describe('useEditorTabs — round-5 real-DOM async-title reactivity', () => {
   afterEach(() => {
     resetTabPersistenceForTesting()
     document.querySelectorAll('.tab-context-menu').forEach((el) => el.remove())
-    document.querySelectorAll('.tab-tooltip').forEach((el) => el.remove())
   })
 
   it('last opened tab flips its strip title the moment getPost resolves', async () => {

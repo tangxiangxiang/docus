@@ -3775,31 +3775,6 @@ main.container.auth-page-shell {
   font-size: 0.66rem;
   line-height: 1.1;
 }
-.document-hover-card {
-  position: fixed;
-  z-index: 10000;
-  width: min(260px, calc(100vw - 24px));
-  display: grid;
-  gap: 5px;
-  padding: 9px 11px;
-  color: var(--text-h, #ddd);
-  background: var(--bg-soft, #252526);
-  border: 1px solid var(--border, #454545);
-  border-radius: 5px;
-  box-shadow: 0 6px 18px rgba(0,0,0,.35);
-  pointer-events: none;
-  font-size: .76rem;
-  line-height: 1.35;
-}
-.document-hover-card strong, .document-hover-card code, .document-hover-card span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.document-hover-card code { color: var(--text-muted, #aaa); }
-.document-hover-tags { color: var(--accent, #75beff); }
-.document-hover-card-enter-active, .document-hover-card-leave-active { transition: opacity 120ms ease; }
-.document-hover-card-enter-from, .document-hover-card-leave-to { opacity: 0; }
 .palette-section-title {
   margin: 0;
   padding: 8px 12px 4px;
@@ -3918,45 +3893,6 @@ main.container.auth-page-shell {
   margin: 4px 0;
 }
 
-/* Custom editor-tab tooltip — replaces the browser-native title.
-   Lives above the tab strip and the Monaco editor surface
-   (z-index 10000) so it never gets clipped. pointer-events: none
-   keeps the tooltip from intercepting hover on the tab it covers. */
-.tab-tooltip {
-  position: fixed;
-  z-index: 10000;
-  display: grid;
-  gap: 4px;
-  padding: 8px 12px;
-  /* box-sizing: border-box so the inline maxWidth cap accounts for
-     padding (24px) + border (2px). Without it the right-edge clamp
-     can leave up to 26px of overflow because the inner width alone
-     is what the cap sees. */
-  box-sizing: border-box;
-  background: var(--bg-soft, #252526);
-  color: var(--text-h, #ddd);
-  border: 1px solid var(--border, #454545);
-  border-radius: 5px;
-  box-shadow: 0 6px 18px rgba(0,0,0,.45);
-  font-size: .76rem;
-  line-height: 1.35;
-  pointer-events: none;
-  /* allow the path line to wrap onto multiple lines if it's very
-     long, so we never overflow the viewport on the right */
-  overflow-wrap: anywhere;
-  white-space: normal;
-}
-.tab-tooltip-title { font-weight: 600; color: var(--text-h, #eee); }
-.tab-tooltip-label { color: var(--text-muted, #888); margin-right: 2px; }
-.tab-tooltip-document-title,
-.tab-tooltip-path { color: var(--text-muted, #aaa); }
-.tab-tooltip-status { color: var(--text-h, #ddd); }
-.tab-tooltip-status[data-status-kind="error"]   { color: var(--vs-error, #e06060); }
-.tab-tooltip-status[data-status-kind="offline"] { color: var(--vs-text-3, #888); }
-.tab-tooltip-status[data-status-kind="external"]{ color: var(--vs-warning, #f0a040); }
-.tab-tooltip-status[data-status-kind="saving"]  { color: var(--vs-text-1, #ddd); }
-.tab-tooltip-status[data-status-kind="dirty"]   { color: var(--vs-accent, #75beff); }
-.tab-tooltip-hint { color: var(--text-muted, #888); font-size: 0.7rem; }
 .vault .file-tree .empty {
   padding: 12px; color: var(--vs-text-3); font-size: 0.85rem;
 }

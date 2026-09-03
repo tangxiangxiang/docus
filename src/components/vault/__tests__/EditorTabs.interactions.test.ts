@@ -15,7 +15,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  document.querySelectorAll('.tab-context-menu, .tab-tooltip').forEach((element) => element.remove())
+  document.querySelectorAll('.tab-context-menu').forEach((element) => element.remove())
   useI18n().setLocale('zh')
 })
 
@@ -149,20 +149,18 @@ describe('EditorTabs interaction wiring', () => {
     expect(document.activeElement).toBe(source.element)
   })
 
-  it('coordinates drag start by closing tooltip and context menu without selecting', async () => {
+  it('coordinates drag start by closing the context menu without selecting', async () => {
     const wrapper = mount(EditorTabs, {
       props: { tabs: [makeTab('a'), makeTab('b')], activePath: 'a' },
       attachTo: document.body,
     })
     const source = wrapper.get('[data-tab-id="b"]')
-    await source.trigger('mouseenter')
     await openPointerMenu(wrapper, 'b')
     expect(document.querySelector('.tab-context-menu')).not.toBeNull()
 
     const dataTransfer = new TestDataTransfer() as unknown as DataTransfer
     await source.trigger('dragstart', { dataTransfer })
 
-    expect(document.querySelector('.tab-tooltip')).toBeNull()
     expect(document.querySelector('.tab-context-menu')).toBeNull()
     expect(source.classes()).toContain('dragging')
     expect(wrapper.emitted('select')).toBeUndefined()

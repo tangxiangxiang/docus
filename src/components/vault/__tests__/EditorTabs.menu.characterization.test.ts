@@ -61,7 +61,7 @@ async function openWithPointer(
 describe('EditorTabs menu behavior characterization', () => {
   beforeEach(() => {
     useI18n().setLocale('zh')
-    document.querySelectorAll('.tab-context-menu, .tab-tooltip')
+    document.querySelectorAll('.tab-context-menu')
       .forEach((element) => element.remove())
   })
 
