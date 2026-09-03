@@ -15,4 +15,5 @@ docker compose up -d --build
 curl --fail http://127.0.0.1:3000/api/health
 ```
 
-Docus has no built-in authentication or TLS. Review the security and backup guides before exposing it beyond the local machine.
+Docus provides single-owner authentication but does not terminate TLS. Review
+the security and backup guides before exposing it beyond the local machine.

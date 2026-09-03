@@ -83,6 +83,14 @@ Compose 默认只绑定 `127.0.0.1:3000`，将 `./src/content` 挂载为笔记�
 
 Docus 提供单 owner 身份认证，但不负责 TLS 终止。直接 HTTP 访问应保持在回环地址；需要远程访问时，请在 Docus 前配置 HTTPS 反向代理，并设置明确的、面向浏览器的 `DOCUS_PUBLIC_ORIGIN`。备份必须同时包含笔记库（包括隐藏的 `.git`）和 `data/`。
 
+生产实例必须将实际的浏览器访问地址写入仓库根目录、与 `docker-compose.yml` 同级的 `.env`；下面仅为占位示例，请替换为真实地址：
+
+```dotenv
+DOCUS_PUBLIC_ORIGIN=https://your-docus.example.com
+```
+
+该值必须与用户实际打开的浏览器地址完全一致；修改后执行 `docker compose up -d --force-recreate docus` 使容器重新读取配置。详见[Docker 部署指南](docs/deployment/docker.md)。
+
 - [部署概览](docs/deployment/overview.md)
 - [Docker 指南](docs/deployment/docker.md)
 - [运行时配置](docs/deployment/configuration.md)

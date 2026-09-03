@@ -20,6 +20,11 @@ docker compose ps
 
 Open `http://127.0.0.1:3000`. The host binding defaults to loopback even though the process inside the container must listen on `0.0.0.0`; the container listener is not the browser-facing authentication origin.
 
+The Docker build context excludes `src/content/`, `backups/`, and `data/`.
+Those directories are runtime data and must remain outside the image build; the
+Vault is supplied through the Compose bind mount and application data through
+the persistent `docus-data` volume.
+
 On the first visit, Docus opens `/setup`. Provide an explicit strong
 `DOCUS_SETUP_TOKEN` through an untracked `.env`/secret mechanism, or read the
 one-time fallback token from `docker compose logs docus`. Explicit values must
@@ -78,6 +83,24 @@ the same container port. HTTPS selects the `__Host-docus_session` cookie
 (`Secure`, `HttpOnly`, `SameSite=Lax`, `Path=/`). Docus does not infer this
 profile from Docker's `0.0.0.0` listener or arbitrary forwarded headers; the
 proxy should preserve the browser's `Origin` header.
+
+### Production Browser Origin
+
+For the production instance, put the actual browser-facing origin in the
+`.env` file beside `docker-compose.yml` (replace the placeholder below):
+
+```dotenv
+DOCUS_PUBLIC_ORIGIN=https://your-docus.example.com
+```
+
+Do not leave the loopback default when accessing this deployment through its
+public URL. The value controls the authentication cookie profile and
+same-origin mutation checks. If the public URL changes, update `.env` to match
+the URL users open, then recreate the service:
+
+```bash
+docker compose up -d --force-recreate docus
+```
 
 ## Upgrade
 

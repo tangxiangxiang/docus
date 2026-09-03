@@ -6,7 +6,9 @@ dist
 .env
 .env.*
 !.env.example
-data
+data/
+src/content/
+backups/
 *.log
 .DS_Store
 .vscode

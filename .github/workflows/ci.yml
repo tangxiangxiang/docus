@@ -121,6 +121,14 @@ jobs:
           explicit="$(DOCS_PORT=43123 DOCUS_PUBLIC_ORIGIN=https://docus.example.com docker compose config)"
           grep -F 'DOCUS_PUBLIC_ORIGIN: https://docus.example.com' <<<"$explicit"
 
+      - name: Verify Docker build context exclusions
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fx 'src/content/' .dockerignore
+          grep -Fx 'backups/' .dockerignore
+          grep -Fx 'data/' .dockerignore
+
       - name: Build production image
         run: docker build . -t docus-ci-smoke
 
