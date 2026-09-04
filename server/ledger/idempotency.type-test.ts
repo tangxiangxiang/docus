@@ -1,5 +1,5 @@
 import type { Database as DatabaseT } from 'better-sqlite3'
-import type { LedgerAccountCreateRequest } from '../../shared/ledgerProtocol.js'
+import type { LedgerAccountCreateRequest, LedgerAccountDto } from '../../shared/ledgerProtocol.js'
 import {
   executeIdempotentLedgerCreate,
   LEDGER_IDEMPOTENCY_OPERATION_SCOPES,
@@ -9,6 +9,7 @@ import type { LedgerRepository } from './repository.js'
 declare const db: DatabaseT
 declare const repository: LedgerRepository
 declare const request: LedgerAccountCreateRequest
+declare const accountResponse: LedgerAccountDto
 
 executeIdempotentLedgerCreate(db, repository, {
   operationScope: LEDGER_IDEMPOTENCY_OPERATION_SCOPES.accounts,
@@ -17,7 +18,7 @@ executeIdempotentLedgerCreate(db, repository, {
   mutation: () => ({
     resultStatus: 'committed',
     responseStatus: 201,
-    responseBody: { committed: true },
+    responseBody: accountResponse,
   }),
 })
 
@@ -29,7 +30,7 @@ executeIdempotentLedgerCreate(db, repository, {
   mutation: async () => ({
     resultStatus: 'committed',
     responseStatus: 201,
-    responseBody: { committed: true },
+    responseBody: accountResponse,
   }),
 })
 
@@ -41,4 +42,28 @@ executeIdempotentLedgerCreate(db, repository, {
   request,
   // @ts-expect-error PromiseLike-returning Ledger mutation callbacks are forbidden.
   mutation: () => thenable,
+})
+
+executeIdempotentLedgerCreate(db, repository, {
+  operationScope: LEDGER_IDEMPOTENCY_OPERATION_SCOPES.accounts,
+  idempotencyKey: 'arbitrary-response-type-test-key',
+  request,
+  mutation: () => ({
+    resultStatus: 'committed',
+    responseStatus: 201,
+    // @ts-expect-error Arbitrary JSON objects are not Ledger replay DTOs.
+    responseBody: { committed: true },
+  }),
+})
+
+executeIdempotentLedgerCreate(db, repository, {
+  operationScope: LEDGER_IDEMPOTENCY_OPERATION_SCOPES.accounts,
+  idempotencyKey: 'sensitive-response-type-test-key',
+  request,
+  mutation: () => ({
+    resultStatus: 'committed',
+    responseStatus: 201,
+    // @ts-expect-error Sensitive/non-Ledger response objects are not replay DTOs.
+    responseBody: { authorization: 'secret' },
+  }),
 })

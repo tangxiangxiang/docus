@@ -102,6 +102,22 @@ export type LedgerTransactionDto =
   | LedgerTransferTransactionDto
   | LedgerAdjustmentTransactionDto
 
+export interface LedgerAdjustmentAppliedDto {
+  readonly adjustment: LedgerAdjustmentTransactionDto
+  readonly account: LedgerAccountDto
+  readonly noOp: false
+}
+
+export interface LedgerAdjustmentNoOpDto {
+  readonly adjustment: null
+  readonly account: LedgerAccountDto
+  readonly noOp: true
+}
+
+export type LedgerAdjustmentMutationDto =
+  | LedgerAdjustmentAppliedDto
+  | LedgerAdjustmentNoOpDto
+
 export interface LedgerIncomeCreateRequest {
   readonly type: 'income'
   readonly amountMinor: number

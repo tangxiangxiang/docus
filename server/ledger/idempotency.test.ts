@@ -3,6 +3,14 @@ import type {
   LedgerAccount,
   LedgerCategory,
 } from './domain.js'
+import type {
+  LedgerAccountDto,
+  LedgerAdjustmentAppliedDto,
+  LedgerAdjustmentNoOpDto,
+  LedgerCategoryDto,
+  LedgerSettingsDto,
+  LedgerTransactionDto,
+} from '../../shared/ledgerProtocol.js'
 import { LedgerError } from './errors.js'
 import {
   executeIdempotentLedgerCreate,
@@ -11,7 +19,7 @@ import {
   LEDGER_IDEMPOTENCY_OPERATION_SCOPES,
   serializeLedgerReplayResponse,
   stableSerializeLedgerJson,
-  type LedgerJsonValue,
+  type LedgerReplayResponseBody,
 } from './idempotency.js'
 import {
   parseAccountCreateRequest,
@@ -90,7 +98,10 @@ function accountRequest(name = 'Original account') {
   })
 }
 
-function accountResponse(value: LedgerAccount, currentBalanceMinor = value.openingBalanceMinor) {
+function accountResponse(
+  value: LedgerAccount,
+  currentBalanceMinor = value.openingBalanceMinor,
+): LedgerAccountDto {
   return {
     id: value.id,
     name: value.name,
@@ -106,6 +117,19 @@ function accountResponse(value: LedgerAccount, currentBalanceMinor = value.openi
     createdAt: value.createdAt,
     updatedAt: value.updatedAt,
     currentBalanceMinor,
+  }
+}
+
+function categoryResponse(value: LedgerCategory): LedgerCategoryDto {
+  return {
+    id: value.id,
+    kind: value.kind,
+    name: value.name,
+    normalizedName: value.normalizedName,
+    archivedAt: value.archivedAt,
+    version: value.version,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
   }
 }
 
@@ -338,7 +362,7 @@ describe('Ledger persistent idempotent create executor', () => {
       occurredAt: 1_700_000_000_000,
     })
     const scope = ledgerAccountAdjustmentOperationScope(targetAccount.id)
-    const originalBody = {
+    const originalBody: LedgerAdjustmentNoOpDto = {
       adjustment: null,
       account: accountResponse(targetAccount, 1_000),
       noOp: true,
@@ -435,7 +459,7 @@ describe('Ledger persistent idempotent create executor', () => {
       },
     })
     const categoryRequest = { kind: 'expense' as const, name: 'Scope category' }
-    const categoryBody = { id: categoryValue.id, kind: categoryValue.kind, name: categoryValue.name }
+    const categoryBody = categoryResponse(categoryValue)
     executeIdempotentLedgerCreate(database.db, repository, {
       operationScope: LEDGER_IDEMPOTENCY_OPERATION_SCOPES.categories,
       idempotencyKey: key,
@@ -523,7 +547,7 @@ describe('Ledger persistent idempotent create executor', () => {
         return {
           resultStatus: 'committed' as const,
           responseStatus: 201 as const,
-          responseBody: new Date(0) as unknown as LedgerJsonValue,
+          responseBody: new Date(0) as unknown as LedgerAccountDto,
           resultType: 'account',
           resultId: invalidResponseAccount.id,
         }
@@ -567,6 +591,78 @@ describe('Ledger persistent idempotent create executor', () => {
       LEDGER_IDEMPOTENCY_OPERATION_SCOPES.accounts,
       'seam-failure-key',
     )).not.toBeNull()
+  })
+
+  it('rejects a sensitive top-level response field and rolls back both writes', () => {
+    const database = freshDatabase()
+    const repository = createLedgerRepository(database.db)
+    const value = account('top-level-privacy-rollback-account')
+    const unsafeResponse = {
+      ...accountResponse(value),
+      authorization: 'Bearer secret',
+    } as unknown as LedgerAccountDto
+
+    expect(() => executeIdempotentLedgerCreate(database.db, repository, {
+      operationScope: LEDGER_IDEMPOTENCY_OPERATION_SCOPES.accounts,
+      idempotencyKey: 'top-level-privacy-rollback-key',
+      request: accountRequest('Top-level privacy account'),
+      mutation: () => {
+        repository.insertAccount(value)
+        return {
+          resultStatus: 'committed' as const,
+          responseStatus: 201 as const,
+          responseBody: unsafeResponse,
+          resultType: 'account',
+          resultId: value.id,
+        }
+      },
+    })).toThrow(TypeError)
+
+    expect(repository.getAccount(value.id)).toBeNull()
+    expect(repository.getIdempotencyRecord(
+      LEDGER_IDEMPOTENCY_OPERATION_SCOPES.accounts,
+      'top-level-privacy-rollback-key',
+    )).toBeNull()
+  })
+
+  it('rejects a sensitive nested response field and rolls back both writes', () => {
+    const database = freshDatabase()
+    const repository = createLedgerRepository(database.db)
+    const value = account('nested-privacy-rollback-account')
+    const unsafeResponse = {
+      adjustment: null,
+      account: {
+        ...accountResponse(value),
+        sessionToken: 'secret',
+      },
+      noOp: true,
+    } as unknown as LedgerAdjustmentNoOpDto
+
+    expect(() => executeIdempotentLedgerCreate(database.db, repository, {
+      operationScope: ledgerAccountAdjustmentOperationScope(value.id),
+      idempotencyKey: 'nested-privacy-rollback-key',
+      request: parseAdjustmentEndpointRequest({
+        targetBalanceMinor: 0,
+        expectedCalculatedBalanceMinor: 0,
+        occurredAt: 1_700_000_000_000,
+      }),
+      mutation: () => {
+        repository.insertAccount(value)
+        return {
+          resultStatus: 'no-op' as const,
+          responseStatus: 200 as const,
+          responseBody: unsafeResponse,
+          resultType: 'adjustment',
+          resultId: value.id,
+        }
+      },
+    })).toThrow(TypeError)
+
+    expect(repository.getAccount(value.id)).toBeNull()
+    expect(repository.getIdempotencyRecord(
+      ledgerAccountAdjustmentOperationScope(value.id),
+      'nested-privacy-rollback-key',
+    )).toBeNull()
   })
 
   it('uses one nested transaction boundary with runLedgerWrite', () => {
@@ -653,7 +749,106 @@ describe('Ledger persistent idempotent create executor', () => {
 })
 
 describe('Ledger idempotency response serialization', () => {
-  it('uses canonical compact JSON for stored response bodies', () => {
-    expect(serializeLedgerReplayResponse({ b: true, a: null })).toBe('{"a":null,"b":true}')
+  const settingsResponse: LedgerSettingsDto = {
+    baseCurrency: 'CNY',
+    currencyExponent: 2,
+    timezone: 'Asia/Shanghai',
+    version: 1,
+    createdAt: 1_000,
+    updatedAt: 1_000,
+  }
+
+  const transactionResponse: LedgerTransactionDto = {
+    id: 'serialization-transaction',
+    type: 'income',
+    amountMinor: 100,
+    accountId: 'serialization-account',
+    categoryId: 'serialization-category',
+    occurredAt: 1_700_000_000_000,
+    payee: 'Employer',
+    note: '',
+    deletedAt: null,
+    version: 1,
+    createdAt: 1_000,
+    updatedAt: 1_000,
+  }
+
+  const adjustmentTransaction: Extract<LedgerTransactionDto, { type: 'adjustment' }> = {
+    id: 'serialization-adjustment',
+    type: 'adjustment',
+    amountMinor: 200,
+    accountId: 'serialization-adjustment-account',
+    adjustmentCalculatedBalanceMinor: 1_000,
+    adjustmentTargetBalanceMinor: 1_200,
+    occurredAt: 1_700_000_000_000,
+    note: '',
+    deletedAt: null,
+    version: 1,
+    createdAt: 1_000,
+    updatedAt: 1_000,
+  }
+
+  const appliedAdjustment: LedgerAdjustmentAppliedDto = {
+    adjustment: adjustmentTransaction,
+    account: accountResponse(account('serialization-adjustment-account'), 1_200),
+    noOp: false,
+  }
+
+  const noOpAdjustment: LedgerAdjustmentNoOpDto = {
+    adjustment: null,
+    account: accountResponse(account('serialization-no-op-account')),
+    noOp: true,
+  }
+
+  const validResponses: readonly [string, LedgerReplayResponseBody][] = [
+    ['settings', settingsResponse],
+    ['account', accountResponse(account('serialization-account'))],
+    ['category', categoryResponse(category('serialization-category'))],
+    ['transaction', transactionResponse],
+    ['adjustment-applied', appliedAdjustment],
+    ['adjustment-no-op', noOpAdjustment],
+  ]
+
+  it.each(validResponses)('serializes the valid %s response variant', (_name, responseBody) => {
+    expect(serializeLedgerReplayResponse(responseBody)).toBe(stableSerializeLedgerJson(responseBody))
+  })
+
+  it('rejects an unknown top-level field even when the value is JSON-safe', () => {
+    const unsafeResponse = {
+      ...accountResponse(account('top-level-privacy-account')),
+      authorization: 'Bearer secret',
+    } as unknown as LedgerReplayResponseBody
+
+    expect(() => serializeLedgerReplayResponse(unsafeResponse)).toThrow(TypeError)
+  })
+
+  it('rejects an unknown nested DTO field', () => {
+    const unsafeResponse = {
+      adjustment: null,
+      account: {
+        ...accountResponse(account('nested-privacy-account')),
+        sessionToken: 'secret',
+      },
+      noOp: true,
+    } as unknown as LedgerReplayResponseBody
+
+    expect(() => serializeLedgerReplayResponse(unsafeResponse)).toThrow(TypeError)
+  })
+
+  it.each([
+    {
+      adjustment: adjustmentTransaction,
+      account: accountResponse(account('malformed-no-op-account')),
+      noOp: true,
+    },
+    {
+      adjustment: null,
+      account: accountResponse(account('malformed-applied-account')),
+      noOp: false,
+    },
+  ] as const)('rejects malformed Adjustment wrapper discriminator %#', (responseBody) => {
+    expect(() => serializeLedgerReplayResponse(
+      responseBody as unknown as LedgerReplayResponseBody,
+    )).toThrow(TypeError)
   })
 })

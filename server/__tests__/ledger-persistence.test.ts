@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { applyMigrations } from '../db.js'
 import type { LedgerAccount } from '../ledger/domain.js'
+import type { LedgerAccountDto } from '../../shared/ledgerProtocol.js'
 import {
   executeIdempotentLedgerCreate,
   fingerprintLedgerMutation,
@@ -57,9 +58,9 @@ describe('Ledger persistent idempotency replay', () => {
     })
     const operationScope = LEDGER_IDEMPOTENCY_OPERATION_SCOPES.accounts
     const idempotencyKey = 'reopen-key'
-    const responseBody = {
-      id: storedAccount.id,
-      name: storedAccount.name,
+    const responseBody: LedgerAccountDto = {
+      ...storedAccount,
+      currencyExponent: 2,
       currentBalanceMinor: 0,
     }
 
