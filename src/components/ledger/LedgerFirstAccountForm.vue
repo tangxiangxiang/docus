@@ -6,6 +6,7 @@ import { ledgerErrorMessage, ledgerFieldError } from '../../features/ledger/ledg
 import { useLedgerStore } from '../../features/ledger/ledgerStore'
 import { formatLedgerMoney, parseLedgerMoney } from '../../features/ledger/money'
 import { openingDateInputFromInstant } from '../../features/ledger/time'
+import LedgerPendingCreateRecovery from './LedgerPendingCreateRecovery.vue'
 
 const props = withDefaults(defineProps<{
   firstAccount?: boolean
@@ -35,6 +36,9 @@ const saving = ref(false)
 const settings = computed(() => store.settings.value)
 const currency = computed(() => settings.value?.baseCurrency ?? '')
 const currencyExponent = computed(() => settings.value?.currencyExponent ?? 2)
+const pendingAccount = computed(() => (
+  store.pendingCreate.value?.operation === 'account' ? store.pendingCreate.value : null
+))
 const typeOptions = computed(() => ledgerAccountTypeOptionsForNature(nature.value))
 const balanceExample = computed(() => currency.value ? formatLedgerMoney(100, currency.value) : '金额')
 
@@ -108,6 +112,20 @@ async function submit(): Promise<void> {
     saving.value = false
   }
 }
+
+async function retryPendingAccount(): Promise<void> {
+  if (saving.value) return
+  saving.value = true
+  formError.value = ''
+  try {
+    await store.retryPendingCreate()
+    emit('saved')
+  } catch (error) {
+    formError.value = ledgerErrorMessage(error, '账户仍未确认，请稍后重试。')
+  } finally {
+    saving.value = false
+  }
+}
 </script>
 
 <template>
@@ -126,6 +144,15 @@ async function submit(): Promise<void> {
       <p v-if="currency" class="ledger-context">当前 Ledger：{{ currency }} · {{ settings?.timezone }}</p>
     </div>
 
+    <LedgerPendingCreateRecovery
+      v-if="pendingAccount"
+      :intent="pendingAccount"
+      :busy="saving"
+      :error="formError"
+      @retry="retryPendingAccount"
+    />
+
+    <template v-else>
     <div class="ledger-form-field">
       <label for="ledger-account-name">账户名称</label>
       <input
@@ -208,6 +235,7 @@ async function submit(): Promise<void> {
         {{ saving ? '正在保存…' : (props.firstAccount ? '创建账户并继续' : '创建账户') }}
       </button>
     </div>
+    </template>
   </form>
 </template>
 

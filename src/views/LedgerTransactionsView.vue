@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import type {
   LedgerCategoryDto,
   LedgerTransactionDto,
@@ -30,6 +30,26 @@ const loading = computed(() => store.workspaceState.value === 'BOOTSTRAPPING' ||
 const page = computed(() => store.transactions.value)
 const transactions = computed(() => page.value?.transactions ?? [])
 const hasFilters = computed(() => filterType.value !== 'all' || Boolean(filterAccountId.value || filterCategoryId.value || filterFrom.value || filterTo.value))
+let recoveryPresented = false
+
+watch(
+  [() => store.pendingCreate.value, () => store.workspaceState.value],
+  ([pending, workspaceState]) => {
+    if (!pending) {
+      recoveryPresented = false
+      return
+    }
+    if (
+      !recoveryPresented
+      && (workspaceState === 'READY' || workspaceState === 'NO_ACTIVE_ACCOUNT')
+      && (pending.operation === 'transaction' || pending.operation === 'category')
+    ) {
+      transactionSheetOpen.value = true
+      recoveryPresented = true
+    }
+  },
+  { immediate: true },
+)
 
 onMounted(async () => {
   await store.bootstrap()

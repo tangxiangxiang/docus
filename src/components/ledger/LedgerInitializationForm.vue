@@ -6,6 +6,7 @@ import {
 import { browserTimezone } from '../../features/ledger/time'
 import { ledgerErrorMessage, ledgerFieldError } from '../../features/ledger/ledgerErrors'
 import { useLedgerStore } from '../../features/ledger/ledgerStore'
+import LedgerPendingCreateRecovery from './LedgerPendingCreateRecovery.vue'
 
 const store = useLedgerStore()
 const emit = defineEmits<{ saved: [] }>()
@@ -19,6 +20,9 @@ const saving = ref(false)
 const currentSettings = computed(() => store.settings.value)
 const isEditing = computed(() => currentSettings.value !== null)
 const isLocked = computed(() => currentSettings.value?.hasCreatedAccount === true)
+const pendingSettings = computed(() => (
+  store.pendingCreate.value?.operation === 'settings' ? store.pendingCreate.value : null
+))
 
 const commonTimezones = [
   'UTC',
@@ -100,6 +104,20 @@ async function submit(): Promise<void> {
     saving.value = false
   }
 }
+
+async function retryPendingSettings(): Promise<void> {
+  if (saving.value) return
+  saving.value = true
+  formError.value = ''
+  try {
+    await store.retryPendingCreate()
+    emit('saved')
+  } catch (error) {
+    formError.value = ledgerErrorMessage(error, 'Ledger 设置仍未确认，请稍后重试。')
+  } finally {
+    saving.value = false
+  }
+}
 </script>
 
 <template>
@@ -122,7 +140,15 @@ async function submit(): Promise<void> {
       Ledger 已经创建过账户，基础货币和时区已锁定。请返回账户流程继续。
     </div>
 
-    <template v-else>
+    <LedgerPendingCreateRecovery
+      v-if="pendingSettings"
+      :intent="pendingSettings"
+      :busy="saving"
+      :error="formError"
+      @retry="retryPendingSettings"
+    />
+
+    <template v-else-if="!isLocked">
       <div class="ledger-form-field">
         <label for="ledger-base-currency">基础货币</label>
         <select

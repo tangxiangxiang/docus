@@ -18,8 +18,28 @@ const transactionSheetOpen = ref(false)
 
 const bootstrapping = computed(() => store.workspaceState.value === 'BOOTSTRAPPING')
 const showOnboarding = computed(() => store.workspaceState.value === 'UNINITIALIZED' || store.workspaceState.value === 'FIRST_ACCOUNT_REQUIRED')
+let recoveryPresented = false
 
 watch(() => auth.user.value?.username ?? null, (identity) => store.setOwnerIdentity(identity), { immediate: true })
+
+watch(
+  [() => store.pendingCreate.value, () => store.workspaceState.value],
+  ([pending, workspaceState]) => {
+    if (!pending) {
+      recoveryPresented = false
+      return
+    }
+    if (
+      !recoveryPresented
+      && (workspaceState === 'READY' || workspaceState === 'NO_ACTIVE_ACCOUNT')
+      && (pending.operation === 'transaction' || pending.operation === 'category')
+    ) {
+      transactionSheetOpen.value = true
+      recoveryPresented = true
+    }
+  },
+  { immediate: true },
+)
 
 onMounted(() => {
   void store.bootstrap()
