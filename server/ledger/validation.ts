@@ -14,7 +14,9 @@ import type {
   LedgerAdjustmentEndpointRequest,
   LedgerSettingsCreateRequest,
   LedgerTransactionCreateRequest,
+  LedgerTransactionCursor,
   LedgerTransactionFilterType,
+  LedgerTransactionQuery,
   LedgerTransactionType,
   LedgerTransferCreateRequest,
 } from '../../shared/ledgerProtocol.js'
@@ -31,6 +33,7 @@ export const LEDGER_NOTE_MAX_LENGTH = 2_000
 export const LEDGER_IDEMPOTENCY_KEY_MAX_LENGTH = 200
 export const LEDGER_LIST_LIMIT_DEFAULT = 50
 export const LEDGER_LIST_LIMIT_MAX = 200
+export const LEDGER_TREND_MONTHS_DEFAULT = 6
 
 type UnknownRecord = Record<string, unknown>
 
@@ -494,6 +497,64 @@ export function parseBooleanQuery(value: unknown, key: string, defaultValue = fa
   throw ledgerValidationError(`${key} must be true or false`, { field: key })
 }
 
+function invalidCursor(): never {
+  throw ledgerValidationError('cursor must be a valid Ledger v1 keyset cursor', { field: 'cursor' })
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
+  const prototype = Object.getPrototypeOf(value)
+  return prototype === Object.prototype || prototype === null
+}
+
+/** Decode and validate the opaque v1 transaction cursor payload. */
+export function parseLedgerTransactionCursor(value: unknown): LedgerTransactionCursor {
+  if (typeof value !== 'string' || value.length === 0 || !/^[A-Za-z0-9_-]+$/.test(value)) {
+    return invalidCursor()
+  }
+
+  let payloadText: string
+  try {
+    const bytes = Buffer.from(value, 'base64url')
+    if (bytes.length === 0 || bytes.toString('base64url') !== value) return invalidCursor()
+    payloadText = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch {
+    return invalidCursor()
+  }
+
+  let payload: unknown
+  try {
+    payload = JSON.parse(payloadText)
+  } catch {
+    return invalidCursor()
+  }
+  if (!isPlainObject(payload)) return invalidCursor()
+
+  const keys = Object.keys(payload).sort()
+  if (keys.length !== 4 || keys.join(',') !== 'createdAt,id,occurredAt,v') return invalidCursor()
+  if (payload.v !== 1) return invalidCursor()
+  if (
+    typeof payload.id !== 'string'
+    || payload.id.length === 0
+    || typeof payload.occurredAt !== 'number'
+    || typeof payload.createdAt !== 'number'
+    || !Number.isSafeInteger(payload.occurredAt)
+    || !Number.isSafeInteger(payload.createdAt)
+  ) {
+    return invalidCursor()
+  }
+
+  try {
+    return {
+      occurredAt: assertUtcMilliseconds(payload.occurredAt, 'cursor.occurredAt'),
+      createdAt: assertUtcMilliseconds(payload.createdAt, 'cursor.createdAt'),
+      id: payload.id,
+    }
+  } catch {
+    return invalidCursor()
+  }
+}
+
 export function parseTransactionTypeFilter(value: unknown): LedgerTransactionFilterType | 'all' {
   if (value === undefined || value === 'all') return 'all'
   if (
@@ -503,6 +564,70 @@ export function parseTransactionTypeFilter(value: unknown): LedgerTransactionFil
     throw ledgerValidationError('type has an unsupported transaction filter', { field: 'type' })
   }
   return value
+}
+
+function parseQueryId(record: UnknownRecord, key: string): string | undefined {
+  if (!hasOwn(record, key)) return undefined
+  const value = record[key]
+  if (typeof value !== 'string' || value.length === 0) {
+    throw ledgerValidationError(`${key} must be a non-empty identifier`, { field: key })
+  }
+  return value
+}
+
+function parseQuerySearch(record: UnknownRecord): string | undefined {
+  if (!hasOwn(record, 'search')) return undefined
+  const value = record.search
+  if (typeof value !== 'string') {
+    throw ledgerValidationError('search must be a string', { field: 'search' })
+  }
+  const trimmed = value.trim()
+  return trimmed.length === 0 ? undefined : trimmed
+}
+
+function parseQueryCursor(record: UnknownRecord): string | undefined {
+  if (!hasOwn(record, 'cursor')) return undefined
+  const value = record.cursor
+  parseLedgerTransactionCursor(value)
+  if (typeof value !== 'string') return invalidCursor()
+  return value
+}
+
+/** Parse the complete, shared transaction-list query contract. */
+export function parseTransactionQuery(value: UnknownRecord): LedgerTransactionQuery {
+  assertExactKeys(value, [
+    'type', 'accountId', 'categoryId', 'from', 'to', 'search',
+    'includeDeleted', 'limit', 'cursor',
+  ], [])
+
+  const from = parseUtcQueryValue(value.from, 'from')
+  const to = parseUtcQueryValue(value.to, 'to')
+  if (from !== undefined && to !== undefined && from >= to) {
+    throw ledgerValidationError('from must be earlier than to', { field: 'from' })
+  }
+
+  return {
+    type: parseTransactionTypeFilter(value.type),
+    accountId: parseQueryId(value, 'accountId'),
+    categoryId: parseQueryId(value, 'categoryId'),
+    from,
+    to,
+    search: parseQuerySearch(value),
+    includeDeleted: parseBooleanQuery(value.includeDeleted, 'includeDeleted', false),
+    limit: parseLimit(value.limit),
+    cursor: parseQueryCursor(value),
+  }
+}
+
+export function parseTrendMonths(value: unknown): number {
+  if (value === undefined) return LEDGER_TREND_MONTHS_DEFAULT
+  const numeric = typeof value === 'string' && /^[1-9]\d*$/.test(value)
+    ? Number(value)
+    : NaN
+  if (!Number.isSafeInteger(numeric) || numeric < 1) {
+    throw ledgerValidationError('months must be a positive safe integer', { field: 'months' })
+  }
+  return numeric
 }
 
 export function parseOverviewScope(value: unknown): 'today' | 'week' | 'month' | 'year' | 'all' {

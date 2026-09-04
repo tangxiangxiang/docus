@@ -13,12 +13,15 @@ import {
   parseExpectedVersionCommand,
   parseIdempotencyKey,
   parseLimit,
+  parseLedgerTransactionCursor,
   parseOverviewScope,
   parseSettingsCreateRequest,
   parseSettingsPatchRequest,
   parseTransactionCreateRequest,
   parseTransactionPatchRequest,
+  parseTransactionQuery,
   parseTransactionTypeFilter,
+  parseTrendMonths,
 } from './validation.js'
 
 const occurredAt = 1_700_000_000_000
@@ -159,5 +162,61 @@ describe('Ledger stateless request validation', () => {
     expect(parseTransactionTypeFilter('transfer')).toBe('transfer')
     expect(() => parseTransactionTypeFilter('adjustment')).toThrow()
     expect(() => parseTransactionTypeFilter('unknown')).toThrow()
+  })
+
+  it('parses the canonical transaction query and strictly validates v1 cursors', () => {
+    const cursor = Buffer.from(JSON.stringify({
+      v: 1,
+      occurredAt,
+      createdAt: occurredAt - 1,
+      id: 'transaction-1',
+    }), 'utf8').toString('base64url')
+    expect(parseTransactionQuery({
+      type: 'all',
+      accountId: 'account-1',
+      categoryId: 'category-1',
+      from: String(occurredAt - 100),
+      to: String(occurredAt + 100),
+      search: '  coffee  ',
+      includeDeleted: 'true',
+      limit: '2',
+      cursor,
+    })).toMatchObject({
+      type: 'all',
+      accountId: 'account-1',
+      categoryId: 'category-1',
+      from: occurredAt - 100,
+      to: occurredAt + 100,
+      search: 'coffee',
+      includeDeleted: true,
+      limit: 2,
+      cursor,
+    })
+    expect(parseLedgerTransactionCursor(cursor)).toEqual({
+      occurredAt,
+      createdAt: occurredAt - 1,
+      id: 'transaction-1',
+    })
+    expect(parseTransactionQuery({ search: '   ' }).search).toBeUndefined()
+    expect(parseTrendMonths(undefined)).toBe(6)
+    expect(parseTrendMonths('3')).toBe(3)
+
+    expect(() => parseTransactionQuery({ from: String(occurredAt), to: String(occurredAt) })).toThrow()
+    expect(() => parseTransactionQuery({ cursor: 'not-base64url' })).toThrow()
+    expect(() => parseLedgerTransactionCursor(Buffer.from(JSON.stringify({
+      v: 1,
+      occurredAt,
+      createdAt: occurredAt,
+      id: 'transaction-1',
+      extra: true,
+    }), 'utf8').toString('base64url'))).toThrow()
+    expect(() => parseLedgerTransactionCursor(Buffer.from(JSON.stringify({
+      v: 2,
+      occurredAt,
+      createdAt: occurredAt,
+      id: 'transaction-1',
+    }), 'utf8').toString('base64url'))).toThrow()
+    expect(() => parseTrendMonths('0')).toThrow()
+    expect(() => parseTrendMonths('-1')).toThrow()
   })
 })

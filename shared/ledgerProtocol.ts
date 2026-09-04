@@ -193,6 +193,13 @@ export interface LedgerPageInfo {
   readonly nextCursor: string | null
 }
 
+/** The decoded keyset position used by the Ledger transaction query. */
+export interface LedgerTransactionCursor {
+  readonly occurredAt: number
+  readonly createdAt: number
+  readonly id: string
+}
+
 export interface LedgerTransactionQuery {
   readonly type?: LedgerTransactionFilterType | 'all'
   readonly accountId?: string
@@ -203,6 +210,11 @@ export interface LedgerTransactionQuery {
   readonly includeDeleted?: boolean
   readonly limit?: number
   readonly cursor?: string
+}
+
+export interface LedgerTransactionPageDto {
+  readonly transactions: readonly LedgerTransactionDto[]
+  readonly page: LedgerPageInfo
 }
 
 export interface LedgerPeriodSummary {
@@ -261,4 +273,11 @@ export interface LedgerOverviewDto {
 export interface LedgerMovementSummary {
   readonly balanceIncreaseMinor: number
   readonly balanceDecreaseMinor: number
+}
+
+export interface LedgerAccountTransactionsDto {
+  readonly account: LedgerAccountDto
+  readonly movement: LedgerMovementSummary
+  readonly transactions: readonly LedgerTransactionDto[]
+  readonly page: LedgerPageInfo
 }

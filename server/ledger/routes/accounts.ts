@@ -4,15 +4,21 @@ import {
   parseAdjustmentEndpointRequest,
   parseBooleanQuery,
   parseIdempotencyKey,
+  parseTransactionQuery,
 } from '../validation.js'
 import {
+  ledgerProjectionsForRequest,
   ledgerReplayResponse,
   readLedgerJson,
   withLedgerErrors,
+  type LedgerProjectionFactory,
   type LedgerServiceFactory,
 } from './shared.js'
 
-export function createAccountRoutes(getService: LedgerServiceFactory): Hono {
+export function createAccountRoutes(
+  getService: LedgerServiceFactory,
+  getProjections: LedgerProjectionFactory = ledgerProjectionsForRequest,
+): Hono {
   const routes = new Hono()
 
   routes.get('/', (c) => withLedgerErrors(c, () => {
@@ -49,6 +55,13 @@ export function createAccountRoutes(getService: LedgerServiceFactory): Hono {
       idempotencyKey,
     ))
   }))
+
+  routes.get('/:id/transactions', (c) => withLedgerErrors(c, () => c.json(
+    getProjections().getAccountTransactions(
+      c.req.param('id'),
+      parseTransactionQuery(c.req.query()),
+    ),
+  )))
 
   routes.get('/:id', (c) => withLedgerErrors(c, () => c.json(
     getService().getAccount(c.req.param('id')),

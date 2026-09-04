@@ -222,6 +222,16 @@ const SELECT_ACTIVE_TRANSACTIONS_FOR_ACCOUNT = `
   ORDER BY occurred_at DESC, created_at DESC, id DESC
 `
 
+const SELECT_ALL_ACTIVE_TRANSACTIONS = `
+  SELECT id, type, amount_minor, account_id, from_account_id, to_account_id,
+         category_id, occurred_at, payee, note,
+         adjustment_calculated_balance_minor, adjustment_target_balance_minor,
+         deleted_at, version, created_at, updated_at
+  FROM ledger_transactions
+  WHERE deleted_at IS NULL
+  ORDER BY occurred_at DESC, created_at DESC, id DESC
+`
+
 const SELECT_IDEMPOTENCY_RECORD = `
   SELECT operation_scope, idempotency_key, request_fingerprint,
          response_status, response_body_json, result_status, result_type,
@@ -285,6 +295,22 @@ export interface LedgerIdempotencyRecord {
   readonly createdAt: number
 }
 
+export interface LedgerTransactionQueryOptions {
+  readonly type?: 'all' | 'income' | 'expense' | 'transfer'
+  readonly accountId?: string
+  readonly categoryId?: string
+  readonly from?: number
+  readonly to?: number
+  readonly search?: string
+  readonly includeDeleted?: boolean
+  readonly limit: number
+  readonly cursor?: {
+    readonly occurredAt: number
+    readonly createdAt: number
+    readonly id: string
+  }
+}
+
 export interface LedgerRepository {
   getSettings(): LedgerSettings | null
   insertSettings(settings: LedgerSettings): void
@@ -310,6 +336,8 @@ export interface LedgerRepository {
   updateTransaction(input: LedgerTransactionUpdateInput): number
   softDeleteTransaction(input: LedgerTransactionSoftDeleteInput): number
   listActiveTransactionsForAccount(accountId: string): LedgerTransaction[]
+  listActiveTransactions(): LedgerTransaction[]
+  queryTransactions(options: LedgerTransactionQueryOptions): LedgerTransaction[]
 
   getIdempotencyRecord(operationScope: string, idempotencyKey: string): LedgerIdempotencyRecord | null
   insertIdempotencyRecord(record: LedgerIdempotencyRecord): void
@@ -628,6 +656,7 @@ export function createLedgerRepository(db: DatabaseT): LedgerRepository {
     listActiveTransactionsForAccount: db.prepare<{ readonly accountId: string }>(
       SELECT_ACTIVE_TRANSACTIONS_FOR_ACCOUNT,
     ),
+    listActiveTransactions: db.prepare(SELECT_ALL_ACTIVE_TRANSACTIONS),
     getIdempotencyRecord: db.prepare<IdempotencyLookupParams, IdempotencyRow>(SELECT_IDEMPOTENCY_RECORD),
     insertIdempotencyRecord: db.prepare<IdempotencyParams>(INSERT_IDEMPOTENCY_RECORD),
   }
@@ -738,6 +767,89 @@ export function createLedgerRepository(db: DatabaseT): LedgerRepository {
       return statements.listActiveTransactionsForAccount
         .all({ accountId })
         .map(ledgerTransactionFromRow)
+    },
+
+    listActiveTransactions(): LedgerTransaction[] {
+      return statements.listActiveTransactions.all().map(ledgerTransactionFromRow)
+    },
+
+    queryTransactions(options: LedgerTransactionQueryOptions): LedgerTransaction[] {
+      const clauses: string[] = []
+      const params: Record<string, string | number> = {
+        limit: options.limit + 1,
+      }
+
+      if (options.includeDeleted !== true) clauses.push('deleted_at IS NULL')
+
+      if (options.type !== undefined && options.type !== 'all') {
+        clauses.push('type = @type')
+        params.type = options.type
+      }
+
+      if (options.accountId !== undefined) {
+        clauses.push(`(
+          account_id = @accountId
+          OR from_account_id = @accountId
+          OR to_account_id = @accountId
+        )`)
+        params.accountId = options.accountId
+      }
+
+      if (options.categoryId !== undefined) {
+        clauses.push('category_id = @categoryId')
+        params.categoryId = options.categoryId
+      }
+
+      if (options.from !== undefined) {
+        clauses.push('occurred_at >= @from')
+        params.from = options.from
+      }
+      if (options.to !== undefined) {
+        clauses.push('occurred_at < @to')
+        params.to = options.to
+      }
+
+      if (options.search !== undefined && options.search.length > 0) {
+        const escaped = options.search
+          .replaceAll('\\', '\\\\')
+          .replaceAll('%', '\\%')
+          .replaceAll('_', '\\_')
+        params.searchPattern = `%${escaped}%`
+        clauses.push(`(
+          payee LIKE @searchPattern ESCAPE '\\' COLLATE NOCASE
+          OR note LIKE @searchPattern ESCAPE '\\' COLLATE NOCASE
+        )`)
+      }
+
+      if (options.cursor !== undefined) {
+        clauses.push(`(
+          occurred_at < @cursorOccurredAt
+          OR (
+            occurred_at = @cursorOccurredAt
+            AND created_at < @cursorCreatedAt
+          )
+          OR (
+            occurred_at = @cursorOccurredAt
+            AND created_at = @cursorCreatedAt
+            AND id < @cursorId
+          )
+        )`)
+        params.cursorOccurredAt = options.cursor.occurredAt
+        params.cursorCreatedAt = options.cursor.createdAt
+        params.cursorId = options.cursor.id
+      }
+
+      const sql = `
+        SELECT id, type, amount_minor, account_id, from_account_id, to_account_id,
+               category_id, occurred_at, payee, note,
+               adjustment_calculated_balance_minor, adjustment_target_balance_minor,
+               deleted_at, version, created_at, updated_at
+        FROM ledger_transactions
+        ${clauses.length === 0 ? '' : `WHERE ${clauses.join('\n          AND ')}`}
+        ORDER BY occurred_at DESC, created_at DESC, id DESC
+        LIMIT @limit
+      `
+      return db.prepare(sql).all(params).map(ledgerTransactionFromRow)
     },
 
     getIdempotencyRecord(operationScope: string, idempotencyKey: string): LedgerIdempotencyRecord | null {

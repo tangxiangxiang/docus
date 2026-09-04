@@ -62,6 +62,10 @@ function request(
 describe('Ledger API auth inheritance', () => {
   it('rejects anonymous reads and mutations through the existing owner boundary', async () => {
     const read = await request('/api/ledger/settings')
+    const transactionRead = await request('/api/ledger/transactions')
+    const accountTransactionRead = await request('/api/ledger/accounts/account/transactions')
+    const overviewRead = await request('/api/ledger/overview')
+    const trendRead = await request('/api/ledger/trend')
     const mutation = await request('/api/ledger/settings', {
       method: 'POST',
       body: { baseCurrency: 'CNY', timezone: 'UTC' },
@@ -88,10 +92,18 @@ describe('Ledger API auth inheritance', () => {
       idempotencyKey: 'anonymous-adjustment',
     })
     expect(read.status).toBe(401)
+    expect(transactionRead.status).toBe(401)
+    expect(accountTransactionRead.status).toBe(401)
+    expect(overviewRead.status).toBe(401)
+    expect(trendRead.status).toBe(401)
     expect(mutation.status).toBe(401)
     expect(transactionMutation.status).toBe(401)
     expect(adjustmentMutation.status).toBe(401)
     expect(await read.json()).toMatchObject({ code: 'auth-session-required' })
+    expect(await transactionRead.json()).toMatchObject({ code: 'auth-session-required' })
+    expect(await accountTransactionRead.json()).toMatchObject({ code: 'auth-session-required' })
+    expect(await overviewRead.json()).toMatchObject({ code: 'auth-session-required' })
+    expect(await trendRead.json()).toMatchObject({ code: 'auth-session-required' })
     expect(await mutation.json()).toMatchObject({ code: 'auth-session-required' })
     expect(await transactionMutation.json()).toMatchObject({ code: 'auth-session-required' })
     expect(await adjustmentMutation.json()).toMatchObject({ code: 'auth-session-required' })

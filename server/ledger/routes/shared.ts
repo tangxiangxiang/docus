@@ -2,13 +2,20 @@ import { getDb } from '../../db.js'
 import { isLedgerError, ledgerValidationError } from '../errors.js'
 import type { LedgerReplayResult } from '../idempotency.js'
 import { createLedgerRepository } from '../repository.js'
+import { createLedgerProjections, type LedgerProjections } from '../projections.js'
 import { createLedgerService, type LedgerService } from '../service.js'
 
 export type LedgerServiceFactory = () => LedgerService
+export type LedgerProjectionFactory = () => LedgerProjections
 
 export function ledgerServiceForRequest(): LedgerService {
   const db = getDb()
   return createLedgerService(db, createLedgerRepository(db))
+}
+
+export function ledgerProjectionsForRequest(): LedgerProjections {
+  const db = getDb()
+  return createLedgerProjections(createLedgerRepository(db))
 }
 
 export async function readLedgerJson(c: any): Promise<unknown> {

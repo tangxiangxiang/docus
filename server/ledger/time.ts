@@ -13,6 +13,10 @@ export interface LedgerTimeRange {
   readonly endMs: number
 }
 
+export interface LedgerCalendarMonthRange extends LedgerTimeRange {
+  readonly month: string
+}
+
 function validationError(field: string, message: string): LedgerError {
   return new LedgerError('ledger-validation-failed', 400, message, { field })
 }
@@ -178,6 +182,36 @@ export function periodRangesForInstant(
     week: weekRange(instantMs, timezone),
     month: monthRange(instantMs, timezone),
     year: yearRange(instantMs, timezone),
+  }
+}
+
+/** Return consecutive Ledger-local calendar months ending with the current month. */
+export function calendarMonthRanges(
+  months: number,
+  instantMs: number,
+  timezone: string,
+): readonly LedgerCalendarMonthRange[] {
+  if (!Number.isSafeInteger(months) || months < 1) {
+    throw validationError('months', 'months must be a positive safe integer')
+  }
+
+  const zone = assertIanaTimeZoneId(timezone)
+  const date = plainDateForInstant(instantMs, zone)
+  try {
+    const currentMonth = Temporal.PlainDate.from({ year: date.year, month: date.month, day: 1 })
+    const firstMonth = currentMonth.subtract({ months: months - 1 })
+    return Array.from({ length: months }, (_, index) => {
+      const startDate = firstMonth.add({ months: index })
+      const endDate = startDate.add({ months: 1 })
+      return {
+        month: startDate.toString().slice(0, 7),
+        startMs: startOfLocalDate(startDate, zone, 'trend.startAt'),
+        endMs: startOfLocalDate(endDate, zone, 'trend.endAt'),
+      }
+    })
+  } catch (error) {
+    if (error instanceof LedgerError) throw error
+    throw validationError('months', 'months cannot be represented by the Ledger calendar range')
   }
 }
 

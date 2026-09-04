@@ -6,6 +6,7 @@ import {
   assertIanaTimeZoneId,
   assertOpeningDate,
   assertUtcMilliseconds,
+  calendarMonthRanges,
   localDateRange,
   monthRange,
   openingBoundaryMs,
@@ -119,5 +120,26 @@ describe('Ledger DST-safe local calendar periods', () => {
     expect(includes(range.endMs, range)).toBe(false)
     expect(includes(range.endMs, nextRange)).toBe(true)
     expect(nextRange.startMs).toBe(range.endMs)
+  })
+
+  it('builds DST-safe consecutive calendar-month ranges', () => {
+    const spring = calendarMonthRanges(
+      2,
+      Date.parse('2024-03-10T12:00:00.000Z'),
+      'America/Los_Angeles',
+    )
+    expect(spring.map((range) => range.month)).toEqual(['2024-02', '2024-03'])
+    expect(iso(spring[0].startMs)).toBe('2024-02-01T08:00:00.000Z')
+    expect(iso(spring[0].endMs)).toBe('2024-03-01T08:00:00.000Z')
+    expect(iso(spring[1].endMs)).toBe('2024-04-01T07:00:00.000Z')
+
+    const fall = calendarMonthRanges(
+      2,
+      Date.parse('2024-11-04T12:00:00.000Z'),
+      'America/Los_Angeles',
+    )
+    expect(fall.map((range) => range.month)).toEqual(['2024-10', '2024-11'])
+    expect(iso(fall[1].startMs)).toBe('2024-11-01T07:00:00.000Z')
+    expect(iso(fall[1].endMs)).toBe('2024-12-01T08:00:00.000Z')
   })
 })

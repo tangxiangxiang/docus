@@ -491,7 +491,11 @@ describe('Ledger Transaction and Adjustment API', () => {
     expect(await repeatedDelete.text()).toBe(deletedText)
 
     const listBoundary = await authenticated('/api/ledger/transactions')
-    expect(listBoundary.status).toBe(404)
+    expect(listBoundary.status).toBe(200)
+    expect(await json(listBoundary)).toMatchObject({
+      transactions: [],
+      page: { nextCursor: null },
+    })
   })
 
   it('uses one-row Transfer effects and exposes Adjustment no-op/conflict responses', async () => {
@@ -669,5 +673,164 @@ describe('Ledger Transaction and Adjustment API', () => {
       idempotencyKey: 'valid-after-error-api',
     })
     expect(valid.status).toBe(201)
+  })
+})
+
+describe('Ledger query and projection API', () => {
+  it('serves filtered paged transaction lists and Account Detail projections', async () => {
+    await initialize()
+    const bankResponse = await authenticated('/api/ledger/accounts', {
+      method: 'POST',
+      body: accountBody({ name: 'Projection bank', openingBalanceMinor: 100 }),
+      idempotencyKey: 'projection-bank',
+    })
+    const cardResponse = await authenticated('/api/ledger/accounts', {
+      method: 'POST',
+      body: accountBody({ name: 'Projection card', type: 'credit_card', nature: 'liability' }),
+      idempotencyKey: 'projection-card',
+    })
+    const bank = await json(bankResponse)
+    const card = await json(cardResponse)
+    const categories = await json(await authenticated('/api/ledger/categories?includeArchived=true'))
+    const expenseCategory = categories.find((candidate: any) => candidate.kind === 'expense')
+    const incomeCategory = categories.find((candidate: any) => candidate.kind === 'income')
+    const current = Date.parse('2026-09-04T03:00:00.000Z')
+    const old = Date.parse('2026-01-15T03:00:00.000Z')
+
+    const expense = await json(await authenticated('/api/ledger/transactions', {
+      method: 'POST',
+      body: {
+        type: 'expense', amountMinor: 10, accountId: bank.id, categoryId: expenseCategory.id,
+        occurredAt: current, payee: '100%', note: 'literal _ note',
+      },
+      idempotencyKey: 'projection-expense',
+    }))
+    const transfer = await json(await authenticated('/api/ledger/transactions', {
+      method: 'POST',
+      body: {
+        type: 'transfer', amountMinor: 20, fromAccountId: bank.id, toAccountId: card.id,
+        occurredAt: current + 1, note: 'repayment',
+      },
+      idempotencyKey: 'projection-transfer',
+    }))
+    const income = await json(await authenticated('/api/ledger/transactions', {
+      method: 'POST',
+      body: {
+        type: 'income', amountMinor: 100, accountId: bank.id, categoryId: incomeCategory.id,
+        occurredAt: old, payee: 'Old income',
+      },
+      idempotencyKey: 'projection-income',
+    }))
+    const adjustment = await json(await authenticated(`/api/ledger/accounts/${card.id}/adjust`, {
+      method: 'POST',
+      body: {
+        targetBalanceMinor: -15,
+        expectedCalculatedBalanceMinor: -20,
+        occurredAt: current + 2,
+        note: 'reconcile',
+      },
+      idempotencyKey: 'projection-adjustment',
+    }))
+
+    const firstPage = await authenticated('/api/ledger/transactions?limit=2')
+    expect(firstPage.status).toBe(200)
+    expect(firstPage.headers.get('cache-control')).toBe('no-store')
+    const firstBody = await json(firstPage)
+    expect(firstBody.transactions).toHaveLength(2)
+    expect(firstBody.page.nextCursor).toEqual(expect.any(String))
+    const secondPage = await authenticated(
+      `/api/ledger/transactions?limit=2&cursor=${encodeURIComponent(firstBody.page.nextCursor)}`,
+    )
+    const secondBody = await json(secondPage)
+    expect(secondPage.status).toBe(200)
+    expect(new Set([
+      ...firstBody.transactions.map((row: any) => row.id),
+      ...secondBody.transactions.map((row: any) => row.id),
+    ]).size).toBe(4)
+
+    const accountPage = await authenticated(`/api/ledger/accounts/${card.id}/transactions?limit=1`)
+    expect(accountPage.status).toBe(200)
+    expect(await json(accountPage)).toMatchObject({
+      account: { id: card.id, currentBalanceMinor: -15 },
+      movement: { balanceIncreaseMinor: 0, balanceDecreaseMinor: 20 },
+      transactions: [expect.objectContaining({ id: adjustment.adjustment.id })],
+      page: { nextCursor: expect.any(String) },
+    })
+
+    const accountFilter = await authenticated(`/api/ledger/transactions?accountId=${encodeURIComponent(card.id)}`)
+    expect((await json(accountFilter)).transactions.map((row: any) => row.id)).toEqual([
+      adjustment.adjustment.id,
+      transfer.id,
+    ])
+    const categoryFilter = await authenticated(
+      `/api/ledger/transactions?categoryId=${encodeURIComponent(expenseCategory.id)}`,
+    )
+    expect((await json(categoryFilter)).transactions.map((row: any) => row.id)).toEqual([expense.id])
+
+    const literalSearch = await authenticated('/api/ledger/transactions?search=100%25')
+    expect((await json(literalSearch)).transactions.map((row: any) => row.id)).toEqual([expense.id])
+    const malformedCursor = await authenticated('/api/ledger/transactions?cursor=broken')
+    expect(malformedCursor.status).toBe(400)
+    expect(await json(malformedCursor)).toMatchObject({ code: 'ledger-validation-failed' })
+    expect(income.type).toBe('income')
+  })
+
+  it('serves live Overview and custom calendar-month trend projections', async () => {
+    await initialize()
+    const accountResponse = await authenticated('/api/ledger/accounts', {
+      method: 'POST',
+      body: accountBody({ name: 'Overview account', openingBalanceMinor: 100 }),
+      idempotencyKey: 'overview-account',
+    })
+    const account = await json(accountResponse)
+    const categories = await json(await authenticated('/api/ledger/categories'))
+    const expenseCategory = categories.find((candidate: any) => candidate.kind === 'expense')
+    const incomeCategory = categories.find((candidate: any) => candidate.kind === 'income')
+    await authenticated('/api/ledger/transactions', {
+      method: 'POST',
+      body: {
+        type: 'income', amountMinor: 100, accountId: account.id, categoryId: incomeCategory.id,
+        occurredAt: Date.parse('2026-01-15T03:00:00.000Z'),
+      },
+      idempotencyKey: 'overview-old-income',
+    })
+    const expense = await authenticated('/api/ledger/transactions', {
+      method: 'POST',
+      body: {
+        type: 'expense', amountMinor: 25, accountId: account.id, categoryId: expenseCategory.id,
+        occurredAt: Date.parse('2026-09-04T03:00:00.000Z'),
+      },
+      idempotencyKey: 'overview-current-expense',
+    })
+    expect(expense.status).toBe(201)
+
+    const all = await json(await authenticated('/api/ledger/overview?scope=all'))
+    const today = await json(await authenticated('/api/ledger/overview?scope=today'))
+    expect(all).toMatchObject({
+      currency: 'CNY',
+      currencyExponent: 2,
+      assetTotalMinor: 175,
+      liabilityTotalMinor: 0,
+      netWorthMinor: 175,
+      cashflow: { incomeMinor: 100, expenseMinor: 25, balanceMinor: 75 },
+    })
+    expect(today.cashflow).toEqual({ incomeMinor: 0, expenseMinor: 25, balanceMinor: -25 })
+    for (const key of [
+      'currency', 'currencyExponent', 'assetTotalMinor', 'liabilityTotalMinor', 'netWorthMinor',
+      'accounts', 'periods', 'trend', 'recentTransactions',
+    ]) {
+      expect(today[key]).toEqual(all[key])
+    }
+    expect(all.periods.map((period: any) => period.period)).toEqual(['today', 'week', 'month', 'year'])
+    expect(all.recentTransactions).toHaveLength(2)
+
+    const trend = await authenticated('/api/ledger/trend?months=3')
+    expect(trend.status).toBe(200)
+    expect((await json(trend)).map((point: any) => point.month)).toEqual([
+      '2026-07', '2026-08', '2026-09',
+    ])
+    const invalidMonths = await authenticated('/api/ledger/trend?months=0')
+    expect(invalidMonths.status).toBe(400)
+    expect(await json(invalidMonths)).toMatchObject({ code: 'ledger-validation-failed' })
   })
 })

@@ -2,16 +2,26 @@ import { Hono } from 'hono'
 import {
   parseIdempotencyKey,
   parseTransactionCreateRequest,
+  parseTransactionQuery,
 } from '../validation.js'
 import {
+  ledgerProjectionsForRequest,
   ledgerReplayResponse,
   readLedgerJson,
   withLedgerErrors,
+  type LedgerProjectionFactory,
   type LedgerServiceFactory,
 } from './shared.js'
 
-export function createTransactionRoutes(getService: LedgerServiceFactory): Hono {
+export function createTransactionRoutes(
+  getService: LedgerServiceFactory,
+  getProjections: LedgerProjectionFactory = ledgerProjectionsForRequest,
+): Hono {
   const routes = new Hono()
+
+  routes.get('/', (c) => withLedgerErrors(c, () => c.json(
+    getProjections().listTransactions(parseTransactionQuery(c.req.query())),
+  )))
 
   routes.post('/', (c) => withLedgerErrors(c, async () => {
     const request = parseTransactionCreateRequest(await readLedgerJson(c))
