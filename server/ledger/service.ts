@@ -449,7 +449,7 @@ export function createLedgerService(
     for (const field of fields) {
       if (!hasOwn(rawRecord, field) || typeof rawRecord[field] !== 'string') continue
       const candidate = repository.getAccount(rawRecord[field])
-      if (candidate?.archivedAt !== null) archivedAccount()
+      if (candidate !== null && candidate.archivedAt !== null) archivedAccount()
     }
   }
 
@@ -1067,10 +1067,15 @@ export function createLedgerService(
       requireSettings()
       const transaction = repository.getTransaction(id)
       if (transaction === null) notFound('Ledger Transaction')
+
+      if (transaction.deletedAt !== null) {
+        parseExpectedVersionCommand(value)
+        return toTransactionDto(transaction)
+      }
+
       assertTransactionAccountsNotArchived(transaction)
 
       const expectedVersion = parseExpectedVersionCommand(value)
-      if (transaction.deletedAt !== null) return toTransactionDto(transaction)
       assertExpectedVersion(transaction.version, expectedVersion)
 
       const timestamp = generatedTimestamp(now)

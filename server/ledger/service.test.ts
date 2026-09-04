@@ -582,6 +582,80 @@ describe('Ledger Transaction and Adjustment service lifecycle', () => {
     )
   })
 
+  it('distinguishes missing and archived candidate Accounts before PATCH version checks', () => {
+    const { service } = freshService()
+    initialize(service)
+    const account = createAccount(service, 'patch-candidate-source')
+    const category = service.listCategories('expense', false)[0]!
+    const transaction = transactionFromResult(service.createTransaction(transactionRequest({
+      type: 'expense',
+      amountMinor: 1,
+      accountId: account.id,
+      categoryId: category.id,
+    }), 'patch-candidate-transaction'))
+    const archived = createAccount(service, 'patch-candidate-archived')
+    service.archiveAccount(archived.id, { expectedVersion: archived.version })
+
+    expectLedgerError(
+      () => service.patchTransaction(transaction.id, {
+        expectedVersion: transaction.version,
+        accountId: 'missing-account',
+      }),
+      'ledger-not-found',
+    )
+    expectLedgerError(
+      () => service.patchTransaction(transaction.id, {
+        expectedVersion: 99,
+        accountId: 'missing-account',
+      }),
+      'ledger-version-conflict',
+    )
+    expectLedgerError(
+      () => service.patchTransaction(transaction.id, {
+        expectedVersion: 99,
+        accountId: archived.id,
+      }),
+      'ledger-archived-account',
+    )
+  })
+
+  it('applies the same missing-versus-archived candidate contract to Transfer PATCH', () => {
+    const { service } = freshService()
+    initialize(service)
+    const from = createAccount(service, 'transfer-candidate-from', { openingBalanceMinor: 100 })
+    const to = createAccount(service, 'transfer-candidate-to', { openingBalanceMinor: -100 })
+    const transfer = transactionFromResult(service.createTransaction(transactionRequest({
+      type: 'transfer',
+      amountMinor: 100,
+      fromAccountId: from.id,
+      toAccountId: to.id,
+    }), 'transfer-candidate-transaction'))
+    const archived = createAccount(service, 'transfer-candidate-archived')
+    service.archiveAccount(archived.id, { expectedVersion: archived.version })
+
+    expectLedgerError(
+      () => service.patchTransaction(transfer.id, {
+        expectedVersion: transfer.version,
+        toAccountId: 'missing-account',
+      }),
+      'ledger-not-found',
+    )
+    expectLedgerError(
+      () => service.patchTransaction(transfer.id, {
+        expectedVersion: 99,
+        toAccountId: 'missing-account',
+      }),
+      'ledger-version-conflict',
+    )
+    expectLedgerError(
+      () => service.patchTransaction(transfer.id, {
+        expectedVersion: 99,
+        toAccountId: archived.id,
+      }),
+      'ledger-archived-account',
+    )
+  })
+
   it('allows only text edits on transactions that reference an archived Account', () => {
     const { service } = freshService()
     initialize(service)
@@ -706,6 +780,55 @@ describe('Ledger Transaction and Adjustment service lifecycle', () => {
     expect(repository.getTransaction(adjustment.id)?.deletedAt).not.toBeNull()
     const repeated = service.deleteTransaction(income.id, { expectedVersion: 1 })
     expect(repeated).toMatchObject({ id: income.id, version: 2 })
+  })
+
+  it('keeps terminal DELETE idempotent after the referenced Account is archived', () => {
+    const { repository, service } = freshService()
+    initialize(service)
+    const account = createAccount(service, 'terminal-delete-account')
+    const category = service.listCategories('expense', false)[0]!
+    const expense = transactionFromResult(service.createTransaction(transactionRequest({
+      type: 'expense',
+      amountMinor: 100,
+      accountId: account.id,
+      categoryId: category.id,
+    }), 'terminal-delete-expense'))
+
+    expect(service.getAccount(account.id).currentBalanceMinor).toBe(-100)
+    const deleted = service.deleteTransaction(expense.id, { expectedVersion: 1 })
+    expect(service.getAccount(account.id).currentBalanceMinor).toBe(0)
+    const deletedRow = repository.getTransaction(expense.id)
+    expect(deletedRow).not.toBeNull()
+    const archived = service.archiveAccount(account.id, { expectedVersion: account.version })
+    expect(archived).toMatchObject({ archivedAt: expect.any(Number), currentBalanceMinor: 0 })
+
+    const beforeRetry = repository.getTransaction(expense.id)
+    expect(beforeRetry).toEqual(deletedRow)
+
+    for (const expectedVersion of [1, 2, 999]) {
+      expect(service.deleteTransaction(expense.id, { expectedVersion })).toEqual(deleted)
+    }
+
+    for (const command of [
+      {},
+      { expectedVersion: 0 },
+      { expectedVersion: -1 },
+      { expectedVersion: 1.5 },
+      { expectedVersion: Number.MAX_SAFE_INTEGER + 1 },
+      { expectedVersion: '1' },
+    ]) {
+      expectLedgerError(
+        () => service.deleteTransaction(expense.id, command),
+        'ledger-validation-failed',
+      )
+    }
+
+    expect(repository.getTransaction(expense.id)).toEqual(beforeRetry)
+    expect(service.getAccount(account.id)).toMatchObject({
+      archivedAt: expect.any(Number),
+      currentBalanceMinor: 0,
+    })
+    expect(repository.hasAccountHistory(account.id)).toBe(true)
   })
 
   it('replays immutable create snapshots and applies Adjustment no-op/concurrency semantics', () => {
