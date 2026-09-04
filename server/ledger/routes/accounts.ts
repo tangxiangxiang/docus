@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import {
   parseAccountCreateRequest,
+  parseAdjustmentEndpointRequest,
   parseBooleanQuery,
   parseIdempotencyKey,
 } from '../validation.js'
@@ -37,6 +38,16 @@ export function createAccountRoutes(getService: LedgerServiceFactory): Hono {
   routes.post('/:id/restore', (c) => withLedgerErrors(c, async () => {
     const body = await readLedgerJson(c)
     return c.json(getService().restoreAccount(c.req.param('id'), body))
+  }))
+
+  routes.post('/:id/adjust', (c) => withLedgerErrors(c, async () => {
+    const request = parseAdjustmentEndpointRequest(await readLedgerJson(c))
+    const idempotencyKey = parseIdempotencyKey(c.req.header('Idempotency-Key'))
+    return ledgerReplayResponse(c, getService().adjustAccount(
+      c.req.param('id'),
+      request,
+      idempotencyKey,
+    ))
   }))
 
   routes.get('/:id', (c) => withLedgerErrors(c, () => c.json(

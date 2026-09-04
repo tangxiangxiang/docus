@@ -67,10 +67,34 @@ describe('Ledger API auth inheritance', () => {
       body: { baseCurrency: 'CNY', timezone: 'UTC' },
       idempotencyKey: 'anonymous-settings',
     })
+    const transactionMutation = await request('/api/ledger/transactions', {
+      method: 'POST',
+      body: {
+        type: 'transfer',
+        amountMinor: 1,
+        fromAccountId: 'anonymous-from',
+        toAccountId: 'anonymous-to',
+        occurredAt: Date.now(),
+      },
+      idempotencyKey: 'anonymous-transaction',
+    })
+    const adjustmentMutation = await request('/api/ledger/accounts/anonymous-account/adjust', {
+      method: 'POST',
+      body: {
+        targetBalanceMinor: 1,
+        expectedCalculatedBalanceMinor: 0,
+        occurredAt: Date.now(),
+      },
+      idempotencyKey: 'anonymous-adjustment',
+    })
     expect(read.status).toBe(401)
     expect(mutation.status).toBe(401)
+    expect(transactionMutation.status).toBe(401)
+    expect(adjustmentMutation.status).toBe(401)
     expect(await read.json()).toMatchObject({ code: 'auth-session-required' })
     expect(await mutation.json()).toMatchObject({ code: 'auth-session-required' })
+    expect(await transactionMutation.json()).toMatchObject({ code: 'auth-session-required' })
+    expect(await adjustmentMutation.json()).toMatchObject({ code: 'auth-session-required' })
   })
 
   it('allows the owner while preserving existing CSRF and JSON content-type checks', async () => {

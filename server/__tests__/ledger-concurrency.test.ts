@@ -15,7 +15,9 @@ import {
 } from '../ledger/repository.js'
 import { runLedgerWrite } from '../ledger/writeTransaction.js'
 import { LedgerError } from '../ledger/errors.js'
+import { ledgerAccountAdjustmentOperationScope } from '../ledger/idempotency.js'
 import { createLedgerService } from '../ledger/service.js'
+import { parseTransactionCreateRequest } from '../ledger/validation.js'
 import { SQLITE_BUSY_TIMEOUT_MS } from '../db.js'
 import {
   createLedgerTestDatabase,
@@ -489,5 +491,79 @@ describe('Ledger write transaction infrastructure', () => {
       'ledger-account-nonzero-balance',
     )
     expect(repositoryB.getAccount(archivedCandidate.id)?.archivedAt).toBeNull()
+  })
+
+  it('allows only one two-connection Adjustment to accept the same stale balance', () => {
+    const database = freshDatabase()
+    const connectionB = database.openConnection()
+    const repositoryA = createLedgerRepository(database.db)
+    const repositoryB = createLedgerRepository(connectionB)
+    const accountValue = account('adjustment-race-account')
+    repositoryA.insertSettings(settings())
+    repositoryA.insertAccount(accountValue)
+    const serviceA = createLedgerService(database.db, repositoryA)
+    const serviceB = createLedgerService(connectionB, repositoryB)
+    const occurredAt = Date.now()
+
+    const first = serviceA.adjustAccount(accountValue.id, {
+      targetBalanceMinor: 100,
+      expectedCalculatedBalanceMinor: 0,
+      occurredAt,
+      note: 'first client',
+    }, 'adjustment-race-a')
+    expect(first.responseStatus).toBe(201)
+
+    expectLedgerErrorCode(
+      () => serviceB.adjustAccount(accountValue.id, {
+        targetBalanceMinor: 200,
+        expectedCalculatedBalanceMinor: 0,
+        occurredAt,
+        note: 'stale second client',
+      }, 'adjustment-race-b'),
+      'ledger-balance-conflict',
+    )
+
+    expect(repositoryA.listActiveTransactionsForAccount(accountValue.id)).toHaveLength(1)
+    expect(serviceB.getAccount(accountValue.id).currentBalanceMinor).toBe(100)
+    expect(repositoryB.getIdempotencyRecord(
+      ledgerAccountAdjustmentOperationScope(accountValue.id),
+      'adjustment-race-b',
+    )).toBeNull()
+  })
+
+  it('keeps the archived zero-balance invariant when archive wins another connection', () => {
+    const database = freshDatabase()
+    const connectionB = database.openConnection()
+    const repositoryA = createLedgerRepository(database.db)
+    const repositoryB = createLedgerRepository(connectionB)
+    const accountValue = account('archive-wins-account')
+    const categoryValue = category('archive-wins-category')
+    repositoryA.insertSettings(settings())
+    repositoryA.insertAccount(accountValue)
+    repositoryA.insertCategory(categoryValue)
+    const serviceA = createLedgerService(database.db, repositoryA)
+    const serviceB = createLedgerService(connectionB, repositoryB)
+
+    expect(serviceA.archiveAccount(accountValue.id, { expectedVersion: 1 }).archivedAt)
+      .not.toBeNull()
+    expectLedgerErrorCode(
+      () => serviceB.createTransaction(parseTransactionCreateRequest({
+        type: 'expense',
+        amountMinor: 1,
+        accountId: accountValue.id,
+        categoryId: categoryValue.id,
+        occurredAt: Date.now(),
+      }), 'archive-wins-transaction'),
+      'ledger-archived-account',
+    )
+
+    expect(serviceB.getAccount(accountValue.id)).toMatchObject({
+      archivedAt: expect.any(Number),
+      currentBalanceMinor: 0,
+    })
+    expect(repositoryB.getIdempotencyRecord(
+      'POST:/api/ledger/transactions',
+      'archive-wins-transaction',
+    )).toBeNull()
   })
 })

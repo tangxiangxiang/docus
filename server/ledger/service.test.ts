@@ -5,6 +5,7 @@ import type {
   LedgerCategoryDto,
   LedgerCategoryCreateRequest,
   LedgerSettingsCreateRequest,
+  LedgerTransactionCreateRequest,
 } from '../../shared/ledgerProtocol.js'
 import { DEFAULT_LEDGER_CATEGORIES_V1 } from './defaultCategories.js'
 import { LedgerError } from './errors.js'
@@ -14,6 +15,7 @@ import {
   parseAccountCreateRequest,
   parseCategoryCreateRequest,
   parseSettingsCreateRequest,
+  parseTransactionCreateRequest,
 } from './validation.js'
 import {
   createLedgerTestDatabase,
@@ -21,6 +23,7 @@ import {
 } from '../__tests__/helpers/ledgerDb.js'
 
 const databases: LedgerTestDatabase[] = []
+const TEST_NOW = Date.parse('2026-01-01T00:00:00.000Z')
 
 const EXPECTED_DEFAULT_LEDGER_CATEGORIES_V1 = [
   { kind: 'expense', name: '餐饮' },
@@ -52,10 +55,9 @@ function freshService(): {
   databases.push(database)
   const repository = createLedgerRepository(database.db)
   let nextId = 0
-  let nextTime = 1_700_000_000_000
   const service = createLedgerService(database.db, repository, {
     createId: () => `ledger-test-${++nextId}`,
-    now: () => nextTime++,
+    now: () => TEST_NOW,
   })
   return { database, repository, service }
 }
@@ -130,6 +132,27 @@ function createCategory(
   const result = service.createCategory(categoryRequest(overrides), key)
   expect(result.responseStatus).toBe(201)
   return JSON.parse(result.responseBodyJson) as LedgerCategoryDto
+}
+
+function transactionRequest(value: Record<string, unknown>): LedgerTransactionCreateRequest {
+  return parseTransactionCreateRequest({
+    occurredAt: TEST_NOW,
+    ...value,
+  })
+}
+
+function transactionFromResult(result: ReturnType<LedgerService['createTransaction']>) {
+  expect(result.responseStatus).toBe(201)
+  return JSON.parse(result.responseBodyJson) as {
+    id: string
+    type: string
+    amountMinor: number
+    version: number
+    deletedAt: number | null
+    accountId?: string
+    fromAccountId?: string
+    toAccountId?: string
+  }
 }
 
 describe('Ledger Settings and default Category service', () => {
@@ -395,6 +418,404 @@ describe('Ledger Account service lifecycle', () => {
     expect(replay.responseStatus).toBe(201)
     expect(replay.responseBodyJson).toBe(snapshot)
     expect(() => service.getAccount(account.id)).toThrow(LedgerError)
+  })
+})
+
+describe('Ledger Transaction and Adjustment service lifecycle', () => {
+  it.each([
+    { type: 'income' as const, nature: 'asset' as const, expected: 100 },
+    { type: 'income' as const, nature: 'liability' as const, expected: -100 },
+    { type: 'expense' as const, nature: 'asset' as const, expected: -100 },
+    { type: 'expense' as const, nature: 'liability' as const, expected: 100 },
+  ])('applies $type to a $nature Account through the service', ({ type, nature, expected }) => {
+    const { service } = freshService()
+    initialize(service)
+    const account = createAccount(service, `${type}-${nature}`, {
+      type: nature === 'asset' ? 'bank' : 'credit_card',
+      nature,
+    })
+    const category = service.listCategories(type, false)[0]!
+    const result = service.createTransaction(transactionRequest({
+      type,
+      amountMinor: 100,
+      accountId: account.id,
+      categoryId: category.id,
+    }), `${type}-${nature}-transaction`)
+
+    expect(transactionFromResult(result)).toMatchObject({ type, amountMinor: 100, version: 1 })
+    expect(service.getAccount(account.id).currentBalanceMinor).toBe(expected)
+  })
+
+  it.each([
+    { fromNature: 'asset' as const, toNature: 'asset' as const },
+    { fromNature: 'asset' as const, toNature: 'liability' as const },
+    { fromNature: 'liability' as const, toNature: 'asset' as const },
+    { fromNature: 'liability' as const, toNature: 'liability' as const },
+  ])('preserves net worth for $fromNature to $toNature Transfer', ({ fromNature, toNature }) => {
+    const { service } = freshService()
+    initialize(service)
+    const from = createAccount(service, `from-${fromNature}`, {
+      type: fromNature === 'asset' ? 'bank' : 'loan',
+      nature: fromNature,
+      openingBalanceMinor: 100,
+    })
+    const to = createAccount(service, `to-${toNature}`, {
+      type: toNature === 'asset' ? 'wallet' : 'credit_card',
+      nature: toNature,
+      openingBalanceMinor: 50,
+    })
+    const before = (fromNature === 'asset' ? from.currentBalanceMinor : -from.currentBalanceMinor)
+      + (toNature === 'asset' ? to.currentBalanceMinor : -to.currentBalanceMinor)
+    const result = service.createTransaction(transactionRequest({
+      type: 'transfer',
+      amountMinor: 10,
+      fromAccountId: from.id,
+      toAccountId: to.id,
+    }), `transfer-${fromNature}-${toNature}`)
+    const transfer = transactionFromResult(result)
+
+    expect(transfer).toMatchObject({ type: 'transfer', fromAccountId: from.id, toAccountId: to.id })
+    const fromAfter = service.getAccount(from.id).currentBalanceMinor
+    const toAfter = service.getAccount(to.id).currentBalanceMinor
+    const after = (fromNature === 'asset' ? fromAfter : -fromAfter)
+      + (toNature === 'asset' ? toAfter : -toAfter)
+    expect(after).toBe(before)
+  })
+
+  it('rejects generic Adjustment creation and validates current-state references and time boundaries', () => {
+    const { service } = freshService()
+    initialize(service)
+    const account = createAccount(service, 'future-account', { openingDate: '2026-02-01' })
+    const expenseCategory = service.listCategories('expense', false)[0]!
+
+    expectLedgerError(
+      () => service.createTransaction(transactionRequest({
+        type: 'adjustment',
+        accountId: account.id,
+        targetBalanceMinor: 1,
+        expectedCalculatedBalanceMinor: 0,
+      }), 'generic-adjustment'),
+      'ledger-validation-failed',
+    )
+    expectLedgerError(
+      () => service.createTransaction(transactionRequest({
+        type: 'expense',
+        amountMinor: 1,
+        accountId: account.id,
+        categoryId: expenseCategory.id,
+      }), 'opening-conflict'),
+      'ledger-opening-date-conflict',
+    )
+    expectLedgerError(
+      () => service.createTransaction(transactionRequest({
+        type: 'expense',
+        amountMinor: 1,
+        accountId: account.id,
+        categoryId: expenseCategory.id,
+        occurredAt: TEST_NOW + 60_001,
+      }), 'future-conflict'),
+      'ledger-validation-failed',
+    )
+
+    const archived = createAccount(service, 'archived-for-transaction')
+    service.archiveAccount(archived.id, { expectedVersion: archived.version })
+    expectLedgerError(
+      () => service.createTransaction(transactionRequest({
+        type: 'expense',
+        amountMinor: 1,
+        accountId: archived.id,
+        categoryId: expenseCategory.id,
+      }), 'archived-account-create'),
+      'ledger-archived-account',
+    )
+  })
+
+  it('atomically patches a transaction across Accounts and Categories and enforces type/field rules', () => {
+    const { service } = freshService()
+    initialize(service)
+    const first = createAccount(service, 'patch-first')
+    const second = createAccount(service, 'patch-second')
+    const firstCategory = createCategory(service, 'patch-category-first', { name: 'Patch first' })
+    const secondCategory = createCategory(service, 'patch-category-second', { name: 'Patch second' })
+    const created = transactionFromResult(service.createTransaction(transactionRequest({
+      type: 'expense',
+      amountMinor: 100,
+      accountId: first.id,
+      categoryId: firstCategory.id,
+    }), 'patch-transaction'))
+
+    const patched = service.patchTransaction(created.id, {
+      expectedVersion: created.version,
+      amountMinor: 150,
+      accountId: second.id,
+      categoryId: secondCategory.id,
+      note: 'moved',
+    })
+    expect(patched).toMatchObject({
+      id: created.id,
+      amountMinor: 150,
+      accountId: second.id,
+      categoryId: secondCategory.id,
+      note: 'moved',
+      version: 2,
+    })
+    expect(service.getAccount(first.id).currentBalanceMinor).toBe(0)
+    expect(service.getAccount(second.id).currentBalanceMinor).toBe(-150)
+
+    expectLedgerError(
+      () => service.patchTransaction(created.id, { expectedVersion: 2, type: 'income' }),
+      'ledger-transaction-type-immutable',
+    )
+    expectLedgerError(
+      () => service.patchTransaction(created.id, { expectedVersion: 2, fromAccountId: first.id }),
+      'ledger-validation-failed',
+    )
+
+    const archivedCategory = createCategory(service, 'archived-patch-category', { name: 'Archived patch' })
+    service.archiveCategory(archivedCategory.id, { expectedVersion: archivedCategory.version })
+    expectLedgerError(
+      () => service.patchTransaction(created.id, {
+        expectedVersion: 2,
+        categoryId: archivedCategory.id,
+      }),
+      'ledger-archived-category',
+    )
+  })
+
+  it('allows only text edits on transactions that reference an archived Account', () => {
+    const { service } = freshService()
+    initialize(service)
+    const account = createAccount(service, 'archived-history-account')
+    const expenseCategory = service.listCategories('expense', false)[0]!
+    const incomeCategory = service.listCategories('income', false)[0]!
+    const expense = transactionFromResult(service.createTransaction(transactionRequest({
+      type: 'expense',
+      amountMinor: 100,
+      accountId: account.id,
+      categoryId: expenseCategory.id,
+    }), 'archived-expense'))
+    transactionFromResult(service.createTransaction(transactionRequest({
+      type: 'income',
+      amountMinor: 100,
+      accountId: account.id,
+      categoryId: incomeCategory.id,
+    }), 'archived-income'))
+    expect(service.getAccount(account.id).currentBalanceMinor).toBe(0)
+    service.archiveAccount(account.id, { expectedVersion: account.version })
+
+    expectLedgerError(
+      () => service.patchTransaction(expense.id, { expectedVersion: 99, amountMinor: 1 }),
+      'ledger-archived-account',
+    )
+    expectLedgerError(
+      () => service.deleteTransaction(expense.id, { expectedVersion: 99 }),
+      'ledger-archived-account',
+    )
+    const renamed = service.patchTransaction(expense.id, {
+      expectedVersion: expense.version,
+      note: 'historical note',
+      payee: 'historical payee',
+    })
+    expect(renamed).toMatchObject({ version: 2, note: 'historical note', payee: 'historical payee' })
+  })
+
+  it.each([
+    { fromNature: 'asset' as const, toNature: 'asset' as const },
+    { fromNature: 'asset' as const, toNature: 'liability' as const },
+    { fromNature: 'liability' as const, toNature: 'asset' as const },
+    { fromNature: 'liability' as const, toNature: 'liability' as const },
+  ])('keeps archived Transfer references safe for $fromNature to $toNature', ({ fromNature, toNature }) => {
+    const { service } = freshService()
+    initialize(service)
+    const from = createAccount(service, `archived-transfer-from-${fromNature}`, {
+      type: fromNature === 'asset' ? 'bank' : 'loan',
+      nature: fromNature,
+      openingBalanceMinor: fromNature === 'asset' ? 100 : -100,
+    })
+    const to = createAccount(service, `archived-transfer-to-${toNature}`, {
+      type: toNature === 'asset' ? 'wallet' : 'credit_card',
+      nature: toNature,
+      openingBalanceMinor: toNature === 'asset' ? -100 : 100,
+    })
+    const transfer = transactionFromResult(service.createTransaction(transactionRequest({
+      type: 'transfer',
+      amountMinor: 100,
+      fromAccountId: from.id,
+      toAccountId: to.id,
+    }), `archived-transfer-${fromNature}-${toNature}`))
+    expect(service.getAccount(from.id).currentBalanceMinor).toBe(0)
+    expect(service.getAccount(to.id).currentBalanceMinor).toBe(0)
+
+    service.archiveAccount(from.id, { expectedVersion: from.version })
+    service.archiveAccount(to.id, { expectedVersion: to.version })
+    const notePatch = service.patchTransaction(transfer.id, {
+      expectedVersion: transfer.version,
+      note: 'archived transfer note',
+    })
+    expect(notePatch).toMatchObject({ version: 2, note: 'archived transfer note' })
+    expectLedgerError(
+      () => service.deleteTransaction(transfer.id, { expectedVersion: notePatch.version }),
+      'ledger-archived-account',
+    )
+  })
+
+  it('soft deletes every transaction type and makes deletion terminal and balance-neutral', () => {
+    const { repository, service } = freshService()
+    initialize(service)
+    const account = createAccount(service, 'delete-account')
+    const other = createAccount(service, 'delete-other')
+    const expenseCategory = service.listCategories('expense', false)[0]!
+    const incomeCategory = service.listCategories('income', false)[0]!
+    const income = transactionFromResult(service.createTransaction(transactionRequest({
+      type: 'income', amountMinor: 100, accountId: account.id, categoryId: incomeCategory.id,
+    }), 'delete-income'))
+    const expense = transactionFromResult(service.createTransaction(transactionRequest({
+      type: 'expense', amountMinor: 20, accountId: account.id, categoryId: expenseCategory.id,
+    }), 'delete-expense'))
+    const transfer = transactionFromResult(service.createTransaction(transactionRequest({
+      type: 'transfer', amountMinor: 30, fromAccountId: account.id, toAccountId: other.id,
+    }), 'delete-transfer'))
+    const adjustmentResult = service.adjustAccount(account.id, {
+      targetBalanceMinor: 60,
+      expectedCalculatedBalanceMinor: 50,
+      occurredAt: TEST_NOW,
+      note: 'delete adjustment',
+    }, 'delete-adjustment')
+    expect(adjustmentResult.responseStatus).toBe(201)
+    const adjustment = (JSON.parse(adjustmentResult.responseBodyJson) as {
+      adjustment: { id: string; version: number }
+    }).adjustment
+
+    for (const transaction of [income, expense, transfer, adjustment]) {
+      const deleted = service.deleteTransaction(transaction.id, { expectedVersion: 1 })
+      expect(deleted).toMatchObject({ id: transaction.id, version: 2 })
+      expect(deleted.deletedAt).not.toBeNull()
+      expectLedgerError(
+        () => service.patchTransaction(transaction.id, null),
+        'ledger-transaction-deleted',
+      )
+      expectLedgerError(
+        () => service.patchTransaction(transaction.id, { expectedVersion: 2, note: 'blocked' }),
+        'ledger-transaction-deleted',
+      )
+    }
+
+    expect(service.getAccount(account.id).currentBalanceMinor).toBe(0)
+    expect(service.getAccount(other.id).currentBalanceMinor).toBe(0)
+    expect(repository.hasAccountHistory(account.id)).toBe(true)
+    expect(repository.getTransaction(adjustment.id)?.deletedAt).not.toBeNull()
+    const repeated = service.deleteTransaction(income.id, { expectedVersion: 1 })
+    expect(repeated).toMatchObject({ id: income.id, version: 2 })
+  })
+
+  it('replays immutable create snapshots and applies Adjustment no-op/concurrency semantics', () => {
+    const { service } = freshService()
+    initialize(service)
+    const account = createAccount(service, 'adjustment-account')
+    const expenseCategory = service.listCategories('expense', false)[0]!
+    const noOpRequest = {
+      targetBalanceMinor: 0,
+      expectedCalculatedBalanceMinor: 0,
+      occurredAt: TEST_NOW,
+      note: 'already reconciled',
+    }
+    const noOp = service.adjustAccount(account.id, noOpRequest, 'adjustment-no-op')
+    expect(noOp.responseStatus).toBe(200)
+    expect(JSON.parse(noOp.responseBodyJson)).toMatchObject({ adjustment: null, noOp: true, account: { currentBalanceMinor: 0 } })
+
+    const income = transactionFromResult(service.createTransaction(transactionRequest({
+      type: 'income', amountMinor: 10, accountId: account.id, categoryId: service.listCategories('income', false)[0]!.id,
+    }), 'adjustment-balance-change'))
+    expect(income.amountMinor).toBe(10)
+    const replayNoOp = service.adjustAccount(account.id, noOpRequest, 'adjustment-no-op')
+    expect(replayNoOp.replayed).toBe(true)
+    expect(replayNoOp.responseBodyJson).toBe(noOp.responseBodyJson)
+
+    const mismatchKey = 'adjustment-retry-after-conflict'
+    expectLedgerError(
+      () => service.adjustAccount(account.id, {
+        targetBalanceMinor: 20,
+        expectedCalculatedBalanceMinor: 0,
+        occurredAt: TEST_NOW,
+        note: '',
+      }, mismatchKey),
+      'ledger-balance-conflict',
+    )
+    const adjusted = service.adjustAccount(account.id, {
+      targetBalanceMinor: 20,
+      expectedCalculatedBalanceMinor: 10,
+      occurredAt: TEST_NOW,
+      note: 'reconciled',
+    }, mismatchKey)
+    expect(adjusted.responseStatus).toBe(201)
+    const adjustedReplay = service.adjustAccount(account.id, {
+      targetBalanceMinor: 20,
+      expectedCalculatedBalanceMinor: 10,
+      occurredAt: TEST_NOW,
+      note: 'reconciled',
+    }, mismatchKey)
+    expect(adjustedReplay.replayed).toBe(true)
+    expect(adjustedReplay.responseBodyJson).toBe(adjusted.responseBodyJson)
+    const adjustment = JSON.parse(adjusted.responseBodyJson) as { adjustment: { id: string; version: number } }
+    expect(adjustment.adjustment.version).toBe(1)
+
+    const notePatch = service.patchTransaction(adjustment.adjustment.id, {
+      expectedVersion: 1,
+      note: 'corrected note',
+    })
+    expect(notePatch.version).toBe(2)
+    expectLedgerError(
+      () => service.patchTransaction(adjustment.adjustment.id, {
+        expectedVersion: 2,
+        adjustmentTargetBalanceMinor: 21,
+      }),
+      'ledger-adjustment-immutable',
+    )
+    const deleted = service.deleteTransaction(adjustment.adjustment.id, { expectedVersion: 2 })
+    expect(deleted.deletedAt).not.toBeNull()
+    expect(service.getAccount(account.id).currentBalanceMinor).toBe(10)
+
+    expectLedgerError(
+      () => service.adjustAccount(account.id, {
+        targetBalanceMinor: 11,
+        expectedCalculatedBalanceMinor: 10,
+        occurredAt: TEST_NOW,
+        note: 'different payload',
+      }, mismatchKey),
+      'ledger-idempotency-conflict',
+    )
+
+    const createdResult = service.createTransaction(transactionRequest({
+      type: 'expense', amountMinor: 3, accountId: account.id, categoryId: expenseCategory.id,
+    }), 'transaction-replay')
+    const created = transactionFromResult(createdResult)
+    const snapshot = createdResult.responseBodyJson
+    service.patchTransaction(created.id, { expectedVersion: 1, note: 'changed after create' })
+    const replay = service.createTransaction(transactionRequest({
+      type: 'expense', amountMinor: 3, accountId: account.id, categoryId: expenseCategory.id,
+    }), 'transaction-replay')
+    expect(replay.replayed).toBe(true)
+    expect(replay.responseBodyJson).toBe(snapshot)
+  })
+
+  it('rejects Adjustment delta subtraction overflow without consuming the request key', () => {
+    const { service } = freshService()
+    initialize(service)
+    const account = createAccount(service, 'adjustment-overflow', {
+      openingBalanceMinor: -Number.MAX_SAFE_INTEGER,
+    })
+    const request = {
+      targetBalanceMinor: Number.MAX_SAFE_INTEGER,
+      expectedCalculatedBalanceMinor: -Number.MAX_SAFE_INTEGER,
+      occurredAt: TEST_NOW,
+      note: 'overflow',
+    }
+    expectLedgerError(
+      () => service.adjustAccount(account.id, request, 'adjustment-overflow-key'),
+      'ledger-money-overflow',
+    )
+    const row = service.getAccount(account.id)
+    expect(row.currentBalanceMinor).toBe(-Number.MAX_SAFE_INTEGER)
   })
 })
 

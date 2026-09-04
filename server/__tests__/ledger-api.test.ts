@@ -312,7 +312,7 @@ describe('Ledger Account API', () => {
   })
 })
 
-describe('Ledger Category API and L0.6 boundary', () => {
+describe('Ledger Category API', () => {
   it('enforces normalized identity, archive/restore, kind filter, and physical delete history', async () => {
     await initialize()
     const created = await authenticated('/api/ledger/categories', {
@@ -380,7 +380,7 @@ describe('Ledger Category API and L0.6 boundary', () => {
     expect(deleted.status).toBe(200)
   })
 
-  it('does not expose a working Adjustment endpoint in L0.5', async () => {
+  it('creates an Adjustment through the dedicated Account endpoint', async () => {
     await initialize()
     const account = await authenticated('/api/ledger/accounts', {
       method: 'POST',
@@ -393,10 +393,281 @@ describe('Ledger Category API and L0.6 boundary', () => {
       body: {
         targetBalanceMinor: 1,
         expectedCalculatedBalanceMinor: 0,
-        occurredAt: 1_700_000_000_000,
+        occurredAt: Date.now(),
+      },
+      idempotencyKey: 'account-adjust-boundary',
+    })
+    expect(response.status).toBe(201)
+    expect(await json(response)).toMatchObject({
+      noOp: false,
+      adjustment: {
+        type: 'adjustment',
+        amountMinor: 1,
+        accountId: accountValue.id,
+      },
+      account: { currentBalanceMinor: 1 },
+    })
+  })
+})
+
+describe('Ledger Transaction and Adjustment API', () => {
+  it('creates, replays, reads, patches, and terminally deletes a Transaction', async () => {
+    await initialize()
+    const accountResponse = await authenticated('/api/ledger/accounts', {
+      method: 'POST',
+      body: accountBody({ name: 'Transaction account' }),
+      idempotencyKey: 'transaction-account',
+    })
+    const account = await json(accountResponse)
+    const categories = await authenticated('/api/ledger/categories?kind=expense')
+    const expenseCategory = (await json(categories))[0]
+    const requestBody = {
+      type: 'expense',
+      amountMinor: 250,
+      accountId: account.id,
+      categoryId: expenseCategory.id,
+      occurredAt: Date.now(),
+      payee: 'Market',
+      note: 'Initial purchase',
+    }
+
+    const first = await authenticated('/api/ledger/transactions', {
+      method: 'POST',
+      body: requestBody,
+      idempotencyKey: 'transaction-replay',
+    })
+    const firstText = await first.text()
+    expect(first.status).toBe(201)
+    expect(first.headers.get('cache-control')).toBe('no-store')
+
+    const replay = await authenticated('/api/ledger/transactions', {
+      method: 'POST',
+      body: requestBody,
+      idempotencyKey: 'transaction-replay',
+    })
+    expect(replay.status).toBe(201)
+    expect(await replay.text()).toBe(firstText)
+
+    const created = JSON.parse(firstText)
+    const point = await authenticated(`/api/ledger/transactions/${created.id}`)
+    expect(point.status).toBe(200)
+    expect(await json(point)).toEqual(created)
+
+    const patched = await authenticated(`/api/ledger/transactions/${created.id}`, {
+      method: 'PATCH',
+      body: { expectedVersion: 1, amountMinor: 300, note: 'Updated purchase' },
+    })
+    expect(patched.status).toBe(200)
+    expect(await json(patched)).toMatchObject({ amountMinor: 300, note: 'Updated purchase', version: 2 })
+
+    const typeChange = await authenticated(`/api/ledger/transactions/${created.id}`, {
+      method: 'PATCH',
+      body: { expectedVersion: 2, type: 'income' },
+    })
+    expect(typeChange.status).toBe(409)
+    expect(await json(typeChange)).toMatchObject({ code: 'ledger-transaction-type-immutable' })
+
+    const deleted = await authenticated(`/api/ledger/transactions/${created.id}`, {
+      method: 'DELETE',
+      body: { expectedVersion: 2 },
+    })
+    const deletedText = await deleted.text()
+    expect(deleted.status).toBe(200)
+    expect(JSON.parse(deletedText)).toMatchObject({ id: created.id, version: 3 })
+    expect(JSON.parse(deletedText).deletedAt).not.toBeNull()
+
+    const deletedPatch = await authenticated(`/api/ledger/transactions/${created.id}`, {
+      method: 'PATCH',
+      body: { expectedVersion: 3, note: 'must not change' },
+    })
+    expect(deletedPatch.status).toBe(409)
+    expect(await json(deletedPatch)).toMatchObject({ code: 'ledger-transaction-deleted' })
+
+    const repeatedDelete = await authenticated(`/api/ledger/transactions/${created.id}`, {
+      method: 'DELETE',
+      body: { expectedVersion: 1 },
+    })
+    expect(repeatedDelete.status).toBe(200)
+    expect(await repeatedDelete.text()).toBe(deletedText)
+
+    const listBoundary = await authenticated('/api/ledger/transactions')
+    expect(listBoundary.status).toBe(404)
+  })
+
+  it('uses one-row Transfer effects and exposes Adjustment no-op/conflict responses', async () => {
+    await initialize()
+    const assetResponse = await authenticated('/api/ledger/accounts', {
+      method: 'POST',
+      body: accountBody({ name: 'Bank', openingBalanceMinor: 100 }),
+      idempotencyKey: 'transfer-asset',
+    })
+    const liabilityResponse = await authenticated('/api/ledger/accounts', {
+      method: 'POST',
+      body: accountBody({
+        name: 'Card',
+        type: 'credit_card',
+        nature: 'liability',
+      }),
+      idempotencyKey: 'transfer-liability',
+    })
+    const asset = await json(assetResponse)
+    const liability = await json(liabilityResponse)
+
+    const transfer = await authenticated('/api/ledger/transactions', {
+      method: 'POST',
+      body: {
+        type: 'transfer',
+        amountMinor: 50,
+        fromAccountId: asset.id,
+        toAccountId: liability.id,
+        occurredAt: Date.now(),
+        note: 'Repayment',
+      },
+      idempotencyKey: 'transfer-api',
+    })
+    expect(transfer.status).toBe(201)
+    expect(await json(transfer)).toMatchObject({
+      type: 'transfer',
+      fromAccountId: asset.id,
+      toAccountId: liability.id,
+    })
+
+    expect(await json(await authenticated(`/api/ledger/accounts/${asset.id}`)))
+      .toMatchObject({ currentBalanceMinor: 50 })
+    expect(await json(await authenticated(`/api/ledger/accounts/${liability.id}`)))
+      .toMatchObject({ currentBalanceMinor: -50 })
+
+    const noOpOccurredAt = Date.now()
+    const noOpRequest = {
+      targetBalanceMinor: 50,
+      expectedCalculatedBalanceMinor: 50,
+      occurredAt: noOpOccurredAt,
+      note: 'already reconciled',
+    }
+    const noOp = await authenticated(`/api/ledger/accounts/${asset.id}/adjust`, {
+      method: 'POST',
+      body: noOpRequest,
+      idempotencyKey: 'adjustment-api-no-op',
+    })
+    const noOpText = await noOp.text()
+    expect(noOp.status).toBe(200)
+    expect(JSON.parse(noOpText)).toMatchObject({ adjustment: null, noOp: true })
+
+    const applied = await authenticated(`/api/ledger/accounts/${liability.id}/adjust`, {
+      method: 'POST',
+      body: {
+        targetBalanceMinor: -40,
+        expectedCalculatedBalanceMinor: -50,
+        occurredAt: Date.now(),
+        note: 'card reconciliation',
+      },
+      idempotencyKey: 'adjustment-api-applied',
+    })
+    expect(applied.status).toBe(201)
+    expect(await json(applied)).toMatchObject({
+      noOp: false,
+      adjustment: { type: 'adjustment', amountMinor: 10, accountId: liability.id },
+      account: { currentBalanceMinor: -40 },
+    })
+
+    const stale = await authenticated(`/api/ledger/accounts/${liability.id}/adjust`, {
+      method: 'POST',
+      body: {
+        targetBalanceMinor: -30,
+        expectedCalculatedBalanceMinor: -50,
+        occurredAt: Date.now(),
+        note: 'stale attempt',
+      },
+      idempotencyKey: 'adjustment-api-stale',
+    })
+    expect(stale.status).toBe(409)
+    expect(await json(stale)).toMatchObject({ code: 'ledger-balance-conflict' })
+
+    const noOpReplay = await authenticated(`/api/ledger/accounts/${asset.id}/adjust`, {
+      method: 'POST',
+      body: noOpRequest,
+      idempotencyKey: 'adjustment-api-no-op',
+    })
+    expect(noOpReplay.status).toBe(200)
+    expect(await noOpReplay.text()).toBe(noOpText)
+  })
+
+  it('rejects generic Adjustment requests and preserves canonical cross-row errors', async () => {
+    await initialize()
+    const accountResponse = await authenticated('/api/ledger/accounts', {
+      method: 'POST',
+      body: accountBody(),
+      idempotencyKey: 'transaction-validation-account',
+    })
+    const account = await json(accountResponse)
+    const expenseCategories = await authenticated('/api/ledger/categories?kind=expense')
+    const incomeCategories = await authenticated('/api/ledger/categories?kind=income')
+    const expenseCategory = (await json(expenseCategories))[0]
+    const incomeCategory = (await json(incomeCategories))[0]
+
+    const genericAdjustment = await authenticated('/api/ledger/transactions', {
+      method: 'POST',
+      body: {
+        type: 'adjustment',
+        accountId: account.id,
+        targetBalanceMinor: 1,
+        expectedCalculatedBalanceMinor: 0,
+        occurredAt: Date.now(),
+      },
+      idempotencyKey: 'generic-adjustment-api',
+    })
+    expect(genericAdjustment.status).toBe(400)
+    expect(await json(genericAdjustment)).toMatchObject({ code: 'ledger-validation-failed' })
+
+    const wrongKind = await authenticated('/api/ledger/transactions', {
+      method: 'POST',
+      body: {
+        type: 'expense',
+        amountMinor: 1,
+        accountId: account.id,
+        categoryId: incomeCategory.id,
+        occurredAt: Date.now(),
+      },
+      idempotencyKey: 'wrong-category-kind-api',
+    })
+    expect(wrongKind.status).toBe(409)
+    expect(await json(wrongKind)).toMatchObject({ code: 'ledger-category-kind-mismatch' })
+
+    const missingTransactionKey = await authenticated('/api/ledger/transactions', {
+      method: 'POST',
+      body: {
+        type: 'expense',
+        amountMinor: 1,
+        accountId: account.id,
+        categoryId: expenseCategory.id,
+        occurredAt: Date.now(),
       },
     })
-    expect(response.status).toBe(404)
-    expect((await response.text())).not.toContain('501')
+    expect(missingTransactionKey.status).toBe(400)
+    expect(await json(missingTransactionKey)).toMatchObject({ code: 'ledger-validation-failed' })
+
+    const missingAdjustmentKey = await authenticated(`/api/ledger/accounts/${account.id}/adjust`, {
+      method: 'POST',
+      body: {
+        targetBalanceMinor: 0,
+        expectedCalculatedBalanceMinor: 0,
+        occurredAt: Date.now(),
+      },
+    })
+    expect(missingAdjustmentKey.status).toBe(400)
+    expect(await json(missingAdjustmentKey)).toMatchObject({ code: 'ledger-validation-failed' })
+
+    const valid = await authenticated('/api/ledger/transactions', {
+      method: 'POST',
+      body: {
+        type: 'expense',
+        amountMinor: 1,
+        accountId: account.id,
+        categoryId: expenseCategory.id,
+        occurredAt: Date.now(),
+      },
+      idempotencyKey: 'valid-after-error-api',
+    })
+    expect(valid.status).toBe(201)
   })
 })
