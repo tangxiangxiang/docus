@@ -1,19 +1,23 @@
-# Ledger L1 — UI Integration Implementation Plan
+# Ledger — UI Integration Implementation Plan
 
-## 1. Status / baseline
+## 1. Status / remediation baseline
 
 | 项目 | 审计结果 |
 | --- | --- |
 | Plan date | 2026-09-05 |
+| Remediation date | 2026-09-05（Asia/Shanghai） |
 | Implementation Plan status | **Implementation Plan: Ready for Review** |
 | Implementation authorization | **Not authorized**；本轮只生成 Plan，不开始生产实现 |
-| audited main HEAD | `85fd6a82f27d2fbaabaf59d9f13746bf0592d964` |
-| audited HEAD commit | `fix(e2e): stabilize ledger dark theme characterization` |
-| working tree at audit | `?? docs/design/ledger-l1-ui-integration-prd.md`；该用户文件已存在但未被本轮修改 |
+| Remediation audited main HEAD | `db975dbecfb52e3e271697aaaf3aa6456b99e3e8` |
+| audited HEAD commit | `docs(ledger): add L1 UI PRD and implementation plan` |
+| Current committed repository reality | 当前 `main` 已包含 `7ace840 fix(e2e): wait for ledger workspace mount` 与上一轮文档提交；`e2e/ledger-workspace.spec.ts` 的等待 workspace mount 修改已经 committed；本轮 remediation audit 时 working tree clean |
+| Original IP drafting baseline | `85fd6a82f27d2fbaabaf59d9f13746bf0592d964`（historical only；不是当前实现 baseline） |
+| Original PRD drafting baseline | `3af6541c8542e12877918159882108f3e3ff6c91`（historical only；不是当前实现 baseline） |
+| Current document path | `docs/design/ledger-ui-integration-implementation-plan.md`（本轮重命名后） |
 | REQ-003 path / status | repository 中未找到独立文件；本 Prompt 提供的 REQ-003 是本轮 authoritative P0 product input |
 | Ledger v1 PRD | `docs/design/ledger-v1-prd.md`；Product Review: **Accepted** |
 | Ledger L0 Foundation PRD | `docs/design/ledger-l0-foundation-prd.md`；Architecture Review: **Accepted** |
-| L1 UI Integration PRD | `docs/design/ledger-l1-ui-integration-prd.md`；Product Review: **Ready for Review**，尚未 Accepted |
+| UI Integration PRD | `docs/design/ledger-ui-integration-prd.md`；Product Review: **Ready for Review**，尚未 Accepted |
 | L0 Implementation Plan | `docs/design/ledger-l0-foundation-implementation-plan.md`；内容中的 baseline 是旧的，不能代替当前代码审计 |
 | latest migration in repository | `server/migrations/0013_ledger_foundation.sql` |
 | local runtime | Node `v24.15.0`，npm `11.12.1` |
@@ -21,13 +25,13 @@
 
 本 Plan 可以进入 Architecture / Implementation Review，但不能被解释为已经获得编码授权。编码前至少需要满足：
 
-1. L1 PRD 通过 Product Review 并改为 `Accepted`；
-2. §4 中记录的 roadmap phase crosswalk 得到 Product Review 明确确认；
-3. 本 Plan 通过 Implementation Review。
+1. UI Integration PRD 通过 Product Review 并改为 `Accepted`；
+2. 本 Plan 通过 Implementation Review，并明确为 `Ready for Implementation`；
+3. implementation 开始前再次 audit then-current `main`。
 
 本轮未修改 `src/**`、`server/**`、`shared/**`、migration、tests、`package.json`、router、CI 或 Bills/Ledger UI。
 
-审计后的二次工作树检查另外看到 `M e2e/ledger-workspace.spec.ts` 的一处未提交变更；本轮未触碰并予以保留。它不属于本 Plan 的修改范围。
+当前 main 中的 e2e workspace mount 修复是既有 committed history，不是本轮 working-tree 变更。
 
 ## 2. Plan 目的与权威边界
 
@@ -72,7 +76,7 @@ REQ-003 的目标是把已经可用的 Ledger L0 API 接到 Docus 用户界面�
 - SQLite migration `0013_ledger_foundation.sql`；
 - server/API、domain、repository、projection、validation、error、time、money 和 idempotency 测试。
 
-`server/index.ts` 已将 Ledger route 挂载为 `/api/ledger`，并继承现有 `/api/*` owner authentication boundary。Ledger routes 统一使用 `Cache-Control: no-store`。因此 L1 不需要新增认证体系、数据库 migration、server financial service 或 API route。
+`server/index.ts` 已将 Ledger route 挂载为 `/api/ledger`，并继承现有 `/api/*` owner authentication boundary。Ledger routes 统一使用 `Cache-Control: no-store`。因此 UI Integration 不需要新增认证体系、数据库 migration、server financial service 或 API route。
 
 ### 3.2 当前前端现实
 
@@ -89,7 +93,7 @@ REQ-003 的目标是把已经可用的 Ledger L0 API 接到 Docus 用户界面�
 
 当前事实如下：
 
-| 区域 | 当前实现 | L1 处理 |
+| 区域 | 当前实现 | UI Integration 处理 |
 | --- | --- | --- |
 | Dashboard | `BillsView.vue` 直接读取 `billsMockData` | 重写为真实 Ledger projection |
 | Transactions | `BillsTransactionsView.vue` 读取 mock；新增和 filters disabled | 重写为真实分页列表、创建、查看、编辑、soft-delete |
@@ -98,21 +102,21 @@ REQ-003 的目标是把已经可用的 Ledger L0 API 接到 Docus 用户界面�
 | Navigation | Ledger scope chip 仍 push `bills` route | 改为 canonical `ledger` route |
 | App shell | 以 `bills-mode` 和 Bills predicate 区分 workspace | 使用 Ledger route predicate 和 Ledger-scoped classes |
 | Components | Bills cards 的 props、formatters、aggregations 都依赖 mock model | 仅复用视觉意图；输入改为 shared DTO / projection |
-| Features | `src/features/bills/mockData.ts` 明确是无 persistence fixture | L1 runtime 不得再 import；完成迁移后删除 |
+| Features | `src/features/bills/mockData.ts` 明确是无 persistence fixture | UI Integration runtime 不得再 import；完成迁移后删除 |
 | Dialog | Docus 已有 Teleport、`role=dialog`、Escape、focus trap pattern | 复用 `useFocusTrap` 与现有 shell，不引入新 UI framework |
 | Error / toast | `authFetch` 观察 session expiry；`jsonOrThrow` 保留 status/body/code；`useToast` 提供 info/success/error | Ledger API boundary 统一归一化；页面保留字段级错误和恢复动作 |
 | i18n | `useI18n` 是轻量 zh/en 字符串表，Bills prototype 多数文案硬编码 | 新 Ledger 用户可见文案进入 `ledger.*` keys；不继续新增 Bills 文案 |
 
 ### 3.3 测试和验证现实
 
-当前的 `e2e/ledger-workspace.spec.ts` 是 Bills prototype characterization：它访问 `/bills`、断言 `bills-page`、`bills-mode`、mock asset card 和 mock scrollbar。L1 必须将它改成 canonical Ledger shell / no-mock characterization，不能保留“mock 渲染成功”作为产品证据。
+当前的 `e2e/ledger-workspace.spec.ts` 是 Bills prototype characterization：它访问 `/bills`、断言 `bills-page`、`bills-mode`、mock asset card 和 mock scrollbar。UI Integration 必须将它改成 canonical Ledger shell / no-mock characterization，不能保留“mock 渲染成功”作为产品证据。
 
 当前已有的 Ledger 服务端回归集中在：
 
 - `server/__tests__/ledger-api.test.ts`；
 - `server/ledger/*.test.ts`。
 
-这些测试已经覆盖 owner boundary、初始化、Account/Category/Transaction/Transfer/Adjustment、idempotency、cursor、Overview、trend 和 lifecycle。L1 默认不修改这些 server tests；只有审计发现 API contract gap 时才能另行停下并回到 authoritative document。
+这些测试已经覆盖 owner boundary、初始化、Account/Category/Transaction/Transfer/Adjustment、idempotency、cursor、Overview、trend 和 lifecycle。UI Integration 默认不修改这些 server tests；只有审计发现 API contract gap 时才能另行停下并回到 authoritative document。
 
 ### 3.4 Package scripts 与 CI matrix
 
@@ -142,21 +146,17 @@ npx playwright install chromium
 node node_modules/@playwright/test/cli.js test --config=playwright.cross-platform.config.ts --reporter=line,github
 ```
 
-`.github/workflows/ci.yml` 当前包含 `verify`、`tags-scale`、`docker-smoke`、`auth-browser`、`visual` jobs。L1 不会把不存在的 `npm run test:e2e:ledger` 当作当前 command；如后续需要隔离的 Ledger E2E config，将使用已存在的 Playwright CLI 直接调用，或在独立 review 中添加 script。
+`.github/workflows/ci.yml` 当前包含 `verify`、`tags-scale`、`docker-smoke`、`auth-browser`、`visual` jobs。UI Integration 不会把不存在的 `npm run test:e2e:ledger` 当作当前 command；如后续需要隔离的 Ledger E2E config，将使用已存在的 Playwright CLI 直接调用，或在独立 review 中添加 script。
 
-## 4. Product / Architecture Contract Conflict
+## 4. Roadmap relationship
 
-审计没有发现阻止本 L1 UI 闭环的 API 或 financial-semantics gap，但发现以下必须记录的文档冲突：
+`docs/design/ledger-v1-prd.md` 中已经 Accepted 的 roadmap 是 capability roadmap，编号保持不变：L0 Foundation、L1 Accounts、L2 Transactions、L3 Transfers & Balance Integrity、L4 Dashboard Real Data、L5 Filtering & Search、L6 Categories，以及后续 L7/L8。
 
-| ID | 冲突 | 影响 | 需要修改的 authoritative document | 最小 remediation |
-| --- | --- | --- | --- | --- |
-| `PHASE-CROSSWALK-001` | Accepted `ledger-v1-prd.md §10` 把 Accounts、Transactions、Transfers、Dashboard、Filtering、Categories 分别命名为 L1–L6；REQ-003 与本 L1 PRD 把真实 UI 接入定义为一个 `Ledger L1 — UI Integration` milestone | 影响 phase 名称、slice 归属、release gate 和“L1 是否包含 Category full management”的阅读方式；不改变任何 API 或财务语义 | 优先修改 `docs/design/ledger-v1-prd.md §10`，并在 L1 PRD Review 中确认 crosswalk | 加入明确 crosswalk：`L0 Foundation` 已落地 server authority；`L1 UI Integration` 是跨 v1 domain epics 的 UI delivery milestone，覆盖本 Plan 的 onboarding、Accounts、Transactions、Transfer、Dashboard 和 basic filters；原有 L1–L6 是 capability roadmap，不是本次 UI release label |
-| `PHASE-CROSSWALK-002` | Accepted `ledger-v1-prd.md §8.4` 描述 v1 Categories 页面支持 create/edit/archive/restore；L1 PRD 冻结为只做真实 selector + kind-fixed quick create，full Category Management later | 如果把 §8.4 误读为本次 L1 必须交付，会扩大本 Plan scope；API 已支持这些 server operations，但它们不是 L1 UI requirement | `docs/design/ledger-v1-prd.md §8.4/§10` 与 L1 PRD §12/§24 | 明确“v1 capability”与“L1 UI slice”的关系：L1 只实现 quick create；full Category Management 进入后续 capability slice，不改变 Category identity/lifecycle |
-| `PHASE-CROSSWALK-003` | Accepted `ledger-v1-prd.md §8.2` 描述 payee/note search 和 Adjustment confirmation workflow；L1 PRD 将 free-text search 与 Adjustment creation 排除在 L1 | 影响 Transactions acceptance scope；不构成 API gap，因为当前 API 已分别有 `search` 和 dedicated Adjustment endpoint | `docs/design/ledger-v1-prd.md §8.2/§10` 与 L1 PRD §14/§24 | 明确 L1 只交付 type/account/category/date basic filters 和 Adjustment read-only；search/Adjustment UI 作为后续 capability slice 单独评审 |
+Ledger UI Integration 是一个跨 capability 的 delivery milestone，不是新的 roadmap phase，也不占用 “L1” 名称。它把 Accounts、Transactions、Transfers、Dashboard、basic filtering 和 minimum Category UI 组合为第一个完整的用户可用 UI 闭环。full Category Management、Adjustment UI、free-text Search 等未纳入本次 delivery 的能力，仍留在原 roadmap 或后续独立 requirement。
 
-本 Plan 采用 REQ-003 和 L1 PRD 的 `L1 UI Integration` 作为本次交付范围，不偷偷改动上位文档的 phase 名称，也不把 full Category Management、Adjustment UI、free-text search 或新的 financial semantics 加进来。上述 crosswalk 在 Product Review 前必须被确认；在确认前，状态只能是 `Ready for Review`，不能升级为 `Ready for Implementation`。
+本 Plan 使用 REQ-003 和 UI Integration PRD 冻结的 delivery scope，不修改 `ledger-v1-prd.md` 的 L1–L8 编号，不重新定义任何 financial、lifecycle、projection、amount 或 idempotency contract。full Category Management、Adjustment UI、free-text search 的延后是本次 delivery cut，不是未解决的 phase conflict。
 
-L1 PRD 当前仍为 `Ready for Review` 也是治理 gate，不是 API blocker。用户明确要求本轮生成 Plan，因此本 Plan 先作为 review artifact 生成；它不会绕过该 gate 开始编码。
+因此这里没有 Product / Architecture Contract Conflict blocker。UI Integration PRD 当前为 `Ready for Review` 是正常的 Product Review gate，不是 API blocker；本 Plan 也只能保持 `Ready for Review`，直到两个 review gate 和 implementation 前的最新 re-audit 完成。
 
 ## 5. Accepted API contract audit
 
@@ -166,7 +166,7 @@ L1 PRD 当前仍为 `Ready for Review` 也是治理 gate，不是 API blocker。
 | --- | --- | --- |
 | `GET /api/ledger/settings` | 已初始化返回 `LedgerSettingsDto`，包含 `baseCurrency`、`currencyExponent`、`timezone`、`version`；未初始化返回 `404 ledger-not-found` | 只有这个明确的 404 才进入 `UNINITIALIZED`；其他错误不能被误判为首次使用 |
 | `POST /api/ledger/settings` | exact payload `{ baseCurrency, timezone }`；需要 `Idempotency-Key`；成功 `201`；服务端同时 seed 默认 Categories | UI 要求主动确认两个值；成功后以响应为准并加载真实 Categories |
-| `PATCH /api/ledger/settings` | 带 `expectedVersion`；首个 Account 创建前可改；首个 Account 后 `baseCurrency` / `timezone` 分别受 locked error 保护 | L1 onboarding 可以允许返回上一步修正未冻结设置；不提供绕过 lock 的快捷操作 |
+| `PATCH /api/ledger/settings` | 带 `expectedVersion`；首个 Account 创建前可改；首个 Account 后 `baseCurrency` / `timezone` 分别受 locked error 保护 | UI Integration onboarding 必须允许返回上一步修正未冻结设置；不提供绕过 lock 的快捷操作 |
 
 `baseCurrency` 不由 browser locale 静默决定。browser timezone 只能作为可见预选建议；用户必须主动确认 `baseCurrency` 和 `timezone`。首个 Account 成功后两个值由服务端 lifecycle 冻结。
 
@@ -174,14 +174,14 @@ L1 PRD 当前仍为 `Ready for Review` 也是治理 gate，不是 API blocker。
 
 | API | 当前 contract | 前端计划 |
 | --- | --- | --- |
-| `GET /api/ledger/accounts?includeArchived=false` | 返回 Account DTO；默认不含 archived | Dashboard / selector 只使用 active accounts |
+| `GET /api/ledger/accounts?includeArchived=false` | 返回 Account DTO；默认不含 archived；`includeArchived=true` 返回历史 Account | Dashboard / create selector 只使用 active accounts；Account management 与 Transactions history filter 使用 `includeArchived=true` 并标记 archived |
 | `GET /api/ledger/accounts/:id` | 返回 Account DTO，包括 `currentBalanceMinor`、`version`、`archivedAt` | Account detail 以此为 authoritative snapshot |
-| `GET /api/ledger/accounts/:id/transactions` | 返回 account、movement、transaction page；支持 `includeDeleted`、cursor 等 query | detail 页用 `includeDeleted=true&limit=1` 判断是否存在历史，不能由余额猜 history |
+| `GET /api/ledger/accounts/:id/transactions` | 返回 account、movement、transaction page；支持 `includeDeleted`、cursor 等 query；Account 本身即使 archived 仍可查询 | detail 页用 `includeDeleted=true&limit=1` 判断是否存在历史，不能由余额猜 history；历史筛选保留 archived Account context |
 | `POST /api/ledger/accounts` | exact create fields：`name`、`type`、`nature`、`openingBalanceMinor`、`openingDate`、`currency`、`note`；需要 `Idempotency-Key` | Account 表单使用用户金额；currency 只读继承 baseCurrency |
 | `PATCH /api/ledger/accounts/:id` | `expectedVersion`；无历史可改 financial interpretation fields；有历史只能改 `name`/`note`；archived 只能改 `name`/`note` | UI 根据 authoritative history 显示可编辑字段；不让用户尝试服务端拒绝的字段 |
 | `POST /api/ledger/accounts/:id/archive` | `expectedVersion`；current balance 必须为 0 | 非零时展示可理解的余额和处理方向，不自动生成交易 |
 | `POST /api/ledger/accounts/:id/restore` | `expectedVersion`；恢复 archived Account | 恢复后重新加载 accounts / overview |
-| `DELETE /api/ledger/accounts/:id` | physical delete；无 history 才允许 | L1 不暴露；保留为 server capability，不作为普通维护动作 |
+| `DELETE /api/ledger/accounts/:id` | physical delete；无 history 才允许 | UI Integration 不暴露；保留为 server capability，不作为普通维护动作 |
 
 合法 Account type/nature pairing 由 server `domain.ts` / validation authority 决定：cash、bank、wallet 是 asset；credit_card、loan 是 liability；other 才允许用户选择“我拥有的钱 / 我欠的钱”。
 
@@ -189,9 +189,9 @@ L1 PRD 当前仍为 `Ready for Review` 也是治理 gate，不是 API blocker。
 
 | API | 当前 contract | 前端计划 |
 | --- | --- | --- |
-| `GET /api/ledger/categories?kind=income\|expense&includeArchived=false` | 返回真实 Category；默认排除 archived | expense 表单只请求/显示 expense；income 表单只请求/显示 income |
+| `GET /api/ledger/categories?kind=income\|expense&includeArchived=false` | 返回真实 Category；默认排除 archived；`includeArchived=true` 返回历史 Category | create selector 只使用 active kind；Transactions history filter 使用 `includeArchived=true` 并标记 archived |
 | `POST /api/ledger/categories` | `{ kind, name }`；需要 `Idempotency-Key`；normalized identity 和 duplicate 由 server 决定 | Transaction Sheet 提供 kind 固定的 quick create；成功后使用 response 的真实 ID |
-| Category PATCH / archive / restore / DELETE | API 已存在；history、identity、archived rules 由 server 决定 | L1 不做 full Category Management 页面，不暴露这些普通管理动作 |
+| Category PATCH / archive / restore / DELETE | API 已存在；history、identity、archived rules 由 server 决定 | UI Integration 不做 full Category Management 页面，不暴露这些普通管理动作 |
 
 初始化时的默认 Category 由 `server/ledger/defaultCategories.ts` seed，不能从 `billsMockData` 或前端硬编码推导。当前默认 catalog 为：
 
@@ -200,16 +200,16 @@ L1 PRD 当前仍为 `Ready for Review` 也是治理 gate，不是 API blocker。
 
 ### 5.4 Transactions
 
-| Transaction type | 当前 create payload | L1 表单 |
+| Transaction type | 当前 create payload | UI Integration 表单 |
 | --- | --- | --- |
 | `income` | `type`、positive `amountMinor`、`accountId`、`categoryId`、UTC `occurredAt`、`payee`、`note` | 金额、账户、收入分类、日期/时间；payee/note optional |
 | `expense` | `type`、positive `amountMinor`、`accountId`、`categoryId`、UTC `occurredAt`、`payee`、`note` | 金额、账户、支出分类、日期/时间；payee/note optional |
 | `transfer` | `type`、positive `amountMinor`、`fromAccountId`、`toAccountId`、UTC `occurredAt`、`note` | 金额、转出账户、转入账户、日期/时间；note optional |
-| `adjustment` | generic transaction create 被 server 拒绝；必须走 Account Adjustment endpoint | L1 不放进普通新增入口；已有 Adjustment 只读展示 |
+| `adjustment` | generic transaction create 被 server 拒绝；必须走 Account Adjustment endpoint | UI Integration 不放进普通新增入口；已有 Adjustment 只读展示 |
 
-`GET /api/ledger/transactions` 支持 `type`、`accountId`、`categoryId`、`from`、`to`、`search`、`includeDeleted`、`limit`、`cursor`。L1 只暴露 PRD 已冻结的 type/account/category/date basic filters，不在 UI 顺手加入 free-text search 或高级保存筛选。
+`GET /api/ledger/transactions` 支持 `type`、`accountId`、`categoryId`、`from`、`to`、`search`、`includeDeleted`、`limit`、`cursor`。`accountId` 会匹配普通交易账户以及 Transfer 的 from/to，`categoryId` 会匹配 income/expense 的关联分类；查询按 ID 过滤，不因 Account 或 Category 当前 archived 而隐藏其历史 active Transaction。UI Integration 只暴露 PRD 已冻结的 type/account/category/date basic filters，不在 UI 顺手加入 free-text search 或高级保存筛选。
 
-`PATCH /api/ledger/transactions/:id` 需要 `expectedVersion`，type immutable；`DELETE` 是 terminal soft delete，需要 `expectedVersion`。L1 支持 active ordinary income/expense/transfer 的 edit 和 delete；Adjustment 仍只读，Transaction delete 无 restore UI。
+`PATCH /api/ledger/transactions/:id` 需要 `expectedVersion`，type immutable；`DELETE` 是 terminal soft delete，需要 `expectedVersion`。如果已有 Transaction 关联 archived Account，server 只允许 income/expense 修改 `note`/`payee`，只允许 transfer 修改 `note`；amount、occurredAt、account/category、from/to 等 financial fields 会被拒绝。对任何关联 archived Account 的 Transaction，DELETE 也会被拒绝。UI Integration 必须在客户端先反映这些限制，而不是依赖 generic 409；Adjustment 仍只读，Transaction delete 无 restore UI。
 
 ### 5.5 Projections
 
@@ -224,9 +224,9 @@ L1 PRD 当前仍为 `Ready for Review` 也是治理 gate，不是 API blocker。
 - recent active transactions；
 - recent calendar-month `trend`。
 
-`scope` 只改变 cashflow 与 category breakdown；资产、负债、净资产、账户余额、periods、trend、recentTransactions 服从现有 server semantics。L1 默认请求 `scope=month`，scope 切换时重新消费 projection，不在 client 重新定义边界或做 `reduce()`。
+`scope` 只改变 cashflow 与 category breakdown；资产、负债、净资产、账户余额、periods、trend、recentTransactions 服从现有 server semantics。UI Integration 默认请求 `scope=month`，scope 切换时重新消费 projection，不在 client 重新定义边界或做 `reduce()`。
 
-结论：当前 API 已覆盖 REQ-003 / L1 PRD 的初始化、Account、三种普通交易、Category selector、Dashboard projection、recent transactions、filters、edit/delete 需要的 contract。没有需要偷偷用 frontend workaround 解决的 API gap。
+结论：当前 API 已覆盖 REQ-003 / UI Integration PRD 的初始化、Account、三种普通交易、Category selector、Dashboard projection、recent transactions、filters、edit/delete 需要的 contract。没有需要偷偷用 frontend workaround 解决的 API gap。
 
 ## 6. Target frontend architecture
 
@@ -333,7 +333,7 @@ NO_ACCOUNT
 
 NO_ACTIVE_ACCOUNT
     → restore Account → READY
-    → create Account（若确实没有历史 Account）→ READY
+    → create new Account（即使存在 archived/history Account）→ READY
 
 READY
     → OVERVIEW_LOADING / mutation sub-state
@@ -351,12 +351,33 @@ loading、recoverable error、session expired 是 overlay/status state，不允�
 | --- | --- | --- |
 | `UNINITIALIZED` | 只显示 Ledger initialization surface；不显示正常 Dashboard shell | 选择并确认 baseCurrency / timezone |
 | `NO_ACCOUNT` | 显示已初始化上下文和明确首个 Account CTA；不显示全 0 Dashboard | 创建第一个 Account，或稍后返回此状态 |
-| `NO_ACTIVE_ACCOUNT` | 显示 Account 管理/归档说明 | 恢复账户或创建可用账户 |
+| `NO_ACTIVE_ACCOUNT` | 显示 Account 管理/归档说明；保留 archived/history context | 恢复一个 archived Account，或创建一个新的 active Account |
 | `READY` + 0 transactions | 显示真实 Dashboard shell；余额来自 Account/opening balance；recent/period/trend 使用真实空数据 | `+ 记一笔` |
 | `READY` + transactions | 显示完整真实 projection、Account 和 recent records | 继续记账或查看 Transactions |
 | loading | skeleton/status；primary mutation disabled | 等待或按页面提供 retry |
 | recoverable error | 说明影响范围并提供 retry/reload | 用户修复或重试 |
 | `SESSION_EXPIRED` | 不泄露 stale Ledger 数据；沿用全局登录 redirect / expiry notice | 重新登录 |
+
+### 7.3 Create intent mutation state
+
+所有 create mutation（Settings、Account、Category quick create、Transaction，以及未来若接入 UI 的 Adjustment）都必须有独立的 intent sub-state：
+
+```text
+CREATE_INTENT_DRAFT
+        ↓ submit
+CREATE_INTENT_SUBMITTING
+   ├─ definite success → CREATE_INTENT_CONFIRMED
+   ├─ definite validation / deterministic conflict failure → DRAFT / ERROR
+   └─ outcome unknown → CREATE_INTENT_UNCERTAIN
+
+CREATE_INTENT_UNCERTAIN
+   ├─ retry same canonical payload + same Idempotency-Key
+   │       → CONFIRMED
+   └─ cancel / new intent
+           → first confirm the original authoritative result
+```
+
+`CREATE_INTENT_UNCERTAIN` 与普通 validation error 必须是不同状态。进入 UNCERTAIN 后，canonical payload 字段不可直接编辑；不能因为用户修改金额、Account、Category 或时间就生成新 key。只有原 intent 被确认成功，或被确认没有创建成功后，才允许新的 payload + 新 Idempotency-Key。intent snapshot/key 至少要跨 component re-render、transport retry 和 sheet 状态变化保持；如果页面 reload 后仍有未确认 intent，UI 必须先提供原 intent 的结果确认/恢复路径，不能让用户无提示地开始第二个 create。
 
 ## 8. Route / naming / shell migration
 
@@ -375,7 +396,7 @@ loading、recoverable error、session expired 是 overlay/status state，不允�
 
 ### 8.2 Legacy routes
 
-L1 保留以下 compatibility redirects，不再渲染 Bills page：
+UI Integration 保留以下 compatibility redirects，不再渲染 Bills page：
 
 ```text
 /bills              → /ledger
@@ -384,7 +405,7 @@ L1 保留以下 compatibility redirects，不再渲染 Bills page：
 
 redirect 保留合法 query/hash context，避免登录 deep link、旧书签和旧入口丢失上下文。redirect 目标必须是 canonical route，不能形成 `/bills` ↔ `/ledger` loop。
 
-`/bills` compatibility route 在 L1 release 保留；删除时机不属于 L1 implementation，必须在后续 release 满足“旧链接 inventory 完成、用户通知/迁移策略确认、Product Review 明确退休”的独立 gate 后再删除。
+`/bills` compatibility route 在 UI Integration release 保留；删除时机不属于本次 delivery implementation，必须在后续 release 满足“旧链接 inventory 完成、用户通知/迁移策略确认、Product Review 明确退休”的独立 gate 后再删除。
 
 ### 8.3 Auth redirect and navigation
 
@@ -395,7 +416,7 @@ redirect 保留合法 query/hash context，避免登录 deep link、旧书签和
 
 `src/components/NavBar.vue` 的 Ledger scope chip 改为 push `{ name: 'ledger' }`。`src/App.vue` 和 Navbar 以 `/ledger` predicate 管理 compact workspace chrome；旧 Bills path 只在 redirect 尚未完成的 router boundary 处理。
 
-当前 shared-shell prop `isVault` 是内部历史命名，不是用户可见产品术语。L1 不为了 rename 而扩大 shell refactor；但 `isBills` 行为 predicate、`bills-mode` / `bills-nav-mode` route classes 和 Ledger feature 的用户可见 copy 必须迁移为 Ledger 语义。`src/style.css` 中对应 scope selector / variable 一并迁移。
+当前 shared-shell prop `isVault` 是内部历史命名，不是用户可见产品术语。UI Integration 不为了 rename 而扩大 shell refactor；但 `isBills` 行为 predicate、`bills-mode` / `bills-nav-mode` route classes 和 Ledger feature 的用户可见 copy 必须迁移为 Ledger 语义。`src/style.css` 中对应 scope selector / variable 一并迁移。
 
 ### 8.4 Prototype file migration
 
@@ -435,11 +456,11 @@ redirect 保留合法 query/hash context，避免登录 deep link、旧书签和
 3. 页面显示 baseCurrency、timezone 的用途、period 影响和首个 Account 后锁定的时机；
 4. currency 使用受支持 ISO code selector；timezone 使用 named IANA selector；browser timezone 只能作为可见 preselect；
 5. 用户点击 `继续创建第一个账户` 后才提交；前端不自动 POST；
-6. 生成一个 settings create intent key；network timeout/response loss retry 复用同一 key；payload 修改后创建新 key；
+6. 生成一个 settings create intent key；明确成功或明确失败后才结束 intent；network timeout/response loss 进入 `CREATE_INTENT_UNCERTAIN`，retry/检查复用同一 canonical payload 和同一 key；在结果确认前不得修改 payload 或创建新 key；
 7. 成功后以 response settings 为准，进入 first Account step；默认 Categories 由真实 API 加载；
 8. 如果 concurrent session 已初始化，重新读取 settings 并进入 first Account/no-account，不把 `ledger-settings-already-initialized` 变成不可恢复错误；
 9. 用户取消 Step 2 时保持 `NO_ACCOUNT`，再次进入仍给出 create Account CTA；
-10. initialization failure 保留用户输入，字段问题就地提示，网络/503 提供 retry，401 交给 session expiry flow。
+10. initialization failure 保留用户输入，字段问题就地提示，网络/503 进入 UNCERTAIN 并提供同一 intent 的 retry/检查，明确失败才回到可编辑状态，401 交给 session expiry flow。
 
 ### 9.2 First Account
 
@@ -463,6 +484,8 @@ redirect 保留合法 query/hash context，避免登录 deep link、旧书签和
 | 备注 | `note` | optional；提示用途/尾号，不提示密码/token |
 
 提交时使用 Account create idempotency key。成功后必须以 server response 的 `currentBalanceMinor` / `version` 为准，进入 `/ledger` 的真实 Dashboard；不能用本地 opening balance 计算资产或净资产。
+
+First Account step 同时显示当前 baseCurrency/timezone 和 `[修改 Ledger 设置]`。点击后返回初始化 Settings surface，使用当前 Settings `version` 调用 PATCH；保存成功后以服务端返回值刷新并重新进入 First Account。只要首个 Account 尚未成功创建，该返回入口都有效；首个 Account 成功后 server lock 生效，UI 不再允许编辑这两个字段。若并发 session 已先完成首个 Account，必须重新读取状态而不是用旧表单覆盖 locked settings。
 
 ## 10. Account UI implementation
 
@@ -543,25 +566,40 @@ Account selector 使用真实 Account DTO 的 name、用户可读 type/nature、
 - dirty form 关闭前确认丢弃；saving 期间禁止关闭、Escape 重复提交或二次 submit；
 - 保存成功只有在 server response 和 authoritative refresh path 建立后才显示已记账；refresh 失败显示可恢复提示，不显示猜测余额。
 
-### 11.4 Idempotency-Key lifecycle
+### 11.4 Idempotency-Key lifecycle and UNCERTAIN safety
 
-对于 Settings、Account、Category quick create、Transaction create，client 采用同一行为：
+对于 Settings、Account、Category quick create、Transaction create，以及未来若接入 UI 的 Adjustment create，client 采用统一的 intent state：
 
-1. 打开一个新 create intent 时建立 draft；
-2. 第一次 submit 生成 opaque UUID/string key 并保存到该 intent；
-3. HTTP retry、network timeout、response loss 或用户点击 `重试同一次记账` 始终复用 key；
-4. key 不因每一次 transport retry 改变；
-5. 用户修改任何影响 canonical payload 的字段后，当前 retry intent 结束，下一次正式 submit 生成新 key；
-6. 用户取消并新开一笔，生成新 key；
-7. 相同 key + server `409 ledger-idempotency-conflict` 不自动换 key 重发，先提示 payload/key conflict 并让用户重新确认；
-8. 保存成功或明确取消后清理本地 intent；
-9. Sheet 在 response 未确认时保持 open，避免用户误以为没有记账而新开第二笔。
+```text
+CREATE_INTENT_DRAFT
+        ↓ first submit
+CREATE_INTENT_SUBMITTING
+   ├─ definite success → CREATE_INTENT_CONFIRMED
+   ├─ definite 400 / deterministic 409 failure → DRAFT / ERROR
+   └─ timeout / connection reset / response loss → CREATE_INTENT_UNCERTAIN
 
-对于 PATCH / archive / restore / soft-delete，server 使用 `expectedVersion` 而不是 create idempotency。响应丢失时先 reload entity/list 判断 authoritative state；不要在未知状态下盲目覆盖或把版本冲突隐藏成成功。
+CREATE_INTENT_UNCERTAIN
+   ├─ retry same canonical payload + same key → CONFIRMED
+   └─ cancel / new intent → first confirm the original result
+```
+
+实现必须遵守：
+
+1. 打开一个新 create intent 时建立 draft；第一次 submit 才生成 opaque UUID/string key，并把 canonical payload snapshot 与 key 绑定到该 intent；
+2. server 明确成功后进入 `CONFIRMED`；HTTP 400 或 server 明确表示 create 未成功的 deterministic 409（例如 semantic conflict、duplicate Category、锁定或 lifecycle conflict）进入可编辑的 `DRAFT / ERROR`；该失败确认后，下一次正式提交才是新的 intent，并生成新 key；
+3. fetch timeout、connection reset、response stream lost、browser 未收到 response 等 outcome unknown 必须进入 `CREATE_INTENT_UNCERTAIN`，不能推断为“肯定未保存”；
+4. UNCERTAIN 中的 `[重试确认]`、HTTP transport retry、页面重渲染或网络恢复都必须复用同一 canonical payload 和同一 Idempotency-Key；不得每次 retry 生成新 key；
+5. UNCERTAIN 中禁止直接修改 amount、Account、Category、occurredAt 或任何 canonical payload 字段，也禁止用新 key 提交修改后的 payload；sheet 必须将这些字段置为只读，或要求先完成原 intent 的 authoritative result confirmation；
+6. UNCERTAIN 中的取消不能抹掉未确认 intent，`cancel / new intent` 必须先通过同一 key + payload 的 retry 或结果检查确认原 intent 成功/未创建；只有确认完成后，用户才可以用新 payload + 新 key 开始新的 create；
+7. intent snapshot/key 至少跨 component re-render、sheet 状态变化、transport retry 和 route refresh 保持。如果 page reload 后仍存在未确认 intent，必须显示恢复/确认原 intent 的路径，不能让用户无提示地开启第二个 create；
+8. `ledger-idempotency-conflict` 是明确的 key/payload 冲突响应，不得自动换 key 重发；保留原 intent 的冲突信息，先确认/结束原 intent 后才能创建新的 intent；
+9. 只有 `CONFIRMED` success 或 `CONFIRMED` not-created 后才能清理该 intent；成功后以 response 和 authoritative refresh 为准，不能用本地猜测余额冒充确认。
+
+对于 PATCH / archive / restore / soft-delete，server 使用 `expectedVersion` 而不是 create idempotency。响应丢失时先 reload entity/list 判断 authoritative state；不要在未知状态下盲目覆盖或把版本冲突隐藏成成功。上述 UNCERTAIN create 规则与普通 validation error 是不同状态，测试必须分别证明。
 
 ## 12. Category integration
 
-L1 采用 L1 PRD 已冻结的方案：**Transaction Sheet 内支持 contextual quick create，full Category Management 延后**。
+UI Integration 采用 UI Integration PRD 已冻结的方案：**Transaction Sheet 内支持 contextual quick create，full Category Management 延后**。
 
 实施要求：
 
@@ -570,7 +608,7 @@ L1 采用 L1 PRD 已冻结的方案：**Transaction Sheet 内支持 contextual q
 - 使用 Category create idempotency key；
 - 成功后以 response Category ID/name 立即选中并继续原 Transaction draft；
 - `ledger-duplicate-category` 显示“已有同名分类/请换一个名称”，不自动 unarchive、不生成第二 identity；
-- archived Category 不出现在新交易 selector；历史交易仍可显示其名称/归档提示；
+- archived Category 不出现在新交易 selector；历史交易仍可显示其名称/归档提示；History filter 通过 `includeArchived=true` 同时提供 active 与 archived Category；
 - active Category list loading 时 selector 显示 loading；空列表提供“新建支出分类/新建收入分类”；
 - quick create 失败时保留 Transaction draft 和 Category name，允许 retry/改名；
 - 不新增 `/ledger/categories` full management route，不暴露 Category rename/archive/restore/delete。
@@ -638,9 +676,11 @@ L1 采用 L1 PRD 已冻结的方案：**Transaction Sheet 内支持 contextual q
 - Adjustment 在“全部”中只读显示；不提供 generic adjustment create/edit/delete；
 - 默认排序不由 client 重排，服从 `occurredAt DESC, createdAt DESC, id DESC`。
 
-Filters 的 query builder 只发送 API 支持的参数。日期 range 由 Ledger local date 转为 UTC `from`/`to`，但边界 authority 仍是 server query/projection contract。L1 不加入 free-text search、保存筛选、导入或高级报表。
+Filters 的 query builder 只发送 API 支持的参数。History filter 的 Account/Category options 必须分别以 `includeArchived=true` 读取，并给 archived entity 加“已归档”标记；选择 archived ID 仍可查询其历史 active Transaction，不能自动恢复或隐藏。Create selector 仍只使用 active Account/Category。日期 range 由 Ledger local date 转为 UTC `from`/`to`，但边界 authority 仍是 server query/projection contract。UI Integration 不加入 free-text search、保存筛选、导入或高级报表。
 
-删除确认必须明确：记录将从默认列表、余额和统计中移除，L1 没有恢复入口。版本冲突要求 reload 后再决定；不能用 DELETE API 的存在推导出 physical delete 或 restore UI。
+删除确认必须明确：记录将从默认列表、余额和统计中移除，本次 delivery 没有恢复入口。若关联 Account 已 archived，UI 必须在请求前禁用或拦截删除，提示“需要先恢复相关账户，才能删除这条交易”，并提供 Account restore 路径；恢复后重新读取记录/版本才可重新评估。版本冲突要求 reload 后再决定；不能用 DELETE API 的存在推导出 physical delete 或 restore UI。
+
+编辑 existing Transaction 时，若任一关联 Account 已 archived，UI 必须依据 server contract 预先展示只读 financial fields：Income/Expense 只允许 `note`、`payee`，Transfer 只允许 `note`；amount、occurredAt、account/category、from/to 不可编辑。页面提供“先恢复相关账户”说明和 restore 入口；恢复后重新读取 Transaction 与 version，再决定是否恢复完整编辑能力。若 Account 在 Sheet 打开后被归档，保存前重新读取并应用同一矩阵，不把 server 的 `409 ledger-archived-account` 泛化成普通失败。
 
 ## 15. Loading / Empty / Error UX implementation
 
@@ -652,7 +692,7 @@ Filters 的 query builder 只发送 API 支持的参数。日期 range 由 Ledge
 | B. initialized, 0 Account | “先添加一个账户，Ledger 才能开始记账” | `创建第一个账户` |
 | C. Account exists, 0 Transaction | “还没有交易记录” | `+ 记一笔` |
 | D. filter result empty | “当前筛选没有匹配的交易” | `清除筛选`；保留 `+ 记一笔` |
-| archived-only | “当前没有可用于记账的账户” | `恢复账户` / `创建账户` |
+| archived-only | “当前没有可用于记账的账户”；历史账户仍保留 | `恢复账户` / `创建新账户` |
 
 每个 state 都保留产品身份、下一步和真实上下文；不能只写“暂无数据”。
 
@@ -665,12 +705,14 @@ Filters 的 query builder 只发送 API 支持的参数。日期 range 由 Ledge
 | field validation | 400 `ledger-validation-failed`、invalid currency/timezone/date/decimal | 字段旁说明；保留其他输入 |
 | missing entity | 404 account/category/transaction/settings not found | 重新加载对应 surface；不显示 stale entity |
 | duplicate Category | 409 `ledger-duplicate-category` | 改名或选择现有 Category；不自动 unarchive |
-| archived lifecycle | 409 archived account/category | 引导 restore/换 active entity |
+| archived lifecycle | 409 archived account/category | Create selector 引导换 active entity；历史筛选保留 archived entity；关联 archived Account 的交易编辑/删除在 UI 先显示受限状态并引导 restore |
 | version conflict | 409 `ledger-version-conflict` | reload latest；说明其他更新未被覆盖 |
 | balance conflict | 409 `ledger-balance-conflict` / nonzero archive | 显示当前 authoritative 状态；用户处理后重试 |
 | lifecycle/semantic conflict | locked、history、type immutable、deleted、invalid pair/kind/currency | 不暴露内部细节；解释该操作不适用于当前状态 |
-| idempotency conflict | 409 `ledger-idempotency-conflict` | 保留 draft；不要自动换 key；让用户确认新 intent |
-| network / temporary unavailable | fetch failure、503 `ledger-write-busy` | 保留输入；提供 retry；创建 intent 复用 key |
+| idempotency conflict | 409 `ledger-idempotency-conflict` | 这是明确的 key/payload conflict；不自动换 key；先确认/结束原 intent，再创建新 intent |
+| deterministic create failure | 400 validation 或明确的 409 semantic/version/lifecycle/duplicate failure | 明确表示本次 create 未成功；回到可编辑 DRAFT/ERROR，新的正式提交生成新 key |
+| network / response loss | fetch timeout、connection reset、response stream loss、browser 未收到 response | outcome unknown 进入 `CREATE_INTENT_UNCERTAIN`；canonical fields 只读；仅允许同 payload + 同 key 的 retry/检查 |
+| server temporary unavailable | 已收到 503 `ledger-write-busy` | server 已明确本次请求未成功完成；保留输入并允许 retry；与没有收到 response 的 UNCERTAIN 分开处理 |
 | session expired | 401 `auth-session-required` | 交给现有 auth observer/router；清理 Ledger store，登录后可恢复入口 |
 | unknown internal error | 500 `ledger-internal-error` | “Ledger 暂时无法完成操作，请稍后重试”；不显示 SQL/stack/SQLite |
 
@@ -704,7 +746,7 @@ Filters 的 query builder 只发送 API 支持的参数。日期 range 由 Ledge
 
 以下 slices 是建议的实现顺序；每个 slice 都以真实 API 和上一个 slice 的 exit criteria 为依赖。它们不是当前轮要执行的代码变更。
 
-### L1.1 — Ledger frontend boundary and browser-safe primitives
+### UI.1 — Ledger frontend boundary and browser-safe primitives
 
 **Inputs**
 
@@ -754,9 +796,9 @@ Filters 的 query builder 只发送 API 支持的参数。日期 range 由 Ledge
 
 **Dependencies**
 
-- 无生产 UI 依赖；必须先确认 §4 crosswalk 不改变这些 boundary。
+- 无生产 UI 依赖；必须遵守 §4 roadmap relationship，不改变这些 boundary。
 
-### L1.2 — Canonical route and shared shell migration
+### UI.2 — Canonical route and shared shell migration
 
 **Inputs**
 
@@ -804,16 +846,16 @@ Filters 的 query builder 只发送 API 支持的参数。日期 range 由 Ledge
 
 **Dependencies**
 
-- L1.1 API boundary不是 route 的硬依赖，但新 Ledger view 在后续 slice 接入。
+- UI.1 API boundary不是 route 的硬依赖，但新 Ledger view 在后续 slice 接入。
 
-### L1.3 — Initialization and first Account onboarding
+### UI.3 — Initialization and first Account onboarding
 
 **Inputs**
 
-- L1 PRD initialization/first Account decisions；
+- UI Integration PRD initialization/first Account decisions；
 - Settings/Account API contract；
-- L1.1 state/API primitives；
-- L1.2 canonical `/ledger` route。
+- UI.1 state/API primitives；
+- UI.2 canonical `/ledger` route。
 
 **Files**
 
@@ -830,9 +872,10 @@ Filters 的 query builder 只发送 API 支持的参数。日期 range 由 Ledge
 
 - 实现 `UNINITIALIZED → NO_ACCOUNT → READY` 两步连续 onboarding；
 - 显示 lock timing、currency/timezone 说明；
+- First Account step 显示 `[修改 Ledger 设置]`，允许在首个 Account 成功前返回并 PATCH 当前 settings version；成功后重新进入 First Account，首个 Account 成功后保持 server lock；
 - 实现 account type/nature user language；
 - decimal opening balance 转 minor；
-- settings/account create retry 复用 stable key；
+- settings/account create 遵守 DRAFT/SUBMITTING/CONFIRMED/UNCERTAIN；结果未知时复用同一 canonical payload + stable key，不能直接改 payload 开新 key；
 - first Account 成功后 reload authoritative state，不本地算 dashboard。
 
 **Tests**
@@ -841,8 +884,10 @@ Filters 的 query builder 只发送 API 支持的参数。日期 range 由 Ledge
 - explicit CNY/Asia/Shanghai confirmation；
 - browser timezone 只做预选、不自动提交；
 - initialization success/failure/concurrent initialize；
+- first Account 前返回修改 settings，settings PATCH version conflict，以及创建 first Account 后 lock 不可编辑；
 - first Account fields、type/nature、opening balance/date/currency/note；
-- no-account empty action、cancel/re-entry、session expiry。
+- no-account empty action、NO_ACTIVE_ACCOUNT 的 create-new action、cancel/re-entry、session expiry；
+- response loss/timeout 进入 UNCERTAIN，不能直接修改 canonical payload。
 
 **Exit criteria**
 
@@ -852,14 +897,14 @@ Filters 的 query builder 只发送 API 支持的参数。日期 range 由 Ledge
 
 **Dependencies**
 
-- L1.1、L1.2。
+- UI.1、UI.2。
 
-### L1.4 — Account management and Account detail
+### UI.4 — Account management and Account detail
 
 **Inputs**
 
 - L0 Account lifecycle / expectedVersion contract；
-- L1.3 shared Account form；
+- UI.3 shared Account form；
 - account transaction endpoint。
 
 **Files**
@@ -879,6 +924,7 @@ Filters 的 query builder 只发送 API 支持的参数。日期 range 由 Ledge
 - list active/archived accounts；
 - create/edit/archive/restore；
 - based on `includeDeleted=true` history gate editable fields；
+- NO_ACTIVE_ACCOUNT 同时提供 restore archived Account 与 create new Account；
 - display asset/liability wording and server current balance；
 - archive zero-balance requirement；
 - no physical delete control；
@@ -890,6 +936,7 @@ Filters 的 query builder 只发送 API 支持的参数。日期 range 由 Ledge
 - archived edit restriction；
 - archive nonzero error；
 - restore and expectedVersion conflict；
+- archived-only state 的 create-new 与 restore 两条路径；
 - Account detail movement/list/cursor；
 - no delete button。
 
@@ -901,15 +948,15 @@ Filters 的 query builder 只发送 API 支持的参数。日期 range 由 Ledge
 
 **Dependencies**
 
-- L1.1、L1.3；Dashboard action wiring may initially be a stable link.
+- UI.1、UI.3；Dashboard action wiring may initially be a stable link。
 
-### L1.5 — Transaction Sheet, three types, and Category quick create
+### UI.5 — Transaction Sheet, three types, and Category quick create
 
 **Inputs**
 
-- L1 PRD transaction decisions；
+- UI Integration PRD transaction decisions；
 - transaction/category API contracts；
-- L1.1 idempotency/money/time primitives；
+- UI.1 idempotency/money/time primitives；
 - existing `useFocusTrap` / Dialog pattern。
 
 **Files**
@@ -930,6 +977,7 @@ Filters 的 query builder 只发送 API 支持的参数。日期 range 由 Ledge
 - kind-fixed Category quick create；
 - amount/date/note/payee form behavior；
 - create key stable retry；
+- create intent 的 DRAFT/SUBMITTING/CONFIRMED/UNCERTAIN；UNCERTAIN 中 canonical fields 只读，retry 使用同 payload + 同 key；
 - duplicate submit/dirty close/focus trap；
 - success refresh accounts/overview/recent/list。
 
@@ -940,6 +988,7 @@ Filters 的 query builder 只发送 API 支持的参数。日期 range 由 Ledge
 - Category kind filtering/archived exclusion/empty quick create；
 - CNY/JPY/KWD input；
 - response loss retry uses same key；
+- response loss 后尝试修改 amount/account/category/time 会被阻止，只有确认原 intent 后才能新建；
 - field error/system error/session expiry；
 - keyboard, Escape, focus restoration、narrow viewport。
 
@@ -952,15 +1001,15 @@ Filters 的 query builder 只发送 API 支持的参数。日期 range 由 Ledge
 
 **Dependencies**
 
-- L1.1、L1.3、L1.4。
+- UI.1、UI.3、UI.4。
 
-### L1.6 — Dashboard live projection cutover
+### UI.6 — Dashboard live projection cutover
 
 **Inputs**
 
 - Overview DTO and scope semantics；
 - existing Bills visual characterization only as layout reference；
-- L1.5 successful mutation contract。
+- UI.5 successful mutation contract。
 
 **Files**
 
@@ -1001,14 +1050,14 @@ Filters 的 query builder 只发送 API 支持的参数。日期 range 由 Ledge
 
 **Dependencies**
 
-- L1.1、L1.3、L1.4、L1.5。
+- UI.1、UI.3、UI.4、UI.5。
 
-### L1.7 — Transactions live list and ordinary mutation UI
+### UI.7 — Transactions live list and ordinary mutation UI
 
 **Inputs**
 
 - Transactions query/cursor contract；
-- L1.5 Sheet；
+- UI.5 Sheet；
 - expectedVersion / soft-delete contract。
 
 **Files**
@@ -1025,10 +1074,13 @@ Filters 的 query builder 只发送 API 支持的参数。日期 range 由 Ledge
 
 - real list + cursor next page；
 - type/account/category/date filters；
+- Account/Category history filter 以 `includeArchived=true` 加载并标记 archived entity；create selectors 仍只用 active entity；
 - empty/loading/error/session states；
 - view details；
 - edit ordinary transaction with immutable type；
+- archived Account 关联 Income/Expense 只允许 payee/note，Transfer 只允许 note；financial fields 显示只读；
 - terminal soft-delete with confirmation；
+- archived Account 关联交易的 delete 在 UI 先阻止并引导 restore；
 - adjustment read-only；
 - mutation refresh current list + dashboard/account projections。
 
@@ -1037,7 +1089,9 @@ Filters 的 query builder 只发送 API 支持的参数。日期 range 由 Ledge
 - server order/cursor and filter query construction；
 - transfer row from/to；
 - archived history display；
+- archived Account/Category history filters 可选、可查询且有归档标记；archived entity 不进入 create selector；
 - edit field matrix；
+- archived Account edit field matrix 与 restore-before-delete；
 - expectedVersion conflict reload；
 - soft-delete removes record/effect and offers no restore；
 - Adjustment has no edit/delete control；
@@ -1051,9 +1105,9 @@ Filters 的 query builder 只发送 API 支持的参数。日期 range 由 Ledge
 
 **Dependencies**
 
-- L1.1、L1.5、L1.6。
+- UI.1、UI.5、UI.6。
 
-### L1.8 — Bills prototype cleanup and accessibility/responsive hardening
+### UI.8 — Bills prototype cleanup and accessibility/responsive hardening
 
 **Inputs**
 
@@ -1095,9 +1149,9 @@ Filters 的 query builder 只发送 API 支持的参数。日期 range 由 Ledge
 
 **Dependencies**
 
-- L1.2、L1.6、L1.7。
+- UI.2、UI.6、UI.7。
 
-### L1.9 — Live E2E, regression evidence, and release gate
+### UI.9 — Live E2E, regression evidence, and release gate
 
 **Inputs**
 
@@ -1125,6 +1179,7 @@ Filters 的 query builder 只发送 API 支持的参数。日期 range 由 Ledge
 
 - fresh database → login → `/ledger` → CNY/Asia/Shanghai → first Bank Account ¥10,000 → expense ¥38 → live Dashboard/recent/balance → reload；
 - single Transaction assertion and no mock text/data；
+- response-loss scenario：server 已成功但 response 丢失，retry 复用同一 key/payload，最终只有一笔 Transaction；UNCERTAIN 中 payload mutation 被拒绝；
 - route compatibility and non-Ledger regressions；
 - currency exponent, timezone, accessibility-critical behavior；
 - loading/error/session expiry/conflict cases at unit/component level and live smoke where deterministic。
@@ -1137,7 +1192,7 @@ Filters 的 query builder 只发送 API 支持的参数。日期 range 由 Ledge
 
 **Dependencies**
 
-- L1.1–L1.8；Product Review Accepted；phase crosswalk resolved。
+- UI.1–UI.8；UI Integration PRD Product Review Accepted；UI Integration Plan Review Accepted / Ready for Implementation；implementation 前完成 then-current main re-audit。
 
 ## 18. Test file and responsibility matrix
 
@@ -1190,7 +1245,23 @@ Filters 的 query builder 只发送 API 支持的参数。日期 range 由 Ledge
 - `server/ledger/validation.test.ts`；
 - 以及当前 `server/ledger/*.test.ts` 中的 L0 coverage。
 
-如果 L1 实现证明 API 不足，必须先登记 contract conflict / API gap，停止该 slice，而不是修改 client semantics。
+如果 UI Integration 实现证明 API 不足，必须先登记 contract conflict / API gap，停止该 slice，而不是修改 client semantics。
+
+### 18.4 Remediation-specific test cases
+
+以下测试是本轮 contract remediation 的明确责任，不得在 implementation 时合并成一个泛化的“保存失败”测试：
+
+| Case | Planned test file(s) | Required evidence |
+| --- | --- | --- |
+| A. Response loss + safe retry | `src/components/ledger/__tests__/LedgerTransactionSheet.test.ts`、`src/features/ledger/__tests__/ledgerStore.test.ts`、`e2e/ledger-ui.integration.spec.ts` | server 已成功但 response 丢失时进入 UNCERTAIN；retry 使用同一 key + payload，最终只有一笔 Transaction |
+| B. UNCERTAIN 不允许 payload mutation | `src/components/ledger/__tests__/LedgerTransactionSheet.test.ts` | UNCERTAIN 中尝试修改 amount、Account、Category、time 被阻止；只能 retry/check 原 intent，不能开新 key |
+| C. Confirmed failure 可编辑重试 | `src/components/ledger/__tests__/LedgerTransactionSheet.test.ts`、`src/features/ledger/__tests__/api.test.ts` | HTTP 400 或 deterministic 409 已确认 create 未成功后回到 DRAFT/ERROR；用户修正后新的正式 submit 使用新 key |
+| D. Archived Account transaction edit | `src/components/ledger/__tests__/LedgerTransactionsList.test.ts`、`src/views/__tests__/LedgerTransactionsView.test.ts` | archived Account 关联 Income/Expense 只允许 payee/note；Transfer 只允许 note；financial fields 只读并提供 restore 路径 |
+| E. Archived Account transaction delete | `src/components/ledger/__tests__/LedgerTransactionsList.test.ts` | 关联 archived Account 的 ordinary Transaction 删除在 UI 被阻止/拦截，显示 restore-before-delete 提示，不发送会注定失败的普通 DELETE |
+| F. History filters | `src/components/ledger/__tests__/LedgerTransactionsList.test.ts`、`src/views/__tests__/LedgerTransactionsView.test.ts` | archived Account 和 archived Category 可用于历史 filter，选项有归档标记，查询能返回历史 active Transaction |
+| G. Create selectors | `src/components/ledger/__tests__/LedgerTransactionSheet.test.ts` | archived Account / Category 不出现在 new Transaction selector；只有 active entities 可提交 |
+| H. NO_ACTIVE_ACCOUNT | `src/components/ledger/__tests__/LedgerAccountManagement.test.ts`、`src/views/__tests__/LedgerView.test.ts` | archived-only state 同时提供 restore archived Account 和 create new Account 两条可完成路径 |
+| I. Settings back-navigation | `src/components/ledger/__tests__/LedgerInitializationForm.test.ts`、`src/components/ledger/__tests__/LedgerAccountForm.test.ts`、`src/views/__tests__/LedgerView.test.ts` | first Account 创建前可返回修改 baseCurrency/timezone；修改后回到 Step 2；first Account 成功后 locked fields 不再可改 |
 
 ## 19. User acceptance scenario
 
@@ -1226,7 +1297,8 @@ Filters 的 query builder 只发送 API 支持的参数。日期 range 由 Ledge
 4. 第二次请求复用同一 `Idempotency-Key`；
 5. server replay 或返回第一次结果；
 6. Dashboard/recent/account projection 只出现一笔记录；
-7. 用户修改金额后再提交，才生成新 key，并被视为新的显式 intent。
+7. 在结果确认前尝试把金额改为 `¥39.00`、改账户、分类或时间，UI 拒绝该 payload mutation；
+8. 只有原 intent 被确认成功或确认没有创建后，用户才可以开始新的显式 intent；此时修改后的 payload 使用新 key。
 
 ## 20. Verification ladder
 
@@ -1300,7 +1372,7 @@ CI matrix 必须继续覆盖：
 - Windows + Node 24；
 - Ubuntu + Node 22。
 
-L1 implementation owner 还应在 CI workflow 中加入或明确调用专用 live Ledger E2E；本轮不修改 `.github/workflows/ci.yml`。
+UI Integration implementation owner 还应在 CI workflow 中加入或明确调用专用 live Ledger E2E；本轮不修改 `.github/workflows/ci.yml`。
 
 ## 21. Commit strategy
 
@@ -1331,7 +1403,7 @@ L1 implementation owner 还应在 CI workflow 中加入或明确调用专用 liv
 
 | 风险 | 影响 | Mitigation |
 | --- | --- | --- |
-| PRD/roadmap phase drift | review 无法判断 L1 release 到底包含什么 | 先完成 `PHASE-CROSSWALK-001`；Plan 保持 Ready for Review |
+| PRD/roadmap phase drift | review 无法判断 capability roadmap 与 UI delivery 的关系 | 文档明确 L1–L8 是 capability roadmap，UI Integration 是跨 capability delivery milestone；不改变 roadmap 编号 |
 | Bills mock 遗留 | 用户把 demo 当真实财务数据 | runtime import audit、canonical redirect、no-mock tests |
 | 前端自行 reduce projection | 与 L0 balance/period semantics 分叉 | overview/account DTO only；禁止 client financial authority |
 | response loss 重复创建 | 真实余额被重复计入 | stable create intent key、Sheet pending state、replay test |
@@ -1340,23 +1412,22 @@ L1 implementation owner 还应在 CI workflow 中加入或明确调用专用 liv
 | timezone/DST 错位 | Today/Week/Month/Year 显示不一致 | server period authority、browser-safe Temporal input helper、zone tests |
 | Category kind/archived drift | income/expense breakdown 错乱 | server-filtered selector、kind-fixed quick create、duplicate handling |
 | narrow/focus unusable | 高频记账无法完成 | focus trap、keyboard、scrollable sheet、narrow viewport E2E/component tests |
-| hard delete误暴露 | 历史/identity 破坏 | Account physical delete 和 Category full management 不进 L1 UI |
+| hard delete误暴露 | 历史/identity 破坏 | Account physical delete 和 Category full management 不进 UI Integration |
 | visual requirements未冻结 | 图表实现返工 | 先冻结 data/accessibility contract；visual detail 在 Product Review/UX review 确认 |
 
 ## 23. Open questions
 
 这些问题不改变当前 API boundary，但需要在 review 中明确：
 
-1. `PHASE-CROSSWALK-001` 是否按 §4 写回 `ledger-v1-prd.md`，以使“L1 UI Integration”与原 L1–L6 capability roadmap 共存且不产生 phase ambiguity。
-2. `/bills` compatibility redirect 的最终退休 release、旧链接通知和 telemetry 条件是什么；L1 只保留 redirect，不自行删除。
-3. Category breakdown / trend 的最终视觉形式和密度；本 Plan 已冻结真实 DTO mapping、period context 和 accessible text，但未冻结 exact chart/CSS。
-4. Ledger zh/en copy 的最终短标签；不得因此改变 type/nature 或错误恢复语义。
+1. `/bills` compatibility redirect 的最终退休 release、旧链接通知和 telemetry 条件是什么；UI Integration 只保留 redirect，不自行删除。
+2. Category breakdown / trend 的最终视觉形式和密度；本 Plan 已冻结真实 DTO mapping、period context 和 accessible text，但未冻结 exact chart/CSS。
+3. Ledger zh/en copy 的最终短标签；不得因此改变 type/nature 或错误恢复语义。
 
-以下不再是 open question，已由 L1 PRD 冻结：
+以下不再是 open question，已由 UI Integration PRD 冻结：
 
 - onboarding 是两步连续流程；
 - `+ 记一笔` 默认 expense；
-- L1 支持 income/expense/transfer；
+- UI Integration 支持 income/expense/transfer；
 - Category quick create kind 固定；
 - Account 管理入口和 physical delete non-goal；
 - Transaction ordinary edit/delete；
@@ -1372,8 +1443,9 @@ L1 implementation owner 还应在 CI workflow 中加入或明确调用专用 liv
 
 ### Governance / contract gates
 
-1. **L1 PRD 尚未 Accepted。** 这是编码授权 gate；不是本 Plan 的 API gap。
-2. **`PHASE-CROSSWALK-001` 尚未由 Product Review 确认。** 这是 release/phase 文档冲突；不改变实现语义，但必须在最终 implementation-ready 前关闭。
+1. **UI Integration PRD 尚未 Accepted。** 这是编码授权 gate；不是本 Plan 的 API gap。
+2. **本 Plan 尚未通过 Implementation Review / Ready for Implementation。** 这是正常的后续治理 gate。
+3. **implementation 前必须重新 audit then-current `main`。** 这是防止文档 baseline 再次漂移的执行 gate，不是当前 blocker。
 
 因此本文件状态为：
 
@@ -1385,20 +1457,24 @@ L1 implementation owner 还应在 CI workflow 中加入或明确调用专用 liv
 
 在 Plan 可以升级为 `Ready for Implementation` 前，review 必须确认：
 
-- [ ] L1 PRD status 已变为 Product Review: Accepted；
-- [ ] phase crosswalk 已写入/确认 authoritative product documentation；
+- [ ] UI Integration PRD status 已变为 Product Review: Accepted；
+- [ ] capability roadmap 与 UI Integration delivery milestone 的关系已被 review 识别；无需修改或重编号 `ledger-v1-prd.md` 的 L1–L8；
 - [ ] canonical `/ledger`、`/ledger/transactions`、`/ledger/accounts` routes；
 - [ ] `/bills` compatibility redirect strategy 和 retirement gate；
 - [ ] feature API boundary 与 browser-safe shared imports；
 - [ ] feature-local state model、reset 和 refresh/invalidation；
 - [ ] initialization / first Account 两步流程；
+- [ ] First Account 创建前可返回修改 Settings，创建成功后保持 settings lock；
 - [ ] `+ 记一笔` 与 unified Transaction Sheet；
 - [ ] three transaction payloads、Account/Category selector rules；
+- [ ] create intent 的 DRAFT/SUBMITTING/CONFIRMED/UNCERTAIN 状态，以及 UNCERTAIN 的同 payload/同 key retry 和 payload lock；
 - [ ] Category quick create 及 full Category Management non-goal；
+- [ ] create selectors 只显示 active entity，history filters 支持并标记 archived Account/Category；
 - [ ] money input/output 与 currency exponent；
 - [ ] Ledger timezone input/display 与 server period authority；
 - [ ] Dashboard projection mapping、period/breakdown/trend/recent hierarchy；
-- [ ] ordinary edit/delete 与 Adjustment read-only；
+- [ ] ordinary edit/delete 与 Adjustment read-only；archived Account 关联交易的受限 edit 和 restore-before-delete；
+- [ ] NO_ACTIVE_ACCOUNT 同时支持 restore archived Account 与 create new Account；
 - [ ] idempotency key lifecycle；
 - [ ] loading/empty/error/session/conflict states；
 - [ ] responsive/accessibility strategy；
@@ -1411,12 +1487,12 @@ L1 implementation owner 还应在 CI workflow 中加入或明确调用专用 liv
 
 本轮实际修改：
 
-- `docs/design/ledger-l1-ui-integration-implementation-plan.md`（本文件）
-- `docs/README.md`（补充 L1 PRD / Implementation Plan 索引）
+- `docs/design/ledger-ui-integration-implementation-plan.md`（重命名并修正后的本文件）
+- `docs/design/ledger-ui-integration-prd.md`（重命名并修正后的 PRD）
+- `docs/README.md`（更新 UI Integration PRD / Implementation Plan 索引）
 
 本轮未修改：
 
-- `docs/design/ledger-l1-ui-integration-prd.md`；
 - `src/**`、`server/**`、`shared/**`；
 - migrations、tests、`package.json`、router、CI；
 - Bills / Ledger UI。
