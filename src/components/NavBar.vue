@@ -37,9 +37,11 @@ const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 
-/* Ledger is the Bills workspace. It shares this navbar with Vault, but its
-   body does not own Vault's editor/read-mode or right-rail controls. */
-const isBills = computed(() => route?.path?.startsWith('/bills') ?? false)
+/* Ledger shares this navbar with Vault, but its body does not own Vault's
+   editor/read-mode or right-rail controls. */
+const isLedger = computed(() => (
+  route?.path?.startsWith('/ledger') === true || route?.path?.startsWith('/bills') === true
+))
 
 /* Sun when current theme is dark (click to lighten),
    moon when current theme is light (click to darken). */
@@ -80,13 +82,13 @@ const appShell = inject(AppShellContextKey, null)
 
 function isVaultLedgerDocument(): boolean {
   return props.isVault
-    && !isBills.value
+    && !isLedger.value
     && route?.name === 'vault-doc'
     && route.path.startsWith('/vault/ledger/')
 }
 
 function isScopeActive(scope: ScopeKey): boolean {
-  if (isBills.value) return scope === 'ledger'
+  if (isLedger.value) return scope === 'ledger'
   if (scope === 'ledger' && isVaultLedgerDocument()) return true
   return activeScope.value === scope
 }
@@ -115,15 +117,15 @@ const isVaultDocumentVisible = computed(() => (
 function onScopeClick(scope: ScopeKey): void {
   if (scope === 'ledger') {
     // Keep direct legacy Ledger documents usable in the Vault while the
-    // top-level Ledger chip opens the Bills workspace everywhere else.
+    // top-level Ledger chip opens the canonical Ledger workspace elsewhere.
     if (isVaultLedgerDocument()) {
       selectScope('ledger')
       return
     }
-    if (!isBills.value) void router.push({ name: 'bills' })
+    if (!isLedger.value) void router.push({ name: 'ledger' })
     return
   }
-  if (isBills.value) {
+  if (isLedger.value) {
     if (scope === 'diary' && diaryAccess) {
       void diaryAccess.requestScopeChange(scope).then(() => {
         if (activeScope.value === scope) void router.push({ name: 'vault' })
@@ -214,7 +216,7 @@ onBeforeUnmount(() => {
 
 <template>
   <header
-    :class="['navbar', { 'is-vault': props.isVault, 'bills-nav-mode': isBills, 'diary-calendar-mode': props.isVault && activeScope === 'diary' }]"
+    :class="['navbar', { 'is-vault': props.isVault, 'ledger-nav-mode': isLedger, 'bills-nav-mode': isLedger, 'diary-calendar-mode': props.isVault && activeScope === 'diary' }]"
     :inert="props.logoutBusy || undefined"
     :aria-busy="props.logoutBusy || undefined"
   >
@@ -273,7 +275,7 @@ onBeforeUnmount(() => {
         />
       </button>
         <button
-          v-if="props.isVault && !isBills && viewModeApi && isVaultDocumentVisible && !isDiaryCalendarVisible"
+          v-if="props.isVault && !isLedger && viewModeApi && isVaultDocumentVisible && !isDiaryCalendarVisible"
           class="view-toggle"
           :class="{ 'is-read': isReadMode }"
           type="button"
@@ -285,7 +287,7 @@ onBeforeUnmount(() => {
           <span class="view-toggle-icon" aria-hidden="true" v-html="isReadMode ? ICON_EDIT : ICON_EYE" />
         </button>
         <button
-          v-if="props.isVault && !isBills && !isDiaryCalendarVisible"
+          v-if="props.isVault && !isLedger && !isDiaryCalendarVisible"
           class="left-panel-toggle"
           type="button"
           :title="t(leftSidebarVisible ? 'nav.left_panel_close' : 'nav.left_panel_open')"
@@ -297,7 +299,7 @@ onBeforeUnmount(() => {
           <span class="left-panel-toggle-icon" aria-hidden="true" v-html="ICON_PANEL_LEFT_OPEN" />
         </button>
         <button
-          v-if="props.isVault && !isBills && !isDiaryCalendarVisible"
+          v-if="props.isVault && !isLedger && !isDiaryCalendarVisible"
           class="right-rail-toggle"
           type="button"
           :title="t(rightRailCollapsed ? 'nav.right_rail_open' : 'nav.right_rail_close')"

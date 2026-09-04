@@ -222,13 +222,13 @@ describe('NavBar — scope chips', () => {
     expect(chips[1].attributes('aria-label')).toBe('Current scope: diary')
   })
 
-  it('uses the ledger scope chip as the Bills entry', async () => {
+  it('uses the ledger scope chip as the canonical Ledger entry', async () => {
     const api = makeViewModeApi()
     const router = createRouter({
       history: createMemoryHistory(),
       routes: [
         { path: '/vault', name: 'vault', component: { template: '<div />' } },
-        { path: '/bills', name: 'bills', component: { template: '<div />' } },
+        { path: '/ledger', name: 'ledger', component: { template: '<div />' } },
       ],
     })
     await router.push('/vault')
@@ -246,19 +246,19 @@ describe('NavBar — scope chips', () => {
     await wrapper.findAll('.scope-chip')[2].trigger('click')
     await new Promise((resolve) => setTimeout(resolve, 0))
 
-    expect(router.currentRoute.value.name).toBe('bills')
+    expect(router.currentRoute.value.name).toBe('ledger')
   })
 
-  it('keeps the shared workspace chrome on the Bills route', async () => {
+  it('keeps the shared workspace chrome on the Ledger route', async () => {
     const api = makeViewModeApi()
     const router = createRouter({
       history: createMemoryHistory(),
       routes: [
         { path: '/vault', name: 'vault', component: { template: '<div />' } },
-        { path: '/bills', name: 'bills', component: { template: '<div />' } },
+        { path: '/ledger', name: 'ledger', component: { template: '<div />' } },
       ],
     })
-    await router.push('/bills')
+    await router.push('/ledger')
     await router.isReady()
 
     const wrapper = mount(NavBar, {

@@ -34,8 +34,8 @@ function requestSettings(): void {
 }
 
 provide(AppShellContextKey, { settingsRequestTick, diaryCalendarVisible })
-/* Vault and Bills routes both use the compact workspace navbar. Only the
-   `/vault` path owns the locked, three-pane Vault surface; Bills remains a
+/* Vault and Ledger routes both use the compact workspace navbar. Only the
+   `/vault` path owns the locked, three-pane Vault surface; Ledger remains a
    normal scrollable body below the same global chrome. */
 const isVaultRoute = computed(() =>
   route.meta.fullWidth === true
@@ -43,8 +43,9 @@ const isVaultRoute = computed(() =>
   && auth.state.value === 'authenticated'
   && vaultIdentity.state.value === 'ready',
 )
-const isBillsRoute = computed(() => route.path === '/bills' || route.path.startsWith('/bills/'))
-const isWorkspaceChrome = computed(() => isVaultRoute.value || isBillsRoute.value)
+const isLedgerRoute = computed(() => route.path === '/ledger' || route.path.startsWith('/ledger/'))
+const isLegacyBillsRoute = computed(() => route.path === '/bills' || route.path.startsWith('/bills/'))
+const isWorkspaceChrome = computed(() => isVaultRoute.value || isLedgerRoute.value || isLegacyBillsRoute.value)
 const isPublicDevPreview = computed(() => route.meta.publicDevPreview === true)
 const showNormalChrome = computed(() => shouldShowNormalChrome(
   auth.state.value,
@@ -224,11 +225,15 @@ watch(
 /* The vault uses an internal scrollable surface (FileTree, Editor,
    Preview). It must NOT let the outer document scroll, otherwise
    two scrollbars fight and the page wobbles. Route-scoped classes keep
-   the Vault body lock and the Bills scrollbar treatment isolated. */
+   the Vault body lock and the Ledger scrollbar treatment isolated. */
 watchEffect(() => {
   document.body.classList.toggle('vault-mode', isVaultRoute.value)
-  document.body.classList.toggle('bills-mode', isBillsRoute.value)
-  document.documentElement.classList.toggle('bills-mode', isBillsRoute.value)
+  document.body.classList.toggle('ledger-mode', isLedgerRoute.value || isLegacyBillsRoute.value)
+  document.documentElement.classList.toggle('ledger-mode', isLedgerRoute.value || isLegacyBillsRoute.value)
+  // Keep the old class as a stylesheet compatibility hook until UI.8 removes
+  // the prototype CSS. It is never a user-visible product label.
+  document.body.classList.toggle('bills-mode', isLedgerRoute.value || isLegacyBillsRoute.value)
+  document.documentElement.classList.toggle('bills-mode', isLedgerRoute.value || isLegacyBillsRoute.value)
 })
 
 /* Global open-search trigger: incremented by NavBar, watched by the

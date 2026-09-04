@@ -27,7 +27,7 @@ function decodeFully(value: string): string | null {
  * Normalize a redirect supplied by a login/setup route to a same-origin
  * workspace path. Invalid, external, scheme-relative, backslash-containing,
  * and malformed values all resolve to the safe vault root. Workspace modules
- * such as Bills are also valid same-origin destinations.
+ * such as Ledger are also valid same-origin destinations.
  */
 export function safeInternalRedirect(value: unknown, fallback = REDIRECT_FALLBACK): string {
   if (typeof value !== 'string' || value.length === 0 || value.length > 2048) return fallback
@@ -43,8 +43,9 @@ export function safeInternalRedirect(value: unknown, fallback = REDIRECT_FALLBAC
   }
   if (url.origin !== REDIRECT_ORIGIN || url.username || url.password) return fallback
   const isVaultPath = url.pathname === '/' || url.pathname === '/vault' || url.pathname.startsWith('/vault/')
-  const isBillsPath = url.pathname === '/bills' || url.pathname.startsWith('/bills/')
-  if (!isVaultPath && !isBillsPath) return fallback
+  const isLedgerPath = url.pathname === '/ledger' || url.pathname.startsWith('/ledger/')
+  const isLegacyBillsPath = url.pathname === '/bills' || url.pathname.startsWith('/bills/')
+  if (!isVaultPath && !isLedgerPath && !isLegacyBillsPath) return fallback
   return `${url.pathname}${url.search}${url.hash}` || fallback
 }
 
