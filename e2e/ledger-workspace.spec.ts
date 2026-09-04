@@ -40,8 +40,13 @@ test('Ledger scope switches back to the shared Vault body', async ({ page }) => 
 })
 
 test('Ledger dark theme keeps dashboard surfaces and asset totals readable', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('docus.theme', 'dark')
+  })
   await page.goto('/bills')
-  await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'))
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+  await expect(page.getByTestId('bills-page')).toBeVisible()
+  await expect(page.getByTestId('bills-asset-overview')).toBeVisible()
 
   const colors = await page.evaluate(() => {
     const pageElement = document.querySelector('.bills-page') as HTMLElement | null
