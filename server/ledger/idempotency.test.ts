@@ -753,6 +753,7 @@ describe('Ledger idempotency response serialization', () => {
     baseCurrency: 'CNY',
     currencyExponent: 2,
     timezone: 'Asia/Shanghai',
+    hasCreatedAccount: false,
     version: 1,
     createdAt: 1_000,
     updatedAt: 1_000,

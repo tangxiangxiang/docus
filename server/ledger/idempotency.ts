@@ -173,6 +173,7 @@ const LEDGER_SETTINGS_REPLAY_KEYS = [
   'baseCurrency',
   'currencyExponent',
   'timezone',
+  'hasCreatedAccount',
   'version',
   'createdAt',
   'updatedAt',
@@ -340,6 +341,7 @@ function assertLedgerSettingsReplayBody(value: unknown): asserts value is Ledger
   assertReplayString(object.baseCurrency, 'settings response.baseCurrency')
   assertReplaySafeInteger(object.currencyExponent, 'settings response.currencyExponent')
   assertReplayString(object.timezone, 'settings response.timezone')
+  assertReplayBoolean(object.hasCreatedAccount, 'settings response.hasCreatedAccount')
   assertReplayPositiveSafeInteger(object.version, 'settings response.version')
   assertReplaySafeInteger(object.createdAt, 'settings response.createdAt')
   assertReplaySafeInteger(object.updatedAt, 'settings response.updatedAt')

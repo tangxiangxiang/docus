@@ -236,6 +236,7 @@ function toSettingsDto(settings: LedgerSettings): LedgerSettingsDto {
     baseCurrency: settings.baseCurrency,
     currencyExponent: currencyExponentFor(settings.baseCurrency),
     timezone: settings.timezone,
+    hasCreatedAccount: settings.hasCreatedAccount,
     version: settings.version,
     createdAt: settings.createdAt,
     updatedAt: settings.updatedAt,

@@ -125,6 +125,7 @@ describe('Ledger API owner boundary and Settings', () => {
     expect(first.status).toBe(201)
     expect(first.headers.get('cache-control')).toBe('no-store')
     expect(first.headers.get('content-type')).toMatch(/application\/json/)
+    expect(JSON.parse(firstText)).toMatchObject({ hasCreatedAccount: false })
 
     const categories = await authenticated('/api/ledger/categories')
     expect(categories.status).toBe(200)
@@ -235,6 +236,7 @@ describe('Ledger API owner boundary and Settings', () => {
       idempotencyKey: 'account-freeze',
     })
     expect(account.status).toBe(201)
+    expect((await json(await authenticated('/api/ledger/settings'))).hasCreatedAccount).toBe(true)
 
     const timezone = await authenticated('/api/ledger/settings', {
       method: 'PATCH',

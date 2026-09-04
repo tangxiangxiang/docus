@@ -25,6 +25,8 @@ export interface LedgerSettingsDto {
   readonly baseCurrency: string
   readonly currencyExponent: number
   readonly timezone: string
+  /** Monotonic lifecycle marker; never inferred from an Account list. */
+  readonly hasCreatedAccount: boolean
   readonly version: number
   readonly createdAt: number
   readonly updatedAt: number

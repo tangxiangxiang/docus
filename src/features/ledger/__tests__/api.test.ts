@@ -1,0 +1,74 @@
+// @vitest-environment jsdom
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { authFetch } from '../../../lib/auth-session'
+import {
+  createLedgerTransaction,
+  getLedgerSettings,
+  listLedgerTransactions,
+} from '../api'
+import { LedgerApiError } from '../ledgerErrors'
+
+vi.mock('../../../lib/auth-session', () => ({
+  authFetch: vi.fn(),
+}))
+
+const mockedAuthFetch = vi.mocked(authFetch)
+
+function response(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  })
+}
+
+describe('Ledger frontend API boundary', () => {
+  beforeEach(() => mockedAuthFetch.mockReset())
+
+  it('builds the canonical read path and validates Settings lifecycle projection', async () => {
+    mockedAuthFetch.mockResolvedValue(response({
+      baseCurrency: 'CNY',
+      currencyExponent: 2,
+      timezone: 'Asia/Shanghai',
+      hasCreatedAccount: false,
+      version: 1,
+      createdAt: 1,
+      updatedAt: 1,
+    }))
+
+    await expect(getLedgerSettings()).resolves.toMatchObject({ hasCreatedAccount: false })
+    expect(mockedAuthFetch).toHaveBeenCalledWith('/api/ledger/settings', {})
+  })
+
+  it('encodes query parameters and sends a stable idempotency key', async () => {
+    mockedAuthFetch.mockResolvedValue(response({ id: 'tx-1', type: 'expense' }))
+    await createLedgerTransaction({
+      type: 'expense',
+      amountMinor: 3800,
+      accountId: 'account 1',
+      categoryId: 'category-1',
+      occurredAt: 1_700_000_000_000,
+      payee: '',
+      note: '',
+    }, 'key-a')
+    const [, init] = mockedAuthFetch.mock.calls[0]!
+    expect(new Headers(init?.headers).get('Idempotency-Key')).toBe('key-a')
+
+    mockedAuthFetch.mockResolvedValue(response({ transactions: [], page: { nextCursor: null } }))
+    await listLedgerTransactions({ type: 'expense', accountId: 'account 1', limit: 10 })
+    expect(mockedAuthFetch.mock.calls.at(-1)?.[0]).toContain('type=expense')
+    expect(mockedAuthFetch.mock.calls.at(-1)?.[0]).toContain('accountId=account+1')
+  })
+
+  it('normalizes auth, 503, and malformed responses without treating 503 as uncertain', async () => {
+    mockedAuthFetch.mockResolvedValue(response({ error: 'expired', code: 'auth-session-required' }, 401))
+    await expect(getLedgerSettings()).rejects.toMatchObject({ code: 'auth-session-required', kind: 'auth' })
+
+    mockedAuthFetch.mockResolvedValue(response({ error: 'busy', code: 'ledger-write-busy' }, 503))
+    const busy = await getLedgerSettings().catch((error: unknown) => error)
+    expect(busy).toBeInstanceOf(LedgerApiError)
+    expect(busy).toMatchObject({ code: 'ledger-write-busy', kind: 'temporary', transportOutcomeUnknown: false })
+
+    mockedAuthFetch.mockResolvedValue(response({ hasCreatedAccount: false }))
+    await expect(getLedgerSettings()).rejects.toMatchObject({ code: 'ledger-malformed-response' })
+  })
+})
