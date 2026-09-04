@@ -40,7 +40,7 @@ const router = useRouter()
 /* Ledger shares this navbar with Vault, but its body does not own Vault's
    editor/read-mode or right-rail controls. */
 const isLedger = computed(() => (
-  route?.path?.startsWith('/ledger') === true || route?.path?.startsWith('/bills') === true
+  route?.path?.startsWith('/ledger') === true
 ))
 
 /* Sun when current theme is dark (click to lighten),
@@ -216,7 +216,7 @@ onBeforeUnmount(() => {
 
 <template>
   <header
-    :class="['navbar', { 'is-vault': props.isVault, 'ledger-nav-mode': isLedger, 'bills-nav-mode': isLedger, 'diary-calendar-mode': props.isVault && activeScope === 'diary' }]"
+    :class="['navbar', { 'is-vault': props.isVault, 'ledger-nav-mode': isLedger, 'diary-calendar-mode': props.isVault && activeScope === 'diary' }]"
     :inert="props.logoutBusy || undefined"
     :aria-busy="props.logoutBusy || undefined"
   >
@@ -233,7 +233,7 @@ onBeforeUnmount(() => {
         <span class="brand-wordmark">Docus</span>
       </button>
       <!-- Scope filter: lives in the navbar (the file tree header is too
-           narrow on 150px sidebars). Ledger is the Bills entry. -->
+           narrow on 150px sidebars). The Ledger chip opens the Ledger workspace. -->
       <div v-if="props.isVault" class="scope-chips" role="tablist" :aria-label="t('nav.scope_label')">
         <button
           v-for="chip in SCOPE_CHIPS"

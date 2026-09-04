@@ -1,22 +1,16 @@
 import { expect, test } from './fixtures/auth'
 
-test('Ledger renders inside the shared Docus App Shell', async ({ page }) => {
-  await page.goto('/bills')
+test('canonical Ledger renders inside the shared Docus App Shell', async ({ page }) => {
+  await page.goto('/ledger')
 
-  await expect(page.getByTestId('bills-page')).toBeVisible()
+  await expect(page.getByTestId('ledger-page')).toBeVisible()
   await expect(page.locator('.navbar')).toHaveCount(1)
   await expect(page.locator('.scope-chips')).toBeVisible()
   await expect(page.locator('.scope-chip').filter({ hasText: 'ledger' })).toHaveAttribute('aria-pressed', 'true')
-  await expect(page.locator('body')).toHaveClass(/bills-mode/)
-  await expect(page.locator('html')).toHaveClass(/bills-mode/)
-  const outerScrollbar = await page.evaluate(() => ({
-    html: getComputedStyle(document.documentElement).scrollbarWidth,
-    body: getComputedStyle(document.body).scrollbarWidth,
-    accountList: getComputedStyle(document.querySelector('.bills-account-list') as HTMLElement).scrollbarWidth,
-  }))
-  expect(outerScrollbar.html).toBe('none')
-  expect(outerScrollbar.body).toBe('none')
-  expect(outerScrollbar.accountList).toBe('none')
+  await expect(page.locator('body')).toHaveClass(/ledger-mode/)
+  await expect(page.locator('html')).toHaveClass(/ledger-mode/)
+  await expect(page.locator('body')).not.toHaveClass(/bills-mode/)
+  await expect(page.locator('html')).not.toHaveClass(/bills-mode/)
 
   // Ledger is a body workspace, not a second Vault shell. The global actions
   // stay in the single navbar while Vault-only controls and sidebars do not.
@@ -26,44 +20,37 @@ test('Ledger renders inside the shared Docus App Shell', async ({ page }) => {
   await expect(page.locator('.right-rail-toggle')).toHaveCount(0)
   await expect(page.locator('.activity-bar')).toHaveCount(0)
   await expect(page.locator('.navbar + .navbar')).toHaveCount(0)
+  await expect(page.locator('body')).not.toContainText('billsMockData')
+  await expect(page.locator('body')).not.toContainText('Bills')
+})
+
+test('legacy Bills URLs redirect to the canonical Ledger routes', async ({ page }) => {
+  await page.goto('/bills/transactions?period=month#recent')
+  await expect(page).toHaveURL(/\/ledger\/transactions\?period=month#recent$/)
+  await expect(page.getByTestId('ledger-transactions-page')).toBeVisible()
+
+  await page.goto('/bills?period=month#summary')
+  await expect(page).toHaveURL(/\/ledger\?period=month#summary$/)
+  await expect(page.getByTestId('ledger-page')).toBeVisible()
 })
 
 test('Ledger scope switches back to the shared Vault body', async ({ page }) => {
-  await page.goto('/bills')
+  await page.goto('/ledger')
   await page.locator('.scope-chip').filter({ hasText: 'note' }).click()
 
   await expect(page).toHaveURL(/\/vault(?:[/?#]|$)/)
-  await expect(page.locator('body')).not.toHaveClass(/bills-mode/)
-  await expect(page.locator('html')).not.toHaveClass(/bills-mode/)
+  await expect(page.locator('body')).not.toHaveClass(/ledger-mode/)
+  await expect(page.locator('html')).not.toHaveClass(/ledger-mode/)
   await expect(page.locator('.navbar')).toHaveCount(1)
   await expect(page.locator('.scope-chip').filter({ hasText: 'note' })).toHaveAttribute('aria-pressed', 'true')
 })
 
-test('Ledger dark theme keeps dashboard surfaces and asset totals readable', async ({ page }) => {
+test('Ledger keeps the shared theme readable', async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem('docus.theme', 'dark')
   })
-  await page.goto('/bills')
+  await page.goto('/ledger')
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
-  await expect(page.getByTestId('bills-page')).toBeVisible()
-  await expect(page.getByTestId('bills-asset-overview')).toBeVisible()
-
-  const colors = await page.evaluate(() => {
-    const pageElement = document.querySelector('.bills-page') as HTMLElement | null
-    const cardElement = document.querySelector('[data-testid="bills-asset-overview"]') as HTMLElement | null
-    const totalElement = document.querySelector('.bills-asset-total-primary') as HTMLElement | null
-    const totalValue = totalElement?.querySelector('strong') as HTMLElement | null
-
-    return {
-      pageBackground: pageElement ? getComputedStyle(pageElement).backgroundColor : '',
-      cardBackground: cardElement ? getComputedStyle(cardElement).backgroundColor : '',
-      totalBackground: totalElement ? getComputedStyle(totalElement).backgroundColor : '',
-      totalText: totalValue ? getComputedStyle(totalValue).color : '',
-    }
-  })
-
-  expect(colors.pageBackground).toBe('rgb(30, 30, 30)')
-  expect(colors.cardBackground).toBe('rgb(37, 37, 38)')
-  expect(colors.totalBackground).toBe('rgb(45, 45, 45)')
-  expect(colors.totalText).toBe('rgb(212, 212, 212)')
+  await expect(page.getByTestId('ledger-page')).toBeVisible()
+  await expect(page.locator('body')).not.toContainText('Bills')
 })

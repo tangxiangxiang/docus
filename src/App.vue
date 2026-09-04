@@ -44,8 +44,7 @@ const isVaultRoute = computed(() =>
   && vaultIdentity.state.value === 'ready',
 )
 const isLedgerRoute = computed(() => route.path === '/ledger' || route.path.startsWith('/ledger/'))
-const isLegacyBillsRoute = computed(() => route.path === '/bills' || route.path.startsWith('/bills/'))
-const isWorkspaceChrome = computed(() => isVaultRoute.value || isLedgerRoute.value || isLegacyBillsRoute.value)
+const isWorkspaceChrome = computed(() => isVaultRoute.value || isLedgerRoute.value)
 const isPublicDevPreview = computed(() => route.meta.publicDevPreview === true)
 const showNormalChrome = computed(() => shouldShowNormalChrome(
   auth.state.value,
@@ -228,12 +227,8 @@ watch(
    the Vault body lock and the Ledger scrollbar treatment isolated. */
 watchEffect(() => {
   document.body.classList.toggle('vault-mode', isVaultRoute.value)
-  document.body.classList.toggle('ledger-mode', isLedgerRoute.value || isLegacyBillsRoute.value)
-  document.documentElement.classList.toggle('ledger-mode', isLedgerRoute.value || isLegacyBillsRoute.value)
-  // Keep the old class as a stylesheet compatibility hook until UI.8 removes
-  // the prototype CSS. It is never a user-visible product label.
-  document.body.classList.toggle('bills-mode', isLedgerRoute.value || isLegacyBillsRoute.value)
-  document.documentElement.classList.toggle('bills-mode', isLedgerRoute.value || isLegacyBillsRoute.value)
+  document.body.classList.toggle('ledger-mode', isLedgerRoute.value)
+  document.documentElement.classList.toggle('ledger-mode', isLedgerRoute.value)
 })
 
 /* Global open-search trigger: incremented by NavBar, watched by the

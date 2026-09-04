@@ -242,7 +242,7 @@ describe('NavBar — scope chips', () => {
       },
     })
 
-    expect(wrapper.find('[data-testid="bills-nav-link"]').exists()).toBe(false)
+    expect(wrapper.findAll('.scope-chip')[2].text()).toContain('ledger')
     await wrapper.findAll('.scope-chip')[2].trigger('click')
     await new Promise((resolve) => setTimeout(resolve, 0))
 
