@@ -7,6 +7,7 @@ import type {
   LedgerExpenseCreateRequest,
   LedgerIncomeCreateRequest,
   LedgerOverviewDto,
+  LedgerOverviewScope,
   LedgerSettingsCreateRequest,
   LedgerSettingsDto,
   LedgerTransactionDto,
@@ -74,6 +75,7 @@ interface LedgerStoreState {
   accounts: LedgerAccountDto[]
   categories: LedgerCategoryDto[]
   overview: LedgerOverviewDto | null
+  overviewScope: LedgerOverviewScope
   transactions: LedgerTransactionPageDto | null
   accountDetail: LedgerAccountDto | null
   accountTransactions: LedgerAccountTransactionsDto | null
@@ -96,6 +98,7 @@ const state = reactive<LedgerStoreState>({
   accounts: [],
   categories: [],
   overview: null,
+  overviewScope: 'month',
   transactions: null,
   accountDetail: null,
   accountTransactions: null,
@@ -150,17 +153,22 @@ function clearPresentation(): void {
   state.mutationState = state.pendingCreate ? 'UNCERTAIN' : 'IDLE'
 }
 
-async function loadData(epoch: number, settings: LedgerSettingsDto): Promise<void> {
+async function loadData(
+  epoch: number,
+  settings: LedgerSettingsDto,
+  overviewScope: LedgerOverviewScope = state.overviewScope,
+): Promise<void> {
   const [accounts, categories, overview] = await Promise.all([
     listLedgerAccounts(true),
     listLedgerCategories(undefined, true),
-    getLedgerOverview('month'),
+    getLedgerOverview(overviewScope),
   ])
   if (!isCurrent(epoch)) return
   state.settings = settings
   state.accounts = accounts
   state.categories = categories
   state.overview = overview
+  state.overviewScope = overviewScope
   state.workspaceState = lifecycleFor(settings, accounts)
   state.error = null
 }
@@ -224,7 +232,7 @@ async function refreshData(): Promise<void> {
   state.loading = true
   state.error = null
   try {
-    await loadData(epoch, state.settings)
+    await loadData(epoch, state.settings, state.overviewScope)
     if (state.transactions !== null) {
       state.transactions = await listLedgerTransactions(state.transactionQuery)
     }
@@ -232,6 +240,24 @@ async function refreshData(): Promise<void> {
     if (!isCurrent(epoch)) return
     state.error = normalizeLedgerError(error)
     state.workspaceState = 'RECOVERABLE_ERROR'
+  } finally {
+    if (isCurrent(epoch)) state.loading = false
+  }
+}
+
+async function refreshOverview(scope: LedgerOverviewScope): Promise<void> {
+  const epoch = state.requestEpoch + 1
+  state.requestEpoch = epoch
+  state.loading = true
+  state.error = null
+  try {
+    const overview = await getLedgerOverview(scope)
+    if (!isCurrent(epoch)) return
+    state.overview = overview
+    state.overviewScope = scope
+  } catch (error) {
+    if (!isCurrent(epoch)) return
+    state.error = normalizeLedgerError(error)
   } finally {
     if (isCurrent(epoch)) state.loading = false
   }
@@ -357,6 +383,7 @@ export interface LedgerStore {
   readonly activeCategories: ComputedRef<readonly LedgerCategoryDto[]>
   readonly archivedCategories: ComputedRef<readonly LedgerCategoryDto[]>
   readonly overview: ComputedRef<LedgerOverviewDto | null>
+  readonly overviewScope: ComputedRef<LedgerOverviewScope>
   readonly transactions: ComputedRef<LedgerTransactionPageDto | null>
   readonly accountDetail: ComputedRef<LedgerAccountDto | null>
   readonly accountTransactions: ComputedRef<LedgerAccountTransactionsDto | null>
@@ -368,6 +395,7 @@ export interface LedgerStore {
   readonly pendingCreate: ComputedRef<LedgerPendingCreateIntent | null>
   readonly bootstrap: () => Promise<void>
   readonly refreshData: () => Promise<void>
+  readonly refreshOverview: (scope: LedgerOverviewScope) => Promise<void>
   readonly refreshTransactions: (query?: LedgerTransactionQuery) => Promise<void>
   readonly getAccount: (id: string) => Promise<LedgerAccountDto>
   readonly getTransaction: (id: string) => Promise<LedgerTransactionDto>
@@ -400,6 +428,7 @@ const store: LedgerStore = {
   activeCategories: computed(() => state.categories.filter((category) => category.archivedAt === null)),
   archivedCategories: computed(() => state.categories.filter((category) => category.archivedAt !== null)),
   overview: computed(() => state.overview),
+  overviewScope: computed(() => state.overviewScope),
   transactions: computed(() => state.transactions),
   accountDetail: computed(() => state.accountDetail),
   accountTransactions: computed(() => state.accountTransactions),
@@ -411,6 +440,7 @@ const store: LedgerStore = {
   pendingCreate: computed(() => state.pendingCreate),
   bootstrap,
   refreshData,
+  refreshOverview,
   refreshTransactions,
   getAccount: async (id) => {
     const result = await getLedgerAccount(id)
@@ -455,6 +485,7 @@ export function resetLedgerStoreForTesting(): void {
   state.accounts = []
   state.categories = []
   state.overview = null
+  state.overviewScope = 'month'
   state.transactions = null
   state.accountDetail = null
   state.accountTransactions = null

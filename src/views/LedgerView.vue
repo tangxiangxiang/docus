@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { useAuth } from '../composables/useAuth'
+import LedgerDashboard from '../components/ledger/LedgerDashboard.vue'
 import LedgerFirstAccountForm from '../components/ledger/LedgerFirstAccountForm.vue'
 import LedgerNoActiveAccountState from '../components/ledger/LedgerNoActiveAccountState.vue'
 import LedgerOnboarding from '../components/ledger/LedgerOnboarding.vue'
@@ -9,6 +11,7 @@ import { ledgerErrorMessage } from '../features/ledger/ledgerErrors'
 import { useLedgerStore } from '../features/ledger/ledgerStore'
 
 const auth = useAuth()
+const router = useRouter()
 const store = useLedgerStore()
 const newAccountOpen = ref(false)
 const transactionSheetOpen = ref(false)
@@ -32,6 +35,10 @@ function closeNewAccount(): void {
 
 function retry(): void {
   void store.bootstrap()
+}
+
+function openTransactions(): void {
+  void router.push({ name: 'ledger-transactions' })
 }
 </script>
 
@@ -63,12 +70,7 @@ function retry(): void {
       <LedgerNoActiveAccountState v-else @create="openNewAccount" />
     </template>
 
-    <section v-else class="ledger-ready-placeholder" data-testid="ledger-ready-placeholder" aria-labelledby="ledger-ready-title">
-      <p class="ledger-eyebrow">Ledger</p>
-      <h1 id="ledger-ready-title">你的 Ledger 已准备好</h1>
-      <p>Dashboard 正在接入真实账户和交易数据。</p>
-      <button class="ledger-primary-button" type="button" :disabled="!store.activeAccounts.value.length" @click="transactionSheetOpen = true">＋ 记一笔</button>
-    </section>
+    <LedgerDashboard v-else @record="transactionSheetOpen = true" @view-transactions="openTransactions" />
 
     <LedgerTransactionSheet :open="transactionSheetOpen" @close="transactionSheetOpen = false" />
   </main>

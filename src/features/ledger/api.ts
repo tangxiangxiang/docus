@@ -12,6 +12,7 @@ import type {
   LedgerIncomeCreateRequest,
   LedgerOverviewDto,
   LedgerOverviewScope,
+  LedgerTrendPoint,
   LedgerSettingsCreateRequest,
   LedgerSettingsDto,
   LedgerTransactionDto,
@@ -358,6 +359,6 @@ export function getLedgerOverview(scope: LedgerOverviewScope = 'month'): Promise
   return request(`/api/ledger/overview${queryString({ scope })}`, {}, objectResponse<LedgerOverviewDto>('Overview response'))
 }
 
-export function getLedgerTrend(months = 6): Promise<readonly unknown[]> {
-  return request(`/api/ledger/trend${queryString({ months })}`, {}, arrayResponse<unknown>('Trend response'))
+export function getLedgerTrend(months = 6): Promise<readonly LedgerTrendPoint[]> {
+  return request(`/api/ledger/trend${queryString({ months })}`, {}, arrayResponse<LedgerTrendPoint>('Trend response'))
 }

@@ -144,7 +144,7 @@ describe('Ledger initialization and first-account onboarding', () => {
       currency: 'CNY',
       note: '',
     }, expect.any(String))
-    expect(wrapper.find('[data-testid="ledger-ready-placeholder"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ledger-dashboard"]').exists()).toBe(true)
   })
 
   it('does not present a normal zero dashboard when initialized without an active account', async () => {
@@ -166,6 +166,6 @@ describe('Ledger initialization and first-account onboarding', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-testid="ledger-settings-form"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="ledger-ready-placeholder"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ledger-dashboard"]').exists()).toBe(true)
   })
 })

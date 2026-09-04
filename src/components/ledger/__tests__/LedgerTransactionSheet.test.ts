@@ -90,7 +90,7 @@ async function openSheet(): Promise<VueWrapper> {
   const wrapper = mount(LedgerView)
   wrappers.push(wrapper)
   await flushPromises()
-  await wrapper.get('[data-testid="ledger-ready-placeholder"] button').trigger('click')
+  await wrapper.get('[data-testid="ledger-record-button"]').trigger('click')
   await flushPromises()
   return wrapper
 }
@@ -158,7 +158,7 @@ describe('Ledger transaction creation sheet', () => {
 
     expect(api.createLedgerTransaction).toHaveBeenCalledWith(expect.objectContaining({ type: 'income', amountMinor: 1250 }), expect.any(String))
 
-    await wrapper.get('[data-testid="ledger-ready-placeholder"] button').trigger('click')
+    await wrapper.get('[data-testid="ledger-record-button"]').trigger('click')
     const transferSheet = getSheet()
     await transferSheet.findAll('[role="tab"]').find((button) => button.text() === '转账')!.trigger('click')
     expect(transferSheet.find('select[name="categoryId"]').exists()).toBe(false)
