@@ -10,6 +10,11 @@ const image = process.env.DOCKER_IMAGE ?? 'docus-ci-smoke'
 const namespace = `docus-vault-lifecycle-${process.pid}-${Date.now()}`
 const setupToken = 'docker-lifecycle-test-token-0123456789abcdef'
 const containers = new Set()
+const hostUser = typeof process.getuid === 'function' && typeof process.getgid === 'function'
+  ? `${process.getuid()}:${process.getgid()}`
+  : null
+const dockerUserArgs = hostUser ? ['--user', hostUser] : []
+const composeUserConfig = hostUser ? `    user: "${hostUser}"\n` : ''
 
 if (!image || /\s/.test(image)) {
   throw new Error('Docker Vault writer lifecycle test requires a valid local image reference')
@@ -98,7 +103,7 @@ async function startContainer(name, store) {
     'run', '-d', '--name', name,
     '--read-only',
     '--tmpfs', '/tmp:rw,mode=1777',
-    '--user', '1000:1000',
+    ...dockerUserArgs,
     '-e', 'NODE_ENV=production',
     '-e', 'HOST=0.0.0.0',
     '-e', 'PORT=3000',
@@ -188,7 +193,7 @@ async function testComposeForceRecreate(root, evidence) {
   const composeArgs = ['compose', '--project-name', project, '--file', composeFile]
   let composeStarted = false
 
-  await writeFile(composeFile, `services:\n  docus:\n    image: ${JSON.stringify(image)}\n    pull_policy: never\n    read_only: true\n    user: \"1000:1000\"\n    tmpfs:\n      - /tmp:rw,mode=1777\n    environment:\n      NODE_ENV: production\n      HOST: 0.0.0.0\n      PORT: \"3000\"\n      DOCUS_PUBLIC_ORIGIN: http://127.0.0.1:3000\n      DOCUS_SETUP_TOKEN: ${setupToken}\n    volumes:\n      - type: bind\n        source: ${JSON.stringify(store.vault)}\n        target: /app/src/content\n      - type: bind\n        source: ${JSON.stringify(store.data)}\n        target: /app/data\n`, 'utf8')
+  await writeFile(composeFile, `services:\n  docus:\n    image: ${JSON.stringify(image)}\n    pull_policy: never\n    read_only: true\n${composeUserConfig}    tmpfs:\n      - /tmp:rw,mode=1777\n    environment:\n      NODE_ENV: production\n      HOST: 0.0.0.0\n      PORT: \"3000\"\n      DOCUS_PUBLIC_ORIGIN: http://127.0.0.1:3000\n      DOCUS_SETUP_TOKEN: ${setupToken}\n    volumes:\n      - type: bind\n        source: ${JSON.stringify(store.vault)}\n        target: /app/src/content\n      - type: bind\n        source: ${JSON.stringify(store.data)}\n        target: /app/data\n`, 'utf8')
 
   try {
     await docker([...composeArgs, 'up', '-d'], 'initial Compose startup')
