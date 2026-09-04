@@ -6,11 +6,19 @@ Docus server persistence spans the vault, the data directory, and any externally
 | --- | --- | --- |
 | Markdown notes | `src/content/**/*.md` | Required. |
 | Vault versions and identity | `src/content/.git/`, `src/content/.docus/`, vault dotfiles | Required if History must survive. |
-| SQLite metadata, AI data, and Authentication v1 state | `data/docus.db` plus active WAL/SHM files | Required for titles, summaries, tags, document IDs, migration records, `users`, `auth_instance`, `auth_sessions`, AI settings, encrypted credentials, sessions, and messages. |
+| SQLite metadata, AI data, Authentication v1 state, and Ledger financial state | `data/docus.db` plus active WAL/SHM files | Required for titles, summaries, tags, document IDs, migration records, `users`, `auth_instance`, `auth_sessions`, AI settings, encrypted credentials, sessions, messages, and Ledger's `ledger_settings`, `ledger_accounts`, `ledger_categories`, `ledger_transactions`, and `ledger_idempotency` tables. |
 | AI master key | `data/.docus-master-key` or an external environment/secret file | Required to decrypt stored AI credentials. |
 | Unsaved drafts | Browser IndexedDB `docus-draft-recovery` | Browser-local; not included in server or Docker backups. |
 
 A complete server backup includes the full vault, the full data directory, and the master key when it is managed outside `data/`.
+
+Ledger has no separate database and does not store financial records in
+Markdown. Its five `ledger_*` tables are server-owned structured state in the
+same SQLite database as metadata, authentication, and AI. The
+`ledger_idempotency` table is create-mutation retry-safety state: it is not a
+financial business record, but it must be backed up and restored together
+with the Ledger business rows. Do not clear it as a normal restore step, or a
+response-loss retry could execute a mutation a second time.
 
 ## Authentication State
 
@@ -42,7 +50,12 @@ ciphertext, or change other AI settings.
 
 Stop Docus before copying `data/` and the vault. This closes SQLite cleanly and prevents a document mutation from spanning the two backup copies.
 
-If zero-downtime backups are required, use a filesystem snapshot that covers both stores at the same point in time and a SQLite-aware backup process. A plain live copy of only `docus.db` can miss data still in the WAL.
+If zero-downtime backups are required, use a filesystem snapshot that covers
+both stores at the same point in time and a SQLite-aware backup process. A
+plain live copy of only `docus.db` can miss Ledger or other data still in the
+WAL. The WAL and SHM files belong to the same SQLite consistency boundary;
+prefer stopping Docus or using a SQLite-aware backup rather than copying only
+the main database file.
 
 ## Docker Backup
 
@@ -81,6 +94,7 @@ Store the external master key separately if it is not under `data/`.
 6. If the restore should force reauthentication, set `DOCUS_AUTH_REVOKE_SESSIONS_ON_START=1` before starting Docus.
 7. Start Docus and inspect startup logs; reset the flag to `0` after the one-shot invalidation has run.
 8. Verify `/api/health`, authenticate the owner, open representative notes, check tags and properties, inspect History, and test AI settings without replacing the key.
+9. If Ledger has been initialized, use the authenticated owner boundary to verify `GET /api/ledger/settings`, `GET /api/ledger/accounts`, `GET /api/ledger/overview`, and `GET /api/ledger/transactions?limit=1`. These checks verify that Ledger settings, entities, financial records, current projections, and read APIs are available; Ledger UI is not required for restore verification.
 
 For Docker, one restore method that preserves the existing named volume is:
 
@@ -97,6 +111,8 @@ The `--delete` flag makes the restored vault match the backup and removes newer 
 ## Partial Restore Consequences
 
 - Markdown without SQLite retains note bodies but loses current database-owned titles, summaries, tags, stable IDs, AI settings, and conversations. Startup will reconstruct fallback metadata, not the missing application state.
+- A vault-only restore cannot restore Ledger Settings, Accounts, Categories, Transactions, current projections, or idempotency replay state.
+- A SQLite restore includes Ledger rows and replay state, but restoring it without the matching vault can still leave the document side of the Docus instance inconsistent.
 - SQLite without the matching vault contains metadata identities for missing files and is not a useful document restore.
 - SQLite without the matching master key preserves encrypted credentials but cannot decrypt them. Restore the original key. If the credentials are intentionally abandoned, the old credential rows must be explicitly cleared before reconfiguration; Docus does not clear or replace them during the failed read.
 - If the original key cannot be recovered, Settings can explicitly forget one provider credential at a time. This destructive action removes only the selected encrypted row; it does not decrypt, rewrite, or remove the other provider's row or the master-key file. Once all unrecoverable rows are cleared, a new API key can be saved and a new fallback key will be created.

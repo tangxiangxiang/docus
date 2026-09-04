@@ -10,13 +10,34 @@ Vault paths are validated before use. Folder and file path segments use lowercas
 
 ## SQLite
 
-The server opens `data/docus.db` and applies migrations from `server/migrations/`. SQLite uses write-ahead logging. It stores:
+The server opens the single `data/docus.db` database and applies migrations
+from `server/migrations/`. SQLite uses write-ahead logging; the database,
+`docus.db-wal`, and `docus.db-shm` are one consistency boundary. There is no
+second Ledger database. The same SQLite instance is shared with document
+metadata, authentication, and AI state.
+
+It stores:
 
 - stable document identities and metadata such as title, summary, and tags;
 - metadata-migration backup records;
 - AI provider settings, sessions, and messages.
+- Ledger server-owned structured financial state in:
+  `ledger_settings`, `ledger_accounts`, `ledger_categories`,
+  `ledger_transactions`, and `ledger_idempotency`.
 
-SQLite is not the source of Markdown bodies. Removing the database does not remove the vault, but it does lose application metadata and AI history. Restoring only the database without the matching vault can leave stale document records.
+Ledger does not write transactions to `ledger/*.md` or to Note/Diary
+frontmatter. Its financial source of truth is the Ledger rows in SQLite plus
+the shared server-side balance rules. `ledger_accounts` has no persisted
+current-balance column: an account's current balance is derived from its
+opening balance and the effects of active transaction rows. Overview and
+other summaries are live projections, not persisted snapshots or caches.
+
+Removing `data/docus.db` does not remove the vault, but it loses application
+metadata, AI history, authentication state, Ledger Settings, Accounts,
+Categories, Transactions, and the `ledger_idempotency` retry-safety state.
+Restoring only the database without the matching vault can leave stale
+document records; restoring only the vault cannot restore Ledger financial
+history.
 
 ## Vault Git repository
 
@@ -44,4 +65,3 @@ A complete backup includes both:
 2. the `data/` directory, including the database and master-key file if present.
 
 See [Backup and Restore](../deployment/backup-and-restore.md) for procedures.
-
