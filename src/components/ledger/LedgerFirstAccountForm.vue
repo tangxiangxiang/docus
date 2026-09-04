@@ -205,7 +205,7 @@ async function submit(): Promise<void> {
       <button v-if="props.cancelable" class="ledger-secondary-button" type="button" :disabled="saving" @click="emit('cancel')">取消</button>
       <button v-if="!props.firstAccount && !settings?.hasCreatedAccount" class="ledger-secondary-button" type="button" :disabled="saving" @click="emit('edit-settings')">修改 Ledger 设置</button>
       <button class="ledger-primary-button" type="submit" :disabled="saving">
-        {{ saving ? '正在保存…' : '创建账户并继续' }}
+        {{ saving ? '正在保存…' : (props.firstAccount ? '创建账户并继续' : '创建账户') }}
       </button>
     </div>
   </form>
@@ -248,4 +248,3 @@ async function submit(): Promise<void> {
   .ledger-form-actions > * { flex: 1 1 160px; }
 }
 </style>
-
