@@ -4,14 +4,16 @@ import { useAuth } from '../composables/useAuth'
 import LedgerFirstAccountForm from '../components/ledger/LedgerFirstAccountForm.vue'
 import LedgerNoActiveAccountState from '../components/ledger/LedgerNoActiveAccountState.vue'
 import LedgerOnboarding from '../components/ledger/LedgerOnboarding.vue'
+import LedgerTransactionSheet from '../components/ledger/LedgerTransactionSheet.vue'
 import { ledgerErrorMessage } from '../features/ledger/ledgerErrors'
 import { useLedgerStore } from '../features/ledger/ledgerStore'
 
 const auth = useAuth()
 const store = useLedgerStore()
 const newAccountOpen = ref(false)
+const transactionSheetOpen = ref(false)
 
-const bootstrapping = computed(() => store.workspaceState.value === 'BOOTSTRAPPING' || store.loading.value)
+const bootstrapping = computed(() => store.workspaceState.value === 'BOOTSTRAPPING')
 const showOnboarding = computed(() => store.workspaceState.value === 'UNINITIALIZED' || store.workspaceState.value === 'FIRST_ACCOUNT_REQUIRED')
 
 watch(() => auth.user.value?.username ?? null, (identity) => store.setOwnerIdentity(identity), { immediate: true })
@@ -65,7 +67,10 @@ function retry(): void {
       <p class="ledger-eyebrow">Ledger</p>
       <h1 id="ledger-ready-title">你的 Ledger 已准备好</h1>
       <p>Dashboard 正在接入真实账户和交易数据。</p>
+      <button class="ledger-primary-button" type="button" :disabled="!store.activeAccounts.value.length" @click="transactionSheetOpen = true">＋ 记一笔</button>
     </section>
+
+    <LedgerTransactionSheet :open="transactionSheetOpen" @close="transactionSheetOpen = false" />
   </main>
 </template>
 
