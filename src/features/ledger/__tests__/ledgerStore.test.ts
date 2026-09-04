@@ -2,7 +2,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   LedgerAccountDto,
-  LedgerCategoryDto,
   LedgerOverviewDto,
   LedgerSettingsDto,
 } from '../../../../shared/ledgerProtocol'
