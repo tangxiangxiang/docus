@@ -1,19 +1,22 @@
 # Ledger — UI Integration PRD
 
-## 1. Status / remediation baseline
+## 1. Status / review closure
 
 | 项目 | 结论 |
 | --- | --- |
-| Product Review | **Ready for Review** |
-| PRD 状态 | Draft for Product Review；尚未 Accepted |
+| Product Review | **Accepted** |
+| PRD 状态 | Product Review: Accepted |
 | Remediation date | 2026-09-05（Asia/Shanghai） |
-| Remediation audited main HEAD | `db975dbecfb52e3e271697aaaf3aa6456b99e3e8` |
-| Current committed repository reality | 当前 `main` 已包含 `7ace840 fix(e2e): wait for ledger workspace mount`；`e2e/ledger-workspace.spec.ts` 的该修改已经 committed；本轮 remediation audit 时 working tree clean，不存在旧文档所述的未提交 e2e 修改 |
+| Product Review closure date | 2026-09-05（Asia/Shanghai） |
+| Product Review result | PASS / Accepted |
+| Review baseline HEAD | `5724e66e78905f3d0518f723eb7c23f2a1e3d360` |
+| Remediation audited main HEAD | `5724e66e78905f3d0518f723eb7c23f2a1e3d360` |
+| Current committed repository reality | 当前 `main` 已包含 `7ace840 fix(e2e): wait for ledger workspace mount` 与上一轮 UI Integration 文档 remediation；本轮 review closure audit 时 working tree clean |
 | Original PRD drafting baseline | `3af6541c8542e12877918159882108f3e3ff6c91`（historical only；不是当前实现 baseline） |
 | Current document path | `docs/design/ledger-ui-integration-prd.md`（本轮重命名后） |
 | 产品输入 | REQ-003「Ledger UI 接入与记账闭环」；本 Prompt 提供的内容是本轮 authoritative product input |
 | 领域/架构上位合同 | [`docs/design/ledger-v1-prd.md`](ledger-v1-prd.md)、[`docs/design/ledger-l0-foundation-prd.md`](ledger-l0-foundation-prd.md) |
-| 本轮边界 | 只定义 Ledger UI Integration delivery milestone 的产品行为；不写 Implementation Plan，不修改生产代码，不开始 UI implementation |
+| 本轮边界 | 只关闭本 PRD 的 Product Review；不修改生产代码，不开始 UI implementation |
 
 Ledger v1 PRD 已是 Product Review: Accepted；L0 Foundation PRD 已冻结 Ledger 的领域、生命周期、金额、时间、projection、错误与幂等语义。本 PRD 定义一个跨多个 capability epic 的 UI Integration delivery milestone：把 Accounts、Transactions、Transfers、Dashboard、basic filtering 和 minimum Category UI 组合成第一个用户可用闭环。它不能重新定义上位合同，也不改变 Ledger v1 的 L1–L8 roadmap 编号。
 
@@ -42,7 +45,7 @@ Ledger v1 PRD 已是 Product Review: Accepted；L0 Foundation PRD 已冻结 Ledg
 
 Ledger UI Integration 是一个跨 capability 的 delivery milestone，而不是新的 “L1” 阶段。它把 Accounts、Transactions、Transfers、Dashboard、basic filtering 和 minimum Category UI 组合成第一个用户可用的 UI 闭环。full Category Management、Adjustment UI、free-text Search 等没有纳入本次 delivery 的能力，仍归属于原 roadmap 或后续独立 requirement；本 delivery 不改变任何 Accepted financial、lifecycle、projection 或 idempotency contract。
 
-因此当前没有需要阻塞本 PRD 的 Product / Architecture Contract Conflict。若后续 review 要改变财务语义，必须先修订 v1/L0 authoritative document，不能由本 PRD或后续 Implementation Plan 静默决定。
+因此当前没有需要阻塞本 PRD 的 Product / Architecture Contract Conflict。`hasCreatedAccount` 是 UI 正确呈现设置锁定生命周期所需的只读可见性投影；其最小 DTO 暴露属于后续 Implementation Plan 的实现前置，不改变本 PRD 已接受的产品行为。若后续 review 要改变财务语义，必须先修订 v1/L0 authoritative document，不能由本 PRD 或后续 Implementation Plan 静默决定。
 
 ## 2. Problem
 
@@ -120,7 +123,7 @@ DRAFT
   ↓ submit
 SUBMITTING
   ├─ 明确成功 → CONFIRMED
-  ├─ 明确的 validation / deterministic conflict failure → DRAFT / ERROR
+  ├─ 明确的 validation / deterministic conflict / 503 failure → DRAFT / ERROR
   └─ 结果未知（timeout、connection reset、response lost）→ UNCERTAIN
 
 UNCERTAIN
@@ -128,7 +131,7 @@ UNCERTAIN
   └─ cancel / new intent → 先确认原 intent 的 authoritative result
 ```
 
-一次 intent 在第一次 submit 时绑定一个 stable Idempotency-Key 和 canonical payload。`UNCERTAIN` 不是普通可编辑错误：用户不能直接修改金额、账户、分类、时间或其他 canonical payload 字段后用新 key 再提交，因为原请求可能已经在 server commit。只有原 intent 被确认成功，或被确认没有创建成功，用户才可以开始新的 payload + 新 key intent。明确收到的 HTTP 400 或 deterministic 409 是已知失败，可以回到可编辑状态；网络超时、连接重置、响应丢失或没有收到响应必须进入 `UNCERTAIN`。一次记账意图最终只能产生一笔记录。
+一次 intent 在第一次 submit 时绑定一个 stable Idempotency-Key 和 canonical payload。`UNCERTAIN` 不是普通可编辑错误：用户不能直接修改金额、账户、分类、时间或其他 canonical payload 字段后用新 key 再提交，因为原请求可能已经在 server commit。只有原 intent 被确认成功，或被确认没有创建成功，用户才可以开始新的 payload + 新 key intent。明确收到的 HTTP 400 validation、deterministic 409 或 503 `ledger-write-busy` 是已知的、可恢复的明确失败，可以回到可编辑状态；网络超时、连接重置、响应丢失或没有收到响应必须进入 `UNCERTAIN`。一次记账意图最终只能产生一笔记录。
 
 ### 5.7 时间和货币必须可解释
 
@@ -141,17 +144,17 @@ UNCERTAIN
 | 状态 | 用户看到什么 | 用户下一步 |
 | --- | --- | --- |
 | 未初始化 | Ledger 欢迎/设置页面；不显示伪造的 Dashboard 数字 | 明确选择 baseCurrency 和 timezone，并点击继续 |
-| `NO_ACCOUNT`：从未创建过 Account，或按 server lifecycle / `hasCreatedAccount` contract 判断当前不存在 Account entity | “完成第一个账户”页面或 onboarding 第二步；不显示全是 0 的正常 Dashboard | 创建第一个 Account，或选择稍后创建；下次进入仍回到此状态 |
+| `FIRST_ACCOUNT_REQUIRED`：`settings.hasCreatedAccount=false` 且当前没有可用 Account | “完成第一个账户”页面或 onboarding 第二步；不显示全是 0 的正常 Dashboard | 创建第一个 Account，或选择稍后创建；下次进入仍回到此状态 |
 | 有 Account 但没有 Transaction | 真实 Dashboard shell；资产/负债/净资产来自真实 opening balance，收支、趋势和最近交易显示可解释 empty state | 点击 `+ 记一笔` 创建第一笔真实交易 |
 | 正常有数据 | 完整 Dashboard 和 Transactions 工作区 | 记账、查看、编辑、删除或维护账户 |
 | Loading | 页面级或区域级 loading 状态；未知数值不显示为 0 | 等待当前读取完成；不可执行的 action 保持不可用 |
 | Recoverable Error | 区分表单错误、网络失败、暂时不可用、版本冲突等，并提供对应恢复动作 | 修正字段、重试、重新加载或重新登录 |
 | Session expired | 明确提示 session 已过期并进入登录流程；未保存输入不被宣称为已保存 | 重新登录后回到原 Ledger context，再确认未完成操作 |
-| `NO_ACTIVE_ACCOUNT`：存在 Account history/entity，但当前没有 active Account（例如全部已归档） | 显示当前数据仍存在但没有可用于新记账的 active Account | 从账户管理恢复一个 Account，或创建一个新的 Account；不能用 mock 或静默创建账户 |
+| `NO_ACTIVE_ACCOUNT`：`settings.hasCreatedAccount=true` 且当前没有 active Account（可能是全部归档，也可能是无历史 Account 被 physical delete 后实体为 0） | 显示当前设置已锁定、当前没有可用于新记账的 active Account；保留可用的历史上下文 | 从账户管理恢复一个 archived Account（若存在），或创建一个新的 active Account；不能用 mock 或静默创建账户 |
 
-### 6.1 未初始化与 no-account 不显示正常 Dashboard shell
+### 6.1 未初始化与首个账户/无 active 账户状态不显示正常 Dashboard shell
 
-未初始化和 `NO_ACCOUNT` 时，不显示资产、负债、趋势等看似正常但没有下一步的 Dashboard shell。`NO_ACTIVE_ACCOUNT` 也不显示可保存的正常记账 Dashboard，但要保留账户历史上下文，并同时提供“恢复账户”和“创建新账户”两个明确 CTA。可以保留 Docus 全局 Navbar 和 Ledger 身份，但主区域必须是有明确 CTA 的 onboarding/empty experience。
+未初始化和 `FIRST_ACCOUNT_REQUIRED` 时，不显示资产、负债、趋势等看似正常但没有下一步的 Dashboard shell。`NO_ACTIVE_ACCOUNT` 也不显示可保存的正常记账 Dashboard，但要保留账户历史上下文，并同时提供“恢复账户”（若存在 archived Account）和“创建新账户”两个明确 CTA。可以保留 Docus 全局 Navbar 和 Ledger 身份，但主区域必须是有明确 CTA 的 onboarding/empty experience。UI 必须使用只读的 `settings.hasCreatedAccount` lifecycle authority，不能用 `accounts.length` 猜测设置是否仍可编辑。
 
 有 Account 无 Transaction 时显示真实 Dashboard shell，因为此时 opening balance 和账户状态本身已经是有效的 Ledger 数据；所有 0 必须明确表示“还没有交易”，不能表示加载失败或 mock。
 
@@ -264,7 +267,7 @@ UI 使用以下用户语言和默认性质：
 - 创建 Account 与首个 Account lifecycle freeze 遵循服务端原子合同；UI 不在本地提前声称设置已锁定；
 - 创建失败时保留表单内容，区分字段错误、网络/temporary unavailable、session expired；
 - 用户重复点击或响应丢失不能创建两个相同意图的 Account；
-- 用户选择稍后创建时回到 no-account 状态；下次进入仍提供创建第一个 Account 的主 CTA。
+- 用户选择稍后创建时回到 `FIRST_ACCOUNT_REQUIRED` 状态；下次进入仍提供创建第一个 Account 的主 CTA。
 
 ## 9. Ledger Dashboard
 
@@ -814,7 +817,7 @@ Ledger API 继续使用已存在的 `/api/ledger/*`；本 PRD 不提出 `/api/bi
 | Transaction delete | 进入本次交付；服务端 soft delete，UI 明确不可恢复；archived Account 关联记录必须先恢复账户 |
 | Physical Account delete | 不在本次 UI Integration 暴露 |
 | Dashboard periods | 四个 period 保留为 secondary summary，移除预算式解释 |
-| Category breakdown/trend | 保留真实数据，但降为 secondary、明确 period/语义；Product Review 需确认呈现取舍 |
+| Category breakdown/trend | 保留真实数据，但降为 secondary、明确 period/语义；具体视觉形式属于 non-blocking visual/content follow-up |
 | Empty Ledger shell | 未初始化/无 Account 不显示正常 Dashboard shell；有 Account 无 Transaction 显示真实 shell + empty state |
 | Product naming | 只对用户使用 Ledger；Bills 仅限 legacy technical compatibility |
 
@@ -855,7 +858,7 @@ Ledger API 继续使用已存在的 `/api/ledger/*`；本 PRD 不提出 `/api/bi
 1. 未初始化 owner 进入 `/ledger` 时看不到 mock Dashboard；可以明确选择 baseCurrency 和 timezone，并必须主动点击确认。
 2. 浏览器 timezone 只能作为可见预选；baseCurrency 不由浏览器 locale 静默决定。
 3. 初始化成功后进入第一个 Account 步骤；直接访问其他 Ledger route 也不会绕过无 Account gating。
-4. 初始化后没有 Account 时，不显示正常的全 0 Dashboard；用户每次都能找到创建第一个 Account 的 CTA。
+4. 初始化后 `settings.hasCreatedAccount=false` 且没有 Account 时，不显示正常的全 0 Dashboard；用户每次都能找到创建第一个 Account 的 CTA。`settings.hasCreatedAccount=true` 且当前没有 active Account 时，进入 `NO_ACTIVE_ACCOUNT`，不能误称为创建第一个账户。
 5. 首个 Account 创建前，Step 2 始终提供 `[修改 Ledger 设置]` 返回入口；修改成功后重新进入 Step 2；首个 Account 创建成功后，用户进入真实 Dashboard，且 baseCurrency/timezone 的 lock 行为与 Accepted L0 contract 一致。
 
 ### 25.2 Accounts
@@ -889,8 +892,8 @@ Ledger API 继续使用已存在的 `/api/ledger/*`；本 PRD 不提出 `/api/bi
 
 24. CNY、JPY、KWD 等不同 exponent currency 的输入和显示正确；用户永远不接触 minor units。
 25. 新 Transaction 默认是 Ledger timezone 下的现在；用户可以修改日期/时间；period 不使用 browser timezone。
-26. loading、uninitialized、no-account、no-transaction、filter-empty、recoverable error、session expired 都有对应的用户下一步。
-27. 所有 create mutation 都有 DRAFT/SUBMITTING/CONFIRMED/UNCERTAIN 等价状态；网络超时或响应丢失后进入 UNCERTAIN，用户不能直接修改 canonical payload 或换 key，只能用同一 payload + 同一 key 重试/检查；最终同一记账意图只产生一笔 Transaction，页面不会靠 mock 或未经确认的本地余额冒充成功。
+26. loading、uninitialized、`FIRST_ACCOUNT_REQUIRED`、`NO_ACTIVE_ACCOUNT`、no-transaction、filter-empty、recoverable error、session expired 都有对应的用户下一步。
+27. 所有 create mutation 都有 DRAFT/SUBMITTING/CONFIRMED/UNCERTAIN 等价状态；明确收到的 HTTP 400、deterministic 409 或 503 `ledger-write-busy` 不进入 UNCERTAIN，网络超时或响应丢失才进入 UNCERTAIN；UNCERTAIN 中用户不能直接修改 canonical payload 或换 key，只能用同一 payload + 同一 key 重试/检查；最终同一记账意图只产生一笔 Transaction，页面不会靠 mock 或未经确认的本地余额冒充成功。
 28. version conflict 要求重新加载/重新确认，不能覆盖其他 owner 写入；未知错误不暴露 SQL、stack、SQLite 或内部路径。
 
 ### 25.6 Route and naming
@@ -955,21 +958,21 @@ Ledger API 继续使用已存在的 `/api/ledger/*`；本 PRD 不提出 `/api/bi
 
 ## 27. Open questions
 
-以下问题不阻塞本 PRD 的核心产品合同，但应在 Product Review 或视觉/内容 review 中确认：
+以下问题不阻塞本 PRD 的核心产品合同，作为 Accepted 后的 non-blocking visual/content/release follow-up：
 
 1. `/bills` 兼容 redirect 的最终退休时间和旧链接通知策略；在此之前 redirect 规则保持不变。
 2. “分类收支”与真实 trend 的最终视觉表达（列表、条形、图表组合）及其视觉密度；金额、period、可访问文本和 scope 语义已经冻结。
 3. Account type 的最终中文短标签和辅助说明是否需要按 locale 微调；type/nature 映射不能改变。
 4. 后续是否单独提出 full Category Management、Adjustment UI 或 free-text search；本轮已经明确它们不属于本次交付，不得由 IP 顺手加入。
 
-这些问题不允许被 implementation 以默认值悄悄决定为新的财务或生命周期语义。
+这些问题不允许被 implementation 以默认值悄悄决定为新的财务或生命周期语义；它们也不阻塞本 PRD 的 Accepted 状态。
 
 ## 28. Product risks
 
 | 风险 | 影响 | 本次交付缓解方向 |
 | --- | --- | --- |
 | 用户仍看到 Bills/mock 遗留 | 用户无法判断哪些数据是真的 | canonical route、visible naming 和 no-mock fallback 同时作为验收条件 |
-| no-account 全 0 页面缺少下一步 | 新用户无法开始记账 | no-account 使用 dedicated onboarding empty state，不显示正常 Dashboard shell |
+| `FIRST_ACCOUNT_REQUIRED` 全 0 页面缺少下一步 | 新用户无法开始记账 | 使用 dedicated onboarding empty state，不显示正常 Dashboard shell |
 | baseCurrency/timezone 锁定让用户意外 | 首个 Account 后修改受限 | 初始化时解释用途和锁定时机；要求主动确认 |
 | liability/natural balance 难理解 | 信用卡消费、还款和净资产被误读 | 使用“我欠的钱/减少欠款”等文案，同时保留真实 projection sign |
 | 记账表单字段过多 | 高频记账变慢 | 默认 expense、单一 Sheet、只要求类型所需字段，payee/note optional |
@@ -982,11 +985,13 @@ Ledger API 继续使用已存在的 `/api/ledger/*`；本 PRD 不提出 `/api/bi
 
 ## 29. Review gate
 
-本 PRD 当前状态为：
+本 PRD 的最终状态为：
 
-> **Product Review: Ready for Review**
+> **Product Review: Accepted**
 
-进入 Product Review 时需要重点确认以下已经做出的产品决定：
+Product Review closure：2026-09-05（Asia/Shanghai）；review baseline：`5724e66e78905f3d0518f723eb7c23f2a1e3d360`；review result：**PASS / Accepted**。
+
+本次已关闭并冻结以下产品决定：
 
 - 初始化与首个 Account 是两步连续 onboarding；
 - baseCurrency 不自动决定，browser timezone 只能作为可见预选，两个值都必须主动确认；
@@ -999,4 +1004,4 @@ Ledger API 继续使用已存在的 `/api/ledger/*`；本 PRD 不提出 `/api/bi
 - `/ledger`、`/ledger/transactions` 是 canonical route；Bills 只保留兼容 redirect，不再是用户可见产品术语；
 - 所有 loading、empty、error、session expired 和 response-loss retry 都是正式体验；没有 mock fallback。
 
-Product Review 可以修改本 PRD 并重新审计；在其标记为 `Accepted` 之前，不应授权 UI implementation。现有 Implementation Plan 仍是独立的 review artifact，必须保持 `Ready for Review`。当前没有 P0/P1 blocker；如果 review 发现上述任何决定与 v1/L0 contract 冲突，应将冲突写回 authoritative document 后再推进，而不是把决定留给实现阶段。
+Product Review 结果为 PASS，当前没有 P0/P1 Product Contract Conflict。`hasCreatedAccount` 的 browser-visible projection 是实现这个已接受生命周期行为的最小前置，不改变产品决定；具体计划和 server/shared DTO addition 记录在 `docs/design/ledger-ui-integration-implementation-plan.md`。Implementation Plan 是独立的 implementation review artifact；PRD Accepted 本身不替代 implementation review 或编码前 then-current `main` re-audit。
