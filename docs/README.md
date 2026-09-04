@@ -74,6 +74,8 @@ Docus is a self-hosted Markdown knowledge base with a Vue interface, a Hono serv
 - [Ledger v1 Product Requirements](design/ledger-v1-prd.md)
 - [Ledger Foundation PRD](design/ledger-l0-foundation-prd.md)
 - [Ledger L0 Foundation Implementation Plan](design/ledger-l0-foundation-implementation-plan.md)
+- [Ledger L1 UI Integration PRD](design/ledger-l1-ui-integration-prd.md)
+- [Ledger L1 UI Integration Implementation Plan](design/ledger-l1-ui-integration-implementation-plan.md)
 - [Logo](design/logo.md)
 - [Icon System](design/icon-system.md)
 - [Icon Usage](design/icon-usage.md)
