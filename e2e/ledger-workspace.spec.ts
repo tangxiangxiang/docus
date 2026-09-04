@@ -3,10 +3,10 @@ import { expect, test } from './fixtures/auth'
 test('Ledger renders inside the shared Docus App Shell', async ({ page }) => {
   await page.goto('/bills')
 
+  await expect(page.getByTestId('bills-page')).toBeVisible()
   await expect(page.locator('.navbar')).toHaveCount(1)
   await expect(page.locator('.scope-chips')).toBeVisible()
   await expect(page.locator('.scope-chip').filter({ hasText: 'ledger' })).toHaveAttribute('aria-pressed', 'true')
-  await expect(page.getByTestId('bills-page')).toBeVisible()
   await expect(page.locator('body')).toHaveClass(/bills-mode/)
   await expect(page.locator('html')).toHaveClass(/bills-mode/)
   const outerScrollbar = await page.evaluate(() => ({
