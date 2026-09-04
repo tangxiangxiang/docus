@@ -7,6 +7,7 @@ import {
   createAuthenticatedTestContext,
   type AuthenticatedTestContext,
 } from './helpers/auth.js'
+import { calendarMonthRanges } from '../ledger/time.js'
 
 const db = new Database(':memory:')
 let auth: AuthenticatedTestContext
@@ -178,6 +179,45 @@ describe('Ledger API owner boundary and Settings', () => {
     }))
     expect(malformedBody).not.toHaveProperty('stack')
     expect(JSON.stringify(malformedBody)).not.toMatch(/SQL|database|\.sqlite/i)
+  })
+
+  it('maps an unexpected Ledger failure to an opaque no-store response', async () => {
+    await initialize()
+    const accountResponse = await authenticated('/api/ledger/accounts', {
+      method: 'POST',
+      body: accountBody(),
+      idempotencyKey: 'internal-error-account',
+    })
+    const account = await json(accountResponse)
+    const categoryResponse = await authenticated('/api/ledger/categories', {
+      method: 'POST',
+      body: { kind: 'expense', name: 'Internal error sentinel' },
+      idempotencyKey: 'internal-error-category',
+    })
+    const category = await json(categoryResponse)
+    const transactionResponse = await authenticated('/api/ledger/transactions', {
+      method: 'POST',
+      body: {
+        type: 'expense',
+        amountMinor: 1,
+        accountId: account.id,
+        categoryId: category.id,
+        occurredAt: Date.now() - 1_000,
+      },
+      idempotencyKey: 'internal-error-transaction',
+    })
+    expect(transactionResponse.status).toBe(201)
+
+    // Corrupt only the test DB's semantic Category relation. The read-side
+    // invariant must fail closed without exposing persistence internals.
+    db.prepare('UPDATE ledger_categories SET kind = ? WHERE id = ?').run('income', category.id)
+    const response = await authenticated('/api/ledger/overview?scope=all')
+
+    expect(response.status).toBe(500)
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    const body = await json(response)
+    expect(body).toEqual({ error: 'Ledger operation failed.', code: 'ledger-internal-error' })
+    expect(JSON.stringify(body)).not.toMatch(/stack|SQL|database|\.sqlite|Idempotency-Key|Internal error sentinel/i)
   })
 
   it('patches Settings before the first Account and locks both fields afterwards', async () => {
@@ -694,7 +734,7 @@ describe('Ledger query and projection API', () => {
     const categories = await json(await authenticated('/api/ledger/categories?includeArchived=true'))
     const expenseCategory = categories.find((candidate: any) => candidate.kind === 'expense')
     const incomeCategory = categories.find((candidate: any) => candidate.kind === 'income')
-    const current = Date.parse('2026-09-04T03:00:00.000Z')
+    const current = Date.now() - 1_000
     const old = Date.parse('2026-01-15T03:00:00.000Z')
 
     const expense = await json(await authenticated('/api/ledger/transactions', {
@@ -786,6 +826,7 @@ describe('Ledger query and projection API', () => {
     const categories = await json(await authenticated('/api/ledger/categories'))
     const expenseCategory = categories.find((candidate: any) => candidate.kind === 'expense')
     const incomeCategory = categories.find((candidate: any) => candidate.kind === 'income')
+    const current = Date.now() - 1_000
     await authenticated('/api/ledger/transactions', {
       method: 'POST',
       body: {
@@ -798,7 +839,7 @@ describe('Ledger query and projection API', () => {
       method: 'POST',
       body: {
         type: 'expense', amountMinor: 25, accountId: account.id, categoryId: expenseCategory.id,
-        occurredAt: Date.parse('2026-09-04T03:00:00.000Z'),
+        occurredAt: current,
       },
       idempotencyKey: 'overview-current-expense',
     })
@@ -826,9 +867,9 @@ describe('Ledger query and projection API', () => {
 
     const trend = await authenticated('/api/ledger/trend?months=3')
     expect(trend.status).toBe(200)
-    expect((await json(trend)).map((point: any) => point.month)).toEqual([
-      '2026-07', '2026-08', '2026-09',
-    ])
+    expect((await json(trend)).map((point: any) => point.month)).toEqual(
+      calendarMonthRanges(3, current, 'Asia/Shanghai').map((range) => range.month),
+    )
     const invalidMonths = await authenticated('/api/ledger/trend?months=0')
     expect(invalidMonths.status).toBe(400)
     expect(await json(invalidMonths)).toMatchObject({ code: 'ledger-validation-failed' })
