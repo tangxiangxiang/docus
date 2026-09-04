@@ -1,0 +1,57 @@
+import { Hono } from 'hono'
+import {
+  parseAccountCreateRequest,
+  parseBooleanQuery,
+  parseIdempotencyKey,
+} from '../validation.js'
+import {
+  ledgerReplayResponse,
+  readLedgerJson,
+  withLedgerErrors,
+  type LedgerServiceFactory,
+} from './shared.js'
+
+export function createAccountRoutes(getService: LedgerServiceFactory): Hono {
+  const routes = new Hono()
+
+  routes.get('/', (c) => withLedgerErrors(c, () => {
+    const includeArchived = parseBooleanQuery(
+      c.req.query('includeArchived'),
+      'includeArchived',
+      false,
+    )
+    return c.json(getService().listAccounts(includeArchived))
+  }))
+
+  routes.post('/', (c) => withLedgerErrors(c, async () => {
+    const request = parseAccountCreateRequest(await readLedgerJson(c))
+    const idempotencyKey = parseIdempotencyKey(c.req.header('Idempotency-Key'))
+    return ledgerReplayResponse(c, getService().createAccount(request, idempotencyKey))
+  }))
+
+  routes.post('/:id/archive', (c) => withLedgerErrors(c, async () => {
+    const body = await readLedgerJson(c)
+    return c.json(getService().archiveAccount(c.req.param('id'), body))
+  }))
+
+  routes.post('/:id/restore', (c) => withLedgerErrors(c, async () => {
+    const body = await readLedgerJson(c)
+    return c.json(getService().restoreAccount(c.req.param('id'), body))
+  }))
+
+  routes.get('/:id', (c) => withLedgerErrors(c, () => c.json(
+    getService().getAccount(c.req.param('id')),
+  )))
+
+  routes.patch('/:id', (c) => withLedgerErrors(c, async () => {
+    const body = await readLedgerJson(c)
+    return c.json(getService().patchAccount(c.req.param('id'), body))
+  }))
+
+  routes.delete('/:id', (c) => withLedgerErrors(c, async () => {
+    const body = await readLedgerJson(c)
+    return c.json(getService().deleteAccount(c.req.param('id'), body))
+  }))
+
+  return routes
+}

@@ -15,6 +15,7 @@ import {
 } from '../ledger/repository.js'
 import { runLedgerWrite } from '../ledger/writeTransaction.js'
 import { LedgerError } from '../ledger/errors.js'
+import { createLedgerService } from '../ledger/service.js'
 import { SQLITE_BUSY_TIMEOUT_MS } from '../db.js'
 import {
   createLedgerTestDatabase,
@@ -453,5 +454,40 @@ describe('Ledger write transaction infrastructure', () => {
     }
 
     expect(error).not.toBeInstanceOf(LedgerError)
+  })
+
+  it('serializes Account archive balance reads against a competing committed write', () => {
+    const database = freshDatabase()
+    const connectionB = database.openConnection({ timeout: 25 })
+    const repositoryA = createLedgerRepository(database.db)
+    const repositoryB = createLedgerRepository(connectionB)
+    const serviceB = createLedgerService(connectionB, repositoryB)
+    const archivedCandidate = account('archive-race-account')
+    repositoryA.insertSettings(settings())
+    repositoryA.insertAccount(archivedCandidate)
+    repositoryA.insertCategory(category('archive-race-category'))
+
+    let busyError: LedgerError | undefined
+    runLedgerWrite(database.db, () => {
+      repositoryA.insertTransaction(expense(
+        'archive-race-expense',
+        archivedCandidate.id,
+        'archive-race-category',
+        { amountMinor: 1 },
+      ))
+      busyError = expectLedgerErrorCode(
+        () => serviceB.archiveAccount(archivedCandidate.id, { expectedVersion: 1 }),
+        'ledger-write-busy',
+      )
+    })
+
+    expect(busyError?.status).toBe(503)
+    expect(repositoryB.getAccount(archivedCandidate.id)?.archivedAt).toBeNull()
+
+    expectLedgerErrorCode(
+      () => serviceB.archiveAccount(archivedCandidate.id, { expectedVersion: 1 }),
+      'ledger-account-nonzero-balance',
+    )
+    expect(repositoryB.getAccount(archivedCandidate.id)?.archivedAt).toBeNull()
   })
 })

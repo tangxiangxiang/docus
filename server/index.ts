@@ -16,6 +16,7 @@ import tagRoutes from './routes/tags.js'
 import vaultIdentityRoutes from './routes/vaultIdentity.js'
 import { __setMetadataDbForTesting } from './routes/shared.js'
 import vaultRoutes from './routes/vault.js'
+import ledgerRoutes from './ledger/routes/index.js'
 
 const app = new Hono()
 
@@ -41,5 +42,6 @@ app.route('/', linkRoutes)
 app.route('/', markdownResourceRoutes)
 app.route('/api/ai', aiRoutes)
 app.route('/api/history', historyRoutes)
+app.route('/api/ledger', ledgerRoutes)
 
 export default app

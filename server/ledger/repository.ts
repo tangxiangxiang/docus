@@ -103,6 +103,14 @@ const SELECT_CATEGORY = `
   WHERE id = @id
 `
 
+const SELECT_CATEGORY_BY_IDENTITY = `
+  SELECT id, kind, name, normalized_name, archived_at, version,
+         created_at, updated_at
+  FROM ledger_categories
+  WHERE kind = @kind
+    AND normalized_name = @normalizedName
+`
+
 const SELECT_CATEGORIES = `
   SELECT id, kind, name, normalized_name, archived_at, version,
          created_at, updated_at
@@ -290,6 +298,7 @@ export interface LedgerRepository {
   hasAccountHistory(accountId: string): boolean
 
   getCategory(id: string): LedgerCategory | null
+  findCategoryByIdentity(kind: LedgerCategory['kind'], normalizedName: string): LedgerCategory | null
   listCategories(options?: { readonly includeArchived?: boolean }): LedgerCategory[]
   insertCategory(category: LedgerCategory): void
   updateCategory(input: LedgerCategoryUpdateInput): number
@@ -602,6 +611,9 @@ export function createLedgerRepository(db: DatabaseT): LedgerRepository {
     hasAccountHistory: db.prepare<{ readonly accountId: string }>(HAS_ACCOUNT_HISTORY),
 
     getCategory: db.prepare(SELECT_CATEGORY),
+    findCategoryByIdentity: db.prepare<{ readonly kind: LedgerCategory['kind']; readonly normalizedName: string }>(
+      SELECT_CATEGORY_BY_IDENTITY,
+    ),
     listCategories: db.prepare(SELECT_CATEGORIES),
     listActiveCategories: db.prepare(SELECT_ACTIVE_CATEGORIES),
     insertCategory: db.prepare<CategoryParams>(INSERT_CATEGORY),
@@ -670,6 +682,11 @@ export function createLedgerRepository(db: DatabaseT): LedgerRepository {
 
     getCategory(id: string): LedgerCategory | null {
       const row = statements.getCategory.get({ id })
+      return row === undefined ? null : ledgerCategoryFromRow(row)
+    },
+
+    findCategoryByIdentity(kind: LedgerCategory['kind'], normalizedName: string): LedgerCategory | null {
+      const row = statements.findCategoryByIdentity.get({ kind, normalizedName })
       return row === undefined ? null : ledgerCategoryFromRow(row)
     },
 
