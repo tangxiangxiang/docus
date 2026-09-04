@@ -21,6 +21,20 @@ export function openingDateInputFromInstant(instantMs: number, timezone: string)
   return `${String(local.year).padStart(4, '0')}-${pad(local.month)}-${pad(local.day)}`
 }
 
+/** Convert a Ledger-local calendar date into an exclusive/inclusive query boundary. */
+export function instantFromLedgerDate(
+  value: string,
+  timezone: string,
+  boundary: 'start' | 'end' = 'start',
+): number {
+  const date = Temporal.PlainDate.from(value)
+  const boundaryDate = boundary === 'end' ? date.add({ days: 1 }) : date
+  return boundaryDate.toZonedDateTime({
+    timeZone: timezone,
+    plainTime: Temporal.PlainTime.from('00:00'),
+  }).toInstant().epochMilliseconds
+}
+
 export function formatLedgerDateTime(
   instantMs: number,
   timezone: string,

@@ -267,9 +267,29 @@ async function refreshTransactions(query: LedgerTransactionQuery = state.transac
   const epoch = state.requestEpoch + 1
   state.requestEpoch = epoch
   state.transactionQuery = { ...query }
+  state.error = null
   try {
     const page = await listLedgerTransactions(query)
     if (isCurrent(epoch)) state.transactions = page
+  } catch (error) {
+    if (isCurrent(epoch)) state.error = normalizeLedgerError(error)
+  }
+}
+
+async function loadMoreTransactions(): Promise<void> {
+  const current = state.transactions
+  const cursor = current?.page.nextCursor
+  if (!current || !cursor) return
+  const epoch = state.requestEpoch + 1
+  state.requestEpoch = epoch
+  state.error = null
+  try {
+    const page = await listLedgerTransactions({ ...state.transactionQuery, cursor })
+    if (!isCurrent(epoch)) return
+    state.transactions = {
+      transactions: [...current.transactions, ...page.transactions],
+      page: page.page,
+    }
   } catch (error) {
     if (isCurrent(epoch)) state.error = normalizeLedgerError(error)
   }
@@ -397,6 +417,7 @@ export interface LedgerStore {
   readonly refreshData: () => Promise<void>
   readonly refreshOverview: (scope: LedgerOverviewScope) => Promise<void>
   readonly refreshTransactions: (query?: LedgerTransactionQuery) => Promise<void>
+  readonly loadMoreTransactions: () => Promise<void>
   readonly getAccount: (id: string) => Promise<LedgerAccountDto>
   readonly getTransaction: (id: string) => Promise<LedgerTransactionDto>
   readonly getAccountTransactions: (id: string, query?: LedgerTransactionQuery) => Promise<LedgerAccountTransactionsDto>
@@ -442,6 +463,7 @@ const store: LedgerStore = {
   refreshData,
   refreshOverview,
   refreshTransactions,
+  loadMoreTransactions,
   getAccount: async (id) => {
     const result = await getLedgerAccount(id)
     state.accountDetail = result
