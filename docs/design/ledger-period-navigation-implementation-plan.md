@@ -6,19 +6,19 @@
 
 **Source PRD：** `docs/design/ledger-period-navigation-prd.md`
 
-**Audited main HEAD：** `0d9cd36fd1be6d67ddb8f3b1d227fe57a7a696c5`
+**Audited main HEAD：** `512e16c923224b9ddc5c8afbb0e791e72100ac99`
 
 **Audit working tree：** clean；`main` synchronized with `github/main`
 
 **Product Review baseline：** `Product Review: Accepted`
 
-**Implementation gate：** `Implementation Plan: Ready for Review`；`Ready for Implementation: No`
+**Implementation gate：** `Implementation Review: PASS`；`Ready for Implementation: Yes`
 
-**Baseline：** `0d9cd36fd1be6d67ddb8f3b1d227fe57a7a696c5`
+**Baseline：** `512e16c923224b9ddc5c8afbb0e791e72100ac99`
 
-**Implementation Review：** Ready for Review
+**Implementation Review：** PASS
 
-**Ready for Implementation：** No
+**Ready for Implementation：** Yes
 
 ---
 
