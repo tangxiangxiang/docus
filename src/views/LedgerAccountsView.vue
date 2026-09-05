@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import LedgerFirstAccountForm from '../components/ledger/LedgerFirstAccountForm.vue'
+import LedgerPendingCreateGate from '../components/ledger/LedgerPendingCreateGate.vue'
 import { ledgerAccountTypeOptionsForNature } from '../features/ledger/accountPresentation'
 import { ledgerErrorMessage } from '../features/ledger/ledgerErrors'
 import { formatLedgerMoney } from '../features/ledger/money'
@@ -11,7 +12,10 @@ const createOpen = ref(false)
 const restoreId = ref<string | null>(null)
 const actionError = ref('')
 
-const loading = computed(() => store.workspaceState.value === 'BOOTSTRAPPING' || store.loading.value)
+// Keep an open create form mounted while its successful mutation refreshes the
+// shared read model. Otherwise refreshData's loading flag would unmount the
+// form before it can emit `saved`, leaving the user on a stale draft.
+const loading = computed(() => store.workspaceState.value === 'BOOTSTRAPPING' || (store.loading.value && !createOpen.value))
 const typeLabels = new Map(
   ledgerAccountTypeOptionsForNature('asset').concat(ledgerAccountTypeOptionsForNature('liability'))
     .map((option) => [option.value, option.label]),
@@ -39,6 +43,11 @@ async function restore(id: string, version: number): Promise<void> {
     restoreId.value = null
   }
 }
+
+function onAccountSaved(): void {
+  createOpen.value = false
+  actionError.value = ''
+}
 </script>
 
 <template>
@@ -51,11 +60,12 @@ async function restore(id: string, version: number): Promise<void> {
       </div>
       <div class="ledger-page-actions">
         <RouterLink class="ledger-secondary-button" :to="{ name: 'ledger' }">返回总览</RouterLink>
-        <button class="ledger-primary-button" type="button" :disabled="loading" @click="createOpen = true">新增账户</button>
+        <button class="ledger-primary-button" type="button" :disabled="loading || store.hasUnresolvedCreate.value" @click="createOpen = true">新增账户</button>
       </div>
     </header>
 
-    <div v-if="loading" class="ledger-state-panel" data-testid="ledger-accounts-loading" role="status">正在加载账户…</div>
+    <LedgerPendingCreateGate v-if="store.recoveryGateVisible.value" @resolved="onAccountSaved" />
+    <div v-else-if="loading" class="ledger-state-panel" data-testid="ledger-accounts-loading" role="status">正在加载账户…</div>
     <section v-else-if="store.workspaceState.value === 'RECOVERABLE_ERROR'" class="ledger-state-panel" data-testid="ledger-accounts-error" role="alert">
       <h2>账户暂时无法加载</h2>
       <p>{{ ledgerErrorMessage(store.error.value, '请检查网络后重试。') }}</p>
@@ -67,7 +77,7 @@ async function restore(id: string, version: number): Promise<void> {
       <RouterLink class="ledger-primary-button" :to="{ name: 'ledger' }">去设置 Ledger</RouterLink>
     </section>
     <template v-else-if="createOpen">
-      <LedgerFirstAccountForm :first-account="false" cancelable @cancel="createOpen = false" />
+      <LedgerFirstAccountForm :first-account="false" cancelable @cancel="createOpen = false" @saved="onAccountSaved" />
     </template>
     <template v-else>
       <p v-if="actionError" class="ledger-form-error" role="alert">{{ actionError }}</p>

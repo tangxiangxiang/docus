@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { DOMWrapper, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import type {
   LedgerAccountDto,
   LedgerCategoryDto,
@@ -10,6 +11,7 @@ import type {
   LedgerTransactionPageDto,
 } from '../../../shared/ledgerProtocol'
 import { resetLedgerStoreForTesting } from '../../features/ledger/ledgerStore'
+import { LEDGER_PENDING_CREATE_STORAGE_KEY, createLedgerPendingIntent } from '../../features/ledger/recovery'
 import { instantFromLedgerDate } from '../../features/ledger/time'
 import LedgerTransactionsView from '../LedgerTransactionsView.vue'
 
@@ -187,6 +189,7 @@ function setup(
 ): void {
   api.getLedgerSettings.mockResolvedValue(settings)
   api.listLedgerAccounts.mockResolvedValue(accounts)
+  api.getLedgerAccount.mockImplementation((id: string) => Promise.resolve(accounts.find((item) => item.id === id) ?? activeAccount))
   api.listLedgerCategories.mockResolvedValue([expenseCategory, incomeCategory, archivedCategory])
   api.getLedgerOverview.mockResolvedValue(overview)
   api.listLedgerTransactions.mockResolvedValue(page)
@@ -197,8 +200,18 @@ function setup(
   confirm.mockResolvedValue(true)
 }
 
-async function mountView(): Promise<VueWrapper> {
-  const wrapper = mount(LedgerTransactionsView)
+async function mountView(path = '/ledger/transactions'): Promise<VueWrapper> {
+  const nextRouter = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/ledger/transactions', name: 'ledger-transactions', component: LedgerTransactionsView },
+      { path: '/ledger/accounts', name: 'ledger-accounts', component: { template: '<div />' } },
+      { path: '/ledger', name: 'ledger', component: { template: '<div />' } },
+    ],
+  })
+  await nextRouter.push(path)
+  await nextRouter.isReady()
+  const wrapper = mount(LedgerTransactionsView, { global: { plugins: [nextRouter] } })
   wrappers.push(wrapper)
   await flushPromises()
   return wrapper
@@ -255,6 +268,17 @@ describe('Ledger live transaction history workspace', () => {
     })
   })
 
+  it('applies an Account deep-link query before loading history', async () => {
+    const wrapper = await mountView('/ledger/transactions?accountId=old-bank')
+
+    expect((wrapper.get('select[name="accountId"]').element as HTMLSelectElement).value).toBe('old-bank')
+    expect(api.listLedgerTransactions).toHaveBeenLastCalledWith({
+      type: 'all',
+      accountId: 'old-bank',
+      limit: 25,
+    })
+  })
+
   it('appends cursor pages without replacing the existing history', async () => {
     const firstPage: LedgerTransactionPageDto = {
       transactions: [expense],
@@ -287,6 +311,17 @@ describe('Ledger live transaction history workspace', () => {
 
     expect(wrapper.get('[data-testid="ledger-transactions-empty"]').text()).toContain('没有符合筛选条件的交易')
     expect(wrapper.get('[data-testid="ledger-transactions-empty"]').text()).toContain('清除筛选')
+  })
+
+  it('keeps history and archived filters available when every Account is archived', async () => {
+    setup({ transactions: [expense], page: { nextCursor: null } }, [archivedAccount])
+    const wrapper = await mountView()
+
+    expect(wrapper.get('[data-testid="ledger-transactions-no-account"]').text()).toContain('当前没有可用于新增交易的账户')
+    expect(wrapper.get('[data-testid="ledger-transaction-list"]').text()).toContain('午餐')
+    expect(wrapper.get('select[name="accountId"] option[value="old-bank"]').text()).toContain('已归档')
+    expect(wrapper.get('select[name="categoryId"] option[value="old-food"]').text()).toContain('已归档')
+    expect(wrapper.get('[data-testid="ledger-transactions-record-button"]').attributes('disabled')).toBeDefined()
   })
 
   it('edits an ordinary transaction with its current expectedVersion and refreshes the live list', async () => {
@@ -341,6 +376,45 @@ describe('Ledger live transaction history workspace', () => {
       payee: '归档前商户',
       note: '补充备注',
     })
+  })
+
+  it('rechecks the authoritative Account before sending a financial edit', async () => {
+    const wrapper = await mountView()
+    await wrapper.find('[data-testid="ledger-transaction-row-tx-expense"]').trigger('click')
+    await flushPromises()
+
+    const detail = getDetail()
+    await detail.findAll('button').find((button) => button.text() === '编辑交易')!.trigger('click')
+    const editForm = getDetail().get('[data-testid="ledger-transaction-edit-form"]')
+    await editForm.get('textarea[name="note"]').setValue('并发归档')
+    api.getLedgerAccount.mockResolvedValueOnce(account('bank-1', '招商银行', 20))
+    await editForm.trigger('submit')
+    await flushPromises()
+
+    expect(api.getLedgerAccount).toHaveBeenCalledWith('bank-1')
+    expect(api.patchLedgerTransaction).not.toHaveBeenCalled()
+    expect(getDetail().text()).toContain('请先恢复账户')
+  })
+
+  it('keeps a pending Category recovery visible when the route changes', async () => {
+    const pending = createLedgerPendingIntent(
+      'category',
+      { kind: 'expense', name: '待确认分类' },
+      'key-category-recovery',
+      null,
+    )
+    sessionStorage.setItem(LEDGER_PENDING_CREATE_STORAGE_KEY, JSON.stringify(pending))
+    resetLedgerStoreForTesting()
+    setup()
+    api.createLedgerCategory.mockResolvedValue(category('replayed-category', 'expense', '待确认分类'))
+    const wrapper = await mountView('/ledger/transactions')
+
+    expect(wrapper.find('[data-testid="ledger-recovery-gate"]').exists()).toBe(true)
+    await wrapper.get('[data-testid="ledger-recovery"] button').trigger('click')
+    await flushPromises()
+
+    expect(api.createLedgerCategory).toHaveBeenCalledWith({ kind: 'expense', name: '待确认分类' }, 'key-category-recovery')
+    expect(wrapper.find('[data-testid="ledger-recovery-gate"]').exists()).toBe(false)
   })
 
   it('keeps Adjustment read-only and soft-deletes ordinary transactions only after confirmation', async () => {

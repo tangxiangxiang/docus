@@ -132,6 +132,8 @@ describe('Ledger account management list', () => {
     await flushPromises()
 
     expect(api.createLedgerAccount).toHaveBeenCalledWith(expect.objectContaining({ name: '现金账户' }), expect.any(String))
+    expect(wrapper.find('[data-testid="ledger-account-form"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="ledger-active-account-list"]').text()).toContain('cash-1')
   })
 
   it('restores an archived account through its versioned lifecycle endpoint', async () => {

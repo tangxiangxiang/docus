@@ -45,6 +45,16 @@ const categories = computed(() => {
   return active
 })
 
+function associatedAccountIds(): string[] {
+  const value = transaction.value
+  if (value.type === 'transfer') return [value.fromAccountId, value.toAccountId]
+  return [value.accountId]
+}
+
+async function refreshAssociatedAccounts(): Promise<void> {
+  await Promise.all([...new Set(associatedAccountIds())].map((id) => store.getAccount(id)))
+}
+
 function reset(): void {
   const value = transaction.value
   amount.value = value.type === 'adjustment' ? '' : ledgerDecimalFromMinor(value.amountMinor, store.settings.value?.baseCurrency ?? 'CNY')
@@ -126,10 +136,22 @@ async function submit(): Promise<void> {
     return
   }
 
-  const financial = financialFieldsEditable.value ? validateFinancialFields() : null
-  if (financialFieldsEditable.value && !financial) return
   saving.value = true
   try {
+    if (financialFieldsEditable.value) {
+      // An Account can be archived in another session while this form is
+      // open. Re-read the server-owned Account state immediately before
+      // constructing a financial patch; do not rely on the old snapshot or
+      // let an avoidable generic 409 decide the UX.
+      await refreshAssociatedAccounts()
+      if (!financialFieldsEditable.value) {
+        error.value = '关联账户已归档，无法保存财务字段。请先恢复账户；当前只允许修改交易对象和备注。'
+        return
+      }
+    }
+
+    const financial = financialFieldsEditable.value ? validateFinancialFields() : null
+    if (financialFieldsEditable.value && !financial) return
     const body = financialFieldsEditable.value && financial
       ? transaction.value.type === 'income'
         ? {
@@ -143,11 +165,11 @@ async function submit(): Promise<void> {
           }
         : transaction.value.type === 'expense'
           ? {
-            expectedVersion: transaction.value.version,
-            amountMinor: financial.amountMinor,
-            accountId: accountId.value,
-            ...categoryPatchField(),
-            occurredAt: financial.occurredAtMs,
+              expectedVersion: transaction.value.version,
+              amountMinor: financial.amountMinor,
+              accountId: accountId.value,
+              ...categoryPatchField(),
+              occurredAt: financial.occurredAtMs,
               payee: payee.value.trim(),
               note: note.value.trim(),
             }

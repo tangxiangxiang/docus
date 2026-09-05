@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { DOMWrapper, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 import type {
   LedgerAccountDto,
   LedgerCategoryDto,
@@ -123,6 +124,7 @@ describe('Ledger transaction creation sheet', () => {
     expect(sheet.findAll('select[name="categoryId"] option').map((option) => option.text())).toEqual(['请选择分类', '餐饮'])
 
     await sheet.get('input[name="amount"]').setValue('38')
+    await sheet.get('select[name="accountId"]').setValue('bank-1')
     await sheet.get('select[name="categoryId"]').setValue('food')
     await sheet.get('input[name="occurredAt"]').setValue('2026-09-05T12:30')
     api.createLedgerTransaction.mockResolvedValue(savedTransaction)
@@ -139,6 +141,24 @@ describe('Ledger transaction creation sheet', () => {
       occurredAt: expect.any(Number),
     }), expect.any(String))
     expect(document.body.querySelector('.ledger-sheet')).toBeNull()
+  })
+
+  it('preselects the only active account', async () => {
+    setup([account('only-bank', '唯一账户')])
+    await openSheet()
+    expect((getSheet().get('select[name="accountId"]').element as HTMLSelectElement).value).toBe('only-bank')
+  })
+
+  it('does not guess an account when multiple active accounts are available', async () => {
+    await openSheet()
+    const sheet = getSheet()
+    expect((sheet.get('select[name="accountId"]').element as HTMLSelectElement).value).toBe('')
+    await sheet.get('input[name="amount"]').setValue('5')
+    await sheet.get('select[name="categoryId"]').setValue('food')
+    await sheet.get('input[name="occurredAt"]').setValue('2026-09-05T12:30')
+    await sheet.get('form').trigger('submit')
+    expect(sheet.text()).toContain('请选择账户')
+    expect(api.createLedgerTransaction).not.toHaveBeenCalled()
   })
 
   it('switches to income and transfer with only their contract fields', async () => {
@@ -163,6 +183,8 @@ describe('Ledger transaction creation sheet', () => {
     await transferSheet.findAll('[role="tab"]').find((button) => button.text() === '转账')!.trigger('click')
     expect(transferSheet.find('select[name="categoryId"]').exists()).toBe(false)
     expect(transferSheet.find('input[name="payee"]').exists()).toBe(false)
+    expect((transferSheet.get('select[name="fromAccountId"]').element as HTMLSelectElement).value).toBe('')
+    expect((transferSheet.get('select[name="toAccountId"]').element as HTMLSelectElement).value).toBe('')
     await transferSheet.get('input[name="amount"]').setValue('5')
     await transferSheet.get('select[name="fromAccountId"]').setValue('bank-1')
     await transferSheet.get('select[name="toAccountId"]').setValue('wallet-1')
@@ -174,6 +196,32 @@ describe('Ledger transaction creation sheet', () => {
     expect(api.createLedgerTransaction).toHaveBeenLastCalledWith(expect.objectContaining({
       type: 'transfer', amountMinor: 500, fromAccountId: 'bank-1', toAccountId: 'wallet-1',
     }), expect.any(String))
+  })
+
+  it('preserves only amount, time, and note across semantic type switches', async () => {
+    await openSheet()
+    const sheet = getSheet()
+    await sheet.get('input[name="amount"]').setValue('12.50')
+    await sheet.get('select[name="accountId"]').setValue('bank-1')
+    await sheet.get('select[name="categoryId"]').setValue('food')
+    await sheet.get('input[name="occurredAt"]').setValue('2026-09-05T12:30')
+    await sheet.get('input[name="payee"]').setValue('午餐')
+    await sheet.get('textarea[name="note"]').setValue('共同备注')
+
+    await sheet.findAll('[role="tab"]').find((button) => button.text() === '收入')!.trigger('click')
+    expect((sheet.get('input[name="amount"]').element as HTMLInputElement).value).toBe('12.50')
+    expect((sheet.get('input[name="occurredAt"]').element as HTMLInputElement).value).toBe('2026-09-05T12:30')
+    expect((sheet.get('textarea[name="note"]').element as HTMLTextAreaElement).value).toBe('共同备注')
+    expect((sheet.get('select[name="accountId"]').element as HTMLSelectElement).value).toBe('')
+    expect((sheet.get('select[name="categoryId"]').element as HTMLSelectElement).value).toBe('')
+    expect((sheet.get('input[name="payee"]').element as HTMLInputElement).value).toBe('')
+
+    await sheet.findAll('[role="tab"]').find((button) => button.text() === '转账')!.trigger('click')
+    expect((sheet.get('input[name="amount"]').element as HTMLInputElement).value).toBe('12.50')
+    expect((sheet.get('input[name="occurredAt"]').element as HTMLInputElement).value).toBe('2026-09-05T12:30')
+    expect((sheet.get('textarea[name="note"]').element as HTMLTextAreaElement).value).toBe('共同备注')
+    expect((sheet.get('select[name="fromAccountId"]').element as HTMLSelectElement).value).toBe('')
+    expect((sheet.get('select[name="toAccountId"]').element as HTMLSelectElement).value).toBe('')
   })
 
   it('quick-creates a contextual category and selects the server result', async () => {
@@ -195,21 +243,24 @@ describe('Ledger transaction creation sheet', () => {
   })
 
   it('keeps the same idempotency key and readonly recovery surface after response loss', async () => {
-    await openSheet()
+    const wrapper = await openSheet()
     const sheet = getSheet()
     await sheet.get('input[name="amount"]').setValue('38')
+    await sheet.get('select[name="accountId"]').setValue('bank-1')
     await sheet.get('select[name="categoryId"]').setValue('food')
     await sheet.get('input[name="occurredAt"]').setValue('2026-09-05T12:30')
     api.createLedgerTransaction.mockRejectedValueOnce(new LedgerApiError('unknown', 0, 'ledger-network-error', null, true))
     await sheet.get('form').trigger('submit')
     await flushPromises()
+    await nextTick()
 
-    expect(document.body.querySelector('[data-testid="ledger-recovery"]')).not.toBeNull()
+    expect(wrapper.find('[data-testid="ledger-recovery"]').exists()).toBe(true)
     expect(document.body.querySelector('input[name="amount"]')).toBeNull()
     const firstKey = api.createLedgerTransaction.mock.calls[0][1]
     api.createLedgerTransaction.mockResolvedValue(savedTransaction)
-    await getSheet().get('[data-testid="ledger-recovery"] button').trigger('click')
+    await wrapper.get('[data-testid="ledger-recovery"] button').trigger('click')
     await flushPromises()
+    await nextTick()
 
     expect(api.createLedgerTransaction.mock.calls[1][1]).toBe(firstKey)
     expect(sessionStorage.getItem('docus.ledger.pending-create')).toBeNull()

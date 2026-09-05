@@ -21,7 +21,9 @@ const currentSettings = computed(() => store.settings.value)
 const isEditing = computed(() => currentSettings.value !== null)
 const isLocked = computed(() => currentSettings.value?.hasCreatedAccount === true)
 const pendingSettings = computed(() => (
-  store.pendingCreate.value?.operation === 'settings' ? store.pendingCreate.value : null
+  store.mutationState.value === 'UNCERTAIN' && store.pendingCreate.value?.operation === 'settings'
+    ? store.pendingCreate.value
+    : null
 ))
 
 const commonTimezones = [

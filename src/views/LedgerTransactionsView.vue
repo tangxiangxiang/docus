@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import type {
   LedgerCategoryDto,
   LedgerTransactionDto,
@@ -7,6 +8,7 @@ import type {
   LedgerTransactionQuery,
 } from '../../shared/ledgerProtocol'
 import LedgerTransactionDetailSheet from '../components/ledger/LedgerTransactionDetailSheet.vue'
+import LedgerPendingCreateGate from '../components/ledger/LedgerPendingCreateGate.vue'
 import LedgerTransactionSheet from '../components/ledger/LedgerTransactionSheet.vue'
 import { ledgerErrorMessage } from '../features/ledger/ledgerErrors'
 import { formatLedgerMoney } from '../features/ledger/money'
@@ -14,6 +16,7 @@ import { instantFromLedgerDate, formatLedgerDateTime } from '../features/ledger/
 import { useLedgerStore } from '../features/ledger/ledgerStore'
 
 const store = useLedgerStore()
+const route = useRoute()
 const transactionSheetOpen = ref(false)
 const detailOpen = ref(false)
 const selectedTransaction = ref<LedgerTransactionDto | null>(null)
@@ -30,28 +33,24 @@ const loading = computed(() => store.workspaceState.value === 'BOOTSTRAPPING' ||
 const page = computed(() => store.transactions.value)
 const transactions = computed(() => page.value?.transactions ?? [])
 const hasFilters = computed(() => filterType.value !== 'all' || Boolean(filterAccountId.value || filterCategoryId.value || filterFrom.value || filterTo.value))
-let recoveryPresented = false
 
-watch(
-  [() => store.pendingCreate.value, () => store.workspaceState.value],
-  ([pending, workspaceState]) => {
-    if (!pending) {
-      recoveryPresented = false
-      return
-    }
-    if (
-      !recoveryPresented
-      && (workspaceState === 'READY' || workspaceState === 'NO_ACTIVE_ACCOUNT')
-      && (pending.operation === 'transaction' || pending.operation === 'category')
-    ) {
-      transactionSheetOpen.value = true
-      recoveryPresented = true
-    }
-  },
-  { immediate: true },
-)
+function queryValue(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
+
+function initializeFiltersFromRoute(): void {
+  filterAccountId.value = queryValue(route.query.accountId)
+  filterCategoryId.value = queryValue(route.query.categoryId)
+  const type = queryValue(route.query.type)
+  if (type === 'income' || type === 'expense' || type === 'transfer' || type === 'all') {
+    filterType.value = type
+  }
+  filterFrom.value = queryValue(route.query.from)
+  filterTo.value = queryValue(route.query.to)
+}
 
 onMounted(async () => {
+  initializeFiltersFromRoute()
   await store.bootstrap()
   if (store.settings.value) await loadTransactions()
 })
@@ -165,6 +164,11 @@ function onTransactionUpdated(transaction: LedgerTransactionDto): void {
 function onTransactionDeleted(): void {
   selectedTransaction.value = null
 }
+
+function onRecoveryResolved(): void {
+  transactionSheetOpen.value = false
+  detailOpen.value = false
+}
 </script>
 
 <template>
@@ -175,10 +179,12 @@ function onTransactionDeleted(): void {
         <h1>交易记录</h1>
         <p>查看真实交易历史，或快速记下一笔。</p>
       </div>
-      <button class="ledger-primary-button" type="button" :disabled="loading || !store.activeAccounts.value.length" data-testid="ledger-transactions-record-button" @click="transactionSheetOpen = true">＋ 记一笔</button>
+      <button class="ledger-primary-button" type="button" :disabled="loading || store.hasUnresolvedCreate.value || !store.activeAccounts.value.length" data-testid="ledger-transactions-record-button" @click="transactionSheetOpen = true">＋ 记一笔</button>
     </header>
 
-    <section v-if="store.settings.value" class="ledger-filters" aria-labelledby="ledger-filters-title">
+    <LedgerPendingCreateGate v-if="store.recoveryGateVisible.value" @resolved="onRecoveryResolved" />
+
+    <section v-else-if="store.settings.value" class="ledger-filters" aria-labelledby="ledger-filters-title">
       <div class="ledger-filters-heading">
         <h2 id="ledger-filters-title">筛选</h2>
         <button v-if="hasFilters" class="ledger-link-button" type="button" @click="clearFilters">清除筛选</button>
@@ -193,16 +199,22 @@ function onTransactionDeleted(): void {
       </div>
     </section>
 
-    <div v-if="loading && !page" class="ledger-transactions-state" data-testid="ledger-transactions-loading" role="status">正在加载交易…</div>
-    <section v-else-if="!store.settings.value" class="ledger-transactions-state" data-testid="ledger-transactions-needs-settings">
+    <div v-if="!store.hasUnresolvedCreate.value && loading && !page" class="ledger-transactions-state" data-testid="ledger-transactions-loading" role="status">正在加载交易…</div>
+    <section v-else-if="!store.hasUnresolvedCreate.value && !store.settings.value" class="ledger-transactions-state" data-testid="ledger-transactions-needs-settings">
       <h2>请先完成 Ledger 初始化</h2>
       <p>设置基础货币、时区并创建账户后，交易记录才会出现在这里。</p>
     </section>
-    <section v-else-if="!store.activeAccounts.value.length" class="ledger-transactions-state" data-testid="ledger-transactions-no-account">
-      <h2>还没有可用账户</h2>
-      <p>请先创建或恢复一个账户，再新增交易。</p>
-    </section>
-    <section v-else class="ledger-transaction-history" aria-labelledby="ledger-history-title">
+    <section v-else-if="!store.hasUnresolvedCreate.value && store.settings.value" class="ledger-transaction-history" aria-labelledby="ledger-history-title">
+      <div v-if="!store.activeAccounts.value.length" class="ledger-no-active-account-notice" data-testid="ledger-transactions-no-account" role="status">
+        <div>
+          <strong>当前没有可用于新增交易的账户。</strong>
+          <p>历史记录仍然可以查看；恢复账户或创建新账户后即可继续记账。</p>
+        </div>
+        <div class="ledger-notice-actions">
+          <RouterLink class="ledger-secondary-button" :to="{ name: 'ledger-accounts' }">恢复账户</RouterLink>
+          <RouterLink class="ledger-secondary-button" :to="{ name: 'ledger-accounts' }">创建新账户</RouterLink>
+        </div>
+      </div>
       <div class="ledger-history-heading">
         <div><h2 id="ledger-history-title">历史记录</h2><p>{{ transactions.length }} 笔当前结果</p></div>
         <span v-if="store.settings.value" class="ledger-timezone-note">按 {{ store.settings.value.timezone }} 显示</span>
@@ -225,7 +237,7 @@ function onTransactionDeleted(): void {
       <button v-if="page?.page.nextCursor" class="ledger-load-more" data-testid="ledger-load-more" type="button" :disabled="loadMoreLoading" @click="loadMore">{{ loadMoreLoading ? '正在加载…' : '加载更多' }}</button>
     </section>
 
-    <LedgerTransactionSheet :open="transactionSheetOpen" @close="transactionSheetOpen = false" />
+    <LedgerTransactionSheet v-if="!store.recoveryGateVisible.value" :open="transactionSheetOpen" @close="transactionSheetOpen = false" />
     <LedgerTransactionDetailSheet :open="detailOpen" :transaction="selectedTransaction" @close="detailOpen = false" @updated="onTransactionUpdated" @deleted="onTransactionDeleted" />
   </main>
 </template>
@@ -282,6 +294,10 @@ function onTransactionDeleted(): void {
 .ledger-transactions-empty p { margin: 0; }
 .ledger-transactions-empty h3 { color: var(--text-h); font-size: 1rem; }
 .ledger-transactions-empty p { font-size: .8rem; }
+.ledger-no-active-account-notice { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 18px; padding: 12px 13px; border: 1px solid color-mix(in srgb, #b7791f 30%, var(--border)); border-radius: 8px; background: color-mix(in srgb, #f6ad55 7%, var(--bg-soft)); }
+.ledger-no-active-account-notice strong { color: var(--text-h); font-size: .8rem; }
+.ledger-no-active-account-notice p { margin: 4px 0 0; color: var(--text-muted); font-size: .75rem; }
+.ledger-notice-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .ledger-load-more { display: block; min-height: 36px; margin: 16px auto 0; padding: 6px 16px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-soft); color: var(--text-h); font: inherit; font-size: .8rem; cursor: pointer; }
 .ledger-load-more:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .ledger-load-more:disabled { cursor: wait; opacity: .65; }
@@ -293,6 +309,8 @@ function onTransactionDeleted(): void {
   .ledger-transactions-page { padding: 28px 16px 48px; }
   .ledger-transactions-header { align-items: stretch; flex-direction: column; }
   .ledger-transactions-header > button { width: 100%; }
+  .ledger-no-active-account-notice { align-items: stretch; flex-direction: column; }
+  .ledger-notice-actions > * { flex: 1 1 140px; }
   .ledger-filters-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ledger-filter-submit { grid-column: span 2; }
   .ledger-transaction-history { padding: 16px 13px; }

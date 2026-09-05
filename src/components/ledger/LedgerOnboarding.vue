@@ -15,7 +15,8 @@ watch(() => props.initialStep, (next) => { step.value = next })
 
 const pendingOnboardingIntent = computed(() => {
   const pending = store.pendingCreate.value
-  return pending && (pending.operation === 'settings' || pending.operation === 'account') ? pending : null
+  return store.mutationState.value === 'UNCERTAIN'
+    && pending && (pending.operation === 'settings' || pending.operation === 'account') ? pending : null
 })
 const recoveryBusy = computed(() => store.mutationState.value === 'SUBMITTING')
 

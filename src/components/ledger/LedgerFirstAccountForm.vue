@@ -37,7 +37,9 @@ const settings = computed(() => store.settings.value)
 const currency = computed(() => settings.value?.baseCurrency ?? '')
 const currencyExponent = computed(() => settings.value?.currencyExponent ?? 2)
 const pendingAccount = computed(() => (
-  store.pendingCreate.value?.operation === 'account' ? store.pendingCreate.value : null
+  store.mutationState.value === 'UNCERTAIN' && store.pendingCreate.value?.operation === 'account'
+    ? store.pendingCreate.value
+    : null
 ))
 const typeOptions = computed(() => ledgerAccountTypeOptionsForNature(nature.value))
 const balanceExample = computed(() => currency.value ? formatLedgerMoney(100, currency.value) : '金额')
@@ -230,7 +232,7 @@ async function retryPendingAccount(): Promise<void> {
 
     <div class="ledger-form-actions">
       <button v-if="props.cancelable" class="ledger-secondary-button" type="button" :disabled="saving" @click="emit('cancel')">取消</button>
-      <button v-if="!props.firstAccount && !settings?.hasCreatedAccount" class="ledger-secondary-button" type="button" :disabled="saving" @click="emit('edit-settings')">修改 Ledger 设置</button>
+      <button v-if="props.firstAccount && !settings?.hasCreatedAccount" class="ledger-secondary-button" type="button" :disabled="saving" @click="emit('edit-settings')">修改 Ledger 设置</button>
       <button class="ledger-primary-button" type="submit" :disabled="saving">
         {{ saving ? '正在保存…' : (props.firstAccount ? '创建账户并继续' : '创建账户') }}
       </button>

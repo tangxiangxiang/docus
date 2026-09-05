@@ -49,11 +49,11 @@ const activeCategories = computed(() => store.activeCategories.value)
 const applicableCategories = computed(() => activeCategories.value.filter((category) => category.kind === type.value))
 const pendingTransaction = computed(() => {
   const pending = store.pendingCreate.value
-  return pending?.operation === 'transaction' ? pending : null
+  return store.mutationState.value === 'UNCERTAIN' && pending?.operation === 'transaction' ? pending : null
 })
 const pendingCategory = computed(() => {
   const pending = store.pendingCreate.value
-  return pending?.operation === 'category' ? pending : null
+  return store.mutationState.value === 'UNCERTAIN' && pending?.operation === 'category' ? pending : null
 })
 const recoveryBusy = computed(() => store.mutationState.value === 'SUBMITTING')
 const canSubmit = computed(() => activeAccounts.value.length > 0 && !saving.value && !categorySaving.value)
@@ -69,10 +69,10 @@ function resetForm(): void {
   resetting = true
   type.value = 'expense'
   amount.value = ''
-  accountId.value = activeAccounts.value[0]?.id ?? ''
+  accountId.value = activeAccounts.value.length === 1 ? activeAccounts.value[0]!.id : ''
   categoryId.value = ''
-  fromAccountId.value = activeAccounts.value[0]?.id ?? ''
-  toAccountId.value = activeAccounts.value[1]?.id ?? ''
+  fromAccountId.value = ''
+  toAccountId.value = ''
   occurredAt.value = defaultOccurredAt()
   payee.value = ''
   note.value = ''
@@ -104,17 +104,30 @@ watch([amount, accountId, categoryId, fromAccountId, toAccountId, occurredAt, pa
   if (props.open && !resetting) dirty.value = true
 })
 
-watch(type, () => {
+watch(type, (nextType, previousType) => {
+  if (resetting || nextType === previousType) return
+  // Only the common draft survives a semantic type switch. Account and
+  // category identities must never be guessed across different transaction
+  // meanings.
+  accountId.value = ''
   categoryId.value = ''
-  categoryCreateOpen.value = applicableCategories.value.length === 0
+  payee.value = ''
+  fromAccountId.value = ''
+  toAccountId.value = ''
+  categoryCreateOpen.value = nextType !== 'transfer' && applicableCategories.value.length === 0
+  if (nextType !== 'transfer' && activeAccounts.value.length === 1) {
+    accountId.value = activeAccounts.value[0]!.id
+  }
 })
 
 watch(activeAccounts, (accounts) => {
-  if (!accountId.value) accountId.value = accounts[0]?.id ?? ''
-  if (!fromAccountId.value) fromAccountId.value = accounts[0]?.id ?? ''
-  if (!toAccountId.value || toAccountId.value === fromAccountId.value) {
-    toAccountId.value = accounts.find((account) => account.id !== fromAccountId.value)?.id ?? ''
+  if (type.value !== 'transfer') {
+    if (accountId.value && !accounts.some((account) => account.id === accountId.value)) accountId.value = ''
+    if (!accountId.value && accounts.length === 1) accountId.value = accounts[0]!.id
+    return
   }
+  if (fromAccountId.value && !accounts.some((account) => account.id === fromAccountId.value)) fromAccountId.value = ''
+  if (toAccountId.value && !accounts.some((account) => account.id === toAccountId.value)) toAccountId.value = ''
 })
 
 function onKeydown(event: KeyboardEvent): void {

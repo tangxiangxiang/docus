@@ -3,6 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { LedgerApiError } from '../../../features/ledger/ledgerErrors'
 import { resetLedgerStoreForTesting } from '../../../features/ledger/ledgerStore'
+import { LEDGER_PENDING_CREATE_STORAGE_KEY, createLedgerPendingIntent } from '../../../features/ledger/recovery'
 import type {
   LedgerAccountDto,
   LedgerOverviewDto,
@@ -17,6 +18,7 @@ const api = vi.hoisted(() => ({
   getLedgerOverview: vi.fn(),
   listLedgerTransactions: vi.fn(),
   createLedgerSettings: vi.fn(),
+  patchLedgerSettings: vi.fn(),
   createLedgerAccount: vi.fn(),
 }))
 
@@ -166,6 +168,113 @@ describe('Ledger initialization and first-account onboarding', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-testid="ledger-settings-form"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="ledger-dashboard"]').exists()).toBe(true)
+  })
+
+  it('supports Step 2 back-edit of settings and uses the updated values for the first account', async () => {
+    const initialSettings = settings(false)
+    const editedSettings: LedgerSettingsDto = {
+      ...initialSettings,
+      baseCurrency: 'JPY',
+      currencyExponent: 0,
+      timezone: 'Asia/Tokyo',
+      version: 2,
+    }
+    const lockedSettings: LedgerSettingsDto = { ...editedSettings, hasCreatedAccount: true, version: 3 }
+    api.getLedgerSettings
+      .mockRejectedValueOnce(new LedgerApiError('missing', 404, 'ledger-not-found'))
+      .mockResolvedValue(initialSettings)
+    api.listLedgerAccounts.mockResolvedValue([])
+    api.listLedgerCategories.mockResolvedValue([])
+    api.getLedgerOverview.mockResolvedValue(overview())
+    api.listLedgerTransactions.mockResolvedValue({ transactions: [], page: { nextCursor: null } })
+    api.createLedgerSettings.mockResolvedValue(initialSettings)
+    api.patchLedgerSettings.mockResolvedValue(editedSettings)
+
+    const wrapper = mount(LedgerView)
+    await flushPromises()
+    const settingsForm = wrapper.get('[data-testid="ledger-settings-form"]')
+    await settingsForm.get('select[name="baseCurrency"]').setValue('CNY')
+    await settingsForm.get('input[name="timezone"]').setValue('Asia/Shanghai')
+    await settingsForm.trigger('submit')
+    await flushPromises()
+
+    const firstAccount = wrapper.get('[data-testid="ledger-account-form"]')
+    expect(firstAccount.find('button').text()).toContain('修改 Ledger 设置')
+    await firstAccount.findAll('button').find((button) => button.text() === '修改 Ledger 设置')!.trigger('click')
+
+    const editSettingsForm = wrapper.get('[data-testid="ledger-settings-form"]')
+    await editSettingsForm.get('select[name="baseCurrency"]').setValue('JPY')
+    await editSettingsForm.get('input[name="timezone"]').setValue('Asia/Tokyo')
+    api.getLedgerSettings.mockResolvedValue(editedSettings)
+    await editSettingsForm.trigger('submit')
+    await flushPromises()
+
+    expect(api.patchLedgerSettings).toHaveBeenCalledWith({
+      expectedVersion: 1,
+      baseCurrency: 'JPY',
+      timezone: 'Asia/Tokyo',
+    })
+    const editedAccountForm = wrapper.get('[data-testid="ledger-account-form"]')
+    expect(editedAccountForm.text()).toContain('JPY')
+    await editedAccountForm.get('input[name="name"]').setValue('东京账户')
+    await editedAccountForm.get('input[name="openingBalance"]').setValue('38')
+    api.createLedgerAccount.mockResolvedValue({
+      ...account('jpy-1'),
+      currency: 'JPY',
+      currencyExponent: 0,
+      openingBalanceMinor: 38,
+      currentBalanceMinor: 38,
+    })
+    api.getLedgerSettings.mockResolvedValue(lockedSettings)
+    api.listLedgerAccounts.mockResolvedValue([{
+      ...account('jpy-1'),
+      currency: 'JPY',
+      currencyExponent: 0,
+      openingBalanceMinor: 38,
+      currentBalanceMinor: 38,
+    }])
+    await editedAccountForm.trigger('submit')
+    await flushPromises()
+
+    expect(api.createLedgerAccount).toHaveBeenCalledWith(expect.objectContaining({
+      name: '东京账户',
+      currency: 'JPY',
+      openingBalanceMinor: 38,
+    }), expect.any(String))
+    expect(wrapper.find('[data-testid="ledger-dashboard"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ledger-settings-form"]').exists()).toBe(false)
+  })
+
+  it('keeps an Account create recovery gate visible after reload even when bootstrap is READY', async () => {
+    const pending = createLedgerPendingIntent(
+      'account',
+      {
+        name: '待确认账户',
+        type: 'bank',
+        nature: 'asset',
+        openingBalanceMinor: 1000,
+        openingDate: '2026-09-05',
+        currency: 'CNY',
+        note: '',
+      },
+      'key-account-recovery',
+      null,
+    )
+    sessionStorage.setItem(LEDGER_PENDING_CREATE_STORAGE_KEY, JSON.stringify(pending))
+    resetLedgerStoreForTesting()
+    setupLoadedState(settings(true), [account('existing-bank')])
+    api.createLedgerAccount.mockResolvedValue(account('replayed-account'))
+    const wrapper = mount(LedgerView)
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="ledger-recovery-gate"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ledger-recovery"]').text()).toContain('上一次账户保存结果未知')
+    await wrapper.get('[data-testid="ledger-recovery"] button').trigger('click')
+    await flushPromises()
+
+    expect(api.createLedgerAccount).toHaveBeenCalledWith(expect.objectContaining({ name: '待确认账户' }), 'key-account-recovery')
+    expect(wrapper.find('[data-testid="ledger-recovery-gate"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="ledger-dashboard"]').exists()).toBe(true)
   })
 })
