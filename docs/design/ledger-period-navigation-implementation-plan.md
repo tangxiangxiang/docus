@@ -6,7 +6,7 @@
 
 **Source PRD：** `docs/design/ledger-period-navigation-prd.md`
 
-**Audited main HEAD：** `f4da202197e18a074fd813ce69e2babcdbc48cd6`
+**Audited main HEAD：** `5881ba6b14c21d5df51f8378e4a1b5777dd4a999`
 
 **Audit working tree：** clean；`main` synchronized with `github/main`
 
@@ -14,7 +14,7 @@
 
 **Implementation gate：** `Implementation Plan: Ready for Review`；`Ready for Implementation: No`
 
-**Baseline：** `f4da202197e18a074fd813ce69e2babcdbc48cd6`
+**Baseline：** `5881ba6b14c21d5df51f8378e4a1b5777dd4a999`
 
 **Implementation Review：** Ready for Review
 
@@ -222,6 +222,12 @@ Recent Transactions：
 limit = 5
 ```
 
+它的产品语义是：
+
+```text
+截止 anchorDate 当天结束之前，最近的最多 5 笔 active Transactions
+```
+
 Transaction 必须：
 
 ```text
@@ -232,6 +238,14 @@ deletedAt === null
 
 ```text
 occurredAt < startOfNextLedgerDate(anchorDate)
+```
+
+排序必须使用 Ledger canonical transaction order：
+
+```text
+occurredAt DESC
+→ createdAt DESC
+→ id DESC
 ```
 
 Account / Category 已归档：
@@ -811,13 +825,30 @@ account current balances
 current Account summaries
 ```
 
+Current Snapshot 的账户余额 derivation 继续读取每个账户的完整 active
+Transaction history（概念上等价于现有
+`accountState(account) → listActiveTransactionsForAccount(account.id)`）。
+该读取：
+
+```text
+不按 anchorDate 截断
+不按 selected scope 截断
+包含 anchorDate 之后发生的 active Transaction
+```
+
+例如在 `anchorDate = 2025-06-15` 的历史模式下，账户于 2026-08-01
+发生的 Transaction 仍然必须影响 `currentBalanceMinor`、资产、负债和净资产。
+
+该读取边界不改变 Ledger balance engine、opening balance semantics 或
+任何既有 financial calculation authority。
+
 不得使用 `anchorDate` 重算历史 balance。
 
 ---
 
 ## 9.5 Anchored analytics
 
-使用 bounded active transaction reads 构建：
+只有期间敏感的分析使用 bounded active transaction reads 构建：
 
 ```text
 cashflow
@@ -826,6 +857,9 @@ periods
 trend
 recentTransactions
 ```
+
+这类 bounded historical projection reads 不得替代 Current Snapshot
+余额 derivation 所需的完整 active account transaction history。
 
 ---
 
@@ -1021,10 +1055,38 @@ listRecentActiveTransactionsBefore(
 实现前审计：
 
 ```text
-server/db/migrations.ts
+server/db.ts
 ```
 
-以及真实 schema/index。
+其中 migration runner 按版本执行：
+
+```text
+server/migrations/*.sql
+```
+
+Ledger foundation schema：
+
+```text
+server/migrations/0013_ledger_foundation.sql
+```
+
+当前已有 index：
+
+```text
+idx_ledger_transactions_active_order
+```
+
+它覆盖：
+
+```text
+deleted_at
+occurred_at DESC
+created_at DESC
+id DESC
+```
+
+与本 Plan 的 bounded range / recent cutoff 查询条件和 canonical
+ordering 对齐。
 
 重点确认是否已有支持：
 
@@ -1040,23 +1102,26 @@ created_at
 id
 ```
 
-的 index。
+的 index；该审计结论已关闭当前 migration/index blocker。
 
-不要为了本功能预先强制 migration。
-
-规则：
+本功能默认：
 
 ```text
-existing index sufficient
-→ no migration
-
-missing and query-plan evidence shows need
-→ add minimal migration
+No database migration is planned for Historical Period Navigation.
+No new index migration is planned.
 ```
 
-如果增加 migration：
+只有 implementation-time 的 `EXPLAIN QUERY PLAN` 或明确的
+benchmark/profile evidence 证明现有 index 无法支持 planned query 时，
+才允许重新开启 index migration decision。
 
-必须：
+如果届时确实需要 migration，才可以新增后续：
+
+```text
+server/migrations/<next_version>_*.sql
+```
+
+并且必须：
 
 ```text
 遵循现有 migration framework
@@ -1147,11 +1212,14 @@ src/features/ledger/api.ts
 升级：
 
 ```ts
-getLedgerOverview(
-  scope: LedgerOverviewScope = 'month',
-  anchorDate?: string,
-)
+getLedgerOverview(input: {
+  readonly scope: LedgerOverviewScope
+  readonly anchorDate: string | undefined
+})
 ```
+
+调用方必须传入完整 input；`anchorDate: undefined` 只表示 canonical
+today request，不得通过省略 positional 参数隐式改变既有 historical context。
 
 请求：
 
@@ -1380,28 +1448,90 @@ recent
 
 # 20. refreshOverview
 
-升级：
+不得继续使用容易误调用的 positional optional contract：
 
 ```text
 refreshOverview(scope, anchorDate?)
 ```
 
-请求开始前：
+Store 冻结为显式的 request-context contract：
 
-```text
-state.overviewScope = requested scope
-state.overviewRequestedAnchorDate = requested anchor
-state.loading = true
-state.error = null
+```ts
+interface LedgerOverviewRequestContext {
+  readonly scope: LedgerOverviewScope
+  readonly anchorDate: string | undefined
+}
+
+setOverviewRequestContext(
+  context: LedgerOverviewRequestContext,
+): void
+
+refreshOverview(): Promise<LedgerOverviewRefreshResult>
 ```
 
-然后使用现有：
+其中：
+
+```text
+state.overviewScope
+state.overviewRequestedAnchorDate
+```
+
+共同构成当前 Overview request context；
+`overviewRequestedAnchorDate` 是 requested anchor 的 authoritative state，
+不是可由调用者通过省略参数隐式覆盖的可选值。
+
+Route synchronization 或 scope navigation 必须先写入完整 context，再调用
+无参数的 `refreshOverview()`。因此：
+
+```text
+当前 scope = month
+当前 overviewRequestedAnchorDate = 2025-06-15
+切换 scope = year
+→ 新 context = { scope: 'year', anchorDate: '2025-06-15' }
+```
+
+Retry 不传新的 anchor，必须读取并复用 Store 当前 context：
+
+```text
+same scope
++
+same overviewRequestedAnchorDate
+```
+
+Mutation refresh / `refreshData()` 也必须调用当前 context 的
+`refreshOverview()`，不得回到默认 today。
+
+Canonical `/ledger` 是唯一的特殊情况：route synchronization 明确设置：
+
+```text
+overviewRequestedAnchorDate = undefined
+```
+
+并在后续 refresh 中持续保持 `undefined`，以便由 Server 决定当天日期。
+
+必须保持以下 invariant：
+
+```text
+Omitting an explicit anchor argument must never reset
+an existing historical request context to today.
+```
+
+请求开始前使用现有：
 
 ```text
 requestEpoch
 ```
 
-实现 latest-request-wins。
+实现 latest-request-wins；当前 request context 也必须与该 epoch 一起记录。
+
+请求开始时：
+
+```text
+state.overviewScope = request.scope
+state.overviewRequestedAnchorDate = request.anchorDate
+state.loading = true
+state.error = null
+```
 
 成功：
 
@@ -1412,7 +1542,7 @@ only current epoch may replace overview
 失败：
 
 ```text
-only current epoch may publish error
+only current epoch may publish shared error/state
 ```
 
 快速：
@@ -1423,7 +1553,92 @@ only current epoch may publish error
 → 6月
 ```
 
-即使 8 月最后返回，也不能覆盖 6 月。
+即使 8 月最后返回，也不能覆盖 6 月，或发布会影响 6 月 route 的 error。
+
+---
+
+# 20.1 Overview Request Outcome Contract
+
+`refreshOverview()` 必须提供 Overview-specific 的 typed outcome channel。
+Router coordinator 不得通过观察共享的通用 `state.error` 猜测某一笔
+Overview request 的结果。
+
+采用 project-native 等价实现时，语义必须至少等同于：
+
+```ts
+type LedgerOverviewRefreshResult =
+  | {
+      readonly status: 'success'
+      readonly requestEpoch: number
+      readonly request: LedgerOverviewRequestContext
+      readonly overview: LedgerOverviewDto
+    }
+  | {
+      readonly status: 'error'
+      readonly requestEpoch: number
+      readonly request: LedgerOverviewRequestContext
+      readonly error: LedgerApiError
+    }
+  | {
+      readonly status: 'stale'
+      readonly requestEpoch: number
+      readonly request: LedgerOverviewRequestContext
+    }
+```
+
+或者由 Store 暴露等价的：
+
+```text
+overviewRequestState
+overviewRequestContext
+overviewError
+overviewRequestEpoch
+```
+
+但必须满足：
+
+1. Router coordinator 可以识别当前 anchored Overview request 是否返回：
+
+   ```text
+   code = ledger-validation-failed
+   details.field = "anchorDate"
+   ```
+
+2. outcome 必须绑定 request epoch 和 request context。只有仍然对应当前
+   route/context 的 outcome 才能驱动 route canonicalization。
+
+3. stale request 的 future-date error 不得覆盖较新的 historical navigation。
+
+   ```text
+   Request A: future anchorDate
+   用户立即切换到 Request B: 2025-06-15
+   A 最后失败
+   → 不得把 B 的 route replace 成 /ledger
+   ```
+
+4. network、500、503、malformed response 等普通 historical error 不得被
+   归类为 future validation。
+
+当前 request 的 future anchor validation：
+
+```text
+future anchor validation
+→ router.replace('/ledger')
+→ clear explicit requested anchor
+→ request default today Overview
+```
+
+普通 historical error：
+
+```text
+retain URL
+retain requested anchor
+show retry
+do not canonicalize
+```
+
+该 outcome contract 是 Router 判断 future canonicalization 的唯一依据；
+共享 error 仅用于展示对应的当前请求错误。
 
 ---
 
@@ -1570,6 +1785,10 @@ store.refreshOverview(...)
 
 而不同步 URL。
 
+应先由 route synchronization 更新完整的
+`LedgerOverviewRequestContext`，再调用无参数的
+`store.refreshOverview()`。
+
 Route 是 browser-level date source of truth。
 
 ---
@@ -1715,6 +1934,11 @@ router.replace('/ledger')
 → request default today Overview
 ```
 
+该行为只能由当前 request 的 Overview-specific typed outcome 触发，并且
+必须确认 outcome 的 request epoch/context 仍与当前 route 一致。不得通过
+观察共享通用 error，或处理已经 stale 的 request 结果，来执行
+canonicalization。
+
 这不是普通 historical loading error。
 
 不要显示：
@@ -1753,6 +1977,10 @@ hide/suppress stale period data
 show period error
 provide retry
 ```
+
+Router 必须从 Overview-specific request outcome 区分这类普通错误与
+`details.field = "anchorDate"` 的 future validation；普通错误不得触发
+route canonicalization。
 
 Retry 必须使用：
 
@@ -2083,12 +2311,34 @@ Today mode：
 最近 5 笔真实记录
 ```
 
-Historical mode 建议：
+如果 Today mode 的 Recent Transactions 为空，继续使用当前 today
+empty semantics；当 Ledger 确实没有任何记录时，可以保留通用的创建交易
+CTA。
+
+Historical mode：
 
 ```text
 最近交易
 截至选择日期的最近 5 笔记录
 ```
+
+如果合法的 historical `anchorDate` 在其 cutoff 之前没有 active
+Transaction，必须显示：
+
+```text
+截至该日期还没有交易记录
+```
+
+这表示 cutoff-specific empty，而不是表示整个 Ledger 从未有交易。此时：
+
+```text
+不是 Error
+不自动跳回 today
+不显示“记下第一笔”这类全局首次交易 CTA
+```
+
+第一版 historical empty 不显示创建交易 CTA；如果以后保留按钮，也只能是
+不改变 historical context 的通用操作。
 
 继续使用现有 archived Account label mapping。
 
@@ -2350,14 +2600,22 @@ exactly 6 points
 断言：
 
 ```text
-before anchor end → include
-after anchor end → exclude
-soft-deleted → exclude
+cutoff = startOfNextLedgerDate(anchorDate)
+occurredAt < cutoff → include
+occurredAt >= cutoff → exclude
+deletedAt === null → include
+deletedAt !== null → exclude
 archived Account linked tx → include
 archived Category linked tx → include
 limit = 5
-canonical ordering preserved
+canonical ordering:
+  occurredAt DESC
+  → createdAt DESC
+  → id DESC
 ```
+
+Recent 的结果必须等价于“截止 `anchorDate` 当天结束之前，最近的最多
+5 笔 active Transactions”，不得从 trend window 推导。
 
 ### Case 10 — Current Snapshot
 
@@ -2371,6 +2629,23 @@ account current balances
 ```
 
 仍与 current state 一致。
+
+具体 regression fixture：
+
+```text
+anchorDate = 2025-06-15
+Account 在 2026-08-01 有一笔 active Transaction
+```
+
+预期：
+
+```text
+currentBalanceMinor / asset totals 包含该笔 Transaction
+historical cashflow 不包含该笔 Transaction
+```
+
+该测试必须证明 bounded historical reads 没有截断 Current Snapshot
+balance history。
 
 ---
 
@@ -2505,6 +2780,34 @@ scope + anchorDate
 
 正确发送。
 
+### A.1 Historical scope change preserves anchor
+
+Given：
+
+```text
+overviewScope = month
+overviewRequestedAnchorDate = 2025-06-15
+```
+
+When scope 切换为 `year`，必须发送：
+
+```text
+GET /api/ledger/overview?scope=year&anchorDate=2025-06-15
+```
+
+不得因 scope change 省略 anchor 而回到 today。
+
+### A.2 Historical retry preserves anchor
+
+历史 request 失败后点击 Retry，必须复用：
+
+```text
+same scope
+same overviewRequestedAnchorDate
+```
+
+Retry 不得发送 omitted anchor，也不得清空 historical request context。
+
 ### B. Request race
 
 ```text
@@ -2546,6 +2849,9 @@ create/edit/delete 后：
 historical anchor preserved
 ```
 
+Account archive/restore、Category mutation 和 `refreshData()` 同样必须
+复用 Store 当前 scope 与 requested anchor。
+
 ### F. Canonical today
 
 ```text
@@ -2561,6 +2867,27 @@ refresh 后仍不固定为旧 `todayDate`。
 ```text
 overviewMatchesRequest = false
 ```
+
+### H. Overview request outcome
+
+必须验证 `refreshOverview()` 返回或发布 request-specific typed outcome，
+并带有 request epoch/context：
+
+```text
+current future-anchor rejection
+→ 可被 Router coordinator 识别并 canonicalize 到 /ledger
+
+stale future-anchor rejection
+→ 不得影响更新后的 historical route
+
+ordinary historical 500/network error
+→ 保留 historical URL，提供 retry，不 canonicalize
+```
+
+### I. Latest request wins for errors as well as data
+
+验证旧 request 的 success 或 error 都不能覆盖新 request 的状态、error 或
+route outcome。
 
 ---
 
@@ -2621,6 +2948,35 @@ Client：
 ```text
 replace /ledger
 request today
+```
+
+测试必须证明这是当前 request-specific outcome 触发的
+canonicalization，而不是通过共享 error 猜测。
+
+### F.1 stale future rejection
+
+```text
+Request A: future anchorDate
+Request B: /ledger?date=2025-06-15
+A 的 future validation 最后返回
+```
+
+预期：
+
+```text
+B 的 historical URL 保持不变
+A 不得 replace /ledger
+```
+
+### F.2 ordinary historical failure
+
+对 `/ledger?date=2025-06-15` 注入 500 或 network failure，预期：
+
+```text
+historical URL 保留
+requested anchor 保留
+显示 retry
+不 canonicalize 到 /ledger
 ```
 
 ### G. explicit today query
@@ -2725,6 +3081,20 @@ normal historical error：
 保留 context
 重试可用
 ```
+
+### Historical Recent empty
+
+合法 historical anchor 的 Recent Transactions 在 cutoff 之前没有记录时：
+
+```text
+显示：截至该日期还没有交易记录
+不是 Error
+不显示：记下第一笔
+不自动跳回 today
+```
+
+同时保留 today-mode empty regression；Today mode 仍可使用当前
+“还没有交易记录”语义及其适用的创建交易 CTA。
 
 ### Existing regressions
 
@@ -2844,13 +3214,7 @@ inaccessible button
 
 # 53. Performance Boundary
 
-不得：
-
-```text
-Client fetch all Transactions
-```
-
-也不要继续让 Historical Overview 无条件：
+不得由 Client fetch all Transactions，也不要让期间分析无条件：
 
 ```text
 repository.listActiveTransactions()
@@ -2858,7 +3222,17 @@ repository.listActiveTransactions()
 → filter everything in memory
 ```
 
-除：
+但 Current Snapshot 是明确的 authority boundary 例外：账户当前余额
+derivation 仍必须读取完整 active account transaction history，以保持
+NOW 语义。该完整读取：
+
+```text
+不使用 anchorDate
+不使用 selected scope
+不被 bounded period query 替代
+```
+
+除 Current Snapshot 所需的账户完整历史外：
 
 ```text
 scope=all
@@ -2868,21 +3242,39 @@ scope=all
 
 其它 historical analytics 都使用 bounded DB reads。
 
+具体而言，bounded reads 只适用于：
+
+```text
+cashflow
+categoryBreakdown
+periods
+trend
+recentTransactions
+```
+
 ---
 
 # 54. No Schema Change by Default
 
-预计：
+Repository audit 已确认：
+
+```text
+migration runner = server/db.ts
+Ledger schema = server/migrations/0013_ledger_foundation.sql
+existing index = idx_ledger_transactions_active_order
+```
+
+因此本功能冻结为：
 
 ```text
 no database schema change
+no new index migration
 ```
 
-只有 index audit 证明存在性能缺口时：
-
-```text
-允许增加 index migration
-```
+只有 implementation-time `EXPLAIN QUERY PLAN` 或明确的
+benchmark/profile evidence 证明现有 index 无法支持 planned query 时，
+才允许重新开启 index migration decision；届时只能按现有 migration
+framework 新增 `server/migrations/<next_version>_*.sql`。
 
 禁止：
 
@@ -2932,10 +3324,13 @@ LedgerView/router tests
 existing Ledger E2E
 ```
 
-Conditional only：
+No migration files are expected to change by default.
+
+Conditional only if implementation-time query-plan/benchmark evidence proves
+the audited index insufficient：
 
 ```text
-server/db/migrations.ts
+server/migrations/<next_version>_*.sql
 migration tests
 ```
 
@@ -3268,13 +3663,24 @@ git status --short
 [ ] current snapshot remains NOW 已冻结
 [ ] standalone /trend 不扩 scope 已冻结
 [ ] Store explicit-anchor vs resolved-anchor distinction已冻结
+[ ] historical scope change preserves requested anchor 已冻结
+[ ] historical retry preserves requested anchor 已冻结
+[ ] mutation refresh preserves requested anchor 已冻结
+[ ] canonical today keeps requested anchor undefined 已冻结
 [ ] route query ownership 已冻结
 [ ] invalid/future handling 已冻结
+[ ] Overview request outcome is request-specific 已冻结
+[ ] stale future validation cannot canonicalize newer route 已冻结
 [ ] stale projection handling 已冻结
-[ ] mutation refresh preserves historical context 已冻结
+[ ] Current Snapshot balance retains full active account history 已冻结
+[ ] bounded reads apply only to period-sensitive analytics 已冻结
+[ ] existing ledger transaction index audited sufficient 已冻结
+[ ] no migration planned by default 已冻结
+[ ] historical recent empty copy is cutoff-specific 已冻结
+[ ] historical recent empty does not show first-transaction CTA 已冻结
 [ ] Date Picker max uses Server todayDate 已冻结
-[ ] no default schema migration 已冻结
 [ ] test strategy complete
+[ ] no unresolved persistence/index blocker；已由 repository index audit 关闭
 [ ] no blocking implementation open question
 ```
 
@@ -3300,6 +3706,12 @@ No calendar authority ambiguity
 No current-vs-historical balance ambiguity
 No URL source-of-truth ambiguity
 No stale-data ambiguity
+Overview request outcome is request-specific and epoch-bound
+Historical scope change/retry/mutation refresh preserve requested anchor
+Current Snapshot retains full active account history
+Bounded reads are limited to period-sensitive analytics
+Repository index audit is complete; no migration is planned by default
+Historical Recent empty UX is cutoff-specific and has no first-transaction CTA
 No unresolved persistence/index blocker
 ```
 
