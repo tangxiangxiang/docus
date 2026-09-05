@@ -142,6 +142,102 @@ test('response loss recovers one real transaction with the original intent key',
 
 })
 
+test('an unreadable successful transaction response replays the same committed intent once', async ({ page, request }) => {
+  await page.goto('/ledger')
+  await expect(page.getByTestId('ledger-dashboard')).toBeVisible()
+
+  const before = await getTransactions(request)
+  const accountsBefore = await getAccounts(request)
+  const account = accountsBefore.find((candidate) => candidate.archivedAt === null)
+  expect(account).toBeTruthy()
+
+  let shouldBreakBody = true
+  let droppedKey = ''
+  let droppedPayload = ''
+  await page.route('**/api/ledger/transactions**', async (route) => {
+    const intercepted = route.request()
+    if (intercepted.method() !== 'POST' || !shouldBreakBody) {
+      await route.continue()
+      return
+    }
+    shouldBreakBody = false
+    droppedKey = intercepted.headers()['idempotency-key'] ?? ''
+    droppedPayload = intercepted.postData() ?? ''
+    const response = await route.fetch()
+    const status = response.status()
+    await response.body()
+    await route.fulfill({
+      status,
+      headers: { 'content-type': 'application/json' },
+      body: '{broken-success-body',
+    })
+  })
+
+  await page.getByTestId('ledger-record-button').click()
+  await page.locator('#ledger-transaction-amount').fill('13')
+  await selectOptionContaining(page, '#ledger-transaction-account', account!.name)
+  await selectOptionContaining(page, '#ledger-transaction-category', '餐饮')
+  await page.getByRole('button', { name: '保存交易' }).click()
+
+  await expect(page.getByTestId('ledger-recovery')).toBeVisible()
+  expect(droppedKey).not.toBe('')
+  expect(droppedPayload).toContain('"amountMinor":1300')
+  await page.reload()
+  await expect(page.getByTestId('ledger-recovery')).toBeVisible()
+  await page.getByRole('button', { name: '用同一内容重试' }).click()
+
+  await expect(page.getByTestId('ledger-dashboard')).toBeVisible()
+  await expect(page.getByTestId('ledger-recovery')).toBeHidden()
+  await expect.poll(async () => (await getTransactions(request)).transactions.length).toBe(before.transactions.length + 1)
+
+  const after = await getTransactions(request)
+  const created = after.transactions.filter((transaction) => transaction.amountMinor === 1300 && transaction.type === 'expense')
+  expect(created).toHaveLength(1)
+  expect((await getAccounts(request)).find((candidate) => candidate.id === account!.id)?.currentBalanceMinor)
+    .toBe(account!.currentBalanceMinor - 1300)
+  expect(await page.evaluate(() => sessionStorage.getItem('docus.ledger.pending-create'))).toBeNull()
+})
+
+test('an account response loss remains gated after reload and creates one account on replay', async ({ page, request }) => {
+  await page.goto('/ledger/accounts')
+  await expect(page.getByTestId('ledger-accounts-page')).toBeVisible()
+
+  const uniqueName = `回放账户-${Date.now()}`
+  let shouldDropResponse = true
+  let droppedKey = ''
+  let droppedPayload = ''
+  await page.route('**/api/ledger/accounts**', async (route) => {
+    const intercepted = route.request()
+    if (intercepted.method() !== 'POST' || !shouldDropResponse) {
+      await route.continue()
+      return
+    }
+    shouldDropResponse = false
+    droppedKey = intercepted.headers()['idempotency-key'] ?? ''
+    droppedPayload = intercepted.postData() ?? ''
+    const response = await route.fetch()
+    await response.body()
+    await route.abort('connectionreset')
+  })
+
+  await page.getByRole('button', { name: '新增账户' }).click()
+  await expect(page.getByTestId('ledger-account-form')).toBeVisible()
+  await page.locator('#ledger-account-name').fill(uniqueName)
+  await page.getByRole('button', { name: '创建账户' }).click()
+
+  await expect(page.getByTestId('ledger-recovery')).toBeVisible()
+  expect(droppedKey).not.toBe('')
+  expect(droppedPayload).toContain(uniqueName)
+  await page.reload()
+  await expect(page.getByTestId('ledger-recovery')).toBeVisible()
+  await page.getByRole('button', { name: '用同一内容重试' }).click()
+
+  await expect(page.getByTestId('ledger-accounts-page')).toBeVisible()
+  await expect(page.getByTestId('ledger-recovery')).toBeHidden()
+  await expect.poll(async () => (await getAccounts(request)).filter((account) => account.name === uniqueName).length).toBe(1)
+  expect(await page.evaluate(() => sessionStorage.getItem('docus.ledger.pending-create'))).toBeNull()
+})
+
 test('Ledger transaction entry remains keyboard-usable in a narrow viewport', async ({ page }) => {
   await page.setViewportSize({ width: 430, height: 844 })
   await page.goto('/ledger')
