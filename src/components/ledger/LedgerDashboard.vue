@@ -33,8 +33,11 @@ watch(selectedScope, (scope, previous) => {
   if (scope !== previous && scope !== store.overviewScope.value) void store.refreshOverview(scope)
 })
 
-const accountNames = computed(() => new Map(
-  (overview.value?.accounts ?? []).map((account) => [account.id, account.name]),
+const transactionAccountLabels = computed(() => new Map(
+  store.accounts.value.map((account) => [
+    account.id,
+    account.archivedAt === null ? account.name : `${account.name}（已归档）`,
+  ]),
 ))
 const categoryNames = computed(() => new Map(
   store.categories.value.map((category) => [category.id, category.name]),
@@ -52,7 +55,7 @@ const periodLabels: Record<LedgerPeriodName, string> = {
   year: '今年',
 }
 
-function accountLabel(id: string): string { return accountNames.value.get(id) ?? '未知账户' }
+function accountLabel(id: string): string { return transactionAccountLabels.value.get(id) ?? '未知账户' }
 function categoryLabel(id: string): string { return categoryNames.value.get(id) ?? '未知分类' }
 
 function categoryShare(items: readonly { amountMinor: number }[], amountMinor: number): string {

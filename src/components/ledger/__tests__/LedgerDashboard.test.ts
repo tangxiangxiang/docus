@@ -49,6 +49,23 @@ const account: LedgerAccountDto = {
   currentBalanceMinor: 996_200,
 }
 
+const archivedAccount: LedgerAccountDto = {
+  ...account,
+  id: 'cash-1',
+  name: '现金账户',
+  type: 'cash',
+  archivedAt: 3,
+  version: 2,
+  updatedAt: 3,
+  currentBalanceMinor: 0,
+}
+
+const secondArchivedAccount: LedgerAccountDto = {
+  ...archivedAccount,
+  id: 'wallet-1',
+  name: '旧钱包',
+}
+
 const category: LedgerCategoryDto = {
   id: 'food',
   kind: 'expense',
@@ -73,6 +90,46 @@ const expense: LedgerTransactionDto = {
   version: 1,
   createdAt: 1,
   updatedAt: 1,
+}
+
+const archivedExpense: LedgerTransactionDto = {
+  ...expense,
+  id: 'tx-archived-expense',
+  accountId: archivedAccount.id,
+  payee: '',
+}
+
+const transferActiveToArchived: LedgerTransactionDto = {
+  ...expense,
+  id: 'tx-transfer-active-archived',
+  type: 'transfer',
+  amountMinor: 10_000,
+  fromAccountId: account.id,
+  toAccountId: archivedAccount.id,
+}
+
+const transferArchivedToActive: LedgerTransactionDto = {
+  ...transferActiveToArchived,
+  id: 'tx-transfer-archived-active',
+  fromAccountId: archivedAccount.id,
+  toAccountId: account.id,
+}
+
+const transferArchivedToArchived: LedgerTransactionDto = {
+  ...transferActiveToArchived,
+  id: 'tx-transfer-archived-archived',
+  fromAccountId: archivedAccount.id,
+  toAccountId: secondArchivedAccount.id,
+}
+
+const archivedAdjustment: LedgerTransactionDto = {
+  ...expense,
+  id: 'tx-archived-adjustment',
+  type: 'adjustment',
+  amountMinor: 0,
+  accountId: archivedAccount.id,
+  adjustmentCalculatedBalanceMinor: 0,
+  adjustmentTargetBalanceMinor: 0,
 }
 
 const accountSummary: LedgerAccountSummary = {
@@ -201,5 +258,37 @@ describe('Ledger live dashboard', () => {
     expect(accounts).toContain('负债账户')
     expect(accounts).toContain('招商银行')
     expect(accounts).toContain('信用卡')
+  })
+
+  it('resolves recent transaction account labels from active and archived accounts', async () => {
+    api.listLedgerAccounts.mockResolvedValue([account, archivedAccount, secondArchivedAccount])
+    api.getLedgerOverview.mockResolvedValue({
+      ...overview(),
+      accounts: [accountSummary],
+      recentTransactions: [
+        archivedExpense,
+        transferActiveToArchived,
+        transferArchivedToActive,
+        transferArchivedToArchived,
+        archivedAdjustment,
+      ],
+    })
+
+    const wrapper = mount(LedgerView)
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    const recent = wrapper.get('[data-testid="ledger-recent-transactions"]')
+    const rows = recent.findAll('.ledger-recent-row')
+    expect(rows).toHaveLength(5)
+    expect(rows[0].text()).toContain('餐饮 · 现金账户（已归档）')
+    expect(rows[1].text()).toContain('招商银行 → 现金账户（已归档）')
+    expect(rows[2].text()).toContain('现金账户（已归档） → 招商银行')
+    expect(rows[3].text()).toContain('现金账户（已归档） → 旧钱包（已归档）')
+    expect(rows[4].text()).toContain('现金账户（已归档）')
+
+    // Archived accounts remain available for historical labels, but do not
+    // re-enter the Dashboard's active account projection.
+    expect(wrapper.get('[data-testid="ledger-dashboard-assets"]').text()).not.toContain('现金账户')
   })
 })
