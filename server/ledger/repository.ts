@@ -232,6 +232,41 @@ const SELECT_ALL_ACTIVE_TRANSACTIONS = `
   ORDER BY occurred_at DESC, created_at DESC, id DESC
 `
 
+const SELECT_ACTIVE_TRANSACTIONS_IN_RANGE = `
+  SELECT id, type, amount_minor, account_id, from_account_id, to_account_id,
+         category_id, occurred_at, payee, note,
+         adjustment_calculated_balance_minor, adjustment_target_balance_minor,
+         deleted_at, version, created_at, updated_at
+  FROM ledger_transactions
+  WHERE deleted_at IS NULL
+    AND occurred_at >= @from
+    AND occurred_at < @to
+  ORDER BY occurred_at DESC, created_at DESC, id DESC
+`
+
+const SELECT_ACTIVE_TRANSACTIONS_BEFORE = `
+  SELECT id, type, amount_minor, account_id, from_account_id, to_account_id,
+         category_id, occurred_at, payee, note,
+         adjustment_calculated_balance_minor, adjustment_target_balance_minor,
+         deleted_at, version, created_at, updated_at
+  FROM ledger_transactions
+  WHERE deleted_at IS NULL
+    AND occurred_at < @to
+  ORDER BY occurred_at DESC, created_at DESC, id DESC
+`
+
+const SELECT_RECENT_ACTIVE_TRANSACTIONS_BEFORE = `
+  SELECT id, type, amount_minor, account_id, from_account_id, to_account_id,
+         category_id, occurred_at, payee, note,
+         adjustment_calculated_balance_minor, adjustment_target_balance_minor,
+         deleted_at, version, created_at, updated_at
+  FROM ledger_transactions
+  WHERE deleted_at IS NULL
+    AND occurred_at < @to
+  ORDER BY occurred_at DESC, created_at DESC, id DESC
+  LIMIT @limit
+`
+
 const SELECT_IDEMPOTENCY_RECORD = `
   SELECT operation_scope, idempotency_key, request_fingerprint,
          response_status, response_body_json, result_status, result_type,
@@ -311,6 +346,11 @@ export interface LedgerTransactionQueryOptions {
   }
 }
 
+export interface LedgerTransactionRangeOptions {
+  readonly from?: number
+  readonly to: number
+}
+
 export interface LedgerRepository {
   getSettings(): LedgerSettings | null
   insertSettings(settings: LedgerSettings): void
@@ -337,6 +377,8 @@ export interface LedgerRepository {
   softDeleteTransaction(input: LedgerTransactionSoftDeleteInput): number
   listActiveTransactionsForAccount(accountId: string): LedgerTransaction[]
   listActiveTransactions(): LedgerTransaction[]
+  listActiveTransactionsInRange(options: LedgerTransactionRangeOptions): LedgerTransaction[]
+  listRecentActiveTransactionsBefore(to: number, limit: number): LedgerTransaction[]
   queryTransactions(options: LedgerTransactionQueryOptions): LedgerTransaction[]
 
   getIdempotencyRecord(operationScope: string, idempotencyKey: string): LedgerIdempotencyRecord | null
@@ -657,6 +699,15 @@ export function createLedgerRepository(db: DatabaseT): LedgerRepository {
       SELECT_ACTIVE_TRANSACTIONS_FOR_ACCOUNT,
     ),
     listActiveTransactions: db.prepare(SELECT_ALL_ACTIVE_TRANSACTIONS),
+    listActiveTransactionsInRange: db.prepare<{ readonly from: number; readonly to: number }>(
+      SELECT_ACTIVE_TRANSACTIONS_IN_RANGE,
+    ),
+    listActiveTransactionsBefore: db.prepare<{ readonly to: number }>(
+      SELECT_ACTIVE_TRANSACTIONS_BEFORE,
+    ),
+    listRecentActiveTransactionsBefore: db.prepare<{ readonly to: number; readonly limit: number }>(
+      SELECT_RECENT_ACTIVE_TRANSACTIONS_BEFORE,
+    ),
     getIdempotencyRecord: db.prepare<IdempotencyLookupParams, IdempotencyRow>(SELECT_IDEMPOTENCY_RECORD),
     insertIdempotencyRecord: db.prepare<IdempotencyParams>(INSERT_IDEMPOTENCY_RECORD),
   }
@@ -771,6 +822,38 @@ export function createLedgerRepository(db: DatabaseT): LedgerRepository {
 
     listActiveTransactions(): LedgerTransaction[] {
       return statements.listActiveTransactions.all().map(ledgerTransactionFromRow)
+    },
+
+    listActiveTransactionsInRange(options: LedgerTransactionRangeOptions): LedgerTransaction[] {
+      if (!Number.isSafeInteger(options.to)) {
+        throw ledgerValidationError('transaction range to must be a safe integer', { field: 'to' })
+      }
+      if (options.from !== undefined) {
+        if (!Number.isSafeInteger(options.from)) {
+          throw ledgerValidationError('transaction range from must be a safe integer', { field: 'from' })
+        }
+        if (options.from >= options.to) {
+          throw ledgerValidationError('transaction range from must be earlier than to', { field: 'from' })
+        }
+        return statements.listActiveTransactionsInRange
+          .all({ from: options.from, to: options.to })
+          .map(ledgerTransactionFromRow)
+      }
+      return statements.listActiveTransactionsBefore
+        .all({ to: options.to })
+        .map(ledgerTransactionFromRow)
+    },
+
+    listRecentActiveTransactionsBefore(to: number, limit: number): LedgerTransaction[] {
+      if (!Number.isSafeInteger(to)) {
+        throw ledgerValidationError('recent transaction cutoff must be a safe integer', { field: 'to' })
+      }
+      if (!Number.isSafeInteger(limit) || limit < 1) {
+        throw ledgerValidationError('recent transaction limit must be a positive safe integer', { field: 'limit' })
+      }
+      return statements.listRecentActiveTransactionsBefore
+        .all({ to, limit })
+        .map(ledgerTransactionFromRow)
     },
 
     queryTransactions(options: LedgerTransactionQueryOptions): LedgerTransaction[] {

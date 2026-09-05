@@ -394,7 +394,7 @@ describe('Ledger Overview and trend projections', () => {
       occurredAt: TEST_NOW - 2_000,
     })
 
-    const overview = fixture.projections.getOverview('all')
+    const overview = fixture.projections.getOverview({ scope: 'all', anchorDate: undefined })
     expect(overview.currency).toBe('CNY')
     expect(overview.currencyExponent).toBe(2)
     expect(overview.assetTotalMinor).toBe(1_030)
@@ -422,9 +422,9 @@ describe('Ledger Overview and trend projections', () => {
       occurredAt: Date.parse('2026-01-15T00:00:00.000Z'),
     })
 
-    const today = fixture.projections.getOverview('today')
-    const month = fixture.projections.getOverview('month')
-    const all = fixture.projections.getOverview('all')
+    const today = fixture.projections.getOverview({ scope: 'today', anchorDate: undefined })
+    const month = fixture.projections.getOverview({ scope: 'month', anchorDate: undefined })
+    const all = fixture.projections.getOverview({ scope: 'all', anchorDate: undefined })
     for (const candidate of [today, month]) {
       expect(candidate.assetTotalMinor).toBe(all.assetTotalMinor)
       expect(candidate.liabilityTotalMinor).toBe(all.liabilityTotalMinor)
@@ -439,6 +439,107 @@ describe('Ledger Overview and trend projections', () => {
     expect(all.cashflow).toEqual({ incomeMinor: 100, expenseMinor: 10, balanceMinor: 90 })
   })
 
+  it('anchors complete natural periods while keeping the Current Snapshot on NOW semantics', () => {
+    const fixture = freshFixture()
+    const asset = account(fixture, 'anchored-account', { openingBalanceMinor: 1_000 })
+    const expenseCategory = firstCategory(fixture, 'expense')
+    const incomeCategory = firstCategory(fixture, 'income')
+    const atShanghaiNoon = (date: string): number => Date.parse(`${date}T12:00:00+08:00`)
+
+    transaction(fixture, 'anchored-aug-start', {
+      type: 'expense', amountMinor: 10, accountId: asset.id, categoryId: expenseCategory.id,
+      occurredAt: atShanghaiNoon('2026-08-01'),
+    })
+    transaction(fixture, 'anchored-aug-anchor', {
+      type: 'expense', amountMinor: 5, accountId: asset.id, categoryId: expenseCategory.id,
+      occurredAt: atShanghaiNoon('2026-08-20'),
+    })
+    transaction(fixture, 'anchored-aug-after-anchor', {
+      type: 'expense', amountMinor: 40, accountId: asset.id, categoryId: expenseCategory.id,
+      occurredAt: atShanghaiNoon('2026-08-25'),
+    })
+    transaction(fixture, 'anchored-september', {
+      type: 'expense', amountMinor: 50, accountId: asset.id, categoryId: expenseCategory.id,
+      occurredAt: atShanghaiNoon('2026-09-01'),
+    })
+    transaction(fixture, 'anchored-income', {
+      type: 'income', amountMinor: 100, accountId: asset.id, categoryId: incomeCategory.id,
+      occurredAt: atShanghaiNoon('2026-08-21'),
+    })
+
+    const overview = fixture.projections.getOverview({
+      scope: 'month',
+      anchorDate: '2026-08-20',
+    })
+    expect(overview.context).toEqual({
+      anchorDate: '2026-08-20',
+      todayDate: '2026-09-02',
+      isToday: false,
+      scope: 'month',
+    })
+    expect(overview.cashflow).toEqual({ incomeMinor: 100, expenseMinor: 55, balanceMinor: 45 })
+    expect(overview.categoryBreakdown.expense).toEqual(expect.arrayContaining([
+      expect.objectContaining({ categoryId: expenseCategory.id, amountMinor: 55 }),
+    ]))
+    expect(overview.periods.find((period) => period.period === 'today')).toMatchObject({
+      incomeMinor: 0, expenseMinor: 5, balanceMinor: -5,
+    })
+    expect(overview.periods.find((period) => period.period === 'week')).toMatchObject({
+      incomeMinor: 100, expenseMinor: 5, balanceMinor: 95,
+    })
+    expect(overview.periods.find((period) => period.period === 'month')).toMatchObject({
+      incomeMinor: 100, expenseMinor: 55, balanceMinor: 45,
+    })
+    expect(overview.periods.find((period) => period.period === 'year')).toMatchObject({
+      incomeMinor: 100, expenseMinor: 105, balanceMinor: -5,
+    })
+    expect(overview.trend.at(-1)).toMatchObject({ month: '2026-08', incomeMinor: 100, expenseMinor: 55 })
+
+    // The September transaction remains part of the current balance even
+    // though it is outside the historical August period analysis.
+    expect(overview.assetTotalMinor).toBe(995)
+    expect(overview.accounts[0]?.currentBalanceMinor).toBe(995)
+    expect(overview.recentTransactions.every((row) => row.occurredAt < atShanghaiNoon('2026-08-21'))).toBe(true)
+
+    const all = fixture.projections.getOverview({
+      scope: 'all',
+      anchorDate: '2026-08-20',
+    })
+    expect(all.cashflow).toEqual({ incomeMinor: 0, expenseMinor: 15, balanceMinor: -15 })
+    expect(all.context.scope).toBe('all')
+  })
+
+  it('returns an independent five-row Recent Transactions cutoff with canonical ordering', () => {
+    const fixture = freshFixture()
+    const asset = account(fixture, 'anchored-recent-account')
+    const expenseCategory = firstCategory(fixture, 'expense')
+    const atShanghaiNoon = (date: string): number => Date.parse(`${date}T12:00:00+08:00`)
+
+    const ids: string[] = []
+    for (let index = 0; index < 6; index += 1) {
+      const row = transaction(fixture, `anchored-recent-${index}`, {
+        type: 'expense', amountMinor: index + 1, accountId: asset.id, categoryId: expenseCategory.id,
+        occurredAt: atShanghaiNoon(`2026-08-${String(14 + index).padStart(2, '0')}`),
+      })
+      ids.push(row.id)
+    }
+    const afterAnchor = transaction(fixture, 'anchored-recent-after', {
+      type: 'expense', amountMinor: 99, accountId: asset.id, categoryId: expenseCategory.id,
+      occurredAt: atShanghaiNoon('2026-08-21'),
+    })
+    const deleted = fixture.repository.getTransaction(ids[0]!)!
+    fixture.service.deleteTransaction(deleted.id, { expectedVersion: deleted.version })
+
+    const overview = fixture.projections.getOverview({
+      scope: 'today',
+      anchorDate: '2026-08-20',
+    })
+    expect(overview.recentTransactions).toHaveLength(5)
+    expect(overview.recentTransactions.map((row) => row.id)).toEqual(ids.slice(1).reverse())
+    expect(overview.recentTransactions.map((row) => row.id)).not.toContain(afterAnchor.id)
+    expect(overview.recentTransactions.every((row) => row.deletedAt === null)).toBe(true)
+  })
+
   it('keeps archived Category identity and current name in historical breakdowns', () => {
     const fixture = freshFixture()
     const asset = account(fixture, 'archived-category-account')
@@ -450,7 +551,7 @@ describe('Ledger Overview and trend projections', () => {
     const archived = fixture.service.archiveCategory(archivedCategory.id, { expectedVersion: 1 })
     expect(archived.archivedAt).not.toBeNull()
 
-    const overview = fixture.projections.getOverview('all')
+    const overview = fixture.projections.getOverview({ scope: 'all', anchorDate: undefined })
     expect(overview.categoryBreakdown.expense).toEqual(expect.arrayContaining([
       expect.objectContaining({
         categoryId: archivedCategory.id,
@@ -468,17 +569,17 @@ describe('Ledger Overview and trend projections', () => {
       type: 'expense', amountMinor: 25, accountId: asset.id, categoryId: expenseCategory.id,
       occurredAt: TEST_NOW - 1_000,
     })
-    const before = fixture.projections.getOverview('all')
+    const before = fixture.projections.getOverview({ scope: 'all', anchorDate: undefined })
     const adjustmentRow = adjustment(fixture, 'live-adjustment', asset.id, 10, -25)
     expect(adjustmentRow).not.toBeNull()
-    const adjusted = fixture.projections.getOverview('all')
+    const adjusted = fixture.projections.getOverview({ scope: 'all', anchorDate: undefined })
     expect(adjusted.accounts[0].currentBalanceMinor).toBe(10)
     expect(adjusted.cashflow).toEqual(before.cashflow)
     expect(adjusted.categoryBreakdown).toEqual(before.categoryBreakdown)
     expect(adjusted.trend).toEqual(before.trend)
 
     fixture.service.deleteTransaction(expense.id, { expectedVersion: 1 })
-    const deleted = fixture.projections.getOverview('all')
+    const deleted = fixture.projections.getOverview({ scope: 'all', anchorDate: undefined })
     expect(deleted.accounts[0].currentBalanceMinor).toBe(35)
     expect(deleted.cashflow).toEqual({ incomeMinor: 0, expenseMinor: 0, balanceMinor: 0 })
     expect(deleted.recentTransactions.map((row) => row.id)).toEqual([adjustmentRow!.id])
@@ -491,19 +592,19 @@ describe('Ledger Overview and trend projections', () => {
       name: 'Net worth card', type: 'credit_card', nature: 'liability', openingBalanceMinor: 100,
     })
     const expenseCategory = firstCategory(fixture, 'expense')
-    const before = fixture.projections.getOverview('all')
+    const before = fixture.projections.getOverview({ scope: 'all', anchorDate: undefined })
     transaction(fixture, 'card-expense', {
       type: 'expense', amountMinor: 20, accountId: card.id, categoryId: expenseCategory.id,
       occurredAt: TEST_NOW - 2_000,
     })
-    const afterExpense = fixture.projections.getOverview('all')
+    const afterExpense = fixture.projections.getOverview({ scope: 'all', anchorDate: undefined })
     expect(afterExpense.netWorthMinor).toBe(before.netWorthMinor - 20)
     const beforeTransfer = afterExpense.netWorthMinor
     transaction(fixture, 'card-repayment', {
       type: 'transfer', amountMinor: 30, fromAccountId: bank.id, toAccountId: card.id,
       occurredAt: TEST_NOW - 1_000,
     })
-    const afterTransfer = fixture.projections.getOverview('all')
+    const afterTransfer = fixture.projections.getOverview({ scope: 'all', anchorDate: undefined })
     expect(afterTransfer.netWorthMinor).toBe(beforeTransfer)
     expect(afterTransfer.cashflow).toEqual({ incomeMinor: 0, expenseMinor: 20, balanceMinor: -20 })
   })
@@ -523,7 +624,7 @@ describe('Ledger Overview and trend projections', () => {
     fixture.service.deleteTransaction(newest.id, { expectedVersion: 1 })
     adjustment(fixture, 'recent-adjustment', asset.id, -22, -20)
 
-    const overview = fixture.projections.getOverview('all')
+    const overview = fixture.projections.getOverview({ scope: 'all', anchorDate: undefined })
     expect(overview.recentTransactions).toHaveLength(5)
     expect(overview.recentTransactions.every((row) => row.deletedAt === null)).toBe(true)
     expect(overview.recentTransactions.some((row) => row.type === 'adjustment')).toBe(true)
@@ -566,7 +667,7 @@ describe('Ledger Overview and trend projections', () => {
     })
 
     expectLedgerCode(
-      () => fixture.projections.getOverview('all'),
+      () => fixture.projections.getOverview({ scope: 'all', anchorDate: undefined }),
       'ledger-money-overflow',
     )
   })
@@ -576,7 +677,7 @@ describe('Ledger Overview and trend projections', () => {
     databases.push(database)
     const repository = createLedgerRepository(database.db)
     const projections = createLedgerProjections(repository, { now: () => TEST_NOW })
-    expectLedgerCode(() => projections.getOverview('all'), 'ledger-not-found')
+    expectLedgerCode(() => projections.getOverview({ scope: 'all', anchorDate: undefined }), 'ledger-not-found')
     expectLedgerCode(() => projections.getTrend(0), 'ledger-not-found')
 
     const fixture = freshFixture()

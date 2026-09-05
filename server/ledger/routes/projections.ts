@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import {
   parseOverviewScope,
+  parseOverviewAnchorDate,
   parseTrendMonths,
 } from '../validation.js'
 import {
@@ -12,7 +13,10 @@ export function createProjectionRoutes(getProjections: LedgerProjectionFactory):
   const routes = new Hono()
 
   routes.get('/overview', (c) => withLedgerErrors(c, () => c.json(
-    getProjections().getOverview(parseOverviewScope(c.req.query('scope'))),
+    getProjections().getOverview({
+      scope: parseOverviewScope(c.req.query('scope')),
+      anchorDate: parseOverviewAnchorDate(c.req.query('anchorDate')),
+    }),
   )))
 
   routes.get('/trend', (c) => withLedgerErrors(c, () => c.json(

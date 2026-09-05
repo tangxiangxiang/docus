@@ -849,6 +849,7 @@ describe('Ledger query and projection API', () => {
 
     const all = await json(await authenticated('/api/ledger/overview?scope=all'))
     const today = await json(await authenticated('/api/ledger/overview?scope=today'))
+    const historical = await json(await authenticated('/api/ledger/overview?scope=month&anchorDate=2026-08-20'))
     expect(all).toMatchObject({
       currency: 'CNY',
       currencyExponent: 2,
@@ -858,6 +859,12 @@ describe('Ledger query and projection API', () => {
       cashflow: { incomeMinor: 100, expenseMinor: 25, balanceMinor: 75 },
     })
     expect(today.cashflow).toEqual({ incomeMinor: 0, expenseMinor: 25, balanceMinor: -25 })
+    expect(historical.context).toMatchObject({
+      anchorDate: '2026-08-20',
+      scope: 'month',
+      isToday: false,
+    })
+    expect(historical.cashflow).toEqual({ incomeMinor: 0, expenseMinor: 0, balanceMinor: 0 })
     for (const key of [
       'currency', 'currencyExponent', 'assetTotalMinor', 'liabilityTotalMinor', 'netWorthMinor',
       'accounts', 'periods', 'trend', 'recentTransactions',
@@ -866,6 +873,19 @@ describe('Ledger query and projection API', () => {
     }
     expect(all.periods.map((period: any) => period.period)).toEqual(['today', 'week', 'month', 'year'])
     expect(all.recentTransactions).toHaveLength(2)
+
+    const invalidAnchor = await authenticated('/api/ledger/overview?scope=month&anchorDate=2026-02-30')
+    expect(invalidAnchor.status).toBe(400)
+    expect(await json(invalidAnchor)).toMatchObject({
+      code: 'ledger-validation-failed',
+      details: { field: 'anchorDate' },
+    })
+    const futureAnchor = await authenticated('/api/ledger/overview?scope=month&anchorDate=2999-01-01')
+    expect(futureAnchor.status).toBe(400)
+    expect(await json(futureAnchor)).toMatchObject({
+      code: 'ledger-validation-failed',
+      details: { field: 'anchorDate' },
+    })
 
     const trend = await authenticated('/api/ledger/trend?months=3')
     expect(trend.status).toBe(200)

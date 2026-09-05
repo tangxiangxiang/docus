@@ -17,6 +17,7 @@ import type {
   LedgerCategorySlice,
   LedgerCashflowSummary,
   LedgerMovementSummary,
+  LedgerOverviewContext,
   LedgerOverviewDto,
   LedgerOverviewScope,
   LedgerPeriodName,
@@ -47,8 +48,12 @@ import {
 } from './money.js'
 import {
   calendarMonthRanges,
+  calendarMonthRangesForLocalDate,
+  ledgerLocalDateForInstant,
   monthRange,
+  parseLedgerLocalDate,
   periodRange,
+  periodRangesForLocalDate,
   periodRangesForInstant,
   assertUtcMilliseconds,
 } from './time.js'
@@ -65,6 +70,11 @@ import type {
 const PERIOD_ORDER = ['today', 'week', 'month', 'year'] as const
 const RECENT_TRANSACTION_LIMIT = 5
 
+export interface LedgerOverviewInput {
+  readonly scope: LedgerOverviewScope
+  readonly anchorDate?: string
+}
+
 export interface LedgerProjectionDependencies {
   readonly now?: () => number
 }
@@ -75,7 +85,7 @@ export interface LedgerProjections {
     accountId: string,
     query: LedgerTransactionQuery,
   ): LedgerAccountTransactionsDto
-  getOverview(scope: LedgerOverviewScope): LedgerOverviewDto
+  getOverview(input: LedgerOverviewInput): LedgerOverviewDto
   getTrend(months: number): readonly LedgerTrendPoint[]
 }
 
@@ -296,6 +306,20 @@ function trendForTransactions(
   }))
 }
 
+function trendForRanges(
+  ranges: readonly { readonly month: string; readonly startMs: number; readonly endMs: number }[],
+  transactions: readonly LedgerTransaction[],
+): readonly LedgerTrendPoint[] {
+  return ranges.map((range) => ({
+    month: range.month,
+    startAt: range.startMs,
+    endAt: range.endMs,
+    ...cashflowForTransactions(
+      transactions.filter((transaction) => isWithinRange(transaction.occurredAt, range)),
+    ),
+  }))
+}
+
 function normalizeTransactionQuery(query: LedgerTransactionQuery): LedgerTransactionQueryOptions {
   const limit = query.limit ?? LEDGER_LIST_LIMIT_DEFAULT
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > LEDGER_LIST_LIMIT_MAX) {
@@ -398,16 +422,47 @@ export function createLedgerProjections(
     }
   }
 
-  function getOverview(scope: LedgerOverviewScope): LedgerOverviewDto {
+  function getOverview(input: LedgerOverviewInput): LedgerOverviewDto {
     const settings = requireSettings()
     const nowMs = captureNow()
+    const todayDate = ledgerLocalDateForInstant(nowMs, settings.timezone)
+    const resolvedAnchorDate = input.anchorDate === undefined
+      ? todayDate
+      : parseLedgerLocalDate(input.anchorDate, 'anchorDate')
+    if (resolvedAnchorDate > todayDate) {
+      throw new LedgerError(
+        'ledger-validation-failed',
+        400,
+        'anchorDate cannot be in the future',
+        { field: 'anchorDate' },
+      )
+    }
+
+    const scope = input.scope
+    const fixedPeriods = periodRangesForLocalDate(resolvedAnchorDate, settings.timezone)
+    const trendRanges = calendarMonthRangesForLocalDate(6, resolvedAnchorDate, settings.timezone)
     const allAccounts = repository.listAccounts({ includeArchived: true })
     const accountStates = allAccounts.map(accountState)
     const activeAccounts = accountStates.filter((state) => state.account.archivedAt === null)
-    const activeTransactions = repository.listActiveTransactions()
     const categories = new Map(
       repository.listCategories({ includeArchived: true }).map((category) => [category.id, category]),
     )
+
+    const periodWindowStart = Math.min(
+      trendRanges[0]!.startMs,
+      ...Object.values(fixedPeriods).map((range) => range.startMs),
+    )
+    const periodWindowEnd = Math.max(
+      trendRanges[trendRanges.length - 1]!.endMs,
+      ...Object.values(fixedPeriods).map((range) => range.endMs),
+    )
+    const periodTransactions = repository.listActiveTransactionsInRange({
+      from: periodWindowStart,
+      to: periodWindowEnd,
+    })
+    const allTransactions = scope === 'all'
+      ? repository.listActiveTransactionsInRange({ to: fixedPeriods.today.endMs })
+      : null
 
     const assetTotalMinor = checkedSumMinor(
       accountStates
@@ -421,12 +476,11 @@ export function createLedgerProjections(
     )
 
     const scopedTransactions = scope === 'all'
-      ? activeTransactions
-      : activeTransactions.filter((transaction) => isWithinRange(
+      ? allTransactions!
+      : periodTransactions.filter((transaction) => isWithinRange(
         transaction.occurredAt,
-        periodRange(scope, nowMs, settings.timezone),
+        fixedPeriods[scope],
       ))
-    const fixedPeriods = periodRangesForInstant(nowMs, settings.timezone)
     const month = monthRange(nowMs, settings.timezone)
 
     const accounts: readonly LedgerAccountSummary[] = activeAccounts.map((state) => ({
@@ -435,6 +489,12 @@ export function createLedgerProjections(
     }))
 
     return {
+      context: {
+        anchorDate: resolvedAnchorDate,
+        todayDate,
+        isToday: resolvedAnchorDate === todayDate,
+        scope,
+      } satisfies LedgerOverviewContext,
       currency: settings.baseCurrency,
       currencyExponent: currencyExponentFor(settings.baseCurrency),
       assetTotalMinor,
@@ -446,11 +506,11 @@ export function createLedgerProjections(
       periods: PERIOD_ORDER.map((period) => periodSummary(
         period,
         fixedPeriods[period],
-        activeTransactions,
+        periodTransactions,
       )),
-      trend: trendForTransactions(6, nowMs, settings.timezone, activeTransactions),
-      recentTransactions: activeTransactions
-        .slice(0, RECENT_TRANSACTION_LIMIT)
+      trend: trendForRanges(trendRanges, periodTransactions),
+      recentTransactions: repository
+        .listRecentActiveTransactionsBefore(fixedPeriods.today.endMs, RECENT_TRANSACTION_LIMIT)
         .map(transactionDto),
     }
   }

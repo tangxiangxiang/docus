@@ -182,7 +182,7 @@ describe('Ledger persistent idempotency replay', () => {
     expect(transactionResult.responseStatus).toBe(201)
     const transaction = JSON.parse(transactionResult.responseBodyJson) as LedgerTransactionDto
 
-    expect(projectionsA.getOverview('all')).toMatchObject({
+    expect(projectionsA.getOverview({ scope: 'all', anchorDate: undefined })).toMatchObject({
       assetTotalMinor: 375,
       liabilityTotalMinor: 0,
       netWorthMinor: 375,
@@ -218,7 +218,7 @@ describe('Ledger persistent idempotency replay', () => {
     expect(serviceB.listCategories(undefined, false).find((value) => value.id === category.id))
       .toEqual(category)
     expect(serviceB.getTransaction(transaction.id)).toEqual(transaction)
-    expect(projectionsB.getOverview('all')).toMatchObject({
+    expect(projectionsB.getOverview({ scope: 'all', anchorDate: undefined })).toMatchObject({
       assetTotalMinor: 375,
       liabilityTotalMinor: 0,
       netWorthMinor: 375,
