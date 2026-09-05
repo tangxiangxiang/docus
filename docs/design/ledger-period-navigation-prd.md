@@ -4,7 +4,7 @@
 
 **模块：** Ledger
 
-**状态：** Product Review: Ready for Review
+**状态：** Product Review: Accepted
 
 **类型：** 功能增强
 
@@ -889,7 +889,7 @@ recentTransactions → 截止 anchorDate 当天结束
 
 ## 22. Product Review exit criteria
 
-本 PRD 可进入 Product Review: Accepted，前提是 Review 确认：
+本 PRD 已达到 Product Review: Accepted。Review 已确认：
 
 - 一个统一 `anchorDate`；
 - 当前状态与历史期间数据边界清晰；
@@ -913,4 +913,4 @@ recentTransactions → 截止 anchorDate 当天结束
 - 不需要历史 balance snapshot 才能交付；
 - 无阻塞 Product Open Question。
 
-本文件当前状态仍为 `Product Review: Ready for Review`，不代表已经 Accepted。
+本文件当前状态为 `Product Review: Accepted`。
