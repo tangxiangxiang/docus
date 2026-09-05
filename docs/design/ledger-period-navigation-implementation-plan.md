@@ -6,7 +6,7 @@
 
 **Source PRD：** `docs/design/ledger-period-navigation-prd.md`
 
-**Audited main HEAD：** `5881ba6b14c21d5df51f8378e4a1b5777dd4a999`
+**Audited main HEAD：** `0d9cd36fd1be6d67ddb8f3b1d227fe57a7a696c5`
 
 **Audit working tree：** clean；`main` synchronized with `github/main`
 
@@ -14,7 +14,7 @@
 
 **Implementation gate：** `Implementation Plan: Ready for Review`；`Ready for Implementation: No`
 
-**Baseline：** `5881ba6b14c21d5df51f8378e4a1b5777dd4a999`
+**Baseline：** `0d9cd36fd1be6d67ddb8f3b1d227fe57a7a696c5`
 
 **Implementation Review：** Ready for Review
 
@@ -313,9 +313,7 @@ scope = month
         ▼
 Frontend API
 
-GET /api/ledger/overview
-    ?scope=month
-    &anchorDate=2026-08-20
+GET /api/ledger/overview?scope=month&anchorDate=2026-08-20
         │
         ▼
 Server Route
@@ -1218,15 +1216,64 @@ getLedgerOverview(input: {
 })
 ```
 
-调用方必须传入完整 input；`anchorDate: undefined` 只表示 canonical
-today request，不得通过省略 positional 参数隐式改变既有 historical context。
+调用方必须传入完整 object input。`scope` 是必填的 request context，任何
+Overview request 都必须序列化 `scope`；不得通过省略它让 Server 使用
+`scope=all` 的默认语义。
+
+`anchorDate: undefined` 只表示 canonical today request，并且只允许省略
+`anchorDate` query parameter。它不得通过省略 object input field 或改回旧的
+positional signature 隐式改变既有 historical context，也不得省略 `scope`。
+
+Canonical today 的 HTTP contract：
+
+```text
+input:
+{
+  scope: 'month',
+  anchorDate: undefined,
+}
+
+request:
+GET /api/ledger/overview?scope=month
+```
+
+此时 query 中必须存在 `scope=month`，且不得存在 `anchorDate`。
+
+Historical request 的 HTTP contract：
+
+```text
+input:
+{
+  scope: 'month',
+  anchorDate: '2026-08-20',
+}
+
+request:
+GET /api/ledger/overview?scope=month&anchorDate=2026-08-20
+```
+
+其它 scope 同理：canonical today 始终发送对应的 `scope`，只在存在
+explicit historical anchor 时发送 `anchorDate`：
+
+```text
+scope=today + anchorDate=undefined → ?scope=today
+scope=week  + anchorDate=undefined → ?scope=week
+scope=month + anchorDate=undefined → ?scope=month
+scope=year  + anchorDate=undefined → ?scope=year
+scope=all   + anchorDate=undefined → ?scope=all
+```
+
+Overview query invariant：
+
+```text
+Overview requests always send scope.
+Canonical today omits only anchorDate; it never omits scope.
+```
 
 请求：
 
 ```text
-/api/ledger/overview
-?scope=month
-&anchorDate=2026-08-20
+/api/ledger/overview?scope=month&anchorDate=2026-08-20
 ```
 
 today canonical route：
@@ -1235,7 +1282,7 @@ today canonical route：
 anchorDate === undefined
 ```
 
-时不发送 query。
+时只省略 `anchorDate` query parameter；`scope` query parameter 仍然必须发送。
 
 ---
 
@@ -1469,6 +1516,10 @@ setOverviewRequestContext(
 refreshOverview(): Promise<LedgerOverviewRefreshResult>
 ```
 
+`LedgerOverviewRequestContext.scope` 始终是必填值。`refreshOverview()` 的
+HTTP 序列化不得因为 `anchorDate` 为 `undefined` 而省略 `scope`；canonical
+today 只省略 `anchorDate` query parameter。
+
 其中：
 
 ```text
@@ -1509,11 +1560,21 @@ overviewRequestedAnchorDate = undefined
 
 并在后续 refresh 中持续保持 `undefined`，以便由 Server 决定当天日期。
 
+这不意味着省略整个 Overview query。Canonical `/ledger` 必须沿用当前
+`overviewScope` 序列化 `scope`，例如当前 scope 为 `month` 时请求：
+
+```text
+GET /api/ledger/overview?scope=month
+```
+
 必须保持以下 invariant：
 
 ```text
 Omitting an explicit anchor argument must never reset
 an existing historical request context to today.
+
+Overview requests always send scope.
+Canonical today omits only anchorDate; it never omits scope.
 ```
 
 请求开始前使用现有：
@@ -1817,6 +1878,14 @@ overviewRequestedAnchorDate = undefined
 
 ```text
 GET /api/ledger/overview?scope=<current>
+```
+
+其中 `<current>` 是当前 Store request context 中的必填 `scope`；Return
+Today 只清除 `anchorDate`，不得删除 `scope` query parameter。比如当前
+scope 为 `month` 时，实际请求必须是：
+
+```text
+GET /api/ledger/overview?scope=month
 ```
 
 不要把：
@@ -2654,13 +2723,13 @@ balance history。
 覆盖：
 
 ```text
-GET /api/ledger/overview
+GET /api/ledger/overview?scope=<scope>
 ```
 
-### Omitted
+### Canonical today / omitted anchorDate
 
 ```text
-?scope=month
+GET /api/ledger/overview?scope=month
 ```
 
 成功。
@@ -2732,28 +2801,50 @@ ordering stable
 
 覆盖：
 
-```text
-getLedgerOverview('month')
+Canonical today 使用新的 object signature：
+
+```ts
+getLedgerOverview({
+  scope: 'month',
+  anchorDate: undefined,
+})
 ```
 
-URL 不含：
+必须断言 request 为：
 
 ```text
-anchorDate
+/api/ledger/overview?scope=month
 ```
 
-以及：
+并且同时断言：
 
 ```text
-getLedgerOverview('month', '2026-08-20')
+scope === 'month'
+anchorDate 参数不存在
 ```
 
-URL 包含：
+Historical request 也使用 object signature：
+
+```ts
+getLedgerOverview({
+  scope: 'month',
+  anchorDate: '2026-08-20',
+})
+```
+
+必须断言：
 
 ```text
-scope=month
-anchorDate=2026-08-20
+path === /api/ledger/overview
+scope === 'month'
+anchorDate === '2026-08-20'
 ```
+
+断言应优先读取 `URLSearchParams`，不依赖 query parameter 的字符串顺序，
+除非当前项目测试风格明确固定顺序。
+
+Frontend API Tests 中不得保留任何旧 positional signature；所有调用都必须
+使用上面的完整 object input，并显式提供 `scope` 与 `anchorDate`。
 
 Overview malformed-response test：
 
@@ -3667,6 +3758,8 @@ git status --short
 [ ] historical retry preserves requested anchor 已冻结
 [ ] mutation refresh preserves requested anchor 已冻结
 [ ] canonical today keeps requested anchor undefined 已冻结
+[ ] canonical today serializes scope and omits only anchorDate 已冻结
+[ ] Frontend API Tests use object signature and assert scope is present 已冻结
 [ ] route query ownership 已冻结
 [ ] invalid/future handling 已冻结
 [ ] Overview request outcome is request-specific 已冻结
@@ -3706,6 +3799,7 @@ No calendar authority ambiguity
 No current-vs-historical balance ambiguity
 No URL source-of-truth ambiguity
 No stale-data ambiguity
+Overview requests always serialize scope; canonical today omits only anchorDate
 Overview request outcome is request-specific and epoch-bound
 Historical scope change/retry/mutation refresh preserve requested anchor
 Current Snapshot retains full active account history
