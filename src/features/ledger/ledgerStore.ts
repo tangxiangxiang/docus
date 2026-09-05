@@ -47,8 +47,8 @@ import {
 } from './api'
 import {
   LedgerApiError,
-  isTransportOutcomeUnknown,
   normalizeLedgerError,
+  shouldKeepPendingCreate,
 } from './ledgerErrors'
 import {
   clearLedgerPendingCreate,
@@ -57,6 +57,7 @@ import {
   type LedgerCreateOperation,
   type LedgerCreatePayload,
   type LedgerPendingCreateIntent,
+  type LedgerPendingCreateReadResult,
   writeLedgerPendingCreate,
 } from './recovery'
 
@@ -69,6 +70,7 @@ export type LedgerWorkspaceState =
   | 'RECOVERABLE_ERROR'
 
 export type LedgerMutationState = 'IDLE' | 'SUBMITTING' | 'CONFIRMED' | 'ERROR' | 'UNCERTAIN'
+export type LedgerRecoveryState = 'NONE' | 'PENDING' | 'BLOCKED'
 
 interface LedgerStoreState {
   settings: LedgerSettingsDto | null
@@ -85,6 +87,9 @@ interface LedgerStoreState {
   transactionQuery: LedgerTransactionQuery
   mutationState: LedgerMutationState
   pendingCreate: LedgerPendingCreateIntent | null
+  recoveryState: LedgerRecoveryState
+  recoveryBlockedReason: string | null
+  recoveryGateActive: boolean
   requestEpoch: number
 }
 
@@ -92,7 +97,11 @@ interface LedgerStoreState {
 // than the shared transport contract.
 import type { LedgerAccountTransactionsDto } from '../../../shared/ledgerProtocol'
 
-const initialPending = readLedgerPendingCreate()
+const initialRecovery = readLedgerPendingCreate()
+const initialPending = initialRecovery.status === 'valid' ? initialRecovery.intent : null
+const initialRecoveryState: LedgerRecoveryState = initialRecovery.status === 'valid'
+  ? 'PENDING'
+  : initialRecovery.status === 'invalid' ? 'BLOCKED' : 'NONE'
 const state = reactive<LedgerStoreState>({
   settings: null,
   accounts: [],
@@ -108,6 +117,9 @@ const state = reactive<LedgerStoreState>({
   transactionQuery: { type: 'all', limit: 50 },
   mutationState: initialPending ? 'UNCERTAIN' : 'IDLE',
   pendingCreate: initialPending,
+  recoveryState: initialRecoveryState,
+  recoveryBlockedReason: initialRecovery.status === 'invalid' ? initialRecovery.reason : null,
+  recoveryGateActive: initialRecovery.status === 'valid' || initialRecovery.status === 'invalid',
   requestEpoch: 0,
 })
 
@@ -139,6 +151,50 @@ function isCurrent(epoch: number): boolean {
   return state.requestEpoch === epoch
 }
 
+function applyRecoveryReadResult(result: LedgerPendingCreateReadResult): void {
+  switch (result.status) {
+    case 'valid':
+      state.pendingCreate = result.intent
+      state.recoveryState = 'PENDING'
+      state.recoveryBlockedReason = null
+      state.recoveryGateActive = true
+      state.mutationState = 'UNCERTAIN'
+      return
+    case 'invalid':
+      // Keep the record in storage. Removing an untrusted record would make a
+      // later reload look safe and allow a duplicate create intent.
+      state.pendingCreate = null
+      state.recoveryState = 'BLOCKED'
+      state.recoveryBlockedReason = result.reason
+      state.recoveryGateActive = true
+      state.mutationState = 'ERROR'
+      return
+    case 'none':
+      if (state.pendingCreate) {
+        state.recoveryState = 'BLOCKED'
+        state.recoveryBlockedReason = 'A previously loaded Ledger create intent is missing from sessionStorage.'
+        state.recoveryGateActive = true
+        state.mutationState = 'ERROR'
+      } else {
+        state.recoveryState = 'NONE'
+        state.recoveryBlockedReason = null
+        state.recoveryGateActive = false
+        state.mutationState = 'IDLE'
+      }
+      return
+    case 'unavailable':
+      // A valid in-memory pending intent remains safer than discarding it. If
+      // there is no record, the create boundary will refuse new mutations
+      // when it cannot persist a snapshot.
+      if (!state.pendingCreate && state.recoveryState !== 'BLOCKED') {
+        state.recoveryState = 'NONE'
+        state.recoveryBlockedReason = null
+        state.recoveryGateActive = false
+        state.mutationState = 'IDLE'
+      }
+  }
+}
+
 function clearPresentation(): void {
   state.settings = null
   state.accounts = []
@@ -150,7 +206,7 @@ function clearPresentation(): void {
   state.error = null
   state.loading = false
   state.workspaceState = 'BOOTSTRAPPING'
-  state.mutationState = state.pendingCreate ? 'UNCERTAIN' : 'IDLE'
+  state.mutationState = state.recoveryState === 'PENDING' ? 'UNCERTAIN' : state.recoveryState === 'BLOCKED' ? 'ERROR' : 'IDLE'
 }
 
 async function loadData(
@@ -180,11 +236,7 @@ async function bootstrap(): Promise<void> {
   state.loading = true
   state.error = null
   state.workspaceState = 'BOOTSTRAPPING'
-  const pending = readLedgerPendingCreate()
-  if (pending) {
-    state.pendingCreate = pending
-    state.mutationState = 'UNCERTAIN'
-  }
+  applyRecoveryReadResult(readLedgerPendingCreate())
 
   const pendingRequest = (async () => {
     try {
@@ -300,6 +352,16 @@ async function beginCreate<T>(
   payload: LedgerCreatePayload,
   request: (key: string) => Promise<T>,
 ): Promise<T> {
+  if (state.recoveryState === 'BLOCKED') {
+    const blocked = new LedgerApiError(
+      'An unverified Ledger create record blocks new creates.',
+      409,
+      'ledger-recovery-blocked',
+    )
+    state.error = blocked
+    state.mutationState = 'ERROR'
+    throw blocked
+  }
   if (state.pendingCreate) {
     throw new LedgerApiError(
       'An unresolved Ledger create intent must be recovered first.',
@@ -313,24 +375,45 @@ async function beginCreate<T>(
     generatedIdempotencyKey(),
     ownerIdentity.value,
   )
+  const persisted = writeLedgerPendingCreate(intent)
+  if (!persisted.ok) {
+    const storageError = new LedgerApiError(
+      persisted.reason,
+      0,
+      'ledger-recovery-storage-unavailable',
+    )
+    state.error = storageError
+    state.mutationState = 'ERROR'
+    throw storageError
+  }
   state.pendingCreate = intent
+  state.recoveryState = 'PENDING'
+  state.recoveryBlockedReason = null
+  state.recoveryGateActive = false
+  state.error = null
   state.mutationState = 'SUBMITTING'
-  writeLedgerPendingCreate(intent)
   try {
     const result = await request(intent.idempotencyKey)
     clearLedgerPendingCreate()
     state.pendingCreate = null
+    state.recoveryState = 'NONE'
+    state.recoveryBlockedReason = null
+    state.recoveryGateActive = false
     state.mutationState = 'CONFIRMED'
     await refreshData()
     return result
   } catch (error) {
     const normalized = normalizeLedgerError(error)
-    if (isTransportOutcomeUnknown(normalized)) {
+    if (shouldKeepPendingCreate(normalized)) {
+      state.recoveryGateActive = true
       state.mutationState = 'UNCERTAIN'
       // Keep the exact record and payload. The user must replay this intent.
     } else {
       clearLedgerPendingCreate()
       state.pendingCreate = null
+      state.recoveryState = 'NONE'
+      state.recoveryBlockedReason = null
+      state.recoveryGateActive = false
       state.mutationState = 'ERROR'
     }
     throw normalized
@@ -362,16 +445,22 @@ async function retryPendingCreate(): Promise<unknown> {
     }
     clearLedgerPendingCreate()
     state.pendingCreate = null
+    state.recoveryState = 'NONE'
+    state.recoveryBlockedReason = null
     state.mutationState = 'CONFIRMED'
     await refreshData()
     return result
   } catch (error) {
     const normalized = normalizeLedgerError(error)
-    if (isTransportOutcomeUnknown(normalized)) {
+    if (shouldKeepPendingCreate(normalized)) {
+      state.recoveryGateActive = true
       state.mutationState = 'UNCERTAIN'
     } else {
       clearLedgerPendingCreate()
       state.pendingCreate = null
+      state.recoveryState = 'NONE'
+      state.recoveryBlockedReason = null
+      state.recoveryGateActive = false
       state.mutationState = 'ERROR'
     }
     throw normalized
@@ -387,7 +476,16 @@ function setOwnerIdentity(identity: string | null): void {
     // generated automatically.
     clearLedgerPendingCreate()
     state.pendingCreate = null
+    state.recoveryState = 'NONE'
+    state.recoveryBlockedReason = null
+    state.recoveryGateActive = false
     state.mutationState = 'IDLE'
+  }
+}
+
+function dismissRecoveryGate(): void {
+  if (state.pendingCreate === null && state.recoveryState === 'NONE') {
+    state.recoveryGateActive = false
   }
 }
 
@@ -413,6 +511,10 @@ export interface LedgerStore {
   readonly transactionQuery: ComputedRef<LedgerTransactionQuery>
   readonly mutationState: ComputedRef<LedgerMutationState>
   readonly pendingCreate: ComputedRef<LedgerPendingCreateIntent | null>
+  readonly recoveryState: ComputedRef<LedgerRecoveryState>
+  readonly recoveryBlockedReason: ComputedRef<string | null>
+  readonly hasUnresolvedCreate: ComputedRef<boolean>
+  readonly recoveryGateVisible: ComputedRef<boolean>
   readonly bootstrap: () => Promise<void>
   readonly refreshData: () => Promise<void>
   readonly refreshOverview: (scope: LedgerOverviewScope) => Promise<void>
@@ -437,6 +539,7 @@ export interface LedgerStore {
   readonly patchTransaction: (id: string, body: LedgerTransactionPatchInput) => Promise<LedgerTransactionDto>
   readonly deleteTransaction: (id: string, expectedVersion: number) => Promise<LedgerTransactionDto>
   readonly retryPendingCreate: () => Promise<unknown>
+  readonly dismissRecoveryGate: () => void
   readonly setOwnerIdentity: (identity: string | null) => void
 }
 
@@ -459,6 +562,10 @@ const store: LedgerStore = {
   transactionQuery: computed(() => state.transactionQuery),
   mutationState: computed(() => state.mutationState),
   pendingCreate: computed(() => state.pendingCreate),
+  recoveryState: computed(() => state.recoveryState),
+  recoveryBlockedReason: computed(() => state.recoveryBlockedReason),
+  hasUnresolvedCreate: computed(() => state.recoveryState !== 'NONE'),
+  recoveryGateVisible: computed(() => state.recoveryGateActive),
   bootstrap,
   refreshData,
   refreshOverview,
@@ -467,6 +574,9 @@ const store: LedgerStore = {
   getAccount: async (id) => {
     const result = await getLedgerAccount(id)
     state.accountDetail = result
+    const index = state.accounts.findIndex((account) => account.id === result.id)
+    if (index >= 0) state.accounts[index] = result
+    else state.accounts.push(result)
     return result
   },
   getTransaction,
@@ -495,6 +605,7 @@ const store: LedgerStore = {
   patchTransaction: async (id, body) => { const result = await patchLedgerTransaction(id, body); await refreshData(); return result },
   deleteTransaction: async (id, version) => { const result = await deleteLedgerTransaction(id, version); await refreshData(); return result },
   retryPendingCreate,
+  dismissRecoveryGate,
   setOwnerIdentity,
 }
 
@@ -517,9 +628,14 @@ export function resetLedgerStoreForTesting(): void {
   state.transactionQuery = { type: 'all', limit: 50 }
   state.mutationState = 'IDLE'
   state.pendingCreate = null
+  state.recoveryState = 'NONE'
+  state.recoveryBlockedReason = null
+  state.recoveryGateActive = false
   state.requestEpoch = 0
   bootstrapPromise = null
   ownerIdentity.value = null
+
+  applyRecoveryReadResult(readLedgerPendingCreate())
 }
 
 subscribeAuthSessionRequired(() => {

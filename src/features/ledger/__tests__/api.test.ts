@@ -21,6 +21,23 @@ function response(body: unknown, status = 200): Response {
   })
 }
 
+function rawResponse(body: string, status = 200): Response {
+  return new Response(body, {
+    status,
+    headers: { 'content-type': 'application/json' },
+  })
+}
+
+const expensePayload = {
+  type: 'expense' as const,
+  amountMinor: 3800,
+  accountId: 'account-1',
+  categoryId: 'category-1',
+  occurredAt: 1_700_000_000_000,
+  payee: '',
+  note: '',
+}
+
 describe('Ledger frontend API boundary', () => {
   beforeEach(() => mockedAuthFetch.mockReset())
 
@@ -66,9 +83,36 @@ describe('Ledger frontend API boundary', () => {
     mockedAuthFetch.mockResolvedValue(response({ error: 'busy', code: 'ledger-write-busy' }, 503))
     const busy = await getLedgerSettings().catch((error: unknown) => error)
     expect(busy).toBeInstanceOf(LedgerApiError)
-    expect(busy).toMatchObject({ code: 'ledger-write-busy', kind: 'temporary', transportOutcomeUnknown: false })
+    expect(busy).toMatchObject({
+      code: 'ledger-write-busy',
+      kind: 'temporary',
+      transportOutcomeUnknown: false,
+      requiresIdempotentReplay: false,
+    })
 
     mockedAuthFetch.mockResolvedValue(response({ hasCreatedAccount: false }))
     await expect(getLedgerSettings()).rejects.toMatchObject({ code: 'ledger-malformed-response' })
+  })
+
+  it('retains replay classification when a successful create body is unreadable or malformed', async () => {
+    mockedAuthFetch.mockResolvedValueOnce(rawResponse('{broken', 201))
+    const unreadable = await createLedgerTransaction(expensePayload, 'key-success-body-lost').catch((error: unknown) => error)
+    expect(unreadable).toBeInstanceOf(LedgerApiError)
+    expect(unreadable).toMatchObject({
+      status: 201,
+      code: 'ledger-malformed-response',
+      transportOutcomeUnknown: false,
+      requiresIdempotentReplay: true,
+    })
+
+    mockedAuthFetch.mockResolvedValueOnce(response({ id: 'missing-required-transaction-fields' }, 201))
+    const malformed = await createLedgerTransaction(expensePayload, 'key-success-body-malformed').catch((error: unknown) => error)
+    expect(malformed).toBeInstanceOf(LedgerApiError)
+    expect(malformed).toMatchObject({
+      status: 201,
+      code: 'ledger-malformed-response',
+      transportOutcomeUnknown: false,
+      requiresIdempotentReplay: true,
+    })
   })
 })

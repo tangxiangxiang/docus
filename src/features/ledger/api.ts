@@ -60,6 +60,10 @@ export type LedgerTransactionPatchInput = {
 
 type ResponseValidator<T> = (value: unknown) => T
 
+interface RequestOptions {
+  readonly createMutation?: boolean
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
@@ -157,6 +161,7 @@ async function request<T>(
   path: string,
   init: RequestInit = {},
   validate: ResponseValidator<T> = objectResponse<T>('response'),
+  options: RequestOptions = {},
 ): Promise<T> {
   let response: Response
   try {
@@ -168,6 +173,7 @@ async function request<T>(
       'ledger-network-error',
       null,
       true,
+      options.createMutation === true,
     )
   }
 
@@ -180,9 +186,30 @@ async function request<T>(
   try {
     body = await response.json()
   } catch {
-    throw malformed('JSON response')
+    throw new LedgerApiError(
+      'Ledger returned an unreadable JSON response.',
+      response.status,
+      'ledger-malformed-response',
+      null,
+      false,
+      options.createMutation === true,
+    )
   }
-  return validate(body)
+  try {
+    return validate(body)
+  } catch (error) {
+    if (error instanceof LedgerApiError && error.code === 'ledger-malformed-response') {
+      throw new LedgerApiError(
+        error.message,
+        response.status,
+        error.code,
+        error.details,
+        false,
+        options.createMutation === true,
+      )
+    }
+    throw error
+  }
 }
 
 function jsonInit(
@@ -212,7 +239,7 @@ export function createLedgerSettings(
   body: LedgerSettingsCreateRequest,
   idempotencyKey: string,
 ): Promise<LedgerSettingsDto> {
-  return request('/api/ledger/settings', jsonInit('POST', body, idempotencyKey), settingsResponse)
+  return request('/api/ledger/settings', jsonInit('POST', body, idempotencyKey), settingsResponse, { createMutation: true })
 }
 
 export function patchLedgerSettings(body: {
@@ -239,7 +266,7 @@ export function createLedgerAccount(
   body: LedgerAccountCreateRequest,
   idempotencyKey: string,
 ): Promise<LedgerAccountDto> {
-  return request(`/api/ledger/accounts`, jsonInit('POST', body, idempotencyKey), accountResponse)
+  return request(`/api/ledger/accounts`, jsonInit('POST', body, idempotencyKey), accountResponse, { createMutation: true })
 }
 
 export function patchLedgerAccount(id: string, body: LedgerAccountPatchInput): Promise<LedgerAccountDto> {
@@ -274,7 +301,7 @@ export function listLedgerCategories(
 }
 
 export function createLedgerCategory(body: LedgerCategoryCreateRequest, idempotencyKey: string): Promise<LedgerCategoryDto> {
-  return request('/api/ledger/categories', jsonInit('POST', body, idempotencyKey), categoryResponse)
+  return request('/api/ledger/categories', jsonInit('POST', body, idempotencyKey), categoryResponse, { createMutation: true })
 }
 
 export function patchLedgerCategory(id: string, body: LedgerCategoryPatchInput): Promise<LedgerCategoryDto> {
@@ -301,7 +328,7 @@ export function createLedgerTransaction(
   body: LedgerIncomeCreateRequest | LedgerExpenseCreateRequest | LedgerTransferCreateRequest,
   idempotencyKey: string,
 ): Promise<LedgerTransactionDto> {
-  return request('/api/ledger/transactions', jsonInit('POST', body, idempotencyKey), transactionResponse)
+  return request('/api/ledger/transactions', jsonInit('POST', body, idempotencyKey), transactionResponse, { createMutation: true })
 }
 
 export function getLedgerTransaction(id: string): Promise<LedgerTransactionDto> {

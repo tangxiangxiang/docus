@@ -24,7 +24,7 @@ function operationLabel(operation: LedgerPendingCreateIntent['operation']): stri
     <p class="ledger-eyebrow">需要确认</p>
     <h2 id="ledger-recovery-title">上一次{{ operationLabel(intent.operation) }}保存结果未知</h2>
     <p>
-      网络在返回结果前中断了。为避免重复保存，已保留这次记账意图；请用同一份内容安全重试。
+      上一次提交的结果尚未确认。为避免重复保存，已保留这次操作的原始内容；请用同一份内容安全重试。
     </p>
     <p class="ledger-recovery-detail">原始提交时间：{{ new Date(intent.createdAt).toLocaleString('zh-CN') }}</p>
     <p v-if="error" class="ledger-form-error" role="alert">{{ error }}</p>
@@ -75,4 +75,3 @@ function operationLabel(operation: LedgerPendingCreateIntent['operation']): stri
   .ledger-recovery-card { padding: 22px 18px; }
 }
 </style>
-

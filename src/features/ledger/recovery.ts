@@ -26,6 +26,16 @@ export interface LedgerPendingCreateIntent {
   readonly ownerIdentity: string | null
 }
 
+export type LedgerPendingCreateReadResult =
+  | { readonly status: 'none' }
+  | { readonly status: 'valid'; readonly intent: LedgerPendingCreateIntent }
+  | { readonly status: 'invalid'; readonly reason: string }
+  | { readonly status: 'unavailable'; readonly reason: string }
+
+export type LedgerRecoveryWriteResult =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly reason: string }
+
 interface StorageLike {
   getItem(key: string): string | null
   setItem(key: string, value: string): void
@@ -48,55 +58,137 @@ function isOperation(value: unknown): value is LedgerCreateOperation {
   return value === 'settings' || value === 'account' || value === 'category' || value === 'transaction'
 }
 
-function isSafePayload(value: unknown): value is LedgerCreatePayload {
-  return isRecord(value) && Object.keys(value).every((key) => key.length > 0)
+function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const actual = Object.keys(value).sort()
+  return actual.length === keys.length && actual.every((key, index) => key === [...keys].sort()[index])
+}
+
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0
+}
+
+function safeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value)
+}
+
+function safeDate(value: unknown): value is string {
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
+}
+
+function isSafeSettingsPayload(value: unknown): value is LedgerSettingsCreateRequest {
+  return isRecord(value)
+    && hasExactKeys(value, ['baseCurrency', 'timezone'])
+    && nonEmptyString(value.baseCurrency)
+    && nonEmptyString(value.timezone)
+}
+
+function isSafeAccountPayload(value: unknown): value is LedgerAccountCreateRequest {
+  return isRecord(value)
+    && hasExactKeys(value, ['name', 'type', 'nature', 'openingBalanceMinor', 'openingDate', 'currency', 'note'])
+    && nonEmptyString(value.name)
+    && (value.type === 'cash'
+      || value.type === 'bank'
+      || value.type === 'wallet'
+      || value.type === 'credit_card'
+      || value.type === 'loan'
+      || value.type === 'other')
+    && (value.nature === 'asset' || value.nature === 'liability')
+    && safeInteger(value.openingBalanceMinor)
+    && safeDate(value.openingDate)
+    && nonEmptyString(value.currency)
+    && typeof value.note === 'string'
+}
+
+function isSafeCategoryPayload(value: unknown): value is LedgerCategoryCreateRequest {
+  return isRecord(value)
+    && hasExactKeys(value, ['kind', 'name'])
+    && (value.kind === 'income' || value.kind === 'expense')
+    && nonEmptyString(value.name)
+}
+
+function isSafeTransactionPayload(value: unknown): value is LedgerTransactionCreateRequest {
+  if (!isRecord(value) || !safeInteger(value.amountMinor) || value.amountMinor <= 0
+    || !safeInteger(value.occurredAt) || typeof value.note !== 'string') {
+    return false
+  }
+
+  if (value.type === 'income' || value.type === 'expense') {
+    return hasExactKeys(value, ['type', 'amountMinor', 'accountId', 'categoryId', 'occurredAt', 'payee', 'note'])
+      && nonEmptyString(value.accountId)
+      && nonEmptyString(value.categoryId)
+      && typeof value.payee === 'string'
+      && typeof value.note === 'string'
+  }
+
+  if (value.type === 'transfer') {
+    return hasExactKeys(value, ['type', 'amountMinor', 'fromAccountId', 'toAccountId', 'occurredAt', 'note'])
+      && nonEmptyString(value.fromAccountId)
+      && nonEmptyString(value.toAccountId)
+      && value.fromAccountId !== value.toAccountId
+      && typeof value.note === 'string'
+  }
+
+  return false
+}
+
+function isSafePayload(
+  operation: LedgerCreateOperation,
+  value: unknown,
+): value is LedgerCreatePayload {
+  switch (operation) {
+    case 'settings': return isSafeSettingsPayload(value)
+    case 'account': return isSafeAccountPayload(value)
+    case 'category': return isSafeCategoryPayload(value)
+    case 'transaction': return isSafeTransactionPayload(value)
+  }
 }
 
 export function isLedgerPendingCreateIntent(value: unknown): value is LedgerPendingCreateIntent {
   if (!isRecord(value)) return false
   return value.version === LEDGER_RECOVERY_SCHEMA_VERSION
     && isOperation(value.operation)
-    && typeof value.operationScope === 'string'
-    && value.operationScope.length > 0
+    && value.operationScope === ledgerOperationScope(value.operation)
     && typeof value.idempotencyKey === 'string'
     && value.idempotencyKey.length > 0
-    && isSafePayload(value.canonicalPayload)
+    && isSafePayload(value.operation, value.canonicalPayload)
     && typeof value.createdAt === 'number'
     && Number.isSafeInteger(value.createdAt)
     && (value.ownerIdentity === null || typeof value.ownerIdentity === 'string')
 }
 
-export function readLedgerPendingCreate(): LedgerPendingCreateIntent | null {
+export function readLedgerPendingCreate(): LedgerPendingCreateReadResult {
   const store = storage()
-  if (!store) return null
+  if (!store) return { status: 'unavailable', reason: 'sessionStorage is unavailable.' }
   let raw: string | null
   try {
     raw = store.getItem(LEDGER_PENDING_CREATE_STORAGE_KEY)
   } catch {
-    return null
+    return { status: 'unavailable', reason: 'sessionStorage cannot be read.' }
   }
-  if (raw === null) return null
+  if (raw === null) return { status: 'none' }
   try {
     const parsed: unknown = JSON.parse(raw)
     if (!isLedgerPendingCreateIntent(parsed)) {
-      store.removeItem(LEDGER_PENDING_CREATE_STORAGE_KEY)
-      return null
+      return { status: 'invalid', reason: 'The pending Ledger create record failed validation.' }
     }
-    return parsed
+    return { status: 'valid', intent: parsed }
   } catch {
-    try { store.removeItem(LEDGER_PENDING_CREATE_STORAGE_KEY) } catch { /* fail closed */ }
-    return null
+    return { status: 'invalid', reason: 'The pending Ledger create record is not valid JSON.' }
   }
 }
 
-export function writeLedgerPendingCreate(intent: LedgerPendingCreateIntent): void {
+export function writeLedgerPendingCreate(intent: LedgerPendingCreateIntent): LedgerRecoveryWriteResult {
   const store = storage()
-  if (!store) return
+  if (!store) return { ok: false, reason: '当前标签页无法使用 sessionStorage。' }
+  const serialized = JSON.stringify(intent)
   try {
-    store.setItem(LEDGER_PENDING_CREATE_STORAGE_KEY, JSON.stringify(intent))
+    store.setItem(LEDGER_PENDING_CREATE_STORAGE_KEY, serialized)
+    if (store.getItem(LEDGER_PENDING_CREATE_STORAGE_KEY) !== serialized) {
+      return { ok: false, reason: 'sessionStorage 没有可靠保存记账恢复状态。' }
+    }
+    return { ok: true }
   } catch {
-    // Storage may be blocked in private mode. The in-memory intent still
-    // protects the current form; a hard reload cannot be made durable there.
+    return { ok: false, reason: '当前标签页无法保存 sessionStorage 恢复状态。' }
   }
 }
 

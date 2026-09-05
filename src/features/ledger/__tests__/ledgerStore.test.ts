@@ -153,4 +153,110 @@ describe('Ledger feature-local state', () => {
     expect(store.pendingCreate.value).toBeNull()
     expect(sessionStorage.getItem('docus.ledger.pending-create')).toBeNull()
   })
+
+  it('does not send any create mutation when sessionStorage cannot persist the intent', async () => {
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('blocked', 'SecurityError')
+    })
+    const store = useLedgerStore()
+    const accountPayload = {
+      name: '招商银行',
+      type: 'bank' as const,
+      nature: 'asset' as const,
+      openingBalanceMinor: 0,
+      openingDate: '2026-09-05',
+      currency: 'CNY',
+      note: '',
+    }
+    const transactionPayload = {
+      type: 'expense' as const,
+      amountMinor: 1,
+      accountId: 'account-1',
+      categoryId: 'category-1',
+      occurredAt: 1_700_000_000_000,
+      payee: '',
+      note: '',
+    }
+
+    await expect(store.createSettings({ baseCurrency: 'CNY', timezone: 'Asia/Shanghai' }))
+      .rejects.toMatchObject({ code: 'ledger-recovery-storage-unavailable' })
+    await expect(store.createAccount(accountPayload))
+      .rejects.toMatchObject({ code: 'ledger-recovery-storage-unavailable' })
+    await expect(store.createCategory({ kind: 'expense', name: '交通' }))
+      .rejects.toMatchObject({ code: 'ledger-recovery-storage-unavailable' })
+    await expect(store.createTransaction(transactionPayload))
+      .rejects.toMatchObject({ code: 'ledger-recovery-storage-unavailable' })
+
+    expect(api.createLedgerSettings).not.toHaveBeenCalled()
+    expect(api.createLedgerAccount).not.toHaveBeenCalled()
+    expect(api.createLedgerCategory).not.toHaveBeenCalled()
+    expect(api.createLedgerTransaction).not.toHaveBeenCalled()
+    setItem.mockRestore()
+  })
+
+  it('blocks new creates and retains an invalid recovery record', async () => {
+    const invalidRecord = {
+      version: 99,
+      operation: 'transaction',
+      operationScope: 'POST:/api/ledger/transactions',
+      idempotencyKey: 'key-invalid',
+      canonicalPayload: {},
+      createdAt: 1,
+      ownerIdentity: null,
+    }
+    const raw = JSON.stringify(invalidRecord)
+    sessionStorage.setItem('docus.ledger.pending-create', raw)
+    resetLedgerStoreForTesting()
+    const store = useLedgerStore()
+
+    expect(store.recoveryState.value).toBe('BLOCKED')
+    await expect(store.createCategory({ kind: 'expense', name: '新分类' }))
+      .rejects.toMatchObject({ code: 'ledger-recovery-blocked' })
+    expect(api.createLedgerCategory).not.toHaveBeenCalled()
+    expect(sessionStorage.getItem('docus.ledger.pending-create')).toBe(raw)
+  })
+
+  it('keeps the original intent when a successful create response body is unusable, then replays it', async () => {
+    api.getLedgerSettings.mockResolvedValue(settings(true))
+    api.listLedgerAccounts.mockResolvedValue([account('account-1')])
+    const malformedSuccess = new LedgerApiError(
+      'success body could not be validated',
+      201,
+      'ledger-malformed-response',
+      null,
+      false,
+      true,
+    )
+    api.createLedgerTransaction.mockRejectedValueOnce(malformedSuccess)
+    const store = useLedgerStore()
+    await store.bootstrap()
+    const payload = {
+      type: 'expense' as const,
+      amountMinor: 3800,
+      accountId: 'account-1',
+      categoryId: 'category-1',
+      occurredAt: 1_700_000_000_000,
+      payee: '',
+      note: '',
+    }
+
+    await expect(store.createTransaction(payload)).rejects.toMatchObject({
+      code: 'ledger-malformed-response',
+      transportOutcomeUnknown: false,
+      requiresIdempotentReplay: true,
+    })
+    const firstKey = store.pendingCreate.value?.idempotencyKey
+    expect(firstKey).toBeTruthy()
+    expect(store.mutationState.value).toBe('UNCERTAIN')
+    expect(JSON.parse(sessionStorage.getItem('docus.ledger.pending-create') ?? '{}')).toMatchObject({
+      idempotencyKey: firstKey,
+      canonicalPayload: payload,
+    })
+
+    api.createLedgerTransaction.mockResolvedValue({ id: 'tx-replayed', type: 'expense' })
+    await store.retryPendingCreate()
+    expect(api.createLedgerTransaction).toHaveBeenLastCalledWith(payload, firstKey)
+    expect(store.pendingCreate.value).toBeNull()
+    expect(sessionStorage.getItem('docus.ledger.pending-create')).toBeNull()
+  })
 })

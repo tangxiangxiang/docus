@@ -6,6 +6,7 @@ import LedgerDashboard from '../components/ledger/LedgerDashboard.vue'
 import LedgerFirstAccountForm from '../components/ledger/LedgerFirstAccountForm.vue'
 import LedgerNoActiveAccountState from '../components/ledger/LedgerNoActiveAccountState.vue'
 import LedgerOnboarding from '../components/ledger/LedgerOnboarding.vue'
+import LedgerPendingCreateGate from '../components/ledger/LedgerPendingCreateGate.vue'
 import LedgerTransactionSheet from '../components/ledger/LedgerTransactionSheet.vue'
 import { ledgerErrorMessage } from '../features/ledger/ledgerErrors'
 import { useLedgerStore } from '../features/ledger/ledgerStore'
@@ -18,28 +19,8 @@ const transactionSheetOpen = ref(false)
 
 const bootstrapping = computed(() => store.workspaceState.value === 'BOOTSTRAPPING')
 const showOnboarding = computed(() => store.workspaceState.value === 'UNINITIALIZED' || store.workspaceState.value === 'FIRST_ACCOUNT_REQUIRED')
-let recoveryPresented = false
 
 watch(() => auth.user.value?.username ?? null, (identity) => store.setOwnerIdentity(identity), { immediate: true })
-
-watch(
-  [() => store.pendingCreate.value, () => store.workspaceState.value],
-  ([pending, workspaceState]) => {
-    if (!pending) {
-      recoveryPresented = false
-      return
-    }
-    if (
-      !recoveryPresented
-      && (workspaceState === 'READY' || workspaceState === 'NO_ACTIVE_ACCOUNT')
-      && (pending.operation === 'transaction' || pending.operation === 'category')
-    ) {
-      transactionSheetOpen.value = true
-      recoveryPresented = true
-    }
-  },
-  { immediate: true },
-)
 
 onMounted(() => {
   void store.bootstrap()
@@ -60,6 +41,15 @@ function retry(): void {
 function openTransactions(): void {
   void router.push({ name: 'ledger-transactions' })
 }
+
+function onRecoveryResolved(): void {
+  transactionSheetOpen.value = false
+  newAccountOpen.value = false
+}
+
+function closeTransactionSheet(): void {
+  transactionSheetOpen.value = false
+}
 </script>
 
 <template>
@@ -67,6 +57,8 @@ function openTransactions(): void {
     <div v-if="bootstrapping" class="ledger-loading-state" data-testid="ledger-loading" role="status" aria-live="polite">
       正在加载 Ledger…
     </div>
+
+    <LedgerPendingCreateGate v-else-if="store.recoveryGateVisible.value" @resolved="onRecoveryResolved" />
 
     <section v-else-if="store.workspaceState.value === 'RECOVERABLE_ERROR'" class="ledger-error-state" data-testid="ledger-bootstrap-error" aria-labelledby="ledger-bootstrap-error-title">
       <h1 id="ledger-bootstrap-error-title">Ledger 暂时无法打开</h1>
@@ -92,7 +84,7 @@ function openTransactions(): void {
 
     <LedgerDashboard v-else @record="transactionSheetOpen = true" @view-transactions="openTransactions" />
 
-    <LedgerTransactionSheet :open="transactionSheetOpen" @close="transactionSheetOpen = false" />
+    <LedgerTransactionSheet v-if="!store.recoveryGateVisible.value" :open="transactionSheetOpen" @close="closeTransactionSheet" />
   </main>
 </template>
 

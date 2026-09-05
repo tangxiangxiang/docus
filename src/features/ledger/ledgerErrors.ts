@@ -42,6 +42,8 @@ export type LedgerClientErrorCode =
   | 'auth-session-required'
   | 'ledger-malformed-response'
   | 'ledger-network-error'
+  | 'ledger-recovery-storage-unavailable'
+  | 'ledger-recovery-blocked'
 
 export type LedgerErrorKind =
   | 'validation'
@@ -76,6 +78,8 @@ export class LedgerApiError extends Error {
   readonly kind: LedgerErrorKind
   /** True only when the browser did not receive a definite HTTP result. */
   readonly transportOutcomeUnknown: boolean
+  /** True when a successful mutation may have committed but its result is not authoritative. */
+  readonly requiresIdempotentReplay: boolean
 
   constructor(
     message: string,
@@ -83,6 +87,7 @@ export class LedgerApiError extends Error {
     code: string,
     details: LedgerErrorDetails | null = null,
     transportOutcomeUnknown = false,
+    requiresIdempotentReplay = false,
   ) {
     super(message)
     this.name = 'LedgerApiError'
@@ -91,6 +96,7 @@ export class LedgerApiError extends Error {
     this.details = details
     this.kind = errorKind(status, code)
     this.transportOutcomeUnknown = transportOutcomeUnknown
+    this.requiresIdempotentReplay = requiresIdempotentReplay
   }
 }
 
@@ -120,6 +126,11 @@ export function normalizeLedgerError(value: unknown): LedgerApiError {
 
 export function isTransportOutcomeUnknown(error: unknown): boolean {
   return isLedgerApiError(error) && error.transportOutcomeUnknown
+}
+
+export function shouldKeepPendingCreate(error: unknown): boolean {
+  return isLedgerApiError(error)
+    && (error.transportOutcomeUnknown || error.requiresIdempotentReplay)
 }
 
 /** User-facing copy stays specific enough to offer a useful recovery action. */
@@ -171,6 +182,10 @@ export function ledgerErrorMessage(error: unknown, fallback = 'Ledger 操作暂�
       return 'Ledger 返回了无法识别的数据，请稍后再试。'
     case 'ledger-network-error':
       return '网络连接中断，尚未确认本次操作是否保存。'
+    case 'ledger-recovery-storage-unavailable':
+      return '当前浏览器无法建立安全的记账恢复状态，因此这次操作没有提交。请确认当前标签页允许使用会话存储后重试。'
+    case 'ledger-recovery-blocked':
+      return '发现无法验证的未完成 Ledger 操作。为避免重复记账，已暂停新的提交。'
     default:
       return fallback
   }
