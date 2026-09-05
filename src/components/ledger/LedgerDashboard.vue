@@ -19,8 +19,10 @@ const emit = defineEmits<{
 const store = useLedgerStore()
 const overview = computed(() => store.overview.value)
 const selectedScope = ref<LedgerOverviewScope>('month')
+const historicalMode = computed(() => overview.value?.context.isToday === false
+  || store.overviewRequestedAnchorDate.value !== undefined)
 const scopeOptions = computed<ReadonlyArray<{ value: LedgerOverviewScope; label: string }>>(() => {
-  const historical = overview.value?.context.isToday === false
+  const historical = historicalMode.value
   return [
     { value: 'today', label: historical ? '当日' : '今天' },
     { value: 'week', label: historical ? '所在周' : '本周' },
@@ -33,8 +35,6 @@ const scopeOptions = computed<ReadonlyArray<{ value: LedgerOverviewScope; label:
 const refreshing = computed(() => store.loading.value)
 const scopeError = computed(() => store.error.value)
 const periodDataReady = computed(() => overview.value !== null && store.overviewMatchesRequest.value)
-const historicalMode = computed(() => overview.value?.context.isToday === false
-  || store.overviewRequestedAnchorDate.value !== undefined)
 const dateInputValue = computed(() => store.overviewRequestedAnchorDate.value
   ?? overview.value?.context.todayDate
   ?? '')
