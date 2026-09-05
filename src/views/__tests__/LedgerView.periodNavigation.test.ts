@@ -141,7 +141,7 @@ describe('Ledger historical period route coordination', () => {
     expect(router.currentRoute.value.fullPath).toBe('/ledger?date=2026-08-20')
     expect(api.getLedgerOverview).toHaveBeenCalledWith({ scope: 'month', anchorDate: '2026-08-20' })
     expect((wrapper.get('[data-testid="ledger-period-date"]').element as HTMLInputElement).value).toBe('2026-08-20')
-    expect(wrapper.get('[data-testid="ledger-return-today"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ledger-return-today"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('当前资产与账户余额保持实时')
     expect(wrapper.text()).toContain('截至选择日期的最近 5 笔记录')
   })
