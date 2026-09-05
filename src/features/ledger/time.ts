@@ -1,4 +1,5 @@
 import { Temporal } from '@js-temporal/polyfill'
+import type { LedgerPeriodName } from '../../../shared/ledgerProtocol'
 
 function pad(value: number): string {
   return String(value).padStart(2, '0')
@@ -45,6 +46,61 @@ export function formatLedgerDateTime(
     dateStyle: 'medium',
     timeStyle: 'short',
   }).format(new Date(instantMs))
+}
+
+function formatLedgerCalendarDate(
+  instantMs: number,
+  timezone: string,
+  locale: string,
+  includeYear: boolean,
+): string {
+  return new Intl.DateTimeFormat(locale, {
+    timeZone: timezone,
+    ...(includeYear ? { year: 'numeric' as const } : {}),
+    month: 'long',
+    day: 'numeric',
+  }).format(new Date(instantMs))
+}
+
+function formatLedgerCalendarMonth(instantMs: number, timezone: string, locale: string): string {
+  return new Intl.DateTimeFormat(locale, {
+    timeZone: timezone,
+    year: 'numeric',
+    month: 'long',
+  }).format(new Date(instantMs))
+}
+
+function formatLedgerCalendarYear(instantMs: number, timezone: string, locale: string): string {
+  return new Intl.DateTimeFormat(locale, {
+    timeZone: timezone,
+    year: 'numeric',
+  }).format(new Date(instantMs))
+}
+
+/**
+ * Format a server-owned exclusive period boundary at the period's calendar
+ * granularity. The end of a date range is converted to its final inclusive
+ * millisecond before its calendar date is displayed.
+ */
+export function formatLedgerPeriodLabel(
+  period: LedgerPeriodName,
+  startAt: number,
+  endAt: number,
+  timezone: string,
+  locale = 'zh-CN',
+): string {
+  if (period === 'month') return formatLedgerCalendarMonth(startAt, timezone, locale)
+  if (period === 'year') return formatLedgerCalendarYear(startAt, timezone, locale)
+
+  const start = Temporal.Instant.fromEpochMilliseconds(startAt).toZonedDateTimeISO(timezone)
+  const endInclusiveAt = endAt - 1
+  const end = Temporal.Instant.fromEpochMilliseconds(endInclusiveAt).toZonedDateTimeISO(timezone)
+  const startLabel = formatLedgerCalendarDate(startAt, timezone, locale, true)
+
+  if (period === 'today') return startLabel
+
+  const endLabel = formatLedgerCalendarDate(endInclusiveAt, timezone, locale, start.year !== end.year)
+  return `${startLabel} – ${endLabel}`
 }
 
 export function formatLedgerDate(

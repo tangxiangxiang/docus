@@ -7,7 +7,7 @@ import type {
 } from '../../../shared/ledgerProtocol'
 import { ledgerErrorMessage } from '../../features/ledger/ledgerErrors'
 import { formatLedgerMoney, formatLedgerSignedMoney } from '../../features/ledger/money'
-import { formatLedgerDateTime } from '../../features/ledger/time'
+import { formatLedgerDateTime, formatLedgerPeriodLabel } from '../../features/ledger/time'
 import { useLedgerStore } from '../../features/ledger/ledgerStore'
 
 const emit = defineEmits<{ record: []; viewTransactions: [] }>()
@@ -250,7 +250,7 @@ function retryScope(): void {
         <div class="ledger-period-grid" data-testid="ledger-period-summaries">
           <article v-for="period in (['today', 'week', 'month', 'year'] as const)" :key="period" class="ledger-period-card" :data-testid="`ledger-period-${period}`">
             <h3>{{ periodLabels[period] }}</h3>
-            <small v-if="periodSummary(period)">{{ formatLedgerDateTime(periodSummary(period)!.startAt, store.settings.value?.timezone ?? 'UTC') }} – {{ formatLedgerDateTime(periodSummary(period)!.endAt - 1, store.settings.value?.timezone ?? 'UTC') }}</small>
+            <small v-if="periodSummary(period)">{{ formatLedgerPeriodLabel(period, periodSummary(period)!.startAt, periodSummary(period)!.endAt, store.settings.value?.timezone ?? 'UTC') }}</small>
               <div v-if="periodSummary(period)" class="ledger-period-values">
                 <span>收入 <strong>{{ formatLedgerMoney(periodSummary(period)!.incomeMinor, overview.currency) }}</strong></span>
                 <span>支出 <strong>{{ formatLedgerMoney(periodSummary(period)!.expenseMinor, overview.currency) }}</strong></span>

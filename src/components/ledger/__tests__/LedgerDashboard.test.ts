@@ -10,6 +10,7 @@ import type {
   LedgerTransactionDto,
 } from '../../../../shared/ledgerProtocol'
 import { resetLedgerStoreForTesting } from '../../../features/ledger/ledgerStore'
+import { instantFromLocalDateTime } from '../../../features/ledger/time'
 import LedgerView from '../../../views/LedgerView.vue'
 
 const api = vi.hoisted(() => ({
@@ -148,10 +149,10 @@ const overview = (): LedgerOverviewDto => ({
   cashflow: { incomeMinor: 0, expenseMinor: 3_800, balanceMinor: -3_800 },
   categoryBreakdown: { income: [], expense: [{ categoryId: 'food', name: '餐饮', kind: 'expense', amountMinor: 3_800 }] },
   periods: [
-    { period: 'today', startAt: Date.UTC(2026, 8, 5), endAt: Date.UTC(2026, 8, 6), incomeMinor: 0, expenseMinor: 3_800, balanceMinor: -3_800 },
-    { period: 'week', startAt: Date.UTC(2026, 7, 31), endAt: Date.UTC(2026, 8, 7), incomeMinor: 0, expenseMinor: 3_800, balanceMinor: -3_800 },
-    { period: 'month', startAt: Date.UTC(2026, 8, 1), endAt: Date.UTC(2026, 9, 1), incomeMinor: 0, expenseMinor: 3_800, balanceMinor: -3_800 },
-    { period: 'year', startAt: Date.UTC(2026, 0, 1), endAt: Date.UTC(2027, 0, 1), incomeMinor: 0, expenseMinor: 3_800, balanceMinor: -3_800 },
+    { period: 'today', startAt: instantFromLocalDateTime('2026-09-05T00:00', 'Asia/Shanghai'), endAt: instantFromLocalDateTime('2026-09-06T00:00', 'Asia/Shanghai'), incomeMinor: 0, expenseMinor: 3_800, balanceMinor: -3_800 },
+    { period: 'week', startAt: instantFromLocalDateTime('2026-08-31T00:00', 'Asia/Shanghai'), endAt: instantFromLocalDateTime('2026-09-07T00:00', 'Asia/Shanghai'), incomeMinor: 0, expenseMinor: 3_800, balanceMinor: -3_800 },
+    { period: 'month', startAt: instantFromLocalDateTime('2026-09-01T00:00', 'Asia/Shanghai'), endAt: instantFromLocalDateTime('2026-10-01T00:00', 'Asia/Shanghai'), incomeMinor: 0, expenseMinor: 3_800, balanceMinor: -3_800 },
+    { period: 'year', startAt: instantFromLocalDateTime('2026-01-01T00:00', 'Asia/Shanghai'), endAt: instantFromLocalDateTime('2027-01-01T00:00', 'Asia/Shanghai'), incomeMinor: 0, expenseMinor: 3_800, balanceMinor: -3_800 },
   ],
   trend: [{ month: '2026-09', startAt: Date.UTC(2026, 8, 1), endAt: Date.UTC(2026, 9, 1), incomeMinor: 0, expenseMinor: 3_800, balanceMinor: -3_800 }],
   recentTransactions: [expense],
@@ -190,6 +191,13 @@ describe('Ledger live dashboard', () => {
     expect(wrapper.get('[data-testid="ledger-dashboard-accounts"]').text()).toContain('招商银行')
     expect(wrapper.get('[data-testid="ledger-category-breakdown"]').text()).toContain('餐饮')
     expect(wrapper.get('[data-testid="ledger-recent-transactions"]').text()).toContain('午餐')
+    expect(wrapper.get('[data-testid="ledger-period-today"]').text()).toContain('2026年9月5日')
+    expect(wrapper.get('[data-testid="ledger-period-week"]').text()).toContain('2026年8月31日 – 9月6日')
+    expect(wrapper.get('[data-testid="ledger-period-month"]').text()).toContain('2026年9月')
+    expect(wrapper.get('[data-testid="ledger-period-year"]').text()).toContain('2026年')
+    for (const period of ['today', 'week', 'month', 'year']) {
+      expect(wrapper.get(`[data-testid="ledger-period-${period}"]`).text()).not.toMatch(/00:00|23:59/)
+    }
     expect(wrapper.get('[data-testid="ledger-period-month"]').text()).toContain('收支结余')
     expect(wrapper.get('[data-testid="ledger-period-month"]').text()).toContain('-¥38.00')
     expect(wrapper.text()).not.toContain('billsMockData')
