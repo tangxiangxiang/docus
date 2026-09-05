@@ -52,9 +52,7 @@ import {
   ledgerLocalDateForInstant,
   monthRange,
   parseLedgerLocalDate,
-  periodRange,
   periodRangesForLocalDate,
-  periodRangesForInstant,
   assertUtcMilliseconds,
 } from './time.js'
 import {
