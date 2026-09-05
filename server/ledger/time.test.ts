@@ -7,10 +7,14 @@ import {
   assertOpeningDate,
   assertUtcMilliseconds,
   calendarMonthRanges,
+  calendarMonthRangesForLocalDate,
+  ledgerLocalDateForInstant,
   localDateRange,
   monthRange,
   openingBoundaryMs,
+  parseLedgerLocalDate,
   periodRange,
+  periodRangesForLocalDate,
   periodRangesForInstant,
   todayRange,
   validateOccurredAt,
@@ -54,6 +58,21 @@ describe('Ledger named timezone and UTC primitives', () => {
     expect(assertUtcMilliseconds(-1)).toBe(-1)
     expect(() => assertUtcMilliseconds(1.5)).toThrow()
     expect(() => assertUtcMilliseconds(Number.MAX_SAFE_INTEGER)).toThrow()
+  })
+
+  it('validates generic Ledger local dates without changing opening-date errors', () => {
+    expect(parseLedgerLocalDate('2026-08-20', 'anchorDate')).toBe('2026-08-20')
+    expect(parseLedgerLocalDate('2024-02-29', 'anchorDate')).toBe('2024-02-29')
+    for (const value of ['2026-8-20', '2026-02-30', '2026-99-99', 'abc']) {
+      expect(() => parseLedgerLocalDate(value, 'anchorDate')).toThrow(LedgerError)
+    }
+    expect(() => assertOpeningDate('2026-02-30')).toThrow(LedgerError)
+  })
+
+  it('resolves the same instant to the Ledger-local date in the configured timezone', () => {
+    const instant = Date.parse('2026-09-05T16:30:00.000Z')
+    expect(ledgerLocalDateForInstant(instant, 'Asia/Shanghai')).toBe('2026-09-06')
+    expect(ledgerLocalDateForInstant(instant, 'America/Los_Angeles')).toBe('2026-09-05')
   })
 })
 
@@ -141,5 +160,24 @@ describe('Ledger DST-safe local calendar periods', () => {
     expect(fall.map((range) => range.month)).toEqual(['2024-10', '2024-11'])
     expect(iso(fall[1].startMs)).toBe('2024-11-01T07:00:00.000Z')
     expect(iso(fall[1].endMs)).toBe('2024-12-01T08:00:00.000Z')
+  })
+
+  it('builds anchored full periods and six complete months from a local date', () => {
+    const periods = periodRangesForLocalDate('2026-08-20', 'Asia/Shanghai')
+    expect(iso(periods.today.startMs)).toBe('2026-08-19T16:00:00.000Z')
+    expect(iso(periods.today.endMs)).toBe('2026-08-20T16:00:00.000Z')
+    expect(iso(periods.week.startMs)).toBe('2026-08-16T16:00:00.000Z')
+    expect(iso(periods.week.endMs)).toBe('2026-08-23T16:00:00.000Z')
+    expect(iso(periods.month.startMs)).toBe('2026-07-31T16:00:00.000Z')
+    expect(iso(periods.month.endMs)).toBe('2026-08-31T16:00:00.000Z')
+    expect(iso(periods.year.startMs)).toBe('2025-12-31T16:00:00.000Z')
+    expect(iso(periods.year.endMs)).toBe('2026-12-31T16:00:00.000Z')
+
+    const crossYear = periodRangesForLocalDate('2027-01-01', 'Asia/Shanghai')
+    expect(iso(crossYear.week.startMs)).toBe('2026-12-27T16:00:00.000Z')
+    expect(iso(crossYear.week.endMs)).toBe('2027-01-03T16:00:00.000Z')
+
+    expect(calendarMonthRangesForLocalDate(6, '2025-06-15', 'Asia/Shanghai').map((range) => range.month))
+      .toEqual(['2025-01', '2025-02', '2025-03', '2025-04', '2025-05', '2025-06'])
   })
 })

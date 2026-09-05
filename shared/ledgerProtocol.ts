@@ -255,7 +255,15 @@ export interface LedgerAccountSummary extends LedgerAccountDto {
   readonly balanceDecreaseMinor: number
 }
 
+export interface LedgerOverviewContext {
+  readonly anchorDate: string
+  readonly todayDate: string
+  readonly isToday: boolean
+  readonly scope: LedgerOverviewScope
+}
+
 export interface LedgerOverviewDto {
+  readonly context: LedgerOverviewContext
   readonly currency: string
   readonly currencyExponent: number
   readonly assetTotalMinor: number

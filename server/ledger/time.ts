@@ -64,11 +64,26 @@ export function isIanaTimeZoneId(value: unknown): value is string {
   }
 }
 
-const OPENING_DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+const LOCAL_DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+
+/** Validate a strict Gregorian local date without involving a host timezone. */
+export function parseLedgerLocalDate(value: unknown, field = 'date'): string {
+  if (typeof value !== 'string' || !LOCAL_DATE_RE.test(value)) {
+    throw validationError(field, `${field} must use YYYY-MM-DD`)
+  }
+  try {
+    Temporal.PlainDate.from(value, { overflow: 'reject' })
+  } catch {
+    throw validationError(field, `${field} is not a valid Gregorian date`)
+  }
+  return value
+}
+
+export const assertLedgerLocalDate = parseLedgerLocalDate
 
 /** Validate a strict Gregorian YYYY-MM-DD local date. */
 export function assertOpeningDate(value: unknown): string {
-  if (typeof value !== 'string' || !OPENING_DATE_RE.test(value)) {
+  if (typeof value !== 'string' || !LOCAL_DATE_RE.test(value)) {
     throw new LedgerError('ledger-invalid-opening-date', 400, 'openingDate must use YYYY-MM-DD')
   }
   try {
@@ -96,6 +111,18 @@ function plainDateForInstant(instantMs: number, timezone: string): Temporal.Plai
   return instant.toZonedDateTimeISO(timezone).toPlainDate()
 }
 
+function plainDateForLocalDate(localDate: string, field = 'date'): Temporal.PlainDate {
+  return Temporal.PlainDate.from(parseLedgerLocalDate(localDate, field), { overflow: 'reject' })
+}
+
+/** Resolve the Ledger-local calendar date for one captured UTC instant. */
+export function ledgerLocalDateForInstant(instantMs: number, timezone: string): string {
+  const zone = assertIanaTimeZoneId(timezone)
+  return plainDateForInstant(instantMs, zone).toString()
+}
+
+export const todayDateForInstant = ledgerLocalDateForInstant
+
 /** Convert a local Ledger date's midnight to a UTC epoch millisecond. */
 export function openingBoundaryMs(openingDate: string, timezone: string): number {
   const date = Temporal.PlainDate.from(assertOpeningDate(openingDate), { overflow: 'reject' })
@@ -105,21 +132,18 @@ export function openingBoundaryMs(openingDate: string, timezone: string): number
 
 /** Return the half-open local-calendar-day interval for a YYYY-MM-DD date. */
 export function localDateRange(localDate: string, timezone: string): LedgerTimeRange {
-  const date = Temporal.PlainDate.from(assertOpeningDate(localDate), { overflow: 'reject' })
+  const date = plainDateForLocalDate(localDate)
   const zone = assertIanaTimeZoneId(timezone)
   const startMs = startOfLocalDate(date, zone)
   const endMs = startOfLocalDate(date.add({ days: 1 }), zone)
   return { startMs, endMs }
 }
 
-/** Calculate a DST-safe period from the local date containing an instant. */
-export function periodRange(
+function periodRangeForPlainDate(
   period: LedgerPeriodName,
-  instantMs: number,
-  timezone: string,
+  date: Temporal.PlainDate,
+  zone: string,
 ): LedgerTimeRange {
-  const zone = assertIanaTimeZoneId(timezone)
-  const date = plainDateForInstant(instantMs, zone)
   let startDate: Temporal.PlainDate
   let endDate: Temporal.PlainDate
 
@@ -148,6 +172,29 @@ export function periodRange(
     startMs: startOfLocalDate(startDate, zone),
     endMs: startOfLocalDate(endDate, zone),
   }
+}
+
+/** Calculate a DST-safe period from a validated Ledger-local calendar date. */
+export function periodRangeForLocalDate(
+  period: LedgerPeriodName,
+  localDate: string,
+  timezone: string,
+): LedgerTimeRange {
+  const zone = assertIanaTimeZoneId(timezone)
+  return periodRangeForPlainDate(period, plainDateForLocalDate(localDate), zone)
+}
+
+export const getPeriodRangeForLocalDate = periodRangeForLocalDate
+
+/** Calculate a DST-safe period from the local date containing an instant. */
+export function periodRange(
+  period: LedgerPeriodName,
+  instantMs: number,
+  timezone: string,
+): LedgerTimeRange {
+  const zone = assertIanaTimeZoneId(timezone)
+  const date = plainDateForInstant(instantMs, zone)
+  return periodRangeForPlainDate(period, date, zone)
 }
 
 function assertNeverPeriod(value: never): never {
@@ -185,10 +232,25 @@ export function periodRangesForInstant(
   }
 }
 
-/** Return consecutive Ledger-local calendar months ending with the current month. */
-export function calendarMonthRanges(
+/** Return all four full natural periods for one Ledger-local anchor date. */
+export function periodRangesForLocalDate(
+  localDate: string,
+  timezone: string,
+): Readonly<Record<LedgerPeriodName, LedgerTimeRange>> {
+  const zone = assertIanaTimeZoneId(timezone)
+  const date = plainDateForLocalDate(localDate)
+  return {
+    today: periodRangeForPlainDate('today', date, zone),
+    week: periodRangeForPlainDate('week', date, zone),
+    month: periodRangeForPlainDate('month', date, zone),
+    year: periodRangeForPlainDate('year', date, zone),
+  }
+}
+
+/** Return consecutive Ledger-local calendar months ending with the anchor month. */
+export function calendarMonthRangesForLocalDate(
   months: number,
-  instantMs: number,
+  localDate: string,
   timezone: string,
 ): readonly LedgerCalendarMonthRange[] {
   if (!Number.isSafeInteger(months) || months < 1) {
@@ -196,7 +258,7 @@ export function calendarMonthRanges(
   }
 
   const zone = assertIanaTimeZoneId(timezone)
-  const date = plainDateForInstant(instantMs, zone)
+  const date = plainDateForLocalDate(localDate)
   try {
     const currentMonth = Temporal.PlainDate.from({ year: date.year, month: date.month, day: 1 })
     const firstMonth = currentMonth.subtract({ months: months - 1 })
@@ -213,6 +275,15 @@ export function calendarMonthRanges(
     if (error instanceof LedgerError) throw error
     throw validationError('months', 'months cannot be represented by the Ledger calendar range')
   }
+}
+
+/** Return consecutive Ledger-local calendar months ending with the current month. */
+export function calendarMonthRanges(
+  months: number,
+  instantMs: number,
+  timezone: string,
+): readonly LedgerCalendarMonthRange[] {
+  return calendarMonthRangesForLocalDate(months, ledgerLocalDateForInstant(instantMs, timezone), timezone)
 }
 
 /** Enforce the Accepted future-record tolerance with an injectable clock. */

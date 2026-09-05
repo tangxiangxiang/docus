@@ -24,6 +24,7 @@ import {
   assertOpeningDate,
   assertIanaTimeZoneId,
   assertUtcMilliseconds,
+  parseLedgerLocalDate,
 } from './time.js'
 import { LedgerError, ledgerValidationError } from './errors.js'
 
@@ -634,6 +635,11 @@ export function parseOverviewScope(value: unknown): 'today' | 'week' | 'month' |
   if (value === undefined || value === 'all') return 'all'
   if (value === 'today' || value === 'week' || value === 'month' || value === 'year') return value
   throw ledgerValidationError('scope has an unsupported Overview value', { field: 'scope' })
+}
+
+export function parseOverviewAnchorDate(value: unknown): string | undefined {
+  if (value === undefined) return undefined
+  return parseLedgerLocalDate(value, 'anchorDate')
 }
 
 /** Validate a client-supplied currency code without exposing metadata details. */
