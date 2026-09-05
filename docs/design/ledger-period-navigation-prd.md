@@ -165,7 +165,18 @@ Date Picker 的产品约束为：
 max = Ledger today
 ```
 
-Server 仍必须验证传入日期，不能只依赖 Client。
+这里的 `Ledger today` 必须由 Server 根据注入的当前时间与
+`LedgerSettings.timezone` 得出。Client 在已经获得 Server 返回的
+`todayDate` 后，可以用它设置 Date Picker 的 `max` 作为 UX 优化，但这
+不是日期合法性的 authority。
+
+日期校验分为两层：
+
+- Client 可以本地识别 `YYYY-MM-DD` 格式非法或不存在的 calendar date，
+  这种值不得发送给 Server；
+- 格式合法但可能晚于 Ledger today 的日期，仍必须由 Server 做最终校验。
+
+Server 仍必须验证所有传入日期，不能只依赖 Client。
 
 ## 5. Dashboard 时间上下文
 
@@ -199,30 +210,43 @@ active Account list
 资产与账户余额仍为当前值；以下收支分析按 2025年6月15日 浏览。
 ```
 
-### 5.2 期间型数据
+### 5.2 期间型数据 authority matrix
 
-以下 Dashboard 信息统一跟随 `anchorDate + scope`：
+以下矩阵冻结每个 Dashboard 数据区域的时间 authority：
 
-```text
-selected cashflow
-category breakdown
-日 / 周 / 月 / 年期间摘要
-trend
-recent transactions
-```
+| Dashboard 数据 | `anchorDate` | `scope` | 冻结语义 |
+| --- | --- | --- | --- |
+| 总资产 / 总负债 / 净资产 | 否 | 否 | 当前状态 |
+| Accounts current balance | 否 | 否 | 当前状态 |
+| Selected cashflow | 是 | 是 | 统计 `anchorDate` 所属的完整 day/week/month/year；`all` 为 Ledger beginning 至 `anchorDate` 当天结束 |
+| Category Breakdown | 是 | 是 | 与 selected cashflow 使用完全相同的 anchored scope |
+| Period Summaries | 是 | 否 | 同时返回 `anchorDate` 的完整 day、week、month、year |
+| Trend | 是 | 否 | 以 `anchorDate` 所在月为最后月份的 6 个完整 calendar months |
+| Recent Transactions | 是 | 否 | 截止 `anchorDate` 当天结束的 active Transactions |
 
-不得出现期间摘要、分类、收支和趋势分别使用不同日期上下文的状态。
+因此，只有 selected cashflow 和 Category Breakdown 使用用户当前选择的
+`scope`。期间摘要、Trend 和 Recent Transactions 都只由
+`anchorDate` 决定。不得出现这些区域分别使用不同日期上下文的状态。
+
+对于 selected cashflow 与 Category Breakdown，`today`、`week`、`month`
+和 `year` 都是完整的自然日、自然周、自然月和自然年，不是从该期间
+开始累计到 `anchorDate` 的 partial period。只有 `scope=all` 使用截至
+`anchorDate` 当天结束的 cutoff 语义。
 
 ## 6. 期间摘要
 
-Dashboard 中原有的“固定期间摘要”正式改名为“期间摘要”。区域顶部增加统一日期选择。
+Dashboard 中原有的“固定期间摘要”正式改名为“期间摘要”。统一日期选择
+属于整个“期间分析”区域的顶部，不属于某一张期间摘要卡；收支、分类、
+期间摘要、趋势和最近交易都在该日期上下文下展示。
 
 历史模式示例：
 
 ```text
-期间摘要
+期间分析
 
-[ 回到今天 ]      [ 📅 2026年8月20日 ]
+[ 查看日期：2026年8月20日 📅 ]    [ 回到今天 ]
+
+期间摘要
 
 当日
 2026年8月20日
@@ -240,9 +264,11 @@ Dashboard 中原有的“固定期间摘要”正式改名为“期间摘要”�
 默认今天：
 
 ```text
-期间摘要
+期间分析
 
-[ 📅 2026年9月5日 ]
+[ 查看日期：2026年9月5日 📅 ]
+
+期间摘要
 
 今天
 2026年9月5日
@@ -334,14 +360,30 @@ Dashboard 历史日期使用 canonical route query：
 
 ### 8.1 无效日期 query
 
-`?date=abc`、`?date=2026-99-99` 或未来日期不得导致页面 crash。产品行为为：
+`?date=abc`、`?date=2026-99-99` 或未来日期不得导致页面 crash。格式
+非法或不存在的 calendar date 可以由 Client 在请求前识别，产品行为为：
 
 ```text
-fallback → Ledger today
-remove invalid date query
+Client 不发送 anchored request
+→ fallback 到 Ledger today
+→ remove invalid date query
 ```
 
 不得向 Server 发送错误日期后继续显示 stale historical data。
+
+格式合法但属于未来的日期不能由 Browser clock 最终判定。Client 可以在
+已经拿到 authoritative `todayDate` 后提前限制 Date Picker，但仍允许
+合法 query 进入 Server validation。若 Server 返回
+`400 ledger-validation-failed`，且 `details.field = "anchorDate"`，则：
+
+```text
+Server 判定 future
+→ Client canonicalize 到 /ledger
+→ 重新请求 Ledger today 的默认 overview
+```
+
+这类 future query 的处理是导航规范化，不是历史 projection 的 recoverable
+data error。
 
 ### 8.2 Browser Back / Forward
 
@@ -360,13 +402,16 @@ Dashboard 现有 scope `today`、`week`、`month`、`year`、`all` 保留 transp
 
 ```text
 scope=today → 2026-08-20
-scope=week  → 2026-08-17 ~ 2026-08-23
-scope=month → 2026-08
-scope=year  → 2026
+scope=week  → 2026-08-17 ~ 2026-08-23（完整自然周）
+scope=month → 2026-08（完整自然月）
+scope=year  → 2026（完整自然年）
 scope=all   → Ledger 开始记录以来，到 anchorDate 当天结束为止
 ```
 
-正式冻结：`all` 仍受 `anchorDate` 约束。历史模式下 `anchorDate=2025-06-15&scope=all` 不得包含 `2025-06-16` 之后的交易。
+正式冻结：`today` 是 anchorDate 完整当天，`week` 是 anchorDate 所在的
+完整自然周，`month` 是 anchorDate 所在的完整自然月，`year` 是
+anchorDate 所在的完整自然年；`all` 仍受 `anchorDate` 约束。历史模式下
+`anchorDate=2025-06-15&scope=all` 不得包含 `2025-06-16` 之后的交易。
 
 ## 10. Dashboard 数据区域
 
@@ -386,11 +431,36 @@ Category Breakdown 与 selected cashflow 共享完全相同的 `anchorDate + sco
 
 ### 10.4 Trend
 
-Trend 跟随 `anchorDate`。例如 `anchorDate=2025-06-15` 时，Trend 应展示以 2025 年 6 月为结束月、向前的 calendar month trend。具体月份数量继续沿用现有 Ledger trend contract；如果现有是最近 12 个月，则应为 2024-07 至 2025-06，而不是截至当前日期的趋势。
+Trend 跟随 `anchorDate`，固定展示 6 个完整 calendar months。最后一个月
+是 `anchorDate` 所在的月份，前面依次为该月之前的 5 个月。例如
+`anchorDate=2025-06-15` 时，Trend 必须展示：
+
+```text
+2025-01、2025-02、2025-03、2025-04、2025-05、2025-06
+```
+
+不得继续以当前月份作为历史模式的最后月份，也不得把月份数量留给
+实现阶段自行解释。
 
 ### 10.5 Recent Transactions
 
-历史模式中的 Recent Transactions 定义为：在 `anchorDate` 当天结束之前，最近发生的 active Transactions。例如 `anchorDate=2025-06-15` 时，不得出现 2025-06-16 或更晚的交易。数量继续沿用现有 Dashboard recent transaction contract；默认 today 时行为与现有行为一致。
+历史模式中的 Recent Transactions 定义为：在 `anchorDate` 当天结束之前，
+最近发生的 active Transactions。这里的 active transaction 明确定义为：
+未被 soft-delete 的 Transaction。关联的 Account 或 Category 是否已归档，
+不影响该历史 Transaction 进入 Recent Transactions；归档实体仍应使用其
+历史可识别信息展示。例如 `anchorDate=2025-06-15` 时，不得出现
+2025-06-16 或更晚的交易。数量继续沿用现有 Dashboard recent transaction
+contract；默认 today 时行为与现有行为一致。
+
+时间 cutoff 使用 Ledger timezone 下 `anchorDate` 次日 00:00 的 exclusive
+boundary：只有满足
+
+```text
+occurredAt < startOfNextLedgerDate(anchorDate)
+```
+
+的 active Transaction 才能进入结果。不得直接把下一个 calendar date 的
+00:00 当作用户可见的交易日期，也不得依赖 Browser timezone 判断 cutoff。
 
 ## 11. Server Authority 与 API Contract
 
@@ -446,6 +516,12 @@ GET /api/ledger/overview?scope=month&anchorDate=2026-08-20
 5. 计算 selected scope；
 6. 返回 authoritative projection。
 
+其中“拒绝未来日期”是 Server authority。格式合法的 future date 可以由
+Client 作为一次 anchored request 发送；如果 Server 返回
+`400 ledger-validation-failed` 且 `details.field = "anchorDate"`，Client
+必须将 URL canonicalize 为 `/ledger`，然后重新请求默认的 Ledger today
+projection。Client 不得用浏览器当前日期替代 Server 的判断。
+
 ### 11.2 Response context metadata
 
 优先继续复用 `LedgerOverviewDto`，不为同一 Dashboard 创建第二套 Overview DTO。
@@ -469,14 +545,33 @@ netWorthMinor
 accounts
 ```
 
-`LedgerOverviewDto` 应增加 authoritative context metadata：
+`LedgerOverviewDto` 必须暴露以下 authoritative context metadata：
 
 ```ts
-anchorDate: string
-isToday: boolean
+context: {
+  anchorDate: string
+  todayDate: string
+  isToday: boolean
+  scope: LedgerOverviewScope
+}
 ```
 
-如当前 DTO 架构适合，也可以包含 `scope: LedgerOverviewScope`。Browser 不应仅根据自己的输入猜测 Server 实际采用了哪个 anchor date，Server response 是最终 authority。
+这里的 `todayDate` 是 Server 根据注入的当前时间和
+`LedgerSettings.timezone` 计算出的 Ledger today，而不是 Browser today。
+如果现有 wire DTO 约定要求使用平铺字段，也必须等价暴露这四个字段；
+不得省略 `todayDate` 或让 Browser 仅根据自己的输入猜测 Server 实际采用
+的 anchor date。Server response 是最终 authority。
+
+`todayDate` 至少用于：
+
+- Date Picker 的 `max`；
+- 判断当前是否为历史模式；
+- “回到今天”的目标日期；
+- 对合法 future query 的 UX 预判。
+
+这些用途不能依赖 Browser clock。即使 Client 已经根据已知的
+`todayDate` 阻止了 Date Picker 选择，Server 对 future `anchorDate` 的
+校验仍必须保留。
 
 ### 11.3 Week boundary 与 exclusive `endAt`
 
@@ -617,12 +712,13 @@ Date control 必须有明确 label：
 | selected cashflow | 跟随 `anchorDate + scope` |
 | Category Breakdown | 跟随 `anchorDate + scope` |
 | period summaries | 跟随 `anchorDate` |
-| trend | 跟随 `anchorDate` |
-| recentTransactions | 截止 `anchorDate` |
+| trend | 跟随 `anchorDate`，固定为以 anchorDate 所在月为末月的 6 个完整月份 |
+| recentTransactions | 截止 `anchorDate` 当天结束；只包含未 soft-delete 的 Transaction，归档 Account / Category 不排除历史记录 |
 | `scope=all` | Ledger beginning → `anchorDate` end |
 | current asset/account balance | 不历史化，仍表示当前值 |
 | frontend aggregation | 禁止 |
 | Server timezone authority | 保持 |
+| Server today metadata | `todayDate` 必须随 Overview context 返回 |
 | 第一版 navigation | Date Picker + 回到今天 |
 | previous/next navigation | Deferred |
 | arbitrary range | Deferred |
@@ -662,7 +758,9 @@ When 用户选择 `2026-08-20`，URL 为 `/ledger?date=2026-08-20`，期间摘�
 2026年
 ```
 
-selected `month` cashflow 和 Category Breakdown 都属于 2026 年 8 月。
+selected `month` cashflow 和 Category Breakdown 都属于完整的 2026 年 8
+月，而不是只统计 8 月 1 日至 8 月 20 日；selected `week` 同理统计
+`2026-08-17` 至 `2026-08-23` 的完整自然周。
 
 ### Scenario C — Reload
 
@@ -708,7 +806,20 @@ Given `anchorDate=2025-06-15`、`scope=all`，cashflow 和 Category Breakdown �
 
 ### Scenario L — Invalid URL
 
-访问 `/ledger?date=invalid` 或 future date 时，不 crash、不进入 Error page，使用 Ledger today，canonicalize/remove invalid query，正常显示当前 Dashboard。
+访问 `/ledger?date=invalid` 或 `/ledger?date=2026-99-99` 时，Client 不
+发送 anchored request，不 crash、不进入 Error page，直接 canonicalize 到
+`/ledger`，再用 Server 返回的 `todayDate` 请求并显示当前 Dashboard。
+
+访问格式合法但晚于 Server `todayDate` 的 URL 时，Server 返回
+`400 ledger-validation-failed`（`details.field = "anchorDate"`）；Client
+随后 canonicalize 到 `/ledger`，重新请求 Ledger today 的默认 Dashboard，
+不得显示 stale historical data，也不得用 Browser clock 自行决定结果。
+
+### Scenario M — Six-month Trend
+
+Given `anchorDate=2025-06-15`，Trend 必须展示 2025 年 1 月至 6 月共 6
+个完整 calendar months，最后一个月为 anchorDate 所在月，不得使用当前月
+作为历史趋势的结束月。
 
 ## 20. Privacy 与 Analytics
 
@@ -733,7 +844,9 @@ Server authority
 URL query
 未来日期禁止
 all 截止 anchorDate
-cashflow/category/period/trend/recentTransactions 跟随 anchorDate
+selected cashflow/category → anchorDate + scope
+period summaries/trend → anchorDate
+recentTransactions → 截止 anchorDate 当天结束
 当前资产余额不历史化
 ```
 
@@ -749,6 +862,8 @@ cashflow/category/period/trend/recentTransactions 跟随 anchorDate
 - `scope=all` 历史语义明确；
 - recent transactions 历史语义明确；
 - trend 历史语义明确；
+- `today` / `week` / `month` / `year` 为 anchorDate 所属的完整自然期间；
+- Overview response 提供 Server-authoritative `todayDate`；
 - future date 明确禁止；
 - Ledger timezone 仍为唯一 calendar authority；
 - Server 仍为 projection authority；
