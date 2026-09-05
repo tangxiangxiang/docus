@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter, type RouteLocationNormalizedLoaded } from 'vue-router'
 import { useAuth } from '../composables/useAuth'
 import LedgerDashboard from '../components/ledger/LedgerDashboard.vue'
 import LedgerFirstAccountForm from '../components/ledger/LedgerFirstAccountForm.vue'
@@ -9,10 +9,16 @@ import LedgerOnboarding from '../components/ledger/LedgerOnboarding.vue'
 import LedgerPendingCreateGate from '../components/ledger/LedgerPendingCreateGate.vue'
 import LedgerTransactionSheet from '../components/ledger/LedgerTransactionSheet.vue'
 import { ledgerErrorMessage } from '../features/ledger/ledgerErrors'
-import { useLedgerStore } from '../features/ledger/ledgerStore'
+import { useLedgerStore, type LedgerOverviewRefreshResult } from '../features/ledger/ledgerStore'
+import { parseLedgerRouteDate } from '../features/ledger/periodNavigation'
 
 const auth = useAuth()
-const router = useRouter()
+// The view is also mounted without a Router in focused component tests. The
+// production route always provides both injections; the guards keep those
+// tests on the existing bootstrap path without adding a second navigation
+// implementation.
+const router = useRouter() as ReturnType<typeof useRouter> | undefined
+const route = useRoute() as RouteLocationNormalizedLoaded | undefined
 const store = useLedgerStore()
 const newAccountOpen = ref(false)
 const transactionSheetOpen = ref(false)
@@ -20,11 +26,103 @@ const transactionSheetOpen = ref(false)
 const bootstrapping = computed(() => store.workspaceState.value === 'BOOTSTRAPPING')
 const showOnboarding = computed(() => store.workspaceState.value === 'UNINITIALIZED' || store.workspaceState.value === 'FIRST_ACCOUNT_REQUIRED')
 
+type RouteDateSnapshot = {
+  readonly token: string
+  readonly date: string | undefined
+  readonly invalid: boolean
+}
+
+let hasBootstrapped = false
+let routeSyncRunning = false
+let routeSyncRequested = false
+
+function routeDateSnapshot(): RouteDateSnapshot {
+  const raw = route?.query.date
+  if (raw === undefined) return { token: '', date: undefined, invalid: false }
+  if (typeof raw !== 'string') return { token: JSON.stringify(raw), date: undefined, invalid: true }
+  const date = parseLedgerRouteDate(raw)
+  return { token: raw, date: date ?? undefined, invalid: date === null }
+}
+
+function routeStillMatches(snapshot: RouteDateSnapshot): boolean {
+  return routeDateSnapshot().token === snapshot.token
+}
+
+function isFutureAnchorResult(result: LedgerOverviewRefreshResult | undefined): boolean {
+  return result?.status === 'error'
+    && result.error.code === 'ledger-validation-failed'
+    && result.error.details?.field === 'anchorDate'
+}
+
+async function syncRouteDate(snapshot: RouteDateSnapshot): Promise<void> {
+  if (!route || !router) {
+    if (!hasBootstrapped) {
+      hasBootstrapped = true
+      await store.bootstrap()
+    }
+    return
+  }
+
+  if (snapshot.invalid) {
+    store.setOverviewRequestContext({ scope: store.overviewScope.value, anchorDate: undefined })
+    if (routeStillMatches(snapshot)) await router.replace({ name: 'ledger', hash: route.hash })
+    return
+  }
+
+  store.setOverviewRequestContext({ scope: store.overviewScope.value, anchorDate: snapshot.date })
+  let result: LedgerOverviewRefreshResult | undefined
+  if (!hasBootstrapped) {
+    hasBootstrapped = true
+    result = await store.bootstrap()
+  } else {
+    result = await store.refreshOverview()
+  }
+
+  // A newer browser navigation owns the route. An older request may finish,
+  // but it must not canonicalize or otherwise interpret the newer route.
+  if (!routeStillMatches(snapshot)) return
+
+  if (isFutureAnchorResult(result)) {
+    // The failed bootstrap may not have published Settings/Accounts because
+    // the Overview request was part of the same load. Let the canonical
+    // follow-up perform a complete bootstrap rather than rendering the error
+    // state after the invalid future URL has been removed.
+    hasBootstrapped = false
+    await router.replace({ name: 'ledger', hash: route.hash })
+    return
+  }
+
+  if (snapshot.date !== undefined
+    && result?.status === 'success'
+    && result.overview.context.isToday
+    && result.overview.context.anchorDate === snapshot.date) {
+    await router.replace({ name: 'ledger', hash: route.hash })
+  }
+}
+
+async function drainRouteSync(): Promise<void> {
+  if (routeSyncRunning) return
+  routeSyncRunning = true
+  try {
+    while (routeSyncRequested) {
+      routeSyncRequested = false
+      await syncRouteDate(routeDateSnapshot())
+    }
+  } finally {
+    routeSyncRunning = false
+    if (routeSyncRequested) void drainRouteSync()
+  }
+}
+
+function requestRouteSync(): void {
+  routeSyncRequested = true
+  void drainRouteSync()
+}
+
 watch(() => auth.user.value?.username ?? null, (identity) => store.setOwnerIdentity(identity), { immediate: true })
 
-onMounted(() => {
-  void store.bootstrap()
-})
+if (route && router) watch(() => route.query.date, requestRouteSync, { immediate: true })
+else onMounted(requestRouteSync)
 
 function openNewAccount(): void {
   newAccountOpen.value = true
@@ -39,7 +137,18 @@ function retry(): void {
 }
 
 function openTransactions(): void {
-  void router.push({ name: 'ledger-transactions' })
+  if (router) void router.push({ name: 'ledger-transactions' })
+}
+
+function selectDate(date: string): void {
+  if (!router) return
+  const parsed = parseLedgerRouteDate(date)
+  if (parsed === null) return
+  void router.push({ name: 'ledger', query: { date: parsed }, hash: route?.hash })
+}
+
+function returnToday(): void {
+  if (router) void router.push({ name: 'ledger', hash: route?.hash })
 }
 
 function onRecoveryResolved(): void {
@@ -82,7 +191,13 @@ function closeTransactionSheet(): void {
       <LedgerNoActiveAccountState v-else @create="openNewAccount" />
     </template>
 
-    <LedgerDashboard v-else @record="transactionSheetOpen = true" @view-transactions="openTransactions" />
+    <LedgerDashboard
+      v-else
+      @record="transactionSheetOpen = true"
+      @view-transactions="openTransactions"
+      @select-date="selectDate"
+      @return-today="returnToday"
+    />
 
     <LedgerTransactionSheet v-if="!store.recoveryGateVisible.value" :open="transactionSheetOpen" @close="closeTransactionSheet" />
   </main>
