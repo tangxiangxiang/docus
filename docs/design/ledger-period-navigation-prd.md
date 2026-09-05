@@ -178,6 +178,18 @@ max = Ledger today
 
 Server 仍必须验证所有传入日期，不能只依赖 Client。
 
+### 4.4 Week boundary
+
+Ledger week 正式冻结为 Monday → Sunday。`week.start` 是 `anchorDate` 所在
+周的 Monday 00:00，`week.end` 是下一周 Monday 00:00 的 exclusive boundary；
+内部期间使用 `[startAt, endAt)`。
+
+Ledger Server 是 week boundary authority。Client 不得采用 Sunday-start、
+browser locale week rule 或 locale-dependent first day of week。
+
+例如 `anchorDate=2026-08-20` 时，week 从 2026-08-17 00:00 开始，到
+2026-08-24 00:00 exclusive 结束，用户可见日期为 `2026年8月17日 – 8月23日`。
+
 ## 5. Dashboard 时间上下文
 
 Dashboard 信息分为当前状态和期间型数据两类。
@@ -445,12 +457,21 @@ Trend 跟随 `anchorDate`，固定展示 6 个完整 calendar months。最后一
 ### 10.5 Recent Transactions
 
 历史模式中的 Recent Transactions 定义为：在 `anchorDate` 当天结束之前，
-最近发生的 active Transactions。这里的 active transaction 明确定义为：
-未被 soft-delete 的 Transaction。关联的 Account 或 Category 是否已归档，
-不影响该历史 Transaction 进入 Recent Transactions；归档实体仍应使用其
-历史可识别信息展示。例如 `anchorDate=2025-06-15` 时，不得出现
-2025-06-16 或更晚的交易。数量继续沿用现有 Dashboard recent transaction
-contract；默认 today 时行为与现有行为一致。
+最近的最多 5 笔 active Transactions。这里的 active transaction 明确定义为：
+`deletedAt === null`。结果固定为 `limit = 5`；关联的 Account 或 Category
+是否已归档，不影响该历史 Transaction 进入 Recent Transactions，归档实体仍
+应使用其历史可识别信息展示。排序使用 Ledger canonical transaction order：
+
+```text
+occurredAt DESC
+→ createdAt DESC
+→ id DESC
+```
+
+因此，Recent Transactions 的完整产品定义是：“截止 `anchorDate` 当天结束
+之前，最近的最多 5 笔 active Transactions”。例如 `anchorDate=2025-06-15`
+时，不得出现 2025-06-16 或更晚的交易；默认 today 也遵守同一 `limit`、
+active、cutoff 和排序规则。
 
 时间 cutoff 使用 Ledger timezone 下 `anchorDate` 次日 00:00 的 exclusive
 boundary：只有满足
@@ -575,16 +596,20 @@ context: {
 
 ### 11.3 Week boundary 与 exclusive `endAt`
 
-本功能不重新定义 week semantics，继续使用现有 Ledger Server period contract。如果当前规则为 Monday → Sunday，则保持。例如 `anchorDate=2026-08-20` 时，Server 返回 2026-08-17 至 2026-08-23 的 week。
+Week semantics 在本 PRD 中正式冻结为 Monday → Sunday。`week.start` 是
+`anchorDate` 所在周的 Monday 00:00，`week.end` 是下一周 Monday 00:00 的
+exclusive boundary。Client 不得采用 Sunday-start、browser locale week rule
+或 locale-dependent first day of week；Ledger Server 是唯一的 week boundary
+authority。
 
-内部 period 可以继续使用 `[startAt, endAt)`，例如：
+例如 `anchorDate=2026-08-20` 时：
 
 ```text
-startAt = 2026-08-17 00:00
-endAt   = 2026-08-24 00:00
+week.start = 2026-08-17 00:00
+week.end   = 2026-08-24 00:00 exclusive
 ```
 
-UI 展示为：
+内部 period 使用 `[startAt, endAt)`，用户可见日期为：
 
 ```text
 2026年8月17日 – 8月23日
@@ -707,13 +732,14 @@ Date control 必须有明确 label：
 | 默认日期 | Ledger timezone 下 today |
 | 未来日期 | 不允许 |
 | URL | `/ledger?date=YYYY-MM-DD` |
+| Week boundary | Monday 00:00 → 下一周 Monday 00:00 exclusive；用户可见为 Monday → Sunday |
 | 历史标题 | 当日 / 所在周 / 所在月 / 所在年 |
 | 今天标题 | 今天 / 本周 / 本月 / 今年 |
 | selected cashflow | 跟随 `anchorDate + scope` |
 | Category Breakdown | 跟随 `anchorDate + scope` |
 | period summaries | 跟随 `anchorDate` |
 | trend | 跟随 `anchorDate`，固定为以 anchorDate 所在月为末月的 6 个完整月份 |
-| recentTransactions | 截止 `anchorDate` 当天结束；只包含未 soft-delete 的 Transaction，归档 Account / Category 不排除历史记录 |
+| recentTransactions | 截止 `anchorDate` 当天结束的最多 5 笔；只包含 `deletedAt === null`，按 `occurredAt DESC → createdAt DESC → id DESC` 排序，归档 Account / Category 不排除历史记录 |
 | `scope=all` | Ledger beginning → `anchorDate` end |
 | current asset/account balance | 不历史化，仍表示当前值 |
 | frontend aggregation | 禁止 |
@@ -760,7 +786,8 @@ When 用户选择 `2026-08-20`，URL 为 `/ledger?date=2026-08-20`，期间摘�
 
 selected `month` cashflow 和 Category Breakdown 都属于完整的 2026 年 8
 月，而不是只统计 8 月 1 日至 8 月 20 日；selected `week` 同理统计
-`2026-08-17` 至 `2026-08-23` 的完整自然周。
+`2026-08-17` 至 `2026-08-23` 的完整自然周，即 Monday 00:00 至下一周
+Monday 00:00 的 `[startAt, endAt)` 区间。
 
 ### Scenario C — Reload
 
@@ -789,6 +816,9 @@ Given `anchorDate=2025-06-15`、`scope=all`，cashflow 和 Category Breakdown �
 ```text
 2026年12月28日 – 2027年1月3日
 ```
+
+该周固定从 Monday 00:00 开始，到 2027 年 1 月 4 日 Monday 00:00
+exclusive 结束；不得依据 browser locale 或其他 locale week rule 改变边界。
 
 不能省略第二个年份造成歧义。
 
@@ -820,6 +850,13 @@ Given `anchorDate=2025-06-15`、`scope=all`，cashflow 和 Category Breakdown �
 Given `anchorDate=2025-06-15`，Trend 必须展示 2025 年 1 月至 6 月共 6
 个完整 calendar months，最后一个月为 anchorDate 所在月，不得使用当前月
 作为历史趋势的结束月。
+
+### Scenario N — Recent Transactions
+
+Given `anchorDate=2025-06-15`，Recent Transactions 必须返回截至
+`2025-06-16 00:00` exclusive 之前，按 `occurredAt DESC → createdAt DESC →
+id DESC` 排序的最多 5 笔 Transactions。结果只包含 `deletedAt === null`；
+关联 Account 或 Category 已归档时，仍必须保留该历史 Transaction。
 
 ## 20. Privacy 与 Analytics
 
@@ -862,6 +899,11 @@ recentTransactions → 截止 anchorDate 当天结束
 - `scope=all` 历史语义明确；
 - recent transactions 历史语义明确；
 - trend 历史语义明确；
+- Week boundary 明确冻结为 Monday → Sunday，`week.start` 为 Monday 00:00，
+  `week.end` 为下一周 Monday 00:00 exclusive，且由 Ledger Server authoritative；
+- Recent Transactions 明确冻结为最多 5 笔，`limit = 5`，只包含
+  `deletedAt === null`，使用 `occurredAt DESC → createdAt DESC → id DESC` 排序，
+  归档 Account / Category 不排除历史记录；
 - `today` / `week` / `month` / `year` 为 anchorDate 所属的完整自然期间；
 - Overview response 提供 Server-authoritative `todayDate`；
 - future date 明确禁止；
