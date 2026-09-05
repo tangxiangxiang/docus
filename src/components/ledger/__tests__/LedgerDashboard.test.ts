@@ -190,6 +190,7 @@ describe('Ledger live dashboard', () => {
     expect(wrapper.get('[data-testid="ledger-net-worth"]').text()).toContain('9,962')
     expect(wrapper.get('[data-testid="ledger-dashboard-accounts"]').text()).toContain('招商银行')
     expect(wrapper.get('[data-testid="ledger-category-breakdown"]').text()).toContain('餐饮')
+    expect(wrapper.get('[data-testid="ledger-category-breakdown"]').text()).toContain('这段期间还没有收入分类。')
     expect(wrapper.get('[data-testid="ledger-recent-transactions"]').text()).toContain('午餐')
     expect(wrapper.get('[data-testid="ledger-period-today"]').text()).toContain('2026年9月5日')
     expect(wrapper.get('[data-testid="ledger-period-week"]').text()).toContain('2026年8月31日 – 9月6日')
@@ -266,6 +267,37 @@ describe('Ledger live dashboard', () => {
     expect(accounts).toContain('负债账户')
     expect(accounts).toContain('招商银行')
     expect(accounts).toContain('信用卡')
+  })
+
+  it('keeps category name and share on the left while placing the amount on the right', async () => {
+    api.getLedgerOverview.mockResolvedValue({
+      ...overview(),
+      categoryBreakdown: {
+        income: [
+          { categoryId: 'salary', name: '工资', kind: 'income', amountMinor: 500_000 },
+          { categoryId: 'side-job', name: '兼职', kind: 'income', amountMinor: 10_000 },
+        ],
+        expense: [
+          { categoryId: 'food', name: '餐饮', kind: 'expense', amountMinor: 5_290 },
+        ],
+      },
+    })
+    const wrapper = mount(LedgerView)
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    const incomeRows = wrapper.get('[data-testid="ledger-category-breakdown"]').findAll('.ledger-breakdown-row')
+    expect(incomeRows[0].get('.ledger-breakdown-label').text()).toBe('工资 · 98%')
+    expect(incomeRows[0].get('.ledger-breakdown-amount').text()).toBe('¥5,000.00')
+    expect(incomeRows[0].get('.ledger-breakdown-amount').text()).not.toContain('98%')
+    expect(incomeRows[1].get('.ledger-breakdown-label').text()).toBe('兼职 · 2%')
+    expect(incomeRows[1].get('.ledger-breakdown-amount').text()).toBe('¥100.00')
+    expect(incomeRows[1].get('.ledger-breakdown-amount').text()).not.toContain('2%')
+
+    const expenseRows = wrapper.get('[data-testid="ledger-category-breakdown"]').findAll('.ledger-breakdown-row')
+    expect(expenseRows[2].get('.ledger-breakdown-label').text()).toBe('餐饮 · 100%')
+    expect(expenseRows[2].get('.ledger-breakdown-amount').text()).toBe('¥52.90')
+    expect(expenseRows[2].get('.ledger-breakdown-amount').text()).not.toContain('100%')
   })
 
   it('resolves recent transaction account labels from active and archived accounts', async () => {

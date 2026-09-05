@@ -205,14 +205,26 @@ function retryScope(): void {
             <div>
               <h3>收入</h3>
               <div v-if="selectedPeriods.income.length" class="ledger-breakdown-list">
-                <div v-for="item in selectedPeriods.income" :key="item.categoryId"><span>{{ item.name }}</span><strong>{{ formatLedgerMoney(item.amountMinor, overview.currency) }} · {{ categoryShare(selectedPeriods.income, item.amountMinor) }}</strong></div>
+                <div v-for="item in selectedPeriods.income" :key="item.categoryId" class="ledger-breakdown-row">
+                  <span class="ledger-breakdown-label">
+                    <span class="ledger-breakdown-name">{{ item.name }}</span>
+                    <span class="ledger-breakdown-share"> · {{ categoryShare(selectedPeriods.income, item.amountMinor) }}</span>
+                  </span>
+                  <strong class="ledger-breakdown-amount">{{ formatLedgerMoney(item.amountMinor, overview.currency) }}</strong>
+                </div>
               </div>
               <p v-else class="ledger-inline-empty">这段期间还没有收入分类。</p>
             </div>
             <div>
               <h3>支出</h3>
               <div v-if="selectedPeriods.expense.length" class="ledger-breakdown-list">
-                <div v-for="item in selectedPeriods.expense" :key="item.categoryId"><span>{{ item.name }}</span><strong>{{ formatLedgerMoney(item.amountMinor, overview.currency) }} · {{ categoryShare(selectedPeriods.expense, item.amountMinor) }}</strong></div>
+                <div v-for="item in selectedPeriods.expense" :key="item.categoryId" class="ledger-breakdown-row">
+                  <span class="ledger-breakdown-label">
+                    <span class="ledger-breakdown-name">{{ item.name }}</span>
+                    <span class="ledger-breakdown-share"> · {{ categoryShare(selectedPeriods.expense, item.amountMinor) }}</span>
+                  </span>
+                  <strong class="ledger-breakdown-amount">{{ formatLedgerMoney(item.amountMinor, overview.currency) }}</strong>
+                </div>
               </div>
               <p v-else class="ledger-inline-empty">这段期间还没有支出分类。</p>
             </div>
@@ -331,9 +343,11 @@ function retryScope(): void {
 .ledger-breakdown-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .ledger-breakdown-columns h3 { margin: 0 0 8px; color: var(--text-muted); font-size: .78rem; }
 .ledger-breakdown-list { display: grid; gap: 6px; }
-.ledger-breakdown-list > div { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border); font-size: .8rem; }
-.ledger-breakdown-list span { overflow: hidden; color: var(--text); text-overflow: ellipsis; white-space: nowrap; }
-.ledger-breakdown-list strong { flex: 0 0 auto; color: var(--text-h); }
+.ledger-breakdown-row { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border); font-size: .8rem; }
+.ledger-breakdown-label { display: flex; min-width: 0; overflow: hidden; }
+.ledger-breakdown-name { overflow: hidden; color: var(--text); text-overflow: ellipsis; white-space: nowrap; }
+.ledger-breakdown-share { flex: 0 0 auto; color: var(--text-muted); font-weight: 400; white-space: nowrap; }
+.ledger-breakdown-amount { flex: 0 0 auto; color: var(--text-h); text-align: right; white-space: nowrap; }
 .ledger-inline-empty { margin: 0; color: var(--text-muted); font-size: .78rem; line-height: 1.45; }
 .ledger-inline-empty:has(button) { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .ledger-recent-list { display: grid; gap: 0; }
