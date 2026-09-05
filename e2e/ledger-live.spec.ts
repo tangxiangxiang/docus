@@ -1,5 +1,6 @@
 import { expect, test, type APIRequestContext } from './fixtures/auth'
 import type { Page } from '@playwright/test'
+import { Temporal } from '@js-temporal/polyfill'
 
 type LedgerTransaction = {
   id: string
@@ -20,6 +21,11 @@ type LedgerAccount = {
   archivedAt: number | null
 }
 
+type LedgerCategory = {
+  id: string
+  archivedAt: number | null
+}
+
 async function getTransactions(request: APIRequestContext): Promise<LedgerTransactionPage> {
   const response = await request.get('/api/ledger/transactions?limit=100&includeDeleted=true')
   expect(response.status()).toBe(200)
@@ -30,6 +36,63 @@ async function getAccounts(request: APIRequestContext): Promise<LedgerAccount[]>
   const response = await request.get('/api/ledger/accounts?includeArchived=true')
   expect(response.status()).toBe(200)
   return await response.json() as LedgerAccount[]
+}
+
+async function ensurePeriodNavigationFixtures(request: APIRequestContext): Promise<{
+  categoryId: string
+  timezone: string
+  currency: string
+}> {
+  let settingsResponse = await request.get('/api/ledger/settings')
+  let timezone = 'Asia/Shanghai'
+  if (settingsResponse.status() === 404) {
+    const initialize = await request.post('/api/ledger/settings', {
+      data: { baseCurrency: 'CNY', timezone },
+      headers: { 'Idempotency-Key': `period-settings-${Date.now()}` },
+    })
+    expect(initialize.status(), await initialize.text()).toBe(201)
+    settingsResponse = await request.get('/api/ledger/settings')
+  }
+  expect(settingsResponse.status()).toBe(200)
+  const settings = await settingsResponse.json() as { timezone: string; baseCurrency: string }
+  timezone = settings.timezone
+
+  const categoriesResponse = await request.get('/api/ledger/categories?kind=expense')
+  expect(categoriesResponse.status()).toBe(200)
+  let categories = await categoriesResponse.json() as LedgerCategory[]
+  let category = categories.find((candidate) => candidate.archivedAt === null)
+  if (!category) {
+    const createCategory = await request.post('/api/ledger/categories', {
+      data: { kind: 'expense', name: `期间导航分类-${Date.now()}` },
+      headers: { 'Idempotency-Key': `period-category-${Date.now()}` },
+    })
+    expect(createCategory.status(), await createCategory.text()).toBe(201)
+    const refreshedCategories = await request.get('/api/ledger/categories?kind=expense')
+    expect(refreshedCategories.status()).toBe(200)
+    categories = await refreshedCategories.json() as LedgerCategory[]
+    category = categories.find((candidate) => candidate.archivedAt === null)
+  }
+  expect(category).toBeTruthy()
+  return { categoryId: category!.id, timezone, currency: settings.baseCurrency }
+}
+
+async function createPeriodExpense(
+  request: APIRequestContext,
+  input: { accountId: string; categoryId: string; amountMinor: number; occurredAt: number; payee: string; key: string },
+): Promise<void> {
+  const response = await request.post('/api/ledger/transactions', {
+    data: {
+      type: 'expense',
+      amountMinor: input.amountMinor,
+      accountId: input.accountId,
+      categoryId: input.categoryId,
+      occurredAt: input.occurredAt,
+      payee: input.payee,
+      note: '',
+    },
+    headers: { 'Idempotency-Key': input.key },
+  })
+  expect(response.status(), await response.text()).toBe(201)
 }
 
 async function selectOptionContaining(page: Page, selector: string, text: string): Promise<string> {
@@ -252,4 +315,84 @@ test('Ledger transaction entry remains keyboard-usable in a narrow viewport', as
 
   await page.keyboard.press('Escape')
   await expect(page.getByRole('dialog')).toBeHidden()
+})
+
+test('historical period navigation keeps one anchor across periods, reload, and browser history', async ({ page, request }) => {
+  const fixtures = await ensurePeriodNavigationFixtures(request)
+  const today = Temporal.Now.plainDateISO(fixtures.timezone)
+  const anchor = today.with({ day: 1 }).subtract({ months: 1 }).add({ days: 10 })
+  const afterAnchor = anchor.add({ days: 3 })
+  const laterDate = anchor.add({ days: 5 })
+  const atLedgerNoon = (date: Temporal.PlainDate): number => date.toZonedDateTime({
+    timeZone: fixtures.timezone,
+    plainTime: Temporal.PlainTime.from('12:00'),
+  }).toInstant().epochMilliseconds
+  const anchorDate = anchor.toString()
+  const afterAnchorDate = afterAnchor.toString()
+  const laterDateValue = laterDate.toString()
+  const anchorPayee = `期间锚点-${Date.now()}`
+  const afterAnchorPayee = `锚点之后-${Date.now()}`
+  const createAccount = await request.post('/api/ledger/accounts', {
+    data: {
+      name: `历史期间账户-${Date.now()}`,
+      type: 'bank',
+      nature: 'asset',
+      openingBalanceMinor: 0,
+      openingDate: anchorDate,
+      currency: fixtures.currency,
+      note: '',
+    },
+    headers: { 'Idempotency-Key': `period-account-${anchorDate}-${Date.now()}` },
+  })
+  expect(createAccount.status()).toBe(201)
+  const account = await createAccount.json() as { id: string }
+
+  await createPeriodExpense(request, {
+    accountId: account.id,
+    categoryId: fixtures.categoryId,
+    amountMinor: 4100,
+    occurredAt: atLedgerNoon(anchor),
+    payee: anchorPayee,
+    key: `period-anchor-${anchorDate}-${Date.now()}`,
+  })
+  await createPeriodExpense(request, {
+    accountId: account.id,
+    categoryId: fixtures.categoryId,
+    amountMinor: 7300,
+    occurredAt: atLedgerNoon(afterAnchor),
+    payee: afterAnchorPayee,
+    key: `period-after-${afterAnchorDate}-${Date.now()}`,
+  })
+
+  await page.goto(`/ledger?date=${anchorDate}`)
+  await expect(page).toHaveURL(new RegExp(`/ledger\\?date=${anchorDate}$`))
+  await expect(page.getByTestId('ledger-dashboard')).toBeVisible()
+  await expect(page.getByTestId('ledger-period-date')).toHaveValue(anchorDate)
+  await expect(page.getByTestId('ledger-period-month')).toContainText(`${anchor.year}年${anchor.month}月`)
+  await expect(page.getByTestId('ledger-period-month')).toContainText('¥114.00')
+  await expect(page.getByTestId('ledger-recent-transactions')).toContainText(anchorPayee)
+  await expect(page.getByTestId('ledger-recent-transactions')).not.toContainText(afterAnchorPayee)
+  await expect(page.getByTestId('ledger-return-today')).toBeVisible()
+
+  await page.reload()
+  await expect(page).toHaveURL(new RegExp(`/ledger\\?date=${anchorDate}$`))
+  await expect(page.getByTestId('ledger-period-date')).toHaveValue(anchorDate)
+  await expect(page.getByTestId('ledger-period-month')).toContainText('¥114.00')
+  await expect(page.getByTestId('ledger-recent-transactions')).not.toContainText(afterAnchorPayee)
+
+  const periodDate = page.getByTestId('ledger-period-date')
+  await periodDate.fill(laterDateValue)
+  await periodDate.press('Tab')
+  await expect(page).toHaveURL(new RegExp(`/ledger\\?date=${laterDateValue}$`))
+  await expect(page.getByTestId('ledger-period-date')).toHaveValue(laterDateValue)
+  await expect(page.getByTestId('ledger-recent-transactions')).toContainText(afterAnchorPayee)
+
+  await page.goBack()
+  await expect(page).toHaveURL(new RegExp(`/ledger\\?date=${anchorDate}$`))
+  await expect(page.getByTestId('ledger-period-date')).toHaveValue(anchorDate)
+  await expect(page.getByTestId('ledger-recent-transactions')).not.toContainText(afterAnchorPayee)
+
+  await page.getByTestId('ledger-return-today').click()
+  await expect(page).toHaveURL(/\/ledger$/)
+  await expect(page.getByTestId('ledger-return-today')).toBeHidden()
 })
