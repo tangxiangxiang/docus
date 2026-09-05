@@ -133,6 +133,8 @@ describe('Ledger live dashboard', () => {
     expect(wrapper.get('[data-testid="ledger-dashboard-accounts"]').text()).toContain('招商银行')
     expect(wrapper.get('[data-testid="ledger-category-breakdown"]').text()).toContain('餐饮')
     expect(wrapper.get('[data-testid="ledger-recent-transactions"]').text()).toContain('午餐')
+    expect(wrapper.get('[data-testid="ledger-period-month"]').text()).toContain('收支结余')
+    expect(wrapper.get('[data-testid="ledger-period-month"]').text()).toContain('-¥38.00')
     expect(wrapper.text()).not.toContain('billsMockData')
   })
 
@@ -147,5 +149,57 @@ describe('Ledger live dashboard', () => {
     expect(api.getLedgerOverview).toHaveBeenLastCalledWith('today')
     expect(wrapper.get('[data-testid="ledger-total-assets"]').text()).toContain('9,962')
     expect(wrapper.get('[data-testid="ledger-dashboard-cashflow"]').text()).toContain('38.00')
+  })
+
+  it('supports the all-time scope without changing server-owned balances or fixed periods', async () => {
+    const wrapper = mount(LedgerView)
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    await wrapper.get('select[aria-label="选择收支期间"]').setValue('all')
+    await flushPromises()
+
+    expect(api.getLedgerOverview).toHaveBeenLastCalledWith('all')
+    expect(wrapper.get('[data-testid="ledger-total-assets"]').text()).toContain('9,962')
+    expect(wrapper.get('[data-testid="ledger-total-liabilities"]').text()).toContain('0')
+    expect(wrapper.get('[data-testid="ledger-period-month"]').text()).toContain('-¥38.00')
+  })
+
+  it('shows presentation-only category shares and groups accounts by nature', async () => {
+    const liability: LedgerAccountSummary = {
+      ...account,
+      id: 'card-1',
+      name: '信用卡',
+      type: 'credit_card',
+      nature: 'liability',
+      currentBalanceMinor: 10_000,
+      balanceIncreaseMinor: 10_000,
+      balanceDecreaseMinor: 0,
+    }
+    api.getLedgerOverview.mockResolvedValue({
+      ...overview(),
+      accounts: [accountSummary, liability],
+      categoryBreakdown: {
+        income: [],
+        expense: [
+          { categoryId: 'food', name: '餐饮', kind: 'expense', amountMinor: 3_800 },
+          { categoryId: 'transport', name: '交通', kind: 'expense', amountMinor: 6_200 },
+        ],
+      },
+    })
+    const wrapper = mount(LedgerView)
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    const breakdown = wrapper.get('[data-testid="ledger-category-breakdown"]').text()
+    expect(breakdown).toContain('餐饮')
+    expect(breakdown).toContain('38%')
+    expect(breakdown).toContain('交通')
+    expect(breakdown).toContain('62%')
+    const accounts = wrapper.get('[data-testid="ledger-dashboard-accounts"]').text()
+    expect(accounts).toContain('资产账户')
+    expect(accounts).toContain('负债账户')
+    expect(accounts).toContain('招商银行')
+    expect(accounts).toContain('信用卡')
   })
 })

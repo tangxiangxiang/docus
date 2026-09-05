@@ -18,6 +18,7 @@ const scopeOptions: ReadonlyArray<{ value: LedgerOverviewScope; label: string }>
   { value: 'week', label: '本周' },
   { value: 'month', label: '本月' },
   { value: 'year', label: '今年' },
+  { value: 'all', label: '全部' },
 ]
 
 const overview = computed(() => store.overview.value)
@@ -25,7 +26,7 @@ const refreshing = computed(() => store.loading.value)
 const scopeError = computed(() => store.error.value)
 
 watch(() => store.overviewScope.value, (scope) => {
-  if (scope !== 'all') selectedScope.value = scope
+  selectedScope.value = scope
 }, { immediate: true })
 
 watch(selectedScope, (scope, previous) => {
@@ -41,6 +42,8 @@ const categoryNames = computed(() => new Map(
 const selectedPeriodLabel = computed(() => scopeOptions.find((option) => option.value === selectedScope.value)?.label ?? '本月')
 const selectedPeriods = computed(() => overview.value?.categoryBreakdown ?? { income: [], expense: [] })
 const selectedPeriodSummary = computed(() => overview.value?.cashflow ?? null)
+const assetAccounts = computed(() => (overview.value?.accounts ?? []).filter((account) => account.nature === 'asset'))
+const liabilityAccounts = computed(() => (overview.value?.accounts ?? []).filter((account) => account.nature === 'liability'))
 
 const periodLabels: Record<LedgerPeriodName, string> = {
   today: '今天',
@@ -51,6 +54,13 @@ const periodLabels: Record<LedgerPeriodName, string> = {
 
 function accountLabel(id: string): string { return accountNames.value.get(id) ?? '未知账户' }
 function categoryLabel(id: string): string { return categoryNames.value.get(id) ?? '未知分类' }
+
+function categoryShare(items: readonly { amountMinor: number }[], amountMinor: number): string {
+  const total = items.reduce((sum, item) => sum + BigInt(item.amountMinor), 0n)
+  if (total === 0n) return '0%'
+  const roundedPercent = (BigInt(amountMinor) * 100n + total / 2n) / total
+  return `${roundedPercent.toString()}%`
+}
 
 function transactionTitle(transaction: LedgerTransactionDto): string {
   if (transaction.type === 'income' || transaction.type === 'expense') {
@@ -126,18 +136,37 @@ function retryScope(): void {
         <div class="ledger-section-heading">
           <div>
             <h2 id="ledger-dashboard-accounts-title">账户</h2>
-            <p>当前余额直接来自账户 projection。</p>
+            <p>按资产与负债区分，余额直接来自账户 projection。</p>
           </div>
           <RouterLink :to="{ name: 'ledger-accounts' }">查看全部</RouterLink>
         </div>
-        <div class="ledger-dashboard-accounts" data-testid="ledger-dashboard-accounts">
-          <RouterLink v-for="account in overview.accounts" :key="account.id" class="ledger-dashboard-account" :to="{ name: 'ledger-account', params: { id: account.id } }">
-            <span>
-              <strong>{{ account.name }}</strong>
-              <small>{{ account.nature === 'asset' ? '资产' : '负债' }} · {{ account.currency }}</small>
-            </span>
-            <strong>{{ formatLedgerMoney(account.currentBalanceMinor, account.currency) }}</strong>
-          </RouterLink>
+        <div class="ledger-dashboard-account-groups" data-testid="ledger-dashboard-accounts">
+          <section class="ledger-dashboard-account-group" data-testid="ledger-dashboard-assets" aria-labelledby="ledger-dashboard-assets-title">
+            <h3 id="ledger-dashboard-assets-title">资产账户</h3>
+            <div v-if="assetAccounts.length" class="ledger-dashboard-accounts">
+              <RouterLink v-for="account in assetAccounts" :key="account.id" class="ledger-dashboard-account" :to="{ name: 'ledger-account', params: { id: account.id } }">
+                <span>
+                  <strong>{{ account.name }}</strong>
+                  <small>资产 · {{ account.currency }}</small>
+                </span>
+                <strong>{{ formatLedgerMoney(account.currentBalanceMinor, account.currency) }}</strong>
+              </RouterLink>
+            </div>
+            <p v-else class="ledger-inline-empty">还没有资产账户。</p>
+          </section>
+          <section class="ledger-dashboard-account-group" data-testid="ledger-dashboard-liabilities" aria-labelledby="ledger-dashboard-liabilities-title">
+            <h3 id="ledger-dashboard-liabilities-title">负债账户</h3>
+            <div v-if="liabilityAccounts.length" class="ledger-dashboard-accounts">
+              <RouterLink v-for="account in liabilityAccounts" :key="account.id" class="ledger-dashboard-account" :to="{ name: 'ledger-account', params: { id: account.id } }">
+                <span>
+                  <strong>{{ account.name }}</strong>
+                  <small>负债 · {{ account.currency }}</small>
+                </span>
+                <strong>{{ formatLedgerMoney(account.currentBalanceMinor, account.currency) }}</strong>
+              </RouterLink>
+            </div>
+            <p v-else class="ledger-inline-empty">还没有负债账户。</p>
+          </section>
         </div>
       </section>
 
@@ -173,14 +202,14 @@ function retryScope(): void {
             <div>
               <h3>收入</h3>
               <div v-if="selectedPeriods.income.length" class="ledger-breakdown-list">
-                <div v-for="item in selectedPeriods.income" :key="item.categoryId"><span>{{ item.name }}</span><strong>{{ formatLedgerMoney(item.amountMinor, overview.currency) }}</strong></div>
+                <div v-for="item in selectedPeriods.income" :key="item.categoryId"><span>{{ item.name }}</span><strong>{{ formatLedgerMoney(item.amountMinor, overview.currency) }} · {{ categoryShare(selectedPeriods.income, item.amountMinor) }}</strong></div>
               </div>
               <p v-else class="ledger-inline-empty">这段期间还没有收入分类。</p>
             </div>
             <div>
               <h3>支出</h3>
               <div v-if="selectedPeriods.expense.length" class="ledger-breakdown-list">
-                <div v-for="item in selectedPeriods.expense" :key="item.categoryId"><span>{{ item.name }}</span><strong>{{ formatLedgerMoney(item.amountMinor, overview.currency) }}</strong></div>
+                <div v-for="item in selectedPeriods.expense" :key="item.categoryId"><span>{{ item.name }}</span><strong>{{ formatLedgerMoney(item.amountMinor, overview.currency) }} · {{ categoryShare(selectedPeriods.expense, item.amountMinor) }}</strong></div>
               </div>
               <p v-else class="ledger-inline-empty">这段期间还没有支出分类。</p>
             </div>
@@ -219,10 +248,11 @@ function retryScope(): void {
           <article v-for="period in (['today', 'week', 'month', 'year'] as const)" :key="period" class="ledger-period-card" :data-testid="`ledger-period-${period}`">
             <h3>{{ periodLabels[period] }}</h3>
             <small v-if="periodSummary(period)">{{ formatLedgerDateTime(periodSummary(period)!.startAt, store.settings.value?.timezone ?? 'UTC') }} – {{ formatLedgerDateTime(periodSummary(period)!.endAt - 1, store.settings.value?.timezone ?? 'UTC') }}</small>
-            <div v-if="periodSummary(period)" class="ledger-period-values">
-              <span>收入 <strong>{{ formatLedgerMoney(periodSummary(period)!.incomeMinor, overview.currency) }}</strong></span>
-              <span>支出 <strong>{{ formatLedgerMoney(periodSummary(period)!.expenseMinor, overview.currency) }}</strong></span>
-            </div>
+              <div v-if="periodSummary(period)" class="ledger-period-values">
+                <span>收入 <strong>{{ formatLedgerMoney(periodSummary(period)!.incomeMinor, overview.currency) }}</strong></span>
+                <span>支出 <strong>{{ formatLedgerMoney(periodSummary(period)!.expenseMinor, overview.currency) }}</strong></span>
+                <span>收支结余 <strong>{{ formatLedgerSignedMoney(periodSummary(period)!.balanceMinor, overview.currency) }}</strong></span>
+              </div>
           </article>
         </div>
       </section>
@@ -278,7 +308,10 @@ function retryScope(): void {
 .ledger-section-heading > a { flex: 0 0 auto; color: var(--accent); font-size: .78rem; text-decoration: none; }
 .ledger-section-heading-with-control { align-items: center; }
 .ledger-period-control select { min-height: 34px; padding: 5px 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg); color: var(--text-h); font: inherit; font-size: .8rem; }
-.ledger-dashboard-accounts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.ledger-dashboard-account-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.ledger-dashboard-account-group { min-width: 0; }
+.ledger-dashboard-account-group h3 { margin: 0 0 8px; color: var(--text-muted); font-size: .78rem; }
+.ledger-dashboard-accounts { display: grid; gap: 8px; }
 .ledger-dashboard-account { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 65px; padding: 11px 13px; border: 1px solid var(--border); border-radius: 8px; color: inherit; text-decoration: none; }
 .ledger-dashboard-account:hover { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
 .ledger-dashboard-account > span { display: grid; gap: 3px; min-width: 0; }
@@ -329,7 +362,7 @@ function retryScope(): void {
   .ledger-dashboard-header { align-items: stretch; flex-direction: column; }
   .ledger-dashboard-actions > * { flex: 1 1 150px; }
   .ledger-metric-grid,
-  .ledger-dashboard-accounts,
+  .ledger-dashboard-account-groups,
   .ledger-dashboard-two-column { grid-template-columns: 1fr; }
   .ledger-cashflow-grid { grid-template-columns: 1fr; }
   .ledger-period-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

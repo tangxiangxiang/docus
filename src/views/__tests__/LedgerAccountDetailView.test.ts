@@ -75,6 +75,7 @@ function createTestRouter() {
     routes: [
       { path: '/ledger/accounts/:id', name: 'ledger-account', component: LedgerAccountDetailView },
       { path: '/ledger/accounts', name: 'ledger-accounts', component: { template: '<div />' } },
+      { path: '/ledger/transactions', name: 'ledger-transactions', component: { template: '<div />' } },
     ],
   })
 }
@@ -172,5 +173,57 @@ describe('Ledger account detail lifecycle', () => {
     await flushPromises()
 
     expect(api.archiveLedgerAccount).toHaveBeenCalledWith('bank-1', 3)
+  })
+
+  it('renders the server movement projection with asset language and a filtered-history link', async () => {
+    const original = account()
+    setup(original)
+    api.getLedgerAccountTransactions.mockResolvedValue({
+      account: original,
+      movement: { balanceIncreaseMinor: 50_000, balanceDecreaseMinor: 12_000 },
+      transactions: [],
+      page: { nextCursor: null },
+    })
+    const nextRouter = createTestRouter()
+    await nextRouter.push('/ledger/accounts/bank-1')
+    await nextRouter.isReady()
+    const wrapper = mount(LedgerAccountDetailView, { global: { plugins: [nextRouter] } })
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    const movement = wrapper.get('[data-testid="ledger-account-movement"]')
+    expect(movement.text()).toContain('流入')
+    expect(movement.text()).toContain('流出')
+    expect(movement.text()).toContain('¥500.00')
+    expect(movement.text()).toContain('¥120.00')
+    expect(wrapper.get('.ledger-account-history-link').attributes('href')).toBe('/ledger/transactions?accountId=bank-1')
+    expect(api.getLedgerAccountTransactions).toHaveBeenCalledWith('bank-1', { includeDeleted: true, limit: 1 })
+  })
+
+  it('uses liability movement language instead of cashflow language', async () => {
+    const liability = account({
+      type: 'credit_card',
+      nature: 'liability',
+      currentBalanceMinor: 200_000,
+    })
+    setup(liability)
+    api.getLedgerAccountTransactions.mockResolvedValue({
+      account: liability,
+      movement: { balanceIncreaseMinor: 80_000, balanceDecreaseMinor: 30_000 },
+      transactions: [],
+      page: { nextCursor: null },
+    })
+    const nextRouter = createTestRouter()
+    await nextRouter.push('/ledger/accounts/bank-1')
+    await nextRouter.isReady()
+    const wrapper = mount(LedgerAccountDetailView, { global: { plugins: [nextRouter] } })
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    const movement = wrapper.get('[data-testid="ledger-account-movement"]')
+    expect(movement.text()).toContain('新增负债')
+    expect(movement.text()).toContain('减少负债')
+    expect(movement.text()).not.toContain('流入')
+    expect(movement.text()).not.toContain('流出')
   })
 })

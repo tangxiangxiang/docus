@@ -1,13 +1,14 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useConfirm } from '../composables/useConfirm'
 import LedgerAccountEditForm from '../components/ledger/LedgerAccountEditForm.vue'
+import LedgerPendingCreateGate from '../components/ledger/LedgerPendingCreateGate.vue'
 import { ledgerAccountTypeOptionsForNature } from '../features/ledger/accountPresentation'
 import { ledgerErrorMessage } from '../features/ledger/ledgerErrors'
 import { formatLedgerMoney } from '../features/ledger/money'
 import { useLedgerStore } from '../features/ledger/ledgerStore'
-import type { LedgerAccountDto } from '../../shared/ledgerProtocol'
+import type { LedgerAccountDto, LedgerMovementSummary } from '../../shared/ledgerProtocol'
 
 const route = useRoute()
 const store = useLedgerStore()
@@ -15,6 +16,7 @@ const { confirm } = useConfirm()
 
 const account = ref<LedgerAccountDto | null>(null)
 const hasHistory = ref(false)
+const movement = ref<LedgerMovementSummary | null>(null)
 const loading = ref(false)
 const editing = ref(false)
 const actionError = ref('')
@@ -42,6 +44,7 @@ async function load(): Promise<void> {
     if (sequence !== loadSequence) return
     account.value = nextAccount
     hasHistory.value = history.transactions.length > 0
+    movement.value = history.movement
   } catch (cause) {
     if (sequence !== loadSequence) return
     account.value = null
@@ -52,6 +55,7 @@ async function load(): Promise<void> {
 }
 
 watch(accountId, () => { void load() }, { immediate: true })
+onMounted(() => { void store.bootstrap() })
 
 async function archive(): Promise<void> {
   const current = account.value
@@ -92,7 +96,9 @@ function onSaved(next: LedgerAccountDto): void {
       <RouterLink :to="{ name: 'ledger-accounts' }">← 返回账户</RouterLink>
     </div>
 
-    <div v-if="loading" class="ledger-state-panel" data-testid="ledger-account-loading" role="status">正在加载账户…</div>
+    <LedgerPendingCreateGate v-if="store.recoveryGateVisible.value" />
+
+    <div v-else-if="loading" class="ledger-state-panel" data-testid="ledger-account-loading" role="status">正在加载账户…</div>
     <section v-else-if="!account" class="ledger-state-panel" data-testid="ledger-account-error" role="alert">
       <h1>账户详情无法加载</h1>
       <p>{{ actionError }}</p>
@@ -143,6 +149,29 @@ function onSaved(next: LedgerAccountDto): void {
         </article>
       </div>
 
+      <section class="ledger-detail-movement" data-testid="ledger-account-movement" aria-labelledby="ledger-account-movement-title">
+        <div class="ledger-section-heading">
+          <div>
+            <h2 id="ledger-account-movement-title">本月变动</h2>
+            <p>金额来自该账户的服务端 movement projection。</p>
+          </div>
+        </div>
+        <div v-if="movement" class="ledger-movement-grid">
+          <div>
+            <span>{{ account.nature === 'asset' ? '流入' : '新增负债' }}</span>
+            <strong>{{ formatLedgerMoney(movement.balanceIncreaseMinor, account.currency) }}</strong>
+          </div>
+          <div>
+            <span>{{ account.nature === 'asset' ? '流出' : '减少负债' }}</span>
+            <strong>{{ formatLedgerMoney(movement.balanceDecreaseMinor, account.currency) }}</strong>
+          </div>
+        </div>
+      </section>
+
+      <RouterLink class="ledger-account-history-link" :to="{ name: 'ledger-transactions', query: { accountId: account.id } }">
+        查看该账户全部交易
+      </RouterLink>
+
       <section class="ledger-detail-note" aria-labelledby="ledger-account-note-title">
         <h2 id="ledger-account-note-title">备注</h2>
         <p>{{ account.note || '暂无备注' }}</p>
@@ -177,6 +206,16 @@ function onSaved(next: LedgerAccountDto): void {
 .ledger-detail-card span { color: var(--text-muted); font-size: .78rem; }
 .ledger-detail-card strong { color: var(--text-h); font-size: 1.22rem; }
 .ledger-detail-card small { color: var(--text-muted); font-size: .75rem; line-height: 1.45; }
+.ledger-detail-movement { margin-top: 22px; padding: 18px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-soft); }
+.ledger-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 13px; }
+.ledger-section-heading h2 { margin: 0; color: var(--text-h); font-size: .98rem; }
+.ledger-section-heading p { margin: 5px 0 0; color: var(--text-muted); font-size: .76rem; }
+.ledger-movement-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.ledger-movement-grid > div { display: grid; gap: 6px; padding: 12px; border-radius: 8px; background: var(--bg); }
+.ledger-movement-grid span { color: var(--text-muted); font-size: .76rem; }
+.ledger-movement-grid strong { color: var(--text-h); font-size: 1rem; }
+.ledger-account-history-link { display: inline-flex; margin-top: 18px; color: var(--accent); font-size: .82rem; text-decoration: none; }
+.ledger-account-history-link:hover { text-decoration: underline; }
 .ledger-detail-note { margin-top: 22px; padding: 18px; border-top: 1px solid var(--border); }
 .ledger-detail-note h2 { margin: 0 0 7px; color: var(--text-h); font-size: .95rem; }
 .ledger-detail-note p { margin: 0; color: var(--text-muted); font-size: .84rem; white-space: pre-wrap; }
@@ -189,5 +228,6 @@ function onSaved(next: LedgerAccountDto): void {
   .ledger-detail-header { align-items: stretch; flex-direction: column; }
   .ledger-page-actions > * { flex: 1 1 150px; }
   .ledger-detail-grid { grid-template-columns: 1fr; }
+  .ledger-movement-grid { grid-template-columns: 1fr; }
 }
 </style>

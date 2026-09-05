@@ -23,4 +23,13 @@ describe('Ledger money presentation boundary', () => {
     expect(formatLedgerMoney(38, 'JPY')).not.toContain('.00')
     expect(formatLedgerMoney(38000, 'KWD')).toContain('38.000')
   })
+
+  it('preserves every digit for large safe minor amounts without decimal Number conversion', () => {
+    const maxSafeMinor = Number.MAX_SAFE_INTEGER
+    const digitsOnly = (value: string): string => value.replace(/[^\d.]/g, '')
+
+    expect(digitsOnly(formatLedgerMoney(maxSafeMinor, 'CNY', 'en-US'))).toBe('90071992547409.91')
+    expect(digitsOnly(formatLedgerMoney(maxSafeMinor, 'JPY', 'en-US'))).toBe('9007199254740991')
+    expect(digitsOnly(formatLedgerMoney(maxSafeMinor, 'KWD', 'en-US'))).toBe('9007199254740.991')
+  })
 })
