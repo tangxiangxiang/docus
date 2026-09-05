@@ -140,6 +140,7 @@ const accountSummary: LedgerAccountSummary = {
 }
 
 const overview = (): LedgerOverviewDto => ({
+  context: { anchorDate: '2026-09-05', todayDate: '2026-09-05', isToday: true, scope: 'month' },
   currency: 'CNY',
   currencyExponent: 2,
   assetTotalMinor: 996_200,
@@ -164,7 +165,15 @@ function setup(): void {
   api.getLedgerSettings.mockResolvedValue(settings)
   api.listLedgerAccounts.mockResolvedValue([account])
   api.listLedgerCategories.mockResolvedValue([category])
-  api.getLedgerOverview.mockResolvedValue(overview())
+  api.getLedgerOverview.mockImplementation((input: { scope: LedgerOverviewDto['context']['scope']; anchorDate: string | undefined }) => Promise.resolve({
+    ...overview(),
+    context: {
+      ...overview().context,
+      scope: input.scope,
+      anchorDate: input.anchorDate ?? overview().context.todayDate,
+      isToday: input.anchorDate === undefined,
+    },
+  }))
   api.listLedgerTransactions.mockResolvedValue({ transactions: [expense], page: { nextCursor: null } })
 }
 
@@ -212,7 +221,7 @@ describe('Ledger live dashboard', () => {
     await wrapper.get('select[aria-label="选择收支期间"]').setValue('today')
     await flushPromises()
 
-    expect(api.getLedgerOverview).toHaveBeenLastCalledWith('today')
+    expect(api.getLedgerOverview).toHaveBeenLastCalledWith({ scope: 'today', anchorDate: undefined })
     expect(wrapper.get('[data-testid="ledger-total-assets"]').text()).toContain('9,962')
     expect(wrapper.get('[data-testid="ledger-dashboard-cashflow"]').text()).toContain('38.00')
   })
@@ -225,7 +234,7 @@ describe('Ledger live dashboard', () => {
     await wrapper.get('select[aria-label="选择收支期间"]').setValue('all')
     await flushPromises()
 
-    expect(api.getLedgerOverview).toHaveBeenLastCalledWith('all')
+    expect(api.getLedgerOverview).toHaveBeenLastCalledWith({ scope: 'all', anchorDate: undefined })
     expect(wrapper.get('[data-testid="ledger-total-assets"]').text()).toContain('9,962')
     expect(wrapper.get('[data-testid="ledger-total-liabilities"]').text()).toContain('0')
     expect(wrapper.get('[data-testid="ledger-period-month"]').text()).toContain('-¥38.00')

@@ -163,6 +163,7 @@ const adjustment: LedgerTransactionDto = {
 }
 
 const overview: LedgerOverviewDto = {
+  context: { anchorDate: '2026-09-05', todayDate: '2026-09-05', isToday: true, scope: 'month' },
   currency: 'CNY',
   currencyExponent: 2,
   assetTotalMinor: 1_000_000,

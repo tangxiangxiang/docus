@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { authFetch } from '../../../lib/auth-session'
 import {
   createLedgerTransaction,
+  getLedgerOverview,
   getLedgerSettings,
   listLedgerTransactions,
 } from '../api'
@@ -92,6 +93,49 @@ describe('Ledger frontend API boundary', () => {
 
     mockedAuthFetch.mockResolvedValue(response({ hasCreatedAccount: false }))
     await expect(getLedgerSettings()).rejects.toMatchObject({ code: 'ledger-malformed-response' })
+  })
+
+  it('always serializes scope and omits only anchorDate for canonical today', async () => {
+    mockedAuthFetch.mockResolvedValue(response({
+      context: {
+        anchorDate: '2026-09-05',
+        todayDate: '2026-09-05',
+        isToday: true,
+        scope: 'month',
+      },
+    }))
+
+    await getLedgerOverview({ scope: 'month', anchorDate: undefined })
+    const todayUrl = new URL(String(mockedAuthFetch.mock.calls.at(-1)?.[0]), 'http://localhost')
+    expect(todayUrl.pathname).toBe('/api/ledger/overview')
+    expect(todayUrl.searchParams.get('scope')).toBe('month')
+    expect(todayUrl.searchParams.has('anchorDate')).toBe(false)
+
+    mockedAuthFetch.mockResolvedValue(response({
+      context: {
+        anchorDate: '2026-08-20',
+        todayDate: '2026-09-05',
+        isToday: false,
+        scope: 'month',
+      },
+    }))
+    await getLedgerOverview({ scope: 'month', anchorDate: '2026-08-20' })
+    const historicalUrl = new URL(String(mockedAuthFetch.mock.calls.at(-1)?.[0]), 'http://localhost')
+    expect(historicalUrl.searchParams.get('scope')).toBe('month')
+    expect(historicalUrl.searchParams.get('anchorDate')).toBe('2026-08-20')
+  })
+
+  it('fails closed when Overview context is missing or malformed', async () => {
+    for (const context of [
+      undefined,
+      { anchorDate: '2026-09-05', todayDate: '2026-09-05', isToday: true },
+      { anchorDate: '2026-09-05', todayDate: '2026-09-05', isToday: 'true', scope: 'month' },
+      { anchorDate: '2026-09-05', todayDate: '2026-09-05', isToday: true, scope: 'quarter' },
+    ]) {
+      mockedAuthFetch.mockResolvedValueOnce(response({ context }))
+      await expect(getLedgerOverview({ scope: 'month', anchorDate: undefined }))
+        .rejects.toMatchObject({ code: 'ledger-malformed-response' })
+    }
   })
 
   it('retains replay classification when a successful create body is unreadable or malformed', async () => {

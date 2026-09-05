@@ -52,6 +52,7 @@ function account(id: string, archivedAt: number | null = null): LedgerAccountDto
 }
 
 const overview = (): LedgerOverviewDto => ({
+  context: { anchorDate: '2026-09-05', todayDate: '2026-09-05', isToday: true, scope: 'month' },
   currency: 'CNY',
   currencyExponent: 2,
   assetTotalMinor: 100_000,

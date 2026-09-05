@@ -21,6 +21,7 @@ import type {
   LedgerTransferCreateRequest,
 } from '../../../shared/ledgerProtocol'
 import { LedgerApiError, type LedgerErrorDetails } from './ledgerErrors'
+import { parseLedgerRouteDate } from './periodNavigation'
 
 export interface LedgerDeletedResponse {
   readonly deleted: true
@@ -130,6 +131,26 @@ function transactionPageResponse(value: unknown): LedgerTransactionPageDto {
     throw malformed('Transaction list response')
   }
   return value as unknown as LedgerTransactionPageDto
+}
+
+function isOverviewScope(value: unknown): value is LedgerOverviewScope {
+  return value === 'today'
+    || value === 'week'
+    || value === 'month'
+    || value === 'year'
+    || value === 'all'
+}
+
+function overviewResponse(value: unknown): LedgerOverviewDto {
+  if (!isRecord(value) || !isRecord(value.context)) throw malformed('Overview response')
+  const context = value.context
+  if (parseLedgerRouteDate(context.anchorDate) === null
+    || parseLedgerRouteDate(context.todayDate) === null
+    || typeof context.isToday !== 'boolean'
+    || !isOverviewScope(context.scope)) {
+    throw malformed('Overview response')
+  }
+  return value as unknown as LedgerOverviewDto
 }
 
 function errorDetails(value: unknown): LedgerErrorDetails | null {
@@ -382,8 +403,15 @@ export function getLedgerAccountTransactions(
   )
 }
 
-export function getLedgerOverview(scope: LedgerOverviewScope = 'month'): Promise<LedgerOverviewDto> {
-  return request(`/api/ledger/overview${queryString({ scope })}`, {}, objectResponse<LedgerOverviewDto>('Overview response'))
+export function getLedgerOverview(input: {
+  readonly scope: LedgerOverviewScope
+  readonly anchorDate: string | undefined
+}): Promise<LedgerOverviewDto> {
+  return request(
+    `/api/ledger/overview${queryString({ scope: input.scope, anchorDate: input.anchorDate })}`,
+    {},
+    overviewResponse,
+  )
 }
 
 export function getLedgerTrend(months = 6): Promise<readonly LedgerTrendPoint[]> {

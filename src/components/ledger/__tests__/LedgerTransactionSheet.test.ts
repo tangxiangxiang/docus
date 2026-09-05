@@ -62,6 +62,7 @@ const expense = category('food', 'expense', '餐饮')
 const income = category('salary', 'income', '工资')
 
 const overview = (): LedgerOverviewDto => ({
+  context: { anchorDate: '2026-09-05', todayDate: '2026-09-05', isToday: true, scope: 'month' },
   currency: 'CNY',
   currencyExponent: 2,
   assetTotalMinor: 2_000_000,

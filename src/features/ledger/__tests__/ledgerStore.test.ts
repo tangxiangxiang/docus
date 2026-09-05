@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   LedgerAccountDto,
   LedgerOverviewDto,
+  LedgerOverviewScope,
   LedgerSettingsDto,
 } from '../../../../shared/ledgerProtocol'
 import { LedgerApiError } from '../ledgerErrors'
@@ -65,6 +66,7 @@ const account = (id: string, archivedAt: number | null = null): LedgerAccountDto
 })
 
 const overview = (): LedgerOverviewDto => ({
+  context: { anchorDate: '2026-09-05', todayDate: '2026-09-05', isToday: true, scope: 'month' },
   currency: 'CNY',
   currencyExponent: 2,
   assetTotalMinor: 0,
@@ -77,6 +79,28 @@ const overview = (): LedgerOverviewDto => ({
   trend: [],
   recentTransactions: [],
 })
+
+function overviewFor(
+  scope: LedgerOverviewScope,
+  anchorDate: string,
+  isToday = false,
+): LedgerOverviewDto {
+  return {
+    ...overview(),
+    context: {
+      ...overview().context,
+      scope,
+      anchorDate,
+      isToday,
+    },
+  }
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((nextResolve) => { resolve = nextResolve })
+  return { promise, resolve }
+}
 
 describe('Ledger feature-local state', () => {
   beforeEach(() => {
@@ -98,6 +122,94 @@ describe('Ledger feature-local state', () => {
 
     await store.bootstrap()
     expect(store.workspaceState.value).toBe('NO_ACTIVE_ACCOUNT')
+  })
+
+  it('uses an explicit overview request context and preserves its anchor across refreshes', async () => {
+    api.getLedgerSettings.mockResolvedValue(settings(true))
+    api.listLedgerAccounts.mockResolvedValue([account('account-1')])
+    const store = useLedgerStore()
+
+    await store.bootstrap()
+    expect(api.getLedgerOverview).toHaveBeenLastCalledWith({ scope: 'month', anchorDate: undefined })
+    expect(store.overviewRequestContext.value).toEqual({ scope: 'month', anchorDate: undefined })
+    expect(store.overviewMatchesRequest.value).toBe(true)
+
+    store.setOverviewRequestContext({ scope: 'month', anchorDate: '2026-08-20' })
+    api.getLedgerOverview.mockResolvedValue(overviewFor('month', '2026-08-20'))
+    const historicalResult = await store.refreshOverview()
+    expect(historicalResult.status).toBe('success')
+    expect(api.getLedgerOverview).toHaveBeenLastCalledWith({ scope: 'month', anchorDate: '2026-08-20' })
+    expect(store.overviewMatchesRequest.value).toBe(true)
+
+    store.setOverviewRequestContext({ scope: 'year', anchorDate: '2026-08-20' })
+    api.getLedgerOverview.mockResolvedValue(overviewFor('year', '2026-08-20'))
+    await store.refreshOverview()
+    expect(api.getLedgerOverview).toHaveBeenLastCalledWith({ scope: 'year', anchorDate: '2026-08-20' })
+    expect(store.overviewRequestContext.value).toEqual({ scope: 'year', anchorDate: '2026-08-20' })
+  })
+
+  it('returns a typed future-anchor error without changing the requested context', async () => {
+    api.getLedgerSettings.mockResolvedValue(settings(true))
+    api.listLedgerAccounts.mockResolvedValue([account('account-1')])
+    const store = useLedgerStore()
+    await store.bootstrap()
+
+    store.setOverviewRequestContext({ scope: 'month', anchorDate: '2026-09-06' })
+    const futureError = new LedgerApiError(
+      'future anchor',
+      400,
+      'ledger-validation-failed',
+      { field: 'anchorDate' },
+    )
+    api.getLedgerOverview.mockRejectedValue(futureError)
+    const result = await store.refreshOverview()
+
+    expect(result).toMatchObject({
+      status: 'error',
+      request: { scope: 'month', anchorDate: '2026-09-06' },
+      error: futureError,
+    })
+    expect(store.overviewRequestContext.value).toEqual({ scope: 'month', anchorDate: '2026-09-06' })
+  })
+
+  it('publishes only the latest overview request when navigation races', async () => {
+    api.getLedgerSettings.mockResolvedValue(settings(true))
+    api.listLedgerAccounts.mockResolvedValue([account('account-1')])
+    const store = useLedgerStore()
+    await store.bootstrap()
+
+    const first = deferred<LedgerOverviewDto>()
+    const second = deferred<LedgerOverviewDto>()
+    api.getLedgerOverview.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+
+    store.setOverviewRequestContext({ scope: 'month', anchorDate: '2026-08-20' })
+    const firstRequest = store.refreshOverview()
+    store.setOverviewRequestContext({ scope: 'month', anchorDate: '2026-06-15' })
+    const secondRequest = store.refreshOverview()
+
+    first.resolve(overviewFor('month', '2026-08-20'))
+    expect((await firstRequest).status).toBe('stale')
+    expect(store.overview.value?.context.anchorDate).toBe('2026-09-05')
+
+    second.resolve(overviewFor('month', '2026-06-15'))
+    expect((await secondRequest).status).toBe('success')
+    expect(store.overview.value?.context.anchorDate).toBe('2026-06-15')
+    expect(store.overviewMatchesRequest.value).toBe(true)
+  })
+
+  it('keeps the current historical context for mutation refreshes', async () => {
+    api.getLedgerSettings.mockResolvedValue(settings(true))
+    api.listLedgerAccounts.mockResolvedValue([account('account-1')])
+    const store = useLedgerStore()
+    await store.bootstrap()
+
+    store.setOverviewRequestContext({ scope: 'month', anchorDate: '2026-08-20' })
+    api.getLedgerOverview.mockResolvedValue(overviewFor('month', '2026-08-20'))
+    await store.refreshOverview()
+    api.getLedgerOverview.mockClear()
+    await store.refreshData()
+
+    expect(api.getLedgerOverview).toHaveBeenCalledWith({ scope: 'month', anchorDate: '2026-08-20' })
   })
 
   it('keeps a network-uncertain create intent durable with the same key', async () => {
