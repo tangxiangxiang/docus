@@ -7,30 +7,53 @@ import type {
 } from '../../../shared/ledgerProtocol'
 import { ledgerErrorMessage } from '../../features/ledger/ledgerErrors'
 import { formatLedgerMoney, formatLedgerSignedMoney } from '../../features/ledger/money'
-import { formatLedgerDateTime, formatLedgerPeriodLabel } from '../../features/ledger/time'
+import { formatLedgerDate, formatLedgerDateTime, formatLedgerPeriodLabel } from '../../features/ledger/time'
 import { useLedgerStore } from '../../features/ledger/ledgerStore'
 
-const emit = defineEmits<{ record: []; viewTransactions: [] }>()
+const emit = defineEmits<{
+  record: []
+  viewTransactions: []
+  selectDate: [date: string]
+  returnToday: []
+}>()
 const store = useLedgerStore()
-const selectedScope = ref<LedgerOverviewScope>('month')
-const scopeOptions: ReadonlyArray<{ value: LedgerOverviewScope; label: string }> = [
-  { value: 'today', label: '今天' },
-  { value: 'week', label: '本周' },
-  { value: 'month', label: '本月' },
-  { value: 'year', label: '今年' },
-  { value: 'all', label: '全部' },
-]
-
 const overview = computed(() => store.overview.value)
+const selectedScope = ref<LedgerOverviewScope>('month')
+const scopeOptions = computed<ReadonlyArray<{ value: LedgerOverviewScope; label: string }>>(() => {
+  const historical = overview.value?.context.isToday === false
+  return [
+    { value: 'today', label: historical ? '当日' : '今天' },
+    { value: 'week', label: historical ? '所在周' : '本周' },
+    { value: 'month', label: historical ? '所在月' : '本月' },
+    { value: 'year', label: historical ? '所在年' : '今年' },
+    { value: 'all', label: '全部' },
+  ]
+})
+
 const refreshing = computed(() => store.loading.value)
 const scopeError = computed(() => store.error.value)
+const periodDataReady = computed(() => overview.value !== null && store.overviewMatchesRequest.value)
+const historicalMode = computed(() => overview.value?.context.isToday === false
+  || store.overviewRequestedAnchorDate.value !== undefined)
+const dateInputValue = computed(() => store.overviewRequestedAnchorDate.value
+  ?? overview.value?.context.todayDate
+  ?? '')
+const dateMax = computed(() => overview.value?.context.todayDate ?? '')
+const ledgerTimezone = computed(() => store.settings.value?.timezone ?? 'UTC')
+const showReturnToday = computed(() => historicalMode.value)
 
 watch(() => store.overviewScope.value, (scope) => {
   selectedScope.value = scope
 }, { immediate: true })
 
 watch(selectedScope, (scope, previous) => {
-  if (scope !== previous && scope !== store.overviewScope.value) void store.refreshOverview(scope)
+  if (scope !== previous && scope !== store.overviewScope.value) {
+    store.setOverviewRequestContext({
+      scope,
+      anchorDate: store.overviewRequestedAnchorDate.value,
+    })
+    void store.refreshOverview()
+  }
 })
 
 const transactionAccountLabels = computed(() => new Map(
@@ -42,18 +65,20 @@ const transactionAccountLabels = computed(() => new Map(
 const categoryNames = computed(() => new Map(
   store.categories.value.map((category) => [category.id, category.name]),
 ))
-const selectedPeriodLabel = computed(() => scopeOptions.find((option) => option.value === selectedScope.value)?.label ?? '本月')
-const selectedPeriods = computed(() => overview.value?.categoryBreakdown ?? { income: [], expense: [] })
-const selectedPeriodSummary = computed(() => overview.value?.cashflow ?? null)
+const selectedPeriodLabel = computed(() => scopeOptions.value.find((option) => option.value === selectedScope.value)?.label ?? '本月')
+const selectedPeriods = computed(() => periodDataReady.value
+  ? overview.value?.categoryBreakdown ?? { income: [], expense: [] }
+  : { income: [], expense: [] })
+const selectedPeriodSummary = computed(() => periodDataReady.value ? overview.value?.cashflow ?? null : null)
 const assetAccounts = computed(() => (overview.value?.accounts ?? []).filter((account) => account.nature === 'asset'))
 const liabilityAccounts = computed(() => (overview.value?.accounts ?? []).filter((account) => account.nature === 'liability'))
 
-const periodLabels: Record<LedgerPeriodName, string> = {
-  today: '今天',
-  week: '本周',
-  month: '本月',
-  year: '今年',
-}
+const periodLabels = computed<Record<LedgerPeriodName, string>>(() => ({
+  today: historicalMode.value ? '当日' : '今天',
+  week: historicalMode.value ? '所在周' : '本周',
+  month: historicalMode.value ? '所在月' : '本月',
+  year: historicalMode.value ? '所在年' : '今年',
+}))
 
 function accountLabel(id: string): string { return transactionAccountLabels.value.get(id) ?? '未知账户' }
 function categoryLabel(id: string): string { return categoryNames.value.get(id) ?? '未知分类' }
@@ -88,11 +113,17 @@ function transactionAmount(transaction: LedgerTransactionDto): string {
 }
 
 function periodSummary(period: LedgerPeriodName) {
+  if (!periodDataReady.value) return null
   return overview.value?.periods.find((item) => item.period === period) ?? null
 }
 
 function retryScope(): void {
-  void store.refreshOverview(selectedScope.value)
+  void store.refreshOverview()
+}
+
+function onDateChange(event: Event): void {
+  const value = (event.target as HTMLInputElement).value
+  if (value) emit('selectDate', value)
 }
 </script>
 
@@ -173,18 +204,49 @@ function retryScope(): void {
         </div>
       </section>
 
+      <section class="ledger-dashboard-section ledger-period-navigation" aria-labelledby="ledger-period-navigation-title">
+        <div class="ledger-section-heading">
+          <div>
+            <h2 id="ledger-period-navigation-title">期间分析</h2>
+            <p>选择日期查看完整自然期间；资产、负债和账户余额保持当前值。</p>
+          </div>
+          <button v-if="showReturnToday" class="ledger-secondary-button" type="button" data-testid="ledger-return-today" @click="emit('returnToday')">回到今天</button>
+        </div>
+        <div class="ledger-period-navigation-controls">
+          <label>
+            <span>查看日期</span>
+            <input
+              type="date"
+              data-testid="ledger-period-date"
+              aria-label="查看日期"
+              :value="dateInputValue"
+              :max="dateMax || undefined"
+              @change="onDateChange"
+            >
+          </label>
+          <label>
+            <span>收支范围</span>
+            <select v-model="selectedScope" aria-label="选择收支期间">
+              <option v-for="option in scopeOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+            </select>
+          </label>
+        </div>
+        <p v-if="historicalMode && periodDataReady" class="ledger-historical-hint" role="note">
+          当前资产与账户余额保持实时；以下期间数据按 {{ formatLedgerDate(dateInputValue, ledgerTimezone) }} 浏览。
+        </p>
+      </section>
+
+      <div v-if="!periodDataReady" class="ledger-period-analysis-loading" data-testid="ledger-period-analysis-loading" role="status" aria-live="polite">
+        正在加载所选期间…
+      </div>
+
+      <template v-if="periodDataReady">
       <section class="ledger-dashboard-section ledger-cashflow-section" aria-labelledby="ledger-dashboard-cashflow-title">
         <div class="ledger-section-heading ledger-section-heading-with-control">
           <div>
             <h2 id="ledger-dashboard-cashflow-title">{{ selectedPeriodLabel }}收支</h2>
             <p>选择期间只影响收支与分类 breakdown；资产、负债和账户余额保持当前值。</p>
           </div>
-          <label class="ledger-period-control">
-            <span class="sr-only">选择收支期间</span>
-            <select v-model="selectedScope" aria-label="选择收支期间">
-              <option v-for="option in scopeOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-            </select>
-          </label>
         </div>
         <div v-if="selectedPeriodSummary" class="ledger-cashflow-grid" data-testid="ledger-dashboard-cashflow">
           <div><span>收入</span><strong class="is-income">{{ formatLedgerMoney(selectedPeriodSummary.incomeMinor, overview.currency) }}</strong></div>
@@ -235,7 +297,7 @@ function retryScope(): void {
           <div class="ledger-section-heading">
             <div>
               <h2 id="ledger-recent-title">最近交易</h2>
-              <p>最近 5 笔真实记录。</p>
+              <p>{{ historicalMode ? '截至选择日期的最近 5 笔记录。' : '最近 5 笔真实记录。' }}</p>
             </div>
             <button class="ledger-link-button" type="button" @click="emit('viewTransactions')">查看全部</button>
           </div>
@@ -246,8 +308,11 @@ function retryScope(): void {
             </div>
           </div>
           <div v-else class="ledger-inline-empty" data-testid="ledger-recent-empty">
-            <p>还没有交易记录。</p>
-            <button class="ledger-secondary-button" type="button" @click="emit('record')">记下第一笔</button>
+            <p v-if="historicalMode">截至该日期还没有交易记录。</p>
+            <template v-else>
+              <p>还没有交易记录。</p>
+              <button class="ledger-secondary-button" type="button" @click="emit('record')">记下第一笔</button>
+            </template>
           </div>
         </section>
       </div>
@@ -255,7 +320,7 @@ function retryScope(): void {
       <section class="ledger-dashboard-section" aria-labelledby="ledger-periods-title">
         <div class="ledger-section-heading">
           <div>
-            <h2 id="ledger-periods-title">固定期间摘要</h2>
+            <h2 id="ledger-periods-title">期间摘要</h2>
             <p>期间边界和金额均由 Ledger timezone 与服务端 projection 决定。</p>
           </div>
         </div>
@@ -287,6 +352,7 @@ function retryScope(): void {
         </div>
         <div v-else class="ledger-inline-empty"><p>还没有趋势数据，开始记账后这里会逐步出现变化。</p></div>
       </section>
+      </template>
     </template>
   </section>
 </template>
@@ -322,7 +388,14 @@ function retryScope(): void {
 .ledger-section-heading p { margin: 5px 0 0; color: var(--text-muted); font-size: .76rem; line-height: 1.45; }
 .ledger-section-heading > a { flex: 0 0 auto; color: var(--accent); font-size: .78rem; text-decoration: none; }
 .ledger-section-heading-with-control { align-items: center; }
-.ledger-period-control select { min-height: 34px; padding: 5px 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg); color: var(--text-h); font: inherit; font-size: .8rem; }
+.ledger-period-navigation-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
+.ledger-period-navigation-controls label { display: grid; gap: 5px; color: var(--text-muted); font-size: .75rem; }
+.ledger-period-navigation-controls input,
+.ledger-period-navigation-controls select { min-height: 34px; padding: 5px 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg); color: var(--text-h); font: inherit; font-size: .8rem; }
+.ledger-period-navigation-controls input:focus,
+.ledger-period-navigation-controls select:focus { border-color: var(--accent); outline: 2px solid color-mix(in srgb, var(--accent) 25%, transparent); outline-offset: 1px; }
+.ledger-historical-hint { margin: 13px 0 0; color: var(--text-muted); font-size: .76rem; line-height: 1.45; }
+.ledger-period-analysis-loading { display: grid; min-height: 160px; margin-top: 24px; place-items: center; border: 1px dashed var(--border); border-radius: 11px; color: var(--text-muted); font-size: .82rem; }
 .ledger-dashboard-account-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
 .ledger-dashboard-account-group { min-width: 0; }
 .ledger-dashboard-account-group h3 { margin: 0 0 8px; color: var(--text-muted); font-size: .78rem; }
@@ -388,5 +461,9 @@ function retryScope(): void {
   .ledger-dashboard-section { padding: 16px 13px; }
   .ledger-breakdown-columns { grid-template-columns: 1fr; gap: 18px; }
   .ledger-section-heading-with-control { align-items: flex-start; flex-direction: column; }
+  .ledger-period-navigation-controls { align-items: stretch; flex-direction: column; }
+  .ledger-period-navigation-controls label,
+  .ledger-period-navigation-controls input,
+  .ledger-period-navigation-controls select { width: 100%; box-sizing: border-box; }
 }
 </style>
