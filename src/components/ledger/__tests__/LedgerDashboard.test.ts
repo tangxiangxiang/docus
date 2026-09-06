@@ -13,6 +13,7 @@ import type {
 import { LedgerApiError } from '../../../features/ledger/ledgerErrors'
 import { resetLedgerStoreForTesting, useLedgerStore } from '../../../features/ledger/ledgerStore'
 import { instantFromLocalDateTime } from '../../../features/ledger/time'
+import LedgerCashflowTrend from '../LedgerCashflowTrend.vue'
 import LedgerView from '../../../views/LedgerView.vue'
 
 const api = vi.hoisted(() => ({
@@ -24,6 +25,13 @@ const api = vi.hoisted(() => ({
 }))
 
 vi.mock('../../../features/ledger/api', () => api)
+
+// jsdom has no canvas, so the chart's DOM-owning entry point is stubbed. The
+// chart's own suite covers what it renders.
+vi.mock('echarts/core', () => ({
+  init: vi.fn(() => ({ setOption: vi.fn(), resize: vi.fn(), dispose: vi.fn() })),
+  use: vi.fn(),
+}))
 
 const settings: LedgerSettingsDto = {
   baseCurrency: 'CNY',
@@ -141,6 +149,29 @@ const accountSummary: LedgerAccountSummary = {
   balanceDecreaseMinor: 3_800,
 }
 
+function trendPoint(month: string, incomeMinor: number, expenseMinor: number): LedgerOverviewDto['trend'][number] {
+  const [year, index] = month.split('-').map(Number)
+  return {
+    month,
+    startAt: Date.UTC(year, index - 1, 1),
+    endAt: Date.UTC(year, index, 1),
+    incomeMinor,
+    expenseMinor,
+    balanceMinor: incomeMinor - expenseMinor,
+  }
+}
+
+// The Overview contract is the six complete calendar months ending with the
+// anchor month.
+const sixMonthTrend: LedgerOverviewDto['trend'] = [
+  trendPoint('2026-04', 510_000, 120_000),
+  trendPoint('2026-05', 480_000, 240_000),
+  trendPoint('2026-06', 500_000, 640_000),
+  trendPoint('2026-07', 500_000, 30_000),
+  trendPoint('2026-08', 520_000, 44_000),
+  trendPoint('2026-09', 0, 3_800),
+]
+
 const overview = (): LedgerOverviewDto => ({
   context: { anchorDate: '2026-09-05', todayDate: '2026-09-05', isToday: true, scope: 'month' },
   currency: 'CNY',
@@ -157,7 +188,7 @@ const overview = (): LedgerOverviewDto => ({
     { period: 'month', startAt: instantFromLocalDateTime('2026-09-01T00:00', 'Asia/Shanghai'), endAt: instantFromLocalDateTime('2026-10-01T00:00', 'Asia/Shanghai'), incomeMinor: 0, expenseMinor: 3_800, balanceMinor: -3_800 },
     { period: 'year', startAt: instantFromLocalDateTime('2026-01-01T00:00', 'Asia/Shanghai'), endAt: instantFromLocalDateTime('2027-01-01T00:00', 'Asia/Shanghai'), incomeMinor: 0, expenseMinor: 3_800, balanceMinor: -3_800 },
   ],
-  trend: [{ month: '2026-09', startAt: Date.UTC(2026, 8, 1), endAt: Date.UTC(2026, 9, 1), incomeMinor: 0, expenseMinor: 3_800, balanceMinor: -3_800 }],
+  trend: sixMonthTrend,
   recentTransactions: [expense],
 })
 
@@ -494,5 +525,127 @@ describe('Ledger live dashboard', () => {
     // Archived accounts remain available for historical labels, but do not
     // re-enter the Dashboard's active account projection.
     expect(wrapper.get('[data-testid="ledger-dashboard-assets"]').text()).not.toContain('现金账户')
+  })
+
+  it('hands the whole anchored trend to the cashflow chart instead of a visible table', async () => {
+    const wrapper = mount(LedgerView)
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    const chart = wrapper.findComponent(LedgerCashflowTrend)
+    expect(chart.exists()).toBe(true)
+    expect(chart.props('trend')).toEqual(sixMonthTrend)
+    expect(chart.props('trend')).toHaveLength(6)
+    expect(chart.props('currency')).toBe('CNY')
+    expect(wrapper.find('[data-testid="ledger-cashflow-trend-canvas"]').exists()).toBe(true)
+
+    // The old table stays available to assistive technology only, so it may
+    // not come back as a second visible reading of the same six months.
+    expect(wrapper.find('[data-testid="ledger-trend"]').exists()).toBe(false)
+    expect(wrapper.find('.ledger-trend-table').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="ledger-cashflow-trend-table"]').classes()).toContain('sr-only')
+    expect(wrapper.get('[data-testid="ledger-cashflow-trend-table"]').findAll('tbody tr')).toHaveLength(6)
+  })
+
+  it('keeps the currency in step with the Overview the chart was rendered from', async () => {
+    api.getLedgerOverview.mockResolvedValue({ ...overview(), currency: 'JPY' })
+    const wrapper = mount(LedgerView)
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    expect(wrapper.findComponent(LedgerCashflowTrend).props('currency')).toBe('JPY')
+  })
+
+  it('adds a proportion bar to each category row without displacing its text', async () => {
+    api.getLedgerOverview.mockResolvedValue({
+      ...overview(),
+      categoryBreakdown: {
+        income: [
+          { categoryId: 'salary', name: '工资', kind: 'income', amountMinor: 500_000 },
+          { categoryId: 'side-job', name: '兼职', kind: 'income', amountMinor: 10_000 },
+        ],
+        expense: [
+          { categoryId: 'food', name: '餐饮', kind: 'expense', amountMinor: 5_290 },
+        ],
+      },
+    })
+    const wrapper = mount(LedgerView)
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    const rows = wrapper.get('[data-testid="ledger-category-breakdown"]').findAll('.ledger-breakdown-row')
+    expect(rows).toHaveLength(3)
+
+    // Sort order, name, share and amount all stay exactly where they were.
+    expect(rows.map((row) => row.get('.ledger-breakdown-label').text())).toEqual([
+      '工资 · 98%',
+      '兼职 · 2%',
+      '餐饮 · 100%',
+    ])
+    expect(rows.map((row) => row.get('.ledger-breakdown-amount').text())).toEqual([
+      '¥5,000.00',
+      '¥100.00',
+      '¥52.90',
+    ])
+
+    // The bar reads from the same share, and stays out of the accessibility
+    // tree because the percentage is already spoken by the label.
+    const fills = rows.map((row) => row.get('.ledger-breakdown-bar-fill'))
+    expect(fills.map((fill) => fill.attributes('style'))).toEqual([
+      'width: 98%;',
+      'width: 2%;',
+      'width: 100%;',
+    ])
+    expect(rows[0].get('.ledger-breakdown-bar').attributes('aria-hidden')).toBe('true')
+    expect(fills[0].classes()).toContain('is-income')
+    expect(fills[2].classes()).toContain('is-expense')
+  })
+
+  it('renders a zero-width bar when a period has no category total to divide', async () => {
+    api.getLedgerOverview.mockResolvedValue({
+      ...overview(),
+      categoryBreakdown: {
+        income: [],
+        expense: [{ categoryId: 'food', name: '餐饮', kind: 'expense', amountMinor: 0 }],
+      },
+    })
+    const wrapper = mount(LedgerView)
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    const row = wrapper.get('[data-testid="ledger-category-breakdown"]').get('.ledger-breakdown-row')
+    expect(row.get('.ledger-breakdown-label').text()).toBe('餐饮 · 0%')
+    expect(row.get('.ledger-breakdown-bar-fill').attributes('style')).toBe('width: 0%;')
+  })
+
+  it('labels the trend window only while it is anchored to today', async () => {
+    const wrapper = mount(LedgerView)
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    const trendSection = wrapper.get('#ledger-trend-title').element.closest('section')!
+    expect(trendSection.textContent).toContain('收支趋势')
+    expect(trendSection.textContent).toContain('最近 6 个月')
+
+    const store = useLedgerStore()
+    store.setOverviewRequestContext({ scope: 'month', anchorDate: '2026-08-20' })
+    await store.refreshOverview()
+    await nextTick()
+
+    // Anchored to a past date the six months are no longer "the latest", so
+    // the qualifier is dropped rather than left saying something untrue.
+    expect(wrapper.get('#ledger-trend-title').element.closest('section')!.textContent).not.toContain('最近 6 个月')
+    expect(wrapper.findComponent(LedgerCashflowTrend).props('trend')).toEqual(sixMonthTrend)
+  })
+
+  it('shows the trend empty state without a chart when there is nothing to plot', async () => {
+    api.getLedgerOverview.mockResolvedValue({ ...overview(), trend: [] })
+    const wrapper = mount(LedgerView)
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="ledger-cashflow-trend-empty"]').text()).toContain('还没有趋势数据')
+    expect(wrapper.find('[data-testid="ledger-cashflow-trend-canvas"]').exists()).toBe(false)
+    expect(wrapper.get('#ledger-trend-title').element.closest('section')!.textContent).not.toContain('最近')
   })
 })

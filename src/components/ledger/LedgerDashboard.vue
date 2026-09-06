@@ -8,6 +8,7 @@ import type {
 import { formatLedgerMoney, formatLedgerSignedMoney } from '../../features/ledger/money'
 import { formatLedgerDate, formatLedgerDateTime, formatLedgerPeriodLabel } from '../../features/ledger/time'
 import { useLedgerStore } from '../../features/ledger/ledgerStore'
+import LedgerCashflowTrend from './LedgerCashflowTrend.vue'
 
 const emit = defineEmits<{
   record: []
@@ -90,11 +91,19 @@ const periodLabels = computed<Record<LedgerPeriodName, string>>(() => ({
 function accountLabel(id: string): string { return transactionAccountLabels.value.get(id) ?? '未知账户' }
 function categoryLabel(id: string): string { return categoryNames.value.get(id) ?? '未知分类' }
 
-function categoryShare(items: readonly { amountMinor: number }[], amountMinor: number): string {
+/**
+ * Presentation-only share of the period total. The bar next to each row reads
+ * from the same number, so the width can never disagree with the label.
+ */
+function categorySharePercent(items: readonly { amountMinor: number }[], amountMinor: number): number {
   const total = items.reduce((sum, item) => sum + BigInt(item.amountMinor), 0n)
-  if (total === 0n) return '0%'
+  if (total === 0n) return 0
   const roundedPercent = (BigInt(amountMinor) * 100n + total / 2n) / total
-  return `${roundedPercent.toString()}%`
+  return Math.min(100, Math.max(0, Number(roundedPercent)))
+}
+
+function categoryShare(items: readonly { amountMinor: number }[], amountMinor: number): string {
+  return `${categorySharePercent(items, amountMinor)}%`
 }
 
 function transactionTitle(transaction: LedgerTransactionDto): string {
@@ -259,6 +268,12 @@ function onDateChange(event: Event): void {
                     <span class="ledger-breakdown-share"> · {{ categoryShare(selectedPeriods.income, item.amountMinor) }}</span>
                   </span>
                   <strong class="ledger-breakdown-amount">{{ formatLedgerMoney(item.amountMinor, overview.currency) }}</strong>
+                  <span class="ledger-breakdown-bar" aria-hidden="true">
+                    <span
+                      class="ledger-breakdown-bar-fill is-income"
+                      :style="{ width: `${categorySharePercent(selectedPeriods.income, item.amountMinor)}%` }"
+                    />
+                  </span>
                 </div>
               </div>
               <p v-else class="ledger-inline-empty">这段期间还没有收入分类。</p>
@@ -272,6 +287,12 @@ function onDateChange(event: Event): void {
                     <span class="ledger-breakdown-share"> · {{ categoryShare(selectedPeriods.expense, item.amountMinor) }}</span>
                   </span>
                   <strong class="ledger-breakdown-amount">{{ formatLedgerMoney(item.amountMinor, overview.currency) }}</strong>
+                  <span class="ledger-breakdown-bar" aria-hidden="true">
+                    <span
+                      class="ledger-breakdown-bar-fill is-expense"
+                      :style="{ width: `${categorySharePercent(selectedPeriods.expense, item.amountMinor)}%` }"
+                    />
+                  </span>
                 </div>
               </div>
               <p v-else class="ledger-inline-empty">这段期间还没有支出分类。</p>
@@ -322,15 +343,12 @@ function onDateChange(event: Event): void {
 
       <section class="ledger-dashboard-section" aria-labelledby="ledger-trend-title">
         <div class="ledger-section-heading">
-          <h2 id="ledger-trend-title">收支趋势</h2>
+          <div>
+            <h2 id="ledger-trend-title">收支趋势</h2>
+            <p v-if="!historicalMode && overview.trend.length">最近 {{ overview.trend.length }} 个月</p>
+          </div>
         </div>
-        <div v-if="overview.trend.length" class="ledger-trend-table-wrap">
-          <table class="ledger-trend-table" data-testid="ledger-trend">
-            <thead><tr><th>月份</th><th>收入</th><th>支出</th><th>结余</th></tr></thead>
-            <tbody><tr v-for="point in overview.trend" :key="point.month"><th scope="row">{{ point.month }}</th><td>{{ formatLedgerMoney(point.incomeMinor, overview.currency) }}</td><td>{{ formatLedgerMoney(point.expenseMinor, overview.currency) }}</td><td>{{ formatLedgerSignedMoney(point.balanceMinor, overview.currency) }}</td></tr></tbody>
-          </table>
-        </div>
-        <div v-else class="ledger-inline-empty"><p>还没有趋势数据，开始记账后这里会逐步出现变化。</p></div>
+        <LedgerCashflowTrend :trend="overview.trend" :currency="overview.currency" />
       </section>
       </template>
     </template>
@@ -398,12 +416,17 @@ function onDateChange(event: Event): void {
 .ledger-dashboard-two-column .ledger-dashboard-section { min-width: 0; margin-top: 0; }
 .ledger-breakdown-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .ledger-breakdown-columns h3 { margin: 0 0 8px; color: var(--text-muted); font-size: .78rem; }
-.ledger-breakdown-list { display: grid; gap: 6px; }
-.ledger-breakdown-row { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border); font-size: .8rem; }
+.ledger-breakdown-list { display: grid; gap: 9px; }
+.ledger-breakdown-row { display: flex; flex-wrap: wrap; min-width: 0; align-items: center; justify-content: space-between; gap: 5px 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border); font-size: .8rem; }
 .ledger-breakdown-label { display: flex; min-width: 0; overflow: hidden; }
 .ledger-breakdown-name { overflow: hidden; color: var(--text); text-overflow: ellipsis; white-space: nowrap; }
 .ledger-breakdown-share { flex: 0 0 auto; color: var(--text-muted); font-weight: 400; white-space: nowrap; }
 .ledger-breakdown-amount { flex: 0 0 auto; color: var(--text-h); text-align: right; white-space: nowrap; }
+/* Assists the share label — it never replaces it, so it stays thin and quiet. */
+.ledger-breakdown-bar { flex: 0 0 100%; overflow: hidden; height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--text-muted) 16%, transparent); }
+.ledger-breakdown-bar-fill { display: block; height: 100%; border-radius: 2px; }
+.ledger-breakdown-bar-fill.is-income { background: color-mix(in srgb, #18794e 78%, transparent); }
+.ledger-breakdown-bar-fill.is-expense { background: color-mix(in srgb, #b42318 78%, transparent); }
 .ledger-inline-empty { margin: 0; color: var(--text-muted); font-size: .78rem; line-height: 1.45; }
 .ledger-inline-empty:has(button) { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .ledger-recent-list { display: grid; gap: 0; }
@@ -424,14 +447,6 @@ function onDateChange(event: Event): void {
 .ledger-period-values { display: grid; gap: 3px; margin-top: auto; color: var(--text-muted); font-size: .7rem; }
 .ledger-period-values span { display: flex; justify-content: space-between; gap: 7px; }
 .ledger-period-values strong { color: var(--text-h); font-size: .75rem; }
-.ledger-trend-table-wrap { overflow-x: auto; }
-.ledger-trend-table { width: 100%; border-collapse: collapse; color: var(--text); font-size: .78rem; }
-.ledger-trend-table th,
-.ledger-trend-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
-.ledger-trend-table th:first-child,
-.ledger-trend-table td:first-child { text-align: left; }
-.ledger-trend-table thead th { color: var(--text-muted); font-size: .72rem; font-weight: 600; }
-.ledger-trend-table tbody th { color: var(--text-h); font-weight: 600; }
 @media (max-width: 760px) {
   .ledger-dashboard { padding: 28px 16px 48px; }
   .ledger-dashboard-header { align-items: stretch; flex-direction: column; }

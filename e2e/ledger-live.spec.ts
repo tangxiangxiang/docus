@@ -147,11 +147,18 @@ test('real Ledger onboarding and expense survive dashboard refresh', async ({ pa
   expect(pageAfterCreate.transactions).toHaveLength(1)
   expect(pageAfterCreate.transactions[0]).toMatchObject({ type: 'expense', amountMinor: 3800, deletedAt: null })
 
+  // The trend section is a chart now. Assert the container and the
+  // screen-reader table, never anything inside the canvas.
+  await expect(page.getByTestId('ledger-cashflow-trend-canvas')).toBeVisible()
+  await expect(page.getByTestId('ledger-cashflow-trend-table').locator('tbody tr')).toHaveCount(6)
+  await expect(page.getByTestId('ledger-cashflow-trend-table')).toContainText('¥38.00')
+
   await page.reload()
   await expect(page.getByTestId('ledger-dashboard')).toBeVisible()
   await expect(page.getByTestId('ledger-total-assets')).toContainText('¥9,962.00')
   await expect(page.getByTestId('ledger-net-worth')).toContainText('¥9,962.00')
   await expect(page.getByTestId('ledger-recent-transactions')).toContainText('¥38.00')
+  await expect(page.getByTestId('ledger-cashflow-trend-canvas')).toBeVisible()
   await expect(page.locator('body')).not.toContainText('billsMockData')
 })
 
@@ -309,6 +316,19 @@ test('Ledger transaction entry remains keyboard-usable in a narrow viewport', as
   await page.setViewportSize({ width: 430, height: 844 })
   await page.goto('/ledger')
   await expect(page.getByTestId('ledger-dashboard')).toBeVisible()
+  await expect(page.getByTestId('ledger-cashflow-trend-canvas')).toBeVisible()
+
+  // A canvas chart is easy to let escape its column. Measure real scrollable
+  // overflow rather than layout boxes, so the clipped screen-reader table does
+  // not read as a false positive. The site header overflows this viewport on
+  // its own, so the guard is scoped to the Dashboard subtree.
+  const dashboardWidth = await page.evaluate(() => {
+    const dashboard = document.querySelector('[data-testid="ledger-dashboard"]')
+    if (dashboard === null) return null
+    return { scroll: dashboard.scrollWidth, client: dashboard.clientWidth }
+  })
+  expect(dashboardWidth).not.toBeNull()
+  expect(dashboardWidth!.scroll).toBeLessThanOrEqual(dashboardWidth!.client)
 
   const recordButton = page.getByTestId('ledger-record-button')
   await recordButton.focus()
@@ -379,6 +399,14 @@ test('historical period navigation keeps one anchor across periods, reload, and 
   await expect(page.getByTestId('ledger-recent-transactions')).not.toContainText(afterAnchorPayee)
   await expect(page.getByTestId('ledger-return-today')).toBeVisible()
 
+  // The trend follows the same anchor as the rest of the Overview: six months
+  // ending with the anchor month, so the current month is outside the window.
+  const trendRows = page.getByTestId('ledger-cashflow-trend-table').locator('tbody tr')
+  await expect(page.getByTestId('ledger-cashflow-trend-canvas')).toBeVisible()
+  await expect(trendRows).toHaveCount(6)
+  await expect(trendRows.last()).toContainText(`${anchor.year}年${anchor.month}月`)
+  await expect(page.getByTestId('ledger-cashflow-trend-table')).not.toContainText(`${today.year}年${today.month}月`)
+
   await page.reload()
   await expect(page).toHaveURL(new RegExp(`/ledger\\?date=${anchorDate}$`))
   await expect(page.getByTestId('ledger-period-date')).toHaveValue(anchorDate)
@@ -400,4 +428,6 @@ test('historical period navigation keeps one anchor across periods, reload, and 
   await page.getByTestId('ledger-return-today').click()
   await expect(page).toHaveURL(/\/ledger$/)
   await expect(page.getByTestId('ledger-return-today')).toBeHidden()
+  await expect(page.getByTestId('ledger-cashflow-trend-canvas')).toBeVisible()
+  await expect(trendRows.last()).toContainText(`${today.year}年${today.month}月`)
 })
