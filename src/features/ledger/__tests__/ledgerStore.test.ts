@@ -224,7 +224,7 @@ describe('Ledger feature-local state', () => {
     expect(api.getLedgerOverview).toHaveBeenCalledWith({ scope: 'month', anchorDate: '2026-08-20' })
   })
 
-  it('keeps a ready workspace when a successful mutation cannot refresh historical overview data', async () => {
+  it('escalates a successful mutation when its historical overview refresh fails', async () => {
     api.getLedgerSettings.mockResolvedValue(settings(true))
     api.listLedgerAccounts.mockResolvedValue([account('account-1')])
     const store = useLedgerStore()
@@ -250,21 +250,25 @@ describe('Ledger feature-local state', () => {
 
     await expect(store.createTransaction(payload)).resolves.toMatchObject({ id: 'tx-1' })
 
-    expect(store.workspaceState.value).toBe('READY')
+    expect(store.workspaceState.value).toBe('RECOVERABLE_ERROR')
     expect(store.overviewRequestedAnchorDate.value).toBe('2026-08-20')
     expect(store.overview.value?.context.anchorDate).toBe('2026-08-20')
     expect(store.overviewMatchesRequest.value).toBe(false)
+    expect(store.workspaceError.value).toBeNull()
+    expect(store.overviewError.value).toBe(refreshError)
     expect(store.error.value).toBe(refreshError)
     expect(store.loading.value).toBe(false)
 
     api.getLedgerOverview.mockResolvedValueOnce(overviewFor('month', '2026-08-20'))
-    const retry = await store.refreshOverview()
-    expect(retry.status).toBe('success')
+    await store.bootstrap()
+    expect(store.workspaceState.value).toBe('READY')
     expect(store.overviewMatchesRequest.value).toBe(true)
+    expect(store.workspaceError.value).toBeNull()
+    expect(store.overviewError.value).toBeNull()
     expect(store.error.value).toBeNull()
   })
 
-  it('refreshes the current snapshot while a failed historical read stays period-only', async () => {
+  it('does not present refreshed current state behind stale data after a mutation overview failure', async () => {
     api.getLedgerSettings.mockResolvedValue(settings(true))
     api.listLedgerAccounts.mockResolvedValue([account('account-1')])
     const store = useLedgerStore()
@@ -293,27 +297,72 @@ describe('Ledger feature-local state', () => {
       note: '',
     })).resolves.toMatchObject({ id: 'tx-1' })
 
-    // Only the historical projection failed, so the workspace stays usable and
-    // the Current Snapshot shows the data that was just refreshed.
-    expect(store.workspaceState.value).toBe('READY')
+    // The current state was refreshed, but the Overview still contains the old
+    // projection. The workspace recovery boundary prevents that stale snapshot
+    // from being presented as if it were current.
+    expect(store.workspaceState.value).toBe('RECOVERABLE_ERROR')
     expect(store.accounts.value.map((item) => item.id)).toEqual(['account-1', 'account-2'])
     expect(store.categories.value.map((item) => item.id)).toEqual(['category-1'])
     expect(store.overviewDataReady.value).toBe(false)
     expect(store.overviewMatchesRequest.value).toBe(false)
     expect(store.overviewRequestedAnchorDate.value).toBe('2026-08-20')
     expect(store.overviewScope.value).toBe('month')
+    expect(store.workspaceError.value).toBeNull()
+    expect(store.overviewError.value).toBe(refreshError)
     expect(store.error.value).toBe(refreshError)
     expect(store.loading.value).toBe(false)
 
     api.getLedgerOverview.mockClear()
     api.getLedgerOverview.mockResolvedValueOnce(overviewFor('month', '2026-08-20'))
-    const retry = await store.refreshOverview()
-    expect(retry.status).toBe('success')
+    await store.bootstrap()
     expect(api.getLedgerOverview).toHaveBeenCalledTimes(1)
     expect(api.getLedgerOverview).toHaveBeenCalledWith({ scope: 'month', anchorDate: '2026-08-20' })
+    expect(store.workspaceState.value).toBe('READY')
     expect(store.overviewDataReady.value).toBe(true)
     expect(store.overviewMatchesRequest.value).toBe(true)
+    expect(store.workspaceError.value).toBeNull()
+    expect(store.overviewError.value).toBeNull()
     expect(store.error.value).toBeNull()
+  })
+
+  it('keeps a current-state error owned by the workspace when a later overview succeeds', async () => {
+    api.getLedgerSettings.mockResolvedValue(settings(true))
+    api.listLedgerAccounts.mockResolvedValue([account('account-1')])
+    const store = useLedgerStore()
+    await store.bootstrap()
+
+    const workspaceError = new LedgerApiError('current state unavailable', 503, 'ledger-internal-error')
+    api.listLedgerAccounts.mockRejectedValueOnce(workspaceError)
+    await store.refreshData()
+
+    expect(store.workspaceState.value).toBe('RECOVERABLE_ERROR')
+    expect(store.workspaceError.value).toBe(workspaceError)
+    expect(store.overviewError.value).toBeNull()
+
+    api.getLedgerOverview.mockResolvedValueOnce(overview())
+    const overviewResult = await store.refreshOverview()
+    expect(overviewResult.status).toBe('success')
+    expect(store.workspaceError.value).toBe(workspaceError)
+    expect(store.workspaceState.value).toBe('RECOVERABLE_ERROR')
+    expect(store.error.value).toBe(workspaceError)
+  })
+
+  it('keeps transaction read failures out of workspace and period error ownership', async () => {
+    api.getLedgerSettings.mockResolvedValue(settings(true))
+    api.listLedgerAccounts.mockResolvedValue([account('account-1')])
+    const store = useLedgerStore()
+    await store.bootstrap()
+
+    const transactionsError = new LedgerApiError('transactions unavailable', 500, 'ledger-internal-error')
+    api.listLedgerTransactions.mockRejectedValueOnce(transactionsError)
+    await store.refreshTransactions({ type: 'all', limit: 50 })
+
+    expect(store.workspaceState.value).toBe('READY')
+    expect(store.workspaceError.value).toBeNull()
+    expect(store.overviewError.value).toBeNull()
+    expect(store.transactionsError.value).toBe(transactionsError)
+    expect(store.error.value).toBe(transactionsError)
+    expect(store.transactionsLoading.value).toBe(false)
   })
 
   it.each([

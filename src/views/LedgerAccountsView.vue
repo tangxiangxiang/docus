@@ -68,7 +68,7 @@ function onAccountSaved(): void {
     <div v-else-if="loading" class="ledger-state-panel" data-testid="ledger-accounts-loading" role="status">正在加载账户…</div>
     <section v-else-if="store.workspaceState.value === 'RECOVERABLE_ERROR'" class="ledger-state-panel" data-testid="ledger-accounts-error" role="alert">
       <h2>账户暂时无法加载</h2>
-      <p>{{ ledgerErrorMessage(store.error.value, '请检查网络后重试。') }}</p>
+      <p>{{ ledgerErrorMessage(store.workspaceError.value, '请检查网络后重试。') }}</p>
       <button class="ledger-primary-button" type="button" @click="store.bootstrap">重新加载</button>
     </section>
     <section v-else-if="!store.settings.value" class="ledger-state-panel" data-testid="ledger-accounts-needs-settings">

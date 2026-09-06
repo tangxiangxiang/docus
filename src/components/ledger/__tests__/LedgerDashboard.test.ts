@@ -281,6 +281,23 @@ describe('Ledger live dashboard', () => {
     expect(wrapper.get('[data-testid="ledger-dashboard-cashflow"]').text()).toContain('38.00')
   })
 
+  it('does not show a period error when only the transaction read fails', async () => {
+    const wrapper = mount(LedgerView)
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    const transactionsError = new LedgerApiError('transactions unavailable', 500, 'ledger-internal-error')
+    api.listLedgerTransactions.mockRejectedValueOnce(transactionsError)
+    await useLedgerStore().refreshTransactions({ type: 'all', limit: 50 })
+    await nextTick()
+
+    expect(useLedgerStore().transactionsError.value).toBe(transactionsError)
+    expect(useLedgerStore().workspaceState.value).toBe('READY')
+    expect(wrapper.find('[data-testid="ledger-dashboard"]').exists()).toBe(true)
+    expect(wrapper.find('.ledger-inline-error').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('这段期间的数据暂时无法加载')
+  })
+
   it('states a failed historical period read inside the period boundary', async () => {
     const wrapper = mount(LedgerView)
     wrappers.push(wrapper)

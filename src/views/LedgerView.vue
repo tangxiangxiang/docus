@@ -30,7 +30,7 @@ const transactionSheetOpen = ref(false)
 // state instead of an empty Dashboard frame. States that do not read the
 // projection at all (onboarding, no active account) are not gated on it.
 const bootstrapping = computed(() => store.workspaceState.value === 'BOOTSTRAPPING'
-  || (store.workspaceState.value === 'READY' && store.overview.value === null && store.loading.value))
+  || (store.workspaceState.value === 'READY' && store.overview.value === null && store.overviewLoading.value))
 const showOnboarding = computed(() => store.workspaceState.value === 'UNINITIALIZED' || store.workspaceState.value === 'FIRST_ACCOUNT_REQUIRED')
 
 type RouteDateSnapshot = {
@@ -95,12 +95,12 @@ async function syncRouteDate(snapshot: RouteDateSnapshot): Promise<void> {
   if (!routeStillMatches(snapshot)) return
 
   if (isFutureAnchorResult(result)) {
-    // The failed bootstrap may not have published Settings/Accounts because
-    // the Overview request was part of the same load. Let the canonical
-    // follow-up perform a complete bootstrap rather than rendering the error
-    // state after the invalid future URL has been removed.
+    // The canonical follow-up must start a fresh Overview request even when the
+    // original request still belongs to an in-flight bootstrap. Mark the
+    // bootstrap path as already entered so the route watcher uses
+    // refreshOverview instead of reusing that stale bootstrap promise.
     if (!overviewRequestStillMatches(snapshot, result)) return
-    hasBootstrapped = false
+    hasBootstrapped = true
     await router.replace({ name: 'ledger', hash: route.hash })
     return
   }
@@ -170,7 +170,7 @@ function closeTransactionSheet(): void {
 
     <section v-else-if="store.workspaceState.value === 'RECOVERABLE_ERROR'" class="ledger-error-state" data-testid="ledger-bootstrap-error" aria-labelledby="ledger-bootstrap-error-title">
       <h1 id="ledger-bootstrap-error-title">Ledger 暂时无法打开</h1>
-      <p>{{ ledgerErrorMessage(store.error.value, '请检查网络后重试。') }}</p>
+      <p>{{ ledgerErrorMessage(store.workspaceError.value, '请检查网络后重试。') }}</p>
       <button class="ledger-primary-button" type="button" @click="retry">重新加载</button>
     </section>
 

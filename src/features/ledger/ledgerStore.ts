@@ -111,7 +111,11 @@ interface LedgerStoreState {
   workspaceState: LedgerWorkspaceState
   workspaceLoading: boolean
   overviewLoading: boolean
-  error: LedgerApiError | null
+  transactionsLoading: boolean
+  workspaceError: LedgerApiError | null
+  overviewError: LedgerApiError | null
+  transactionsError: LedgerApiError | null
+  mutationError: LedgerApiError | null
   transactionQuery: LedgerTransactionQuery
   mutationState: LedgerMutationState
   pendingCreate: LedgerPendingCreateIntent | null
@@ -150,7 +154,11 @@ const state = reactive<LedgerStoreState>({
   workspaceState: 'BOOTSTRAPPING',
   workspaceLoading: false,
   overviewLoading: false,
-  error: null,
+  transactionsLoading: false,
+  workspaceError: null,
+  overviewError: null,
+  transactionsError: null,
+  mutationError: null,
   transactionQuery: { type: 'all', limit: 50 },
   mutationState: initialPending ? 'UNCERTAIN' : 'IDLE',
   pendingCreate: initialPending,
@@ -291,9 +299,13 @@ function clearPresentation(): void {
   state.transactions = null
   state.accountDetail = null
   state.accountTransactions = null
-  state.error = null
+  state.workspaceError = null
+  state.overviewError = null
+  state.transactionsError = null
+  state.mutationError = null
   state.workspaceLoading = false
   state.overviewLoading = false
+  state.transactionsLoading = false
   state.workspaceState = 'BOOTSTRAPPING'
   state.mutationState = state.recoveryState === 'PENDING' ? 'UNCERTAIN' : state.recoveryState === 'BLOCKED' ? 'ERROR' : 'IDLE'
 }
@@ -329,7 +341,7 @@ async function refreshCurrentState(
   } catch (error) {
     const normalized = normalizeLedgerError(error)
     if (!isWorkspaceCurrent(epoch)) return { status: 'stale' }
-    state.error = normalized
+    state.workspaceError = normalized
     state.workspaceState = 'RECOVERABLE_ERROR'
     return { status: 'error', error: normalized }
   } finally {
@@ -359,7 +371,7 @@ async function refreshOverviewPhase(
     state.overviewDataReady = true
     state.overviewScope = request.scope
     state.overviewRequestedAnchorDate = request.anchorDate
-    state.error = null
+    state.overviewError = null
     return {
       status: 'success',
       requestEpoch: epoch,
@@ -370,8 +382,17 @@ async function refreshOverviewPhase(
     const normalized = normalizeLedgerError(error)
     if (!isOverviewCurrent(epoch)) return staleOverviewResult(epoch, request)
     state.overviewDataReady = false
-    state.error = normalized
-    if (failurePolicy === 'workspace-error') state.workspaceState = 'RECOVERABLE_ERROR'
+    state.overviewError = normalized
+    // A future anchor is a route-level validation outcome. LedgerView owns the
+    // canonicalization to today, so it must not turn an otherwise usable
+    // workspace into a workspace recovery state while that route correction is
+    // in flight. Other Overview failures keep the caller's requested recovery
+    // boundary (mutation/bootstrap versus period-only).
+    const isFutureAnchorValidation = normalized.code === 'ledger-validation-failed'
+      && normalized.details?.field === 'anchorDate'
+    if (failurePolicy === 'workspace-error' && !isFutureAnchorValidation) {
+      state.workspaceState = 'RECOVERABLE_ERROR'
+    }
     return errorOverviewResult(epoch, request, normalized)
   } finally {
     if (isOverviewCurrent(epoch)) state.overviewLoading = false
@@ -385,7 +406,8 @@ async function bootstrap(): Promise<LedgerOverviewRefreshResult | undefined> {
   const request = currentOverviewRequest()
   state.workspaceLoading = true
   state.overviewLoading = true
-  state.error = null
+  state.workspaceError = null
+  state.overviewError = null
   state.overviewDataReady = false
   state.workspaceState = 'BOOTSTRAPPING'
   applyRecoveryReadResult(readLedgerPendingCreate())
@@ -404,7 +426,7 @@ async function bootstrap(): Promise<LedgerOverviewRefreshResult | undefined> {
             state.categories = []
             state.transactions = null
             state.workspaceState = 'UNINITIALIZED'
-            state.error = null
+            state.workspaceError = null
           }
           if (isOverviewCurrent(overviewEpoch)) {
             state.overview = null
@@ -413,7 +435,7 @@ async function bootstrap(): Promise<LedgerOverviewRefreshResult | undefined> {
           return undefined
         }
         if (!isWorkspaceCurrent(workspaceEpoch)) return staleOverviewResult(overviewEpoch, request)
-        state.error = normalized
+        state.workspaceError = normalized
         state.workspaceState = 'RECOVERABLE_ERROR'
         if (isOverviewCurrent(overviewEpoch)) state.overviewDataReady = false
         return errorOverviewResult(overviewEpoch, request, normalized)
@@ -452,35 +474,40 @@ async function refreshData(): Promise<void> {
   const workspaceEpoch = beginWorkspaceRequest()
   const overviewEpoch = beginOverviewRequest()
   const request = currentOverviewRequest()
-  const workspaceWasReady = state.workspaceState === 'READY'
   state.workspaceLoading = true
   state.overviewLoading = true
-  state.error = null
+  state.workspaceError = null
+  state.overviewError = null
   state.overviewDataReady = false
   try {
     // Phase A — the Current Snapshot's own dependency.
     const currentState = await refreshCurrentState(workspaceEpoch, settings)
     if (currentState.status !== 'published') return
 
-    // Phase B — the historical projection. A read failure here is the only
-    // failure allowed to keep a READY workspace with a period-only error.
+    // Phase B — the historical projection. This is a mutation refresh, not a
+    // read-only navigation refresh. If the projection cannot be refreshed,
+    // the just-refreshed Current Snapshot must not remain behind stale
+    // projection data, so the workspace enters its recovery boundary.
     const overviewResult = await refreshOverviewPhase(
       overviewEpoch,
       request,
-      workspaceWasReady ? 'period-only' : 'workspace-error',
+      'workspace-error',
     )
     if (overviewResult.status !== 'success') return
 
     // Phase C — the transaction page, only when one is already presented.
     if (state.transactions !== null) {
       const transactionsEpoch = beginTransactionsRequest()
+      state.transactionsLoading = true
+      state.transactionsError = null
       try {
         const page = await listLedgerTransactions(state.transactionQuery)
         if (isTransactionsCurrent(transactionsEpoch)) state.transactions = page
       } catch (error) {
         if (!isTransactionsCurrent(transactionsEpoch)) return
-        state.error = normalizeLedgerError(error)
-        if (!workspaceWasReady) state.workspaceState = 'RECOVERABLE_ERROR'
+        state.transactionsError = normalizeLedgerError(error)
+      } finally {
+        if (isTransactionsCurrent(transactionsEpoch)) state.transactionsLoading = false
       }
     }
   } finally {
@@ -493,7 +520,7 @@ async function refreshOverview(): Promise<LedgerOverviewRefreshResult> {
   const epoch = beginOverviewRequest()
   const request = currentOverviewRequest()
   state.overviewLoading = true
-  state.error = null
+  state.overviewError = null
   state.overviewDataReady = false
   // A period navigation refresh never owns the Workspace lifecycle, so it can
   // neither cancel a running bootstrap nor report a workspace failure.
@@ -504,18 +531,21 @@ function setOverviewRequestContext(context: LedgerOverviewRequestContext): void 
   state.overviewScope = context.scope
   state.overviewRequestedAnchorDate = context.anchorDate
   state.overviewDataReady = false
-  state.error = null
+  state.overviewError = null
 }
 
 async function refreshTransactions(query: LedgerTransactionQuery = state.transactionQuery): Promise<void> {
   const epoch = beginTransactionsRequest()
   state.transactionQuery = { ...query }
-  state.error = null
+  state.transactionsLoading = true
+  state.transactionsError = null
   try {
     const page = await listLedgerTransactions(query)
     if (isTransactionsCurrent(epoch)) state.transactions = page
   } catch (error) {
-    if (isTransactionsCurrent(epoch)) state.error = normalizeLedgerError(error)
+    if (isTransactionsCurrent(epoch)) state.transactionsError = normalizeLedgerError(error)
+  } finally {
+    if (isTransactionsCurrent(epoch)) state.transactionsLoading = false
   }
 }
 
@@ -524,7 +554,8 @@ async function loadMoreTransactions(): Promise<void> {
   const cursor = current?.page.nextCursor
   if (!current || !cursor) return
   const epoch = beginTransactionsRequest()
-  state.error = null
+  state.transactionsLoading = true
+  state.transactionsError = null
   try {
     const page = await listLedgerTransactions({ ...state.transactionQuery, cursor })
     if (!isTransactionsCurrent(epoch)) return
@@ -533,7 +564,9 @@ async function loadMoreTransactions(): Promise<void> {
       page: page.page,
     }
   } catch (error) {
-    if (isTransactionsCurrent(epoch)) state.error = normalizeLedgerError(error)
+    if (isTransactionsCurrent(epoch)) state.transactionsError = normalizeLedgerError(error)
+  } finally {
+    if (isTransactionsCurrent(epoch)) state.transactionsLoading = false
   }
 }
 
@@ -548,7 +581,7 @@ async function beginCreate<T>(
       409,
       'ledger-recovery-blocked',
     )
-    state.error = blocked
+    state.mutationError = blocked
     state.mutationState = 'ERROR'
     throw blocked
   }
@@ -572,7 +605,7 @@ async function beginCreate<T>(
       0,
       'ledger-recovery-storage-unavailable',
     )
-    state.error = storageError
+    state.mutationError = storageError
     state.mutationState = 'ERROR'
     throw storageError
   }
@@ -580,7 +613,7 @@ async function beginCreate<T>(
   state.recoveryState = 'PENDING'
   state.recoveryBlockedReason = null
   state.recoveryGateActive = false
-  state.error = null
+  state.mutationError = null
   state.mutationState = 'SUBMITTING'
   try {
     const result = await request(intent.idempotencyKey)
@@ -589,6 +622,7 @@ async function beginCreate<T>(
     state.recoveryState = 'NONE'
     state.recoveryBlockedReason = null
     state.recoveryGateActive = false
+    state.mutationError = null
     state.mutationState = 'CONFIRMED'
     await refreshData()
     return result
@@ -597,6 +631,7 @@ async function beginCreate<T>(
     if (shouldKeepPendingCreate(normalized)) {
       state.recoveryGateActive = true
       state.mutationState = 'UNCERTAIN'
+      state.mutationError = normalized
       // Keep the exact record and payload. The user must replay this intent.
     } else {
       clearLedgerPendingCreate()
@@ -605,6 +640,7 @@ async function beginCreate<T>(
       state.recoveryBlockedReason = null
       state.recoveryGateActive = false
       state.mutationState = 'ERROR'
+      state.mutationError = normalized
     }
     throw normalized
   }
@@ -637,6 +673,7 @@ async function retryPendingCreate(): Promise<unknown> {
     state.pendingCreate = null
     state.recoveryState = 'NONE'
     state.recoveryBlockedReason = null
+    state.mutationError = null
     state.mutationState = 'CONFIRMED'
     await refreshData()
     return result
@@ -645,6 +682,7 @@ async function retryPendingCreate(): Promise<unknown> {
     if (shouldKeepPendingCreate(normalized)) {
       state.recoveryGateActive = true
       state.mutationState = 'UNCERTAIN'
+      state.mutationError = normalized
     } else {
       clearLedgerPendingCreate()
       state.pendingCreate = null
@@ -652,6 +690,7 @@ async function retryPendingCreate(): Promise<unknown> {
       state.recoveryBlockedReason = null
       state.recoveryGateActive = false
       state.mutationState = 'ERROR'
+      state.mutationError = normalized
     }
     throw normalized
   }
@@ -707,6 +746,12 @@ export interface LedgerStore {
   readonly accountDetail: ComputedRef<LedgerAccountDto | null>
   readonly accountTransactions: ComputedRef<LedgerAccountTransactionsDto | null>
   readonly workspaceState: ComputedRef<LedgerWorkspaceState>
+  readonly workspaceLoading: ComputedRef<boolean>
+  readonly overviewLoading: ComputedRef<boolean>
+  readonly transactionsLoading: ComputedRef<boolean>
+  readonly workspaceError: ComputedRef<LedgerApiError | null>
+  readonly overviewError: ComputedRef<LedgerApiError | null>
+  readonly transactionsError: ComputedRef<LedgerApiError | null>
   readonly loading: ComputedRef<boolean>
   readonly error: ComputedRef<LedgerApiError | null>
   readonly transactionQuery: ComputedRef<LedgerTransactionQuery>
@@ -763,8 +808,14 @@ const store: LedgerStore = {
   accountDetail: computed(() => state.accountDetail),
   accountTransactions: computed(() => state.accountTransactions),
   workspaceState: computed(() => state.workspaceState),
+  workspaceLoading: computed(() => state.workspaceLoading),
+  overviewLoading: computed(() => state.overviewLoading),
+  transactionsLoading: computed(() => state.transactionsLoading),
+  workspaceError: computed(() => state.workspaceError),
+  overviewError: computed(() => state.overviewError),
+  transactionsError: computed(() => state.transactionsError),
   loading: computed(() => state.workspaceLoading || state.overviewLoading),
-  error: computed(() => state.error),
+  error: computed(() => state.workspaceError ?? state.overviewError ?? state.transactionsError ?? state.mutationError),
   transactionQuery: computed(() => state.transactionQuery),
   mutationState: computed(() => state.mutationState),
   pendingCreate: computed(() => state.pendingCreate),
@@ -834,7 +885,11 @@ export function resetLedgerStoreForTesting(): void {
   state.workspaceState = 'BOOTSTRAPPING'
   state.workspaceLoading = false
   state.overviewLoading = false
-  state.error = null
+  state.transactionsLoading = false
+  state.workspaceError = null
+  state.overviewError = null
+  state.transactionsError = null
+  state.mutationError = null
   state.transactionQuery = { type: 'all', limit: 50 }
   state.mutationState = 'IDLE'
   state.pendingCreate = null

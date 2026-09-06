@@ -31,8 +31,8 @@ const scopeOptions = computed<ReadonlyArray<{ value: LedgerOverviewScope; label:
   ]
 })
 
-const refreshing = computed(() => store.loading.value)
-const scopeError = computed(() => store.error.value)
+const refreshing = computed(() => store.overviewLoading.value)
+const scopeError = computed(() => store.overviewError.value)
 /**
  * The Current Snapshot stays on screen behind this error, so the copy must
  * stay inside the period boundary. The global Ledger formatter answers a

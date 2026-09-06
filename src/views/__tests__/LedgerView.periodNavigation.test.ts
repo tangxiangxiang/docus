@@ -225,6 +225,59 @@ describe('Ledger historical period route coordination', () => {
     expect(api.getLedgerOverview).toHaveBeenLastCalledWith({ scope: 'month', anchorDate: undefined })
   })
 
+  it('starts a fresh canonical-today overview when future validation races initial bootstrap', async () => {
+    const initial = deferred<LedgerOverviewDto>()
+    const future = deferred<LedgerOverviewDto>()
+    const today = deferred<LedgerOverviewDto>()
+    const requestedAnchors: Array<string | undefined> = []
+    api.getLedgerOverview.mockImplementation((input: { scope: LedgerOverviewScope; anchorDate: string | undefined }) => {
+      requestedAnchors.push(input.anchorDate)
+      if (input.anchorDate === '2026-08-20') return initial.promise
+      if (input.anchorDate === '2026-09-06') return future.promise
+      if (input.anchorDate === undefined) return today.promise
+      return Promise.resolve(overviewFor(input))
+    })
+
+    const { router, wrapper } = await mountAt('/ledger?date=2026-08-20')
+    const store = useLedgerStore()
+    expect(requestedAnchors).toEqual(['2026-08-20'])
+    expect(store.workspaceState.value).toBe('READY')
+    expect(store.workspaceLoading.value).toBe(false)
+    expect(wrapper.find('[data-testid="ledger-loading"]').exists()).toBe(true)
+
+    await router.push('/ledger?date=2026-09-06')
+    await nextTick()
+    expect(requestedAnchors).toEqual(['2026-08-20', '2026-09-06'])
+    expect(store.overviewRequestedAnchorDate.value).toBe('2026-09-06')
+
+    future.reject(new LedgerApiError(
+      'future anchor',
+      400,
+      'ledger-validation-failed',
+      { field: 'anchorDate' },
+    ))
+    await flushPromises()
+    await flushPromises()
+
+    expect(router.currentRoute.value.fullPath).toBe('/ledger')
+    expect(requestedAnchors).toContain(undefined)
+    expect(store.overviewRequestedAnchorDate.value).toBeUndefined()
+
+    initial.resolve(overviewFor({ scope: 'month', anchorDate: '2026-08-20' }))
+    await flushPromises()
+    expect(store.overview.value).toBeNull()
+    expect(router.currentRoute.value.fullPath).toBe('/ledger')
+
+    today.resolve(overviewFor({ scope: 'month', anchorDate: undefined }))
+    await flushPromises()
+    expect(store.workspaceState.value).toBe('READY')
+    expect(store.overview.value?.context.isToday).toBe(true)
+    expect(store.overviewRequestedAnchorDate.value).toBeUndefined()
+    expect(store.overviewMatchesRequest.value).toBe(true)
+    expect(wrapper.find('[data-testid="ledger-dashboard"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ledger-loading"]').exists()).toBe(false)
+  })
+
   it('starts the latest route request immediately and publishes only its result', async () => {
     const { router, wrapper } = await mountAt('/ledger')
     api.getLedgerOverview.mockClear()

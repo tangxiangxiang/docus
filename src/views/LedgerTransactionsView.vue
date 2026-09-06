@@ -111,7 +111,7 @@ async function loadTransactions(): Promise<void> {
   filterError.value = ''
   try {
     await store.refreshTransactions(buildQuery())
-    if (store.error.value) filterError.value = ledgerErrorMessage(store.error.value, '交易列表暂时无法加载。')
+    if (store.transactionsError.value) filterError.value = ledgerErrorMessage(store.transactionsError.value, '交易列表暂时无法加载。')
   } catch (cause) {
     filterError.value = ledgerErrorMessage(cause, '交易列表暂时无法加载。')
   } finally {
@@ -144,7 +144,7 @@ async function loadMore(): Promise<void> {
   filterError.value = ''
   try {
     await store.loadMoreTransactions()
-    if (store.error.value) filterError.value = ledgerErrorMessage(store.error.value, '更多交易暂时无法加载。')
+    if (store.transactionsError.value) filterError.value = ledgerErrorMessage(store.transactionsError.value, '更多交易暂时无法加载。')
   } catch (cause) {
     filterError.value = ledgerErrorMessage(cause, '更多交易暂时无法加载。')
   } finally {
