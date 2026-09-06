@@ -124,6 +124,7 @@ test('real Ledger onboarding and expense survive dashboard refresh', async ({ pa
   await expect(page.getByRole('combobox', { name: '选择收支期间' })).toHaveValue('month')
   await expect(page.locator('.ledger-period-navigation')).toHaveCount(0)
   await expect(page.getByTestId('ledger-dashboard-accounts')).toContainText('招商银行')
+  await expect(page.getByTestId('ledger-dashboard-account-viewport')).toBeVisible()
   await expect(page.getByTestId('ledger-total-assets')).toContainText('¥10,000.00')
   await expect(page.getByTestId('ledger-net-worth')).toContainText('¥10,000.00')
 
@@ -316,6 +317,7 @@ test('Ledger transaction entry remains keyboard-usable in a narrow viewport', as
   await page.setViewportSize({ width: 430, height: 844 })
   await page.goto('/ledger')
   await expect(page.getByTestId('ledger-dashboard')).toBeVisible()
+  await expect(page.getByTestId('ledger-dashboard-account-viewport')).toBeVisible()
   await expect(page.getByTestId('ledger-cashflow-trend-canvas')).toBeVisible()
 
   // A canvas chart is easy to let escape its column. Measure real scrollable

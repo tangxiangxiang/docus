@@ -275,6 +275,22 @@ describe('Ledger live dashboard', () => {
     wrappers.push(wrapper)
     await flushPromises()
 
+    expect(wrapper.findAll('[data-testid="ledger-dashboard-accounts"]')).toHaveLength(1)
+    expect(wrapper.find('[data-testid="ledger-dashboard-account-viewport"]').exists()).toBe(true)
+
+    const sectionOrder = [
+      wrapper.get('.ledger-metric-grid').element,
+      wrapper.get('.ledger-cashflow-section').element,
+      wrapper.get('[data-testid="ledger-dashboard-accounts"]').element,
+      wrapper.get('.ledger-dashboard-two-column').element,
+      wrapper.get('#ledger-periods-title').element.closest('section')!,
+      wrapper.get('#ledger-trend-title').element.closest('section')!,
+    ]
+    for (let index = 1; index < sectionOrder.length; index += 1) {
+      const position = sectionOrder[index - 1].compareDocumentPosition(sectionOrder[index])
+      expect(position & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    }
+
     const accountLinks = wrapper.get('[data-testid="ledger-dashboard-assets"]').findAll('.ledger-dashboard-account')
     expect(accountLinks).toHaveLength(1)
     expect(accountLinks[0].classes()).toContain('ledger-dashboard-account')
@@ -294,6 +310,25 @@ describe('Ledger live dashboard', () => {
     expect(wrapper.text()).not.toContain('最近 5 笔真实记录')
     expect(wrapper.text()).not.toContain('期间边界和金额均按 Ledger 时区统一计算')
     expect(wrapper.text()).not.toContain('最近月份的收支变化')
+  })
+
+  it('keeps every account in the bounded dashboard viewport', async () => {
+    const accounts = Array.from({ length: 8 }, (_, index) => ({
+      ...accountSummary,
+      id: `bank-${index + 1}`,
+      name: `账户 ${index + 1}`,
+    }))
+    api.getLedgerOverview.mockResolvedValue({ ...overview(), accounts })
+
+    const wrapper = mount(LedgerView)
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    const viewport = wrapper.get('[data-testid="ledger-dashboard-account-viewport"]')
+    expect(viewport.findAll('.ledger-dashboard-account')).toHaveLength(accounts.length)
+    for (const accountItem of accounts) {
+      expect(viewport.text()).toContain(accountItem.name)
+    }
   })
 
   it('uses the server scope endpoint when the selected cashflow period changes', async () => {

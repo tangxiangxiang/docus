@@ -176,43 +176,6 @@ function onDateChange(event: Event): void {
         </article>
       </section>
 
-      <section class="ledger-dashboard-section" aria-labelledby="ledger-dashboard-accounts-title">
-        <div class="ledger-section-heading">
-          <div>
-            <h2 id="ledger-dashboard-accounts-title">账户</h2>
-          </div>
-          <RouterLink :to="{ name: 'ledger-accounts' }">查看全部</RouterLink>
-        </div>
-        <div class="ledger-dashboard-account-groups" data-testid="ledger-dashboard-accounts">
-          <section class="ledger-dashboard-account-group" data-testid="ledger-dashboard-assets" aria-labelledby="ledger-dashboard-assets-title">
-            <h3 id="ledger-dashboard-assets-title">资产账户</h3>
-            <div v-if="assetAccounts.length" class="ledger-dashboard-accounts">
-              <RouterLink v-for="account in assetAccounts" :key="account.id" class="ledger-dashboard-account" :to="{ name: 'ledger-account', params: { id: account.id } }">
-                <span>
-                  <strong>{{ account.name }}</strong>
-                  <small>资产 · {{ account.currency }}</small>
-                </span>
-                <strong>{{ formatLedgerMoney(account.currentBalanceMinor, account.currency) }}</strong>
-              </RouterLink>
-            </div>
-            <p v-else class="ledger-inline-empty">还没有资产账户。</p>
-          </section>
-          <section class="ledger-dashboard-account-group" data-testid="ledger-dashboard-liabilities" aria-labelledby="ledger-dashboard-liabilities-title">
-            <h3 id="ledger-dashboard-liabilities-title">负债账户</h3>
-            <div v-if="liabilityAccounts.length" class="ledger-dashboard-accounts">
-              <RouterLink v-for="account in liabilityAccounts" :key="account.id" class="ledger-dashboard-account" :to="{ name: 'ledger-account', params: { id: account.id } }">
-                <span>
-                  <strong>{{ account.name }}</strong>
-                  <small>负债 · {{ account.currency }}</small>
-                </span>
-                <strong>{{ formatLedgerMoney(account.currentBalanceMinor, account.currency) }}</strong>
-              </RouterLink>
-            </div>
-            <p v-else class="ledger-inline-empty">还没有负债账户。</p>
-          </section>
-        </div>
-      </section>
-
       <section class="ledger-dashboard-section ledger-cashflow-section" aria-labelledby="ledger-dashboard-cashflow-title">
         <div class="ledger-section-heading ledger-period-heading">
           <div class="ledger-period-heading-copy">
@@ -247,6 +210,45 @@ function onDateChange(event: Event): void {
           <div><span>收入</span><strong class="is-income">{{ formatLedgerMoney(selectedPeriodSummary.incomeMinor, overview.currency) }}</strong></div>
           <div><span>支出</span><strong class="is-expense">{{ formatLedgerMoney(selectedPeriodSummary.expenseMinor, overview.currency) }}</strong></div>
           <div><span>收支结余</span><strong>{{ formatLedgerSignedMoney(selectedPeriodSummary.balanceMinor, overview.currency) }}</strong></div>
+        </div>
+      </section>
+
+      <section class="ledger-dashboard-section" data-testid="ledger-dashboard-accounts" aria-labelledby="ledger-dashboard-accounts-title">
+        <div class="ledger-section-heading">
+          <div>
+            <h2 id="ledger-dashboard-accounts-title">账户</h2>
+          </div>
+          <RouterLink :to="{ name: 'ledger-accounts' }">查看全部</RouterLink>
+        </div>
+        <div class="ledger-dashboard-account-viewport" data-testid="ledger-dashboard-account-viewport">
+          <div class="ledger-dashboard-account-groups">
+            <section class="ledger-dashboard-account-group" data-testid="ledger-dashboard-assets" aria-labelledby="ledger-dashboard-assets-title">
+              <h3 id="ledger-dashboard-assets-title">资产账户</h3>
+              <div v-if="assetAccounts.length" class="ledger-dashboard-accounts">
+                <RouterLink v-for="account in assetAccounts" :key="account.id" class="ledger-dashboard-account" :to="{ name: 'ledger-account', params: { id: account.id } }">
+                  <span>
+                    <strong>{{ account.name }}</strong>
+                    <small>资产 · {{ account.currency }}</small>
+                  </span>
+                  <strong>{{ formatLedgerMoney(account.currentBalanceMinor, account.currency) }}</strong>
+                </RouterLink>
+              </div>
+              <p v-else class="ledger-inline-empty">还没有资产账户。</p>
+            </section>
+            <section class="ledger-dashboard-account-group" data-testid="ledger-dashboard-liabilities" aria-labelledby="ledger-dashboard-liabilities-title">
+              <h3 id="ledger-dashboard-liabilities-title">负债账户</h3>
+              <div v-if="liabilityAccounts.length" class="ledger-dashboard-accounts">
+                <RouterLink v-for="account in liabilityAccounts" :key="account.id" class="ledger-dashboard-account" :to="{ name: 'ledger-account', params: { id: account.id } }">
+                  <span>
+                    <strong>{{ account.name }}</strong>
+                    <small>负债 · {{ account.currency }}</small>
+                  </span>
+                  <strong>{{ formatLedgerMoney(account.currentBalanceMinor, account.currency) }}</strong>
+                </RouterLink>
+              </div>
+              <p v-else class="ledger-inline-empty">还没有负债账户。</p>
+            </section>
+          </div>
         </div>
       </section>
 
@@ -357,11 +359,11 @@ function onDateChange(event: Event): void {
 
 <style scoped>
 .ledger-dashboard { width: min(100%, 1120px); margin: 0 auto; padding: 34px 28px 64px; box-sizing: border-box; }
-.ledger-dashboard-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 26px; }
+.ledger-dashboard-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 24px; margin-bottom: 26px; }
 .ledger-eyebrow { margin: 0 0 6px; color: var(--accent); font-size: .75rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
 .ledger-dashboard-header h1 { margin: 0; color: var(--text-h); font-size: clamp(1.7rem, 3vw, 2.25rem); line-height: 1.2; }
 .ledger-dashboard-header p:not(.ledger-eyebrow) { margin: 8px 0 0; color: var(--text-muted); font-size: .82rem; }
-.ledger-dashboard-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
+.ledger-dashboard-actions { display: flex; align-items: center; justify-self: end; flex-wrap: wrap; gap: 9px; margin-left: auto; }
 .ledger-primary-button,
 .ledger-secondary-button { display: inline-flex; min-height: 39px; align-items: center; justify-content: center; box-sizing: border-box; padding: 7px 14px; border-radius: 7px; font: inherit; font-size: .84rem; font-weight: 650; text-decoration: none; cursor: pointer; }
 .ledger-primary-button { border: 1px solid var(--accent); background: var(--accent); color: #fff; }
@@ -379,7 +381,7 @@ function onDateChange(event: Event): void {
 .ledger-metric-card span { color: var(--text-muted); font-size: .8rem; }
 .ledger-metric-card strong { color: var(--text-h); font-size: 1.35rem; line-height: 1.2; }
 .ledger-metric-card small { color: var(--text-muted); font-size: .72rem; }
-.ledger-dashboard-section { margin-top: 24px; padding: 20px; border: 1px solid var(--border); border-radius: 11px; background: var(--bg); }
+.ledger-dashboard-section { margin-top: 24px; padding: 20px; border: 1px solid var(--border); border-radius: 11px; background: color-mix(in srgb, var(--bg-soft) 35%, var(--bg)); }
 .ledger-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
 .ledger-section-heading h2 { margin: 0; color: var(--text-h); font-size: 1rem; }
 .ledger-section-heading p { margin: 5px 0 0; color: var(--text-muted); font-size: .76rem; line-height: 1.45; }
@@ -395,21 +397,22 @@ function onDateChange(event: Event): void {
 .ledger-period-toolbar select:focus { border-color: var(--accent); outline: 2px solid color-mix(in srgb, var(--accent) 25%, transparent); outline-offset: 1px; }
 .ledger-historical-hint { margin: 5px 0 0; color: var(--text-muted); font-size: .76rem; line-height: 1.45; }
 .ledger-period-analysis-loading { display: grid; min-height: 160px; margin-top: 24px; place-items: center; border: 1px dashed var(--border); border-radius: 11px; color: var(--text-muted); font-size: .82rem; }
+.ledger-dashboard-account-viewport { max-height: 280px; overflow-y: auto; overscroll-behavior: contain; }
 .ledger-dashboard-account-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .ledger-dashboard-account-group { min-width: 0; }
 .ledger-dashboard-account-group h3 { margin: 0 0 5px; color: var(--text-muted); font-size: .78rem; }
 .ledger-dashboard-accounts { display: grid; }
-.ledger-dashboard-account { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 56px; padding: 9px 10px; border-bottom: 1px solid var(--border); color: inherit; text-decoration: none; }
+.ledger-dashboard-account { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 52px; padding: 8px 10px; border-bottom: 1px solid var(--border); color: inherit; text-decoration: none; }
 .ledger-dashboard-account:last-child { border-bottom: 0; }
 .ledger-dashboard-account:hover { background: color-mix(in srgb, var(--accent) 5%, transparent); }
 .ledger-dashboard-account:focus-visible { position: relative; z-index: 1; border-radius: 6px; outline: 2px solid var(--accent); outline-offset: -2px; }
 .ledger-dashboard-account > span { display: grid; gap: 3px; min-width: 0; }
-.ledger-dashboard-account strong { overflow: hidden; color: var(--text-h); font-size: .85rem; text-overflow: ellipsis; white-space: nowrap; }
+.ledger-dashboard-account strong { overflow: hidden; color: var(--text-h); font-size: .85rem; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
 .ledger-dashboard-account small { color: var(--text-muted); font-size: .73rem; }
 .ledger-cashflow-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .ledger-cashflow-grid > div { display: grid; gap: 5px; padding: 12px; border-radius: 8px; background: var(--bg-soft); }
 .ledger-cashflow-grid span { color: var(--text-muted); font-size: .75rem; }
-.ledger-cashflow-grid strong { color: var(--text-h); font-size: 1rem; }
+.ledger-cashflow-grid strong { color: var(--text-h); font-size: 1rem; font-variant-numeric: tabular-nums; }
 .ledger-cashflow-grid .is-income { color: #18794e; }
 .ledger-cashflow-grid .is-expense { color: #b42318; }
 .ledger-dashboard-two-column { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 14px; margin-top: 20px; }
@@ -421,7 +424,7 @@ function onDateChange(event: Event): void {
 .ledger-breakdown-label { display: flex; min-width: 0; overflow: hidden; }
 .ledger-breakdown-name { overflow: hidden; color: var(--text); text-overflow: ellipsis; white-space: nowrap; }
 .ledger-breakdown-share { flex: 0 0 auto; color: var(--text-muted); font-weight: 400; white-space: nowrap; }
-.ledger-breakdown-amount { flex: 0 0 auto; color: var(--text-h); text-align: right; white-space: nowrap; }
+.ledger-breakdown-amount { flex: 0 0 auto; color: var(--text-h); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
 /* Assists the share label — it never replaces it, so it stays thin and quiet. */
 .ledger-breakdown-bar { flex: 0 0 100%; overflow: hidden; height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--text-muted) 16%, transparent); }
 .ledger-breakdown-bar-fill { display: block; height: 100%; border-radius: 2px; }
@@ -435,7 +438,7 @@ function onDateChange(event: Event): void {
 .ledger-recent-info { display: grid; gap: 3px; min-width: 0; }
 .ledger-recent-info strong { overflow: hidden; color: var(--text-h); font-size: .82rem; text-overflow: ellipsis; white-space: nowrap; }
 .ledger-recent-info small { overflow: hidden; color: var(--text-muted); font-size: .7rem; text-overflow: ellipsis; white-space: nowrap; }
-.ledger-recent-amount { flex: 0 0 auto; color: var(--text-h); font-size: .83rem; }
+.ledger-recent-amount { flex: 0 0 auto; color: var(--text-h); font-size: .83rem; font-variant-numeric: tabular-nums; }
 .ledger-recent-amount.is-income { color: #18794e; }
 .ledger-recent-amount.is-expense { color: #b42318; }
 .ledger-period-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; }
@@ -446,10 +449,11 @@ function onDateChange(event: Event): void {
 .ledger-period-card small { color: var(--text-muted); font-size: .68rem; }
 .ledger-period-values { display: grid; gap: 3px; margin-top: auto; color: var(--text-muted); font-size: .7rem; }
 .ledger-period-values span { display: flex; justify-content: space-between; gap: 7px; }
-.ledger-period-values strong { color: var(--text-h); font-size: .75rem; }
+.ledger-period-values strong { color: var(--text-h); font-size: .75rem; font-variant-numeric: tabular-nums; }
 @media (max-width: 760px) {
   .ledger-dashboard { padding: 28px 16px 48px; }
-  .ledger-dashboard-header { align-items: stretch; flex-direction: column; }
+  .ledger-dashboard-header { grid-template-columns: 1fr; align-items: stretch; }
+  .ledger-dashboard-actions { justify-self: stretch; margin-left: 0; }
   .ledger-dashboard-actions > * { flex: 1 1 150px; }
   .ledger-metric-grid,
   .ledger-dashboard-account-groups,
@@ -457,6 +461,7 @@ function onDateChange(event: Event): void {
   .ledger-cashflow-grid { grid-template-columns: 1fr; }
   .ledger-dashboard-two-column { row-gap: 16px; }
   .ledger-dashboard-two-column .ledger-dashboard-section { margin-top: 0; }
+  .ledger-dashboard-account-viewport { max-height: 360px; }
   .ledger-period-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ledger-period-card:nth-child(odd) { padding-left: 0; border-left: 0; }
   .ledger-period-card:nth-child(even) { padding-right: 0; }
