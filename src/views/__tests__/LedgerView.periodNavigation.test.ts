@@ -173,8 +173,10 @@ describe('Ledger historical period route coordination', () => {
     expect(api.getLedgerOverview).toHaveBeenCalledWith({ scope: 'month', anchorDate: '2026-08-20' })
     expect((wrapper.get('[data-testid="ledger-period-date"]').element as HTMLInputElement).value).toBe('2026-08-20')
     expect(wrapper.find('[data-testid="ledger-return-today"]').exists()).toBe(true)
-    expect(wrapper.text()).toContain('资产与账户余额为当前值')
-    expect(wrapper.text()).toContain('截至选择日期的最近 5 笔记录')
+    expect(wrapper.get('[data-testid="ledger-dashboard-assets"] .ledger-dashboard-account').element.tagName).toBe('A')
+    expect(wrapper.get('[data-testid="ledger-dashboard-assets"] .ledger-dashboard-account').attributes('href')).toBe('/ledger/accounts/bank-1')
+    expect(wrapper.text()).toContain('2026年8月20日 · 账户余额为当前值')
+    expect(wrapper.text()).toContain('截至 2026年8月20日')
   })
 
   it('uses browser history for date changes and clears only the anchor when returning today', async () => {

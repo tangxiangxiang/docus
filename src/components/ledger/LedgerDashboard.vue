@@ -171,7 +171,6 @@ function onDateChange(event: Event): void {
         <div class="ledger-section-heading">
           <div>
             <h2 id="ledger-dashboard-accounts-title">账户</h2>
-            <p>按资产与负债区分，余额为当前值。</p>
           </div>
           <RouterLink :to="{ name: 'ledger-accounts' }">查看全部</RouterLink>
         </div>
@@ -209,9 +208,8 @@ function onDateChange(event: Event): void {
         <div class="ledger-section-heading ledger-period-heading">
           <div class="ledger-period-heading-copy">
             <h2 id="ledger-dashboard-cashflow-title">{{ selectedPeriodLabel }}收支</h2>
-            <p>收支与分类按所选期间统计，账户余额保持当前值。</p>
             <p v-if="historicalMode" class="ledger-historical-hint" role="note">
-              资产与账户余额为当前值；以下分析基于 {{ formatLedgerDate(dateInputValue, ledgerTimezone) }}。
+              {{ formatLedgerDate(dateInputValue, ledgerTimezone) }} · 账户余额为当前值
             </p>
           </div>
           <div class="ledger-period-toolbar">
@@ -249,7 +247,6 @@ function onDateChange(event: Event): void {
           <div class="ledger-section-heading">
             <div>
               <h2 id="ledger-category-breakdown-title">{{ selectedPeriodLabel }}分类</h2>
-              <p>收入与支出分类金额。</p>
             </div>
           </div>
           <div class="ledger-breakdown-columns" data-testid="ledger-category-breakdown">
@@ -286,7 +283,7 @@ function onDateChange(event: Event): void {
           <div class="ledger-section-heading">
             <div>
               <h2 id="ledger-recent-title">最近交易</h2>
-              <p>{{ historicalMode ? '截至选择日期的最近 5 笔记录。' : '最近 5 笔真实记录。' }}</p>
+              <p v-if="historicalMode">截至 {{ formatLedgerDate(dateInputValue, ledgerTimezone) }}</p>
             </div>
             <button class="ledger-link-button" type="button" @click="emit('viewTransactions')">查看全部</button>
           </div>
@@ -308,10 +305,7 @@ function onDateChange(event: Event): void {
 
       <section class="ledger-dashboard-section" aria-labelledby="ledger-periods-title">
         <div class="ledger-section-heading">
-          <div>
-            <h2 id="ledger-periods-title">期间摘要</h2>
-            <p>期间边界和金额均按 Ledger 时区统一计算。</p>
-          </div>
+          <h2 id="ledger-periods-title">期间摘要</h2>
         </div>
         <div class="ledger-period-grid" data-testid="ledger-period-summaries">
           <article v-for="period in (['today', 'week', 'month', 'year'] as const)" :key="period" class="ledger-period-card" :data-testid="`ledger-period-${period}`">
@@ -328,10 +322,7 @@ function onDateChange(event: Event): void {
 
       <section class="ledger-dashboard-section" aria-labelledby="ledger-trend-title">
         <div class="ledger-section-heading">
-          <div>
-            <h2 id="ledger-trend-title">收支趋势</h2>
-            <p>最近月份的收支变化。</p>
-          </div>
+          <h2 id="ledger-trend-title">收支趋势</h2>
         </div>
         <div v-if="overview.trend.length" class="ledger-trend-table-wrap">
           <table class="ledger-trend-table" data-testid="ledger-trend">
@@ -384,14 +375,16 @@ function onDateChange(event: Event): void {
 .ledger-period-toolbar select { width: 100px; }
 .ledger-period-toolbar input:focus,
 .ledger-period-toolbar select:focus { border-color: var(--accent); outline: 2px solid color-mix(in srgb, var(--accent) 25%, transparent); outline-offset: 1px; }
-.ledger-historical-hint { margin: 13px 0 0; color: var(--text-muted); font-size: .76rem; line-height: 1.45; }
+.ledger-historical-hint { margin: 5px 0 0; color: var(--text-muted); font-size: .76rem; line-height: 1.45; }
 .ledger-period-analysis-loading { display: grid; min-height: 160px; margin-top: 24px; place-items: center; border: 1px dashed var(--border); border-radius: 11px; color: var(--text-muted); font-size: .82rem; }
-.ledger-dashboard-account-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.ledger-dashboard-account-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .ledger-dashboard-account-group { min-width: 0; }
-.ledger-dashboard-account-group h3 { margin: 0 0 8px; color: var(--text-muted); font-size: .78rem; }
-.ledger-dashboard-accounts { display: grid; gap: 8px; }
-.ledger-dashboard-account { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 65px; padding: 11px 13px; border: 1px solid var(--border); border-radius: 8px; color: inherit; text-decoration: none; }
-.ledger-dashboard-account:hover { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
+.ledger-dashboard-account-group h3 { margin: 0 0 5px; color: var(--text-muted); font-size: .78rem; }
+.ledger-dashboard-accounts { display: grid; }
+.ledger-dashboard-account { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 56px; padding: 9px 10px; border-bottom: 1px solid var(--border); color: inherit; text-decoration: none; }
+.ledger-dashboard-account:last-child { border-bottom: 0; }
+.ledger-dashboard-account:hover { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+.ledger-dashboard-account:focus-visible { position: relative; z-index: 1; border-radius: 6px; outline: 2px solid var(--accent); outline-offset: -2px; }
 .ledger-dashboard-account > span { display: grid; gap: 3px; min-width: 0; }
 .ledger-dashboard-account strong { overflow: hidden; color: var(--text-h); font-size: .85rem; text-overflow: ellipsis; white-space: nowrap; }
 .ledger-dashboard-account small { color: var(--text-muted); font-size: .73rem; }
@@ -401,8 +394,8 @@ function onDateChange(event: Event): void {
 .ledger-cashflow-grid strong { color: var(--text-h); font-size: 1rem; }
 .ledger-cashflow-grid .is-income { color: #18794e; }
 .ledger-cashflow-grid .is-expense { color: #b42318; }
-.ledger-dashboard-two-column { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 14px; }
-.ledger-dashboard-two-column .ledger-dashboard-section { min-width: 0; }
+.ledger-dashboard-two-column { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 14px; margin-top: 20px; }
+.ledger-dashboard-two-column .ledger-dashboard-section { min-width: 0; margin-top: 0; }
 .ledger-breakdown-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .ledger-breakdown-columns h3 { margin: 0 0 8px; color: var(--text-muted); font-size: .78rem; }
 .ledger-breakdown-list { display: grid; gap: 6px; }
@@ -422,8 +415,10 @@ function onDateChange(event: Event): void {
 .ledger-recent-amount { flex: 0 0 auto; color: var(--text-h); font-size: .83rem; }
 .ledger-recent-amount.is-income { color: #18794e; }
 .ledger-recent-amount.is-expense { color: #b42318; }
-.ledger-period-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; }
-.ledger-period-card { display: grid; gap: 7px; min-height: 110px; padding: 13px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-soft); }
+.ledger-period-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; }
+.ledger-period-card { display: grid; gap: 7px; min-height: 100px; padding: 4px 16px; border-left: 1px solid var(--border); }
+.ledger-period-card:first-child { padding-left: 0; border-left: 0; }
+.ledger-period-card:last-child { padding-right: 0; }
 .ledger-period-card h3 { margin: 0; color: var(--text-h); font-size: .82rem; }
 .ledger-period-card small { color: var(--text-muted); font-size: .68rem; }
 .ledger-period-values { display: grid; gap: 3px; margin-top: auto; color: var(--text-muted); font-size: .7rem; }
@@ -445,13 +440,24 @@ function onDateChange(event: Event): void {
   .ledger-dashboard-account-groups,
   .ledger-dashboard-two-column { grid-template-columns: 1fr; }
   .ledger-cashflow-grid { grid-template-columns: 1fr; }
+  .ledger-dashboard-two-column { row-gap: 16px; }
+  .ledger-dashboard-two-column .ledger-dashboard-section { margin-top: 0; }
   .ledger-period-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ledger-period-card:nth-child(odd) { padding-left: 0; border-left: 0; }
+  .ledger-period-card:nth-child(even) { padding-right: 0; }
+  .ledger-period-card:nth-child(n + 3) { padding-top: 16px; border-top: 1px solid var(--border); }
   .ledger-period-heading { flex-direction: column; }
   .ledger-period-toolbar { width: 100%; justify-content: flex-start; }
 }
 @media (max-width: 420px) {
   .ledger-dashboard-section { padding: 16px 13px; }
   .ledger-breakdown-columns { grid-template-columns: 1fr; gap: 18px; }
+  .ledger-period-grid { grid-template-columns: 1fr; }
+  .ledger-period-card,
+  .ledger-period-card:nth-child(odd),
+  .ledger-period-card:nth-child(even) { padding: 12px 0; border-top: 1px solid var(--border); border-left: 0; }
+  .ledger-period-card:first-child { padding-top: 0; border-top: 0; }
+  .ledger-period-card:last-child { padding-bottom: 0; }
   .ledger-period-toolbar input { flex: 1 1 140px; min-width: 0; width: auto; max-width: 150px; }
   .ledger-period-toolbar select { flex: 1 1 100px; min-width: 0; width: auto; max-width: 120px; }
 }

@@ -239,6 +239,32 @@ describe('Ledger live dashboard', () => {
     expect(wrapper.text()).not.toContain('收支范围')
   })
 
+  it('keeps dashboard groups lightweight without losing account navigation or period semantics', async () => {
+    const wrapper = mount(LedgerView)
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    const accountLinks = wrapper.get('[data-testid="ledger-dashboard-assets"]').findAll('.ledger-dashboard-account')
+    expect(accountLinks).toHaveLength(1)
+    expect(accountLinks[0].classes()).toContain('ledger-dashboard-account')
+    expect(accountLinks[0].classes()).not.toContain('ledger-account-card')
+
+    const periodItems = wrapper.get('[data-testid="ledger-period-summaries"]').findAll('article')
+    expect(periodItems).toHaveLength(4)
+    expect(periodItems.map((item) => item.attributes('data-testid'))).toEqual([
+      'ledger-period-today',
+      'ledger-period-week',
+      'ledger-period-month',
+      'ledger-period-year',
+    ])
+    expect(wrapper.text()).not.toContain('按资产与负债区分')
+    expect(wrapper.text()).not.toContain('收支与分类按所选期间统计')
+    expect(wrapper.text()).not.toContain('收入与支出分类金额')
+    expect(wrapper.text()).not.toContain('最近 5 笔真实记录')
+    expect(wrapper.text()).not.toContain('期间边界和金额均按 Ledger 时区统一计算')
+    expect(wrapper.text()).not.toContain('最近月份的收支变化')
+  })
+
   it('uses the server scope endpoint when the selected cashflow period changes', async () => {
     const wrapper = mount(LedgerView)
     wrappers.push(wrapper)
@@ -327,7 +353,7 @@ describe('Ledger live dashboard', () => {
     await nextTick()
     expect((wrapper.get('[data-testid="ledger-period-date"]').element as HTMLInputElement).value).toBe('2026-08-20')
     expect(wrapper.get('.ledger-cashflow-section').find('[data-testid="ledger-return-today"]').exists()).toBe(true)
-    expect(wrapper.get('.ledger-cashflow-section').text()).toContain('资产与账户余额为当前值')
+    expect(wrapper.get('.ledger-cashflow-section').text()).toContain('2026年8月20日 · 账户余额为当前值')
 
     api.getLedgerOverview.mockRejectedValueOnce(new LedgerApiError('projection unavailable', 500, 'ledger-internal-error'))
     await store.refreshOverview()
