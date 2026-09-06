@@ -11,7 +11,7 @@ import type {
   LedgerTransactionDto,
 } from '../../../../shared/ledgerProtocol'
 import { LedgerApiError } from '../../../features/ledger/ledgerErrors'
-import { resetLedgerStoreForTesting } from '../../../features/ledger/ledgerStore'
+import { resetLedgerStoreForTesting, useLedgerStore } from '../../../features/ledger/ledgerStore'
 import { instantFromLocalDateTime } from '../../../features/ledger/time'
 import LedgerView from '../../../views/LedgerView.vue'
 
@@ -258,7 +258,8 @@ describe('Ledger live dashboard', () => {
     await wrapper.get('select[aria-label="选择收支期间"]').setValue('today')
     await flushPromises()
 
-    expect(wrapper.get('.ledger-inline-error').text()).toContain('Ledger 暂时不可用')
+    expect(wrapper.get('.ledger-inline-error').text()).toContain('这段期间的数据暂时无法加载。')
+    expect(wrapper.get('.ledger-inline-error').text()).not.toContain('Ledger 暂时不可用')
     expect(wrapper.get('.ledger-inline-error').text()).toContain('重试')
     expect(wrapper.find('[data-testid="ledger-period-analysis-loading"]').exists()).toBe(false)
     expect(wrapper.get('[data-testid="ledger-total-assets"]').text()).toContain('9,962')
@@ -278,6 +279,57 @@ describe('Ledger live dashboard', () => {
     expect(wrapper.find('[data-testid="ledger-period-analysis-loading"]').exists()).toBe(false)
     expect(wrapper.find('.ledger-inline-error').exists()).toBe(false)
     expect(wrapper.get('[data-testid="ledger-dashboard-cashflow"]').text()).toContain('38.00')
+  })
+
+  it('states a failed historical period read inside the period boundary', async () => {
+    const wrapper = mount(LedgerView)
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    const store = useLedgerStore()
+    store.setOverviewRequestContext({ scope: 'month', anchorDate: '2026-08-20' })
+    await store.refreshOverview()
+    await nextTick()
+    expect((wrapper.get('[data-testid="ledger-period-date"]').element as HTMLInputElement).value).toBe('2026-08-20')
+
+    api.getLedgerOverview.mockRejectedValueOnce(new LedgerApiError('projection unavailable', 500, 'ledger-internal-error'))
+    await store.refreshOverview()
+    await nextTick()
+
+    // The Current Snapshot is still on screen, so the copy may only speak for
+    // the period that failed — not for Ledger as a whole.
+    const inlineError = wrapper.get('.ledger-inline-error')
+    expect(inlineError.text()).toContain('这段期间的数据暂时无法加载。')
+    expect(inlineError.text()).toContain('重试')
+    expect(wrapper.text()).not.toContain('Ledger 暂时不可用')
+    expect(wrapper.text()).not.toContain('Ledger 暂时无法打开')
+    expect(wrapper.find('[data-testid="ledger-period-analysis-loading"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="ledger-total-assets"]').text()).toContain('9,962')
+    expect(wrapper.get('[data-testid="ledger-dashboard-accounts"]').text()).toContain('招商银行')
+    expect(wrapper.find('[data-testid="ledger-bootstrap-error"]').exists()).toBe(false)
+  })
+
+  it('sends a failed current-state refresh to the workspace recovery boundary', async () => {
+    const wrapper = mount(LedgerView)
+    wrappers.push(wrapper)
+    await flushPromises()
+    expect(wrapper.find('[data-testid="ledger-dashboard"]').exists()).toBe(true)
+
+    api.listLedgerAccounts.mockRejectedValueOnce(new LedgerApiError('accounts unavailable', 503, 'ledger-internal-error'))
+    api.getLedgerOverview.mockClear()
+    await useLedgerStore().refreshData()
+    await nextTick()
+
+    // Accounts are a current-state dependency. Presenting this as a period-only
+    // failure would leave a stale Current Snapshot with only a period retry.
+    expect(wrapper.find('[data-testid="ledger-bootstrap-error"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Ledger 暂时无法打开')
+    expect(wrapper.get('[data-testid="ledger-bootstrap-error"] button').text()).toContain('重新加载')
+    expect(wrapper.find('[data-testid="ledger-dashboard"]').exists()).toBe(false)
+    expect(wrapper.find('.ledger-inline-error').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('这段期间的数据暂时无法加载')
+    expect(wrapper.find('[data-testid="ledger-period-date"]').exists()).toBe(false)
+    expect(api.getLedgerOverview).not.toHaveBeenCalled()
   })
 
   it('shows presentation-only category shares and groups accounts by nature', async () => {

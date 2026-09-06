@@ -118,6 +118,21 @@ function deferred<T>(): {
   return { promise, resolve, reject }
 }
 
+/**
+ * Route the Overview mock by requested anchor instead of call order so a test
+ * can leave one anchor pending while a newer anchor resolves. Returns the list
+ * of anchors the store actually requested.
+ */
+function routeOverviewGate(gates: Record<string, Promise<LedgerOverviewDto>>): Array<string | undefined> {
+  const requested: Array<string | undefined> = []
+  api.getLedgerOverview.mockImplementation((input: { scope: LedgerOverviewScope; anchorDate: string | undefined }) => {
+    requested.push(input.anchorDate)
+    const gate = input.anchorDate === undefined ? undefined : gates[input.anchorDate]
+    return gate ?? Promise.resolve(overviewFor(input))
+  })
+  return requested
+}
+
 async function mountAt(path: string): Promise<{ router: ReturnType<typeof createRouter>; wrapper: VueWrapper }> {
   const placeholder = { template: '<div />' }
   const router = createRouter({
@@ -268,6 +283,117 @@ describe('Ledger historical period route coordination', () => {
     historical.resolve(overviewFor({ scope: 'month', anchorDate: '2026-06-15' }))
     await flushPromises()
     expect(useLedgerStore().overviewMatchesRequest.value).toBe(true)
+    expect(router.currentRoute.value.fullPath).toBe('/ledger?date=2026-06-15')
+  })
+
+  it('finishes the workspace bootstrap when a route change races the initial overview request', async () => {
+    const anchored = deferred<LedgerOverviewDto>()
+    const historical = deferred<LedgerOverviewDto>()
+    const requestedAnchors = routeOverviewGate({
+      '2026-08-20': anchored.promise,
+      '2026-06-15': historical.promise,
+    })
+
+    // The initial bootstrap is genuinely pending: Settings, Accounts and
+    // Categories resolve, but its Overview read never has.
+    const { router, wrapper } = await mountAt('/ledger?date=2026-08-20')
+    const store = useLedgerStore()
+    expect(requestedAnchors).toEqual(['2026-08-20'])
+    expect(store.workspaceState.value).toBe('READY')
+    expect(store.settings.value).toEqual(settings)
+    expect(store.accounts.value).toHaveLength(1)
+    expect(store.categories.value).toHaveLength(1)
+    expect(wrapper.find('[data-testid="ledger-loading"]').exists()).toBe(true)
+
+    await router.push('/ledger?date=2026-06-15')
+    await nextTick()
+    expect(store.overviewRequestedAnchorDate.value).toBe('2026-06-15')
+    expect(requestedAnchors).toEqual(['2026-08-20', '2026-06-15'])
+
+    anchored.resolve(overviewFor({ scope: 'month', anchorDate: '2026-08-20' }))
+    await flushPromises()
+    expect(store.overview.value).toBeNull()
+    expect(store.workspaceState.value).toBe('READY')
+    expect(wrapper.find('[data-testid="ledger-bootstrap-error"]').exists()).toBe(false)
+    expect(router.currentRoute.value.fullPath).toBe('/ledger?date=2026-06-15')
+
+    historical.resolve(overviewFor({ scope: 'month', anchorDate: '2026-06-15' }))
+    await flushPromises()
+    expect(store.workspaceState.value).toBe('READY')
+    expect(wrapper.find('[data-testid="ledger-dashboard"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ledger-loading"]').exists()).toBe(false)
+    expect((wrapper.get('[data-testid="ledger-period-date"]').element as HTMLInputElement).value).toBe('2026-06-15')
+    expect(store.overviewMatchesRequest.value).toBe(true)
+    expect(store.error.value).toBeNull()
+    expect(router.currentRoute.value.fullPath).toBe('/ledger?date=2026-06-15')
+  })
+
+  it('keeps a raced bootstrap overview failure out of the newest route lifecycle', async () => {
+    const anchored = deferred<LedgerOverviewDto>()
+    const historical = deferred<LedgerOverviewDto>()
+    routeOverviewGate({
+      '2026-08-20': anchored.promise,
+      '2026-06-15': historical.promise,
+    })
+
+    const { router, wrapper } = await mountAt('/ledger?date=2026-08-20')
+    const store = useLedgerStore()
+    await router.push('/ledger?date=2026-06-15')
+    await nextTick()
+
+    anchored.reject(new LedgerApiError('projection unavailable', 500, 'ledger-internal-error'))
+    await flushPromises()
+    // The superseded Overview read owns no lifecycle any more: it may not
+    // publish an error, degrade the workspace, or touch the route.
+    expect(store.workspaceState.value).toBe('READY')
+    expect(store.error.value).toBeNull()
+    expect(wrapper.find('[data-testid="ledger-bootstrap-error"]').exists()).toBe(false)
+    expect(router.currentRoute.value.fullPath).toBe('/ledger?date=2026-06-15')
+
+    historical.resolve(overviewFor({ scope: 'month', anchorDate: '2026-06-15' }))
+    await flushPromises()
+    expect(store.workspaceState.value).toBe('READY')
+    expect(store.overviewMatchesRequest.value).toBe(true)
+    expect(store.error.value).toBeNull()
+    expect(wrapper.find('[data-testid="ledger-dashboard"]').exists()).toBe(true)
+    expect((wrapper.get('[data-testid="ledger-period-date"]').element as HTMLInputElement).value).toBe('2026-06-15')
+    expect(router.currentRoute.value.fullPath).toBe('/ledger?date=2026-06-15')
+  })
+
+  it('completes a bootstrap interrupted before Settings with the newest route anchor', async () => {
+    const settingsGate = deferred<LedgerSettingsDto>()
+    api.getLedgerSettings.mockReturnValueOnce(settingsGate.promise)
+    const requestedAnchors = routeOverviewGate({})
+
+    const { router, wrapper } = await mountAt('/ledger?date=2026-08-20')
+    const store = useLedgerStore()
+    expect(store.workspaceState.value).toBe('BOOTSTRAPPING')
+    expect(requestedAnchors).toEqual([])
+
+    await router.push('/ledger?date=2026-06-15')
+    await flushPromises()
+    expect(store.overviewRequestedAnchorDate.value).toBe('2026-06-15')
+    expect(requestedAnchors).toEqual(['2026-06-15'])
+    expect(store.overview.value?.context.anchorDate).toBe('2026-06-15')
+    // Settings is still in flight, so the workspace is still bootstrapping —
+    // and that lifecycle is the only thing left to finish.
+    expect(store.workspaceState.value).toBe('BOOTSTRAPPING')
+    expect(wrapper.find('[data-testid="ledger-loading"]').exists()).toBe(true)
+
+    settingsGate.resolve(settings)
+    await flushPromises()
+    expect(store.workspaceState.value).toBe('READY')
+    expect(store.settings.value).toEqual(settings)
+    expect(store.accounts.value).toHaveLength(1)
+    expect(store.categories.value).toHaveLength(1)
+    // The superseded bootstrap never sends an Overview request it could not publish.
+    expect(requestedAnchors).toEqual(['2026-06-15'])
+    expect(store.overview.value?.context.anchorDate).toBe('2026-06-15')
+    expect(store.overviewMatchesRequest.value).toBe(true)
+    expect(store.error.value).toBeNull()
+    expect(wrapper.find('[data-testid="ledger-dashboard"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ledger-loading"]').exists()).toBe(false)
+    expect((wrapper.get('[data-testid="ledger-period-date"]').element as HTMLInputElement).value).toBe('2026-06-15')
     expect(router.currentRoute.value.fullPath).toBe('/ledger?date=2026-06-15')
   })
 })

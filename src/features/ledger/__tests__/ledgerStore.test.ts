@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   LedgerAccountDto,
+  LedgerCategoryDto,
   LedgerOverviewDto,
   LedgerOverviewScope,
   LedgerSettingsDto,
@@ -63,6 +64,17 @@ const account = (id: string, archivedAt: number | null = null): LedgerAccountDto
   createdAt: 1,
   updatedAt: 1,
   currentBalanceMinor: 0,
+})
+
+const category = (id: string): LedgerCategoryDto => ({
+  id,
+  kind: 'expense',
+  name: id,
+  normalizedName: id,
+  archivedAt: null,
+  version: 1,
+  createdAt: 1,
+  updatedAt: 1,
 })
 
 const overview = (): LedgerOverviewDto => ({
@@ -250,6 +262,108 @@ describe('Ledger feature-local state', () => {
     expect(retry.status).toBe('success')
     expect(store.overviewMatchesRequest.value).toBe(true)
     expect(store.error.value).toBeNull()
+  })
+
+  it('refreshes the current snapshot while a failed historical read stays period-only', async () => {
+    api.getLedgerSettings.mockResolvedValue(settings(true))
+    api.listLedgerAccounts.mockResolvedValue([account('account-1')])
+    const store = useLedgerStore()
+    await store.bootstrap()
+
+    store.setOverviewRequestContext({ scope: 'month', anchorDate: '2026-08-20' })
+    api.getLedgerOverview.mockResolvedValue(overviewFor('month', '2026-08-20'))
+    await store.refreshOverview()
+    expect(store.overviewMatchesRequest.value).toBe(true)
+
+    // The mutation refresh sees new current-state data and a historical
+    // projection read that fails.
+    api.listLedgerAccounts.mockResolvedValue([account('account-1'), account('account-2')])
+    api.listLedgerCategories.mockResolvedValue([category('category-1')])
+    const refreshError = new LedgerApiError('projection unavailable', 503, 'ledger-internal-error')
+    api.getLedgerOverview.mockRejectedValueOnce(refreshError)
+    api.createLedgerTransaction.mockResolvedValue({ id: 'tx-1', type: 'expense' })
+
+    await expect(store.createTransaction({
+      type: 'expense' as const,
+      amountMinor: 3_800,
+      accountId: 'account-1',
+      categoryId: 'category-1',
+      occurredAt: 1_700_000_000_000,
+      payee: '',
+      note: '',
+    })).resolves.toMatchObject({ id: 'tx-1' })
+
+    // Only the historical projection failed, so the workspace stays usable and
+    // the Current Snapshot shows the data that was just refreshed.
+    expect(store.workspaceState.value).toBe('READY')
+    expect(store.accounts.value.map((item) => item.id)).toEqual(['account-1', 'account-2'])
+    expect(store.categories.value.map((item) => item.id)).toEqual(['category-1'])
+    expect(store.overviewDataReady.value).toBe(false)
+    expect(store.overviewMatchesRequest.value).toBe(false)
+    expect(store.overviewRequestedAnchorDate.value).toBe('2026-08-20')
+    expect(store.overviewScope.value).toBe('month')
+    expect(store.error.value).toBe(refreshError)
+    expect(store.loading.value).toBe(false)
+
+    api.getLedgerOverview.mockClear()
+    api.getLedgerOverview.mockResolvedValueOnce(overviewFor('month', '2026-08-20'))
+    const retry = await store.refreshOverview()
+    expect(retry.status).toBe('success')
+    expect(api.getLedgerOverview).toHaveBeenCalledTimes(1)
+    expect(api.getLedgerOverview).toHaveBeenCalledWith({ scope: 'month', anchorDate: '2026-08-20' })
+    expect(store.overviewDataReady.value).toBe(true)
+    expect(store.overviewMatchesRequest.value).toBe(true)
+    expect(store.error.value).toBeNull()
+  })
+
+  it.each([
+    ['accounts', () => api.listLedgerAccounts],
+    ['categories', () => api.listLedgerCategories],
+  ] as const)('escalates a failed %s refresh to a workspace recovery state', async (_label, failing) => {
+    api.getLedgerSettings.mockResolvedValue(settings(true))
+    api.listLedgerAccounts.mockResolvedValue([account('account-1')])
+    const store = useLedgerStore()
+    await store.bootstrap()
+
+    store.setOverviewRequestContext({ scope: 'month', anchorDate: '2026-08-20' })
+    api.getLedgerOverview.mockResolvedValue(overviewFor('month', '2026-08-20'))
+    await store.refreshOverview()
+    expect(store.workspaceState.value).toBe('READY')
+
+    const currentStateError = new LedgerApiError('current state unavailable', 503, 'ledger-internal-error')
+    failing().mockRejectedValueOnce(currentStateError)
+    api.getLedgerOverview.mockClear()
+    api.createLedgerTransaction.mockResolvedValue({ id: 'tx-2', type: 'expense' })
+
+    await expect(store.createTransaction({
+      type: 'expense' as const,
+      amountMinor: 1_200,
+      accountId: 'account-1',
+      categoryId: 'category-1',
+      occurredAt: 1_700_000_000_000,
+      payee: '',
+      note: '',
+    })).resolves.toMatchObject({ id: 'tx-2' })
+
+    // A current-state dependency failed. It is not a period-only analysis
+    // failure: the workspace must expose its own recovery boundary instead of
+    // presenting a stale Current Snapshot behind a period error.
+    expect(store.workspaceState.value).toBe('RECOVERABLE_ERROR')
+    expect(store.error.value).toBe(currentStateError)
+    expect(store.overviewDataReady.value).toBe(false)
+    expect(store.loading.value).toBe(false)
+    // The period read is not the recovery action, so it was never attempted.
+    expect(api.getLedgerOverview).not.toHaveBeenCalled()
+
+    // The workspace-level retry is what recovers.
+    api.listLedgerAccounts.mockResolvedValue([account('account-1')])
+    api.listLedgerCategories.mockResolvedValue([])
+    api.getLedgerOverview.mockResolvedValue(overviewFor('month', '2026-08-20'))
+    await store.bootstrap()
+    expect(store.workspaceState.value).toBe('READY')
+    expect(store.error.value).toBeNull()
+    expect(store.overviewDataReady.value).toBe(true)
+    expect(store.overviewRequestedAnchorDate.value).toBe('2026-08-20')
   })
 
   it('keeps a network-uncertain create intent durable with the same key', async () => {
