@@ -140,7 +140,7 @@ describe('LedgerCashflowTrend', () => {
     expect(wrapper.find('[data-testid="ledger-cashflow-trend-empty"]').exists()).toBe(false)
   })
 
-  it('maps the six months to a bar/bar/line series over one shared value axis', () => {
+  it('maps the six months to income and expense bars over one shared value axis', () => {
     mountTrend(sixMonths)
     const option = lastOption()
 
@@ -148,14 +148,12 @@ describe('LedgerCashflowTrend', () => {
     expect(option.series.map((series) => [series.name, series.type])).toEqual([
       ['收入', 'bar'],
       ['支出', 'bar'],
-      ['收支结余', 'line'],
     ])
     expect(option.series[0].data).toEqual([510_000, 480_000, 500_000, 500_000, 520_000, 510_000])
     expect(option.series[1].data).toEqual([5_290, 120_000, 640_000, 30_000, 44_000, 5_290])
-    // The negative June balance has to survive onto the same axis.
-    expect(option.series[2].data).toEqual([504_710, 360_000, -140_000, 470_000, 476_000, 504_710])
+    expect(option.series.some((series) => series.name === '收支结余')).toBe(false)
     expect(Array.isArray(option.yAxis)).toBe(false)
-    expect(option.legend.data).toEqual(['收入', '支出', '收支结余'])
+    expect(option.legend.data).toEqual(['收入', '支出'])
   })
 
   it('qualifies month labels with the year when the window crosses one', () => {

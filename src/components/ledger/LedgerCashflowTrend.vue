@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
-import { BarChart, LineChart } from 'echarts/charts'
+import { BarChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 import { init, use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
-import type { BarSeriesOption, LineSeriesOption } from 'echarts/charts'
+import type { BarSeriesOption } from 'echarts/charts'
 import type {
   GridComponentOption,
   LegendComponentOption,
@@ -15,11 +15,10 @@ import type { LedgerTrendPoint } from '../../../shared/ledgerProtocol'
 import { currencyExponentFor, formatLedgerMoney, formatLedgerSignedMoney } from '../../features/ledger/money'
 import { useTheme } from '../../composables/useTheme'
 
-use([BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
+use([BarChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
 
 type LedgerTrendChartOption = ComposeOption<
   | BarSeriesOption
-  | LineSeriesOption
   | GridComponentOption
   | LegendComponentOption
   | TooltipComponentOption
@@ -30,7 +29,8 @@ const props = defineProps<{
   readonly currency: string
 }>()
 
-const SERIES_LABEL = { income: '收入', expense: '支出', balance: '收支结余' } as const
+const SERIES_LABEL = { income: '收入', expense: '支出' } as const
+const BALANCE_LABEL = '收支结余'
 
 /**
  * The chart never re-derives money. It renders the server's integer minor
@@ -112,13 +112,12 @@ function tooltipFormatter(params: unknown): string {
   return `<div style="font-weight:650">${escapeHtml(fullMonthLabel(point.month))}</div>`
     + tooltipRow(SERIES_LABEL.income, money(point.incomeMinor), palette.income)
     + tooltipRow(SERIES_LABEL.expense, money(point.expenseMinor), palette.expense)
-    + tooltipRow(SERIES_LABEL.balance, signedMoney(point.balanceMinor), palette.balance)
+    + tooltipRow(BALANCE_LABEL, signedMoney(point.balanceMinor), palette.muted)
 }
 
 interface TrendPalette {
   readonly income: string
   readonly expense: string
-  readonly balance: string
   readonly text: string
   readonly muted: string
   readonly border: string
@@ -129,7 +128,6 @@ interface TrendPalette {
 const FALLBACK_PALETTE: TrendPalette = {
   income: '#18794e',
   expense: '#b42318',
-  balance: '#6366f1',
   text: '#111827',
   muted: '#6b7280',
   border: '#e5e7eb',
@@ -157,7 +155,6 @@ function currentPalette(): TrendPalette {
   return {
     income: token('--ledger-trend-income', FALLBACK_PALETTE.income),
     expense: token('--ledger-trend-expense', FALLBACK_PALETTE.expense),
-    balance: token('--accent', FALLBACK_PALETTE.balance),
     text: token('--text-h', FALLBACK_PALETTE.text),
     muted: token('--text-muted', FALLBACK_PALETTE.muted),
     border: token('--border', FALLBACK_PALETTE.border),
@@ -178,7 +175,7 @@ function buildOption(): LedgerTrendChartOption {
       itemHeight: 9,
       itemGap: 14,
       textStyle: { color: palette.muted, fontSize: 11 },
-      data: [SERIES_LABEL.income, SERIES_LABEL.expense, SERIES_LABEL.balance],
+      data: [SERIES_LABEL.income, SERIES_LABEL.expense],
     },
     tooltip: {
       trigger: 'axis',
@@ -221,15 +218,6 @@ function buildOption(): LedgerTrendChartOption {
         barMaxWidth: 16,
         itemStyle: { color: palette.expense, borderRadius: [2, 2, 0, 0] },
         data: props.trend.map((point) => point.expenseMinor),
-      },
-      {
-        name: SERIES_LABEL.balance,
-        type: 'line',
-        symbol: 'circle',
-        symbolSize: 5,
-        lineStyle: { color: palette.balance, width: 2 },
-        itemStyle: { color: palette.balance },
-        data: props.trend.map((point) => point.balanceMinor),
       },
     ],
   }
@@ -345,9 +333,9 @@ onBeforeUnmount(destroyChart)
 
 <style scoped>
 /* Reuses the Ledger income/expense semantics already on the Dashboard, lifted
-   in dark mode so a thin line and a small bar stay legible on the dark
-   surface. Follows the token pattern in style.css: baseline, OS preference,
-   then the explicit data-theme pin. */
+   in dark mode so the bars stay legible on the dark surface. Follows the
+   token pattern in style.css: baseline, OS preference, then the explicit
+   data-theme pin. */
 .ledger-cashflow-trend {
   --ledger-trend-income: #18794e;
   --ledger-trend-expense: #b42318;
