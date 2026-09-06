@@ -196,7 +196,7 @@ describe('Ledger live dashboard', () => {
     for (const wrapper of wrappers.splice(0)) wrapper.unmount()
   })
 
-  it('renders server projections and recent real transactions without mock data', async () => {
+  it('renders live data and recent real transactions without mock data', async () => {
     const wrapper = mount(LedgerView)
     wrappers.push(wrapper)
     await flushPromises()
@@ -219,6 +219,24 @@ describe('Ledger live dashboard', () => {
     expect(wrapper.get('[data-testid="ledger-period-month"]').text()).toContain('收支结余')
     expect(wrapper.get('[data-testid="ledger-period-month"]').text()).toContain('-¥38.00')
     expect(wrapper.text()).not.toContain('billsMockData')
+  })
+
+  it('places period controls in the cashflow heading and keeps copy user-facing', async () => {
+    const wrapper = mount(LedgerView)
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    const cashflowSection = wrapper.get('.ledger-cashflow-section')
+    expect(wrapper.find('.ledger-period-navigation').exists()).toBe(false)
+    expect(wrapper.find('#ledger-period-navigation-title').exists()).toBe(false)
+    expect(cashflowSection.find('[data-testid="ledger-period-date"]').exists()).toBe(true)
+    expect(cashflowSection.find('select[aria-label="选择收支期间"]').exists()).toBe(true)
+    expect(cashflowSection.find('[data-testid="ledger-return-today"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('期间分析')
+    expect(wrapper.text()).not.toContain('breakdown')
+    expect(wrapper.text()).not.toContain('projection')
+    expect(wrapper.text()).not.toContain('查看日期')
+    expect(wrapper.text()).not.toContain('收支范围')
   })
 
   it('uses the server scope endpoint when the selected cashflow period changes', async () => {
@@ -308,6 +326,8 @@ describe('Ledger live dashboard', () => {
     await store.refreshOverview()
     await nextTick()
     expect((wrapper.get('[data-testid="ledger-period-date"]').element as HTMLInputElement).value).toBe('2026-08-20')
+    expect(wrapper.get('.ledger-cashflow-section').find('[data-testid="ledger-return-today"]').exists()).toBe(true)
+    expect(wrapper.get('.ledger-cashflow-section').text()).toContain('资产与账户余额为当前值')
 
     api.getLedgerOverview.mockRejectedValueOnce(new LedgerApiError('projection unavailable', 500, 'ledger-internal-error'))
     await store.refreshOverview()

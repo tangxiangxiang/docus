@@ -148,12 +148,6 @@ function onDateChange(event: Event): void {
       </div>
     </header>
 
-    <div v-if="refreshing" class="ledger-refreshing" role="status" aria-live="polite">正在更新 Ledger 数据…</div>
-    <div v-if="scopeError" class="ledger-inline-error" role="alert">
-      <span>{{ scopeErrorMessage }}</span>
-      <button class="ledger-link-button" type="button" @click="retryScope">重试</button>
-    </div>
-
     <template v-if="overview">
       <section class="ledger-metric-grid" aria-label="资产概览">
         <article class="ledger-metric-card" data-testid="ledger-total-assets">
@@ -169,7 +163,7 @@ function onDateChange(event: Event): void {
         <article class="ledger-metric-card is-primary" data-testid="ledger-net-worth">
           <span>净资产</span>
           <strong>{{ formatLedgerMoney(overview.netWorthMinor, overview.currency) }}</strong>
-          <small>由 Ledger projection 提供</small>
+          <small>当前净资产</small>
         </article>
       </section>
 
@@ -177,7 +171,7 @@ function onDateChange(event: Event): void {
         <div class="ledger-section-heading">
           <div>
             <h2 id="ledger-dashboard-accounts-title">账户</h2>
-            <p>按资产与负债区分，余额直接来自账户 projection。</p>
+            <p>按资产与负债区分，余额为当前值。</p>
           </div>
           <RouterLink :to="{ name: 'ledger-accounts' }">查看全部</RouterLink>
         </div>
@@ -211,17 +205,16 @@ function onDateChange(event: Event): void {
         </div>
       </section>
 
-      <section class="ledger-dashboard-section ledger-period-navigation" aria-labelledby="ledger-period-navigation-title">
-        <div class="ledger-section-heading">
-          <div>
-            <h2 id="ledger-period-navigation-title">期间分析</h2>
-            <p>选择日期查看完整自然期间；资产、负债和账户余额保持当前值。</p>
+      <section class="ledger-dashboard-section ledger-cashflow-section" aria-labelledby="ledger-dashboard-cashflow-title">
+        <div class="ledger-section-heading ledger-period-heading">
+          <div class="ledger-period-heading-copy">
+            <h2 id="ledger-dashboard-cashflow-title">{{ selectedPeriodLabel }}收支</h2>
+            <p>收支与分类按所选期间统计，账户余额保持当前值。</p>
+            <p v-if="historicalMode" class="ledger-historical-hint" role="note">
+              资产与账户余额为当前值；以下分析基于 {{ formatLedgerDate(dateInputValue, ledgerTimezone) }}。
+            </p>
           </div>
-          <button v-if="showReturnToday" class="ledger-secondary-button" type="button" data-testid="ledger-return-today" @click="emit('returnToday')">回到今天</button>
-        </div>
-        <div class="ledger-period-navigation-controls">
-          <label>
-            <span>查看日期</span>
+          <div class="ledger-period-toolbar">
             <input
               type="date"
               data-testid="ledger-period-date"
@@ -230,44 +223,33 @@ function onDateChange(event: Event): void {
               :max="dateMax || undefined"
               @change="onDateChange"
             >
-          </label>
-          <label>
-            <span>收支范围</span>
             <select v-model="selectedScope" aria-label="选择收支期间">
               <option v-for="option in scopeOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
             </select>
-          </label>
-        </div>
-        <p v-if="historicalMode && periodDataReady" class="ledger-historical-hint" role="note">
-          当前资产与账户余额保持实时；以下期间数据按 {{ formatLedgerDate(dateInputValue, ledgerTimezone) }} 浏览。
-        </p>
-      </section>
-
-      <div v-if="periodDataLoading" class="ledger-period-analysis-loading" data-testid="ledger-period-analysis-loading" role="status" aria-live="polite">
-        正在加载所选期间…
-      </div>
-
-      <template v-if="periodDataReady">
-      <section class="ledger-dashboard-section ledger-cashflow-section" aria-labelledby="ledger-dashboard-cashflow-title">
-        <div class="ledger-section-heading ledger-section-heading-with-control">
-          <div>
-            <h2 id="ledger-dashboard-cashflow-title">{{ selectedPeriodLabel }}收支</h2>
-            <p>选择期间只影响收支与分类 breakdown；资产、负债和账户余额保持当前值。</p>
+            <button v-if="showReturnToday" class="ledger-secondary-button" type="button" data-testid="ledger-return-today" @click="emit('returnToday')">回到今天</button>
           </div>
         </div>
-        <div v-if="selectedPeriodSummary" class="ledger-cashflow-grid" data-testid="ledger-dashboard-cashflow">
+        <div v-if="scopeError" class="ledger-inline-error" role="alert">
+          <span>{{ scopeErrorMessage }}</span>
+          <button class="ledger-link-button" type="button" @click="retryScope">重试</button>
+        </div>
+        <div v-if="periodDataLoading" class="ledger-period-analysis-loading" data-testid="ledger-period-analysis-loading" role="status" aria-live="polite">
+          正在加载所选期间…
+        </div>
+        <div v-else-if="selectedPeriodSummary" class="ledger-cashflow-grid" data-testid="ledger-dashboard-cashflow">
           <div><span>收入</span><strong class="is-income">{{ formatLedgerMoney(selectedPeriodSummary.incomeMinor, overview.currency) }}</strong></div>
           <div><span>支出</span><strong class="is-expense">{{ formatLedgerMoney(selectedPeriodSummary.expenseMinor, overview.currency) }}</strong></div>
           <div><span>收支结余</span><strong>{{ formatLedgerSignedMoney(selectedPeriodSummary.balanceMinor, overview.currency) }}</strong></div>
         </div>
       </section>
 
+      <template v-if="periodDataReady">
       <div class="ledger-dashboard-two-column">
         <section class="ledger-dashboard-section" aria-labelledby="ledger-category-breakdown-title">
           <div class="ledger-section-heading">
             <div>
               <h2 id="ledger-category-breakdown-title">{{ selectedPeriodLabel }}分类</h2>
-              <p>收入与支出分类金额（服务端 projection）。</p>
+              <p>收入与支出分类金额。</p>
             </div>
           </div>
           <div class="ledger-breakdown-columns" data-testid="ledger-category-breakdown">
@@ -328,7 +310,7 @@ function onDateChange(event: Event): void {
         <div class="ledger-section-heading">
           <div>
             <h2 id="ledger-periods-title">期间摘要</h2>
-            <p>期间边界和金额均由 Ledger timezone 与服务端 projection 决定。</p>
+            <p>期间边界和金额均按 Ledger 时区统一计算。</p>
           </div>
         </div>
         <div class="ledger-period-grid" data-testid="ledger-period-summaries">
@@ -348,7 +330,7 @@ function onDateChange(event: Event): void {
         <div class="ledger-section-heading">
           <div>
             <h2 id="ledger-trend-title">收支趋势</h2>
-            <p>最近月份的服务端趋势 projection。</p>
+            <p>最近月份的收支变化。</p>
           </div>
         </div>
         <div v-if="overview.trend.length" class="ledger-trend-table-wrap">
@@ -381,7 +363,6 @@ function onDateChange(event: Event): void {
 .ledger-secondary-button:disabled { cursor: wait; opacity: .65; }
 .ledger-link-button { padding: 0; border: 0; background: transparent; color: var(--accent); font: inherit; font-size: .78rem; cursor: pointer; }
 .ledger-link-button:hover { text-decoration: underline; }
-.ledger-refreshing { margin: -12px 0 14px; color: var(--text-muted); font-size: .76rem; }
 .ledger-inline-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 16px; padding: 10px 12px; border: 1px solid color-mix(in srgb, #b42318 30%, var(--border)); border-radius: 8px; color: #b42318; font-size: .8rem; }
 .ledger-metric-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .ledger-metric-card { display: grid; gap: 8px; min-height: 122px; padding: 18px; box-sizing: border-box; border: 1px solid var(--border); border-radius: 11px; background: var(--bg-soft); }
@@ -394,13 +375,15 @@ function onDateChange(event: Event): void {
 .ledger-section-heading h2 { margin: 0; color: var(--text-h); font-size: 1rem; }
 .ledger-section-heading p { margin: 5px 0 0; color: var(--text-muted); font-size: .76rem; line-height: 1.45; }
 .ledger-section-heading > a { flex: 0 0 auto; color: var(--accent); font-size: .78rem; text-decoration: none; }
-.ledger-section-heading-with-control { align-items: center; }
-.ledger-period-navigation-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
-.ledger-period-navigation-controls label { display: grid; gap: 5px; color: var(--text-muted); font-size: .75rem; }
-.ledger-period-navigation-controls input,
-.ledger-period-navigation-controls select { min-height: 34px; padding: 5px 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg); color: var(--text-h); font: inherit; font-size: .8rem; }
-.ledger-period-navigation-controls input:focus,
-.ledger-period-navigation-controls select:focus { border-color: var(--accent); outline: 2px solid color-mix(in srgb, var(--accent) 25%, transparent); outline-offset: 1px; }
+.ledger-period-heading { align-items: flex-start; }
+.ledger-period-heading-copy { min-width: 0; }
+.ledger-period-toolbar { display: flex; flex: 0 1 auto; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.ledger-period-toolbar input,
+.ledger-period-toolbar select { min-height: 34px; box-sizing: border-box; padding: 5px 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg); color: var(--text-h); font: inherit; font-size: .8rem; }
+.ledger-period-toolbar input { width: 150px; }
+.ledger-period-toolbar select { width: 100px; }
+.ledger-period-toolbar input:focus,
+.ledger-period-toolbar select:focus { border-color: var(--accent); outline: 2px solid color-mix(in srgb, var(--accent) 25%, transparent); outline-offset: 1px; }
 .ledger-historical-hint { margin: 13px 0 0; color: var(--text-muted); font-size: .76rem; line-height: 1.45; }
 .ledger-period-analysis-loading { display: grid; min-height: 160px; margin-top: 24px; place-items: center; border: 1px dashed var(--border); border-radius: 11px; color: var(--text-muted); font-size: .82rem; }
 .ledger-dashboard-account-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
@@ -463,14 +446,13 @@ function onDateChange(event: Event): void {
   .ledger-dashboard-two-column { grid-template-columns: 1fr; }
   .ledger-cashflow-grid { grid-template-columns: 1fr; }
   .ledger-period-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ledger-period-heading { flex-direction: column; }
+  .ledger-period-toolbar { width: 100%; justify-content: flex-start; }
 }
 @media (max-width: 420px) {
   .ledger-dashboard-section { padding: 16px 13px; }
   .ledger-breakdown-columns { grid-template-columns: 1fr; gap: 18px; }
-  .ledger-section-heading-with-control { align-items: flex-start; flex-direction: column; }
-  .ledger-period-navigation-controls { align-items: stretch; flex-direction: column; }
-  .ledger-period-navigation-controls label,
-  .ledger-period-navigation-controls input,
-  .ledger-period-navigation-controls select { width: 100%; box-sizing: border-box; }
+  .ledger-period-toolbar input { flex: 1 1 140px; min-width: 0; width: auto; max-width: 150px; }
+  .ledger-period-toolbar select { flex: 1 1 100px; min-width: 0; width: auto; max-width: 120px; }
 }
 </style>

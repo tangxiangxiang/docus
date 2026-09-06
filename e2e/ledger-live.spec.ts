@@ -119,6 +119,10 @@ test('real Ledger onboarding and expense survive dashboard refresh', async ({ pa
   await page.getByRole('button', { name: '创建账户并继续' }).click()
 
   await expect(page.getByTestId('ledger-dashboard')).toBeVisible()
+  await expect(page.getByRole('heading', { name: '本月收支' })).toBeVisible()
+  await expect(page.getByTestId('ledger-period-date')).toHaveValue(Temporal.Now.plainDateISO('Asia/Shanghai').toString())
+  await expect(page.getByRole('combobox', { name: '选择收支期间' })).toHaveValue('month')
+  await expect(page.locator('.ledger-period-navigation')).toHaveCount(0)
   await expect(page.getByTestId('ledger-dashboard-accounts')).toContainText('招商银行')
   await expect(page.getByTestId('ledger-total-assets')).toContainText('¥10,000.00')
   await expect(page.getByTestId('ledger-net-worth')).toContainText('¥10,000.00')
@@ -367,6 +371,7 @@ test('historical period navigation keeps one anchor across periods, reload, and 
   await page.goto(`/ledger?date=${anchorDate}`)
   await expect(page).toHaveURL(new RegExp(`/ledger\\?date=${anchorDate}$`))
   await expect(page.getByTestId('ledger-dashboard')).toBeVisible()
+  await expect(page.getByRole('heading', { name: '所在月收支' })).toBeVisible()
   await expect(page.getByTestId('ledger-period-date')).toHaveValue(anchorDate)
   await expect(page.getByTestId('ledger-period-month')).toContainText(`${anchor.year}年${anchor.month}月`)
   await expect(page.getByTestId('ledger-period-month')).toContainText('¥114.00')
