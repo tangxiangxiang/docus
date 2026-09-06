@@ -235,8 +235,18 @@ function buildOption(): LedgerTrendChartOption {
   }
 }
 
+/**
+ * `buildOption` always produces a complete, self-contained option, so it
+ * replaces the previous one rather than merging into it.
+ *
+ * Merging would carry properties the new option no longer sets. The axis
+ * bounds are the live case: leaving an all-zero trend drops the pinned
+ * `min`/`max`, and a merge would keep the old one-major-unit ceiling while the
+ * series jumped to a real amount — the first transaction a new user records
+ * would render against a stale axis.
+ */
 function applyOption(): void {
-  chart.value?.setOption(buildOption())
+  chart.value?.setOption(buildOption(), { notMerge: true })
 }
 
 function handleWindowResize(): void {

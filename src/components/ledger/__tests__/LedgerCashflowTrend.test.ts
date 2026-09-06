@@ -78,6 +78,36 @@ function lastOption(instanceIndex = 0): ChartOption {
   return calls[calls.length - 1][0] as ChartOption
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** ECharts merges objects deep and replaces arrays wholesale. */
+function mergeOption(base: Record<string, unknown>, next: Record<string, unknown>): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...base }
+  for (const [key, value] of Object.entries(next)) {
+    const existing = merged[key]
+    merged[key] = isPlainObject(value) && isPlainObject(existing) ? mergeOption(existing, value) : value
+  }
+  return merged
+}
+
+/**
+ * Replays the recorded setOption calls the way ECharts applies them, so a test
+ * can assert the axis the chart actually ends up with rather than the shape of
+ * the last argument. Without `notMerge`, ECharts keeps every property the new
+ * option stopped setting — which is precisely how a stale axis bound survives,
+ * and is invisible if you only inspect the newest option object.
+ */
+function effectiveOption(instanceIndex = 0): ChartOption {
+  let model: Record<string, unknown> = {}
+  for (const [option, updateOptions] of echarts.instances[instanceIndex].setOption.mock.calls) {
+    const notMerge = (updateOptions as { notMerge?: boolean } | undefined)?.notMerge === true
+    model = notMerge ? { ...(option as Record<string, unknown>) } : mergeOption(model, option as Record<string, unknown>)
+  }
+  return model as unknown as ChartOption
+}
+
 describe('LedgerCashflowTrend', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -199,6 +229,55 @@ describe('LedgerCashflowTrend', () => {
     expect(option.yAxis.max).toBe(100)
     expect(Number.isFinite(option.yAxis.max)).toBe(true)
     expect(option.series.every((series) => series.data.every((value) => value === 0))).toBe(true)
+  })
+
+  it('drops the all-zero axis bound once the first real amount arrives', async () => {
+    const zeroTrend = [
+      point('2026-04', 0, 0),
+      point('2026-05', 0, 0),
+      point('2026-06', 0, 0),
+      point('2026-07', 0, 0),
+      point('2026-08', 0, 0),
+      point('2026-09', 0, 0),
+    ]
+    const wrapper = mountTrend(zeroTrend)
+    expect(lastOption().yAxis.min).toBe(0)
+    expect(lastOption().yAxis.max).toBe(100)
+
+    // The path a new user takes: six empty months, then the first transaction.
+    await wrapper.setProps({ trend: [...zeroTrend.slice(0, 5), point('2026-09', 500_000, 0)] })
+
+    // The chart is reused, not rebuilt.
+    expect(echarts.init).toHaveBeenCalledTimes(1)
+    expect(echarts.instances[0].dispose).not.toHaveBeenCalled()
+    expect(echarts.instances[0].setOption).toHaveBeenCalledTimes(2)
+
+    // Replaying the calls under ECharts' own merge rules is what makes this a
+    // real guard: asserting `yAxis.max` on the newest option alone passes even
+    // when the update merges, because the stale ceiling lives in the chart's
+    // model rather than in the option that was just handed over.
+    const effective = effectiveOption()
+    expect(effective.yAxis.min).toBeUndefined()
+    expect(effective.yAxis.max).toBeUndefined()
+    expect(effective.series[0].data).toEqual([0, 0, 0, 0, 0, 500_000])
+
+    // Pin the mechanism too, so the intent survives a refactor of the above.
+    for (const [, updateOptions] of echarts.instances[0].setOption.mock.calls) {
+      expect(updateOptions).toMatchObject({ notMerge: true })
+    }
+  })
+
+  it('keeps replacing rather than merging on every later update', async () => {
+    const wrapper = mountTrend(sixMonths)
+
+    await wrapper.setProps({ currency: 'JPY' })
+    useTheme().set('dark')
+    await nextTick()
+
+    expect(echarts.instances[0].setOption.mock.calls.length).toBeGreaterThan(1)
+    for (const [, updateOptions] of echarts.instances[0].setOption.mock.calls) {
+      expect(updateOptions).toMatchObject({ notMerge: true })
+    }
   })
 
   it('exposes every month to assistive technology in a visually hidden table', () => {
