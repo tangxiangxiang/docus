@@ -23,7 +23,14 @@ const store = useLedgerStore()
 const newAccountOpen = ref(false)
 const transactionSheetOpen = ref(false)
 
-const bootstrapping = computed(() => store.workspaceState.value === 'BOOTSTRAPPING')
+// The Workspace lifecycle now completes independently of the Overview
+// request, so a period navigation can no longer strand it in BOOTSTRAPPING.
+// A READY workspace still has nothing to render until an Overview exists: the
+// Current Snapshot itself comes from that projection, so it keeps the loading
+// state instead of an empty Dashboard frame. States that do not read the
+// projection at all (onboarding, no active account) are not gated on it.
+const bootstrapping = computed(() => store.workspaceState.value === 'BOOTSTRAPPING'
+  || (store.workspaceState.value === 'READY' && store.overview.value === null && store.loading.value))
 const showOnboarding = computed(() => store.workspaceState.value === 'UNINITIALIZED' || store.workspaceState.value === 'FIRST_ACCOUNT_REQUIRED')
 
 type RouteDateSnapshot = {
