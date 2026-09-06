@@ -20,6 +20,7 @@ const api = vi.hoisted(() => ({
   listLedgerCategories: vi.fn(),
   getLedgerOverview: vi.fn(),
   listLedgerTransactions: vi.fn(),
+  createLedgerTransaction: vi.fn(),
 }))
 
 vi.mock('../../features/ledger/api', () => api)
@@ -411,6 +412,93 @@ describe('Ledger historical period route coordination', () => {
     expect(wrapper.find('[data-testid="ledger-dashboard"]').exists()).toBe(true)
     expect((wrapper.get('[data-testid="ledger-period-date"]').element as HTMLInputElement).value).toBe('2026-06-15')
     expect(router.currentRoute.value.fullPath).toBe('/ledger?date=2026-06-15')
+  })
+
+  it('uses read-specific recovery copy after a confirmed mutation overview failure', async () => {
+    const { wrapper } = await mountAt('/ledger?date=2026-08-20')
+    const store = useLedgerStore()
+    const overviewError = new LedgerApiError('overview unavailable', 500, 'ledger-network-error')
+    api.createLedgerTransaction.mockResolvedValue({ id: 'tx-1', type: 'expense' })
+    api.getLedgerOverview.mockRejectedValueOnce(overviewError)
+
+    await expect(store.createTransaction({
+      type: 'expense' as const,
+      amountMinor: 3_800,
+      accountId: 'bank-1',
+      categoryId: 'food',
+      occurredAt: 1_700_000_000_000,
+      payee: '',
+      note: '',
+    })).resolves.toMatchObject({ id: 'tx-1' })
+    await nextTick()
+
+    expect(store.workspaceState.value).toBe('RECOVERABLE_ERROR')
+    expect(store.workspaceError.value).toBe(overviewError)
+    expect(store.overviewError.value).toBe(overviewError)
+    expect(wrapper.find('[data-testid="ledger-bootstrap-error"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ledger-dashboard"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('Ledger 数据暂时无法加载，请稍后重试。')
+    expect(wrapper.text()).not.toContain('尚未确认本次操作是否保存')
+    expect(wrapper.text()).not.toContain('这段期间的数据暂时无法加载')
+  })
+
+  it('keeps canonical-today recovery when the old bootstrap completes after its Overview failed', async () => {
+    const settingsGate = deferred<LedgerSettingsDto>()
+    api.getLedgerSettings.mockReturnValueOnce(settingsGate.promise)
+    const future = deferred<LedgerOverviewDto>()
+    const today = deferred<LedgerOverviewDto>()
+    const requestedAnchors: Array<string | undefined> = []
+    api.getLedgerOverview.mockImplementation((input: { scope: LedgerOverviewScope; anchorDate: string | undefined }) => {
+      requestedAnchors.push(input.anchorDate)
+      if (input.anchorDate === '2026-09-06') return future.promise
+      if (input.anchorDate === undefined) return today.promise
+      return Promise.resolve(overviewFor(input))
+    })
+
+    const { router, wrapper } = await mountAt('/ledger?date=2026-08-20')
+    const store = useLedgerStore()
+    expect(store.workspaceState.value).toBe('BOOTSTRAPPING')
+    expect(requestedAnchors).toEqual([])
+
+    await router.push('/ledger?date=2026-09-06')
+    await nextTick()
+    expect(store.overviewRequestedAnchorDate.value).toBe('2026-09-06')
+    expect(requestedAnchors).toEqual(['2026-09-06'])
+
+    future.reject(new LedgerApiError(
+      'future anchor',
+      400,
+      'ledger-validation-failed',
+      { field: 'anchorDate' },
+    ))
+    await flushPromises()
+    await flushPromises()
+    expect(router.currentRoute.value.fullPath).toBe('/ledger')
+    expect(requestedAnchors).toEqual(['2026-09-06', undefined])
+
+    const todayError = new LedgerApiError('today overview unavailable', 500, 'ledger-network-error')
+    today.reject(todayError)
+    await flushPromises()
+
+    // Let the original bootstrap finish after the newer canonical-today read
+    // has already established the Workspace recovery boundary.
+    settingsGate.resolve(settings)
+    await flushPromises()
+    await flushPromises()
+
+    expect(store.workspaceState.value).toBe('RECOVERABLE_ERROR')
+    expect(store.overview.value).toBeNull()
+    expect(store.overviewDataReady.value).toBe(false)
+    expect(store.overviewMatchesRequest.value).toBe(false)
+    expect(store.overviewRequestedAnchorDate.value).toBeUndefined()
+    expect(store.workspaceError.value).toBe(todayError)
+    expect(store.overviewError.value).toBe(todayError)
+    expect(wrapper.find('[data-testid="ledger-bootstrap-error"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ledger-dashboard"]').exists()).toBe(false)
+    expect(wrapper.find('.ledger-inline-error').exists()).toBe(false)
+    expect(wrapper.text()).toContain('Ledger 数据暂时无法加载，请稍后重试。')
+    expect(wrapper.text()).not.toContain('这段期间的数据暂时无法加载')
+    expect(wrapper.text()).not.toContain('正在加载所选期间')
   })
 
   it('completes a bootstrap interrupted before Settings with the newest route anchor', async () => {

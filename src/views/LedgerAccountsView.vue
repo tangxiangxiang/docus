@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import LedgerFirstAccountForm from '../components/ledger/LedgerFirstAccountForm.vue'
 import LedgerPendingCreateGate from '../components/ledger/LedgerPendingCreateGate.vue'
 import { ledgerAccountTypeOptionsForNature } from '../features/ledger/accountPresentation'
-import { ledgerErrorMessage } from '../features/ledger/ledgerErrors'
+import { ledgerErrorMessage, ledgerWorkspaceReadErrorMessage } from '../features/ledger/ledgerErrors'
 import { formatLedgerMoney } from '../features/ledger/money'
 import { useLedgerStore } from '../features/ledger/ledgerStore'
 
@@ -68,7 +68,7 @@ function onAccountSaved(): void {
     <div v-else-if="loading" class="ledger-state-panel" data-testid="ledger-accounts-loading" role="status">正在加载账户…</div>
     <section v-else-if="store.workspaceState.value === 'RECOVERABLE_ERROR'" class="ledger-state-panel" data-testid="ledger-accounts-error" role="alert">
       <h2>账户暂时无法加载</h2>
-      <p>{{ ledgerErrorMessage(store.workspaceError.value, '请检查网络后重试。') }}</p>
+      <p>{{ ledgerWorkspaceReadErrorMessage(store.workspaceError.value) }}</p>
       <button class="ledger-primary-button" type="button" @click="store.bootstrap">重新加载</button>
     </section>
     <section v-else-if="!store.settings.value" class="ledger-state-panel" data-testid="ledger-accounts-needs-settings">

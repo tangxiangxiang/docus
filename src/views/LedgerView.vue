@@ -8,7 +8,7 @@ import LedgerNoActiveAccountState from '../components/ledger/LedgerNoActiveAccou
 import LedgerOnboarding from '../components/ledger/LedgerOnboarding.vue'
 import LedgerPendingCreateGate from '../components/ledger/LedgerPendingCreateGate.vue'
 import LedgerTransactionSheet from '../components/ledger/LedgerTransactionSheet.vue'
-import { ledgerErrorMessage } from '../features/ledger/ledgerErrors'
+import { ledgerWorkspaceReadErrorMessage } from '../features/ledger/ledgerErrors'
 import { useLedgerStore, type LedgerOverviewRefreshResult } from '../features/ledger/ledgerStore'
 import { parseLedgerRouteDate } from '../features/ledger/periodNavigation'
 
@@ -170,7 +170,7 @@ function closeTransactionSheet(): void {
 
     <section v-else-if="store.workspaceState.value === 'RECOVERABLE_ERROR'" class="ledger-error-state" data-testid="ledger-bootstrap-error" aria-labelledby="ledger-bootstrap-error-title">
       <h1 id="ledger-bootstrap-error-title">Ledger 暂时无法打开</h1>
-      <p>{{ ledgerErrorMessage(store.workspaceError.value, '请检查网络后重试。') }}</p>
+      <p>{{ ledgerWorkspaceReadErrorMessage(store.workspaceError.value) }}</p>
       <button class="ledger-primary-button" type="button" @click="retry">重新加载</button>
     </section>
 

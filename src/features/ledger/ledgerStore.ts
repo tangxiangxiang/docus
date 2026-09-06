@@ -172,6 +172,7 @@ const state = reactive<LedgerStoreState>({
 
 const ownerIdentity = ref<string | null>(null)
 let bootstrapPromise: Promise<LedgerOverviewRefreshResult | undefined> | null = null
+let workspaceRecoveryGeneration = 0
 
 function activeAccounts(accounts: readonly LedgerAccountDto[]): LedgerAccountDto[] {
   return accounts.filter((account) => account.archivedAt === null)
@@ -206,6 +207,13 @@ function isTransactionsCurrent(epoch: number): boolean {
   return state.transactionsEpoch === epoch
 }
 
+function hasUsableCurrentSnapshot(): boolean {
+  // `overviewDataReady` belongs to the requested period. The Overview DTO's
+  // asset, liability, net-worth, and account fields remain the Current
+  // Snapshot even while a newer period request is pending or has failed.
+  return state.overview !== null
+}
+
 function beginWorkspaceRequest(): number {
   const epoch = state.workspaceEpoch + 1
   state.workspaceEpoch = epoch
@@ -222,6 +230,12 @@ function beginTransactionsRequest(): number {
   const epoch = state.transactionsEpoch + 1
   state.transactionsEpoch = epoch
   return epoch
+}
+
+function enterWorkspaceRecovery(error: LedgerApiError): void {
+  state.workspaceError = error
+  state.workspaceState = 'RECOVERABLE_ERROR'
+  workspaceRecoveryGeneration += 1
 }
 
 function currentOverviewRequest(): LedgerOverviewRequestContext {
@@ -291,6 +305,9 @@ function applyRecoveryReadResult(result: LedgerPendingCreateReadResult): void {
 }
 
 function clearPresentation(): void {
+  // Invalidate a current-state completion that belongs to the session before
+  // this reset. It must not restore a READY lifecycle after session expiry.
+  workspaceRecoveryGeneration += 1
   state.settings = null
   state.accounts = []
   state.categories = []
@@ -324,6 +341,7 @@ type LedgerCurrentStateResult =
 async function refreshCurrentState(
   epoch: number,
   settings: LedgerSettingsDto,
+  recoveryGeneration: number,
 ): Promise<LedgerCurrentStateResult> {
   try {
     const [accounts, categories] = await Promise.all([
@@ -334,15 +352,20 @@ async function refreshCurrentState(
     state.settings = settings
     state.accounts = accounts
     state.categories = categories
-    state.workspaceState = lifecycleFor(settings, accounts)
+    // A newer Overview failure may already have established the Workspace
+    // recovery boundary while this older bootstrap was still reading its
+    // current-state dependencies. Do not let this completion turn recovery
+    // back into READY when there is no usable current snapshot.
+    if (workspaceRecoveryGeneration === recoveryGeneration) {
+      state.workspaceState = lifecycleFor(settings, accounts)
+    }
     // The request-level error was already cleared when this request started.
     // Clearing it again here could discard a newer Overview request's error.
     return { status: 'published' }
   } catch (error) {
     const normalized = normalizeLedgerError(error)
     if (!isWorkspaceCurrent(epoch)) return { status: 'stale' }
-    state.workspaceError = normalized
-    state.workspaceState = 'RECOVERABLE_ERROR'
+    enterWorkspaceRecovery(normalized)
     return { status: 'error', error: normalized }
   } finally {
     if (isWorkspaceCurrent(epoch)) state.workspaceLoading = false
@@ -391,7 +414,7 @@ async function refreshOverviewPhase(
     const isFutureAnchorValidation = normalized.code === 'ledger-validation-failed'
       && normalized.details?.field === 'anchorDate'
     if (failurePolicy === 'workspace-error' && !isFutureAnchorValidation) {
-      state.workspaceState = 'RECOVERABLE_ERROR'
+      enterWorkspaceRecovery(normalized)
     }
     return errorOverviewResult(epoch, request, normalized)
   } finally {
@@ -400,9 +423,13 @@ async function refreshOverviewPhase(
 }
 
 async function bootstrap(): Promise<LedgerOverviewRefreshResult | undefined> {
-  if (bootstrapPromise) return bootstrapPromise
+  // A recovery raised by a newer Overview request may coexist with the old
+  // bootstrap that is still unwinding. A user retry must start a fresh
+  // workspace request instead of reusing that already-invalid lifecycle.
+  if (bootstrapPromise && state.workspaceState !== 'RECOVERABLE_ERROR') return bootstrapPromise
   const workspaceEpoch = beginWorkspaceRequest()
   const overviewEpoch = beginOverviewRequest()
+  const recoveryGeneration = workspaceRecoveryGeneration
   const request = currentOverviewRequest()
   state.workspaceLoading = true
   state.overviewLoading = true
@@ -435,14 +462,13 @@ async function bootstrap(): Promise<LedgerOverviewRefreshResult | undefined> {
           return undefined
         }
         if (!isWorkspaceCurrent(workspaceEpoch)) return staleOverviewResult(overviewEpoch, request)
-        state.workspaceError = normalized
-        state.workspaceState = 'RECOVERABLE_ERROR'
+        enterWorkspaceRecovery(normalized)
         if (isOverviewCurrent(overviewEpoch)) state.overviewDataReady = false
         return errorOverviewResult(overviewEpoch, request, normalized)
       }
       if (!isWorkspaceCurrent(workspaceEpoch)) return staleOverviewResult(overviewEpoch, request)
 
-      const currentState = await refreshCurrentState(workspaceEpoch, settings)
+      const currentState = await refreshCurrentState(workspaceEpoch, settings, recoveryGeneration)
       if (currentState.status === 'stale') return staleOverviewResult(overviewEpoch, request)
       // A current-state failure is already published as a workspace recovery
       // state. It is reported back with the same envelope so route callers can
@@ -473,6 +499,7 @@ async function refreshData(): Promise<void> {
   }
   const workspaceEpoch = beginWorkspaceRequest()
   const overviewEpoch = beginOverviewRequest()
+  const recoveryGeneration = workspaceRecoveryGeneration
   const request = currentOverviewRequest()
   state.workspaceLoading = true
   state.overviewLoading = true
@@ -481,7 +508,7 @@ async function refreshData(): Promise<void> {
   state.overviewDataReady = false
   try {
     // Phase A — the Current Snapshot's own dependency.
-    const currentState = await refreshCurrentState(workspaceEpoch, settings)
+    const currentState = await refreshCurrentState(workspaceEpoch, settings, recoveryGeneration)
     if (currentState.status !== 'published') return
 
     // Phase B — the historical projection. This is a mutation refresh, not a
@@ -522,9 +549,15 @@ async function refreshOverview(): Promise<LedgerOverviewRefreshResult> {
   state.overviewLoading = true
   state.overviewError = null
   state.overviewDataReady = false
-  // A period navigation refresh never owns the Workspace lifecycle, so it can
-  // neither cancel a running bootstrap nor report a workspace failure.
-  return refreshOverviewPhase(epoch, request, 'period-only')
+  // A period-only failure is safe only when a previously successful Overview
+  // can continue to provide the Current Snapshot. During the initial/raced
+  // load there is no such authority, so the failure belongs to Workspace
+  // recovery instead of producing an empty Dashboard shell.
+  const failurePolicy: LedgerOverviewFailurePolicy = state.workspaceState === 'READY'
+    && hasUsableCurrentSnapshot()
+    ? 'period-only'
+    : 'workspace-error'
+  return refreshOverviewPhase(epoch, request, failurePolicy)
 }
 
 function setOverviewRequestContext(context: LedgerOverviewRequestContext): void {
@@ -872,6 +905,7 @@ export function useLedgerStore(): LedgerStore {
 }
 
 export function resetLedgerStoreForTesting(): void {
+  workspaceRecoveryGeneration += 1
   state.settings = null
   state.accounts = []
   state.categories = []

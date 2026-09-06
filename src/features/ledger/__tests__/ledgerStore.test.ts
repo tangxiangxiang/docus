@@ -136,6 +136,22 @@ describe('Ledger feature-local state', () => {
     expect(store.workspaceState.value).toBe('NO_ACTIVE_ACCOUNT')
   })
 
+  it('assigns an initial Overview read failure to the Workspace recovery boundary', async () => {
+    api.getLedgerSettings.mockResolvedValue(settings(true))
+    api.listLedgerAccounts.mockResolvedValue([account('account-1')])
+    const overviewError = new LedgerApiError('overview unavailable', 500, 'ledger-internal-error')
+    api.getLedgerOverview.mockRejectedValueOnce(overviewError)
+    const store = useLedgerStore()
+
+    const result = await store.bootstrap()
+
+    expect(result).toMatchObject({ status: 'error', error: overviewError })
+    expect(store.workspaceState.value).toBe('RECOVERABLE_ERROR')
+    expect(store.workspaceError.value).toBe(overviewError)
+    expect(store.overviewError.value).toBe(overviewError)
+    expect(store.overview.value).toBeNull()
+  })
+
   it('uses an explicit overview request context and preserves its anchor across refreshes', async () => {
     api.getLedgerSettings.mockResolvedValue(settings(true))
     api.listLedgerAccounts.mockResolvedValue([account('account-1')])
@@ -254,7 +270,7 @@ describe('Ledger feature-local state', () => {
     expect(store.overviewRequestedAnchorDate.value).toBe('2026-08-20')
     expect(store.overview.value?.context.anchorDate).toBe('2026-08-20')
     expect(store.overviewMatchesRequest.value).toBe(false)
-    expect(store.workspaceError.value).toBeNull()
+    expect(store.workspaceError.value).toBe(refreshError)
     expect(store.overviewError.value).toBe(refreshError)
     expect(store.error.value).toBe(refreshError)
     expect(store.loading.value).toBe(false)
@@ -307,7 +323,7 @@ describe('Ledger feature-local state', () => {
     expect(store.overviewMatchesRequest.value).toBe(false)
     expect(store.overviewRequestedAnchorDate.value).toBe('2026-08-20')
     expect(store.overviewScope.value).toBe('month')
-    expect(store.workspaceError.value).toBeNull()
+    expect(store.workspaceError.value).toBe(refreshError)
     expect(store.overviewError.value).toBe(refreshError)
     expect(store.error.value).toBe(refreshError)
     expect(store.loading.value).toBe(false)

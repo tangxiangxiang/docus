@@ -191,6 +191,17 @@ export function ledgerErrorMessage(error: unknown, fallback = 'Ledger 操作暂�
   }
 }
 
+/**
+ * Workspace recovery handles read/rebuild failures, not mutation submission.
+ * Keep the network copy away from the mutation uncertainty wording used by
+ * `ledgerErrorMessage`, while retaining its explicit auth message.
+ */
+export function ledgerWorkspaceReadErrorMessage(error: unknown): string {
+  const normalized = normalizeLedgerError(error)
+  if (normalized.code === 'auth-session-required') return ledgerErrorMessage(normalized)
+  return 'Ledger 数据暂时无法加载，请稍后重试。'
+}
+
 export function ledgerFieldError(error: unknown, field: string): string | null {
   const normalized = normalizeLedgerError(error)
   return normalized.details?.field === field ? ledgerErrorMessage(error) : null
