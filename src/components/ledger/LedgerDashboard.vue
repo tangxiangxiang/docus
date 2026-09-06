@@ -5,7 +5,6 @@ import type {
   LedgerPeriodName,
   LedgerTransactionDto,
 } from '../../../shared/ledgerProtocol'
-import { ledgerErrorMessage } from '../../features/ledger/ledgerErrors'
 import { formatLedgerMoney, formatLedgerSignedMoney } from '../../features/ledger/money'
 import { formatLedgerDate, formatLedgerDateTime, formatLedgerPeriodLabel } from '../../features/ledger/time'
 import { useLedgerStore } from '../../features/ledger/ledgerStore'
@@ -34,6 +33,13 @@ const scopeOptions = computed<ReadonlyArray<{ value: LedgerOverviewScope; label:
 
 const refreshing = computed(() => store.loading.value)
 const scopeError = computed(() => store.error.value)
+/**
+ * The Current Snapshot stays on screen behind this error, so the copy must
+ * stay inside the period boundary. The global Ledger formatter answers a
+ * different question ("is Ledger usable at all?") and would tell the user the
+ * whole workspace is unavailable while it is still showing current balances.
+ */
+const scopeErrorMessage = computed(() => (scopeError.value ? '这段期间的数据暂时无法加载。' : ''))
 const periodDataReady = computed(() => overview.value !== null && store.overviewMatchesRequest.value)
 const periodDataLoading = computed(() => refreshing.value && !periodDataReady.value && !scopeError.value)
 const dateInputValue = computed(() => store.overviewRequestedAnchorDate.value
@@ -144,7 +150,7 @@ function onDateChange(event: Event): void {
 
     <div v-if="refreshing" class="ledger-refreshing" role="status" aria-live="polite">正在更新 Ledger 数据…</div>
     <div v-if="scopeError" class="ledger-inline-error" role="alert">
-      <span>{{ ledgerErrorMessage(scopeError, '这段期间的数据暂时无法加载。') }}</span>
+      <span>{{ scopeErrorMessage }}</span>
       <button class="ledger-link-button" type="button" @click="retryScope">重试</button>
     </div>
 
