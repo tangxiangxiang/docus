@@ -212,6 +212,46 @@ describe('Ledger feature-local state', () => {
     expect(api.getLedgerOverview).toHaveBeenCalledWith({ scope: 'month', anchorDate: '2026-08-20' })
   })
 
+  it('keeps a ready workspace when a successful mutation cannot refresh historical overview data', async () => {
+    api.getLedgerSettings.mockResolvedValue(settings(true))
+    api.listLedgerAccounts.mockResolvedValue([account('account-1')])
+    const store = useLedgerStore()
+    await store.bootstrap()
+
+    store.setOverviewRequestContext({ scope: 'month', anchorDate: '2026-08-20' })
+    api.getLedgerOverview.mockResolvedValue(overviewFor('month', '2026-08-20'))
+    await store.refreshOverview()
+    expect(store.overviewMatchesRequest.value).toBe(true)
+
+    const refreshError = new LedgerApiError('overview unavailable', 503, 'ledger-internal-error')
+    api.getLedgerOverview.mockRejectedValueOnce(refreshError)
+    api.createLedgerTransaction.mockResolvedValue({ id: 'tx-1', type: 'expense' })
+    const payload = {
+      type: 'expense' as const,
+      amountMinor: 3_800,
+      accountId: 'account-1',
+      categoryId: 'category-1',
+      occurredAt: 1_700_000_000_000,
+      payee: '',
+      note: '',
+    }
+
+    await expect(store.createTransaction(payload)).resolves.toMatchObject({ id: 'tx-1' })
+
+    expect(store.workspaceState.value).toBe('READY')
+    expect(store.overviewRequestedAnchorDate.value).toBe('2026-08-20')
+    expect(store.overview.value?.context.anchorDate).toBe('2026-08-20')
+    expect(store.overviewMatchesRequest.value).toBe(false)
+    expect(store.error.value).toBe(refreshError)
+    expect(store.loading.value).toBe(false)
+
+    api.getLedgerOverview.mockResolvedValueOnce(overviewFor('month', '2026-08-20'))
+    const retry = await store.refreshOverview()
+    expect(retry.status).toBe('success')
+    expect(store.overviewMatchesRequest.value).toBe(true)
+    expect(store.error.value).toBeNull()
+  })
+
   it('keeps a network-uncertain create intent durable with the same key', async () => {
     api.getLedgerSettings.mockResolvedValue(settings(true))
     api.listLedgerAccounts.mockResolvedValue([account('account-1')])

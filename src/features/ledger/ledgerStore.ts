@@ -102,6 +102,7 @@ interface LedgerStoreState {
   accounts: LedgerAccountDto[]
   categories: LedgerCategoryDto[]
   overview: LedgerOverviewDto | null
+  overviewDataReady: boolean
   overviewScope: LedgerOverviewScope
   overviewRequestedAnchorDate: string | undefined
   transactions: LedgerTransactionPageDto | null
@@ -129,6 +130,7 @@ const state = reactive<LedgerStoreState>({
   accounts: [],
   categories: [],
   overview: null,
+  overviewDataReady: false,
   overviewScope: 'month',
   overviewRequestedAnchorDate: undefined,
   transactions: null,
@@ -245,6 +247,7 @@ function clearPresentation(): void {
   state.accounts = []
   state.categories = []
   state.overview = null
+  state.overviewDataReady = false
   state.transactions = null
   state.accountDetail = null
   state.accountTransactions = null
@@ -269,6 +272,7 @@ async function loadData(
   state.accounts = accounts
   state.categories = categories
   state.overview = overview
+  state.overviewDataReady = true
   state.overviewScope = request.scope
   state.overviewRequestedAnchorDate = request.anchorDate
   state.workspaceState = lifecycleFor(settings, accounts)
@@ -288,6 +292,7 @@ async function bootstrap(): Promise<LedgerOverviewRefreshResult | undefined> {
   const request = currentOverviewRequest()
   state.loading = true
   state.error = null
+  state.overviewDataReady = false
   state.workspaceState = 'BOOTSTRAPPING'
   applyRecoveryReadResult(readLedgerPendingCreate())
 
@@ -304,6 +309,7 @@ async function bootstrap(): Promise<LedgerOverviewRefreshResult | undefined> {
             state.accounts = []
             state.categories = []
             state.overview = null
+            state.overviewDataReady = false
             state.transactions = null
             state.workspaceState = 'UNINITIALIZED'
             state.error = null
@@ -318,6 +324,7 @@ async function bootstrap(): Promise<LedgerOverviewRefreshResult | undefined> {
       const normalized = normalizeLedgerError(error)
       if (!isCurrent(epoch)) return staleOverviewResult(epoch, request)
       state.error = normalized
+      state.overviewDataReady = false
       state.workspaceState = 'RECOVERABLE_ERROR'
       return errorOverviewResult(epoch, request, normalized)
     } finally {
@@ -340,8 +347,10 @@ async function refreshData(): Promise<void> {
   const epoch = state.requestEpoch + 1
   state.requestEpoch = epoch
   const request = currentOverviewRequest()
+  const workspaceWasReady = state.workspaceState === 'READY'
   state.loading = true
   state.error = null
+  state.overviewDataReady = false
   try {
     await loadData(epoch, state.settings, request)
     if (state.transactions !== null) {
@@ -350,7 +359,7 @@ async function refreshData(): Promise<void> {
   } catch (error) {
     if (!isCurrent(epoch)) return
     state.error = normalizeLedgerError(error)
-    state.workspaceState = 'RECOVERABLE_ERROR'
+    if (!workspaceWasReady) state.workspaceState = 'RECOVERABLE_ERROR'
   } finally {
     if (isCurrent(epoch)) state.loading = false
   }
@@ -362,10 +371,12 @@ async function refreshOverview(): Promise<LedgerOverviewRefreshResult> {
   const request = currentOverviewRequest()
   state.loading = true
   state.error = null
+  state.overviewDataReady = false
   try {
     const overview = await getLedgerOverview(request)
     if (!isCurrent(epoch)) return staleOverviewResult(epoch, request)
     state.overview = overview
+    state.overviewDataReady = true
     state.overviewScope = request.scope
     state.overviewRequestedAnchorDate = request.anchorDate
     state.error = null
@@ -388,6 +399,7 @@ async function refreshOverview(): Promise<LedgerOverviewRefreshResult> {
 function setOverviewRequestContext(context: LedgerOverviewRequestContext): void {
   state.overviewScope = context.scope
   state.overviewRequestedAnchorDate = context.anchorDate
+  state.overviewDataReady = false
   state.error = null
 }
 
@@ -570,7 +582,7 @@ const archived = computed(() => archivedAccounts(state.accounts))
 const overviewRequestContext = computed<LedgerOverviewRequestContext>(() => currentOverviewRequest())
 const overviewMatchesRequest = computed(() => {
   const overview = state.overview
-  if (overview === null || overview.context.scope !== state.overviewScope) return false
+  if (!state.overviewDataReady || overview === null || overview.context.scope !== state.overviewScope) return false
   if (state.overviewRequestedAnchorDate === undefined) return overview.context.isToday
   return overview.context.anchorDate === state.overviewRequestedAnchorDate
 })
@@ -584,6 +596,7 @@ export interface LedgerStore {
   readonly activeCategories: ComputedRef<readonly LedgerCategoryDto[]>
   readonly archivedCategories: ComputedRef<readonly LedgerCategoryDto[]>
   readonly overview: ComputedRef<LedgerOverviewDto | null>
+  readonly overviewDataReady: ComputedRef<boolean>
   readonly overviewScope: ComputedRef<LedgerOverviewScope>
   readonly overviewRequestedAnchorDate: ComputedRef<string | undefined>
   readonly overviewRequestContext: ComputedRef<LedgerOverviewRequestContext>
@@ -639,6 +652,7 @@ const store: LedgerStore = {
   activeCategories: computed(() => state.categories.filter((category) => category.archivedAt === null)),
   archivedCategories: computed(() => state.categories.filter((category) => category.archivedAt !== null)),
   overview: computed(() => state.overview),
+  overviewDataReady: computed(() => state.overviewDataReady),
   overviewScope: computed(() => state.overviewScope),
   overviewRequestedAnchorDate: computed(() => state.overviewRequestedAnchorDate),
   overviewRequestContext,
@@ -709,6 +723,7 @@ export function resetLedgerStoreForTesting(): void {
   state.accounts = []
   state.categories = []
   state.overview = null
+  state.overviewDataReady = false
   state.overviewScope = 'month'
   state.overviewRequestedAnchorDate = undefined
   state.transactions = null

@@ -35,6 +35,7 @@ const scopeOptions = computed<ReadonlyArray<{ value: LedgerOverviewScope; label:
 const refreshing = computed(() => store.loading.value)
 const scopeError = computed(() => store.error.value)
 const periodDataReady = computed(() => overview.value !== null && store.overviewMatchesRequest.value)
+const periodDataLoading = computed(() => refreshing.value && !periodDataReady.value && !scopeError.value)
 const dateInputValue = computed(() => store.overviewRequestedAnchorDate.value
   ?? overview.value?.context.todayDate
   ?? '')
@@ -236,7 +237,7 @@ function onDateChange(event: Event): void {
         </p>
       </section>
 
-      <div v-if="!periodDataReady" class="ledger-period-analysis-loading" data-testid="ledger-period-analysis-loading" role="status" aria-live="polite">
+      <div v-if="periodDataLoading" class="ledger-period-analysis-loading" data-testid="ledger-period-analysis-loading" role="status" aria-live="polite">
         正在加载所选期间…
       </div>
 

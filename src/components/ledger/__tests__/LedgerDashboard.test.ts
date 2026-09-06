@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 import type {
   LedgerAccountDto,
   LedgerAccountSummary,
@@ -9,6 +10,7 @@ import type {
   LedgerSettingsDto,
   LedgerTransactionDto,
 } from '../../../../shared/ledgerProtocol'
+import { LedgerApiError } from '../../../features/ledger/ledgerErrors'
 import { resetLedgerStoreForTesting } from '../../../features/ledger/ledgerStore'
 import { instantFromLocalDateTime } from '../../../features/ledger/time'
 import LedgerView from '../../../views/LedgerView.vue'
@@ -177,6 +179,12 @@ function setup(): void {
   api.listLedgerTransactions.mockResolvedValue({ transactions: [expense], page: { nextCursor: null } })
 }
 
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((nextResolve) => { resolve = nextResolve })
+  return { promise, resolve }
+}
+
 describe('Ledger live dashboard', () => {
   beforeEach(() => {
     resetLedgerStoreForTesting()
@@ -238,6 +246,38 @@ describe('Ledger live dashboard', () => {
     expect(wrapper.get('[data-testid="ledger-total-assets"]').text()).toContain('9,962')
     expect(wrapper.get('[data-testid="ledger-total-liabilities"]').text()).toContain('0')
     expect(wrapper.get('[data-testid="ledger-period-month"]').text()).toContain('-¥38.00')
+  })
+
+  it('keeps historical period errors separate from loading presentation', async () => {
+    const wrapper = mount(LedgerView)
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    const refreshError = new LedgerApiError('overview unavailable', 500, 'ledger-internal-error')
+    api.getLedgerOverview.mockRejectedValueOnce(refreshError)
+    await wrapper.get('select[aria-label="选择收支期间"]').setValue('today')
+    await flushPromises()
+
+    expect(wrapper.get('.ledger-inline-error').text()).toContain('Ledger 暂时不可用')
+    expect(wrapper.get('.ledger-inline-error').text()).toContain('重试')
+    expect(wrapper.find('[data-testid="ledger-period-analysis-loading"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="ledger-total-assets"]').text()).toContain('9,962')
+
+    const retry = deferred<LedgerOverviewDto>()
+    api.getLedgerOverview.mockReturnValueOnce(retry.promise)
+    await wrapper.get('.ledger-inline-error button').trigger('click')
+    await nextTick()
+    expect(wrapper.find('[data-testid="ledger-period-analysis-loading"]').exists()).toBe(true)
+    expect(wrapper.find('.ledger-inline-error').exists()).toBe(false)
+
+    retry.resolve({
+      ...overview(),
+      context: { ...overview().context, scope: 'today' },
+    })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="ledger-period-analysis-loading"]').exists()).toBe(false)
+    expect(wrapper.find('.ledger-inline-error').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="ledger-dashboard-cashflow"]').text()).toContain('38.00')
   })
 
   it('shows presentation-only category shares and groups accounts by nature', async () => {

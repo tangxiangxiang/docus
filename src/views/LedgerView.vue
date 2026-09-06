@@ -33,8 +33,6 @@ type RouteDateSnapshot = {
 }
 
 let hasBootstrapped = false
-let routeSyncRunning = false
-let routeSyncRequested = false
 
 function routeDateSnapshot(): RouteDateSnapshot {
   const raw = route?.query.date
@@ -46,6 +44,13 @@ function routeDateSnapshot(): RouteDateSnapshot {
 
 function routeStillMatches(snapshot: RouteDateSnapshot): boolean {
   return routeDateSnapshot().token === snapshot.token
+}
+
+function overviewRequestStillMatches(snapshot: RouteDateSnapshot, result: LedgerOverviewRefreshResult | undefined): boolean {
+  if (result === undefined || !routeStillMatches(snapshot)) return false
+  const current = store.overviewRequestContext.value
+  return result.request.scope === current.scope
+    && result.request.anchorDate === current.anchorDate
 }
 
 function isFutureAnchorResult(result: LedgerOverviewRefreshResult | undefined): boolean {
@@ -87,6 +92,7 @@ async function syncRouteDate(snapshot: RouteDateSnapshot): Promise<void> {
     // the Overview request was part of the same load. Let the canonical
     // follow-up perform a complete bootstrap rather than rendering the error
     // state after the invalid future URL has been removed.
+    if (!overviewRequestStillMatches(snapshot, result)) return
     hasBootstrapped = false
     await router.replace({ name: 'ledger', hash: route.hash })
     return
@@ -94,29 +100,15 @@ async function syncRouteDate(snapshot: RouteDateSnapshot): Promise<void> {
 
   if (snapshot.date !== undefined
     && result?.status === 'success'
+    && overviewRequestStillMatches(snapshot, result)
     && result.overview.context.isToday
     && result.overview.context.anchorDate === snapshot.date) {
     await router.replace({ name: 'ledger', hash: route.hash })
   }
 }
 
-async function drainRouteSync(): Promise<void> {
-  if (routeSyncRunning) return
-  routeSyncRunning = true
-  try {
-    while (routeSyncRequested) {
-      routeSyncRequested = false
-      await syncRouteDate(routeDateSnapshot())
-    }
-  } finally {
-    routeSyncRunning = false
-    if (routeSyncRequested) void drainRouteSync()
-  }
-}
-
 function requestRouteSync(): void {
-  routeSyncRequested = true
-  void drainRouteSync()
+  void syncRouteDate(routeDateSnapshot())
 }
 
 watch(() => auth.user.value?.username ?? null, (identity) => store.setOwnerIdentity(identity), { immediate: true })

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import type {
   LedgerAccountDto,
@@ -10,7 +11,7 @@ import type {
   LedgerSettingsDto,
 } from '../../../shared/ledgerProtocol'
 import { LedgerApiError } from '../../features/ledger/ledgerErrors'
-import { resetLedgerStoreForTesting } from '../../features/ledger/ledgerStore'
+import { resetLedgerStoreForTesting, useLedgerStore } from '../../features/ledger/ledgerStore'
 import LedgerView from '../LedgerView.vue'
 
 const api = vi.hoisted(() => ({
@@ -103,6 +104,20 @@ function setupApi(): void {
   api.listLedgerTransactions.mockResolvedValue({ transactions: [], page: { nextCursor: null } })
 }
 
+function deferred<T>(): {
+  promise: Promise<T>
+  resolve: (value: T) => void
+  reject: (reason?: unknown) => void
+} {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((nextResolve, nextReject) => {
+    resolve = nextResolve
+    reject = nextReject
+  })
+  return { promise, resolve, reject }
+}
+
 async function mountAt(path: string): Promise<{ router: ReturnType<typeof createRouter>; wrapper: VueWrapper }> {
   const placeholder = { template: '<div />' }
   const router = createRouter({
@@ -193,5 +208,66 @@ describe('Ledger historical period route coordination', () => {
     expect(wrapper.find('[data-testid="ledger-dashboard"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="ledger-bootstrap-error"]').exists()).toBe(false)
     expect(api.getLedgerOverview).toHaveBeenLastCalledWith({ scope: 'month', anchorDate: undefined })
+  })
+
+  it('starts the latest route request immediately and publishes only its result', async () => {
+    const { router, wrapper } = await mountAt('/ledger')
+    api.getLedgerOverview.mockClear()
+    const first = deferred<LedgerOverviewDto>()
+    const second = deferred<LedgerOverviewDto>()
+    api.getLedgerOverview.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+
+    await router.push('/ledger?date=2026-08-20')
+    await nextTick()
+    expect(api.getLedgerOverview).toHaveBeenNthCalledWith(1, { scope: 'month', anchorDate: '2026-08-20' })
+
+    await router.push('/ledger?date=2026-06-15')
+    await nextTick()
+    expect(api.getLedgerOverview).toHaveBeenNthCalledWith(2, { scope: 'month', anchorDate: '2026-06-15' })
+    expect((wrapper.get('[data-testid="ledger-period-date"]').element as HTMLInputElement).value).toBe('2026-06-15')
+    expect(useLedgerStore().overviewRequestedAnchorDate.value).toBe('2026-06-15')
+
+    first.resolve(overviewFor({ scope: 'month', anchorDate: '2026-08-20' }))
+    await flushPromises()
+    expect(useLedgerStore().overview.value?.context.anchorDate).not.toBe('2026-08-20')
+    expect(router.currentRoute.value.fullPath).toBe('/ledger?date=2026-06-15')
+    expect(wrapper.text()).not.toContain('2026年8月20日')
+
+    second.resolve(overviewFor({ scope: 'month', anchorDate: '2026-06-15' }))
+    await flushPromises()
+    expect(wrapper.text()).toContain('2026年6月15日')
+    expect(useLedgerStore().overviewMatchesRequest.value).toBe(true)
+    expect(router.currentRoute.value.fullPath).toBe('/ledger?date=2026-06-15')
+  })
+
+  it('does not canonicalize a newer historical route after a stale future response', async () => {
+    const { router, wrapper } = await mountAt('/ledger')
+    api.getLedgerOverview.mockClear()
+    const future = deferred<LedgerOverviewDto>()
+    const historical = deferred<LedgerOverviewDto>()
+    api.getLedgerOverview.mockReturnValueOnce(future.promise).mockReturnValueOnce(historical.promise)
+
+    await router.push('/ledger?date=2026-09-06')
+    await nextTick()
+    await router.push('/ledger?date=2026-06-15')
+    await nextTick()
+    expect(api.getLedgerOverview).toHaveBeenCalledTimes(2)
+    expect(api.getLedgerOverview).toHaveBeenLastCalledWith({ scope: 'month', anchorDate: '2026-06-15' })
+
+    future.reject(new LedgerApiError(
+      'future anchor',
+      400,
+      'ledger-validation-failed',
+      { field: 'anchorDate' },
+    ))
+    await flushPromises()
+    expect(router.currentRoute.value.fullPath).toBe('/ledger?date=2026-06-15')
+    expect(api.getLedgerOverview).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('[data-testid="ledger-return-today"]').exists()).toBe(true)
+
+    historical.resolve(overviewFor({ scope: 'month', anchorDate: '2026-06-15' }))
+    await flushPromises()
+    expect(useLedgerStore().overviewMatchesRequest.value).toBe(true)
+    expect(router.currentRoute.value.fullPath).toBe('/ledger?date=2026-06-15')
   })
 })
