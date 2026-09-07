@@ -121,6 +121,7 @@ interface TrendPalette {
   readonly text: string
   readonly muted: string
   readonly border: string
+  readonly grid: string
   readonly surface: string
 }
 
@@ -131,6 +132,7 @@ const FALLBACK_PALETTE: TrendPalette = {
   text: '#111827',
   muted: '#6b7280',
   border: '#e5e7eb',
+  grid: '#edf0f4',
   surface: '#ffffff',
 }
 
@@ -158,6 +160,7 @@ function currentPalette(): TrendPalette {
     text: token('--text-h', FALLBACK_PALETTE.text),
     muted: token('--text-muted', FALLBACK_PALETTE.muted),
     border: token('--border', FALLBACK_PALETTE.border),
+    grid: token('--ledger-trend-grid', FALLBACK_PALETTE.grid),
     surface: token('--bg', FALLBACK_PALETTE.surface),
   }
 }
@@ -165,8 +168,8 @@ function currentPalette(): TrendPalette {
 function buildOption(): LedgerTrendChartOption {
   const palette = currentPalette()
   return {
-    animationDuration: 260,
-    grid: { top: 34, left: 4, right: 4, bottom: 2, containLabel: true },
+    animationDuration: 280,
+    grid: { top: 38, left: 8, right: 8, bottom: 4, containLabel: true },
     legend: {
       top: 0,
       right: 0,
@@ -179,10 +182,10 @@ function buildOption(): LedgerTrendChartOption {
     },
     tooltip: {
       trigger: 'axis',
-      axisPointer: { type: 'shadow' },
+      axisPointer: { type: 'shadow', shadowStyle: { color: palette.grid } },
       backgroundColor: palette.surface,
       borderColor: palette.border,
-      extraCssText: 'box-shadow:0 4px 16px rgba(0,0,0,.12)',
+      extraCssText: 'box-shadow:0 8px 24px rgba(0,0,0,.08);border-radius:8px',
       textStyle: { color: palette.text, fontSize: 12 },
       formatter: tooltipFormatter,
     },
@@ -202,21 +205,21 @@ function buildOption(): LedgerTrendChartOption {
       axisLine: { show: false },
       axisTick: { show: false },
       axisLabel: { color: palette.muted, fontSize: 11, formatter: axisMoney },
-      splitLine: { lineStyle: { color: palette.border, type: 'dashed' } },
+      splitLine: { lineStyle: { color: palette.grid, type: 'solid' } },
     },
     series: [
       {
         name: SERIES_LABEL.income,
         type: 'bar',
-        barMaxWidth: 16,
-        itemStyle: { color: palette.income, borderRadius: [2, 2, 0, 0] },
+        barMaxWidth: 20,
+        itemStyle: { color: palette.income, borderRadius: [3, 3, 0, 0] },
         data: props.trend.map((point) => point.incomeMinor),
       },
       {
         name: SERIES_LABEL.expense,
         type: 'bar',
-        barMaxWidth: 16,
-        itemStyle: { color: palette.expense, borderRadius: [2, 2, 0, 0] },
+        barMaxWidth: 20,
+        itemStyle: { color: palette.expense, borderRadius: [3, 3, 0, 0] },
         data: props.trend.map((point) => point.expenseMinor),
       },
     ],
@@ -339,24 +342,28 @@ onBeforeUnmount(destroyChart)
 .ledger-cashflow-trend {
   --ledger-trend-income: #18794e;
   --ledger-trend-expense: #b42318;
+  --ledger-trend-grid: #edf0f4;
 }
 @media (prefers-color-scheme: dark) {
   .ledger-cashflow-trend {
     --ledger-trend-income: #4cc38a;
     --ledger-trend-expense: #f87171;
+    --ledger-trend-grid: #2b3442;
   }
 }
 :root[data-theme='light'] .ledger-cashflow-trend {
   --ledger-trend-income: #18794e;
   --ledger-trend-expense: #b42318;
+  --ledger-trend-grid: #edf0f4;
 }
 :root[data-theme='dark'] .ledger-cashflow-trend {
   --ledger-trend-income: #4cc38a;
   --ledger-trend-expense: #f87171;
+  --ledger-trend-grid: #2b3442;
 }
-.ledger-cashflow-trend-plot { width: 100%; height: 240px; }
+.ledger-cashflow-trend-plot { width: 100%; height: 280px; }
 .ledger-inline-empty { margin: 0; color: var(--text-muted); font-size: .78rem; line-height: 1.45; }
 @media (max-width: 760px) {
-  .ledger-cashflow-trend-plot { height: 210px; }
+  .ledger-cashflow-trend-plot { height: 230px; }
 }
 </style>

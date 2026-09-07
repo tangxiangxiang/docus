@@ -128,6 +128,13 @@ function transactionAmount(transaction: LedgerTransactionDto): string {
   return formatLedgerMoney(transaction.amountMinor, store.settings.value?.baseCurrency ?? 'CNY')
 }
 
+function transactionMark(transaction: LedgerTransactionDto): string {
+  if (transaction.type === 'income') return '↑'
+  if (transaction.type === 'expense') return '↓'
+  if (transaction.type === 'transfer') return '↔'
+  return '='
+}
+
 function periodSummary(period: LedgerPeriodName) {
   if (!periodDataReady.value) return null
   return overview.value?.periods.find((item) => item.period === period) ?? null
@@ -160,19 +167,34 @@ function onDateChange(event: Event): void {
     <template v-if="overview">
       <section class="ledger-metric-grid" aria-label="资产概览">
         <article class="ledger-metric-card" data-testid="ledger-total-assets">
-          <span>总资产</span>
-          <strong>{{ formatLedgerMoney(overview.assetTotalMinor, overview.currency) }}</strong>
-          <small>当前所有资产账户余额</small>
+          <span class="ledger-metric-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none"><ellipse cx="12" cy="6" rx="6" ry="3"/><path d="M6 6v4c0 1.7 2.7 3 6 3s6-1.3 6-3V6M6 10v4c0 1.7 2.7 3 6 3s6-1.3 6-3v-4M6 14v4c0 1.7 2.7 3 6 3s6-1.3 6-3v-4"/></svg>
+          </span>
+          <span class="ledger-metric-copy">
+            <span>总资产</span>
+            <strong>{{ formatLedgerMoney(overview.assetTotalMinor, overview.currency) }}</strong>
+            <small>当前所有资产账户余额</small>
+          </span>
         </article>
         <article class="ledger-metric-card" data-testid="ledger-total-liabilities">
-          <span>总负债</span>
-          <strong>{{ formatLedgerMoney(overview.liabilityTotalMinor, overview.currency) }}</strong>
-          <small>当前所有负债账户余额</small>
+          <span class="ledger-metric-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none"><rect x="4" y="5" width="16" height="14" rx="3"/><path d="M4 9h16M8 15h4"/></svg>
+          </span>
+          <span class="ledger-metric-copy">
+            <span>总负债</span>
+            <strong>{{ formatLedgerMoney(overview.liabilityTotalMinor, overview.currency) }}</strong>
+            <small>当前所有负债账户余额</small>
+          </span>
         </article>
         <article class="ledger-metric-card is-primary" data-testid="ledger-net-worth">
-          <span>净资产</span>
-          <strong>{{ formatLedgerMoney(overview.netWorthMinor, overview.currency) }}</strong>
-          <small>当前净资产</small>
+          <span class="ledger-metric-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M6 19v-5M12 19V9M18 19V5"/></svg>
+          </span>
+          <span class="ledger-metric-copy">
+            <span>净资产</span>
+            <strong>{{ formatLedgerMoney(overview.netWorthMinor, overview.currency) }}</strong>
+            <small>当前净资产</small>
+          </span>
         </article>
       </section>
 
@@ -207,9 +229,18 @@ function onDateChange(event: Event): void {
           正在加载所选期间…
         </div>
         <div v-else-if="selectedPeriodSummary" class="ledger-cashflow-grid" data-testid="ledger-dashboard-cashflow">
-          <div><span>收入</span><strong class="is-income">{{ formatLedgerMoney(selectedPeriodSummary.incomeMinor, overview.currency) }}</strong></div>
-          <div><span>支出</span><strong class="is-expense">{{ formatLedgerMoney(selectedPeriodSummary.expenseMinor, overview.currency) }}</strong></div>
-          <div><span>收支结余</span><strong>{{ formatLedgerSignedMoney(selectedPeriodSummary.balanceMinor, overview.currency) }}</strong></div>
+          <div>
+            <span class="ledger-cashflow-mark is-income" aria-hidden="true">↑</span>
+            <span class="ledger-cashflow-copy"><span>收入</span><strong class="is-income">{{ formatLedgerMoney(selectedPeriodSummary.incomeMinor, overview.currency) }}</strong></span>
+          </div>
+          <div>
+            <span class="ledger-cashflow-mark is-expense" aria-hidden="true">↓</span>
+            <span class="ledger-cashflow-copy"><span>支出</span><strong class="is-expense">{{ formatLedgerMoney(selectedPeriodSummary.expenseMinor, overview.currency) }}</strong></span>
+          </div>
+          <div>
+            <span class="ledger-cashflow-mark" aria-hidden="true">=</span>
+            <span class="ledger-cashflow-copy"><span>收支结余</span><strong :class="{ 'is-income': selectedPeriodSummary.balanceMinor >= 0, 'is-expense': selectedPeriodSummary.balanceMinor < 0 }">{{ formatLedgerSignedMoney(selectedPeriodSummary.balanceMinor, overview.currency) }}</strong></span>
+          </div>
         </div>
       </section>
 
@@ -223,27 +254,43 @@ function onDateChange(event: Event): void {
         <div class="ledger-dashboard-account-viewport" data-testid="ledger-dashboard-account-viewport">
           <div class="ledger-dashboard-account-groups">
             <section class="ledger-dashboard-account-group" data-testid="ledger-dashboard-assets" aria-labelledby="ledger-dashboard-assets-title">
-              <h3 id="ledger-dashboard-assets-title">资产账户</h3>
+              <h3 id="ledger-dashboard-assets-title">
+                <span><i class="is-asset" aria-hidden="true" />资产账户 <small>({{ assetAccounts.length }})</small></span>
+                <strong>{{ formatLedgerMoney(overview.assetTotalMinor, overview.currency) }}</strong>
+              </h3>
               <div v-if="assetAccounts.length" class="ledger-dashboard-accounts">
                 <RouterLink v-for="account in assetAccounts" :key="account.id" class="ledger-dashboard-account" :to="{ name: 'ledger-account', params: { id: account.id } }">
-                  <span>
-                    <strong>{{ account.name }}</strong>
-                    <small>资产 · {{ account.currency }}</small>
+                  <span class="ledger-account-identity">
+                    <span class="ledger-account-icon is-asset" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none"><rect x="5" y="7" width="14" height="12" rx="3"/><path d="M8 7V5h8v2M9 12h6"/></svg>
+                    </span>
+                    <span>
+                      <strong>{{ account.name }}</strong>
+                      <small>资产 · {{ account.currency }}</small>
+                    </span>
                   </span>
-                  <strong>{{ formatLedgerMoney(account.currentBalanceMinor, account.currency) }}</strong>
+                  <strong class="ledger-account-amount">{{ formatLedgerMoney(account.currentBalanceMinor, account.currency) }}</strong>
                 </RouterLink>
               </div>
               <p v-else class="ledger-inline-empty">还没有资产账户。</p>
             </section>
             <section class="ledger-dashboard-account-group" data-testid="ledger-dashboard-liabilities" aria-labelledby="ledger-dashboard-liabilities-title">
-              <h3 id="ledger-dashboard-liabilities-title">负债账户</h3>
+              <h3 id="ledger-dashboard-liabilities-title">
+                <span><i class="is-liability" aria-hidden="true" />负债账户 <small>({{ liabilityAccounts.length }})</small></span>
+                <strong>{{ formatLedgerMoney(overview.liabilityTotalMinor, overview.currency) }}</strong>
+              </h3>
               <div v-if="liabilityAccounts.length" class="ledger-dashboard-accounts">
                 <RouterLink v-for="account in liabilityAccounts" :key="account.id" class="ledger-dashboard-account" :to="{ name: 'ledger-account', params: { id: account.id } }">
-                  <span>
-                    <strong>{{ account.name }}</strong>
-                    <small>负债 · {{ account.currency }}</small>
+                  <span class="ledger-account-identity">
+                    <span class="ledger-account-icon is-liability" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none"><rect x="4" y="6" width="16" height="13" rx="3"/><path d="M4 10h16M8 15h3"/></svg>
+                    </span>
+                    <span>
+                      <strong>{{ account.name }}</strong>
+                      <small>负债 · {{ account.currency }}</small>
+                    </span>
                   </span>
-                  <strong>{{ formatLedgerMoney(account.currentBalanceMinor, account.currency) }}</strong>
+                  <strong class="ledger-account-amount">{{ formatLedgerMoney(account.currentBalanceMinor, account.currency) }}</strong>
                 </RouterLink>
               </div>
               <p v-else class="ledger-inline-empty">还没有负债账户。</p>
@@ -262,12 +309,12 @@ function onDateChange(event: Event): void {
           </div>
           <div class="ledger-breakdown-columns" data-testid="ledger-category-breakdown">
             <div>
-              <h3>收入</h3>
+              <h3><i class="is-income" aria-hidden="true" />收入分类</h3>
               <div v-if="selectedPeriods.income.length" class="ledger-breakdown-list">
                 <div v-for="item in selectedPeriods.income" :key="item.categoryId" class="ledger-breakdown-row">
                   <span class="ledger-breakdown-label">
                     <span class="ledger-breakdown-name">{{ item.name }}</span>
-                    <span class="ledger-breakdown-share"> · {{ categoryShare(selectedPeriods.income, item.amountMinor) }}</span>
+                    <span class="ledger-breakdown-share">{{ categoryShare(selectedPeriods.income, item.amountMinor) }}</span>
                   </span>
                   <strong class="ledger-breakdown-amount">{{ formatLedgerMoney(item.amountMinor, overview.currency) }}</strong>
                   <span class="ledger-breakdown-bar" aria-hidden="true">
@@ -281,12 +328,12 @@ function onDateChange(event: Event): void {
               <p v-else class="ledger-inline-empty">这段期间还没有收入分类。</p>
             </div>
             <div>
-              <h3>支出</h3>
+              <h3><i class="is-expense" aria-hidden="true" />支出分类</h3>
               <div v-if="selectedPeriods.expense.length" class="ledger-breakdown-list">
                 <div v-for="item in selectedPeriods.expense" :key="item.categoryId" class="ledger-breakdown-row">
                   <span class="ledger-breakdown-label">
                     <span class="ledger-breakdown-name">{{ item.name }}</span>
-                    <span class="ledger-breakdown-share"> · {{ categoryShare(selectedPeriods.expense, item.amountMinor) }}</span>
+                    <span class="ledger-breakdown-share">{{ categoryShare(selectedPeriods.expense, item.amountMinor) }}</span>
                   </span>
                   <strong class="ledger-breakdown-amount">{{ formatLedgerMoney(item.amountMinor, overview.currency) }}</strong>
                   <span class="ledger-breakdown-bar" aria-hidden="true">
@@ -311,7 +358,8 @@ function onDateChange(event: Event): void {
             <button class="ledger-link-button" type="button" @click="emit('viewTransactions')">查看全部</button>
           </div>
           <div v-if="overview.recentTransactions.length" class="ledger-recent-list" data-testid="ledger-recent-transactions">
-              <div v-for="transaction in overview.recentTransactions" :key="transaction.id" class="ledger-recent-row">
+            <div v-for="transaction in overview.recentTransactions" :key="transaction.id" class="ledger-recent-row">
+              <span :class="['ledger-recent-icon', `is-${transaction.type}`]" aria-hidden="true">{{ transactionMark(transaction) }}</span>
               <span class="ledger-recent-info"><strong>{{ transactionTitle(transaction) }}</strong><small>{{ transactionMeta(transaction) }} · {{ formatLedgerDateTime(transaction.occurredAt, store.settings.value?.timezone ?? 'UTC') }}</small></span>
               <strong :class="['ledger-recent-amount', `is-${transaction.type}`]">{{ transactionAmount(transaction) }}</strong>
             </div>
@@ -335,8 +383,8 @@ function onDateChange(event: Event): void {
             <h3>{{ periodLabels[period] }}</h3>
             <small v-if="periodSummary(period)">{{ formatLedgerPeriodLabel(period, periodSummary(period)!.startAt, periodSummary(period)!.endAt, store.settings.value?.timezone ?? 'UTC') }}</small>
               <div v-if="periodSummary(period)" class="ledger-period-values">
-                <span>收入 <strong>{{ formatLedgerMoney(periodSummary(period)!.incomeMinor, overview.currency) }}</strong></span>
-                <span>支出 <strong>{{ formatLedgerMoney(periodSummary(period)!.expenseMinor, overview.currency) }}</strong></span>
+                <span>收入 <strong class="is-income">{{ formatLedgerMoney(periodSummary(period)!.incomeMinor, overview.currency) }}</strong></span>
+                <span>支出 <strong class="is-expense">{{ formatLedgerMoney(periodSummary(period)!.expenseMinor, overview.currency) }}</strong></span>
                 <span>收支结余 <strong>{{ formatLedgerSignedMoney(periodSummary(period)!.balanceMinor, overview.currency) }}</strong></span>
               </div>
           </article>
@@ -358,127 +406,873 @@ function onDateChange(event: Event): void {
 </template>
 
 <style scoped>
-.ledger-dashboard { width: min(100%, 1120px); margin: 0 auto; padding: 34px 28px 64px; box-sizing: border-box; }
-.ledger-dashboard-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 24px; margin-bottom: 26px; }
-.ledger-eyebrow { margin: 0 0 6px; color: var(--accent); font-size: .75rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
-.ledger-dashboard-header h1 { margin: 0; color: var(--text-h); font-size: clamp(1.7rem, 3vw, 2.25rem); line-height: 1.2; }
-.ledger-dashboard-header p:not(.ledger-eyebrow) { margin: 8px 0 0; color: var(--text-muted); font-size: .82rem; }
-.ledger-dashboard-actions { display: flex; align-items: center; justify-self: end; flex-wrap: wrap; gap: 9px; margin-left: auto; }
+.ledger-dashboard {
+  --ledger-border: color-mix(in srgb, var(--border) 76%, transparent);
+  --ledger-divider: color-mix(in srgb, var(--border) 58%, transparent);
+  --ledger-surface: color-mix(in srgb, var(--bg-soft) 42%, var(--bg));
+  --ledger-row-hover: color-mix(in srgb, var(--accent) 5%, transparent);
+  --ledger-income: color-mix(in srgb, #15945f 82%, var(--text-h));
+  --ledger-expense: color-mix(in srgb, #dc3f4d 82%, var(--text-h));
+  width: min(100%, 1240px);
+  margin: 0 auto;
+  padding: 42px 28px 72px;
+  box-sizing: border-box;
+}
+
+.ledger-dashboard-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 28px;
+  margin-bottom: 28px;
+}
+
+.ledger-eyebrow {
+  margin: 0 0 7px;
+  color: var(--accent);
+  font-size: .7rem;
+  font-weight: 750;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+
+.ledger-dashboard-header h1 {
+  margin: 0;
+  color: var(--text-h);
+  font-size: clamp(1.85rem, 3vw, 2.35rem);
+  font-weight: 720;
+  letter-spacing: -.035em;
+  line-height: 1.16;
+}
+
+.ledger-dashboard-header p:not(.ledger-eyebrow) {
+  margin: 8px 0 0;
+  color: var(--text-muted);
+  font-size: .78rem;
+}
+
+.ledger-dashboard-actions {
+  display: flex;
+  align-items: center;
+  justify-self: end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .ledger-primary-button,
-.ledger-secondary-button { display: inline-flex; min-height: 39px; align-items: center; justify-content: center; box-sizing: border-box; padding: 7px 14px; border-radius: 7px; font: inherit; font-size: .84rem; font-weight: 650; text-decoration: none; cursor: pointer; }
-.ledger-primary-button { border: 1px solid var(--accent); background: var(--accent); color: #fff; }
+.ledger-secondary-button {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 8px 15px;
+  border-radius: 8px;
+  font: inherit;
+  font-size: .82rem;
+  font-weight: 650;
+  text-decoration: none;
+  cursor: pointer;
+  transition: border-color .16s ease, background-color .16s ease, color .16s ease;
+}
+
+.ledger-primary-button {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
 .ledger-primary-button:hover:not(:disabled) { background: var(--accent-hover); }
-.ledger-secondary-button { border: 1px solid var(--border); background: var(--bg); color: var(--text-h); }
-.ledger-secondary-button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+
+.ledger-secondary-button {
+  border: 1px solid var(--ledger-border);
+  background: color-mix(in srgb, var(--bg) 86%, transparent);
+  color: var(--text-h);
+}
+
+.ledger-secondary-button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--border));
+  color: var(--accent);
+}
+
+.ledger-primary-button:focus-visible,
+.ledger-secondary-button:focus-visible,
+.ledger-link-button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
+  outline-offset: 2px;
+}
+
 .ledger-primary-button:disabled,
-.ledger-secondary-button:disabled { cursor: wait; opacity: .65; }
-.ledger-link-button { padding: 0; border: 0; background: transparent; color: var(--accent); font: inherit; font-size: .78rem; cursor: pointer; }
+.ledger-secondary-button:disabled {
+  cursor: wait;
+  opacity: .62;
+}
+
+.ledger-link-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: .77rem;
+  cursor: pointer;
+}
+
 .ledger-link-button:hover { text-decoration: underline; }
-.ledger-inline-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 16px; padding: 10px 12px; border: 1px solid color-mix(in srgb, #b42318 30%, var(--border)); border-radius: 8px; color: #b42318; font-size: .8rem; }
-.ledger-metric-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-.ledger-metric-card { display: grid; gap: 8px; min-height: 122px; padding: 18px; box-sizing: border-box; border: 1px solid var(--border); border-radius: 11px; background: var(--bg-soft); }
-.ledger-metric-card.is-primary { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); background: color-mix(in srgb, var(--accent) 8%, var(--bg)); }
-.ledger-metric-card span { color: var(--text-muted); font-size: .8rem; }
-.ledger-metric-card strong { color: var(--text-h); font-size: 1.35rem; line-height: 1.2; }
-.ledger-metric-card small { color: var(--text-muted); font-size: .72rem; }
-.ledger-dashboard-section { margin-top: 24px; padding: 20px; border: 1px solid var(--border); border-radius: 11px; background: color-mix(in srgb, var(--bg-soft) 35%, var(--bg)); }
-.ledger-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
-.ledger-section-heading h2 { margin: 0; color: var(--text-h); font-size: 1rem; }
-.ledger-section-heading p { margin: 5px 0 0; color: var(--text-muted); font-size: .76rem; line-height: 1.45; }
-.ledger-section-heading > a { flex: 0 0 auto; color: var(--accent); font-size: .78rem; text-decoration: none; }
+
+.ledger-inline-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 18px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--ledger-expense) 30%, var(--ledger-border));
+  border-radius: 8px;
+  color: var(--ledger-expense);
+  font-size: .8rem;
+}
+
+.ledger-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.ledger-metric-card {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+  min-height: 112px;
+  padding: 18px 20px;
+  box-sizing: border-box;
+  border: 1px solid var(--ledger-border);
+  border-radius: 12px;
+  background: var(--ledger-surface);
+}
+
+.ledger-metric-card.is-primary {
+  border-color: color-mix(in srgb, var(--accent) 54%, var(--ledger-border));
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg));
+}
+
+.ledger-metric-icon {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-soft));
+  color: color-mix(in srgb, var(--accent) 76%, var(--text-h));
+}
+
+.ledger-metric-card.is-primary .ledger-metric-icon {
+  background: color-mix(in srgb, var(--accent) 20%, var(--bg));
+}
+
+.ledger-metric-icon svg {
+  width: 25px;
+  height: 25px;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.ledger-metric-copy {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.ledger-metric-copy > span {
+  color: var(--text-muted);
+  font-size: .76rem;
+}
+
+.ledger-metric-copy strong {
+  overflow: hidden;
+  color: var(--text-h);
+  font-size: clamp(1.25rem, 2vw, 1.55rem);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.02em;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ledger-metric-copy small {
+  color: var(--text-muted);
+  font-size: .7rem;
+}
+
+.ledger-dashboard-section {
+  margin-top: 22px;
+  padding: 20px;
+  border: 1px solid var(--ledger-border);
+  border-radius: 12px;
+  background: var(--ledger-surface);
+}
+
+.ledger-section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 15px;
+}
+
+.ledger-section-heading h2 {
+  margin: 0;
+  color: var(--text-h);
+  font-size: 1rem;
+  font-weight: 680;
+  letter-spacing: -.01em;
+}
+
+.ledger-section-heading p {
+  margin: 5px 0 0;
+  color: var(--text-muted);
+  font-size: .73rem;
+  line-height: 1.45;
+}
+
+.ledger-section-heading > a {
+  flex: 0 0 auto;
+  color: var(--accent);
+  font-size: .77rem;
+  text-decoration: none;
+}
+
+.ledger-section-heading > a::after { content: ' →'; }
+
 .ledger-period-heading { align-items: flex-start; }
 .ledger-period-heading-copy { min-width: 0; }
-.ledger-period-toolbar { display: flex; flex: 0 1 auto; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
-.ledger-period-toolbar input,
-.ledger-period-toolbar select { min-height: 34px; box-sizing: border-box; padding: 5px 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg); color: var(--text-h); font: inherit; font-size: .8rem; }
-.ledger-period-toolbar input { width: 150px; }
-.ledger-period-toolbar select { width: 100px; }
-.ledger-period-toolbar input:focus,
-.ledger-period-toolbar select:focus { border-color: var(--accent); outline: 2px solid color-mix(in srgb, var(--accent) 25%, transparent); outline-offset: 1px; }
-.ledger-historical-hint { margin: 5px 0 0; color: var(--text-muted); font-size: .76rem; line-height: 1.45; }
-.ledger-period-analysis-loading { display: grid; min-height: 160px; margin-top: 24px; place-items: center; border: 1px dashed var(--border); border-radius: 11px; color: var(--text-muted); font-size: .82rem; }
-.ledger-dashboard-account-viewport { max-height: 280px; overflow-y: auto; overscroll-behavior: contain; }
-.ledger-dashboard-account-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-.ledger-dashboard-account-group { min-width: 0; }
-.ledger-dashboard-account-group h3 { margin: 0 0 5px; color: var(--text-muted); font-size: .78rem; }
-.ledger-dashboard-accounts { display: grid; }
-.ledger-dashboard-account { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 52px; padding: 8px 10px; border-bottom: 1px solid var(--border); color: inherit; text-decoration: none; }
-.ledger-dashboard-account:last-child { border-bottom: 0; }
-.ledger-dashboard-account:hover { background: color-mix(in srgb, var(--accent) 5%, transparent); }
-.ledger-dashboard-account:focus-visible { position: relative; z-index: 1; border-radius: 6px; outline: 2px solid var(--accent); outline-offset: -2px; }
-.ledger-dashboard-account > span { display: grid; gap: 3px; min-width: 0; }
-.ledger-dashboard-account strong { overflow: hidden; color: var(--text-h); font-size: .85rem; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
-.ledger-dashboard-account small { color: var(--text-muted); font-size: .73rem; }
-.ledger-cashflow-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-.ledger-cashflow-grid > div { display: grid; gap: 5px; padding: 12px; border-radius: 8px; background: var(--bg-soft); }
-.ledger-cashflow-grid span { color: var(--text-muted); font-size: .75rem; }
-.ledger-cashflow-grid strong { color: var(--text-h); font-size: 1rem; font-variant-numeric: tabular-nums; }
-.ledger-cashflow-grid .is-income { color: #18794e; }
-.ledger-cashflow-grid .is-expense { color: #b42318; }
-.ledger-dashboard-two-column { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 14px; margin-top: 20px; }
-.ledger-dashboard-two-column .ledger-dashboard-section { min-width: 0; margin-top: 0; }
-.ledger-breakdown-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-.ledger-breakdown-columns h3 { margin: 0 0 8px; color: var(--text-muted); font-size: .78rem; }
-.ledger-breakdown-list { display: grid; gap: 9px; }
-.ledger-breakdown-row { display: flex; flex-wrap: wrap; min-width: 0; align-items: center; justify-content: space-between; gap: 5px 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border); font-size: .8rem; }
-.ledger-breakdown-label { display: flex; min-width: 0; overflow: hidden; }
-.ledger-breakdown-name { overflow: hidden; color: var(--text); text-overflow: ellipsis; white-space: nowrap; }
-.ledger-breakdown-share { flex: 0 0 auto; color: var(--text-muted); font-weight: 400; white-space: nowrap; }
-.ledger-breakdown-amount { flex: 0 0 auto; color: var(--text-h); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
-/* Assists the share label — it never replaces it, so it stays thin and quiet. */
-.ledger-breakdown-bar { flex: 0 0 100%; overflow: hidden; height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--text-muted) 16%, transparent); }
-.ledger-breakdown-bar-fill { display: block; height: 100%; border-radius: 2px; }
-.ledger-breakdown-bar-fill.is-income { background: color-mix(in srgb, #18794e 78%, transparent); }
-.ledger-breakdown-bar-fill.is-expense { background: color-mix(in srgb, #b42318 78%, transparent); }
-.ledger-inline-empty { margin: 0; color: var(--text-muted); font-size: .78rem; line-height: 1.45; }
-.ledger-inline-empty:has(button) { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.ledger-recent-list { display: grid; gap: 0; }
-.ledger-recent-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 57px; border-bottom: 1px solid var(--border); }
-.ledger-recent-row:last-child { border-bottom: 0; }
-.ledger-recent-info { display: grid; gap: 3px; min-width: 0; }
-.ledger-recent-info strong { overflow: hidden; color: var(--text-h); font-size: .82rem; text-overflow: ellipsis; white-space: nowrap; }
-.ledger-recent-info small { overflow: hidden; color: var(--text-muted); font-size: .7rem; text-overflow: ellipsis; white-space: nowrap; }
-.ledger-recent-amount { flex: 0 0 auto; color: var(--text-h); font-size: .83rem; font-variant-numeric: tabular-nums; }
-.ledger-recent-amount.is-income { color: #18794e; }
-.ledger-recent-amount.is-expense { color: #b42318; }
-.ledger-period-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; }
-.ledger-period-card { display: grid; gap: 7px; min-height: 100px; padding: 4px 16px; border-left: 1px solid var(--border); }
-.ledger-period-card:first-child { padding-left: 0; border-left: 0; }
-.ledger-period-card:last-child { padding-right: 0; }
-.ledger-period-card h3 { margin: 0; color: var(--text-h); font-size: .82rem; }
-.ledger-period-card small { color: var(--text-muted); font-size: .68rem; }
-.ledger-period-values { display: grid; gap: 3px; margin-top: auto; color: var(--text-muted); font-size: .7rem; }
-.ledger-period-values span { display: flex; justify-content: space-between; gap: 7px; }
-.ledger-period-values strong { color: var(--text-h); font-size: .75rem; font-variant-numeric: tabular-nums; }
-@media (max-width: 760px) {
-  .ledger-dashboard { padding: 28px 16px 48px; }
-  .ledger-dashboard-header { grid-template-columns: 1fr; align-items: stretch; }
-  .ledger-dashboard-actions { justify-self: stretch; margin-left: 0; }
-  .ledger-dashboard-actions > * { flex: 1 1 150px; }
-  .ledger-metric-grid,
-  .ledger-dashboard-account-groups,
-  .ledger-dashboard-two-column { grid-template-columns: 1fr; }
-  .ledger-cashflow-grid { grid-template-columns: 1fr; }
-  .ledger-dashboard-two-column { row-gap: 16px; }
-  .ledger-dashboard-two-column .ledger-dashboard-section { margin-top: 0; }
-  .ledger-dashboard-account-viewport { max-height: 360px; }
-  .ledger-period-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .ledger-period-card:nth-child(odd) { padding-left: 0; border-left: 0; }
-  .ledger-period-card:nth-child(even) { padding-right: 0; }
-  .ledger-period-card:nth-child(n + 3) { padding-top: 16px; border-top: 1px solid var(--border); }
-  .ledger-period-heading { flex-direction: column; }
-  .ledger-period-toolbar { width: 100%; justify-content: flex-start; }
+
+.ledger-period-toolbar {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
 }
-@media (max-width: 420px) {
-  .ledger-dashboard-section { padding: 16px 13px; }
-  .ledger-breakdown-columns { grid-template-columns: 1fr; gap: 18px; }
+
+.ledger-period-toolbar input,
+.ledger-period-toolbar select {
+  min-height: 36px;
+  box-sizing: border-box;
+  padding: 6px 10px;
+  border: 1px solid var(--ledger-border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 86%, transparent);
+  color: var(--text-h);
+  font: inherit;
+  font-size: .78rem;
+}
+
+.ledger-period-toolbar input { width: 148px; }
+.ledger-period-toolbar select { width: 96px; }
+
+.ledger-period-toolbar input:focus,
+.ledger-period-toolbar select:focus {
+  border-color: var(--accent);
+  outline: 2px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  outline-offset: 1px;
+}
+
+.ledger-historical-hint {
+  margin: 5px 0 0;
+  color: var(--text-muted);
+  font-size: .73rem;
+  line-height: 1.45;
+}
+
+.ledger-period-analysis-loading {
+  display: grid;
+  min-height: 150px;
+  margin-top: 20px;
+  place-items: center;
+  border: 1px dashed var(--ledger-border);
+  border-radius: 10px;
+  color: var(--text-muted);
+  font-size: .8rem;
+}
+
+.ledger-cashflow-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.ledger-cashflow-grid > div {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-height: 64px;
+  padding: 4px 22px;
+  border-left: 1px solid var(--ledger-divider);
+}
+
+.ledger-cashflow-grid > div:first-child {
+  padding-left: 2px;
+  border-left: 0;
+}
+
+.ledger-cashflow-grid > div:last-child { padding-right: 2px; }
+
+.ledger-cashflow-mark {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 11%, var(--bg));
+  color: var(--accent);
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.ledger-cashflow-mark.is-income {
+  background: color-mix(in srgb, var(--ledger-income) 13%, var(--bg));
+  color: var(--ledger-income);
+}
+
+.ledger-cashflow-mark.is-expense {
+  background: color-mix(in srgb, var(--ledger-expense) 13%, var(--bg));
+  color: var(--ledger-expense);
+}
+
+.ledger-cashflow-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.ledger-cashflow-copy > span {
+  color: var(--text-muted);
+  font-size: .73rem;
+}
+
+.ledger-cashflow-copy strong {
+  overflow: hidden;
+  color: var(--text-h);
+  font-size: 1.12rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ledger-cashflow-grid .is-income { color: var(--ledger-income); }
+.ledger-cashflow-grid .is-expense { color: var(--ledger-expense); }
+
+.ledger-dashboard-account-viewport {
+  max-height: 280px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: color-mix(in srgb, var(--text-muted) 34%, transparent) transparent;
+  scrollbar-width: thin;
+}
+
+.ledger-dashboard-account-groups {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 26px;
+}
+
+.ledger-dashboard-account-group {
+  min-width: 0;
+  padding-right: 2px;
+}
+
+.ledger-dashboard-account-group + .ledger-dashboard-account-group {
+  padding-left: 26px;
+  border-left: 1px solid var(--ledger-divider);
+}
+
+.ledger-dashboard-account-group h3 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 0 0 5px;
+  padding: 0 10px 8px;
+  color: var(--text-muted);
+  font-size: .75rem;
+  font-weight: 550;
+}
+
+.ledger-dashboard-account-group h3 > span {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+}
+
+.ledger-dashboard-account-group h3 i,
+.ledger-breakdown-columns h3 i {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+}
+
+.ledger-dashboard-account-group h3 i.is-asset,
+.ledger-breakdown-columns h3 i.is-income { background: var(--ledger-income); }
+
+.ledger-dashboard-account-group h3 i.is-liability,
+.ledger-breakdown-columns h3 i.is-expense { background: var(--ledger-expense); }
+
+.ledger-dashboard-account-group h3 small {
+  color: var(--text-muted);
+  font: inherit;
+}
+
+.ledger-dashboard-account-group h3 > strong {
+  overflow: hidden;
+  color: var(--text-h);
+  font-size: .76rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ledger-dashboard-accounts { display: grid; }
+
+.ledger-dashboard-account {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 54px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--ledger-divider);
+  color: inherit;
+  text-decoration: none;
+  transition: background-color .14s ease;
+}
+
+.ledger-dashboard-account:last-child { border-bottom: 0; }
+.ledger-dashboard-account:hover { background: var(--ledger-row-hover); }
+
+.ledger-dashboard-account:focus-visible {
+  position: relative;
+  z-index: 1;
+  border-radius: 7px;
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.ledger-account-identity {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.ledger-account-identity > span:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.ledger-account-icon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 11%, var(--bg));
+  color: var(--accent);
+}
+
+.ledger-account-icon.is-asset {
+  background: color-mix(in srgb, var(--ledger-income) 10%, var(--bg));
+  color: var(--ledger-income);
+}
+
+.ledger-account-icon.is-liability {
+  background: color-mix(in srgb, var(--ledger-expense) 10%, var(--bg));
+  color: var(--ledger-expense);
+}
+
+.ledger-account-icon svg {
+  width: 17px;
+  height: 17px;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.ledger-account-identity strong,
+.ledger-account-amount {
+  overflow: hidden;
+  color: var(--text-h);
+  font-size: .81rem;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ledger-account-identity small {
+  color: var(--text-muted);
+  font-size: .69rem;
+}
+
+.ledger-account-amount {
+  flex: 0 0 auto;
+  font-weight: 650;
+}
+
+.ledger-dashboard-two-column {
+  display: grid;
+  grid-template-columns: minmax(0, 1.04fr) minmax(0, .96fr);
+  gap: 14px;
+  margin-top: 22px;
+}
+
+.ledger-dashboard-two-column .ledger-dashboard-section {
+  min-width: 0;
+  margin-top: 0;
+}
+
+.ledger-breakdown-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.ledger-breakdown-columns > div + div {
+  padding-left: 20px;
+  border-left: 1px solid var(--ledger-divider);
+}
+
+.ledger-breakdown-columns h3 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 12px;
+  color: var(--text-muted);
+  font-size: .75rem;
+  font-weight: 600;
+}
+
+.ledger-breakdown-list {
+  display: grid;
+  gap: 12px;
+}
+
+.ledger-breakdown-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-width: 0;
+  align-items: center;
+  gap: 7px 12px;
+  font-size: .77rem;
+}
+
+.ledger-breakdown-label {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.ledger-breakdown-name {
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ledger-breakdown-share {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: .69rem;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.ledger-breakdown-amount {
+  flex: 0 0 auto;
+  color: var(--text-h);
+  font-size: .76rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.ledger-breakdown-bar {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  height: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-muted) 13%, transparent);
+}
+
+.ledger-breakdown-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+}
+
+.ledger-breakdown-bar-fill.is-income { background: var(--ledger-income); }
+.ledger-breakdown-bar-fill.is-expense { background: var(--ledger-expense); }
+
+.ledger-inline-empty {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: .77rem;
+  line-height: 1.45;
+}
+
+.ledger-inline-empty:has(button) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ledger-recent-list { display: grid; }
+
+.ledger-recent-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 58px;
+  border-bottom: 1px solid var(--ledger-divider);
+}
+
+.ledger-recent-row:last-child { border-bottom: 0; }
+
+.ledger-recent-icon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 11%, var(--bg));
+  color: var(--accent);
+  font-size: .94rem;
+  font-weight: 700;
+}
+
+.ledger-recent-icon.is-income {
+  background: color-mix(in srgb, var(--ledger-income) 11%, var(--bg));
+  color: var(--ledger-income);
+}
+
+.ledger-recent-icon.is-expense {
+  background: color-mix(in srgb, var(--ledger-expense) 11%, var(--bg));
+  color: var(--ledger-expense);
+}
+
+.ledger-recent-info {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.ledger-recent-info strong {
+  overflow: hidden;
+  color: var(--text-h);
+  font-size: .8rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ledger-recent-info small {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: .67rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ledger-recent-amount {
+  flex: 0 0 auto;
+  color: var(--text-h);
+  font-size: .8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.ledger-recent-amount.is-income { color: var(--ledger-income); }
+.ledger-recent-amount.is-expense { color: var(--ledger-expense); }
+
+.ledger-period-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.ledger-period-card {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  min-height: 100px;
+  padding: 2px 22px;
+  border-left: 1px solid var(--ledger-divider);
+}
+
+.ledger-period-card:first-child {
+  padding-left: 0;
+  border-left: 0;
+}
+
+.ledger-period-card:last-child { padding-right: 0; }
+
+.ledger-period-card h3 {
+  margin: 0;
+  color: var(--text-h);
+  font-size: .8rem;
+  font-weight: 650;
+}
+
+.ledger-period-card small {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: .65rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ledger-period-values {
+  display: grid;
+  gap: 4px;
+  margin-top: auto;
+  color: var(--text-muted);
+  font-size: .68rem;
+}
+
+.ledger-period-values span {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ledger-period-values strong {
+  color: var(--text-h);
+  font-size: .71rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.ledger-period-values strong.is-income { color: var(--ledger-income); }
+.ledger-period-values strong.is-expense { color: var(--ledger-expense); }
+
+@media (max-width: 960px) {
+  .ledger-metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ledger-metric-card.is-primary { grid-column: 1 / -1; }
+  .ledger-dashboard-two-column { grid-template-columns: 1fr; row-gap: 14px; }
+  .ledger-period-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ledger-period-card:nth-child(odd) {
+    padding-left: 0;
+    border-left: 0;
+  }
+  .ledger-period-card:nth-child(even) { padding-right: 0; }
+  .ledger-period-card:nth-child(n + 3) {
+    padding-top: 18px;
+    border-top: 1px solid var(--ledger-divider);
+  }
+}
+
+@media (max-width: 760px) {
+  .ledger-dashboard { padding: 30px 16px 52px; }
+  .ledger-dashboard-header {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+    gap: 20px;
+  }
+  .ledger-dashboard-actions {
+    justify-self: stretch;
+    margin-left: 0;
+  }
+  .ledger-dashboard-actions > * { flex: 1 1 140px; }
+  .ledger-dashboard-account-groups { grid-template-columns: 1fr; gap: 18px; }
+  .ledger-dashboard-account-group + .ledger-dashboard-account-group {
+    padding: 18px 2px 0 0;
+    border-top: 1px solid var(--ledger-divider);
+    border-left: 0;
+  }
+  .ledger-dashboard-account-viewport { max-height: 360px; }
+  .ledger-period-heading { flex-direction: column; }
+  .ledger-period-toolbar {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 620px) {
+  .ledger-metric-grid { grid-template-columns: 1fr; }
+  .ledger-metric-card.is-primary { grid-column: auto; }
+  .ledger-dashboard-section { padding: 17px 15px; }
+  .ledger-cashflow-grid { grid-template-columns: 1fr; }
+  .ledger-cashflow-grid > div {
+    min-height: 60px;
+    padding: 12px 2px;
+    border-top: 1px solid var(--ledger-divider);
+    border-left: 0;
+  }
+  .ledger-cashflow-grid > div:first-child {
+    padding-top: 4px;
+    border-top: 0;
+  }
+  .ledger-cashflow-grid > div:last-child { padding-bottom: 4px; }
+  .ledger-breakdown-columns { grid-template-columns: 1fr; gap: 20px; }
+  .ledger-breakdown-columns > div + div {
+    padding: 20px 0 0;
+    border-top: 1px solid var(--ledger-divider);
+    border-left: 0;
+  }
+}
+
+@media (max-width: 440px) {
+  .ledger-dashboard-header h1 { font-size: 1.75rem; }
+  .ledger-metric-card {
+    grid-template-columns: 42px minmax(0, 1fr);
+    padding: 16px;
+  }
+  .ledger-metric-icon {
+    width: 42px;
+    height: 42px;
+  }
   .ledger-period-grid { grid-template-columns: 1fr; }
   .ledger-period-card,
   .ledger-period-card:nth-child(odd),
-  .ledger-period-card:nth-child(even) { padding: 12px 0; border-top: 1px solid var(--border); border-left: 0; }
-  .ledger-period-card:first-child { padding-top: 0; border-top: 0; }
+  .ledger-period-card:nth-child(even) {
+    padding: 14px 0;
+    border-top: 1px solid var(--ledger-divider);
+    border-left: 0;
+  }
+  .ledger-period-card:first-child {
+    padding-top: 0;
+    border-top: 0;
+  }
   .ledger-period-card:last-child { padding-bottom: 0; }
-  .ledger-period-toolbar input { flex: 1 1 140px; min-width: 0; width: auto; max-width: 150px; }
-  .ledger-period-toolbar select { flex: 1 1 100px; min-width: 0; width: auto; max-width: 120px; }
+  .ledger-period-toolbar input {
+    flex: 1 1 142px;
+    min-width: 0;
+    width: auto;
+  }
+  .ledger-period-toolbar select {
+    flex: 1 1 96px;
+    min-width: 0;
+    width: auto;
+  }
+  .ledger-recent-row {
+    grid-template-columns: 30px minmax(0, 1fr) auto;
+    gap: 8px;
+  }
+  .ledger-recent-icon {
+    width: 29px;
+    height: 29px;
+  }
+  .ledger-recent-amount { font-size: .74rem; }
 }
 </style>

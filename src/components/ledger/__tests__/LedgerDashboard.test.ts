@@ -277,6 +277,9 @@ describe('Ledger live dashboard', () => {
 
     expect(wrapper.findAll('[data-testid="ledger-dashboard-accounts"]')).toHaveLength(1)
     expect(wrapper.find('[data-testid="ledger-dashboard-account-viewport"]').exists()).toBe(true)
+    expect(wrapper.findAll('.ledger-dashboard-actions')).toHaveLength(1)
+    expect(wrapper.findAll('[data-testid="ledger-record-button"]')).toHaveLength(1)
+    expect(wrapper.findAll('.ledger-metric-card')).toHaveLength(3)
 
     const sectionOrder = [
       wrapper.get('.ledger-metric-grid').element,
@@ -295,6 +298,8 @@ describe('Ledger live dashboard', () => {
     expect(accountLinks).toHaveLength(1)
     expect(accountLinks[0].classes()).toContain('ledger-dashboard-account')
     expect(accountLinks[0].classes()).not.toContain('ledger-account-card')
+    expect(wrapper.get('#ledger-dashboard-assets-title').text()).toContain('¥9,962.00')
+    expect(wrapper.get('#ledger-dashboard-liabilities-title').text()).toContain('¥0.00')
 
     const periodItems = wrapper.get('[data-testid="ledger-period-summaries"]').findAll('article')
     expect(periodItems).toHaveLength(4)
@@ -517,15 +522,18 @@ describe('Ledger live dashboard', () => {
     await flushPromises()
 
     const incomeRows = wrapper.get('[data-testid="ledger-category-breakdown"]').findAll('.ledger-breakdown-row')
-    expect(incomeRows[0].get('.ledger-breakdown-label').text()).toBe('工资 · 98%')
+    expect(incomeRows[0].get('.ledger-breakdown-name').text()).toBe('工资')
+    expect(incomeRows[0].get('.ledger-breakdown-share').text()).toBe('98%')
     expect(incomeRows[0].get('.ledger-breakdown-amount').text()).toBe('¥5,000.00')
     expect(incomeRows[0].get('.ledger-breakdown-amount').text()).not.toContain('98%')
-    expect(incomeRows[1].get('.ledger-breakdown-label').text()).toBe('兼职 · 2%')
+    expect(incomeRows[1].get('.ledger-breakdown-name').text()).toBe('兼职')
+    expect(incomeRows[1].get('.ledger-breakdown-share').text()).toBe('2%')
     expect(incomeRows[1].get('.ledger-breakdown-amount').text()).toBe('¥100.00')
     expect(incomeRows[1].get('.ledger-breakdown-amount').text()).not.toContain('2%')
 
     const expenseRows = wrapper.get('[data-testid="ledger-category-breakdown"]').findAll('.ledger-breakdown-row')
-    expect(expenseRows[2].get('.ledger-breakdown-label').text()).toBe('餐饮 · 100%')
+    expect(expenseRows[2].get('.ledger-breakdown-name').text()).toBe('餐饮')
+    expect(expenseRows[2].get('.ledger-breakdown-share').text()).toBe('100%')
     expect(expenseRows[2].get('.ledger-breakdown-amount').text()).toBe('¥52.90')
     expect(expenseRows[2].get('.ledger-breakdown-amount').text()).not.toContain('100%')
   })
@@ -612,10 +620,13 @@ describe('Ledger live dashboard', () => {
     expect(rows).toHaveLength(3)
 
     // Sort order, name, share and amount all stay exactly where they were.
-    expect(rows.map((row) => row.get('.ledger-breakdown-label').text())).toEqual([
-      '工资 · 98%',
-      '兼职 · 2%',
-      '餐饮 · 100%',
+    expect(rows.map((row) => [
+      row.get('.ledger-breakdown-name').text(),
+      row.get('.ledger-breakdown-share').text(),
+    ])).toEqual([
+      ['工资', '98%'],
+      ['兼职', '2%'],
+      ['餐饮', '100%'],
     ])
     expect(rows.map((row) => row.get('.ledger-breakdown-amount').text())).toEqual([
       '¥5,000.00',
@@ -649,7 +660,8 @@ describe('Ledger live dashboard', () => {
     await flushPromises()
 
     const row = wrapper.get('[data-testid="ledger-category-breakdown"]').get('.ledger-breakdown-row')
-    expect(row.get('.ledger-breakdown-label').text()).toBe('餐饮 · 0%')
+    expect(row.get('.ledger-breakdown-name').text()).toBe('餐饮')
+    expect(row.get('.ledger-breakdown-share').text()).toBe('0%')
     expect(row.get('.ledger-breakdown-bar-fill').attributes('style')).toBe('width: 0%;')
   })
 

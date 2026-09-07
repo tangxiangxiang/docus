@@ -119,12 +119,16 @@ test('real Ledger onboarding and expense survive dashboard refresh', async ({ pa
   await page.getByRole('button', { name: '创建账户并继续' }).click()
 
   await expect(page.getByTestId('ledger-dashboard')).toBeVisible()
+  await expect(page.locator('.ledger-dashboard-actions')).toHaveCount(1)
+  await expect(page.getByTestId('ledger-record-button')).toHaveCount(1)
+  await expect(page.locator('.ledger-metric-card')).toHaveCount(3)
   await expect(page.getByRole('heading', { name: '本月收支' })).toBeVisible()
   await expect(page.getByTestId('ledger-period-date')).toHaveValue(Temporal.Now.plainDateISO('Asia/Shanghai').toString())
   await expect(page.getByRole('combobox', { name: '选择收支期间' })).toHaveValue('month')
   await expect(page.locator('.ledger-period-navigation')).toHaveCount(0)
   await expect(page.getByTestId('ledger-dashboard-accounts')).toContainText('招商银行')
   await expect(page.getByTestId('ledger-dashboard-account-viewport')).toBeVisible()
+  await expect(page.getByTestId('ledger-dashboard-account-viewport')).toHaveCSS('max-height', '280px')
   await expect(page.getByTestId('ledger-total-assets')).toContainText('¥10,000.00')
   await expect(page.getByTestId('ledger-net-worth')).toContainText('¥10,000.00')
 
@@ -138,6 +142,9 @@ test('real Ledger onboarding and expense survive dashboard refresh', async ({ pa
   await expect(page.getByRole('dialog')).toBeHidden()
   await expect(page.getByTestId('ledger-recent-transactions')).toContainText('餐饮')
   await expect(page.getByTestId('ledger-recent-transactions')).toContainText('-¥38.00')
+  await expect(page.locator('.ledger-breakdown-columns > div')).toHaveCount(2)
+  await expect(page.getByRole('heading', { name: '收入分类' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '支出分类' })).toBeVisible()
   await expect(page.getByTestId('ledger-total-assets')).toContainText('¥9,962.00')
   await expect(page.getByTestId('ledger-net-worth')).toContainText('¥9,962.00')
   for (const period of ['today', 'week', 'month', 'year']) {
