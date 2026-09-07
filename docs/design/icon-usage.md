@@ -1,6 +1,30 @@
 # Icon Usage
 
-Use icons by meaning, not by shape alone. The source file is the inventory; this page defines stable semantic distinctions so component changes do not make the documentation stale.
+Use icons by meaning, not by shape alone. New functional icons come from the single
+approved `@vicons/tabler` family through `NIcon`; this page defines stable semantic
+distinctions so component changes do not make the documentation stale.
+
+During incremental migration, the source file `src/components/vault/icons.ts` is a
+legacy inventory for existing consumers only. New surfaces must not add to it by
+default.
+
+## Target functional vocabulary
+
+| Docus meaning | Approved Tabler candidate |
+| --- | --- |
+| Search | `Search` |
+| Settings | `Settings` |
+| Add / create | `Plus` or a more specific `*Plus` glyph |
+| Delete | `Trash` |
+| Edit | `Pencil` |
+| Calendar | `Calendar` |
+| Account | `User` |
+| History | `History` |
+| Close | `X` |
+| Confirm | `Check` |
+
+The candidate name is a semantic starting point, not permission to mix families.
+Confirm the glyph's meaning and accessible label at the consuming surface.
 
 ## Current surface mapping
 
@@ -65,10 +89,14 @@ Some exports describe coherent future controls or file types and have no current
 ## Review checklist
 
 - The icon conveys the same concept everywhere it appears.
+- New functional glyphs are imported from `@vicons/tabler` and rendered through
+  `NIcon` where a Naive UI control is involved.
 - The control has a text label, `aria-label`, or equivalent accessible name.
 - Decorative SVG remains `aria-hidden`.
 - Hover, focus, active, disabled, and danger states come from the consuming component.
 - Theme and status color flow through `currentColor` or CSS tokens.
-- The icon contract tests pass, and no new repository-lint findings are introduced beyond the known brand-constellation classification issue in [Icon System](icon-system.md#known-lint-debt).
+- No new hand-written functional SVG or copied path was added.
+- Existing legacy icon contract tests pass, and no new repository-lint findings are
+  introduced beyond documented brand/generated exceptions in [Icon System](icon-system.md).
 
 See [Icon System](icon-system.md) for geometry and exception rules.

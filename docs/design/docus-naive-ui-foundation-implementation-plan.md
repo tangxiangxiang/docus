@@ -2,10 +2,10 @@
 
 **日期：** 2026-09-07
 **模块：** Global UI Foundation
-**状态：** Implementation Review: PASS — Ready for Implementation
+**状态：** Implementation Review: PASS — Phase 0 local PASS; CI handoff ready; Icon Foundation Amendment: Accepted
 **类型：** Architecture / UI Foundation Refactor
 **优先级：** P1
-**基线：** main @ e8a427f53a1df2492f94472a02ef9fde26fe6923
+**基线：** main @ 9c65f7aa84c45fba33fd7b586ce042f57366d14c
 
 ---
 
@@ -63,7 +63,7 @@ Workspace IA 不变
 Authoritative starting HEAD：
 
 ```text
-e8a427f53a1df2492f94472a02ef9fde26fe6923
+9c65f7aa84c45fba33fd7b586ce042f57366d14c
 ```
 
 当前基础设施：
@@ -74,11 +74,13 @@ Vite         ^8.0.12
 TypeScript   ~6.0.2
 Vitest       ^4.1.8
 Playwright   ^1.61.1
+Naive UI     2.45.3 (exact pin; Phase 0 PASS)
+@vicons/tabler 0.13.0 (exact pin; Phase 0 PASS)
 ```
 
-当前没有 `naive-ui`。
-
-截至本计划编写时，Naive UI 当前 npm `latest` 为 `2.45.3`；[Naive UI documentation](https://www.naiveui.com/) 与 [Naive UI npm package](https://www.npmjs.com/package/naive-ui) 均支持按需导入、tree-shaking 和类型安全的 theme override。Phase 0 将以 **2.45.3 作为 exact-pinned candidate dependency** 进行 compatibility spike；依赖和 lockfile 在 Phase 0 提交并由 CI 复现。
+本 amendment 已将 `naive-ui@2.45.3` 和 `@vicons/tabler@0.13.0` exact-pin 写入
+`package.json` 与 `package-lock.json`，并由 `npm ci` 成功复现；Phase 1 消费同一
+exact pin，不重新选择版本。
 
 ---
 
@@ -178,25 +180,32 @@ Phase 0 不做正式 Workspace migration。
 5. 全局 focus-visible 是否与 Naive focus style 冲突
 6. Locale / DateLocale bridge 是否与 `useI18n().locale` 同步
 7. Bundle / test / build 是否在可接受范围
+8. `NIcon + @vicons/tabler` 是否满足 render、currentColor、size、alignment 和 a11y
+9. 是否可以冻结单一 approved functional icon family
 ```
 
 ---
 
 ## 4.2 Spike dependency
 
-Phase 0 正式提交 candidate dependency：
+Phase 0 已提交并验证 candidate dependency：
 
 ```bash
-npm install --save-exact naive-ui@2.45.3
+npm install --save-exact naive-ui@2.45.3 @vicons/tabler@0.13.0
 ```
 
 禁止：
 
 ```json
-"naive-ui": "^2.45.3"
+"naive-ui": "^2.45.3",
+"@vicons/tabler": "^0.13.0"
 ```
 
-Phase 0 的 dependency、`package-lock.json` 和 compatibility evidence 必须可提交、可回滚、可由 `npm ci` 确定性复现。若 Spike FAIL，revert Phase 0 commit(s) 即可回到没有 Naive UI dependency 的状态；不得以未写入项目 manifest / lockfile 的临时安装成功作为通过条件。Phase 1 consumes the exact-pinned dependency already validated in Phase 0，不重复安装依赖。
+上述命令已执行。Phase 0 的 dependency、`package-lock.json` 和 compatibility
+evidence 可提交、可回滚、可由 `npm ci` 确定性复现。若后续需要回滚，revert Phase 0
+commit(s) 即可回到没有 Naive UI / Vicons dependency 的状态；不得以未写入项目
+manifest / lockfile 的临时安装成功作为通过条件。Phase 1 将消费已验证的 exact-pinned
+dependencies，不重复安装依赖。
 
 ---
 
@@ -211,6 +220,8 @@ NInput
 NSelect
 NDialogProvider
 NMessageProvider
+NNotificationProvider
+NIcon + Tabler Search / Plus / Calendar
 ```
 
 验证：
@@ -235,7 +246,51 @@ Light
 产生第二套 theme state
 ```
 
-## 4.4 Locale / DateLocale Spike
+## 4.4 Icon Foundation Spike
+
+Functional icon compatibility 与 Naive UI provider compatibility 已在同一个
+test-only fixture 中验证：
+
+```vue
+<NButton>
+  <template #icon>
+    <NIcon aria-hidden="true" :size="18">
+      <Search />
+    </NIcon>
+  </template>
+  Search
+</NButton>
+```
+
+Phase 0 fixture 使用：
+
+```text
+src/ui/__tests__/fixtures/NaiveUiFoundationSpike.vue
+src/ui/__tests__/naive-ui-foundation-spike.test.ts
+```
+
+必须通过：
+
+```text
+Tabler SVG renders on its 24×24 outline grid
+NIcon size aligns with NButton icon slot and standalone usage
+Tabler currentColor remains inherited from the consuming control
+icon-only control has an accessible name
+decorative icon is aria-hidden
+no Docus SVG path is copied into the fixture
+Vue SSR renderToString compatibility
+```
+
+fixture 以 `@vicons/tabler@0.13.0` 的真实 TypeScript exports 为准，覆盖 Search、Plus、
+Settings 和 Calendar，并在 test-only fixture 中验证 `NIcon` 的 button slot、standalone icon
+和 accessibility。后续 production mapping 仍必须在实际迁移前确认 Settings、Trash、
+Folder、File、Chevron、Check、Alert/Warning 等具体 export；不得把猜测名称写入
+production code。Phase 0 同时记录 theme mapping 的实际边界：Naive UI 部分派生颜色
+字段会交给 `seemly` 解析，不能直接接收 CSS `var()`；raw surface fields 可以直接
+消费 CSS custom properties。Implementation Plan 只允许为前者保留最小、受控且可追溯
+的 TS color mirror，不得把它扩展成第二套 Docus token authority。该验证结果为 PASS。
+
+## 4.5 Locale / DateLocale Spike
 
 现有 `useI18n().locale`（`zh | en`）是唯一 application locale authority。Naive UI locale 与 date locale 只能作为 consumer，不得创建第二套 locale state。
 
@@ -303,7 +358,11 @@ single source of truth
 是否只需局部 override
 ```
 
-Implementation Review 后再允许建立最小 TS mirror。
+Phase 0 已记录实际结果：部分派生颜色字段会经过 `seemly` 的颜色解析、不能接受
+`var(--token)`，而 `bodyColor` / `borderColor` 等 raw surface fields 可以直接消费
+CSS custom properties。因此只允许为派生字段建立最小、受控的 TS color mirror，且
+必须能追溯到 Docus semantic token authority。不得把 mirror 扩展成一套平行的 design
+system。
 
 ---
 
@@ -530,6 +589,12 @@ Provider PASS
 Teleport PASS
 Focus strategy identified
 DatePicker Ledger strategy identified
+NIcon + Tabler render PASS
+Approved single icon family PASS
+Icon currentColor / size / alignment / a11y PASS
+CSS var safe-field mapping PASS
+Derived-color TS mirror boundary documented PASS
+Vue SSR renderToString PASS
 Bundle impact recorded
 exact-head CI PASS
 ```
@@ -546,23 +611,21 @@ exact-head CI PASS
 
 # 11. Phase 1 — UI Foundation
 
-Phase 1 consumes the exact-pinned `naive-ui@2.45.3` dependency already committed and validated in Phase 0。不得在 Phase 1 重复安装或重新选择版本。
+Phase 1 将消费 Phase 0 已提交并验证的 exact-pinned
+`naive-ui@2.45.3` 与 `@vicons/tabler@0.13.0`；不得在 Phase 1 重复安装或重新
+选择版本。
 
-不安装：
-
-```text
-vfonts
-xicons
-其他 icon library
-```
-
-Docus 暂时继续使用：
+Functional icon foundation 已由 Phase 0 冻结为：
 
 ```text
-system font
-inline SVG
-现有 icon strategy
+NIcon
+  ↓
+@vicons/tabler@0.13.0
 ```
+
+Phase 1 不安装第二个 icon family，不复制 SVG path，不把 legacy `icons.ts`
+扩展为新的 functional icon source。System font 仍由 Docus 控制；brand / generated
+SVG 不属于 functional icon foundation。
 
 Naive UI 本身不要求额外 CSS import；依赖只通过按需 import 使用。
 
@@ -1829,6 +1892,7 @@ npm test
 npm run test:e2e
 npm run test:e2e:draft-store
 npm run test:e2e:auth
+npm run test:ui-foundation-spike
 npm run lint:icons
 git diff --check
 git status --short
@@ -1886,24 +1950,60 @@ import {
 
 除 Provider 外，普通组件按需 import。
 
----
+Functional icon 的 canonical import：
 
-# 54. No Second Icon System
-
-Naive UI 文档会推荐 icon library，但 Docus 第一阶段不引入。
-
-继续：
-
-```text
-inline SVG
-existing icons
+```ts
+import { NIcon } from 'naive-ui'
+import { Search } from '@vicons/tabler'
 ```
 
-避免 UI Epic 顺便变成 icon Epic。
+页面不得直接复制 Tabler SVG path；不得从第二个 icon family import functional
+glyph。
 
-如果未来需要全局 Icon Foundation：
+---
 
-单独立项。
+# 54. Docus Functional Icon Foundation
+
+Naive UI Foundation 的 Functional Icon Foundation 已冻结为：
+
+```text
+NIcon
+  ↓
+@vicons/tabler@0.13.0
+```
+
+必须：
+
+```text
+一个 approved functional icon family
+NIcon 作为统一容器
+Tabler component 作为 glyph
+currentColor 由消费方继承
+icon-only control 提供 accessible name
+```
+
+禁止：
+
+```text
+新增 Docus 手写 functional <svg>
+直接复制 SVG path
+引入第二个 @vicons family
+混入 Material / Lucide / Heroicons / Ionicons
+把 legacy icons.ts 当作新页面默认 icon source
+```
+
+例外：
+
+```text
+Docus logo / brand artwork
+Mermaid / Markmap / generated artwork
+用户内容 SVG
+Phase 8 前尚未迁移的 legacy icons.ts
+```
+
+例外必须有 documented ownership；legacy icon preview、contract test 和
+geometry lint 在 Phase 8 前继续用于迁移回归，不得用于阻止 approved Tabler
+component。
 
 ---
 
@@ -2078,7 +2178,8 @@ Mitigation：
 ```text
 exact dependency
 tree-shaken imports
-no second icon library
+one approved @vicons family
+tree-shaken icon imports
 build-size checkpoints
 ```
 
@@ -2230,7 +2331,11 @@ STOP
 9. Host Bridge 是 feedback / overlay canonical architecture；
 10. `tokens.css` 是 global semantic token value authority，`style.css` 不得重新定义相同 alias value；
 11. Visual Acceptance Gate 采用 automated where available + documented manual where unavailable；
-12. Control Density 只冻结 `compact` / `default` 两级 canonical policy。
+12. Control Density 只冻结 `compact` / `default` 两级 canonical policy；
+13. Functional Icon Foundation 使用 `NIcon + @vicons/tabler@0.13.0`，只允许一个
+    approved family；legacy `icons.ts` 在迁移完成前保留为 migration-only source；
+14. Naive UI 无法解析 CSS `var()` 的派生颜色字段只允许使用最小、可追溯的
+    TS color mirror，不得形成第二套 token authority。
 
 ---
 
@@ -2242,6 +2347,8 @@ STOP
 Product Review: Accepted
 Implementation Review: PASS
 Phase 0 gates 清晰
+Icon Foundation Amendment: Accepted
+NIcon + @vicons/tabler policy 清晰
 Migration boundary 清晰
 No blocking open question
 ```

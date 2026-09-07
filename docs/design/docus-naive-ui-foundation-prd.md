@@ -2,10 +2,10 @@
 
 **日期：** 2026-09-07  
 **模块：** Global UI Foundation  
-**状态：** Product Review: Accepted
+**状态：** Product Review: Accepted; Icon Foundation Amendment: Accepted
 **类型：** 架构重构 / UI Foundation  
 **优先级：** P1  
-**基线：** main @ e8a427f53a1df2492f94472a02ef9fde26fe6923
+**基线：** main @ 9c65f7aa84c45fba33fd7b586ce042f57366d14c
 
 ## 1. 产品概述
 
@@ -203,6 +203,69 @@ Accessibility 一致
 | Spin / Loading | Naive UI |
 | Message | Naive UI |
 | Notification | Naive UI |
+
+### 5.1.1 Functional Icon Foundation
+
+这是本次 Naive UI Foundation 的 Design Amendment。Functional icon 也属于基础
+交互层；Docus 不再把通用 glyph 当作第二套自绘 icon library 维护。目标架构冻结
+为：
+
+~~~
+NIcon
+  ↓
+@vicons/tabler@0.13.0
+~~~
+
+冻结以下边界：
+
+- Search、Settings、Plus、Delete、Edit、Save、Calendar、Folder、Document、History、
+  Account、Wallet、Income、Expense、Transfer、Copy、Download、Upload、Chevron、
+  Arrow、Close、Check、Warning、Info、Error、Theme，以及 toolbar、context-menu、
+  AI action 等 functional glyph，迁移时从 approved `@vicons/tabler` family 的实际
+  exports 中选择；
+- Docus functional icon 只允许使用 Tabler 这一套 family，禁止混入第二个
+  `@vicons/*` family、Ionicons、Material、Fluent、Font Awesome、Ant Design、Carbon、
+  Lucide、Heroicons、`@tabler/icons-vue` 或临时手写 SVG path；
+- `NIcon` 是容器，Tabler component 是 glyph，颜色通过 `currentColor` 和消费方
+  CSS 继承；
+- Docus logo、brand constellation、品牌装饰 SVG、产品插画、marketing artwork
+  仍属于 Docus-owned Brand Artwork；Mermaid、Markmap、ECharts、图表 canvas、
+  Markdown / 用户内容 SVG 和第三方 renderer 内部图形由各自 pipeline 拥有；
+- 现有 `src/components/vault/icons.ts` 暂时保留为 Legacy Functional Icon Source，
+  随对应 Workspace migration 渐进迁移，不进行一次性 repo-wide replacement，也不再
+  作为新通用 glyph 的默认扩展点。
+
+Functional icon 的产品语义仍由 Docus 决定，glyph 的几何和绘制由 Tabler 决定：
+
+~~~
+Docus semantic choice
+        ↓
+approved Tabler glyph
+        ↓
+@vicons/tabler component
+        ↓
+Naive UI NIcon
+        ↓
+Docus control / surface
+~~~
+
+如果某个独特 domain symbol 无法由 Tabler 语义表达，应先寻找合适的 Tabler glyph，
+再考虑文本或 label；只有无法表达明确 domain identity 时，才可提出有产品语义、设计
+理由、Review 批准和文档记录的 Docus-owned exception。不得在 Implementation 阶段
+自行手绘或复制第三方 SVG path。
+
+### 5.1.2 Amendment rationale
+
+当前 Docus 的 `src/components/vault/icons.ts`、`ICON_*` vocabulary、16×16 custom
+grid、stroke / fill rules、contract tests、icon preview、repo-wide icon lint、
+`icon-system.md` 和 `icon-usage.md` 已经构成一套小型 icon library。继续扩展它会
+重复承担基础 UI 自研成本，增加跨 Workspace 视觉漂移，也无法解决现有自绘 glyph
+在视觉上不自然、不统一和不够精致的问题。
+
+Functional glyph 不是 Docus 的产品差异化。Docus 负责选择这里表达的语义和如何把
+它组合进产品；Tabler 负责通用 glyph 的绘制、几何和一致性。这次 amendment 只改变
+functional icon foundation，不改变 Workspace IA、domain layout、brand artwork、
+generated content 或现有 `ICON_*` consumer 的业务语义。
 
 ### 5.2 Docus 负责产品表达
 
@@ -640,6 +703,12 @@ var(--docus-accent)
 
 只有 Naive UI API 存在明确技术限制时，Implementation Plan 才允许建立受控 TS token mirror。
 
+Phase 0 必须验证 Naive UI 对颜色值的实际解析边界。若部分派生颜色字段不能接收
+`var(--token)`，Implementation Plan 只允许为这些字段建立最小、受控且可追溯的
+Naive-compatible TS color mirror；这不是第二套 Docus design system，原始 token
+authority 仍然是 Docus semantic CSS tokens。Phase 0 已通过 compatibility fixture
+记录并验证该边界。
+
 ## 17. Root Provider Architecture
 
 Naive UI Provider 不直接散落在各个 Workspace。
@@ -1054,9 +1123,18 @@ Provider hooks
 Locale / DateLocale integration
 Dark / Light integration
 E2E implications
+NIcon + @vicons/tabler compatibility
+Tabler currentColor / size / alignment / accessibility
+approved single icon-family import policy
+Vue SSR renderToString compatibility
 ~~~
 
-本阶段可以提交 exact-pinned dependency、compatibility tests 和最小 test-only fixture，但不得正式接管 App UI、引入 production DocusUiRoot、迁移 Workspace 或改业务页面。Phase 0 是“可提交、可复现、无用户可见 migration”的 compatibility spike。
+本阶段已验证 `naive-ui@2.45.3` 与 `@vicons/tabler@0.13.0` 的 exact pin、真实
+TypeScript exports、NIcon integration、tree-shaking、`currentColor`、Light / Dark、
+compact / default 对齐、icon-only accessibility 和 Vue SSR `renderToString`。已提交
+dependency、compatibility tests 和最小 test-only fixture；没有正式接管 App UI、引入
+production DocusUiRoot、迁移 Workspace 或改业务页面。Phase 0 是“可提交、可复现、无
+用户可见 migration”的 compatibility spike，当前状态为 PASS。
 
 ### Phase 1 — UI Foundation
 
@@ -1072,7 +1150,16 @@ provider baseline
 theme / locale bridge
 ~~~
 
-Phase 1 consumes the exact-pinned dependency already validated in Phase 0，不重复安装依赖；业务 UI 基本保持不变。
+Phase 1 将消费 Phase 0 已提交并验证的 exact-pinned dependencies，不重复安装或重新
+选择版本；业务 UI 基本保持不变。
+
+Phase 1 同时冻结 Functional Icon Foundation：
+
+~~~
+NIcon + @vicons/tabler
+one approved family only
+legacy icons.ts remains migration-only
+~~~
 
 ### Phase 2 — Feedback / Overlay
 
@@ -1208,6 +1295,23 @@ duplicate theme rules
 ~~~
 
 Legacy token 只允许在此阶段评估删除。
+
+Functional icon migration 与上述顺序绑定：
+
+~~~
+Phase 0  验证 NIcon + Tabler，不迁 production icons
+Phase 1  建立 policy / runtime compatibility，不做全站替换
+Phase 2  overlay / feedback 按需采用 Tabler
+Phase 3  迁移 shared primitive icons
+Phase 4  迁移 NavBar、Settings、Auth 和 global chrome icons
+Phase 5  迁移 Diary icons
+Phase 6  迁移 Ledger icons，并保留 Dashboard visual language
+Phase 7  迁移 Vault / Note 的 legacy ICON_* consumers
+Phase 8  zero consumer 后清理 legacy icon infrastructure
+~~~
+
+迁移期间允许 `ICON_*` legacy 与 Tabler 短期共存，但 legacy 必须明确处于退出路径；
+Phase 8 完成后只保留 Tabler functional icons 和已记录的 Brand / Domain exceptions。
 
 ## 28. Migration Incrementality
 
@@ -1710,6 +1814,22 @@ Markmap 保留
 Monaco 保留
 ~~~
 
+### Functional Icon Foundation
+
+~~~
+Functional icon presentation = Naive UI NIcon
+Functional glyph family = @vicons/tabler@0.13.0 only
+Product semantic authority = Docus
+Brand artwork = Docus-owned
+Generated / content SVG = existing renderer or content pipeline
+Legacy icons.ts = temporary migration source
+~~~
+
+从 amendment Accepted 起，不新增手写通用 functional SVG，不复制 Tabler path，也
+不引入第二个 icon family。`icons.ts`、旧 icon preview、geometry contract test 和
+legacy lint 在 zero consumer 前继续保护迁移中的旧 surface；清理只能在 Phase 8
+证明 zero consumer 后进行。
+
 ## 49. Frozen Product Decisions
 
 以下 Product Review 决策已冻结并标记为 **ACCEPTED**：
@@ -1734,6 +1854,12 @@ Monaco 保留
 
 是。Vault / Note 最后迁移。**ACCEPTED**
 
+### Q6. Functional icon 是否统一采用 `NIcon + @vicons/tabler`？
+
+是。`@vicons/tabler@0.13.0` 是唯一 approved functional icon family；现有
+`icons.ts` 作为 migration-only legacy 保留，brand / generated artwork 继续由
+Docus 或原 renderer 拥有。**ACCEPTED**
+
 Blocking Open Questions: **0**
 
 ## 50. Product Review Exit Criteria
@@ -1755,6 +1881,8 @@ Product Review 通过前必须确认：
 - Phase exit criteria 可执行；
 - 没有要求业务层因 UI library 改变 domain behavior；
 - Locale authority、DatePicker exception、Host Bridge、token cascade、Visual Acceptance Gate 和 control density 均已冻结；
+- Functional Icon Foundation、single-family policy、legacy `icons.ts` migration
+  boundary 和 brand / generated SVG exception 均已冻结；
 - P0: 0；P1: 0；
 - Blocking Open Questions = 0；
 - Product Review: **Accepted**。

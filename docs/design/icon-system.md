@@ -1,14 +1,72 @@
 # Icon System
 
-This page documents the current contract enforced by `src/components/vault/__tests__/icons.test.ts` and `scripts/icon-lint.ts`. The exported icon source is `src/components/vault/icons.ts`.
+This page documents the current and target icon contracts. The target Functional
+Icon Foundation is defined by
+[Docus Naive UI Icon Foundation Amendment](docus-naive-ui-icon-foundation-amendment.md).
 
-## Visual language
+## Functional Icon Foundation
 
-Docus icons should be calm, editorial, minimal, and legible at small sizes. Use one concept per glyph, reuse the existing folder/document/status families, and prefer optical balance over added detail.
+New functional icons use one approved family:
 
-## Shared functional grid
+```text
+NIcon
+  ↓
+@vicons/tabler@0.13.0
+```
 
-Unless an icon is an explicit exception, its root SVG must use:
+Use the icon component by meaning, not by copying its SVG path:
+
+```vue
+<script setup lang="ts">
+import { NButton, NIcon } from 'naive-ui'
+import { Search } from '@vicons/tabler'
+</script>
+
+<template>
+  <NButton aria-label="Search notes">
+    <template #icon>
+      <NIcon aria-hidden="true" :size="18">
+        <Search />
+      </NIcon>
+    </template>
+  </NButton>
+</template>
+```
+
+Rules for new code:
+
+- import functional glyphs only from `@vicons/tabler`;
+- render them through `NIcon` when they are used as Naive UI control icons;
+- let the consumer provide size, state color, and accessible name;
+- mark decorative icons `aria-hidden="true"`;
+- do not add hand-written functional `<svg>` or paste SVG paths into a component;
+- do not add a second `@vicons/*` family or mix Material, Lucide, Heroicons, or
+  Ionicons for functional controls.
+
+Tabler's SVG canvas and stroke details belong to the approved upstream family. Docus
+does not re-enforce the legacy 16×16 geometry contract on these components.
+
+## Ownership exceptions
+
+The functional-family rule does not apply to:
+
+- Docus logo, brand constellation, and product illustrations;
+- Mermaid / Markmap output and other renderer-owned SVG;
+- user-authored or generated content SVG;
+- legacy `src/components/vault/icons.ts` exports that still have active consumers
+  during incremental migration.
+
+Each exception must have an identifiable owner and must not silently become a new
+functional icon vocabulary.
+
+## Legacy Docus icon system (migration only)
+
+`src/components/vault/icons.ts` is currently a legacy source used by existing
+surfaces. Its contract remains protected by
+`src/components/vault/__tests__/icons.test.ts` and the legacy portions of
+`scripts/icon-lint.ts` until the consumers migrate.
+
+Unless an icon is an explicit legacy exception, legacy exports use:
 
 | Attribute | Required value |
 | --- | --- |
@@ -21,56 +79,33 @@ Unless an icon is an explicit exception, its root SVG must use:
 | `aria-hidden` | `true` |
 | `focusable` | `false` |
 
-Hard rules apply to every functional icon: no `<text>`, no large imported `1024` canvas, no literal SVG colors, and no root `class` or `style`. The consuming component supplies accessible text and CSS state.
+Filled presence/state glyphs and toolbar surface glyphs keep their existing tested
+allowlists. Do not add new legacy exports for a new surface unless the matching
+surface is not yet migrated and the exception is documented in review.
 
-## Tested exceptions
+## Lint and preview transition
 
-Filled presence/state glyphs use `fill="currentColor"` and `stroke="none"`. The current allowlist is:
+Before Phase 8, `npm run lint:icons`, the legacy contract test, and
+`src/views/IconPreviewView.vue` continue to protect existing `icons.ts` consumers.
+They are migration safety nets, not permission to expand the legacy system.
 
-- `ICON_AI_MEMORY`
-- `ICON_STATUS_SUCCESS`
-- `ICON_STATUS_MODIFIED`
-- `ICON_STOP`
+The long-term lint job is governance-oriented:
 
-Toolbar surface glyphs may use a `0 0 24 24` canvas and a larger display size. The current allowlist is:
+```text
+new functional SVG in business code  → violation
+unapproved icon-family import         → violation
+approved @vicons/tabler import       → allowed
+brand/generated/user SVG             → documented exception
+legacy icons.ts                      → migration-only exception
+```
 
-- `ICON_NAV_THEME_LIGHT`
-- `ICON_NAV_THEME_DARK`
-- `ICON_AB_SETTINGS`
-
-The allowlists live in the icon test. A new exception requires an explanatory source comment and a deliberate test change. Brand assets and third-party controls in `MarkMap.vue` and `Mermaid.vue` are outside the functional icon grid.
-
-## Naming and ownership
-
-- Export functional icons as `ICON_<CONCEPT>` in screaming snake case.
-- Name the concept, not the component or temporary placement: `ICON_SEARCH`, not `ICON_NAVBAR_SEARCH`.
-- Reuse an existing semantic icon instead of copying its SVG into a component.
-- Keep all product-owned functional glyphs in `src/components/vault/icons.ts` so tests and the development preview discover them automatically.
-
-Current vocabulary families cover general file actions, vault scopes, AI tools and concepts, knowledge links, status, file types, editor actions, context menus, and common utilities. An exported glyph may be reserved for a coherent future surface; documentation must not imply that an unused icon means the feature has shipped.
-
-## Adding or changing an icon
-
-1. Search `icons.ts` and current consumers for an existing concept.
-2. Draw on the shared grid and use `currentColor`.
-3. Export from `icons.ts`; do not add untrusted SVG markup at runtime.
-4. Review `/__icon-preview` in development at 14, 18, and 22 px in both themes.
-5. Run:
-
-   ```bash
-   npm run lint:icons
-   npm test -- src/components/vault/__tests__/icons.test.ts
-   ```
-
-6. Update [Icon Usage](icon-usage.md) only when the semantic vocabulary or a major surface mapping changes.
-
-## Known lint debt
-
-`npm run lint:icons` currently reports the 1000×1000 inline brand-constellation SVG in `NavBar.vue` as two hard and one soft functional-icon violations. That SVG is a decorative brand surface, not an `ICON_*` glyph, but the repository scanner does not yet distinguish it. The `icons.ts` contract tests pass. Do not suppress unrelated findings; resolve this debt by giving the brand surface a narrowly scoped lint classification or exception.
+Phase 8 may remove the legacy geometry checks, old preview, and legacy contract test
+after `icons.ts` has no consumers. The approved-family rule remains.
 
 ## Source references
 
+- [Icon Foundation amendment](docus-naive-ui-icon-foundation-amendment.md)
 - [Icon exports](../../src/components/vault/icons.ts)
-- [Contract tests](../../src/components/vault/__tests__/icons.test.ts)
+- [Legacy contract tests](../../src/components/vault/__tests__/icons.test.ts)
 - [Repository lint](../../scripts/icon-lint.ts)
 - [Development preview](../../src/views/IconPreviewView.vue)

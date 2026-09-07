@@ -79,6 +79,7 @@ Docus is a self-hosted Markdown knowledge base with a Vue interface, a Hono serv
 - [Logo](design/logo.md)
 - [Icon System](design/icon-system.md)
 - [Icon Usage](design/icon-usage.md)
+- [Docus Naive UI Icon Foundation Amendment](design/docus-naive-ui-icon-foundation-amendment.md)
 
 ## Migrations
 
