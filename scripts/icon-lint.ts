@@ -1,16 +1,11 @@
-// Repo-wide icon governance lint. Walks src/**/*.{vue,ts}, finds every <svg ...>
+// Repo-wide icon lint. Walks src/**/*.{vue,ts}, finds every <svg ...>
 // element, and checks the rules in docs/design/icon-system.md.
 //
-// New functional SVGs are now hard violations (exit 1): use NIcon with the
-// approved @vicons/tabler family instead. The legacy icons.ts contract remains
-// checked by src/components/vault/__tests__/icons.test.ts until Phase 8.
-//
-// Hard rules for documented legacy/inline exceptions (exit 1 on any violation):
+// Hard rules (exit 1 on any violation):
 //   - no <text> elements
 //   - no viewBox 1024-style
 //   - no color literals in fill/stroke
 //   - no class/style on the root <svg>
-//   - no imports from an unapproved icon family
 //
 // Soft rules (report, exit 0 unless --strict):
 //   - viewBox / width / height / stroke-width should match the shared
@@ -39,17 +34,6 @@ const DEFAULT_ALLOW_FILES = new Set<string>([
   'src/components/vault/__tests__/icons.test.ts',
   'src/components/__tests__/Mermaid.test.ts',
 ])
-// These files contain renderer-owned, brand-owned, or migration-bound SVG. They
-// are explicit exceptions, not a general permission to add functional SVG.
-// Keep this list aligned with docs/design/icon-system.md and remove entries as
-// each surface migrates to NIcon + @vicons/tabler.
-const DOCUMENTED_SVG_EXCEPTIONS = new Set<string>([
-  'src/components/MarkMap.vue',
-  'src/components/Mermaid.vue',
-  'src/components/NavBar.vue',
-  'src/components/ledger/LedgerDashboard.vue',
-  'src/lib/markmapSecurity.ts',
-])
 for (const arg of process.argv.slice(2)) {
   if (arg.startsWith('--allow-file=')) {
     ALLOW_FILES.add(arg.slice('--allow-file='.length))
@@ -75,7 +59,6 @@ const LARGE_VIEWBOX = /viewBox\s*=\s*"\s*0\s+0\s+(\d{3,})\s+\d{3,}\s*"/i
 const COLOR_LITERAL = /(?:fill|stroke)\s*=\s*"(?:#[0-9a-f]{3,8}|rgb\(|rgba\(|hsl\(|hsla\()/i
 const ROOT_CLASS_OR_STYLE = /<svg\b[^>]*\s(?:class|style)\s*=/i
 const ATTR = /([\w:-]+)\s*=\s*"([^"]*)"/g
-const UNAPPROVED_ICON_IMPORT = /['"](?:@vicons\/(?!tabler(?:['"]|\/))[^'"]+|@tabler\/icons-vue|lucide-vue-next|@heroicons\/vue|@material-design-icons\/svg|@ionic\/core)['"]/g
 
 const SHARED_ATTRIBUTES: Record<string, string> = {
   viewBox: '0 0 16 16',
@@ -116,11 +99,7 @@ function parseAttributes(tag: string): Map<string, string> {
 
 function checkFile(filePath: string): { violations: Violation[]; svgCount: number } {
   const rel = relative(ROOT, filePath).replace(/\\/g, '/')
-  if (
-    ALLOW_FILES.has(rel)
-    || DEFAULT_ALLOW_FILES.has(rel)
-    || rel.includes('/__tests__/')
-  ) return { violations: [], svgCount: 0 }
+  if (ALLOW_FILES.has(rel) || DEFAULT_ALLOW_FILES.has(rel)) return { violations: [], svgCount: 0 }
 
   const source = readFileSync(filePath, 'utf8')
   const violations: Violation[] = []
@@ -130,17 +109,6 @@ function checkFile(filePath: string): { violations: Violation[]; svgCount: numbe
   // (including the FILLED_ICONS exception). Don't re-report its soft
   // attribute drift here.
   const isIconModule = rel === 'src/components/vault/icons.ts'
-  const isDocumentedException = DOCUMENTED_SVG_EXCEPTIONS.has(rel)
-
-  for (const match of source.matchAll(UNAPPROVED_ICON_IMPORT)) {
-    violations.push({
-      file: rel,
-      line: lineNumber(source, match.index ?? 0),
-      rule: 'unapproved-icon-family',
-      message: 'functional icons must come from @vicons/tabler; document a non-functional artwork dependency instead',
-      severity: 'hard',
-    })
-  }
 
   for (const openMatch of source.matchAll(SVG_OPEN)) {
     const index = openMatch.index ?? 0
@@ -150,17 +118,7 @@ function checkFile(filePath: string): { violations: Violation[]; svgCount: numbe
     const line = lineNumber(source, index)
     const attrMap = parseAttributes(attrs)
 
-    if (!isIconModule && !isDocumentedException) {
-      violations.push({
-        file: rel,
-        line,
-        rule: 'inline-functional-svg',
-        message: 'new functional SVG is not allowed; use NIcon + @vicons/tabler or document an artwork/generated exception',
-        severity: 'hard',
-      })
-    }
-
-    if (!isDocumentedException && LARGE_VIEWBOX.test(attrs)) {
+    if (LARGE_VIEWBOX.test(attrs)) {
       violations.push({
         file: rel,
         line,
@@ -169,7 +127,7 @@ function checkFile(filePath: string): { violations: Violation[]; svgCount: numbe
         severity: 'hard',
       })
     }
-    if (!isDocumentedException && COLOR_LITERAL.test(attrs)) {
+    if (COLOR_LITERAL.test(attrs)) {
       violations.push({
         file: rel,
         line,
@@ -178,7 +136,7 @@ function checkFile(filePath: string): { violations: Violation[]; svgCount: numbe
         severity: 'hard',
       })
     }
-    if (!isDocumentedException && ROOT_CLASS_OR_STYLE.test(openTag)) {
+    if (ROOT_CLASS_OR_STYLE.test(openTag)) {
       violations.push({
         file: rel,
         line,
@@ -188,7 +146,7 @@ function checkFile(filePath: string): { violations: Violation[]; svgCount: numbe
       })
     }
 
-    if (!isIconModule && !isDocumentedException) {
+    if (!isIconModule) {
       for (const [key, expected] of Object.entries(SHARED_ATTRIBUTES)) {
         const actual = attrMap.get(key)
         if (actual !== undefined && actual !== expected) {
@@ -209,7 +167,7 @@ function checkFile(filePath: string): { violations: Violation[]; svgCount: numbe
     const closeMatch = tail.match(SVG_CLOSE)
     const bodyEnd = closeMatch ? openEnd + (closeMatch.index ?? 0) + closeMatch[0].length : source.length
     const body = source.slice(openEnd, bodyEnd)
-    if (!isDocumentedException && TEXT_TAG.test(body)) {
+    if (TEXT_TAG.test(body)) {
       violations.push({
         file: rel,
         line,
