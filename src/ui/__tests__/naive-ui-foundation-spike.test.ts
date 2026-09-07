@@ -8,7 +8,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { nextTick, h } from 'vue'
 import { renderToString } from '@vue/server-renderer'
 import { build } from 'vite'
-import { NIcon } from 'naive-ui'
+import { NConfigProvider, NDatePicker, NIcon, NInput, dateEnUS, dateZhCN, zhCN, type GlobalThemeOverrides } from 'naive-ui'
 import { Search } from '@vicons/tabler'
 import NaiveUiFoundationSpike from './fixtures/NaiveUiFoundationSpike.vue'
 
@@ -176,6 +176,87 @@ describe('Naive UI foundation compatibility spike', () => {
     expect(wrapper.get('[data-testid="default-icon"]').attributes('style')).toContain('font-size: 20px')
   })
 
+  it('records the Naive color-parser boundary for direct CSS-var primary colors', () => {
+    const directThemeOverrides: GlobalThemeOverrides = {
+      common: {
+        bodyColor: 'var(--docus-bg)',
+        cardColor: 'var(--docus-surface-1)',
+        borderColor: 'var(--docus-border)',
+        primaryColor: 'var(--docus-accent)',
+        primaryColorHover: 'var(--docus-accent-hover)',
+        primaryColorPressed: 'var(--docus-accent-pressed)',
+      },
+    }
+    let runtimeError: unknown
+    let wrapper: VueWrapper | undefined
+    try {
+      wrapper = mount(NConfigProvider, {
+        attachTo: document.body,
+        props: {
+          themeOverrides: directThemeOverrides,
+          preflightStyleDisabled: true,
+        },
+        slots: {
+          default: () => h(NInput, { value: '' }),
+        },
+      })
+      wrapper.html()
+    } catch (error) {
+      runtimeError = error
+    } finally {
+      wrapper?.unmount()
+    }
+
+    expect(runtimeError).toBeInstanceOf(Error)
+    expect((runtimeError as Error).message).toContain('[seemly/rgba]: Invalid color value var(--docus-accent)')
+    expect((runtimeError as Error).stack).toContain('changeColor')
+  })
+
+  it('keeps explicit derived and raw CSS variables in mounted Naive runtime styles', async () => {
+    const wrapper = mountFixture()
+    await nextTick()
+
+    const runtimeStyle = `${renderedInlineStyleText()}\n${generatedStyleText()}`
+    expect(runtimeStyle).toContain('var(--docus-accent-hover)')
+    expect(runtimeStyle).toContain('var(--docus-accent-pressed)')
+    expect(wrapper.get('[data-testid="surface-color-probe"]').attributes('style')).toContain('var(--docus-surface-1)')
+    expect(runtimeStyle).toContain('var(--docus-border)')
+
+    const primaryButton = wrapper.get('[data-testid="compact-button"]').element as HTMLButtonElement
+    await wrapper.get('[data-testid="compact-button"]').trigger('mouseenter')
+    await wrapper.get('[data-testid="compact-button"]').trigger('mousedown')
+    primaryButton.focus()
+    expect(document.activeElement).toBe(primaryButton)
+    expect(primaryButton.disabled).toBe(false)
+  })
+
+  it('maps Docus compact/default density to distinct Naive sizes across control states', () => {
+    const wrapper = mountFixture()
+    const compact = wrapper.get('[data-testid="compact-button"]')
+    const defaultButton = wrapper.get('[data-testid="default-button"]')
+
+    expect(compact.classes()).toContain('n-button--small-type')
+    expect(defaultButton.classes()).toContain('n-button--medium-type')
+    expect(defaultButton.classes()).not.toContain('n-button--large-type')
+
+    for (const testId of ['compact-button', 'default-button']) {
+      const element = wrapper.get(`[data-testid="${testId}"]`).element as HTMLButtonElement
+      expect(element.tagName).toBe('BUTTON')
+      expect(element.disabled).toBe(false)
+      element.focus()
+      expect(document.activeElement).toBe(element)
+    }
+
+    for (const testId of ['compact-disabled-button', 'default-disabled-button']) {
+      const element = wrapper.get(`[data-testid="${testId}"]`).element as HTMLButtonElement
+      expect(element.disabled).toBe(true)
+    }
+
+    for (const testId of ['compact-loading-button', 'default-loading-button']) {
+      expect(wrapper.get(`[data-testid="${testId}"]`).classes()).toContain('n-button--loading')
+    }
+  })
+
   it('switches light and dark themes without remounting the provider child', async () => {
     const wrapper = mountFixture()
     await nextTick()
@@ -194,7 +275,8 @@ describe('Naive UI foundation compatibility spike', () => {
     const renderedTheme = renderedInlineStyleText()
     expect(renderedTheme).toContain('var(--docus-border)')
     expect(renderedTheme).toContain('var(--docus-text-2)')
-    expect(renderedTheme).not.toContain('var(--docus-accent-hover)')
+    expect(renderedTheme).toContain('var(--docus-accent-hover)')
+    expect(renderedTheme).toContain('var(--docus-accent-pressed)')
     expect(generatedStyleText()).toContain('.n-button')
   })
 
@@ -211,6 +293,50 @@ describe('Naive UI foundation compatibility spike', () => {
     await nextTick()
     expect(wrapper.get('[data-testid="locale-surface"]').text()).toContain('无数据')
     expect(wrapper.get('[data-testid="child-mount-count"]').text()).toBe('1')
+
+    const datePanelWeekdays = () => wrapper.findAll('[data-testid="date-locale-panel"] .n-date-panel-weekdays__day').map((day) => day.text())
+    const zhWeekdays = datePanelWeekdays()
+    await wrapper.setProps({ locale: 'en' })
+    await nextTick()
+    const enWeekdays = datePanelWeekdays()
+    expect(zhWeekdays).toHaveLength(7)
+    expect(enWeekdays).toHaveLength(7)
+    expect(enWeekdays).not.toEqual(zhWeekdays)
+    await wrapper.setProps({ locale: 'zh' })
+    await nextTick()
+    expect(datePanelWeekdays()).toEqual(zhWeekdays)
+  })
+
+  it('proves dateLocale is consumed independently by a real NDatePicker panel', async () => {
+    const wrapper = mount(NConfigProvider, {
+      attachTo: document.body,
+      props: {
+        locale: zhCN,
+        dateLocale: dateZhCN,
+      },
+      slots: {
+        default: () => h(NDatePicker, {
+          panel: true,
+          type: 'date',
+          defaultCalendarStartTime: Date.UTC(2026, 8, 7, 12),
+        }),
+      },
+    })
+    wrappers.push(wrapper)
+
+    const weekdays = () => wrapper.findAll('.n-date-panel-weekdays__day').map((day) => day.text())
+    const zhWeekdays = weekdays()
+    expect(zhWeekdays).toHaveLength(7)
+
+    await wrapper.setProps({ dateLocale: dateEnUS })
+    await nextTick()
+    const enWeekdays = weekdays()
+    expect(enWeekdays).toHaveLength(7)
+    expect(enWeekdays).not.toEqual(zhWeekdays)
+
+    await wrapper.setProps({ dateLocale: dateZhCN })
+    await nextTick()
+    expect(weekdays()).toEqual(zhWeekdays)
   })
 
   it('uses provider hooks to create, render, destroy, and tear down overlays', async () => {
@@ -336,7 +462,7 @@ for (const value of values) {
     expect(html).toContain('aria-hidden="true"')
   })
 
-  it('keeps Naive controls keyboard focusable for the focus strategy investigation', () => {
+  it('keeps Naive controls keyboard focusable for the browser focus strategy investigation', () => {
     const wrapper = mountFixture()
     const button = wrapper.get('[data-testid="icon-only-button"]')
     const input = wrapper.get('[data-testid="input"]').find('input')

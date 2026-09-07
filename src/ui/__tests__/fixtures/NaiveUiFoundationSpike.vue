@@ -3,6 +3,7 @@ import { computed, defineComponent, h, onMounted, ref } from 'vue'
 import type { Component } from 'vue'
 import {
   NButton,
+  NCard,
   NCheckbox,
   NConfigProvider,
   NDatePicker,
@@ -55,8 +56,11 @@ const theme = computed(() => props.themeMode === 'dark' ? darkTheme : null)
 const locale = computed(() => props.locale === 'zh' ? zhCN : enUS)
 const dateLocale = computed(() => props.locale === 'zh' ? dateZhCN : dateEnUS)
 
-// Surface fields can consume Docus CSS vars directly. Naive's derived-color logic
-// parses primary colors, so those fields use resolved values in this fixture.
+// This is the runtime experiment for the theme bridge. Naive's Input theme
+// derives an alpha color from primaryColor with seemly, so only that base field
+// needs a resolved mirror. Explicit primary hover/pressed values and raw
+// surface fields stay CSS-variable-backed; the spike test records the parser
+// boundary separately with a direct all-variable mount.
 const themeOverrides: GlobalThemeOverrides = {
   common: {
     bodyColor: 'var(--docus-bg)',
@@ -64,8 +68,8 @@ const themeOverrides: GlobalThemeOverrides = {
     cardColor: 'var(--docus-surface-1)',
     modalColor: 'var(--docus-surface-1)',
     primaryColor: '#4f46e5',
-    primaryColorHover: '#4338ca',
-    primaryColorPressed: '#3730a3',
+    primaryColorHover: 'var(--docus-accent-hover)',
+    primaryColorPressed: 'var(--docus-accent-pressed)',
     textColorBase: 'var(--docus-text-1)',
     textColor1: 'var(--docus-text-1)',
     textColor2: 'var(--docus-text-2)',
@@ -97,6 +101,7 @@ const checked = ref(false)
 const switched = ref(false)
 const formattedDate = ref(props.initialDate)
 const childMountCount = ref(0)
+const dateLocaleProbeStartTime = Date.UTC(2026, 8, 7, 12)
 
 const CompatibilityChild = defineComponent({
   name: 'CompatibilityChild',
@@ -177,10 +182,14 @@ const CompatibilityChild = defineComponent({
         icon: () => h(NIcon, { 'data-testid': 'compact-icon', size: 14, 'aria-hidden': 'true' }, { default: () => h(Plus) }),
         default: () => 'Compact',
       }),
-      h(NButton, { size: 'large', 'data-testid': 'default-button' }, {
+      h(NButton, { 'data-testid': 'default-button' }, {
         icon: () => h(NIcon, { 'data-testid': 'default-icon', size: 20, 'aria-hidden': 'true' }, { default: () => h(Check) }),
         default: () => 'Default',
       }),
+      h(NButton, { size: 'small', disabled: true, 'data-testid': 'compact-disabled-button' }, { default: () => 'Compact disabled' }),
+      h(NButton, { disabled: true, 'data-testid': 'default-disabled-button' }, { default: () => 'Default disabled' }),
+      h(NButton, { size: 'small', loading: true, 'data-testid': 'compact-loading-button' }, { default: () => 'Compact loading' }),
+      h(NButton, { loading: true, 'data-testid': 'default-loading-button' }, { default: () => 'Default loading' }),
     ])
   },
 })
@@ -216,6 +225,14 @@ const CompatibilityChild = defineComponent({
               value-format="yyyy-MM-dd"
             />
             <output data-testid="formatted-date">{{ formattedDate }}</output>
+            <div data-testid="date-locale-panel">
+              <NDatePicker
+                panel
+                type="date"
+                :default-calendar-start-time="dateLocaleProbeStartTime"
+              />
+            </div>
+            <NCard data-testid="surface-color-probe">Surface color probe</NCard>
             <NEmpty data-testid="locale-surface" />
 
             <div data-testid="icon-export-probe">
