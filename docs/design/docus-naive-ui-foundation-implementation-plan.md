@@ -1,0 +1,2166 @@
+# Docus — Naive UI Foundation Implementation Plan
+
+**日期：** 2026-09-07
+**模块：** Global UI Foundation
+**状态：** Implementation Review: Ready for Review
+**类型：** Architecture / UI Foundation Refactor
+**优先级：** P1
+**基线：** main @ 0ba48906037dbc97d90f208ed917ff87b1cd476a
+
+---
+
+## 1. 实施目标
+
+本计划实现已经冻结的产品方向：
+
+```text
+Naive UI
+=
+基础交互组件层
+
+Docus
+=
+产品视觉 + 信息架构 + Domain Layout
+```
+
+目标不是：
+
+```text
+把 <button> 换成 <NButton>
+```
+
+而是最终建立：
+
+```text
+Docus Semantic Tokens
+        ↓
+Docus Theme Authority
+        ↓
+Naive UI Theme Mapping
+        ↓
+Naive UI Interaction Foundation
+        ↓
+Docus Domain Components
+        ↓
+Note / Diary / Ledger / Vault
+```
+
+整个实施必须保持：
+
+```text
+业务语义不变
+Route 不变
+Store 不变
+API 不变
+Server 不变
+Workspace IA 不变
+```
+
+---
+
+# 2. Starting Baseline
+
+Authoritative starting HEAD：
+
+```text
+0ba48906037dbc97d90f208ed917ff87b1cd476a
+```
+
+当前基础设施：
+
+```text
+Vue          ^3.5.34
+Vite         ^8.0.12
+TypeScript   ~6.0.2
+Vitest       ^4.1.8
+Playwright   ^1.61.1
+```
+
+当前没有 `naive-ui`。
+
+截至本计划编写时，Naive UI 当前 npm `latest` 为 `2.45.3`，官方同时说明组件支持 tree-shaking，并提供类型安全的 theme override 系统。Phase 0 将以 **2.45.3 作为候选版本进行 compatibility spike**；只有 Spike Gate 通过后，才以 exact version 写入正式依赖。([Naive UI][1])
+
+---
+
+# 3. 总体实施原则
+
+## 3.1 Incremental Migration
+
+禁止：
+
+```text
+一个 commit
+→ 全项目 Naive UI 化
+```
+
+必须：
+
+```text
+Foundation
+→ Feedback / Overlay
+→ Primitive
+→ Shared Chrome
+→ Diary
+→ Ledger
+→ Vault / Note
+→ Cleanup
+```
+
+每个阶段：
+
+```text
+独立可运行
+独立可测试
+独立可 review
+独立可回滚
+```
+
+---
+
+## 3.2 Preserve Before Improve
+
+迁移优先级：
+
+```text
+1. Behavior preservation
+2. Accessibility preservation
+3. Theme consistency
+4. Visual consistency
+5. Visual refinement
+```
+
+不是：
+
+```text
+1. Naive UI 默认样式
+2. 再想办法修回产品样子
+```
+
+---
+
+## 3.3 Docus Token 是唯一 Design Source
+
+不得形成：
+
+```text
+Docus CSS colors
++
+Naive TS colors
++
+Workspace local colors
+```
+
+三套 authority。
+
+最终必须是：
+
+```text
+Docus semantic tokens
+            ↓
+        全部消费方
+```
+
+---
+
+# 4. Phase 0 — Architecture Spike
+
+## 4.1 目标
+
+Phase 0 不做正式 Workspace migration。
+
+只验证六个技术问题：
+
+```text
+1. Naive UI 2.45.3 与当前 Vue / TS / Vite 是否兼容
+2. themeOverrides 是否能可靠引用 CSS custom properties
+3. Light / Dark runtime switch 是否正确
+4. Provider / Teleport / Overlay 是否与现有 App Shell 共存
+5. 全局 focus-visible 是否与 Naive focus style 冲突
+6. Bundle / test / build 是否在可接受范围
+```
+
+---
+
+## 4.2 Spike dependency
+
+临时验证：
+
+```bash
+npm install --no-save --package-lock=false naive-ui@2.45.3
+```
+
+正式 dependency 暂不提交。
+
+如果 Spike PASS，Phase 1 才：
+
+```bash
+npm install --save-exact naive-ui@2.45.3
+```
+
+禁止：
+
+```json
+"naive-ui": "^2.45.3"
+```
+
+第一阶段先 exact pin。
+
+等整个 Epic 稳定后再决定是否恢复 semver range。
+
+---
+
+## 4.3 Theme Spike
+
+建立临时最小 demo：
+
+```text
+NConfigProvider
+NButton
+NInput
+NSelect
+NDialogProvider
+NMessageProvider
+```
+
+验证：
+
+```text
+Light
+↓
+切换
+↓
+Dark
+↓
+切换
+↓
+Light
+```
+
+过程中不得：
+
+```text
+重新 mount App
+刷新页面
+产生第二套 theme state
+```
+
+---
+
+# 5. CSS Variable Theme Spike
+
+验证类似：
+
+```ts
+const themeOverrides: GlobalThemeOverrides = {
+  common: {
+    primaryColor: 'var(--docus-accent)',
+    textColor1: 'var(--docus-text-1)',
+    bodyColor: 'var(--docus-bg)',
+    borderColor: 'var(--docus-border)',
+  },
+}
+```
+
+是否在：
+
+```text
+Button
+Input
+Select
+Dialog
+Message
+```
+
+真实生效。
+
+如果全部可靠：
+
+```text
+CSS semantic token
+=
+single source of truth
+```
+
+如果存在 Naive UI theme property 无法可靠消费 CSS `var()`：
+
+不得立刻建立一整套 TS theme。
+
+先记录：
+
+```text
+具体哪个 property
+为什么失败
+是否只需局部 override
+```
+
+Implementation Review 后再允许建立最小 TS mirror。
+
+---
+
+# 6. DatePicker Spike — Blocking Gate
+
+这是 Phase 0 最重要的 domain compatibility test 之一。
+
+Naive UI DatePicker 的用户交互可以迁移，但：
+
+```text
+Naive DatePicker
+≠
+Docus 时间 authority
+```
+
+特别是 Ledger。
+
+Ledger 使用：
+
+```text
+YYYY-MM-DD calendar date
++
+Ledger timezone
++
+Server authority
+```
+
+不得把：
+
+```text
+Browser-local JS timestamp
+```
+
+偷偷变成 Ledger date authority。
+
+Naive UI 社区历史上存在 DatePicker timezone 相关需求，因此不能假设组件本身会替 Docus 正确解决领域时区语义。([GitHub][2])
+
+Phase 0 必须验证：
+
+```text
+Asia/Shanghai Ledger
++
+America/Los_Angeles Browser
+```
+
+这种跨 timezone 场景。
+
+### Gate
+
+如果不能安全得到：
+
+```text
+selected calendar date
+→ YYYY-MM-DD
+```
+
+而不经过 browser-local date interpretation，
+
+则：
+
+**Ledger 暂时保留 native `<input type="date">`。**
+
+这不是 Epic failure。
+
+PRD 冻结的是：
+
+> Naive UI 负责 DatePicker primitive where suitable。
+
+不是：
+
+> 所有 date input 必须不计代价替换。
+
+---
+
+# 7. Focus Spike
+
+当前 Docus 有全局：
+
+```css
+:focus-visible
+```
+
+策略。
+
+Naive UI 自己也提供 focus state。
+
+Phase 0 要检查：
+
+```text
+NButton
+NInput
+NSelect
+NCheckbox
+NSwitch
+NDatePicker
+```
+
+是否出现：
+
+```text
+Naive focus ring
++
+Docus outline
+```
+
+双重 focus。
+
+最终 authority：
+
+```text
+Naive primitives
+→ Naive focus presentation
+
+Native / Docus domain controls
+→ Docus global focus-visible
+```
+
+不要通过：
+
+```css
+[class*="n-"] {
+  outline: none;
+}
+```
+
+这种宽泛 hack 解决。
+
+必须根据实际 rendered focus target 定义最小 selector boundary。
+
+---
+
+# 8. Teleport / Overlay Spike
+
+至少验证：
+
+```text
+普通页面
+Ledger
+Vault
+Auth
+```
+
+中的：
+
+```text
+Dialog
+Message
+Dropdown
+Popover
+```
+
+关注：
+
+```text
+z-index
+Navbar
+body scroll
+Vault body lock
+Dark Theme
+Teleport theme
+ESC
+focus return
+```
+
+当前 App 明确存在：
+
+```text
+vault-mode body lock
+ledger-mode scrollbar behavior
+```
+
+所以 overlay 不得破坏现有 document lifecycle。
+
+---
+
+# 9. Bundle Baseline
+
+Phase 0 开始前记录：
+
+```text
+npm run build
+```
+
+得到：
+
+```text
+entry JS
+largest async chunk
+total JS bytes
+total CSS bytes
+```
+
+然后 Spike 安装 Naive UI 后再次比较。
+
+不新增：
+
+```text
+webpack-bundle-analyzer
+rollup-visualizer
+```
+
+除非已有工具不足。
+
+第一轮只使用 Vite build output + filesystem size。
+
+---
+
+# 10. Phase 0 Exit Criteria
+
+Phase 0 PASS 必须满足：
+
+```text
+Vue compatibility PASS
+TypeScript PASS
+Vite build PASS
+Vitest mount PASS
+CSS token mapping PASS
+Light/Dark PASS
+Provider PASS
+Teleport PASS
+Focus strategy identified
+DatePicker Ledger strategy identified
+Bundle impact recorded
+```
+
+任何一个 blocking compatibility failure：
+
+```text
+停止 Phase 1
+```
+
+不得边迁移边补架构。
+
+---
+
+# 11. Phase 1 — UI Foundation
+
+Phase 0 通过后正式安装：
+
+```bash
+npm install --save-exact naive-ui@2.45.3
+```
+
+不安装：
+
+```text
+vfonts
+xicons
+其他 icon library
+```
+
+Docus 暂时继续使用：
+
+```text
+system font
+inline SVG
+现有 icon strategy
+```
+
+Naive UI 本身不要求额外 CSS import。([NPM][3])
+
+---
+
+# 12. 新增目录结构
+
+建立：
+
+```text
+src/ui/
+├── DocusUiRoot.vue
+├── naiveTheme.ts
+├── tokens.css
+└── __tests__/
+    ├── DocusUiRoot.test.ts
+    └── naiveTheme.test.ts
+```
+
+后续如果 Overlay Bridge 确有必要，再增加：
+
+```text
+src/ui/runtime/
+```
+
+不要预创建空 architecture。
+
+---
+
+# 13. `tokens.css`
+
+将 semantic design tokens 集中到：
+
+```text
+src/ui/tokens.css
+```
+
+第一版：
+
+```css
+:root {
+  --docus-bg: ...;
+  --docus-surface-1: ...;
+  --docus-surface-2: ...;
+
+  --docus-text-1: ...;
+  --docus-text-2: ...;
+  --docus-text-3: ...;
+
+  --docus-border: ...;
+  --docus-divider: ...;
+
+  --docus-accent: ...;
+  --docus-accent-hover: ...;
+  --docus-accent-pressed: ...;
+
+  --docus-positive: ...;
+  --docus-negative: ...;
+  --docus-warning: ...;
+  --docus-info: ...;
+
+  --docus-radius-sm: ...;
+  --docus-radius-md: ...;
+  --docus-radius-lg: ...;
+
+  --docus-space-1: ...;
+  ...
+}
+```
+
+数值应优先从当前 Docus 已经验证过的视觉语言提取。
+
+不要重新发明品牌配色。
+
+---
+
+# 14. Legacy Aliases
+
+Phase 1 保留：
+
+```css
+--bg: var(--docus-bg);
+--bg-soft: var(--docus-surface-1);
+
+--text-h: var(--docus-text-1);
+--text: var(--docus-text-2);
+--text-muted: var(--docus-text-3);
+
+--border: var(--docus-border);
+
+--accent: var(--docus-accent);
+--accent-hover: var(--docus-accent-hover);
+```
+
+当前大量 CSS 已依赖旧变量，所以 Phase 1 绝不进行全文件 rename。
+
+---
+
+# 15. Dark Mode Token Authority
+
+从 `style.css` 中逐步抽离：
+
+```text
+:root light token
+prefers-color-scheme dark token
+[data-theme='light']
+[data-theme='dark']
+```
+
+真正颜色定义最终归：
+
+```text
+tokens.css
+```
+
+`style.css` 只消费。
+
+但 Phase 1 只移动基础 semantic token。
+
+Vault 特有：
+
+```text
+--vs-*
+```
+
+Ledger scoped：
+
+```text
+--ledger-*
+```
+
+暂不重构。
+
+---
+
+# 16. `useTheme()` 保持不变
+
+继续保留：
+
+```text
+storage key = docus.theme
+light / dark
+data-theme
+OS fallback
+```
+
+现有实现已经是 theme authority。
+
+`index.html` 首屏 boot script 同样保留。
+
+它现在会在 Vue mount 前写入 `data-theme`，用于避免首屏主题闪烁。
+
+Phase 1 不重写这套 boot mechanism。
+
+---
+
+# 17. `naiveTheme.ts`
+
+职责只有：
+
+```text
+Docus token
+→ Naive token
+```
+
+例如：
+
+```ts
+export const docusNaiveThemeOverrides: GlobalThemeOverrides = {
+  common: {
+    primaryColor: 'var(--docus-accent)',
+    primaryColorHover: 'var(--docus-accent-hover)',
+    primaryColorPressed: 'var(--docus-accent-pressed)',
+
+    textColor1: 'var(--docus-text-1)',
+    textColor2: 'var(--docus-text-2)',
+    textColor3: 'var(--docus-text-3)',
+
+    bodyColor: 'var(--docus-bg)',
+    cardColor: 'var(--docus-surface-1)',
+    modalColor: 'var(--docus-surface-1)',
+
+    borderColor: 'var(--docus-border)',
+    dividerColor: 'var(--docus-divider)',
+
+    borderRadius: 'var(--docus-radius-md)',
+  },
+}
+```
+
+只 override 真正需要统一的 common / component variables。
+
+不要一开始复制 Naive UI 几百个 theme variable。
+
+---
+
+# 18. `DocusUiRoot.vue`
+
+推荐结构：
+
+```vue
+<script setup lang="ts">
+import { computed } from 'vue'
+import {
+  darkTheme,
+  NConfigProvider,
+  NDialogProvider,
+  NMessageProvider,
+  NNotificationProvider,
+} from 'naive-ui'
+import App from '../App.vue'
+import { useTheme } from '../composables/useTheme'
+import { docusNaiveThemeOverrides } from './naiveTheme'
+
+const { theme } = useTheme()
+
+const naiveTheme = computed(() =>
+  theme.value === 'dark' ? darkTheme : null
+)
+</script>
+
+<template>
+  <NConfigProvider
+    :theme="naiveTheme"
+    :theme-overrides="docusNaiveThemeOverrides"
+  >
+    <NDialogProvider>
+      <NMessageProvider>
+        <NNotificationProvider>
+          <App />
+        </NNotificationProvider>
+      </NMessageProvider>
+    </NDialogProvider>
+  </NConfigProvider>
+</template>
+```
+
+具体 nesting 可以在 Implementation Review 微调，但：
+
+```text
+App 必须位于 Provider 下方
+```
+
+是冻结要求。
+
+---
+
+# 19. `main.ts`
+
+由当前：
+
+```ts
+createApp(App)
+  .use(router)
+  .mount('#app')
+```
+
+改为：
+
+```ts
+createApp(DocusUiRoot)
+  .use(router)
+  .mount('#app')
+```
+
+当前入口非常轻量，应继续保持这个特性。
+
+同时 import：
+
+```ts
+import './ui/tokens.css'
+import './style.css'
+```
+
+顺序：
+
+```text
+tokens
+↓
+global styles
+```
+
+---
+
+# 20. Phase 1 Tests
+
+新增测试至少覆盖：
+
+### Theme
+
+```text
+light → Naive default light theme
+dark → darkTheme
+runtime switch 不 remount App
+```
+
+### Tokens
+
+验证：
+
+```text
+核心 semantic token 存在
+legacy alias 存在
+```
+
+不要 snapshot 整个 CSS 文件。
+
+### Root
+
+验证：
+
+```text
+App 位于 provider tree
+Router 继续工作
+```
+
+---
+
+# 21. Phase 1 Exit Criteria
+
+```text
+Naive dependency pinned
+DocusUiRoot installed
+Theme bridge works
+Tokens established
+Legacy CSS still works
+App routes unchanged
+No visible workspace redesign
+Light PASS
+Dark PASS
+Unit PASS
+Typecheck PASS
+Build PASS
+E2E PASS
+```
+
+---
+
+# 22. Phase 2 — Feedback / Overlay
+
+目标：
+
+```text
+Toast
+Confirm
+Prompt
+```
+
+底层切换到 Naive UI。
+
+但业务 API：
+
+```text
+useToast()
+useConfirm()
+usePrompt()
+```
+
+必须保留。
+
+---
+
+# 23. Toast Migration
+
+当前 `useToast()` API：
+
+```text
+info
+success
+error
+dismiss
+ttl
+```
+
+且当前由 reactive queue + `ToastHost` 渲染。
+
+迁移时禁止全项目：
+
+```text
+useToast()
+→
+useMessage()
+```
+
+### 推荐 adapter-first
+
+保留：
+
+```text
+useToast
+```
+
+将：
+
+```text
+ToastHost
+```
+
+改造成：
+
+```text
+Naive Message bridge
+```
+
+或者在 Provider 下建立最小 `DocusMessageBridge`。
+
+要求保持：
+
+```text
+TTL
+类型
+dismiss
+调用时机
+```
+
+等价。
+
+---
+
+# 24. Confirm Migration
+
+当前 Confirm 支持：
+
+```text
+queue
+confirm
+confirmCancellable
+destructive
+custom labels
+detail
+```
+
+并且 cancellation 是真实业务 contract。
+
+迁移后必须继续支持：
+
+```ts
+const { promise, cancel } = confirmCancellable(...)
+```
+
+不能因为 `NDialog` imperative API 简单，就丢弃 cancellation。
+
+推荐：
+
+```text
+useConfirm semantics
+        ↓
+Confirm Naive Adapter
+        ↓
+NDialog
+```
+
+Adapter 负责：
+
+```text
+queue
+destroy dialog
+resolve false on cancel
+double settle protection
+```
+
+---
+
+# 25. Prompt Migration
+
+当前 Prompt 支持：
+
+```text
+title
+placeholder
+initial
+actionLabel
+actionTitle
+async transform
+```
+
+迁移后保持 API。
+
+推荐实现：
+
+```text
+NModal / NDialog
++
+NInput
++
+NButton
+```
+
+而不是寻找一个不存在的“一键 prompt API”。
+
+`transform()` 必须继续支持 async。
+
+提交期间：
+
+```text
+busy
+double submit
+transform error
+cancel
+ESC
+```
+
+都需要测试。
+
+---
+
+# 26. Phase 2 删除策略
+
+Phase 2 完成后：
+
+如果：
+
+```text
+ToastHost / ConfirmHost / PromptHost
+```
+
+只是名称仍存在，但内部已经成为正式 adapter，
+
+允许暂时保留。
+
+不要为了“文件消失”而把逻辑塞进奇怪 singleton。
+
+Cleanup Phase 再决定是否删除这些 Host。
+
+---
+
+# 27. Phase 2 Tests
+
+重点覆盖：
+
+```text
+Toast success/info/error
+TTL
+manual dismiss
+
+Confirm confirm
+Confirm cancel
+Confirm destructive
+Confirm cancellable.cancel()
+queued confirms
+ESC
+
+Prompt initial value
+Prompt submit
+Prompt cancel
+async transform
+busy
+double submit
+```
+
+以及：
+
+```text
+focus enters overlay
+focus leaves overlay correctly
+keyboard works
+```
+
+---
+
+# 28. Phase 3 — Primitive Foundation
+
+先做完整 inventory：
+
+```bash
+rg -n '<button\b' src --glob '*.vue'
+rg -n '<input\b' src --glob '*.vue'
+rg -n '<textarea\b' src --glob '*.vue'
+rg -n '<select\b' src --glob '*.vue'
+```
+
+并分类：
+
+```text
+Shared
+Auth
+Settings
+Diary
+Ledger
+Vault
+Note
+Domain-specialized
+```
+
+不要搜索到一个就机械替换一个。
+
+---
+
+# 29. Primitive Canonical Mapping
+
+默认 mapping：
+
+```text
+button
+→ NButton
+
+input text
+→ NInput
+
+textarea
+→ NInput type="textarea"
+
+select
+→ NSelect
+
+checkbox
+→ NCheckbox
+
+radio
+→ NRadio / NRadioGroup
+
+toggle
+→ NSwitch
+
+simple date input
+→ NDatePicker
+```
+
+前提：
+
+```text
+domain semantics 可保持
+```
+
+---
+
+# 30. 不创建 `DButton / DInput`
+
+禁止：
+
+```text
+src/ui/DButton.vue
+src/ui/DInput.vue
+src/ui/DSelect.vue
+```
+
+除非后续真实出现稳定 Docus domain semantics。
+
+普通页面直接：
+
+```ts
+import { NButton, NInput } from 'naive-ui'
+```
+
+---
+
+# 31. Phase 3 Scope
+
+Phase 3 只迁移：
+
+```text
+Shared / low-risk primitives
+```
+
+Workspace specific controls 留给对应 Workspace Phase。
+
+否则 Phase 3 会重新变成 Big Bang。
+
+---
+
+# 32. Phase 4 — Shared Chrome
+
+范围：
+
+```text
+NavBar
+Settings
+Auth shared UI
+global command surfaces
+```
+
+可以迁：
+
+```text
+Button
+Dropdown
+Tooltip
+Select
+Switch
+Input
+```
+
+但保留：
+
+```text
+Navbar layout
+note / diary / ledger IA
+Route semantics
+Workspace visual identity
+```
+
+---
+
+# 33. NavBar 特别规则
+
+禁止：
+
+```text
+整个 NavBar
+→ NMenu
+```
+
+只有真正 menu-like 的部分：
+
+```text
+账号菜单
+设置菜单
+dropdown action list
+```
+
+才考虑 `NDropdown / NMenu`。
+
+Workspace switch 继续是 Docus product navigation。
+
+---
+
+# 34. Phase 5 — Diary
+
+Diary 是第一个完整 Workspace validation target。
+
+迁移：
+
+```text
+Dialog
+Buttons
+Inputs
+Form
+Password fields
+Date controls where safe
+Select
+Loading
+Empty state where appropriate
+```
+
+---
+
+# 35. Diary Calendar 特别规则
+
+项目当前仍依赖：
+
+```text
+v-calendar 3.1.2
+```
+
+Diary 的完整 Calendar 如果承担：
+
+```text
+日期浏览
+日记导航
+Workspace spatial layout
+```
+
+它属于：
+
+> Domain UI
+
+不是普通 DatePicker primitive。
+
+因此：
+
+**不得因为引入 NDatePicker 就顺便删除 v-calendar。**
+
+是否未来替换是另一个独立需求。
+
+---
+
+# 36. Phase 6 — Ledger
+
+这是保真迁移。
+
+当前 Ledger Dashboard 视觉已被冻结。
+
+不得调整：
+
+```text
+section order
+metric layout
+cashflow hierarchy
+accounts layout
+category bars
+recent list
+period summary
+ECharts composition
+```
+
+只迁移：
+
+```text
+按钮
+日期控件
+Scope Select
+Form
+Dialog
+Input
+Empty / Loading primitive where appropriate
+```
+
+---
+
+# 37. Ledger DatePicker Decision
+
+依据 Phase 0 结果。
+
+### 如果 timezone-safe
+
+则迁：
+
+```text
+native date
+→ NDatePicker
+```
+
+但 Component Boundary 必须显式完成：
+
+```text
+Naive selected calendar date
+        ↓
+YYYY-MM-DD
+        ↓
+Ledger route
+        ↓
+Server
+```
+
+### 如果 timezone 不安全
+
+保留：
+
+```html
+<input type="date">
+```
+
+并在 Final Report 标记：
+
+```text
+intentional domain exception
+```
+
+这是允许的。
+
+---
+
+# 38. Ledger Select
+
+Scope：
+
+```text
+today
+week
+month
+year
+all
+```
+
+transport value 必须保持。
+
+NSelect 只改变 UI。
+
+不得改变：
+
+```text
+Store enum
+URL
+Server request
+anchored semantics
+```
+
+---
+
+# 39. Ledger ECharts
+
+完全不迁。
+
+只允许 theme color source 从：
+
+```text
+旧 CSS token
+```
+
+逐渐切到：
+
+```text
+Docus semantic token
+```
+
+不得改：
+
+```text
+series
+balance tooltip semantics
+notMerge
+ResizeObserver
+six-month domain contract
+```
+
+---
+
+# 40. Phase 7 — Vault / Note
+
+最后执行。
+
+第一步不是替换控件。
+
+而是先做：
+
+```text
+interaction inventory
+```
+
+分类：
+
+```text
+FileTree
+Tabs
+Editor toolbar
+Preview toolbar
+Command Palette
+Properties
+History
+Search
+Context menu
+Dialog
+Tooltip
+Keyboard controls
+```
+
+---
+
+# 41. Vault High-Risk Boundary
+
+明确不迁：
+
+```text
+File tree model
+Pane lifecycle
+Editor lifecycle
+Document lifecycle
+Scroll ownership
+Command system
+Monaco
+Preview rendering
+Markdown
+```
+
+Naive UI 只能进入它们内部的：
+
+```text
+Button
+Dropdown
+Tooltip
+Input
+Dialog
+simple Tabs
+```
+
+---
+
+# 42. Vault Tabs
+
+只有确认现有 Tabs：
+
+```text
+不是 Route authority
+不是 editor lifecycle authority
+```
+
+之后，才允许评估 `NTabs`。
+
+如果现有 tab system 管理：
+
+```text
+opened documents
+active document
+editor preservation
+```
+
+则它是 domain component。
+
+不能直接换 `NTabs`。
+
+---
+
+# 43. Note
+
+Note 的 Markdown/content rendering：
+
+```text
+Markdown-it
+Shiki
+Mermaid
+Markmap
+KaTeX
+Monaco
+```
+
+全部不动。
+
+Naive UI 只进入：
+
+```text
+外围 controls
+dialogs
+menus
+forms
+feedback
+```
+
+---
+
+# 44. Phase 8 — Cleanup
+
+只有所有 Workspace migration 完成后才开始。
+
+Cleanup inventory：
+
+```text
+legacy primitive CSS
+old button classes
+old input classes
+obsolete modal CSS
+Toast / Confirm / Prompt dead styles
+duplicate focus rules
+unused tokens
+duplicate theme rules
+dead helper components
+```
+
+---
+
+# 45. `style.css` Cleanup
+
+当前 `src/style.css` 规模约 170KB，是 Cleanup 重点之一。
+
+但目标不是：
+
+```text
+把 170KB 压到某个 KPI 数字
+```
+
+目标：
+
+```text
+删除基础 primitive 重复样式
+保留真正的 domain / layout / rendering CSS
+```
+
+例如这些仍可能合理存在：
+
+```text
+Vault pane
+Ledger dashboard
+Diary layout
+Markdown
+Preview
+Editor
+```
+
+---
+
+# 46. Legacy Token Removal
+
+只有确认：
+
+```bash
+rg -- '--bg\b' src
+rg -- '--text-h\b' src
+rg -- '--accent\b' src
+```
+
+不存在需要保留的使用后，
+
+才允许删除 compatibility aliases。
+
+不是 Cleanup 一开始就删。
+
+---
+
+# 47. Test Architecture
+
+整个 Epic 不要求把已有 unit test 全改成“测试 Naive UI 内部实现”。
+
+测试重点仍然是：
+
+```text
+Docus behavior
+Docus semantics
+Docus accessibility
+```
+
+避免：
+
+```text
+expect(component.classes()).toContain('n-button')
+```
+
+这种 library implementation assertion。
+
+---
+
+# 48. E2E Selector Policy
+
+迁移后仍优先：
+
+```text
+role
+aria-label
+data-testid
+user-visible text
+```
+
+禁止大量依赖：
+
+```text
+.n-button
+.n-input
+.n-base-selection
+```
+
+避免以后升级 Naive UI 时 E2E 全碎。
+
+---
+
+# 49. Visual Regression
+
+每个 Workspace Phase 都必须：
+
+```text
+Light desktop
+Dark desktop
+Light mobile
+Dark mobile
+```
+
+做人工或已有 visual review。
+
+如果截图发生变化：
+
+必须回答：
+
+```text
+intentional?
+还是 regression?
+```
+
+不能：
+
+> 组件库默认就这样。
+
+---
+
+# 50. CI Gate
+
+当前 CI 已覆盖：
+
+```text
+Node 24:
+Ubuntu
+macOS
+Windows
+
+Node 22:
+Ubuntu
+
+typecheck
+build
+unit + integration
+browser E2E
+Draft Store E2E
+auth E2E
+visual
+docker smoke
+```
+
+每个 Phase 都必须通过现有 CI。
+
+不得为了迁移降低 CI gate。
+
+---
+
+# 51. Validation Commands
+
+每个实现 Phase 至少：
+
+```bash
+npm run typecheck
+npm run build
+npm test
+npm run test:e2e
+npm run test:e2e:draft-store
+npm run test:e2e:auth
+npm run lint:icons
+git diff --check
+git status --short
+```
+
+根据 Phase 再执行 focused tests。
+
+CI 最终作为 exact-head authority。
+
+---
+
+# 52. Bundle Gate
+
+每个主要 Phase：
+
+```text
+Foundation
+Diary
+Ledger
+Vault
+```
+
+记录 build size。
+
+禁止出现：
+
+> 因为 tree shaking 应该有效，所以不测。
+
+Naive UI 官方声称组件可 tree-shake，但 Docus 仍必须验证自己的 import pattern。([NPM][3])
+
+---
+
+# 53. Import Policy
+
+推荐：
+
+```ts
+import {
+  NButton,
+  NInput,
+  NSelect,
+} from 'naive-ui'
+```
+
+依赖 bundler tree-shaking。
+
+禁止：
+
+```text
+自制全组件 installer
+全局注册所有 Naive component
+```
+
+除 Provider 外，普通组件按需 import。
+
+---
+
+# 54. No Second Icon System
+
+Naive UI 文档会推荐 icon library，但 Docus 第一阶段不引入。
+
+继续：
+
+```text
+inline SVG
+existing icons
+```
+
+避免 UI Epic 顺便变成 icon Epic。
+
+如果未来需要全局 Icon Foundation：
+
+单独立项。
+
+---
+
+# 55. Commit Strategy
+
+每个 Phase 建议最少一个独立 commit。
+
+推荐：
+
+```text
+chore(ui): add naive ui foundation
+
+refactor(ui): migrate global feedback overlays
+
+refactor(ui): standardize shared primitive controls
+
+refactor(ui): migrate shared chrome controls
+
+refactor(diary): adopt naive ui primitives
+
+refactor(ledger): adopt naive ui primitives
+
+refactor(vault): adopt naive ui interaction primitives
+
+refactor(note): adopt naive ui interaction primitives
+
+refactor(ui): remove legacy primitive styles
+```
+
+不要 amend 已 push history。
+
+不要 force push。
+
+---
+
+# 56. 不建议一个 Phase 一个超大 Commit
+
+例如 Ledger Phase 可以合理拆：
+
+```text
+refactor(ledger): migrate form controls
+refactor(ledger): migrate overview period controls
+```
+
+前提：
+
+每个 commit：
+
+```text
+buildable
+testable
+reviewable
+```
+
+禁止产生：
+
+```text
+commit A 页面坏掉
+commit B 再修回来
+```
+
+---
+
+# 57. Rollback Strategy
+
+因为整个迁移是 incremental：
+
+任意 Phase 出现严重 regression 时：
+
+```text
+revert current Phase commits
+```
+
+应该可以恢复上一 stable phase。
+
+因此不得跨 Phase 同时改：
+
+```text
+UI Foundation
++
+Store
++
+Server
++
+Domain
+```
+
+否则回滚边界失效。
+
+---
+
+# 58. Feature Flag
+
+本计划默认：
+
+**不引入 UI migration feature flag。**
+
+理由：
+
+双 UI runtime：
+
+```text
+legacy UI
++
+Naive UI
+```
+
+长期并行会增加复杂度。
+
+Incremental commit 本身已经提供 rollback boundary。
+
+只有某一个高风险 Vault surface 确实无法独立切换时，再在 Implementation Review 单独批准局部 flag。
+
+---
+
+# 59. 主要风险
+
+## Risk 1 — Default Naive Appearance 覆盖 Docus
+
+Mitigation：
+
+```text
+Docus tokens
+themeOverrides
+visual baseline
+不滥用 NCard / NLayout
+```
+
+---
+
+## Risk 2 — DatePicker 时间语义污染
+
+Mitigation：
+
+```text
+Phase 0 timezone spike
+domain adapter
+无法安全则保留 native
+```
+
+---
+
+## Risk 3 — Overlay / Focus Regression
+
+Mitigation：
+
+```text
+Provider spike
+focus trap tests
+ESC tests
+Vault overlay tests
+```
+
+---
+
+## Risk 4 — CSS 双体系越来越大
+
+Mitigation：
+
+```text
+每个 Phase 明确 canonical scope
+Cleanup debt ledger
+最终 Phase 8 清理
+```
+
+---
+
+## Risk 5 — Bundle 明显增长
+
+Mitigation：
+
+```text
+exact dependency
+tree-shaken imports
+no second icon library
+build-size checkpoints
+```
+
+---
+
+## Risk 6 — Ledger 被重新设计
+
+Mitigation：
+
+```text
+Ledger migration = visual preservation
+Dashboard domain layout frozen
+```
+
+---
+
+## Risk 7 — Vault 生命周期被 UI Library 改坏
+
+Mitigation：
+
+```text
+Vault last
+domain components remain custom
+UI primitive only
+```
+
+---
+
+# 60. Implementation Tracking
+
+建议在 Implementation Plan 内维护：
+
+```text
+Phase | State | Start SHA | Final SHA | CI
+```
+
+例如：
+
+```text
+0 Spike        Pending
+1 Foundation   Pending
+2 Overlay      Pending
+3 Primitive    Pending
+4 Chrome       Pending
+5 Diary        Pending
+6 Ledger       Pending
+7 Vault/Note   Pending
+8 Cleanup      Pending
+```
+
+不要另外建立复杂 project tracking 系统。
+
+---
+
+# 61. 每 Phase Final Report
+
+每阶段实现报告必须至少包含：
+
+```text
+Starting HEAD
+Final HEAD
+Changed files
+Behavior changed?
+Visual changed?
+Theme changed?
+Tests
+Typecheck
+Build
+E2E
+Exact-head CI
+Bundle delta
+Known exceptions
+Rollback boundary
+```
+
+---
+
+# 62. 整个 Epic 最终 Gate
+
+全部完成前验证：
+
+```text
+Note main path
+Diary main path
+Ledger main path
+Vault main path
+Auth
+Settings
+Theme switch
+Overlay
+Keyboard
+Responsive
+```
+
+并确保：
+
+```text
+No P0
+No P1
+P2 有明确接受理由
+```
+
+---
+
+# 63. Explicit Non-Changes
+
+整个 Implementation Plan 禁止修改：
+
+```text
+Server architecture
+Database schema
+API protocol
+Ledger financial semantics
+Ledger historical semantics
+Diary access semantics
+Vault identity semantics
+Document persistence
+Router contract
+Markdown pipeline
+ECharts domain data
+```
+
+任何需要修改上述范围的发现：
+
+```text
+STOP
+→ Implementation Review
+```
+
+不能现场“顺手解决”。
+
+---
+
+# 64. Implementation Review Checkpoints
+
+在真正进入 coding 前，我建议重点 Review 下面 7 项：
+
+1. `naive-ui@2.45.3` 是否批准作为 Phase 0 candidate。
+2. CSS variable → themeOverrides 是否作为首选单 source 方案。
+3. `DocusUiRoot → App` Provider hierarchy 是否接受。
+4. `useToast / useConfirm / usePrompt` API 是否正式冻结。
+5. Ledger DatePicker 是否接受“安全则迁，不安全则保留 native”的例外规则。
+6. Diary full calendar / Vault domain tree 是否明确不属于 primitive migration。
+7. Phase 8 才删除 legacy token / primitive CSS 是否接受。
+
+我对这 7 项的建议都是：
+
+```text
+ACCEPT
+```
+
+---
+
+# 65. Ready-for-Implementation 条件
+
+只有以下全部通过：
+
+```text
+Product Review: Accepted
+Implementation Review: PASS
+Phase 0 gates 清晰
+Migration boundary 清晰
+No blocking open question
+```
+
+才进入 coding。
+
+届时状态改为：
+
+```text
+Implementation Review: PASS
+Ready for Implementation
+```
+
