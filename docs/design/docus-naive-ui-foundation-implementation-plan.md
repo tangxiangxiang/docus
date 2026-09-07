@@ -2,10 +2,10 @@
 
 **日期：** 2026-09-07
 **模块：** Global UI Foundation
-**状态：** Implementation Review: Ready for Review
+**状态：** Implementation Review: PASS — Ready for Implementation
 **类型：** Architecture / UI Foundation Refactor
 **优先级：** P1
-**基线：** main @ 0ba48906037dbc97d90f208ed917ff87b1cd476a
+**基线：** main @ e8a427f53a1df2492f94472a02ef9fde26fe6923
 
 ---
 
@@ -63,7 +63,7 @@ Workspace IA 不变
 Authoritative starting HEAD：
 
 ```text
-0ba48906037dbc97d90f208ed917ff87b1cd476a
+e8a427f53a1df2492f94472a02ef9fde26fe6923
 ```
 
 当前基础设施：
@@ -78,7 +78,7 @@ Playwright   ^1.61.1
 
 当前没有 `naive-ui`。
 
-截至本计划编写时，Naive UI 当前 npm `latest` 为 `2.45.3`，官方同时说明组件支持 tree-shaking，并提供类型安全的 theme override 系统。Phase 0 将以 **2.45.3 作为候选版本进行 compatibility spike**；只有 Spike Gate 通过后，才以 exact version 写入正式依赖。([Naive UI][1])
+截至本计划编写时，Naive UI 当前 npm `latest` 为 `2.45.3`；[Naive UI documentation](https://www.naiveui.com/) 与 [Naive UI npm package](https://www.npmjs.com/package/naive-ui) 均支持按需导入、tree-shaking 和类型安全的 theme override。Phase 0 将以 **2.45.3 作为 exact-pinned candidate dependency** 进行 compatibility spike；依赖和 lockfile 在 Phase 0 提交并由 CI 复现。
 
 ---
 
@@ -168,7 +168,7 @@ Docus semantic tokens
 
 Phase 0 不做正式 Workspace migration。
 
-只验证六个技术问题：
+只验证 compatibility gates，不做正式 Workspace migration：
 
 ```text
 1. Naive UI 2.45.3 与当前 Vue / TS / Vite 是否兼容
@@ -176,22 +176,15 @@ Phase 0 不做正式 Workspace migration。
 3. Light / Dark runtime switch 是否正确
 4. Provider / Teleport / Overlay 是否与现有 App Shell 共存
 5. 全局 focus-visible 是否与 Naive focus style 冲突
-6. Bundle / test / build 是否在可接受范围
+6. Locale / DateLocale bridge 是否与 `useI18n().locale` 同步
+7. Bundle / test / build 是否在可接受范围
 ```
 
 ---
 
 ## 4.2 Spike dependency
 
-临时验证：
-
-```bash
-npm install --no-save --package-lock=false naive-ui@2.45.3
-```
-
-正式 dependency 暂不提交。
-
-如果 Spike PASS，Phase 1 才：
+Phase 0 正式提交 candidate dependency：
 
 ```bash
 npm install --save-exact naive-ui@2.45.3
@@ -203,9 +196,7 @@ npm install --save-exact naive-ui@2.45.3
 "naive-ui": "^2.45.3"
 ```
 
-第一阶段先 exact pin。
-
-等整个 Epic 稳定后再决定是否恢复 semver range。
+Phase 0 的 dependency、`package-lock.json` 和 compatibility evidence 必须可提交、可回滚、可由 `npm ci` 确定性复现。若 Spike FAIL，revert Phase 0 commit(s) 即可回到没有 Naive UI dependency 的状态；不得以未写入项目 manifest / lockfile 的临时安装成功作为通过条件。Phase 1 consumes the exact-pinned dependency already validated in Phase 0，不重复安装依赖。
 
 ---
 
@@ -242,6 +233,25 @@ Light
 重新 mount App
 刷新页面
 产生第二套 theme state
+```
+
+## 4.4 Locale / DateLocale Spike
+
+现有 `useI18n().locale`（`zh | en`）是唯一 application locale authority。Naive UI locale 与 date locale 只能作为 consumer，不得创建第二套 locale state。
+
+验证 runtime：
+
+```text
+zh → en → zh
+```
+
+并确认 Naive primitive UI、DatePicker date locale、Pagination、Empty、built-in messages 与现有 Docus copy 同步；切换不得重新 mount App 或刷新页面。
+
+固定映射：
+
+```text
+zh → locale = zhCN, dateLocale = dateZhCN
+en → locale = enUS, dateLocale = dateEnUS
 ```
 
 ---
@@ -329,7 +339,7 @@ Browser-local JS timestamp
 
 偷偷变成 Ledger date authority。
 
-Naive UI 社区历史上存在 DatePicker timezone 相关需求，因此不能假设组件本身会替 Docus 正确解决领域时区语义。([GitHub][2])
+Naive UI 的 [DatePicker timezone issue search](https://github.com/tusen-ai/naive-ui/issues?q=DatePicker%20timezone) 表明不能假设组件本身会替 Docus 正确解决领域时区语义。
 
 Phase 0 必须验证：
 
@@ -471,7 +481,7 @@ ledger-mode scrollbar behavior
 
 # 9. Bundle Baseline
 
-Phase 0 开始前记录：
+Phase 0 开始前记录 Baseline：
 
 ```text
 npm run build
@@ -486,7 +496,7 @@ total JS bytes
 total CSS bytes
 ```
 
-然后 Spike 安装 Naive UI 后再次比较。
+Phase 0 exact-pinned dependency + compatibility test state 再次比较。由于 Phase 0 不做 production import，单纯依赖增加不应显著改变 production bundle；这是 Phase 0 gate。Phase 1 首次引入 production provider / theme imports 后，再记录一次真实 production bundle delta。
 
 不新增：
 
@@ -503,20 +513,25 @@ rollup-visualizer
 
 # 10. Phase 0 Exit Criteria
 
-Phase 0 PASS 必须满足：
+Phase 0 是 exact-head reproducible gate。PASS 必须满足：
 
 ```text
+package.json exact pin PASS
+package-lock deterministic PASS
+npm ci PASS
 Vue compatibility PASS
 TypeScript PASS
 Vite build PASS
 Vitest mount PASS
 CSS token mapping PASS
 Light/Dark PASS
+Locale/DateLocale PASS
 Provider PASS
 Teleport PASS
 Focus strategy identified
 DatePicker Ledger strategy identified
 Bundle impact recorded
+exact-head CI PASS
 ```
 
 任何一个 blocking compatibility failure：
@@ -531,11 +546,7 @@ Bundle impact recorded
 
 # 11. Phase 1 — UI Foundation
 
-Phase 0 通过后正式安装：
-
-```bash
-npm install --save-exact naive-ui@2.45.3
-```
+Phase 1 consumes the exact-pinned `naive-ui@2.45.3` dependency already committed and validated in Phase 0。不得在 Phase 1 重复安装或重新选择版本。
 
 不安装：
 
@@ -553,7 +564,7 @@ inline SVG
 现有 icon strategy
 ```
 
-Naive UI 本身不要求额外 CSS import。([NPM][3])
+Naive UI 本身不要求额外 CSS import；依赖只通过按需 import 使用。
 
 ---
 
@@ -588,6 +599,8 @@ src/ui/runtime/
 ```text
 src/ui/tokens.css
 ```
+
+Phase 1 必须在同一 commit boundary 内先把 `src/style.css` 中基础 semantic palette 的真实值移动到 `tokens.css`，再定义 aliases，并删除 `style.css` 中冲突的 hard-coded `:root`、dark-mode 和 alias 定义。`tokens.css` 是 semantic value authority，`style.css` 只能消费变量；不得把 Phase 1 扩成 `--vs-*`、`--ledger-*`、Markdown 或 editor token 的全量重写。
 
 第一版：
 
@@ -624,7 +637,7 @@ src/ui/tokens.css
 
 数值应优先从当前 Docus 已经验证过的视觉语言提取。
 
-不要重新发明品牌配色。
+不要重新发明品牌配色；数值优先从当前 Docus 已验证的视觉语言提取。
 
 ---
 
@@ -646,7 +659,7 @@ Phase 1 保留：
 --accent-hover: var(--docus-accent-hover);
 ```
 
-当前大量 CSS 已依赖旧变量，所以 Phase 1 绝不进行全文件 rename。
+当前大量 CSS 已依赖旧变量，所以 Phase 1 绝不进行全文件 rename。Aliases 与 semantic values 必须在 `tokens.css` 中共同拥有，`style.css` 不得再次定义同名 alias。
 
 ---
 
@@ -668,6 +681,8 @@ tokens.css
 ```
 
 `style.css` 只消费。
+
+主题 cascade precedence 固定为：默认 Light tokens → 无显式持久化主题时的 `prefers-color-scheme` fallback → `[data-theme='light']` / `[data-theme='dark']` explicit application state。显式 state 优先于 OS preference；storage key 固定为 `docus.theme`。
 
 但 Phase 1 只移动基础 semantic token。
 
@@ -706,6 +721,24 @@ OS fallback
 
 Phase 1 不重写这套 boot mechanism。
 
+## 16.1 `useI18n()` Locale Bridge
+
+`useI18n().locale`（`zh | en`）是唯一 locale authority。DocusUiRoot 中派生：
+
+```ts
+const { locale } = useI18n()
+
+const naiveLocale = computed(() =>
+  locale.value === 'zh' ? zhCN : enUS,
+)
+
+const naiveDateLocale = computed(() =>
+  locale.value === 'zh' ? dateZhCN : dateEnUS,
+)
+```
+
+runtime `zh → en → zh` 必须同步 Naive UI locale 与 date locale，不重新 mount App、不刷新页面。
+
 ---
 
 # 17. `naiveTheme.ts`
@@ -742,7 +775,7 @@ export const docusNaiveThemeOverrides: GlobalThemeOverrides = {
 }
 ```
 
-只 override 真正需要统一的 common / component variables。
+只 override 真正需要统一的 common / component variables；CSS custom properties 可用时优先直接引用 `var(--docus-*)`，不得建立第二套长期 TS palette。
 
 不要一开始复制 Naive UI 几百个 theme variable。
 
@@ -757,19 +790,33 @@ export const docusNaiveThemeOverrides: GlobalThemeOverrides = {
 import { computed } from 'vue'
 import {
   darkTheme,
+  dateEnUS,
+  dateZhCN,
+  enUS,
   NConfigProvider,
   NDialogProvider,
   NMessageProvider,
   NNotificationProvider,
+  zhCN,
 } from 'naive-ui'
 import App from '../App.vue'
+import { useI18n } from '../composables/useI18n'
 import { useTheme } from '../composables/useTheme'
 import { docusNaiveThemeOverrides } from './naiveTheme'
 
 const { theme } = useTheme()
+const { locale } = useI18n()
 
 const naiveTheme = computed(() =>
   theme.value === 'dark' ? darkTheme : null
+)
+
+const naiveLocale = computed(() =>
+  locale.value === 'zh' ? zhCN : enUS,
+)
+
+const naiveDateLocale = computed(() =>
+  locale.value === 'zh' ? dateZhCN : dateEnUS,
 )
 </script>
 
@@ -777,6 +824,8 @@ const naiveTheme = computed(() =>
   <NConfigProvider
     :theme="naiveTheme"
     :theme-overrides="docusNaiveThemeOverrides"
+    :locale="naiveLocale"
+    :date-locale="naiveDateLocale"
   >
     <NDialogProvider>
       <NMessageProvider>
@@ -789,13 +838,15 @@ const naiveTheme = computed(() =>
 </template>
 ```
 
-具体 nesting 可以在 Implementation Review 微调，但：
+具体 nesting 可以依据 Naive UI API 约束微调，但：
 
 ```text
 App 必须位于 Provider 下方
 ```
 
 是冻结要求。
+
+第一版保留 `NNotificationProvider` 以支持未来 richer notification，但 transient `useToast()` 默认由 NMessage 承担；Provider 存在不等于所有 toast 都迁成 Notification。
 
 ---
 
@@ -846,6 +897,7 @@ global styles
 light → Naive default light theme
 dark → darkTheme
 runtime switch 不 remount App
+locale `zh → en → zh` 同步 `locale` 与 `date-locale`
 ```
 
 ### Tokens
@@ -855,6 +907,7 @@ runtime switch 不 remount App
 ```text
 核心 semantic token 存在
 legacy alias 存在
+同名 alias 不在 `style.css` 重复定义
 ```
 
 不要 snapshot 整个 CSS 文件。
@@ -886,6 +939,9 @@ Unit PASS
 Typecheck PASS
 Build PASS
 E2E PASS
+Locale / DateLocale PASS
+Visual Acceptance Gate PASS
+Exact-head CI PASS
 ```
 
 ---
@@ -912,6 +968,24 @@ usePrompt()
 
 必须保留。
 
+Host Bridge 是唯一 canonical architecture：
+
+```text
+Business Components
+        ↓
+useToast / useConfirm / usePrompt
+(provider-independent Docus semantic APIs)
+        ↓
+ToastHost / ConfirmHost / PromptHost
+(or clearly renamed equivalent Hosts)
+        ↓
+Naive UI provider hooks / components
+```
+
+Naive UI 的 `useMessage`、`useDialog`、`useNotification` 只允许在 Provider descendants / Host bridge 内部调用；业务组件不需要处于 Naive UI injection context。
+
+Host Bridge 是 provider-aware 的 domain adapter，不是绕过 Provider 的 global singleton。
+
 ---
 
 # 23. Toast Migration
@@ -936,7 +1010,7 @@ useToast()
 useMessage()
 ```
 
-### 推荐 adapter-first
+### Frozen adapter-first strategy
 
 保留：
 
@@ -956,8 +1030,6 @@ ToastHost
 Naive Message bridge
 ```
 
-或者在 Provider 下建立最小 `DocusMessageBridge`。
-
 要求保持：
 
 ```text
@@ -968,6 +1040,8 @@ dismiss
 ```
 
 等价。
+
+短反馈 `info` / `success` / `warning` / `error` 默认映射到 NMessage；只有标题、长生命周期或 richer content 才使用 NNotification。若 Naive duration 与 Docus `ttl` 单位不同，由 Adapter 做 conversion。不得让业务层直接从 `useToast()` 改写为 `useMessage()`。
 
 ---
 
@@ -994,7 +1068,7 @@ const { promise, cancel } = confirmCancellable(...)
 
 不能因为 `NDialog` imperative API 简单，就丢弃 cancellation。
 
-推荐：
+实现固定为：
 
 ```text
 useConfirm semantics
@@ -1012,6 +1086,8 @@ destroy dialog
 resolve false on cancel
 double settle protection
 ```
+
+`cancel()` 必须主动 destroy 对应 Naive dialog，并 resolve `false`；不能只从 queue 删除而留下可见 dialog。必须保留 safe cancel focus、ESC cancel、focus restore，以及 destructive confirm 不默认 focus 危险 action 的 observable behavior。
 
 ---
 
@@ -1055,6 +1131,8 @@ ESC
 ```
 
 都需要测试。
+
+如果 `transform` throws / rejects：Prompt 保持打开，busy 恢复 `false`，不得产生 unhandled rejection 或 double settlement。除非已有 caller 语义，不新增产品级 error copy；Host 可捕获错误并允许继续编辑 / 重试。
 
 ---
 
@@ -1110,6 +1188,8 @@ focus leaves overlay correctly
 keyboard works
 ```
 
+这些测试应优先断言 role、accessible name、用户可见 label 或必要的 `data-testid`，而不是 `.btn`、`.confirm-actions`、`.n-dialog`、`.n-button` 等 implementation class。
+
 ---
 
 # 28. Phase 3 — Primitive Foundation
@@ -1136,7 +1216,7 @@ Note
 Domain-specialized
 ```
 
-不要搜索到一个就机械替换一个。
+inventory 必须同时记录每个 control 的：current density、target density、reason / exception、keyboard / focus contract。Docus 只允许两档 canonical density：`compact → Naive small`，`default → Naive medium / library default equivalent`；`large` 仅在明确产品强调场景按需使用。不要搜索到一个就机械替换一个。
 
 ---
 
@@ -1169,6 +1249,19 @@ toggle
 simple date input
 → NDatePicker
 ```
+
+默认前提是 domain semantics 可保持。Naive UI 是 primitive 默认 authority，但不是绝对强制替换 authority；若 replacement 无法保持 existing domain semantics、timezone / calendar semantics、accessibility、browser / platform behavior 或 lifecycle guarantees，允许保留现有 primitive。
+
+每个 exception 必须记录 concrete reason、保持 domain behavior、保留测试，并在 Phase Final Report 标记；exception 不得扩散成重新自研全部 primitives。
+
+control size 统一按：
+
+```text
+compact  → Naive small
+default  → Naive medium / library default equivalent
+```
+
+`compact` 用于 Navbar、compact workspace chrome、dense inline toolbar 和 small auxiliary actions；`default` 用于 forms、dialogs、settings、Ledger record forms、Diary access forms 以及普通 primary / secondary actions。
 
 前提：
 
@@ -1391,6 +1484,8 @@ intentional domain exception
 ```
 
 这是允许的。
+
+无法证明 timezone-safe 时保留 native 是正式的 `intentional domain exception`，与 PRD 的 Primitive Exception Policy 一致。
 
 ---
 
@@ -1674,31 +1769,23 @@ user-visible text
 
 ---
 
-# 49. Visual Regression
+# 49. Visual Acceptance Gate
 
-每个 Workspace Phase 都必须：
+Visual Acceptance Gate 是正式 Phase gate，采用两级方式：
 
-```text
-Light desktop
-Dark desktop
-Light mobile
-Dark mobile
-```
+1. 已存在稳定 automated visual baseline 的 surface，必须 automated screenshot regression PASS；
+2. 尚无 automated baseline 的 surface，必须人工验证 Desktop Light、Desktop Dark、Mobile Light、Mobile Dark。
 
-做人工或已有 visual review。
-
-如果截图发生变化：
-
-必须回答：
+每个 Phase Final Report 必须记录：
 
 ```text
-intentional?
-还是 regression?
+reviewed surfaces
+intentional visual changes
+regressions found / fixed
+remaining accepted differences
 ```
 
-不能：
-
-> 组件库默认就这样。
+随着 Workspace migration，可逐步为 NavBar / Shared Chrome、Diary main surface、Ledger Dashboard、Vault critical chrome 建立 automated baseline；Phase 0 / Phase 1 不强制建立全站 screenshot suite。视觉变化必须说明原因，不得以“组件库默认就是这样”作为接受理由。
 
 ---
 
@@ -1759,18 +1846,20 @@ CI 最终作为 exact-head authority。
 
 ```text
 Foundation
+Phase 0
+Phase 1
 Diary
 Ledger
 Vault
 ```
 
-记录 build size。
+记录 build size，并按 Baseline、Phase 0、Phase 1、Diary、Ledger、Vault 六个 checkpoint 比较 entry JS、largest async chunk、total JS bytes 和 total CSS bytes。
 
 禁止出现：
 
 > 因为 tree shaking 应该有效，所以不测。
 
-Naive UI 官方声称组件可 tree-shake，但 Docus 仍必须验证自己的 import pattern。([NPM][3])
+Naive UI 官方支持 tree-shaking；Docus 仍必须验证自己的 import pattern。
 
 ---
 
@@ -2029,15 +2118,16 @@ Phase | State | Start SHA | Final SHA | CI
 例如：
 
 ```text
-0 Spike        Pending
-1 Foundation   Pending
-2 Overlay      Pending
-3 Primitive    Pending
-4 Chrome       Pending
-5 Diary        Pending
-6 Ledger       Pending
-7 Vault/Note   Pending
-8 Cleanup      Pending
+Phase | State | Scope
+0     | Pending | exact dependency + reproducible compatibility validation
+1     | Pending | production tokens/theme/provider/locale integration
+2     | Pending | feedback / overlay Host Bridge
+3     | Pending | shared low-risk primitives
+4     | Pending | Shared Chrome controls
+5     | Pending | Diary primitives
+6     | Pending | Ledger primitives with visual preservation
+7     | Pending | Vault / Note high-risk primitives
+8     | Pending | legacy cleanup
 ```
 
 不要另外建立复杂 project tracking 系统。
@@ -2055,6 +2145,7 @@ Changed files
 Behavior changed?
 Visual changed?
 Theme changed?
+Locale changed?
 Tests
 Typecheck
 Build
@@ -2062,6 +2153,7 @@ E2E
 Exact-head CI
 Bundle delta
 Known exceptions
+Visual Acceptance Gate result
 Rollback boundary
 ```
 
@@ -2125,21 +2217,20 @@ STOP
 
 # 64. Implementation Review Checkpoints
 
-在真正进入 coding 前，我建议重点 Review 下面 7 项：
+以下 Frozen Implementation Decisions 均为 **ACCEPTED**：
 
-1. `naive-ui@2.45.3` 是否批准作为 Phase 0 candidate。
-2. CSS variable → themeOverrides 是否作为首选单 source 方案。
-3. `DocusUiRoot → App` Provider hierarchy 是否接受。
-4. `useToast / useConfirm / usePrompt` API 是否正式冻结。
-5. Ledger DatePicker 是否接受“安全则迁，不安全则保留 native”的例外规则。
-6. Diary full calendar / Vault domain tree 是否明确不属于 primitive migration。
-7. Phase 8 才删除 legacy token / primitive CSS 是否接受。
-
-我对这 7 项的建议都是：
-
-```text
-ACCEPT
-```
+1. `naive-ui@2.45.3` 作为 Phase 0 candidate exact-pin dependency；
+2. CSS custom properties 作为 `themeOverrides` 首选 single source 方案；
+3. `DocusUiRoot → App` Provider hierarchy；
+4. `useToast / useConfirm / usePrompt` public semantic API；
+5. Ledger DatePicker 采用 safe-migrate / native-exception rule；
+6. Diary full calendar / Vault domain tree 不属于 primitive migration；
+7. Legacy aliases / primitive CSS cleanup 在 Phase 8 最终完成；
+8. `useI18n().locale` 是唯一 locale authority；
+9. Host Bridge 是 feedback / overlay canonical architecture；
+10. `tokens.css` 是 global semantic token value authority，`style.css` 不得重新定义相同 alias value；
+11. Visual Acceptance Gate 采用 automated where available + documented manual where unavailable；
+12. Control Density 只冻结 `compact` / `default` 两级 canonical policy。
 
 ---
 
@@ -2155,12 +2246,12 @@ Migration boundary 清晰
 No blocking open question
 ```
 
-才进入 coding。
-
-届时状态改为：
+文档现在满足上述条件，可以进入 coding。当前文档状态：
 
 ```text
 Implementation Review: PASS
 Ready for Implementation
+P0: 0
+P1: 0
+Blocking Open Questions: 0
 ```
-

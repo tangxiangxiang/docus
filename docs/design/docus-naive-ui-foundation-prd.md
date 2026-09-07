@@ -2,10 +2,10 @@
 
 **日期：** 2026-09-07  
 **模块：** Global UI Foundation  
-**状态：** Product Review: Ready for Review  
+**状态：** Product Review: Accepted
 **类型：** 架构重构 / UI Foundation  
 **优先级：** P1  
-**基线：** main @ 0ba48906037dbc97d90f208ed917ff87b1cd476a
+**基线：** main @ e8a427f53a1df2492f94472a02ef9fde26fe6923
 
 ## 1. 产品概述
 
@@ -461,7 +461,7 @@ Docus looks like Naive UI
 
 > 少量、稳定、有语义、长期可维护的 token。
 
-## 12. Legacy Token Compatibility
+## 12. Legacy Token Compatibility 与 Cascade
 
 当前项目已有：
 
@@ -476,9 +476,14 @@ Docus looks like Naive UI
 --accent-hover
 ~~~
 
-第一阶段不得一次性删除这些 token。
+第一阶段不得一次性删除这些 token。Phase 1 必须在同一个实现边界内完成以下原子迁移：
 
-必须提供 compatibility alias，例如：
+1. 将基础 semantic palette 的真实值从 `src/style.css` 移到 `src/ui/tokens.css`；
+2. 在 `tokens.css` 定义 `--docus-*` semantic tokens；
+3. 在 `tokens.css` 定义 legacy aliases；
+4. 同一 Phase / commit boundary 删除 `style.css` 中会冲突的 hard-coded `:root`、dark-mode 和 alias 定义。
+
+`tokens.css` 是 global semantic token value authority，`style.css` 只消费这些变量，不得重新定义相同 alias value。Phase 1 不扩展到 `--vs-*`、`--ledger-*`、Markdown 或 editor-specific tokens；这些由对应 Workspace / Cleanup 阶段负责。
 
 ~~~css
 --bg: var(--docus-bg);
@@ -494,17 +499,15 @@ Docus looks like Naive UI
 --accent-hover: var(--docus-accent-hover);
 ~~~
 
-迁移过程中：
+迁移过程中，新代码优先使用 `--docus-*` token，旧代码继续通过 compatibility alias 工作。旧 token 的删除只能发生在 Cleanup Phase。
 
-~~~
-新代码
-→ 优先使用 --docus-* token
+主题 cascade precedence 固定为：
 
-旧代码
-→ compatibility alias 保持稳定
-~~~
+1. 默认 Light tokens；
+2. `prefers-color-scheme` 仅在没有显式持久化主题时提供首次体验；
+3. `[data-theme='light']` / `[data-theme='dark']` 作为 explicit application state，优先于 OS preference。
 
-旧 token 的删除只能发生在 Cleanup Phase。
+现有 `index.html` boot script 与 `useTheme()` 继续负责 `data-theme` 和 storage key `docus.theme`。不得引入 Naive UI 自己的 theme localStorage。
 
 ## 13. Theme Authority
 
@@ -536,6 +539,34 @@ theme switching
 ~~~
 
 Naive UI 只是 theme consumer。
+
+### 13.1 Locale Authority
+
+现有 `useI18n().locale` 是 Docus 唯一 application locale authority，取值为 `zh | en`。Naive UI 不得创建第二套 locale state。
+
+locale 链路冻结为：
+
+~~~
+navigator / Docus locale state
+            ↓
+         useI18n
+            ↓
+          zh | en
+            ↓
+ ┌──────────┼─────────────┐
+ ▼          ▼             ▼
+Docus      Naive UI       Date locale
+copy       locale         formatting
+~~~
+
+映射固定为：
+
+~~~text
+zh → locale = zhCN, dateLocale = dateZhCN
+en → locale = enUS, dateLocale = dateEnUS
+~~~
+
+`NConfigProvider` 消费由 `useI18n().locale` 派生的 `locale` 与 `date-locale`。runtime `zh → en → zh` 必须自动同步，不重新 mount App、不刷新页面；DatePicker、Pagination、Empty 和 built-in messages 均必须遵循同一 locale authority。
 
 ## 14. Light / Dark 一致性
 
@@ -615,7 +646,7 @@ Naive UI Provider 不直接散落在各个 Workspace。
 
 必须建立统一 Root。
 
-推荐：
+固定位置：
 
 ~~~
 src/ui/DocusUiRoot.vue
@@ -631,6 +662,19 @@ DocusUiRoot
                  └─ NNotificationProvider
                       └─ App
 ~~~
+
+`NConfigProvider` 同时接收：
+
+~~~vue
+<NConfigProvider
+  :theme="naiveTheme"
+  :theme-overrides="docusNaiveThemeOverrides"
+  :locale="naiveLocale"
+  :date-locale="naiveDateLocale"
+>
+~~~
+
+其中 `naiveLocale` / `naiveDateLocale` 由 `useI18n().locale` reactive 派生。具体 provider 顺序可按 Naive UI API 约束微调，但 App 必须位于全部需要的 providers 下方。
 
 App.vue 不承担 provider bootstrap。
 
@@ -653,6 +697,8 @@ NLoadingBarProvider
 
 只有出现明确全局 Loading Bar 产品需求时再引入。
 
+保留 `NNotificationProvider` 不代表所有 toast 都迁成 Notification。第一版默认 transient feedback 使用 `NMessage`；只有需要标题、长生命周期或更丰富内容时才使用 Notification。
+
 ## 19. Global Feedback Migration
 
 当前 Docus 已有：
@@ -663,7 +709,7 @@ ConfirmHost
 PromptHost
 ~~~
 
-目标不是立即删除业务层 API，而是先替换底层实现。
+目标不是立即删除业务层 API，而是先替换底层实现。Host Bridge 是 feedback / overlay 的唯一 canonical architecture。
 
 现有：
 
@@ -675,14 +721,23 @@ usePrompt
 
 属于有价值的 Docus semantic abstraction。
 
-因此优先策略：
+因此冻结为：
 
 ~~~
-业务层 API 保持
+Business Components
         ↓
-底层 implementation
-custom host → Naive UI
+useToast / useConfirm / usePrompt
+(provider-independent Docus semantic APIs)
+        ↓
+ToastHost / ConfirmHost / PromptHost
+(or clearly renamed equivalent Hosts)
+        ↓
+Naive UI provider hooks / components
 ~~~
+
+业务组件不得要求位于 `useMessage` / `useDialog` injection context 才能调用。Naive UI 的 `useMessage`、`useDialog`、`useNotification` 只允许在 Provider descendants 或 Host bridge 内部使用。
+
+Host Bridge 是 provider-aware 的 domain adapter，不是绕过 Provider 的 global singleton。
 
 ## 20. Toast
 
@@ -706,9 +761,7 @@ error
 
 优先由 NMessage 承担。
 
-需要更长信息、标题或较重反馈时可使用 NNotification。
-
-具体映射由 Implementation Plan 冻结。
+ToastHost 负责把 Docus semantic state 转为 NMessage / NNotification。默认 `info`、`success`、`warning`、`error` 使用 NMessage；需要标题或长生命周期时才使用 NNotification。必须保留 `ttl`、manual dismiss、type 与 call timing；若 duration 单位不同，由 Adapter 做转换。
 
 业务调用方不应因为迁移发生大规模改写。
 
@@ -729,6 +782,20 @@ useConfirm()
 
 继续作为 Docus confirm semantic API。
 
+现有 contract 必须完整保留：
+
+~~~text
+confirm()
+confirmCancellable()
+queue semantics
+cancel()
+destructive
+confirmLabel
+cancelLabel
+detail
+single-settlement protection
+~~~
+
 它负责表达：
 
 ~~~
@@ -748,9 +815,13 @@ buttons
 a11y
 ~~~
 
+ConfirmHost 负责将 semantic request 映射到 NDialog，维护 queue、destroy 对应 dialog、`cancel()` resolve `false` 和 single-settlement。`cancel()` 不能只从 queue 删除而留下可见 dialog。
+
+observable accessibility contract 必须保持：打开后 focus 进入 dialog；destructive confirm 默认 focus 保持在安全 / cancel action；ESC resolve `false`；关闭后 focus 恢复到原触发元素。若 Naive UI 默认 initial focus 不满足，Host Adapter 必须显式配置或补偿。
+
 ## 22. Prompt
 
-PromptHost 不要求强行替换成一个 Naive UI built-in API。
+PromptHost 保留为 domain bridge，不要求强行替换成一个 Naive UI built-in API。
 
 允许建立：
 
@@ -760,6 +831,8 @@ Docus Prompt semantics
 NModal / NDialog
 +
 NInput
++
+NButton
 ~~~
 
 目标是保留：
@@ -777,6 +850,10 @@ focus
 buttons
 validation presentation
 ~~~
+
+`usePrompt()` contract 保留 `title`、`placeholder`、`initial`、`actionLabel`、`actionTitle`、`transform` 和 `Promise<string | null>`。必须保持 initial value、input auto focus、合理的 selection、Enter submit、ESC cancel、与现状一致的 outside-click semantics、async transform、busy、double-submit prevention、transform 完成后重新 focus/select，以及 Promise exactly once settlement。
+
+如果 `transform` throws / rejects：Prompt 保持打开，busy 恢复 `false`，不得产生 unhandled rejection 或 double settlement。除非已有 caller 语义，文档不新增产品级 error copy；Host 可捕获错误并允许继续编辑 / 重试。
 
 ## 23. Form Strategy
 
@@ -822,7 +899,9 @@ switch
 date picker
 ~~~
 
-但迁移必须是产品语义等价迁移。
+但 Naive UI 是默认 authority 而非绝对强制替换 authority。迁移必须是产品语义等价迁移；若 Naive UI replacement 无法保持 existing domain semantics、timezone / calendar semantics、accessibility、browser / platform behavior 或 lifecycle guarantees，允许保留现有 primitive。
+
+任何 exception 必须记录 concrete reason、保持 domain behavior、保留测试，并在 Phase Final Report 记录；exception 不得扩散为重新自研全部 primitives。
 
 不能因为 Naive UI 默认 API 不同就改变：
 
@@ -835,6 +914,19 @@ loading state
 disabled state
 business events
 ~~~
+
+### 24.1 Control Density / Size Policy
+
+Docus 只冻结两档 canonical control density：
+
+~~~text
+compact  → Naive small
+default  → Naive medium / library default equivalent
+~~~
+
+`compact` 用于 Navbar、compact workspace chrome、dense inline toolbar 和 small auxiliary actions；`default` 用于 forms、dialogs、settings、Ledger record forms、Diary access forms 以及普通 primary / secondary actions。`large` 默认不是 Docus canonical size，只能在明确的产品强调场景按需使用。
+
+同一产品语义必须使用同一 density。不要由各 Workspace 任意引入本地高度或 size token。
 
 ## 25. DatePicker 特别规则
 
@@ -857,6 +949,8 @@ Naive UI 只负责：
 > 用户如何选择日期。
 
 不得让 DatePicker 自己成为 financial date authority。
+
+默认迁移规则：timezone-safe 且能稳定得到 canonical `YYYY-MM-DD` 时迁移到 `NDatePicker`；无法证明 timezone-safe 时保留 native `<input type="date">`，并在 Final Report 标记 `intentional domain exception`。这条规则同样适用于其他拥有日期领域 authority 的 Workspace。
 
 ## 26. Workspace Migration Boundary
 
@@ -950,34 +1044,35 @@ command model
 验证：
 
 ~~~
+exact-pinned dependency 与 package-lock 可复现性
 Naive UI 与当前 Vue/Vite/TypeScript 兼容性
-themeOverrides
-CSS var mapping
+themeOverrides 与 CSS var mapping
 bundle impact
 test environment
 Teleport
 Provider hooks
+Locale / DateLocale integration
 Dark / Light integration
 E2E implications
 ~~~
 
-本阶段不得大面积迁移 UI。
+本阶段可以提交 exact-pinned dependency、compatibility tests 和最小 test-only fixture，但不得正式接管 App UI、引入 production DocusUiRoot、迁移 Workspace 或改业务页面。Phase 0 是“可提交、可复现、无用户可见 migration”的 compatibility spike。
 
 ### Phase 1 — UI Foundation
 
 完成：
 
 ~~~
-Naive UI dependency
 DocusUiRoot
 NConfigProvider
 Theme mapping
 tokens.css
 legacy aliases
 provider baseline
+theme / locale bridge
 ~~~
 
-但业务 UI 基本保持不变。
+Phase 1 consumes the exact-pinned dependency already validated in Phase 0，不重复安装依赖；业务 UI 基本保持不变。
 
 ### Phase 2 — Feedback / Overlay
 
@@ -1442,21 +1537,20 @@ double submit
 close behavior
 ~~~
 
-## 43. Visual Regression Strategy
+当前 `ConfirmHost` / `PromptHost` 测试中的 observable behavior 是 migration regression evidence。Confirm 至少保留 safe cancel focus、ESC、focus restore、destructive labels；Prompt 至少保留 focus、Enter、ESC、async transform、busy。测试应断言 role、accessible name、用户可见 label 或确有必要的 `data-testid`，不得断言 `.n-dialog`、`.n-button` 等 Naive UI implementation class。
 
-对于 UI migration，视觉回归测试是正式 gate。
+## 43. Visual Acceptance Gate
 
-已有稳定 surface 应尽量保留 baseline。
+Visual Acceptance Gate 是正式 Phase gate，采用两级方式：
 
-如果视觉变化是 intentional：
+1. 已存在稳定 automated visual baseline 的 surface，必须 automated screenshot regression PASS；
+2. 尚无 automated baseline 的 surface，必须人工验证 Desktop Light、Desktop Dark、Mobile Light、Mobile Dark。
 
-必须明确记录变化原因。
+每个 Phase Final Report 必须记录 reviewed surfaces、intentional visual changes、regressions found / fixed 和 remaining accepted differences。
 
-不得用：
+随着 Workspace migration，NavBar / Shared Chrome、Diary main surface、Ledger Dashboard、Vault critical chrome 等稳定且高风险 surface 可以逐步加入 automated visual baseline；Phase 0 / Phase 1 不强制建立全站 screenshot suite。
 
-> Naive UI 默认就是这样
-
-作为视觉变化理由。
+视觉变化必须说明原因，不得以“Naive UI 默认就是这样”作为接受理由。
 
 ## 44. Phase Exit Criteria
 
@@ -1477,6 +1571,8 @@ close behavior
 13. No unapproved domain behavior change。
 14. No unapproved route change。
 15. Exact-head CI PASS。
+16. Visual Acceptance Gate PASS。
+17. Locale / DateLocale parity PASS。
 
 ## 45. Epic Completion Criteria
 
@@ -1614,31 +1710,31 @@ Markmap 保留
 Monaco 保留
 ~~~
 
-## 49. Open Questions
+## 49. Frozen Product Decisions
 
-Product Review 当前只需要重点确认以下问题：
+以下 Product Review 决策已冻结并标记为 **ACCEPTED**：
 
 ### Q1. Phase 0 是否允许只做技术 Spike、不产生用户可见 UI 变化？
 
-推荐：**允许。**
+允许。Phase 0 只提交 exact-pinned dependency、可复现 compatibility evidence 和 test-only fixture，不接管 App UI。**ACCEPTED**
 
 ### Q2. Legacy semantic token alias 是否保留到最终 Cleanup Phase？
 
-推荐：**是。**
+是。Legacy aliases 保留至 Cleanup Phase，并在确认无消费者后再评估删除。**ACCEPTED**
 
 ### Q3. useToast / useConfirm / usePrompt 是否保持为 Docus public composable API？
 
-推荐：**是。**
+是。三者保持 provider-independent Docus semantic APIs，由 Host Bridge 适配 Naive UI。**ACCEPTED**
 
 ### Q4. Ledger 是否必须在 Diary 之后迁移？
 
-推荐：**是。**
-
-原因是 Ledger 当前刚完成视觉稳定化，不适合作为第一个完整 Workspace migration target。
+是。Ledger 在 Diary 完成后进行保真迁移。**ACCEPTED**
 
 ### Q5. Vault 与 Note 是否作为最后一组高风险迁移？
 
-推荐：**是。**
+是。Vault / Note 最后迁移。**ACCEPTED**
+
+Blocking Open Questions: **0**
 
 ## 50. Product Review Exit Criteria
 
@@ -1658,9 +1754,12 @@ Product Review 通过前必须确认：
 - Existing renderer / editor / ECharts 不迁移；
 - Phase exit criteria 可执行；
 - 没有要求业务层因 UI library 改变 domain behavior；
-- Blocking Open Questions = 0。
+- Locale authority、DatePicker exception、Host Bridge、token cascade、Visual Acceptance Gate 和 control density 均已冻结；
+- P0: 0；P1: 0；
+- Blocking Open Questions = 0；
+- Product Review: **Accepted**。
 
-这份 PRD 进入正式 **Product Review**。
+这份 PRD 已通过正式 **Product Review**。
 
 它的核心定位不是“安装 Naive UI 的 PRD”，而是 **Docus UI Foundation 重构 PRD**。后续 Implementation Plan 负责回答：
 
@@ -1676,4 +1775,3 @@ bundle baseline 怎么测
 ~~~
 
 这样产品职责与实现职责保持清晰。
-
