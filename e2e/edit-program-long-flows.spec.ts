@@ -190,7 +190,7 @@ test('Long Flow A — Recovery → History/Diff → Rename across one document l
   await expect(comparison).toContainText(markerX) // after = the live buffer
 
   expect(putCount).toBe(0) // History/Diff never autosaved the document
-  await expect(page.locator('.confirm-dialog')).toHaveCount(0)
+  await expect(page.locator('.n-dialog[role="dialog"]')).toHaveCount(0)
 
   // Close Diff returns to the read-only revision viewer (its own
   // "(History)" tab), NOT to the live document — leave the History
@@ -208,15 +208,16 @@ test('Long Flow A — Recovery → History/Diff → Rename across one document l
   const newName = `e2e-lfa-ren-${RUN_ID}`
   await page.locator(`[data-tree-key="file:${slug}"]`).click({ button: 'right' })
   await page.locator('.tree-context-menu button', { hasText: 'Rename' }).click()
-  const promptInput = page.locator('.prompt-card .prompt-input')
+  const promptDialog = page.locator('.n-dialog[role="dialog"]')
+  const promptInput = promptDialog.getByRole('textbox')
   await expect(promptInput).toBeVisible()
   await promptInput.fill(newName)
-  await page.locator('.prompt-card .prompt-actions .btn-primary').click()
+  await promptDialog.getByRole('button', { name: 'Confirm', exact: true }).click()
 
-  const refsConfirm = page.locator('.confirm-dialog')
+  const refsConfirm = page.getByRole('dialog', { name: /link to this note/i })
   await expect(refsConfirm).toBeVisible({ timeout: 10000 })
-  await expect(refsConfirm.locator('.confirm-message')).toContainText('link to this note')
-  await refsConfirm.locator('.confirm-actions .btn-primary').click()
+  await expect(refsConfirm).toContainText('link to this note')
+  await refsConfirm.getByRole('button').last().click()
 
   const newSlug = `inbox/${newName}`
   createdPaths.push(newSlug)
@@ -350,11 +351,11 @@ test('Long Flow B — AI live context, external conflict, and multi-tab authorit
   //    client chain; the buffer is dirty and the save is done, so the
   //    overwrite confirm appears once — Cancel keeps the local bytes ─
   releaseRace()
-  const confirmDialog = page.locator('.confirm-dialog')
+  const confirmDialog = page.locator('.n-dialog[role="dialog"]')
   await expect(confirmDialog).toBeVisible({ timeout: 15000 })
-  await expect(confirmDialog.locator('.confirm-message')).toContainText(slugB)
-  await confirmDialog.locator('.confirm-actions .btn').first().click() // Cancel = keep local
-  await expect(confirmDialog).toBeHidden()
+  await expect(confirmDialog).toContainText(slugB)
+  await confirmDialog.getByRole('button', { name: 'Cancel', exact: true }).click() // Cancel = keep local
+  await expect(confirmDialog).not.toBeVisible()
 
   await expect(page.locator('.editor-pane .monaco-editor .view-lines').first()).toContainText(tailB)
   expect((await (await request.get(`/api/posts/${slugB}`)).json()).raw).toBe(aiBodyB) // no auto-save of local

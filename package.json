@@ -17,6 +17,7 @@
     "test:history-integration": "vitest run --config vitest.history.config.ts",
     "test:recovery-integration": "vitest run --config vitest.recovery.config.ts",
     "test:ui-foundation-spike": "vitest run src/ui/__tests__/naive-ui-foundation-spike.test.ts src/ui/__tests__/naiveTheme.test.ts src/ui/__tests__/DocusUiRoot.test.ts",
+    "test:feedback-overlay": "vitest run src/components/__tests__/ConfirmHost.test.ts src/components/__tests__/FeedbackHosts.test.ts",
     "test:watch": "vitest",
     "test:e2e": "node node_modules/@playwright/test/cli.js test",
     "test:e2e:draft-store": "node node_modules/@playwright/test/cli.js test --config=playwright.draft-store.config.ts",

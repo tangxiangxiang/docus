@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
-import { defineComponent } from 'vue'
+import { defineComponent, h } from 'vue'
+import { NConfigProvider, NDialogProvider, NMessageProvider, NNotificationProvider } from 'naive-ui'
 import EditorTabs from '../EditorTabs.vue'
 import ConfirmHost from '../../ConfirmHost.vue'
 import type { WorkspaceTab } from '../tabs'
@@ -135,7 +136,20 @@ describe('EditorTabs interaction wiring', () => {
         <ConfirmHost />
       `,
     })
-    const wrapper = mount(Harness, { attachTo: document.body })
+    const wrapper = mount(NConfigProvider, {
+      attachTo: document.body,
+      global: { stubs: { transition: false } },
+      props: { preflightStyleDisabled: true },
+      slots: {
+        default: () => h(NDialogProvider, null, {
+          default: () => h(NMessageProvider, null, {
+            default: () => h(NNotificationProvider, null, {
+              default: () => h(Harness),
+            }),
+          }),
+        }),
+      },
+    })
     const source = wrapper.get<HTMLElement>('[data-tab-id="dirty"]')
     source.element.focus()
     await source.trigger('keydown', { key: 'F10', shiftKey: true })
@@ -143,10 +157,13 @@ describe('EditorTabs interaction wiring', () => {
     await flushPromises()
 
     expect(document.querySelector('.tab-context-menu')).toBeNull()
-    expect(document.querySelector('.confirm-host')).not.toBeNull()
-    document.querySelector<HTMLButtonElement>('.confirm-actions .btn')!.click()
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')
+    expect(dialog).not.toBeNull()
+    const cancel = dialog!.querySelector<HTMLButtonElement>('button')!
+    cancel.focus()
+    cancel.click()
     await flushPromises()
-    expect(document.activeElement).toBe(source.element)
+    await vi.waitFor(() => expect(document.activeElement).toBe(source.element), { timeout: 1200 })
   })
 
   it('coordinates drag start by closing the context menu without selecting', async () => {

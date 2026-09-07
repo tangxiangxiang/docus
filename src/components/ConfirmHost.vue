@@ -1,85 +1,145 @@
 <script setup lang="ts">
-import { ref, watch, nextTick, onBeforeUnmount } from 'vue'
-import { useConfirm } from '../composables/useConfirm'
-import { useFocusTrap } from '../composables/useFocusTrap'
+import { h, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { NModal } from 'naive-ui'
+import { useConfirm, type ConfirmRequest } from '../composables/useConfirm'
 import { useI18n } from '../composables/useI18n'
 
 const { queue, answer } = useConfirm()
-const dialogRef = ref<HTMLElement | HTMLElement[] | null>(null)
-const trap = useFocusTrap()
 const { t } = useI18n()
+const displayed = ref<ConfirmRequest | null>(null)
+const show = ref(false)
+const detailContent = ref<(() => ReturnType<typeof h>) | undefined>(undefined)
+let closing = false
 
-function activeDialog(): HTMLElement | null {
-  return Array.isArray(dialogRef.value) ? (dialogRef.value[0] ?? null) : dialogRef.value
+function closeDisplayed(id: number): void {
+  if (displayed.value?.id !== id || !show.value) return
+  closing = true
+  show.value = false
 }
 
-// Capture / restore focus + run a Tab trap while a confirm dialog is
-// shown. The dialog is a single alertdialog; the trap only matters
-// when the dialog has more than one focusable button (it does —
-// 取消 + 确定), so a keyboard user can move between them without
-// escaping back to the trigger underneath the teleported backdrop.
-watch(queue, async (q) => {
-  if (q.length > 0) {
-    trap.activate()
-    await nextTick()
-    // Default focus: the safe action (Cancel). Focusing the
-    // destructive action (OK) by default would make Enter a
-    // destructive shortcut for anyone whose keyboard layout routes
-    // Enter straight to the focused element.
-    const cancel = activeDialog()?.querySelector<HTMLButtonElement>('.confirm-actions .btn')
-    cancel?.focus()
-  } else {
-    void trap.deactivate()
-  }
-}, { immediate: true })
-
-function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Tab' && activeDialog()) {
-    trap.onTab(activeDialog, e)
-  }
+function startNext(): void {
+  if (show.value || closing || displayed.value || !queue.value[0]) return
+  displayed.value = queue.value[0]
+  detailContent.value = displayed.value.detail
+    ? () => h('div', { style: { whiteSpace: 'pre-line' } }, displayed.value?.detail)
+    : undefined
+  show.value = true
 }
+
+function syncQueue(): void {
+  const next = queue.value[0] ?? null
+  if (displayed.value && (!next || next.id !== displayed.value.id)) {
+    closeDisplayed(displayed.value.id)
+    return
+  }
+  if (!displayed.value) startNext()
+}
+
+function settle(id: number, value: boolean): boolean {
+  if (!queue.value.some((request) => request.id === id)) return false
+  answer(id, value)
+  closeDisplayed(id)
+  return true
+}
+
+async function focusSafeCancel(requestId: number): Promise<void> {
+  await nextTick()
+  await new Promise<void>((resolve) => window.setTimeout(resolve, 0))
+  await nextTick()
+  const request = displayed.value
+  if (!request || request.id !== requestId) return
+  const candidates = Array.from(document.querySelectorAll<HTMLElement>('[role="alertdialog"], [role="dialog"]'))
+  const dialog = candidates.find((candidate) => candidate.textContent?.includes(request.message))
+  if (!dialog) return
+  const cancelLabel = request.cancelLabel ?? t('common.cancel')
+  const cancel = Array.from(dialog.querySelectorAll<HTMLButtonElement>('button'))
+    .find((button) => button.textContent?.trim() === cancelLabel)
+  cancel?.focus()
+}
+
+function finishClose(id: number): void {
+  if (displayed.value?.id !== id) return
+  displayed.value = null
+  detailContent.value = undefined
+  show.value = false
+  closing = false
+  void nextTick(syncQueue)
+}
+
+function handleEsc(): void {
+  if (displayed.value) settle(displayed.value.id, false)
+}
+
+function handleMaskClick(): void {
+  if (displayed.value) settle(displayed.value.id, false)
+}
+
+function handleVisibilityChange(value: boolean): void {
+  if (value || !displayed.value) return
+  // Defensive boundary for any supported Naive close path that changes
+  // visibility without first invoking a semantic action.
+  settle(displayed.value.id, false)
+}
+
+function handlePositiveClick(): false {
+  if (displayed.value) settle(displayed.value.id, true)
+  return false
+}
+
+function handleNegativeClick(): false {
+  if (displayed.value) settle(displayed.value.id, false)
+  return false
+}
+
+function handleAfterEnter(): void {
+  if (displayed.value) void focusSafeCancel(displayed.value.id)
+}
+
+function handleAfterLeave(): void {
+  if (displayed.value) finishClose(displayed.value.id)
+}
+
+watch(queue, syncQueue, { immediate: true })
+
+watch(show, (visible) => {
+  if (visible && displayed.value) void focusSafeCancel(displayed.value.id)
+})
+
 onBeforeUnmount(() => {
-  // If the host is unmounted mid-dialog (rare, but possible during
-  // HMR), make sure the trap doesn't leave focus dangling.
-  if (queue.value.length) void trap.deactivate()
+  // A Host teardown must not leave callers waiting forever. The provider
+  // owns the visual transition; the semantic queue owns settlement.
+  for (const request of [...queue.value]) answer(request.id, false)
+  displayed.value = null
+  show.value = false
 })
 </script>
 
 <template>
-  <Teleport to="body">
-    <div v-if="queue.length" class="confirm-host" @keydown.esc="answer(queue[0].id, false)">
-      <div
-        v-for="r in queue"
-        :key="r.id"
-        class="confirm-backdrop"
-        @click.self="answer(r.id, false)"
-        @keydown="onKeydown"
-      >
-        <div
-          ref="dialogRef"
-          class="confirm-dialog"
-          role="alertdialog"
-          aria-modal="true"
-          :aria-label="r.message"
-          tabindex="-1"
-        >
-          <div class="confirm-message">{{ r.message }}</div>
-          <div v-if="r.detail" class="confirm-detail">{{ r.detail }}</div>
-          <div class="confirm-actions">
-            <button type="button" class="btn" @click="answer(r.id, false)">
-              {{ r.cancelLabel ?? t('common.cancel') }}
-            </button>
-            <button
-              type="button"
-              class="btn"
-              :class="r.destructive ? 'btn-danger' : 'btn-primary'"
-              @click="answer(r.id, true)"
-            >
-              {{ r.confirmLabel ?? t('common.confirm') }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  </Teleport>
+  <NModal
+    v-if="displayed"
+    :show="show"
+    :z-index="10001"
+    preset="dialog"
+    role="alertdialog"
+    :aria-label="displayed.message"
+    :title="displayed.message"
+    :content="detailContent"
+    :negative-text="displayed.cancelLabel ?? t('common.cancel')"
+    :positive-text="displayed.confirmLabel ?? t('common.confirm')"
+    :type="displayed.destructive ? 'error' : 'default'"
+    :show-icon="displayed.destructive"
+    :negative-button-props="{ size: 'medium' }"
+    :positive-button-props="{ size: 'medium' }"
+    :closable="false"
+    :mask-closable="true"
+    :close-on-esc="false"
+    :auto-focus="false"
+    :on-esc="handleEsc"
+    :on-mask-click="handleMaskClick"
+    :on-update-show="handleVisibilityChange"
+    :on-positive-click="handlePositiveClick"
+    :on-negative-click="handleNegativeClick"
+    :on-after-enter="handleAfterEnter"
+    :on-after-leave="handleAfterLeave"
+  />
 </template>

@@ -537,7 +537,7 @@ test('Native DOCUMENT Cmd/Ctrl+W closes through the existing focus and dirty pol
     await expect(fallbackTab).toHaveAttribute('aria-selected', 'true')
     await expect(page).toHaveURL(new RegExp(`/vault/${note.replace('/', '\\/')}(?:[?#]|$)`))
     await expect(fallbackTab).toBeFocused()
-    await expect(page.locator('.confirm-dialog')).toHaveCount(0)
+    await expect(page.locator('.n-dialog[role="dialog"]')).toHaveCount(0)
 
     await selectScope(page, 'diary')
     await expect(page.getByTestId('diary-calendar')).toBeVisible()
@@ -551,13 +551,13 @@ test('Native DOCUMENT Cmd/Ctrl+W closes through the existing focus and dirty pol
 
     await page.locator('.vault').focus()
     await page.keyboard.press('ControlOrMeta+w')
-    const confirmation = page.locator('.confirm-dialog')
+    const confirmation = page.locator('.n-dialog[role="dialog"]')
     await expect(confirmation).toBeVisible()
     await expect(diaryTab).toHaveCount(1)
     await expect(diaryTab).toHaveAttribute('aria-selected', 'true')
     await expect(page).toHaveURL(new RegExp(`/vault/${diary.replace('/', '\\/')}(?:[?#]|$)`))
-    await confirmation.locator('.confirm-actions .btn').first().click()
-    await expect(confirmation).toHaveCount(0)
+    await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await expect(confirmation).not.toBeVisible()
     await expect(diaryTab).toHaveAttribute('data-save-status', 'dirty')
   } finally {
     await deletePost(request, diary)

@@ -115,11 +115,11 @@ async function undoLatestChange(
   try {
     if (cancelFirst) {
       await dialog.locator('[data-action="undo-apply"]').click()
-      const cancelledConfirmation = page.getByRole('alertdialog')
+      const cancelledConfirmation = page.locator('.n-dialog[role="dialog"]')
       await expect(cancelledConfirmation).toBeVisible()
       await expect(cancelledConfirmation.getByRole('button', { name: 'Cancel' })).toBeFocused()
       await page.keyboard.press('Escape')
-      await expect(cancelledConfirmation).toHaveCount(0)
+      await expect(cancelledConfirmation).not.toBeVisible()
       await expect(dialog).toHaveAttribute('data-undo-state', 'undo-preview-ready')
       expect(applyRequests).toBe(0)
       await expect(dialog.locator('[data-action="undo-apply"]')).toBeFocused()
@@ -130,7 +130,7 @@ async function undoLatestChange(
       && new URL(response.url()).pathname === '/api/tags/undo/apply'
     ))
     await dialog.locator('[data-action="undo-apply"]').click()
-    const confirmation = page.getByRole('alertdialog')
+    const confirmation = page.locator('.n-dialog[role="dialog"]')
     await expect(confirmation).toContainText(`Confirm ${expectedOperation}?`)
     await confirmation.getByRole('button', { name: 'Confirm Undo' }).click()
     const applied = await applyResponse
@@ -682,7 +682,7 @@ test('production Remove previews, confirms once, clears selection, and preserves
     }
     page.on('request', onRequest)
     await dialog.locator('[data-action="remove-apply"]').click()
-    const confirmation = page.getByRole('alertdialog')
+    const confirmation = page.locator('.n-dialog[role="dialog"]')
     await expect(confirmation).toContainText(`Remove tag #${sourceName}?`)
     const cancelButton = confirmation.getByRole('button', { name: 'Cancel' })
     await expect(cancelButton).toBeFocused()
@@ -699,7 +699,7 @@ test('production Remove previews, confirms once, clears selection, and preserves
       && new URL(response.url()).pathname === '/api/tags/operations/apply'
     ))
     await dialog.locator('[data-action="remove-apply"]').click()
-    const confirmationAgain = page.getByRole('alertdialog')
+    const confirmationAgain = page.locator('.n-dialog[role="dialog"]')
     await confirmationAgain.getByRole('button', { name: `Remove #${sourceName}` }).click()
     const applyResponse = await applyResponsePromise
     expect(applyRequests).toBe(1)
@@ -893,7 +893,7 @@ test('production Undo previews, confirms, and restores Rename, Display Rename, M
       && new URL(response.url()).pathname === '/api/tags/operations/apply'
     ))
     await dialog.locator('[data-action="remove-apply"]').click()
-    const removeConfirmation = page.getByRole('alertdialog')
+    const removeConfirmation = page.locator('.n-dialog[role="dialog"]')
     await removeConfirmation.getByRole('button', { name: `Remove #${removeSourceName}` }).click()
     expect((await applyResponse).status()).toBe(200)
     await expect(dialog).toHaveAttribute('data-state', 'success')

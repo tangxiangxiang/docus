@@ -1,203 +1,190 @@
 <script setup lang="ts">
-import { ref, watch, nextTick, computed, onBeforeUnmount } from 'vue'
-import { usePrompt } from '../composables/usePrompt'
-import { useFocusTrap } from '../composables/useFocusTrap'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { NButton, NInput, NModal, type InputInst } from 'naive-ui'
+import { usePrompt, type PromptRequest } from '../composables/usePrompt'
+import { useI18n } from '../composables/useI18n'
 
 const { queue, answer } = usePrompt()
 const active = computed(() => queue.value[0] ?? null)
+const displayed = ref<PromptRequest | null>(null)
+const show = ref(false)
 const input = ref('')
 const busy = ref(false)
-const cardRef = ref<HTMLElement | null>(null)
-const trap = useFocusTrap()
+const inputRef = ref<InputInst | null>(null)
+const { t } = useI18n()
+let closing = false
 
-// Focus management: when a prompt opens, remember the trigger and
-// focus the input. When it closes, send focus back so the keyboard
-// user doesn't drop into <body>. The Tab trap keeps focus cycling
-// between the input, the cancel button, and the OK button.
-watch(active, async (a) => {
-  if (a) {
-    trap.activate()
-    input.value = a.initial ?? ''
-    busy.value = false
-    await nextTick()
-    const el = document.getElementById('docus-prompt-input') as HTMLInputElement | null
-    el?.focus()
-    el?.select()
-  } else {
-    void trap.deactivate()
+function closeDisplayed(id: number): void {
+  if (displayed.value?.id !== id || !show.value) return
+  closing = true
+  show.value = false
+}
+
+function startNext(): void {
+  if (show.value || closing || displayed.value || !active.value) return
+  displayed.value = active.value
+  input.value = displayed.value.initial ?? ''
+  busy.value = false
+  show.value = true
+}
+
+function syncQueue(): void {
+  const next = active.value
+  if (displayed.value && (!next || next.id !== displayed.value.id)) {
+    closeDisplayed(displayed.value.id)
+    return
   }
-}, { immediate: true })
+  if (!displayed.value) startNext()
+}
 
-function submit() {
-  if (!active.value) return
-  answer(active.value.id, input.value.trim() || null)
+function settle(id: number, value: string | null): boolean {
+  if (!queue.value.some((request) => request.id === id)) return false
+  answer(id, value)
+  closeDisplayed(id)
+  return true
 }
-function cancel() {
-  if (!active.value) return
-  answer(active.value.id, null)
+
+function submit(): void {
+  if (!displayed.value || busy.value) return
+  settle(displayed.value.id, input.value.trim() || null)
 }
-async function runAction() {
-  const req = active.value
-  if (!req?.transform || busy.value) return
+
+function cancel(): void {
+  if (!displayed.value) return
+  settle(displayed.value.id, null)
+}
+
+async function focusInput(select = true): Promise<void> {
+  await nextTick()
+  await new Promise<void>((resolve) => window.setTimeout(resolve, 0))
+  await nextTick()
+  inputRef.value?.focus()
+  if (select) inputRef.value?.select()
+}
+
+function requestIsStillVisible(id: number): boolean {
+  return displayed.value?.id === id && queue.value.some((request) => request.id === id)
+}
+
+async function runAction(): Promise<void> {
+  const req = displayed.value
+  if (!req?.transform || busy.value || !requestIsStillVisible(req.id)) return
   busy.value = true
   try {
     const next = await req.transform(input.value)
+    if (!requestIsStillVisible(req.id)) return
     input.value = next
-    await nextTick()
-    const el = document.getElementById('docus-prompt-input') as HTMLInputElement | null
-    el?.focus()
-    el?.select()
+    await focusInput()
+  } catch {
+    // Transform rejection is recoverable: keep the prompt open, consume the
+    // rejection, and let the caller edit or retry.
   } finally {
-    busy.value = false
-  }
-}
-function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape') { e.preventDefault(); cancel(); return }
-  if (e.key === 'Enter')  { e.preventDefault(); submit(); return }
-  if (e.key === 'Tab' && cardRef.value) {
-    trap.onTab(() => cardRef.value, e)
+    if (requestIsStillVisible(req.id)) busy.value = false
   }
 }
 
+function finishClose(id: number): void {
+  if (displayed.value?.id !== id) return
+  displayed.value = null
+  show.value = false
+  busy.value = false
+  closing = false
+  void nextTick(syncQueue)
+}
+
+function onVisibilityChange(value: boolean): void {
+  if (value || !displayed.value) return
+  settle(displayed.value.id, null)
+}
+
+function onEsc(): void {
+  cancel()
+}
+
+function onMaskClick(): void {
+  cancel()
+}
+
+function onAfterLeave(): void {
+  if (displayed.value) finishClose(displayed.value.id)
+}
+
+watch(active, (request) => {
+  if (request && !displayed.value && !closing) startNext()
+}, { immediate: true })
+
+watch(displayed, (request) => {
+  if (!request) return
+  input.value = request.initial ?? ''
+  busy.value = false
+}, { immediate: true })
+
+watch(show, (visible) => {
+  if (visible) void focusInput()
+})
+
 onBeforeUnmount(() => {
-  if (active.value) void trap.deactivate()
+  // Resolve all requests safely during HMR/root teardown. Naive's modal is
+  // owned by this Host and disappears with it; no orphan overlay remains.
+  for (const request of [...queue.value]) answer(request.id, null)
+  displayed.value = null
+  show.value = false
+  busy.value = false
 })
 </script>
 
 <template>
-  <Teleport to="body">
-    <div
-      v-if="active"
-      class="prompt-backdrop"
-      @click.self="cancel"
-      @keydown="onKeydown"
-      tabindex="-1"
-    >
-      <div
-        ref="cardRef"
-        class="prompt-card"
-        role="dialog"
-        aria-modal="true"
-        :aria-label="active.title"
+  <NModal
+    v-if="displayed"
+    :show="show"
+    :z-index="10001"
+    preset="dialog"
+    role="dialog"
+    :aria-label="displayed.title"
+    :title="displayed.title"
+    :show-icon="false"
+    :closable="false"
+    :mask-closable="true"
+    :close-on-esc="false"
+    :auto-focus="false"
+    :on-esc="onEsc"
+    :on-mask-click="onMaskClick"
+    :on-update-show="onVisibilityChange"
+    :on-after-enter="() => focusInput()"
+    :on-after-leave="onAfterLeave"
+  >
+    <template #default>
+      <NInput
+        ref="inputRef"
+        v-model:value="input"
+        :placeholder="displayed.placeholder"
+        autofocus
+        :input-props="{ 'aria-label': displayed.title }"
+        @keydown.enter.prevent="submit"
       >
-        <h3 class="prompt-title">{{ active.title }}</h3>
-        <div class="prompt-input-wrap" :class="{ 'has-action': Boolean(active.transform) }">
-          <input
-            id="docus-prompt-input"
-            v-model="input"
-            class="prompt-input"
-            :placeholder="active.placeholder"
-            @keydown.enter.prevent="submit"
-            @keydown.escape.prevent="cancel"
-          />
-          <button
-            v-if="active.transform"
-            type="button"
-            class="prompt-input-action"
-            :title="active.actionTitle ?? '生成英文路径名'"
+        <template v-if="displayed.transform" #suffix>
+          <NButton
+            size="small"
+            quaternary
+            :loading="busy"
             :disabled="busy"
+            :title="displayed.actionTitle ?? '生成英文路径名'"
+            :aria-label="displayed.actionTitle ?? '生成英文路径名'"
             @click="runAction"
-          >{{ busy ? '...' : (active.actionLabel ?? '✧') }}</button>
-        </div>
-        <div class="prompt-actions">
-          <button type="button" class="btn" @click="cancel">取消</button>
-          <button type="button" class="btn btn-primary" @click="submit">确定</button>
-        </div>
-      </div>
-    </div>
-  </Teleport>
+          >
+            {{ displayed.actionLabel ?? '✧' }}
+          </NButton>
+        </template>
+      </NInput>
+    </template>
+
+    <template #action>
+      <NButton size="medium" @click="cancel">{{ t('common.cancel') }}</NButton>
+      <NButton type="primary" size="medium" :disabled="busy" @click="submit">{{ t('common.confirm') }}</NButton>
+    </template>
+  </NModal>
 </template>
 
 <style scoped>
-.prompt-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 9998;
-  background: rgba(0, 0, 0, 0.35);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.prompt-card {
-  background: var(--bg);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 20px 22px;
-  min-width: 320px;
-  max-width: 480px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
-}
-.prompt-title {
-  margin: 0 0 12px;
-  font-size: 1rem;
-  font-weight: 600;
-  color: var(--text-h);
-}
-.prompt-input-wrap {
-  position: relative;
-  display: flex;
-  width: 100%;
-  min-width: 0;
-}
-.prompt-input {
-  display: block;
-  width: 100%;
-  box-sizing: border-box;
-  padding: 6px 32px 6px 10px;
-  font-family: var(--sans);
-  font-size: 0.85rem;
-  line-height: 1.4;
-  min-height: 34px;
-  background: color-mix(in srgb, var(--bg) 94%, white);
-  color: var(--vs-text-1);
-  border: 1px solid color-mix(in srgb, var(--border) 82%, var(--text));
-  border-radius: 6px;
-  outline: none;
-  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
-}
-.prompt-input-wrap:not(.has-action) .prompt-input {
-  padding-right: 10px;
-}
-.prompt-input:focus {
-  border-color: color-mix(in srgb, var(--vs-accent) 62%, var(--vs-border));
-  background: color-mix(in srgb, var(--bg) 96%, white);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--vs-accent) 16%, transparent);
-}
-.prompt-input::placeholder {
-  color: color-mix(in srgb, var(--vs-text-2) 78%, var(--vs-text-3));
-  font-weight: 500;
-}
-.prompt-input-action {
-  position: absolute;
-  right: 4px;
-  top: 4px;
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: color-mix(in srgb, var(--vs-text-2) 86%, var(--vs-text-1));
-  font: inherit;
-  font-size: 0.95rem;
-  font-weight: 600;
-  line-height: 1;
-  cursor: pointer;
-  transition: background 0.12s, border-color 0.12s, color 0.12s, opacity 0.12s;
-}
-.prompt-input-action:hover:not(:disabled) {
-  color: var(--vs-accent);
-  background: color-mix(in srgb, var(--vs-accent) 10%, transparent);
-}
-.prompt-input-action:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-.prompt-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 18px;
-}
+.n-input { width: 100%; }
 </style>

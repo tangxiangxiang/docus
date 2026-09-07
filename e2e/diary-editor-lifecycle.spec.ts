@@ -213,16 +213,17 @@ test('Native Editor dirty lifecycle preserves identity and reveals Calendar only
     await expect(calendar).toBeHidden()
     await expect(page.locator(`[role="tab"][data-tab-id="${path}"]`)).toHaveCount(1)
     await expect(page.locator(`[role="tab"][data-tab-id="${path}"]`)).toHaveAttribute('aria-selected', 'true')
-    await expect(page.locator('.confirm-dialog')).toHaveCount(0)
+    await expect(page.locator('.n-dialog[role="dialog"]')).toHaveCount(0)
 
     // Calendar Home remains hidden while a managed Diary tab is open. A real
     // dirty tab close continues to use the existing confirmation policy.
     await page.locator('.vault').focus()
     await page.keyboard.press('ControlOrMeta+W')
-    await expect(page.locator('.confirm-dialog')).toBeVisible()
-    await page.locator('.confirm-dialog .confirm-actions .btn').first().click()
+    const calendarCloseConfirmation = page.locator('.n-dialog[role="dialog"]')
+    await expect(calendarCloseConfirmation).toBeVisible()
+    await calendarCloseConfirmation.getByRole('button', { name: 'Cancel', exact: true }).click()
     await expect(page.locator(`[role="tab"][data-tab-id="${path}"]`)).toHaveCount(1)
-    await expect(page.locator('.confirm-dialog')).toHaveCount(0)
+    await expect(calendarCloseConfirmation).not.toBeVisible()
 
     const readToggle = page.getByTestId('view-toggle')
     if (/read|阅读/i.test(await readToggle.getAttribute('aria-label') ?? '')) await readToggle.click()
@@ -250,14 +251,14 @@ test('Native Editor dirty lifecycle preserves identity and reveals Calendar only
     await appendEditorText(page, closeMarker)
     await expect(page.locator(`[data-tab-id="${path}"][data-save-status="dirty"]`)).toBeVisible({ timeout: 15_000 })
     await page.locator(`[data-tab-id="${path}"] .tab-close`).click()
-    const confirmation = page.locator('.confirm-dialog')
+    const confirmation = page.locator('.n-dialog[role="dialog"]')
     await expect(confirmation).toBeVisible()
-    await confirmation.locator('.confirm-actions .btn').first().click()
-    await expect(confirmation).toHaveCount(0)
+    await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await expect(confirmation).not.toBeVisible()
     await expect(page.locator(`[data-tab-id="${path}"][data-save-status="dirty"]`)).toBeVisible()
     await page.locator(`[data-tab-id="${path}"] .tab-close`).click()
     await expect(confirmation).toBeVisible()
-    await confirmation.locator('.confirm-actions .btn').last().click()
+    await confirmation.getByRole('button').last().click()
     await expect(page.locator(`[data-tab-id="${path}"]`)).toHaveCount(0)
     await expect(page.getByTestId('diary-calendar')).toBeVisible()
   } finally {
@@ -477,9 +478,9 @@ test.skip('D8.2: managed Diary History restore waits for an adapter-aware owner'
     const restoreAction = page.getByRole('menuitem', { name: /Restore to this version/ })
     await expect(restoreAction).toBeVisible()
     await restoreAction.click()
-    const confirmation = page.locator('.confirm-dialog')
+    const confirmation = page.locator('.n-dialog[role="dialog"]')
     await expect(confirmation).toBeVisible()
-    await confirmation.locator('.confirm-actions .btn-danger').click()
+    await confirmation.getByRole('button').last().click()
 
     await expect.poll(async () => (
       await (await request.get(`/api/posts/${path}`)).json()

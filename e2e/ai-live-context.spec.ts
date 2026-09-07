@@ -336,10 +336,11 @@ test('E2E-9 rename: the stable documentId survives a path change', async ({ page
   await page.locator(`[data-tree-key="file:${slug}"]`).click({ button: 'right' })
   await page.locator('.tree-context-menu button', { hasText: 'Rename' }).click()
   const newName = `e2e-ai-ren9-${RUN_ID}`
-  const input = page.locator('.prompt-card .prompt-input')
+  const promptDialog = page.locator('.n-dialog[role="dialog"]')
+  const input = promptDialog.getByRole('textbox')
   await expect(input).toBeVisible()
   await input.fill(newName)
-  await page.locator('.prompt-card .prompt-actions .btn-primary').click()
+  await promptDialog.getByRole('button', { name: 'Confirm', exact: true }).click()
 
   const newSlug = `inbox/${newName}`
   createdPaths.push(newSlug)

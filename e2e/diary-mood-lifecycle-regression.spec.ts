@@ -351,7 +351,7 @@ test('Mood set/change/clear stays separate from a dirty native Diary body', asyn
     const dirtyTab = page.locator(`[data-tab-id="${path}"]`)
     await expect(dirtyTab).toHaveCount(1)
     await expect(dirtyTab.locator('.tab-dirty-indicator')).toHaveCount(1)
-    await expect(page.locator('.confirm-dialog')).toHaveCount(0)
+    await expect(page.locator('.n-dialog[role="dialog"]')).toHaveCount(0)
 
     await page.unroute(`**/api/posts/${path}`)
     autosaveInstalled = false
@@ -479,7 +479,7 @@ test('external metadata conflict leaves a dirty native body untouched', async ({
     await expect(dirtyTab).toHaveCount(1)
     await expect(dirtyTab.locator('.tab-dirty-indicator')).toHaveCount(1)
     await expect(page.locator('.editor-pane .monaco-editor .view-lines').first()).toContainText(dirtyMarker)
-    await expect(page.locator('.confirm-dialog')).toHaveCount(0)
+    await expect(page.locator('.n-dialog[role="dialog"]')).toHaveCount(0)
     await expect(page).toHaveURL(new RegExp(`/vault/${path.replace('/', '\\/')}(?:[?#]|$)`))
     await expect(page.getByTestId('diary-calendar')).toBeHidden()
 
@@ -559,7 +559,7 @@ test('native body conflict preserves Mood while resolving through the existing s
     expect(conflicted.metadata.mood).toBe('sad')
     await expect(page.locator('.editor-pane .monaco-editor .view-lines').first()).toContainText(localMarker)
     await expect(page.getByTestId('diary-calendar')).toBeHidden()
-    await expect(page.locator('.confirm-dialog')).toHaveCount(0)
+    await expect(page.locator('.n-dialog[role="dialog"]')).toHaveCount(0)
 
     const readToggle = page.getByTestId('view-toggle')
     if (/read|阅读/i.test(await readToggle.getAttribute('aria-label') ?? '')) await readToggle.click()
@@ -707,9 +707,9 @@ test.skip('D8.2: managed Diary Mood History restore waits for an adapter-aware o
     const restoreAction = page.getByRole('menuitem', { name: /Restore to this version/ })
     await expect(restoreAction).toBeVisible()
     await restoreAction.click()
-    const confirmation = page.locator('.confirm-dialog')
+    const confirmation = page.locator('.n-dialog[role="dialog"]')
     await expect(confirmation).toBeVisible()
-    await confirmation.locator('.confirm-actions .btn-danger').click()
+    await confirmation.getByRole('button').last().click()
 
     await expect.poll(async () => (await readDiary(request, date)).raw).toBe(historicalRaw)
     const restored = await readDiary(request, date)

@@ -200,13 +200,13 @@ test('residual race: send clean → type while the AI turn is open → same-path
   //    (disk-poll events carry source 'editor-lifecycle' and are
   //    dropped before the conflict logic) ────────────────────────────
   releaseRace()
-  const confirmDialog = page.locator('.confirm-dialog')
+  const confirmDialog = page.locator('.n-dialog[role="dialog"]')
   await expect(confirmDialog).toBeVisible({ timeout: 15000 })
-  const confirmMessage = (await confirmDialog.locator('.confirm-message').textContent()) ?? ''
+  const confirmMessage = (await confirmDialog.textContent()) ?? ''
   expect(confirmMessage).toContain(slug)
   // Cancel is the focused safe action: keep the local changes.
-  await confirmDialog.locator('.confirm-actions .btn').first().click()
-  await expect(confirmDialog).toBeHidden()
+  await confirmDialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(confirmDialog).not.toBeVisible()
 
   // ── 7. Monaco still shows the user's post-Send typing — the buffer
   //    was NOT overwritten; the server still holds the AI write — the
@@ -238,7 +238,7 @@ test('residual race: send clean → type while the AI turn is open → same-path
   // ── 9. The conflict stays user-owned: no duplicate confirm ever
   //    re-appeared, the autosave was never silently re-sent, nothing
   //    resolved the external state silently ──────────────────────────
-  await expect(page.locator('.confirm-dialog')).toBeHidden()
+  await expect(page.locator('.n-dialog[role="dialog"]')).not.toBeVisible()
   expect(autosave.statuses).toEqual([409]) // exactly one autosave, the real 409
   await expect(page.locator(`[data-tab-id="${slug}"][data-save-status="external"]`)).toBeVisible()
 })
