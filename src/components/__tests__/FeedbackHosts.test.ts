@@ -243,7 +243,7 @@ describe('ToastHost Naive bridge', () => {
 
     toast.dismiss(second)
     await settleVue()
-    expect(hasVisibleText('Second message')).toBe(false)
+    await waitForNoText('Second message')
 
     for (const wrapper of wrappers.splice(0)) wrapper.unmount()
 
