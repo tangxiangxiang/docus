@@ -78,10 +78,15 @@ Naive UI     not installed; Phase 0 candidate 2.45.3 (exact pin)
 @vicons/tabler not installed; Phase 0 candidate 0.13.0 (exact pin)
 ```
 
+这里记录的 `9c65f7a` 是 Icon Foundation Design Amendment 的设计基线，不是未来
+Phase 0 的执行基线。Phase 0 开始前必须重新读取当前 `main` HEAD，并把该 SHA 作为
+本次 spike 的 authoritative starting baseline；不得假定未来仍从旧 SHA 开始。
+
 本 amendment 不安装 dependency、不修改 `package.json` 或 `package-lock.json`，也不
-创建或运行 compatibility fixture。Phase 0 通过后才将
-`naive-ui@2.45.3` 和 `@vicons/tabler@0.13.0` exact-pin 写入 manifest / lockfile，
-并由 CI 用 `npm ci` 复现；Phase 1 消费同一 exact pin，不重新选择版本。
+创建或运行 compatibility fixture。Phase 0 必须先 exact-pin
+`naive-ui@2.45.3` 和 `@vicons/tabler@0.13.0`，再创建 test-only evidence；manifest、
+lockfile 和 fixture 都是 Phase 0 实施结果的一部分，而不是 Phase 0 通过后的步骤。
+Phase 1 消费 Phase 0 提交并验证的 exact pin，不重新安装或重新选择版本。
 
 ---
 
@@ -189,7 +194,34 @@ Phase 0 不做正式 Workspace migration。
 
 ## 4.2 Spike dependency
 
-Phase 0 在通过 compatibility review 后提交 candidate dependency：
+Phase 0 从记录 baseline 开始，exact-pin candidate dependency 和建立可复现的
+test-only evidence 都属于 Phase 0 的正式实施步骤。正确的 lifecycle 是：
+
+```text
+Phase 0 START
+    ↓
+resolve current main HEAD and record starting baseline
+    ↓
+record current production bundle baseline
+    ↓
+exact-pin candidate dependencies
+    ↓
+update package-lock.json
+    ↓
+create test-only compatibility fixture / tests
+    ↓
+npm ci reproducibility check
+    ↓
+compatibility gates and full validation
+    ↓
+commit + push
+    ↓
+exact-head CI
+    ↓
+PASS / FAIL
+```
+
+执行：
 
 ```bash
 npm install --save-exact naive-ui@2.45.3 @vicons/tabler@0.13.0
@@ -202,11 +234,27 @@ npm install --save-exact naive-ui@2.45.3 @vicons/tabler@0.13.0
 "@vicons/tabler": "^0.13.0"
 ```
 
-本 amendment 不执行上述命令。Phase 0 的 dependency、`package-lock.json` 和
-compatibility evidence 必须可提交、可回滚、可由 `npm ci` 确定性复现。若 Spike
-FAIL，revert Phase 0 commit(s) 即可回到没有 Naive UI / Vicons dependency 的状态；
-不得以未写入项目 manifest / lockfile 的临时安装成功作为通过条件。Phase 1 将消费
-Phase 0 通过后提交并验证的 exact-pinned dependencies，不重复安装依赖。
+Phase 0 实施时，`package.json`、`package-lock.json`、test-only fixture 和
+compatibility tests 一起形成可提交、可回滚、可由 `npm ci` 确定性复现的 spike
+evidence。若 Phase 0 失败，必须通过 revert Phase 0 commit(s) 回到没有 Naive UI /
+Vicons dependency 的 stable baseline；不得以未写入 manifest / lockfile 的临时安装
+成功作为通过条件。
+
+Phase 0 的状态必须区分为：
+
+```text
+implementation commit 已完成、exact-head CI 尚未结束
+→ Phase 0 IMPLEMENTED / AWAITING EXACT-HEAD CI
+
+local gates PASS + exact-head CI PASS
+→ Phase 0 PASS
+
+任一 blocking compatibility failure
+→ Phase 0 FAIL，revert Phase 0 commit(s)
+```
+
+本 amendment 不执行上述命令、不创建 fixture，也不执行 Phase 0；当前状态仍为
+Pending / Ready to Start。
 
 ---
 
@@ -255,7 +303,7 @@ test-only fixture 中验证：
 ```vue
 <NButton>
   <template #icon>
-    <NIcon aria-hidden="true" :size="18">
+    <NIcon aria-hidden="true">
       <Search />
     </NIcon>
   </template>
@@ -285,7 +333,8 @@ Vue SSR renderToString compatibility
 fixture 应以 `@vicons/tabler@0.13.0` 的真实 TypeScript exports 为准，至少覆盖
 Search、Settings、Plus、Calendar、Trash/Delete equivalent、Folder、File/Document
 equivalent、Chevron、Check、Alert/Warning；不得在未验证 export 前把猜测名称写入
-production code。本 amendment 不执行该 fixture 或验证。
+production code。本 amendment 不执行该 fixture 或验证。fixture 的创建本身属于 Phase 0
+实施步骤，不能推迟到 Phase 0 PASS 之后。
 
 ## 4.5 Locale / DateLocale Spike
 
@@ -569,6 +618,16 @@ rollup-visualizer
 
 # 10. Phase 0 Exit Criteria
 
+Phase 0 的 implementation commit 完成并推送后，在 exact-head CI 结束前只能标记为：
+
+```text
+Phase 0 IMPLEMENTED / AWAITING EXACT-HEAD CI
+```
+
+只有 local gates 与 exact-head CI 全部通过，才能标记为 `Phase 0: PASS`。任一
+blocking compatibility failure 都标记为 `Phase 0: FAIL`，并按 4.2 节 revert Phase 0
+commit(s)。
+
 Phase 0 是 exact-head reproducible gate。PASS 必须满足：
 
 ```text
@@ -608,8 +667,8 @@ exact-head CI PASS
 
 # 11. Phase 1 — UI Foundation
 
-Phase 1 将消费 Phase 0 通过后提交并验证的 exact-pinned
-`naive-ui@2.45.3` 与 `@vicons/tabler@0.13.0`；不得在 Phase 1 重复安装或重新
+Phase 1 将消费 Phase 0 提交并验证的 exact-pinned
+`naive-ui@2.45.3` 与 `@vicons/tabler` dependency；不得在 Phase 1 重复安装或重新
 选择版本。本 amendment 尚未执行 Phase 0。
 
 本 amendment 将 Functional icon foundation 冻结为：
@@ -617,12 +676,15 @@ Phase 1 将消费 Phase 0 通过后提交并验证的 exact-pinned
 ```text
 NIcon
   ↓
-@vicons/tabler@0.13.0
+@vicons/tabler
 ```
 
 Phase 1 不安装第二个 icon family，不复制 SVG path，不把 legacy `icons.ts`
 扩展为新的 functional icon source。System font 仍由 Docus 控制；brand / generated
 SVG 不属于 functional icon foundation。
+
+Phase 0 的 implementation candidate 仍为 `@vicons/tabler@0.13.0` exact pin；该版本
+属于实现与兼容性验证，不属于永久的产品架构名称。
 
 Naive UI 本身不要求额外 CSS import；依赖只通过按需 import 使用。
 
@@ -1972,7 +2034,7 @@ Naive UI Foundation 的 Functional Icon Foundation 已冻结为：
 ```text
 NIcon
   ↓
-@vicons/tabler@0.13.0
+@vicons/tabler
 ```
 
 必须：
@@ -2346,12 +2408,12 @@ STOP
 10. `tokens.css` 是 global semantic token value authority，`style.css` 不得重新定义相同 alias value；
 11. Visual Acceptance Gate 采用 automated where available + documented manual where unavailable；
 12. Control Density 只冻结 `compact` / `default` 两级 canonical policy；
-13. Functional Icon Foundation 使用 `NIcon + @vicons/tabler@0.13.0`，只允许一个
+13. Functional Icon Foundation 使用 `NIcon + @vicons/tabler`，只允许一个
     approved family；legacy `icons.ts` 在迁移完成前保留为 migration-only source；
 14. Naive UI 无法解析 CSS `var()` 的派生颜色字段只允许使用最小、可追溯的
     TS color mirror，不得形成第二套 token authority。
-15. `@vicons/tabler@0.13.0` 是 Phase 0 的 exact-pinned candidate；本 amendment
-    不安装或验证它。
+15. `@vicons/tabler@0.13.0` 是 Phase 0 的 exact-pinned implementation candidate；
+    本 amendment 不安装或验证它。
 16. 不新增手写 generic functional SVG，也不复制第三方 SVG path。
 17. `icons.ts` 是迁移期 legacy source，不是未来 functional icon authority。
 18. Brand artwork、generated / content SVG 属于各自 Docus 或 renderer owner，
@@ -2375,13 +2437,14 @@ Migration boundary 清晰
 No blocking open question
 ```
 
-文档现在满足上述条件，可以进入 coding。当前文档状态：
+文档现在满足上述条件，可以进入新的 Phase 0。当前文档状态：
 
 ```text
 Implementation Review: PASS
-Ready for Implementation; Phase 0: Ready to start
+Ready for Phase 0
 P0: 0
 P1: 0
+P2: 0
 Blocking Open Questions: 0
 ```
 

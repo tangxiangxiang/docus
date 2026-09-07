@@ -20,8 +20,11 @@ Target: approved @vicons/tabler glyph rendered by NIcon
 ```
 
 Do not rename every legacy constant in one pass or infer a Tabler export from a similar
-name. Each migration must verify the actual `@vicons/tabler@0.13.0` TypeScript export,
-review the meaning at the consuming surface, and preserve the existing accessible label.
+name. Each migration must verify the actual TypeScript export from the approved family at
+the Phase 0 candidate version (`@vicons/tabler@0.13.0` for the current spike), review the
+meaning at the consuming surface, and preserve the existing accessible label. The family
+name is the product contract; the candidate version is an implementation detail that can
+change through dependency and regression review.
 
 ## Target functional vocabulary
 

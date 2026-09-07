@@ -11,10 +11,15 @@ New functional icons use one approved family:
 ```text
 NIcon
   ↓
-@vicons/tabler@0.13.0
+@vicons/tabler
 ```
 
-Use the icon component by meaning, not by copying its SVG path:
+The product architecture names `@vicons/tabler` as the canonical functional icon
+family. Phase 0 uses `@vicons/tabler@0.13.0` as an exact-pinned implementation candidate;
+the version can be upgraded through dependency and regression review without changing
+the product-level family authority.
+
+With visible text, the text provides the accessible name and the glyph is decorative:
 
 ```vue
 <script setup lang="ts">
@@ -23,15 +28,35 @@ import { Search } from '@vicons/tabler'
 </script>
 
 <template>
-  <NButton aria-label="Search notes">
+  <NButton>
     <template #icon>
-      <NIcon aria-hidden="true" :size="18">
+      <NIcon aria-hidden="true">
         <Search />
       </NIcon>
     </template>
+    Search
   </NButton>
 </template>
 ```
+
+An icon-only control must provide its accessible name on the control itself:
+
+```vue
+<NButton
+  circle
+  aria-label="Search notes"
+>
+  <template #icon>
+    <NIcon aria-hidden="true">
+      <Search />
+    </NIcon>
+  </template>
+</NButton>
+```
+
+Use each icon component by meaning, not by copying its SVG path. `aria-label` belongs on
+an icon-only control; a tooltip is not its only accessible name. Icon size is selected by
+the consuming control or surface, so these examples do not establish a global 18px rule.
 
 Rules for new code:
 
@@ -53,7 +78,8 @@ does not re-enforce the legacy 16×16 geometry contract on these components.
 | --- | --- |
 | Product semantic choice | Docus |
 | Functional icon presentation | Naive UI `NIcon` |
-| Functional glyph family | `@vicons/tabler@0.13.0` only |
+| Functional glyph family | `@vicons/tabler` |
+| Phase 0 candidate version | `0.13.0` exact pin |
 | Glyph geometry and drawing | Tabler |
 | Theme color | `currentColor` / consuming component theme |
 | Size and density | `NIcon` and consuming control / surface |

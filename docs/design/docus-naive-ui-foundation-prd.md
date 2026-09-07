@@ -213,8 +213,12 @@ Accessibility 一致
 ~~~
 NIcon
   ↓
-@vicons/tabler@0.13.0
+@vicons/tabler
 ~~~
+
+`@vicons/tabler` 是产品架构层的 canonical functional icon family。Phase 0 的
+implementation candidate 才使用 `@vicons/tabler@0.13.0` exact pin；版本升级属于
+dependency upgrade 与 regression review，不改变产品层的 family authority。
 
 冻结以下边界：
 
@@ -1137,11 +1141,15 @@ Vue SSR renderToString compatibility
 
 本阶段计划验证 `naive-ui@2.45.3` 与 `@vicons/tabler@0.13.0` 的 exact pin、真实
 TypeScript exports、NIcon integration、tree-shaking、`currentColor`、Light / Dark、
-compact / default 对齐、icon-only accessibility 和 Vue SSR `renderToString`。通过后才
-可提交 dependency、compatibility tests 和最小 test-only fixture；本 amendment 不安装
-dependency、不创建 fixture，也不执行 Phase 0。不得正式接管 App UI、引入 production
-DocusUiRoot、迁移 Workspace 或改业务页面。Phase 0 是“可提交、可复现、无用户可见
-migration”的 compatibility spike，当前状态为 Pending。
+compact / default 对齐、icon-only accessibility 和 Vue SSR `renderToString`。Phase 0
+从记录当前 `main` HEAD 与 production bundle baseline 开始，随后 exact-pin candidate
+dependency、更新 lockfile、创建可复现的 test-only fixture / compatibility tests，再
+执行 `npm ci`、compatibility gates、full validation、commit + push 和 exact-head CI。
+candidate dependency 与 fixture 都是 Phase 0 实施步骤，不能推迟到 Phase 0 通过之后。
+只有 local gates 与 exact-head CI 全部通过，Phase 0 才能标记为 PASS；本 amendment 不
+安装 dependency、不创建 fixture，也不执行 Phase 0。不得正式接管 App UI、引入
+production DocusUiRoot、迁移 Workspace 或改业务页面。Phase 0 是“可提交、可复现、无
+用户可见 migration”的 compatibility spike，当前状态为 Pending / Ready to Start。
 
 Phase 0 的 bundle checkpoint 必须记录 dependency 安装后 production import 仍为
 `NONE`；
@@ -1163,8 +1171,8 @@ provider baseline
 theme / locale bridge
 ~~~
 
-Phase 1 将消费 Phase 0 通过后提交并验证的 exact-pinned dependencies，不重复安装或
-重新选择版本；本 amendment 尚未安装或验证这些 dependency，业务 UI 基本保持不变。
+Phase 1 将消费 Phase 0 提交并验证的 exact-pinned dependencies，不重复安装或重新
+选择版本；本 amendment 尚未安装或验证这些 dependency，业务 UI 基本保持不变。
 
 Phase 1 同时冻结 Functional Icon Foundation：
 
@@ -1569,10 +1577,11 @@ tree-shaking friendly
 
 禁止为了方便一次性暴露整个 Naive UI component set。
 
-Functional Icon Foundation 的唯一 approved dependency 是
-`@vicons/tabler@0.13.0`，且必须与 `naive-ui@2.45.3` 一样 exact pin。禁止以
-`@vicons/*` 泛化或引入第二个 icon package；如果未来出现 blocker，必须回到
-Design / Implementation Review。Phase 0 必须记录 baseline、dependency 安装后
+Functional Icon Foundation 的唯一 approved functional icon family 是
+`@vicons/tabler`。Phase 0 implementation 才使用 `@vicons/tabler@0.13.0` 与
+`naive-ui@2.45.3` exact pin；禁止以 `@vicons/*` 泛化或引入第二个 icon package。版本
+升级属于 dependency upgrade 与 regression review；如果未来出现 family blocker，必须
+回到 Design / Implementation Review。Phase 0 必须记录 baseline、dependency 安装后
 production import `NONE` 的 bundle checkpoint，以及第一次 production Tabler import
 后的实际 tree-shaken delta。
 
@@ -1849,7 +1858,8 @@ Monaco 保留
 
 ~~~
 Functional icon presentation = Naive UI NIcon
-Functional glyph family = @vicons/tabler@0.13.0 only
+Functional glyph family = @vicons/tabler only
+Phase 0 candidate version = @vicons/tabler@0.13.0 exact pin
 Product semantic authority = Docus
 Brand artwork = Docus-owned
 Generated / content SVG = existing renderer or content pipeline
@@ -1887,9 +1897,9 @@ legacy lint 在 zero consumer 前继续保护迁移中的旧 surface；清理只
 
 ### Q6. Functional icon 是否统一采用 `NIcon + @vicons/tabler`？
 
-是。`@vicons/tabler@0.13.0` 是唯一 approved functional icon family；现有
-`icons.ts` 作为 migration-only legacy 保留，brand / generated artwork 继续由
-Docus 或原 renderer 拥有。**ACCEPTED**
+是。`@vicons/tabler` 是唯一 approved functional icon family；Phase 0 使用
+`@vicons/tabler@0.13.0` exact-pinned candidate。现有 `icons.ts` 作为 migration-only
+legacy 保留，brand / generated artwork 继续由 Docus 或原 renderer 拥有。**ACCEPTED**
 
 Blocking Open Questions: **0**
 
@@ -1914,7 +1924,7 @@ Product Review 通过前必须确认：
 - Locale authority、DatePicker exception、Host Bridge、token cascade、Visual Acceptance Gate 和 control density 均已冻结；
 - Functional Icon Foundation、single-family policy、legacy `icons.ts` migration
   boundary 和 brand / generated SVG exception 均已冻结；
-- P0: 0；P1: 0；
+- P0: 0；P1: 0；P2: 0；
 - Blocking Open Questions = 0；
 - Product Review: **Accepted**。
 
