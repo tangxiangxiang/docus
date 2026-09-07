@@ -8,6 +8,21 @@ During incremental migration, the source file `src/components/vault/icons.ts` is
 legacy inventory for existing consumers only. New surfaces must not add to it by
 default.
 
+## Semantic mapping authority
+
+`ICON_*` names are the current Legacy Vocabulary, not a second target icon family. The
+semantic distinction remains owned by Docus while the glyph implementation changes one
+surface at a time:
+
+```text
+Legacy: ICON_* export
+Target: approved @vicons/tabler glyph rendered by NIcon
+```
+
+Do not rename every legacy constant in one pass or infer a Tabler export from a similar
+name. Each migration must verify the actual `@vicons/tabler@0.13.0` TypeScript export,
+review the meaning at the consuming surface, and preserve the existing accessible label.
+
 ## Target functional vocabulary
 
 | Docus meaning | Approved Tabler candidate |
@@ -17,14 +32,24 @@ default.
 | Add / create | `Plus` or a more specific `*Plus` glyph |
 | Delete | `Trash` |
 | Edit | `Pencil` |
+| Save | `DeviceFloppy` |
 | Calendar | `Calendar` |
+| Folder | `Folder` |
+| Document / file | `File` or a specific `File*` glyph |
 | Account | `User` |
+| Wallet / account balance | `Wallet` |
+| Income / expense / transfer | semantic `Arrow*` or transaction glyph |
 | History | `History` |
+| Copy / download / upload | corresponding Tabler utility glyph |
+| Chevron / disclosure | `Chevron*` |
 | Close | `X` |
-| Confirm | `Check` |
+| Confirm / success | `Check` |
+| Warning / info / error | corresponding Tabler status glyph |
+| Theme | semantic sun / moon glyph |
 
-The candidate name is a semantic starting point, not permission to mix families.
-Confirm the glyph's meaning and accessible label at the consuming surface.
+These names are candidate examples for the approved family, not a claim that production
+mapping has already happened. Confirm the actual export, glyph meaning, and accessible
+label at the consuming surface during its migration. No second icon family is allowed.
 
 ## Current surface mapping
 
@@ -66,6 +91,10 @@ State must be distinguishable by glyph as well as color:
 
 The component supplies the state label. Do not rely on color or an icon-only tooltip as the accessible name.
 
+Future status glyphs should use the approved Tabler family. If loading is animated, the
+animation belongs to the consuming component or `NIcon` presentation; do not alter the
+upstream glyph.
+
 ## AI tool mapping
 
 The AI tool card maps tool names to compact glyphs:
@@ -81,6 +110,11 @@ The AI tool card maps tool names to compact glyphs:
 | `rename_file` | `ICON_RENAME_FILE` |
 
 `update_metadata` currently falls back to the generic tool glyph. If a dedicated icon is added, update the tool map, tests, and this table together.
+
+AI actions follow the same rule: read, list, create, write, patch, delete, rename,
+conversation, and new-chat semantics should use approved Tabler glyphs where a matching
+meaning exists. A unique Docus AI brand mark requires a separately reviewed
+Brand / Domain exception.
 
 ## Reserved vocabularies
 

@@ -228,6 +228,12 @@ NIcon
   Lucide、Heroicons、`@tabler/icons-vue` 或临时手写 SVG path；
 - `NIcon` 是容器，Tabler component 是 glyph，颜色通过 `currentColor` 和消费方
   CSS 继承；
+- Icon size / density 跟随 `NIcon`、Naive UI control 和 Docus 的 `compact` / `default`
+  policy，不重新建立 Docus 16×16 geometry authority；状态颜色由消费方和 semantic
+  tokens 决定，业务代码不得给普通 glyph 写任意 brand 或状态色；
+- icon-only control 必须提供 `aria-label` 或等价 accessible name，带可见文字的
+  control 使用该 label，纯 decorative icon 必须 `aria-hidden`；状态不能只靠颜色
+  表达；
 - Docus logo、brand constellation、品牌装饰 SVG、产品插画、marketing artwork
   仍属于 Docus-owned Brand Artwork；Mermaid、Markmap、ECharts、图表 canvas、
   Markdown / 用户内容 SVG 和第三方 renderer 内部图形由各自 pipeline 拥有；
@@ -706,8 +712,8 @@ var(--docus-accent)
 Phase 0 必须验证 Naive UI 对颜色值的实际解析边界。若部分派生颜色字段不能接收
 `var(--token)`，Implementation Plan 只允许为这些字段建立最小、受控且可追溯的
 Naive-compatible TS color mirror；这不是第二套 Docus design system，原始 token
-authority 仍然是 Docus semantic CSS tokens。Phase 0 已通过 compatibility fixture
-记录并验证该边界。
+authority 仍然是 Docus semantic CSS tokens。本 amendment 不执行该验证，也不创建
+compatibility fixture。
 
 ## 17. Root Provider Architecture
 
@@ -1129,12 +1135,19 @@ approved single icon-family import policy
 Vue SSR renderToString compatibility
 ~~~
 
-本阶段已验证 `naive-ui@2.45.3` 与 `@vicons/tabler@0.13.0` 的 exact pin、真实
+本阶段计划验证 `naive-ui@2.45.3` 与 `@vicons/tabler@0.13.0` 的 exact pin、真实
 TypeScript exports、NIcon integration、tree-shaking、`currentColor`、Light / Dark、
-compact / default 对齐、icon-only accessibility 和 Vue SSR `renderToString`。已提交
-dependency、compatibility tests 和最小 test-only fixture；没有正式接管 App UI、引入
-production DocusUiRoot、迁移 Workspace 或改业务页面。Phase 0 是“可提交、可复现、无
-用户可见 migration”的 compatibility spike，当前状态为 PASS。
+compact / default 对齐、icon-only accessibility 和 Vue SSR `renderToString`。通过后才
+可提交 dependency、compatibility tests 和最小 test-only fixture；本 amendment 不安装
+dependency、不创建 fixture，也不执行 Phase 0。不得正式接管 App UI、引入 production
+DocusUiRoot、迁移 Workspace 或改业务页面。Phase 0 是“可提交、可复现、无用户可见
+migration”的 compatibility spike，当前状态为 Pending。
+
+Phase 0 的 bundle checkpoint 必须记录 dependency 安装后 production import 仍为
+`NONE`；
+第一次真实 production Tabler import 要到后续 Shared Primitive / Shared Chrome phase
+再测量 tree-shaking 和增量。即使 dependency 在未来 Phase 0 安装，也不得借 spike
+提前替换 NavBar、Ledger、Diary、Vault 或 Note 的 production icon。
 
 ### Phase 1 — UI Foundation
 
@@ -1150,8 +1163,8 @@ provider baseline
 theme / locale bridge
 ~~~
 
-Phase 1 将消费 Phase 0 已提交并验证的 exact-pinned dependencies，不重复安装或重新
-选择版本；业务 UI 基本保持不变。
+Phase 1 将消费 Phase 0 通过后提交并验证的 exact-pinned dependencies，不重复安装或
+重新选择版本；本 amendment 尚未安装或验证这些 dependency，业务 UI 基本保持不变。
 
 Phase 1 同时冻结 Functional Icon Foundation：
 
@@ -1556,7 +1569,12 @@ tree-shaking friendly
 
 禁止为了方便一次性暴露整个 Naive UI component set。
 
-Phase 0 必须记录 baseline 和 Spike 后 bundle 变化。
+Functional Icon Foundation 的唯一 approved dependency 是
+`@vicons/tabler@0.13.0`，且必须与 `naive-ui@2.45.3` 一样 exact pin。禁止以
+`@vicons/*` 泛化或引入第二个 icon package；如果未来出现 blocker，必须回到
+Design / Implementation Review。Phase 0 必须记录 baseline、dependency 安装后
+production import `NONE` 的 bundle checkpoint，以及第一次 production Tabler import
+后的实际 tree-shaken delta。
 
 ## 40. Root Bootstrap
 
@@ -1677,6 +1695,13 @@ Visual Acceptance Gate 是正式 Phase gate，采用两级方式：
 15. Exact-head CI PASS。
 16. Visual Acceptance Gate PASS。
 17. Locale / DateLocale parity PASS。
+18. 涉及 icon migration 时，不新增手写 generic functional SVG 或复制第三方 path；
+19. 涉及 icon migration 时，只使用 approved Tabler family，且保留 Docus semantic
+    distinction；
+20. icon-only control 具备 accessible name，decorative icon 不产生重复朗读；
+21. Icon 在 compact / default density 下对齐，且没有未解释的 bundle 增长；
+22. 不存在未经批准的第二个 icon family；尚未覆盖的 legacy consumer 都有明确
+    migration phase 归属。
 
 ## 45. Epic Completion Criteria
 
@@ -1691,6 +1716,12 @@ Visual Acceptance Gate 是正式 Phase gate，采用两级方式：
 - Note / Diary / Ledger / Vault 已完成计划范围内迁移；
 - 已无无主的重复 primitive system；
 - Legacy CSS debt 已清理；
+- Functional Icon Authority 已统一为 `NIcon + @vicons/tabler`；
+- `ICON_*` production consumers 已迁移为 0，除明确批准的 Brand / Domain exception；
+- 不再新增手写通用 functional SVG，不复制第三方 glyph path，也不保留第二个 icon
+  family；
+- legacy icon geometry、preview、contract tests 和 lint 规则只在 zero consumer 后
+  清理，且不会误删 brand artwork；
 - Light / Dark 一致；
 - Accessibility 没有明显退步；
 - 所有主路径 E2E 通过；

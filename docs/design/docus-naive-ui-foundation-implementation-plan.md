@@ -2,7 +2,7 @@
 
 **日期：** 2026-09-07
 **模块：** Global UI Foundation
-**状态：** Implementation Review: PASS — Phase 0 local PASS; CI handoff ready; Icon Foundation Amendment: Accepted
+**状态：** Implementation Review: PASS — Ready for Phase 0; Icon Foundation Amendment: Accepted
 **类型：** Architecture / UI Foundation Refactor
 **优先级：** P1
 **基线：** main @ 9c65f7aa84c45fba33fd7b586ce042f57366d14c
@@ -74,13 +74,14 @@ Vite         ^8.0.12
 TypeScript   ~6.0.2
 Vitest       ^4.1.8
 Playwright   ^1.61.1
-Naive UI     2.45.3 (exact pin; Phase 0 PASS)
-@vicons/tabler 0.13.0 (exact pin; Phase 0 PASS)
+Naive UI     not installed; Phase 0 candidate 2.45.3 (exact pin)
+@vicons/tabler not installed; Phase 0 candidate 0.13.0 (exact pin)
 ```
 
-本 amendment 已将 `naive-ui@2.45.3` 和 `@vicons/tabler@0.13.0` exact-pin 写入
-`package.json` 与 `package-lock.json`，并由 `npm ci` 成功复现；Phase 1 消费同一
-exact pin，不重新选择版本。
+本 amendment 不安装 dependency、不修改 `package.json` 或 `package-lock.json`，也不
+创建或运行 compatibility fixture。Phase 0 通过后才将
+`naive-ui@2.45.3` 和 `@vicons/tabler@0.13.0` exact-pin 写入 manifest / lockfile，
+并由 CI 用 `npm ci` 复现；Phase 1 消费同一 exact pin，不重新选择版本。
 
 ---
 
@@ -188,7 +189,7 @@ Phase 0 不做正式 Workspace migration。
 
 ## 4.2 Spike dependency
 
-Phase 0 已提交并验证 candidate dependency：
+Phase 0 在通过 compatibility review 后提交 candidate dependency：
 
 ```bash
 npm install --save-exact naive-ui@2.45.3 @vicons/tabler@0.13.0
@@ -201,11 +202,11 @@ npm install --save-exact naive-ui@2.45.3 @vicons/tabler@0.13.0
 "@vicons/tabler": "^0.13.0"
 ```
 
-上述命令已执行。Phase 0 的 dependency、`package-lock.json` 和 compatibility
-evidence 可提交、可回滚、可由 `npm ci` 确定性复现。若后续需要回滚，revert Phase 0
-commit(s) 即可回到没有 Naive UI / Vicons dependency 的状态；不得以未写入项目
-manifest / lockfile 的临时安装成功作为通过条件。Phase 1 将消费已验证的 exact-pinned
-dependencies，不重复安装依赖。
+本 amendment 不执行上述命令。Phase 0 的 dependency、`package-lock.json` 和
+compatibility evidence 必须可提交、可回滚、可由 `npm ci` 确定性复现。若 Spike
+FAIL，revert Phase 0 commit(s) 即可回到没有 Naive UI / Vicons dependency 的状态；
+不得以未写入项目 manifest / lockfile 的临时安装成功作为通过条件。Phase 1 将消费
+Phase 0 通过后提交并验证的 exact-pinned dependencies，不重复安装依赖。
 
 ---
 
@@ -248,7 +249,7 @@ Light
 
 ## 4.4 Icon Foundation Spike
 
-Functional icon compatibility 与 Naive UI provider compatibility 已在同一个
+Functional icon compatibility 与 Naive UI provider compatibility 应在同一个
 test-only fixture 中验证：
 
 ```vue
@@ -262,7 +263,7 @@ test-only fixture 中验证：
 </NButton>
 ```
 
-Phase 0 fixture 使用：
+Phase 0 临时 fixture 建议使用：
 
 ```text
 src/ui/__tests__/fixtures/NaiveUiFoundationSpike.vue
@@ -281,14 +282,10 @@ no Docus SVG path is copied into the fixture
 Vue SSR renderToString compatibility
 ```
 
-fixture 以 `@vicons/tabler@0.13.0` 的真实 TypeScript exports 为准，覆盖 Search、Plus、
-Settings 和 Calendar，并在 test-only fixture 中验证 `NIcon` 的 button slot、standalone icon
-和 accessibility。后续 production mapping 仍必须在实际迁移前确认 Settings、Trash、
-Folder、File、Chevron、Check、Alert/Warning 等具体 export；不得把猜测名称写入
-production code。Phase 0 同时记录 theme mapping 的实际边界：Naive UI 部分派生颜色
-字段会交给 `seemly` 解析，不能直接接收 CSS `var()`；raw surface fields 可以直接
-消费 CSS custom properties。Implementation Plan 只允许为前者保留最小、受控且可追溯
-的 TS color mirror，不得把它扩展成第二套 Docus token authority。该验证结果为 PASS。
+fixture 应以 `@vicons/tabler@0.13.0` 的真实 TypeScript exports 为准，至少覆盖
+Search、Settings、Plus、Calendar、Trash/Delete equivalent、Folder、File/Document
+equivalent、Chevron、Check、Alert/Warning；不得在未验证 export 前把猜测名称写入
+production code。本 amendment 不执行该 fixture 或验证。
 
 ## 4.5 Locale / DateLocale Spike
 
@@ -358,11 +355,11 @@ single source of truth
 是否只需局部 override
 ```
 
-Phase 0 已记录实际结果：部分派生颜色字段会经过 `seemly` 的颜色解析、不能接受
-`var(--token)`，而 `bodyColor` / `borderColor` 等 raw surface fields 可以直接消费
-CSS custom properties。因此只允许为派生字段建立最小、受控的 TS color mirror，且
-必须能追溯到 Docus semantic token authority。不得把 mirror 扩展成一套平行的 design
-system。
+Phase 0 同时记录 theme mapping 的实际边界：Naive UI 部分派生颜色字段可能交给
+`seemly` 解析，不能直接接收 CSS `var()`；raw surface fields 可以直接消费 CSS
+custom properties。Implementation Plan 只允许为前者保留最小、受控且可追溯的 TS
+color mirror，不得把它扩展成第二套 Docus token authority。本 amendment 不执行
+该验证。
 
 ---
 
@@ -611,11 +608,11 @@ exact-head CI PASS
 
 # 11. Phase 1 — UI Foundation
 
-Phase 1 将消费 Phase 0 已提交并验证的 exact-pinned
+Phase 1 将消费 Phase 0 通过后提交并验证的 exact-pinned
 `naive-ui@2.45.3` 与 `@vicons/tabler@0.13.0`；不得在 Phase 1 重复安装或重新
-选择版本。
+选择版本。本 amendment 尚未执行 Phase 0。
 
-Functional icon foundation 已由 Phase 0 冻结为：
+本 amendment 将 Functional icon foundation 冻结为：
 
 ```text
 NIcon
@@ -1005,6 +1002,12 @@ E2E PASS
 Locale / DateLocale PASS
 Visual Acceptance Gate PASS
 Exact-head CI PASS
+Icon Foundation policy documented; no new handwritten generic functional SVG
+Approved Tabler family only; semantic distinctions preserved
+Icon-only controls have accessible names; decorative icons are hidden
+Compact / default icon alignment PASS
+No unexplained icon bundle growth
+Legacy consumers remain only in their documented migration phase
 ```
 
 ---
@@ -1509,7 +1512,7 @@ Empty / Loading primitive where appropriate
 
 # 37. Ledger DatePicker Decision
 
-依据 Phase 0 结果。
+待依据 Phase 0 结果决定。
 
 ### 如果 timezone-safe
 
@@ -1982,6 +1985,12 @@ currentColor 由消费方继承
 icon-only control 提供 accessible name
 ```
 
+这是一套 One Functional Icon System：Docus 负责 semantic choice 和产品组合，
+`NIcon` 负责 presentation container，`@vicons/tabler` 负责通用 glyph。Tabler 是
+唯一 canonical functional family；不得混入 Ionicons、Material、Fluent、Font
+Awesome、Ant Design、Carbon、Lucide、Heroicons、`@tabler/icons-vue` 或其他
+`@vicons/*` family。
+
 禁止：
 
 ```text
@@ -1992,12 +2001,17 @@ icon-only control 提供 accessible name
 把 legacy icons.ts 当作新页面默认 icon source
 ```
 
+迁移期间允许现有 `ICON_*` 与 Tabler 短期共存，但 legacy system 必须处于明确退出
+路径；Phase 8 证明 zero consumer 后，只保留 Tabler functional icons 和已记录的
+Brand / Domain exceptions。
+
 例外：
 
 ```text
 Docus logo / brand artwork
 Mermaid / Markmap / generated artwork
-用户内容 SVG
+ECharts / chart SVG or canvas / third-party renderer graphics
+Markdown / 用户内容 SVG
 Phase 8 前尚未迁移的 legacy icons.ts
 ```
 
@@ -2336,6 +2350,14 @@ STOP
     approved family；legacy `icons.ts` 在迁移完成前保留为 migration-only source；
 14. Naive UI 无法解析 CSS `var()` 的派生颜色字段只允许使用最小、可追溯的
     TS color mirror，不得形成第二套 token authority。
+15. `@vicons/tabler@0.13.0` 是 Phase 0 的 exact-pinned candidate；本 amendment
+    不安装或验证它。
+16. 不新增手写 generic functional SVG，也不复制第三方 SVG path。
+17. `icons.ts` 是迁移期 legacy source，不是未来 functional icon authority。
+18. Brand artwork、generated / content SVG 属于各自 Docus 或 renderer owner，
+    不受 Functional Icon Foundation 的 glyph family 约束。
+19. legacy icon infrastructure 只在证明 zero production consumers 后于 Phase 8
+    清理。
 
 ---
 
@@ -2357,8 +2379,11 @@ No blocking open question
 
 ```text
 Implementation Review: PASS
-Ready for Implementation
+Ready for Implementation; Phase 0: Ready to start
 P0: 0
 P1: 0
 Blocking Open Questions: 0
 ```
+
+Phase 0 尚未执行；上述状态表示实现计划已获通过并可进入新的 Phase 0，不能解读为
+dependency、fixture 或 production icon 已经落地。
