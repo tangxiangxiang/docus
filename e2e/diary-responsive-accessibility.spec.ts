@@ -559,6 +559,10 @@ test('Native DOCUMENT Cmd/Ctrl+W closes through the existing focus and dirty pol
     await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click()
     await expect(confirmation).not.toBeVisible()
     await expect(diaryTab).toHaveAttribute('data-save-status', 'dirty')
+    // Let the intentionally retained dirty edit settle before fixture
+    // cleanup deletes the server document. Otherwise the delayed autosave
+    // can race the cleanup DELETE and report a misleading 404 in the page.
+    await expect(diaryTab).toHaveAttribute('data-save-status', 'saved', { timeout: 15_000 })
   } finally {
     await deletePost(request, diary)
     await deletePost(request, note)
