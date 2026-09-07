@@ -9,7 +9,11 @@ const DATABASE_NAME = 'docus-draft-recovery'
 const VAULT_DIR = process.env.DOCUS_DRAFT_E2E_VAULT ?? path.join(os.tmpdir(), 'docus-draft-e2e-vault')
 
 test.beforeEach(async ({ page }) => {
-  await page.goto('/')
+  // Keep the SPA from reopening the database while the per-test cleanup is
+  // in flight. The app's startup recovery can otherwise recreate v2 after
+  // deleteDatabase() succeeds, leaving schema-sensitive tests with a stale
+  // database version before they begin.
+  await page.goto('/src/main.ts')
   await page.evaluate(async (databaseName) => {
     await new Promise<void>((resolve, reject) => {
       const request = indexedDB.deleteDatabase(databaseName)
@@ -18,6 +22,7 @@ test.beforeEach(async ({ page }) => {
       request.onblocked = () => reject(new Error('Draft database deletion blocked'))
     })
   }, DATABASE_NAME)
+  await page.goto('/')
 })
 
 test('creates the production schema and persists compound-key records', async ({
