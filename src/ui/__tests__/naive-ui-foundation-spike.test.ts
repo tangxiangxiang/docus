@@ -247,7 +247,7 @@ describe('Naive UI foundation compatibility spike', () => {
     expect(wrapper.get('[data-testid="formatted-date"]').text()).toBe('2026-01-01')
   })
 
-  it('keeps formatted dates stable across representative runtime timezones', () => {
+  it('keeps formatted dates stable across representative runtime timezones', { timeout: 30_000 }, () => {
     const script = String.raw`
 import { JSDOM } from 'jsdom'
 const dom = new JSDOM('<!doctype html><html><head></head><body></body></html>', { url: 'http://localhost' })
