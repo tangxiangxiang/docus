@@ -13,6 +13,7 @@ const busy = ref(false)
 const inputRef = ref<InputInst | null>(null)
 const { t } = useI18n()
 let closing = false
+let focusReturnTarget: HTMLElement | null = null
 
 function closeDisplayed(id: number): void {
   if (displayed.value?.id !== id || !show.value) return
@@ -22,6 +23,12 @@ function closeDisplayed(id: number): void {
 
 function startNext(): void {
   if (show.value || closing || displayed.value || !active.value) return
+  if (!focusReturnTarget && typeof document !== 'undefined') {
+    const activeElement = document.activeElement
+    if (activeElement instanceof HTMLElement && activeElement !== document.body) {
+      focusReturnTarget = activeElement
+    }
+  }
   displayed.value = active.value
   input.value = displayed.value.initial ?? ''
   busy.value = false
@@ -85,11 +92,23 @@ async function runAction(): Promise<void> {
 
 function finishClose(id: number): void {
   if (displayed.value?.id !== id) return
+  const returnTarget = focusReturnTarget
   displayed.value = null
   show.value = false
   busy.value = false
   closing = false
-  void nextTick(syncQueue)
+  void nextTick(async () => {
+    syncQueue()
+    if (displayed.value || queue.value.length > 0 || !returnTarget) return
+    // Naive's focus trap restores the element it captured when the trap was
+    // mounted. Keep Docus' trigger-focus contract authoritative after the
+    // modal has fully left, including the close→next-request race.
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0))
+    await nextTick()
+    if (displayed.value || queue.value.length > 0) return
+    focusReturnTarget = null
+    returnTarget.focus({ preventScroll: true })
+  })
 }
 
 function onVisibilityChange(value: boolean): void {
@@ -130,6 +149,7 @@ onBeforeUnmount(() => {
   displayed.value = null
   show.value = false
   busy.value = false
+  focusReturnTarget = null
 })
 </script>
 
