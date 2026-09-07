@@ -1,8 +1,9 @@
 import { createApp } from 'vue'
+import './ui/tokens.css'
 import './style.css'
 import './shiki.css'
 import 'katex/dist/katex.min.css'
-import App from './App.vue'
+import DocusUiRoot from './ui/DocusUiRoot.vue'
 import router from './router'
 
-createApp(App).use(router).mount('#app')
+createApp(DocusUiRoot).use(router).mount('#app')

@@ -24,7 +24,6 @@ import {
   useNotification,
   zhCN,
   type DialogReactive,
-  type GlobalThemeOverrides,
   type MessageReactive,
   type NotificationReactive,
 } from 'naive-ui'
@@ -40,6 +39,7 @@ import {
   Settings,
   Trash,
 } from '@vicons/tabler'
+import { createDocusNaiveThemeOverrides } from '../../naiveTheme'
 
 type ThemeMode = 'light' | 'dark'
 type FixtureLocale = 'zh' | 'en'
@@ -61,21 +61,7 @@ const dateLocale = computed(() => props.locale === 'zh' ? dateZhCN : dateEnUS)
 // needs a resolved mirror. Explicit primary hover/pressed values and raw
 // surface fields stay CSS-variable-backed; the spike test records the parser
 // boundary separately with a direct all-variable mount.
-const themeOverrides: GlobalThemeOverrides = {
-  common: {
-    bodyColor: 'var(--docus-bg)',
-    borderColor: 'var(--docus-border)',
-    cardColor: 'var(--docus-surface-1)',
-    modalColor: 'var(--docus-surface-1)',
-    primaryColor: '#4f46e5',
-    primaryColorHover: 'var(--docus-accent-hover)',
-    primaryColorPressed: 'var(--docus-accent-pressed)',
-    textColorBase: 'var(--docus-text-1)',
-    textColor1: 'var(--docus-text-1)',
-    textColor2: 'var(--docus-text-2)',
-    textColor3: 'var(--docus-text-3)',
-  },
-}
+const themeOverrides = computed(() => createDocusNaiveThemeOverrides(props.themeMode))
 
 const iconExports = {
   Search,

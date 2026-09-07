@@ -68,7 +68,7 @@ function hasVisibleDocusOutline(snapshot: FocusSnapshot): boolean {
   return snapshot.docusOutline.style !== 'none' && snapshot.docusOutline.width !== '0px'
 }
 
-test('Docus focus-visible rules are measured against Naive button and input focus styles', async ({ page }) => {
+test('production focus authority stays single for Naive button and input', async ({ page }) => {
   const pageErrors: string[] = []
   const consoleErrors: string[] = []
   const consoleWarnings: string[] = []
@@ -107,35 +107,34 @@ test('Docus focus-visible rules are measured against Naive button and input focu
   await tabUntil(page, '[data-testid="input"] input')
   const keyboardInput = await focusSnapshot(input)
 
-  // Kept as explicit evidence while the focus authority decision is reviewed.
   console.log(JSON.stringify({ mouseButton, keyboardButton, mouseInput, keyboardInput }))
   expect(keyboardButton.active).toBe(true)
   expect(keyboardInput.active).toBe(true)
-  expect(hasVisibleDocusOutline(keyboardButton)).toBe(true)
+  expect(hasVisibleDocusOutline(mouseButton)).toBe(false)
+  expect(hasVisibleDocusOutline(mouseInput)).toBe(false)
+  expect(hasVisibleDocusOutline(keyboardButton)).toBe(false)
   expect(hasClearlyVisibleNaiveBorder(keyboardButton)).toBe(true)
   expect(hasVisibleDocusOutline(keyboardInput)).toBe(false)
   expect(hasClearlyVisibleNaiveBorder(keyboardInput)).toBe(true)
-  expect(hasVisibleDocusOutline(keyboardButton) && hasClearlyVisibleNaiveBorder(keyboardButton)).toBe(true)
-  expect(hasVisibleDocusOutline(keyboardInput) && hasClearlyVisibleNaiveBorder(keyboardInput)).toBe(false)
-
-  // Minimal Phase 1 strategy probe: Naive primitives own their focus visuals;
-  // Docus' broad global ring is excluded only for these primitives.
-  await page.addStyleTag({
-    content: ':where(.n-button, .n-input input):focus-visible { outline: none; }',
-  })
-  await page.getByTestId('keyboard-start').focus()
-  await tabUntil(page, '[data-testid="icon-only-button"]')
-  const resolvedButton = await focusSnapshot(button)
-  await page.getByTestId('keyboard-start').focus()
-  await tabUntil(page, '[data-testid="input"] input')
-  const resolvedInput = await focusSnapshot(input)
-  expect(hasVisibleDocusOutline(resolvedButton)).toBe(false)
-  expect(hasClearlyVisibleNaiveBorder(resolvedButton)).toBe(true)
-  expect(hasVisibleDocusOutline(resolvedInput)).toBe(false)
-  expect(hasClearlyVisibleNaiveBorder(resolvedInput)).toBe(true)
-  expect(hasVisibleDocusOutline(resolvedButton) && hasClearlyVisibleNaiveBorder(resolvedButton)).toBe(false)
-  expect(hasVisibleDocusOutline(resolvedInput) && hasClearlyVisibleNaiveBorder(resolvedInput)).toBe(false)
   expect(pageErrors).toEqual([])
   expect(consoleErrors).toEqual([])
   expect(consoleWarnings).toEqual([])
+})
+
+test('explicit Docus theme tokens override the OS fallback', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'dark' })
+  await page.goto('/e2e/naive-ui-foundation/')
+
+  const token = () => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--docus-bg').trim())
+  expect(await token()).toBe('#111827')
+
+  await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'light'))
+  expect(await token()).toBe('#ffffff')
+
+  await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'))
+  expect(await token()).toBe('#111827')
+
+  await page.emulateMedia({ colorScheme: 'light' })
+  await page.evaluate(() => document.documentElement.removeAttribute('data-theme'))
+  expect(await token()).toBe('#ffffff')
 })

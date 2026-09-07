@@ -1,0 +1,148 @@
+/*
+ * Docus global semantic token authority.
+ *
+ * Keep the validated light/dark palette here. `src/style.css` consumes these
+ * variables but must not redefine this global base palette or its aliases.
+ * Workspace-local systems such as --vs-* and --ledger-* remain outside this
+ * file until their own migration phases.
+ */
+:root {
+  /* Global semantic palette — validated light values from the existing app. */
+  --docus-bg: #ffffff;
+  --docus-surface-1: #f9fafb;
+  --docus-surface-2: #f3f4f6;
+
+  --docus-text-1: #111827;
+  --docus-text-2: #4b5563;
+  --docus-text-3: #6b7280;
+
+  --docus-border: #e5e7eb;
+  --docus-divider: #e5e7eb;
+
+  --docus-accent: #6366f1;
+  --docus-accent-hover: #4f46e5;
+  --docus-accent-pressed: #4338ca;
+
+  /* These semantic status values preserve existing Docus status usage where
+     one exists; the remaining values are reserved for the foundation. */
+  --docus-positive: #15803d;
+  --docus-negative: #b42318;
+  --docus-warning: #d97706;
+  --docus-info: #005fb8;
+
+  --docus-radius-sm: 4px;
+  --docus-radius-md: 8px;
+  --docus-radius-lg: 12px;
+
+  --docus-space-1: 4px;
+  --docus-space-2: 8px;
+  --docus-space-3: 12px;
+  --docus-space-4: 16px;
+  --docus-space-5: 24px;
+  --docus-space-6: 32px;
+
+  --docus-font-size-xs: 0.75rem;
+  --docus-font-size-sm: 0.875rem;
+  --docus-font-size-md: 1rem;
+  --docus-font-size-lg: 1.125rem;
+
+  /* Existing global consumers that do not yet have a public semantic group. */
+  --docus-code-bg: #f3f4f6;
+  --docus-navbar-vault-bg: #f4f6fa;
+  --docus-navbar-vault-border: #dbe2ea;
+
+  /* Compatibility aliases stay until the Cleanup phase. */
+  --bg: var(--docus-bg);
+  --bg-soft: var(--docus-surface-1);
+  --text-h: var(--docus-text-1);
+  --text: var(--docus-text-2);
+  --text-muted: var(--docus-text-3);
+  --border: var(--docus-border);
+  --code-bg: var(--docus-code-bg);
+  --accent: var(--docus-accent);
+  --accent-hover: var(--docus-accent-hover);
+  --navbar-vault-bg: var(--docus-navbar-vault-bg);
+  --navbar-vault-border: var(--docus-navbar-vault-border);
+}
+
+/* OS preference is only a fallback before Docus has an explicit theme state. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --docus-bg: #111827;
+    --docus-surface-1: #1f2937;
+    --docus-surface-2: #1f2937;
+
+    --docus-text-1: #f9fafb;
+    --docus-text-2: #d1d5db;
+    --docus-text-3: #9ca3af;
+
+    --docus-border: #374151;
+    --docus-divider: #374151;
+
+    --docus-accent: #818cf8;
+    --docus-accent-hover: #a5b4fc;
+    --docus-accent-pressed: #c7d2fe;
+
+    --docus-positive: #4ade80;
+    --docus-negative: #f87171;
+    --docus-warning: #fbbf24;
+    --docus-info: #60a5fa;
+
+    --docus-code-bg: #1f2937;
+    --docus-navbar-vault-bg: #181818;
+    --docus-navbar-vault-border: #2b2b2b;
+  }
+}
+
+/* Explicit Docus state always wins over the OS preference. */
+:root[data-theme='light'] {
+  --docus-bg: #ffffff;
+  --docus-surface-1: #f9fafb;
+  --docus-surface-2: #f3f4f6;
+
+  --docus-text-1: #111827;
+  --docus-text-2: #4b5563;
+  --docus-text-3: #6b7280;
+
+  --docus-border: #e5e7eb;
+  --docus-divider: #e5e7eb;
+
+  --docus-accent: #6366f1;
+  --docus-accent-hover: #4f46e5;
+  --docus-accent-pressed: #4338ca;
+
+  --docus-positive: #15803d;
+  --docus-negative: #b42318;
+  --docus-warning: #d97706;
+  --docus-info: #005fb8;
+
+  --docus-code-bg: #f3f4f6;
+  --docus-navbar-vault-bg: #f4f6fa;
+  --docus-navbar-vault-border: #dbe2ea;
+}
+
+:root[data-theme='dark'] {
+  --docus-bg: #111827;
+  --docus-surface-1: #1f2937;
+  --docus-surface-2: #1f2937;
+
+  --docus-text-1: #f9fafb;
+  --docus-text-2: #d1d5db;
+  --docus-text-3: #9ca3af;
+
+  --docus-border: #374151;
+  --docus-divider: #374151;
+
+  --docus-accent: #818cf8;
+  --docus-accent-hover: #a5b4fc;
+  --docus-accent-pressed: #c7d2fe;
+
+  --docus-positive: #4ade80;
+  --docus-negative: #f87171;
+  --docus-warning: #fbbf24;
+  --docus-info: #60a5fa;
+
+  --docus-code-bg: #1f2937;
+  --docus-navbar-vault-bg: #181818;
+  --docus-navbar-vault-border: #2b2b2b;
+}

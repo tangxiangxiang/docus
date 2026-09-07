@@ -1,16 +1,4 @@
 :root {
-  --text: #4b5563;
-  --text-h: #111827;
-  --text-muted: #6b7280;
-  --bg: #ffffff;
-  --bg-soft: #f9fafb;
-  --border: #e5e7eb;
-  --code-bg: #f3f4f6;
-  --accent: #6366f1;
-  --accent-hover: #4f46e5;
-  --navbar-vault-bg: #f4f6fa;
-  --navbar-vault-border: #dbe2ea;
-
   --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
   --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 
@@ -21,22 +9,6 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --text: #d1d5db;
-    --text-h: #f9fafb;
-    --text-muted: #9ca3af;
-    --bg: #111827;
-    --bg-soft: #1f2937;
-    --border: #374151;
-    --code-bg: #1f2937;
-    --accent: #818cf8;
-    --accent-hover: #a5b4fc;
-    --navbar-vault-bg: #181818;
-    --navbar-vault-border: #2b2b2b;
-  }
 }
 
 body {
@@ -122,6 +94,11 @@ body.vault-mode #app { height: 100%; }
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: 2px;
+}
+/* Naive primitives own their focus presentation. Keep this exclusion narrow:
+   future migrated primitives must earn an explicit compatibility decision. */
+:where(.n-button, .n-input input):focus-visible {
+  outline: none;
 }
 .vault :where(a, button, [role='button'], [role='tab'], [role='option'],
               [tabindex], input, textarea, select, summary):focus-visible {
@@ -5077,46 +5054,8 @@ main.container.auth-page-shell {
   margin: 0;
 }
 
-/* ---------- User-forced theme (data-theme on <html>) ----------
-   Higher specificity than the prefers-color-scheme media query
-   (`:root[data-theme=X]` beats `:root` inside `@media`), so when the
-   user has picked light or dark explicitly it wins over the OS. In
-   `auto` mode no attribute is set and the media query applies.
-
-   Token values mirror the baseline :root and the
-   prefers-color-scheme: dark / light :root blocks above. */
-
-:root[data-theme='light'] {
-  --text: #4b5563;
-  --text-h: #111827;
-  --text-muted: #6b7280;
-  --bg: #ffffff;
-  --bg-soft: #f9fafb;
-  --border: #e5e7eb;
-  --code-bg: #f3f4f6;
-  --accent: #6366f1;
-  --accent-hover: #4f46e5;
-  --navbar-vault-bg: #f4f6fa;
-  --navbar-vault-border: #dbe2ea;
-}
-
-:root[data-theme='dark'] {
-  --text: #d1d5db;
-  --text-h: #f9fafb;
-  --text-muted: #9ca3af;
-  --bg: #111827;
-  --bg-soft: #1f2937;
-  --border: #374151;
-  --code-bg: #1f2937;
-  --accent: #818cf8;
-  --accent-hover: #a5b4fc;
-  --navbar-vault-bg: #181818;
-  --navbar-vault-border: #2b2b2b;
-}
-
-/* Vault: same idea, but the vault overrides live on .vault with its
-   own VSCode palette. We re-pin them under :root[data-theme=...] so
-   the vault respects the user's choice (not just the OS). */
+/* Vault: its workspace-local palette remains scoped here. The global Docus
+   semantic palette and legacy aliases are authoritative in tokens.css. */
 
 :root[data-theme='light'] .vault {
   --vs-bg-1: #ffffff;
