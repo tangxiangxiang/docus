@@ -155,7 +155,7 @@ function onDateChange(event: Event): void {
     <header class="ledger-dashboard-header">
       <div>
         <p class="ledger-eyebrow">Ledger</p>
-        <h1>你的财务概览</h1>
+        <h1>财务概览</h1>
         <p v-if="store.settings.value">{{ store.settings.value.baseCurrency }} · {{ store.settings.value.timezone }}</p>
       </div>
       <div class="ledger-dashboard-actions">
