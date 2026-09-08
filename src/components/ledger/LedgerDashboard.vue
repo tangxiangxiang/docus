@@ -284,22 +284,24 @@ function onDateChange(value: string): void {
                 <span><i class="is-asset" aria-hidden="true" />资产账户 <small>({{ assetAccounts.length }})</small></span>
                 <strong>{{ formatLedgerMoney(overview.assetTotalMinor, overview.currency) }}</strong>
               </h3>
-              <NList v-if="assetAccounts.length" class="ledger-dashboard-accounts" :show-divider="false" hoverable>
-                <NListItem v-for="account in assetAccounts" :key="account.id" class="ledger-dashboard-account-item">
-                  <RouterLink class="ledger-dashboard-account" :to="{ name: 'ledger-account', params: { id: account.id } }">
-                    <span class="ledger-account-identity">
-                      <span class="ledger-account-icon is-asset" aria-hidden="true">
-                        <NIcon aria-hidden="true" :size="17"><Wallet /></NIcon>
+              <div v-if="assetAccounts.length" class="ledger-dashboard-account-list-viewport" data-testid="ledger-dashboard-assets-viewport">
+                <NList class="ledger-dashboard-accounts" :show-divider="false" hoverable>
+                  <NListItem v-for="account in assetAccounts" :key="account.id" class="ledger-dashboard-account-item">
+                    <RouterLink class="ledger-dashboard-account" :to="{ name: 'ledger-account', params: { id: account.id } }">
+                      <span class="ledger-account-identity">
+                        <span class="ledger-account-icon is-asset" aria-hidden="true">
+                          <NIcon aria-hidden="true" :size="17"><Wallet /></NIcon>
+                        </span>
+                        <span>
+                          <strong>{{ account.name }}</strong>
+                          <small>资产 · {{ account.currency }}</small>
+                        </span>
                       </span>
-                      <span>
-                        <strong>{{ account.name }}</strong>
-                        <small>资产 · {{ account.currency }}</small>
-                      </span>
-                    </span>
-                    <strong class="ledger-account-amount">{{ formatLedgerMoney(account.currentBalanceMinor, account.currency) }}</strong>
-                  </RouterLink>
-                </NListItem>
-              </NList>
+                      <strong class="ledger-account-amount">{{ formatLedgerMoney(account.currentBalanceMinor, account.currency) }}</strong>
+                    </RouterLink>
+                  </NListItem>
+                </NList>
+              </div>
               <NEmpty v-else class="ledger-inline-empty" size="small" :show-icon="false" description="还没有资产账户。" />
             </section>
             <section class="ledger-dashboard-account-group" data-testid="ledger-dashboard-liabilities" aria-labelledby="ledger-dashboard-liabilities-title">
@@ -307,22 +309,24 @@ function onDateChange(value: string): void {
                 <span><i class="is-liability" aria-hidden="true" />负债账户 <small>({{ liabilityAccounts.length }})</small></span>
                 <strong>{{ formatLedgerMoney(overview.liabilityTotalMinor, overview.currency) }}</strong>
               </h3>
-              <NList v-if="liabilityAccounts.length" class="ledger-dashboard-accounts" :show-divider="false" hoverable>
-                <NListItem v-for="account in liabilityAccounts" :key="account.id" class="ledger-dashboard-account-item">
-                  <RouterLink class="ledger-dashboard-account" :to="{ name: 'ledger-account', params: { id: account.id } }">
-                    <span class="ledger-account-identity">
-                      <span class="ledger-account-icon is-liability" aria-hidden="true">
-                        <NIcon aria-hidden="true" :size="17"><CreditCard /></NIcon>
+              <div v-if="liabilityAccounts.length" class="ledger-dashboard-account-list-viewport" data-testid="ledger-dashboard-liabilities-viewport">
+                <NList class="ledger-dashboard-accounts" :show-divider="false" hoverable>
+                  <NListItem v-for="account in liabilityAccounts" :key="account.id" class="ledger-dashboard-account-item">
+                    <RouterLink class="ledger-dashboard-account" :to="{ name: 'ledger-account', params: { id: account.id } }">
+                      <span class="ledger-account-identity">
+                        <span class="ledger-account-icon is-liability" aria-hidden="true">
+                          <NIcon aria-hidden="true" :size="17"><CreditCard /></NIcon>
+                        </span>
+                        <span>
+                          <strong>{{ account.name }}</strong>
+                          <small>负债 · {{ account.currency }}</small>
+                        </span>
                       </span>
-                      <span>
-                        <strong>{{ account.name }}</strong>
-                        <small>负债 · {{ account.currency }}</small>
-                      </span>
-                    </span>
-                    <strong class="ledger-account-amount">{{ formatLedgerMoney(account.currentBalanceMinor, account.currency) }}</strong>
-                  </RouterLink>
-                </NListItem>
-              </NList>
+                      <strong class="ledger-account-amount">{{ formatLedgerMoney(account.currentBalanceMinor, account.currency) }}</strong>
+                    </RouterLink>
+                  </NListItem>
+                </NList>
+              </div>
               <NEmpty v-else class="ledger-inline-empty" size="small" :show-icon="false" description="还没有负债账户。" />
             </section>
           </div>
@@ -784,6 +788,10 @@ function onDateChange(value: string): void {
 .ledger-cashflow-grid .is-expense { color: var(--ledger-expense); }
 
 .ledger-dashboard-account-viewport {
+  min-width: 0;
+}
+
+.ledger-dashboard-account-list-viewport {
   max-height: 280px;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -1219,7 +1227,7 @@ function onDateChange(value: string): void {
     border-top: 1px solid var(--ledger-divider);
     border-left: 0;
   }
-  .ledger-dashboard-account-viewport { max-height: 360px; }
+  .ledger-dashboard-account-list-viewport { max-height: 360px; }
   .ledger-period-heading { flex-direction: column; }
   .ledger-period-toolbar {
     width: 100%;

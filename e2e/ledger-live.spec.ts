@@ -148,7 +148,9 @@ test('real Ledger onboarding and expense survive dashboard refresh', async ({ pa
   await expect(page.locator('.ledger-period-navigation')).toHaveCount(0)
   await expect(page.getByTestId('ledger-dashboard-accounts')).toContainText('招商银行')
   await expect(page.getByTestId('ledger-dashboard-account-viewport')).toBeVisible()
-  await expect(page.getByTestId('ledger-dashboard-account-viewport')).toHaveCSS('max-height', '280px')
+  await expect(page.getByTestId('ledger-dashboard-assets-viewport')).toBeVisible()
+  await expect(page.getByTestId('ledger-dashboard-assets-viewport')).toHaveCSS('max-height', '280px')
+  await expect(page.getByTestId('ledger-dashboard-assets-viewport')).toHaveCSS('overflow-y', 'auto')
   await expect(page.getByTestId('ledger-total-assets')).toContainText('¥10,000.00')
   await expect(page.getByTestId('ledger-net-worth')).toContainText('¥10,000.00')
 
@@ -361,6 +363,7 @@ test('Ledger transaction entry remains keyboard-usable in a narrow viewport', as
   await page.goto('/ledger')
   await expect(page.getByTestId('ledger-dashboard')).toBeVisible()
   await expect(page.getByTestId('ledger-dashboard-account-viewport')).toBeVisible()
+  await expect(page.getByTestId('ledger-dashboard-assets-viewport')).toBeVisible()
   await expect(page.getByTestId('ledger-cashflow-trend-canvas')).toBeVisible()
 
   // A canvas chart is easy to let escape its column. Measure real scrollable

@@ -318,7 +318,7 @@ describe('Ledger live dashboard', () => {
     expect(wrapper.text()).not.toContain('最近月份的收支变化')
   })
 
-  it('keeps every account in the bounded dashboard viewport', async () => {
+  it('keeps every account in its nature-specific dashboard viewport', async () => {
     const accounts = Array.from({ length: 8 }, (_, index) => ({
       ...accountSummary,
       id: `bank-${index + 1}`,
@@ -330,7 +330,7 @@ describe('Ledger live dashboard', () => {
     wrappers.push(wrapper)
     await flushPromises()
 
-    const viewport = wrapper.get('[data-testid="ledger-dashboard-account-viewport"]')
+    const viewport = wrapper.get('[data-testid="ledger-dashboard-assets-viewport"]')
     expect(viewport.findAll('.ledger-dashboard-account')).toHaveLength(accounts.length)
     for (const accountItem of accounts) {
       expect(viewport.text()).toContain(accountItem.name)
@@ -503,6 +503,8 @@ describe('Ledger live dashboard', () => {
     expect(accounts).toContain('负债账户')
     expect(accounts).toContain('招商银行')
     expect(accounts).toContain('信用卡')
+    expect(wrapper.get('[data-testid="ledger-dashboard-assets-viewport"]').findAll('.ledger-dashboard-account')).toHaveLength(1)
+    expect(wrapper.get('[data-testid="ledger-dashboard-liabilities-viewport"]').findAll('.ledger-dashboard-account')).toHaveLength(1)
   })
 
   it('keeps category name and share on the left while placing the amount on the right', async () => {
