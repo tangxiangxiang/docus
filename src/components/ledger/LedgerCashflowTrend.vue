@@ -181,7 +181,8 @@ function buildOption(): LedgerTrendChartOption {
       data: [SERIES_LABEL.income, SERIES_LABEL.expense],
     },
     tooltip: {
-      trigger: 'item',
+      trigger: 'axis',
+      axisPointer: { type: 'line', lineStyle: { color: palette.border, width: 1, type: 'dashed' } },
       backgroundColor: palette.surface,
       borderColor: palette.border,
       extraCssText: 'box-shadow:0 8px 24px rgba(0,0,0,.08);border-radius:8px',
