@@ -798,7 +798,7 @@ function onDateChange(value: string): void {
 
 .ledger-period-scope { width: 96px; }
 .ledger-category-scope {
-  width: 96px;
+  width: 72px;
   opacity: 0;
   pointer-events: auto;
   transition: opacity .14s ease;
