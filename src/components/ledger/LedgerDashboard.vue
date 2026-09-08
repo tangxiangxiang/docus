@@ -797,12 +797,21 @@ function onDateChange(value: string): void {
 }
 
 .ledger-period-scope { width: 96px; }
-.ledger-category-scope { display: none; width: 96px; }
+.ledger-category-scope {
+  width: 96px;
+  opacity: 0;
+  pointer-events: auto;
+  transition: opacity .14s ease;
+}
 .ledger-category-toolbar {
   display: flex;
   flex: 0 1 auto;
   align-items: center;
   gap: 6px;
+}
+.ledger-category-toolbar:hover .ledger-category-scope,
+.ledger-category-toolbar:focus-within .ledger-category-scope {
+  opacity: 1;
 }
 .ledger-category-date,
 .ledger-category-date :deep(.n-input) { width: 148px; }
