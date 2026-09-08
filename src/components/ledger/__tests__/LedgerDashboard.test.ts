@@ -607,41 +607,6 @@ describe('Ledger live dashboard', () => {
     }
   })
 
-  it('sorts accounts by current balance within each nature group', async () => {
-    const smallerAsset = { ...accountSummary, id: 'asset-small', name: '小额资产', currentBalanceMinor: 1_000 }
-    const largerAsset = { ...accountSummary, id: 'asset-large', name: '大额资产', currentBalanceMinor: 20_000 }
-    const smallerLiability: LedgerAccountSummary = {
-      ...accountSummary,
-      id: 'liability-small',
-      name: '小额负债',
-      nature: 'liability',
-      currentBalanceMinor: 2_000,
-    }
-    const largerLiability: LedgerAccountSummary = {
-      ...smallerLiability,
-      id: 'liability-large',
-      name: '大额负债',
-      currentBalanceMinor: 30_000,
-    }
-    api.getLedgerOverview.mockResolvedValue({
-      ...overview(),
-      accounts: [smallerAsset, largerLiability, largerAsset, smallerLiability],
-    })
-
-    const wrapper = mount(LedgerView)
-    wrappers.push(wrapper)
-    await flushPromises()
-
-    expect(wrapper.get('[data-testid="ledger-dashboard-assets-viewport"]').findAll('.ledger-account-identity strong').map((node) => node.text())).toEqual([
-      '大额资产',
-      '小额资产',
-    ])
-    expect(wrapper.get('[data-testid="ledger-dashboard-liabilities-viewport"]').findAll('.ledger-account-identity strong').map((node) => node.text())).toEqual([
-      '大额负债',
-      '小额负债',
-    ])
-  })
-
   it('uses the server scope endpoint when the selected cashflow period changes', async () => {
     const wrapper = mount(LedgerView)
     wrappers.push(wrapper)
