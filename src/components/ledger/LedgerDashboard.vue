@@ -880,7 +880,7 @@ function onDateChange(period: LedgerPeriodName, value: string): void {
 .ledger-category-date,
 .ledger-category-date :deep(.n-input) { width: 148px; }
 .ledger-trend-date,
-.ledger-trend-date :deep(.n-input) { width: 148px; }
+.ledger-trend-date :deep(.n-input) { width: 96px; }
 .ledger-period-toolbar :deep(.ledger-period-scope .n-base-selection) { width: 96px; }
 
 .ledger-historical-hint {
