@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, provide, ref, watch, watchEffect } from 'vue'
+import { NButton } from 'naive-ui'
 import { useRoute, useRouter } from 'vue-router'
 import NavBar from './components/NavBar.vue'
 import ToastHost from './components/ToastHost.vue'
@@ -290,11 +291,11 @@ provide(VaultViewModeKey, { mode: viewMode, set: setViewMode, toggle: toggleView
       </template>
       <template v-else-if="identityFailure">
         <p role="alert">{{ t('auth.vault_identity_unavailable') }}</p>
-        <button type="button" @click="retryVaultIdentity">{{ t('auth.retry') }}</button>
+        <NButton attr-type="button" @click="retryVaultIdentity">{{ t('auth.retry') }}</NButton>
       </template>
       <template v-else>
         <p role="alert">{{ authFailureMessage }}</p>
-        <button type="button" @click="retryAuth">{{ t('auth.retry') }}</button>
+        <NButton attr-type="button" @click="retryAuth">{{ t('auth.retry') }}</NButton>
       </template>
     </div>
   </section>

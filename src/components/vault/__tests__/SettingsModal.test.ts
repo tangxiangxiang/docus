@@ -1,10 +1,13 @@
 // @vitest-environment jsdom
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { h } from 'vue'
+import { NCheckbox, NSelect } from 'naive-ui'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useI18n } from '../../../composables/useI18n'
 import SettingsModal from '../SettingsModal.vue'
 import TagManagementPanel from '../TagManagementPanel.vue'
+import { useEditorPreferences } from '../../../composables/vault/useEditorPreferences'
+import { useFileTreePreferences } from '../../../composables/vault/useFileTreePreferences'
 
 const getAiSettings = vi.fn()
 const getAiCredentialStatus = vi.fn()
@@ -185,6 +188,8 @@ beforeEach(() => {
   confirm.mockResolvedValue(true)
   loadActive.mockResolvedValue(undefined)
   deactivateFocusTrap.mockResolvedValue(undefined)
+  useEditorPreferences().reset()
+  useFileTreePreferences().compactFileTree.value = true
 })
 
 afterEach(() => {
@@ -195,7 +200,7 @@ afterEach(() => {
 
 describe('SettingsModal', () => {
   it('opens on AI with active navigation, real providers, URL placeholder, and saved-key status', async () => {
-    mountSettings()
+    const wrapper = mountSettings()
     await flushPromises()
 
     const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')
@@ -205,12 +210,12 @@ describe('SettingsModal', () => {
     expect(document.body.textContent).toContain('AI 提供商配置')
     expect(document.body.textContent).toContain('配置')
 
-    const provider = fieldControl<HTMLSelectElement>('提供商', 'select')
-    expect(Array.from(provider.options).map((option) => [option.value, option.text])).toEqual([
-      ['anthropic', 'Anthropic'],
-      ['openai', 'OpenAI'],
+    const provider = wrapper.getComponent(NSelect)
+    expect(provider.props('options')).toEqual([
+      { value: 'anthropic', label: 'Anthropic' },
+      { value: 'openai', label: 'OpenAI' },
     ])
-    expect(provider.value).toBe('openai')
+    expect(provider.props('value')).toBe('openai')
 
     const keyInput = fieldControl<HTMLInputElement>('API Key', 'input')
     expect(keyInput.value).toBe('')
@@ -283,16 +288,15 @@ describe('SettingsModal', () => {
 
   it('switches providers through the existing save call and uses the optional URL placeholder for Anthropic', async () => {
     saveAiSettings.mockResolvedValueOnce(anthropicSettings())
-    mountSettings()
+    const wrapper = mountSettings()
     await flushPromises()
 
-    const provider = fieldControl<HTMLSelectElement>('提供商', 'select')
-    provider.value = 'anthropic'
-    provider.dispatchEvent(new Event('change', { bubbles: true }))
+    const provider = wrapper.getComponent(NSelect)
+    provider.vm.$emit('update:value', 'anthropic')
     await flushPromises()
 
     expect(saveAiSettings).toHaveBeenCalledWith({ provider: 'anthropic' })
-    expect(provider.value).toBe('anthropic')
+    expect(provider.props('value')).toBe('anthropic')
     expect(fieldControl<HTMLInputElement>('模型', 'input').value).toBe('claude-sonnet-4-6')
     expect(fieldControl<HTMLInputElement>('Base URL', 'input').placeholder).toBe('可选')
   })
@@ -377,6 +381,52 @@ describe('SettingsModal', () => {
     expect(settings.querySelector('[data-tag-management-panel]')).toBeTruthy()
     expect(settings.querySelector('[data-action="manage-tags"]')).toBeNull()
     expect(document.body.querySelectorAll('[role="dialog"]')).toHaveLength(1)
+  })
+
+  it('preserves native number bounds and exact numeric/boolean editor preference types', async () => {
+    const wrapper = mountSettings()
+    await flushPromises()
+    findButton('编辑器').click()
+    await flushPromises()
+
+    const fontSize = fieldControl<HTMLInputElement>('字体大小', 'input')
+    const lineHeight = fieldControl<HTMLInputElement>('行高', 'input')
+    const wrapColumn = fieldControl<HTMLInputElement>('换行列', 'input')
+    expect([fontSize.type, fontSize.min, fontSize.max]).toEqual(['number', '11', '24'])
+    expect([lineHeight.type, lineHeight.min, lineHeight.max]).toEqual(['number', '16', '40'])
+    expect([wrapColumn.type, wrapColumn.min, wrapColumn.max]).toEqual(['number', '60', '160'])
+
+    const tabSize = wrapper.getComponent(NSelect)
+    expect(tabSize.props('options')).toEqual([
+      { value: 2, label: '2 个空格' },
+      { value: 4, label: '4 个空格' },
+    ])
+    tabSize.vm.$emit('update:value', 4)
+    await flushPromises()
+    expect(useEditorPreferences().tabSize.value).toBe(4)
+    expect(typeof useEditorPreferences().tabSize.value).toBe('number')
+
+    const checkboxes = wrapper.findAllComponents(NCheckbox)
+    expect(checkboxes).toHaveLength(2)
+    checkboxes[0].vm.$emit('update:checked', false)
+    checkboxes[1].vm.$emit('update:checked', false)
+    await flushPromises()
+    expect(useEditorPreferences().typography.value).toBe(false)
+    expect(useFileTreePreferences().compactFileTree.value).toBe(false)
+  })
+
+  it('focuses the first real settings input after opening', async () => {
+    const wrapper = mount(SettingsModal, {
+      props: { open: false },
+      attachTo: document.body,
+    })
+    wrappers.push(wrapper)
+
+    await wrapper.setProps({ open: true })
+    await flushPromises()
+    const firstInput = document.body.querySelector<HTMLInputElement>('.settings-modal input:not([disabled])')
+    expect(firstInput).toBeTruthy()
+    expect(document.activeElement).toBe(firstInput)
   })
 
   it('closes on Escape and continues routing Tab through the focus trap', async () => {

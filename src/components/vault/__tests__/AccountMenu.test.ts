@@ -6,7 +6,12 @@ import { useI18n } from '../../../composables/useI18n'
 
 const wrappers: VueWrapper[] = []
 
-function mountAccount(props: { username?: string; logoutBusy?: boolean } = {}) {
+function mountAccount(props: {
+  username?: string
+  logoutBusy?: boolean
+  diaryUnlocked?: boolean
+  diaryLockBusy?: boolean
+} = {}) {
   const wrapper = mount(AccountMenu, {
     props: { username: 'xiangxiang', ...props },
     attachTo: document.body,
@@ -146,12 +151,34 @@ describe('AccountMenu', () => {
 
   it('emits an open-settings intent from the account menu', async () => {
     const wrapper = mountAccount()
+    const trigger = wrapper.get('[data-testid="account-button"]')
 
-    await wrapper.get('[data-testid="account-button"]').trigger('click')
+    await trigger.trigger('click')
     await wrapper.get('[data-testid="account-settings"]').trigger('click')
+    await wrapper.vm.$nextTick()
 
     expect(wrapper.emitted('open-settings')).toHaveLength(1)
     expect(wrapper.find('[data-testid="account-menu"]').exists()).toBe(false)
+    expect(document.activeElement).toBe(trigger.element)
+  })
+
+  it('keeps Diary lock conditional, busy-safe, and single-shot', async () => {
+    const wrapper = mountAccount({ diaryUnlocked: true, diaryLockBusy: false })
+    await wrapper.get('[data-testid="account-button"]').trigger('click')
+    const lock = wrapper.get('[data-testid="account-lock-diary"]')
+
+    expect((lock.element as HTMLButtonElement).disabled).toBe(false)
+    await lock.trigger('click')
+    expect(wrapper.emitted('lock-diary')).toHaveLength(1)
+    expect(wrapper.find('[data-testid="account-menu"]').exists()).toBe(false)
+
+    await wrapper.get('[data-testid="account-button"]').trigger('click')
+    await wrapper.setProps({ diaryLockBusy: true })
+    const busyLock = wrapper.get('[data-testid="account-lock-diary"]')
+    expect((busyLock.element as HTMLButtonElement).disabled).toBe(true)
+    expect(busyLock.attributes('aria-busy')).toBe('true')
+    await busyLock.trigger('click')
+    expect(wrapper.emitted('lock-diary')).toHaveLength(1)
   })
 
   it('disables the account entry and prevents duplicate logout intents while busy', async () => {

@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { NButton, NIcon } from 'naive-ui'
+import { Book, Edit, FileText, Robot, Tag, X } from '@vicons/tabler'
 import {
   clearAiApiKey,
   getAiCredentialStatus,
@@ -34,7 +36,6 @@ import SettingsEditorSection from './SettingsEditorSection.vue'
 import SettingsMetadataSection from './SettingsMetadataSection.vue'
 import SettingsTagsSection from './SettingsTagsSection.vue'
 import SettingsDiaryMigrationSection from './SettingsDiaryMigrationSection.vue'
-import { ICON_AI, ICON_EDIT, ICON_TAG, ICON_TOC } from './icons'
 
 const props = withDefaults(defineProps<{
   open: boolean
@@ -79,13 +80,13 @@ const cleanedPaths = ref<string[]>([])
    The active pane resets to AI every time the modal opens so a
    returning user always lands somewhere predictable. */
 type SectionId = 'ai' | 'editor' | 'metadata' | 'diary-migration' | 'tags'
-const SECTIONS: ReadonlyArray<{ id: SectionId; labelKey: string; icon: string }> = [
-  { id: 'ai', labelKey: 'settings.ai', icon: ICON_AI },
-  { id: 'editor', labelKey: 'settings.editor', icon: ICON_EDIT },
-  { id: 'metadata', labelKey: 'settings.metadata', icon: ICON_TOC },
-  { id: 'diary-migration', labelKey: 'settings.diary_migration', icon: ICON_TOC },
-  { id: 'tags', labelKey: 'settings.tags', icon: ICON_TAG },
-]
+const SECTIONS = [
+  { id: 'ai', labelKey: 'settings.ai', icon: Robot },
+  { id: 'editor', labelKey: 'settings.editor', icon: Edit },
+  { id: 'metadata', labelKey: 'settings.metadata', icon: FileText },
+  { id: 'diary-migration', labelKey: 'settings.diary_migration', icon: Book },
+  { id: 'tags', labelKey: 'settings.tags', icon: Tag },
+] as const satisfies ReadonlyArray<{ id: SectionId; labelKey: string; icon: typeof Robot }>
 const active = ref<SectionId>('ai')
 
 async function load() {
@@ -343,11 +344,9 @@ watch(() => props.open, async (open) => {
   if (open) {
     active.value = 'ai'
     trap.activate()
-    void load()
-    void nextTick(() => {
-      const first = modalRef.value?.querySelector<HTMLInputElement>('input:not([disabled])')
-      first?.focus()
-    })
+    void focusFirstSettingsField()
+    await load()
+    await focusFirstSettingsField()
   } else {
     abortConnectionTest()
     await trap.deactivate()
@@ -357,9 +356,17 @@ watch(() => props.open, async (open) => {
 onMounted(() => {
   if (props.open) {
     trap.activate()
-    void load()
+    void focusFirstSettingsField()
+    void load().then(focusFirstSettingsField)
   }
 })
+
+async function focusFirstSettingsField(): Promise<void> {
+  await nextTick()
+  if (!props.open) return
+  const first = modalRef.value?.querySelector<HTMLInputElement>('input:not([disabled])')
+  first?.focus()
+}
 
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
@@ -409,29 +416,35 @@ onBeforeUnmount(() => {
       >
         <header class="settings-header">
           <h2>{{ t('settings.title') }}</h2>
-          <button
-            type="button"
+          <NButton
+            attr-type="button"
+            size="small"
+            quaternary
+            circle
+            :bordered="false"
             class="settings-icon-btn"
             :title="t('settings.close')"
             :aria-label="t('settings.close')"
             @click="closeSettings"
-          ><span aria-hidden="true">×</span></button>
+          ><NIcon aria-hidden="true"><X /></NIcon></NButton>
         </header>
 
         <div class="settings-body">
           <nav class="settings-nav" :aria-label="t('settings.title')">
-            <button
+            <NButton
               v-for="section in SECTIONS"
               :key="section.id"
-              type="button"
+              attr-type="button"
+              size="medium"
+              text
               class="settings-nav-item"
               :class="{ active: active === section.id }"
               :aria-current="active === section.id ? 'page' : undefined"
               @click="selectSection(section.id)"
             >
-              <span class="settings-nav-icon" v-html="section.icon" aria-hidden="true" />
+              <NIcon class="settings-nav-icon" aria-hidden="true"><component :is="section.icon" /></NIcon>
               <span>{{ t(section.labelKey) }}</span>
-            </button>
+            </NButton>
           </nav>
 
           <div class="settings-detail" role="region" aria-live="polite">

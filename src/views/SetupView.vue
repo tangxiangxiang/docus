@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onMounted, ref } from 'vue'
+import { NButton, NInput, type InputInst } from 'naive-ui'
 import { useRoute, useRouter } from 'vue-router'
 import { AuthApiError } from '../lib/auth-api'
 import { safeInternalRedirect } from '../lib/auth-redirect'
@@ -18,8 +19,8 @@ const confirmPassword = ref('')
 const error = ref('')
 const errorCode = ref<string | undefined>()
 const confirmError = ref('')
-const tokenInput = ref<HTMLInputElement | null>(null)
-const confirmInput = ref<HTMLInputElement | null>(null)
+const tokenInput = ref<InputInst | null>(null)
+const confirmInput = ref<InputInst | null>(null)
 
 function errorText(value: unknown): string {
   errorCode.value = value instanceof AuthApiError ? value.code : undefined
@@ -96,64 +97,72 @@ onMounted(() => tokenInput.value?.focus())
       <form class="auth-form" :aria-busy="auth.submitting.value" @submit.prevent="submit">
         <div class="auth-field">
           <label for="setup-token">{{ t('auth.bootstrap_token') }}</label>
-          <input
-            id="setup-token"
+          <NInput
             ref="tokenInput"
-            v-model="bootstrapToken"
-            name="bootstrapToken"
+            v-model:value="bootstrapToken"
+            class="auth-control"
             type="password"
-            autocomplete="off"
-            required
+            size="medium"
+            :input-props="{
+              id: 'setup-token',
+              name: 'bootstrapToken',
+              autocomplete: 'off',
+              required: true,
+              'aria-invalid': errorCode === 'bootstrap-invalid' ? 'true' : undefined,
+              'aria-describedby': errorCode === 'bootstrap-invalid' ? 'setup-token-help setup-error' : 'setup-token-help',
+            }"
             :disabled="auth.submitting.value"
-            :aria-invalid="errorCode === 'bootstrap-invalid' ? 'true' : undefined"
-            :aria-describedby="errorCode === 'bootstrap-invalid' ? 'setup-token-help setup-error' : 'setup-token-help'"
+            :status="errorCode === 'bootstrap-invalid' ? 'error' : undefined"
           />
           <p id="setup-token-help" class="auth-help">{{ t('auth.bootstrap_token_help') }}</p>
         </div>
         <div class="auth-field">
           <label for="setup-username">{{ t('auth.username') }}</label>
-          <input
-            id="setup-username"
-            v-model="username"
-            name="username"
+          <NInput
+            v-model:value="username"
+            class="auth-control"
             type="text"
-            autocomplete="username"
-            required
+            size="medium"
+            :input-props="{ id: 'setup-username', name: 'username', autocomplete: 'username', required: true }"
             :disabled="auth.submitting.value"
           />
         </div>
         <div class="auth-field">
           <label for="setup-password">{{ t('auth.password') }}</label>
-          <input
-            id="setup-password"
-            v-model="password"
-            name="password"
+          <NInput
+            v-model:value="password"
+            class="auth-control"
             type="password"
-            autocomplete="new-password"
-            required
+            size="medium"
+            :input-props="{ id: 'setup-password', name: 'password', autocomplete: 'new-password', required: true }"
             :disabled="auth.submitting.value"
           />
         </div>
         <div class="auth-field">
           <label for="setup-confirm-password">{{ t('auth.confirm_password') }}</label>
-          <input
-            id="setup-confirm-password"
+          <NInput
             ref="confirmInput"
-            v-model="confirmPassword"
-            name="confirmPassword"
+            v-model:value="confirmPassword"
+            class="auth-control"
             type="password"
-            autocomplete="new-password"
-            required
+            size="medium"
+            :input-props="{
+              id: 'setup-confirm-password',
+              name: 'confirmPassword',
+              autocomplete: 'new-password',
+              required: true,
+              'aria-invalid': confirmError ? 'true' : undefined,
+              'aria-describedby': confirmError ? 'setup-confirm-error' : undefined,
+            }"
             :disabled="auth.submitting.value"
-            :aria-invalid="confirmError ? 'true' : undefined"
-            :aria-describedby="confirmError ? 'setup-confirm-error' : undefined"
+            :status="confirmError ? 'error' : undefined"
           />
         </div>
         <p v-if="confirmError" id="setup-confirm-error" class="auth-error" role="alert">{{ confirmError }}</p>
         <p v-if="error" id="setup-error" class="auth-error" role="alert">{{ error }}</p>
-        <button class="auth-submit" type="submit" :disabled="auth.submitting.value">
+        <NButton class="auth-submit" attr-type="submit" type="primary" :disabled="auth.submitting.value">
           {{ auth.submitting.value ? t('auth.creating_owner') : t('auth.create_owner') }}
-        </button>
+        </NButton>
       </form>
     </div>
   </section>

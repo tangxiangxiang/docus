@@ -91,6 +91,21 @@ describe('LoginView', () => {
 
     expect(mocks.auth.login).toHaveBeenCalledWith({ username: 'owner', password: 'secret' })
     expect(mocks.router.replace).toHaveBeenCalledWith('/vault/a?view=read#section')
+    expect((wrapper.get('#login-password').element as HTMLInputElement).value).toBe('')
+  })
+
+  it('keeps native required, name, and validity semantics inside Naive inputs', () => {
+    const wrapper = mountLogin()
+    const username = wrapper.get('#login-username').element as HTMLInputElement
+    const password = wrapper.get('#login-password').element as HTMLInputElement
+    const form = wrapper.get('form').element as HTMLFormElement
+
+    expect(username.required).toBe(true)
+    expect(username.name).toBe('username')
+    expect(password.required).toBe(true)
+    expect(password.name).toBe('password')
+    expect(form.checkValidity()).toBe(false)
+    expect(mocks.auth.login).not.toHaveBeenCalled()
   })
 
   it('focuses the username field and prevents duplicate pending submissions', async () => {
@@ -210,6 +225,23 @@ describe('SetupView', () => {
     expect(document.activeElement).toBe(wrapper.get('#setup-confirm-password').element)
   })
 
+  it('keeps every setup secret field required with its transport name', () => {
+    const wrapper = mountSetup()
+    const expected = [
+      ['#setup-token', 'bootstrapToken'],
+      ['#setup-username', 'username'],
+      ['#setup-password', 'password'],
+      ['#setup-confirm-password', 'confirmPassword'],
+    ] as const
+
+    for (const [selector, name] of expected) {
+      const input = wrapper.get(selector).element as HTMLInputElement
+      expect(input.required).toBe(true)
+      expect(input.name).toBe(name)
+    }
+    expect((wrapper.get('form').element as HTMLFormElement).checkValidity()).toBe(false)
+  })
+
   it('sends only bootstrapToken, username, and password, then restores a deep link', async () => {
     mocks.route.query = { redirect: '/vault/inbox/note?view=read#section' }
     mocks.auth.setup.mockResolvedValue({ authenticated: true, user: { id: 1, username: 'owner' } })
@@ -281,6 +313,17 @@ describe('SetupView', () => {
       name: 'login',
       query: { redirect: '/vault/inbox/note' },
     })
+  })
+
+  it('restores the requested route when already-initialized refresh is authenticated', async () => {
+    mocks.route.query = { redirect: '/vault/inbox/recovered' }
+    mocks.auth.setup.mockRejectedValue(error('already-initialized', 409))
+    mocks.auth.refreshStatus.mockResolvedValue('authenticated')
+    const wrapper = mountSetup()
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(mocks.router.replace).toHaveBeenCalledWith('/vault/inbox/recovered')
   })
 
   it('rejects malicious redirects after successful setup', async () => {

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useI18n } from '../../composables/useI18n'
+import { NButton } from 'naive-ui'
 import type { FrontmatterCleanupPreview, MetadataMigrationSummary } from '../../lib/api'
 
 /* The metadata section is presentational — async side effects
@@ -33,9 +34,9 @@ const { t } = useI18n()
         <p>{{ t('settings.metadata_subtitle') }}</p>
       </div>
       <div class="settings-section-actions">
-        <button type="button" class="btn" :disabled="previewing" @click="emit('preview')">
+        <NButton attr-type="button" size="medium" class="btn" :bordered="false" :disabled="previewing" @click="emit('preview')">
           {{ t(previewing ? 'settings.checking' : 'settings.check_cleanup') }}
-        </button>
+        </NButton>
       </div>
     </header>
     <div class="settings-section-body">
@@ -64,20 +65,25 @@ const { t } = useI18n()
           </span>
         </div>
         <div class="settings-metadata-actions">
-          <button
+          <NButton
             v-if="cleanedPaths.length"
-            type="button"
+            attr-type="button"
+            size="medium"
+            :bordered="false"
             class="btn"
             :disabled="mutatingMetadata"
             @click="emit('restore')"
-          >{{ t('settings.restore_original', { count: cleanedPaths.length }) }}</button>
-          <button
+          >{{ t('settings.restore_original', { count: cleanedPaths.length }) }}</NButton>
+          <NButton
             v-if="cleanupPreview.candidates.length"
-            type="button"
+            attr-type="button"
+            size="medium"
+            type="error"
+            :bordered="false"
             class="btn btn-danger"
             :disabled="mutatingMetadata || cleanupPreview.blocked.length > 0"
             @click="emit('remove')"
-          >{{ t('settings.remove_frontmatter', { count: cleanupPreview.candidates.length }) }}</button>
+          >{{ t('settings.remove_frontmatter', { count: cleanupPreview.candidates.length }) }}</NButton>
         </div>
       </div>
     </div>

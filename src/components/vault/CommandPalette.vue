@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { NButton, NInput, type InputInst } from 'naive-ui'
 import type { PostSummary } from '../../lib/api'
 import { createDocumentSearchProvider, createLatestSearchRunner, type DocumentSearchPayload, type SearchResult, type SearchResultSection } from '../../lib/searchResults'
 import { useFocusTrap } from '../../composables/useFocusTrap'
@@ -12,7 +13,7 @@ const query = ref('')
 const sections = ref<SearchResultSection[]>([])
 const hits = computed(() => sections.value.flatMap((section) => section.results))
 const activeIdx = ref(0)
-const inputRef = ref<HTMLInputElement | null>(null)
+const inputRef = ref<InputInst | null>(null)
 const trap = useFocusTrap()
 const { t } = useI18n()
 const placeholder = computed(() => t('search.placeholder', { count: props.posts.length }))
@@ -61,7 +62,22 @@ defineExpose({ show, hide })
   <Teleport to="body">
     <div v-if="open" class="palette-backdrop" @click.self="hide">
       <div class="palette" role="dialog" aria-modal="true" :aria-label="t('search.dialog_label')">
-        <input ref="inputRef" v-model="query" class="palette-input" type="text" :placeholder="placeholder" :aria-label="t('search.input_label')" autocomplete="off" spellcheck="false" @keydown="onInputKey" />
+        <NInput
+          ref="inputRef"
+          v-model:value="query"
+          class="palette-input"
+          type="text"
+          size="medium"
+          :bordered="false"
+          :placeholder="placeholder"
+          :input-props="{
+            'aria-label': t('search.input_label'),
+            autocomplete: 'off',
+            spellcheck: false,
+          }"
+          :theme-overrides="{ heightMedium: '53px', borderRadius: '0px' }"
+          @keydown="onInputKey"
+        />
         <div v-if="hits.length" class="palette-list" role="listbox">
           <section v-for="section in sections" :key="section.id" class="palette-section">
             <h3 class="palette-section-title">{{ sectionLabel(section) }}</h3>
@@ -72,7 +88,7 @@ defineExpose({ show, hide })
             </div>
           </section>
         </div>
-        <div v-else class="palette-empty"><div>{{ t('search.no_results') }}</div><button v-if="query.trim()" type="button" class="btn btn-primary palette-new" @click="commitNew">{{ t('search.create', { query: query.trim() }) }}</button></div>
+        <div v-else class="palette-empty"><div>{{ t('search.no_results') }}</div><NButton v-if="query.trim()" attr-type="button" type="primary" class="palette-new" @click="commitNew">{{ t('search.create', { query: query.trim() }) }}</NButton></div>
         <div class="palette-foot"><span>{{ t('search.navigate') }}</span><span>{{ t('search.open') }}</span><span>{{ t('search.close') }}</span></div>
       </div>
     </div>

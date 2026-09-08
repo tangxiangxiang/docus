@@ -1,11 +1,23 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { NButton, NIcon } from 'naive-ui'
+import {
+  Book,
+  Edit,
+  Eye,
+  LayoutSidebarLeftExpand,
+  LayoutSidebarRightExpand,
+  Moon,
+  Notes,
+  Search,
+  Sun,
+  Wallet,
+} from '@vicons/tabler'
 import { useRoute, useRouter } from 'vue-router'
 import { useTheme } from '../composables/useTheme'
 import { VaultViewModeKey } from '../composables/vault/viewMode'
 import { useScopeFilter } from '../composables/vault/useScopeFilter'
 import type { ScopeKey } from '../../shared/scopeProtocol'
-import { ICON_EDIT, ICON_EYE, ICON_PANEL_LEFT_OPEN, ICON_PANEL_RIGHT_OPEN, ICON_SCOPE_NOTE, ICON_SCOPE_DIARY, ICON_SCOPE_LEDGER, ICON_SEARCH, ICON_NAV_THEME_LIGHT, ICON_NAV_THEME_DARK } from './vault/icons'
 import { useVaultLayout } from '../composables/vault/useVaultLayout'
 import { useI18n } from '../composables/useI18n'
 import { DiaryAccessContextKey } from '../composables/diary/diaryAccessContext'
@@ -54,9 +66,9 @@ const themeTitle = computed<string>(() => {
 })
 
 const SCOPE_CHIPS = [
-  { scope: 'note', label: 'note', icon: ICON_SCOPE_NOTE },
-  { scope: 'diary', label: 'diary', icon: ICON_SCOPE_DIARY },
-  { scope: 'ledger', label: 'ledger', icon: ICON_SCOPE_LEDGER },
+  { scope: 'note', label: 'note', icon: Notes },
+  { scope: 'diary', label: 'diary', icon: Book },
+  { scope: 'ledger', label: 'ledger', icon: Wallet },
 ] as const
 
 function scopeLabel(scope: ScopeKey, label: string): string {
@@ -235,80 +247,101 @@ onBeforeUnmount(() => {
       <!-- Scope filter: lives in the navbar (the file tree header is too
            narrow on 150px sidebars). The Ledger chip opens the Ledger workspace. -->
       <div v-if="props.isVault" class="scope-chips" role="tablist" :aria-label="t('nav.scope_label')">
-        <button
+        <NButton
           v-for="chip in SCOPE_CHIPS"
           :key="chip.scope"
           class="scope-chip"
           :class="{ active: isScopeActive(chip.scope) }"
+          attr-type="button"
+          size="small"
+          quaternary
+          :bordered="false"
           :aria-pressed="isScopeActive(chip.scope)"
           :aria-label="scopeLabel(chip.scope, chip.label)"
           :title="scopeLabel(chip.scope, chip.label)"
           @click="onScopeClick(chip.scope)"
         >
-          <span class="scope-chip-icon" aria-hidden="true" v-html="chip.icon" />
+          <NIcon class="scope-chip-icon" aria-hidden="true"><component :is="chip.icon" /></NIcon>
           <span class="scope-chip-label">{{ chip.label }}</span>
-        </button>
+        </NButton>
       </div>
       <div class="nav-spacer" />
       <div class="nav-actions">
-        <button
+        <NButton
           v-if="props.isVault"
           class="nav-search"
-          type="button"
+          attr-type="button"
+          size="small"
+          quaternary
+          :bordered="false"
           :title="t('nav.search_hint')"
           :aria-label="t('nav.search')"
           @click="emit('open-search')"
         >
-          <span class="nav-search-icon" v-html="ICON_SEARCH" aria-hidden="true" />
-        </button>
-        <button
+          <NIcon class="nav-search-icon" aria-hidden="true"><Search /></NIcon>
+        </NButton>
+        <NButton
           class="theme-toggle"
-          type="button"
+          attr-type="button"
+          size="small"
+          quaternary
+          :bordered="false"
           :title="themeTitle"
           :aria-label="themeTitle"
           @click="toggle"
         >
-        <span
-          class="theme-toggle-icon"
-          v-html="themeIcon === 'sun' ? ICON_NAV_THEME_LIGHT : ICON_NAV_THEME_DARK"
-          aria-hidden="true"
-        />
-      </button>
-        <button
+          <NIcon class="theme-toggle-icon" aria-hidden="true">
+            <Sun v-if="themeIcon === 'sun'" />
+            <Moon v-else />
+          </NIcon>
+        </NButton>
+        <NButton
           v-if="props.isVault && !isLedger && viewModeApi && isVaultDocumentVisible && !isDiaryCalendarVisible"
           class="view-toggle"
           :class="{ 'is-read': isReadMode }"
-          type="button"
+          attr-type="button"
+          size="small"
+          quaternary
+          :bordered="false"
           :aria-label="t(isReadMode ? 'nav.switch_edit' : 'nav.switch_read')"
           :title="t(isReadMode ? 'nav.switch_edit_hint' : 'nav.switch_read_hint')"
           data-testid="view-toggle"
           @click="viewModeApi.toggle()"
         >
-          <span class="view-toggle-icon" aria-hidden="true" v-html="isReadMode ? ICON_EDIT : ICON_EYE" />
-        </button>
-        <button
+          <NIcon class="view-toggle-icon" aria-hidden="true">
+            <Edit v-if="isReadMode" />
+            <Eye v-else />
+          </NIcon>
+        </NButton>
+        <NButton
           v-if="props.isVault && !isLedger && !isDiaryCalendarVisible"
           class="left-panel-toggle"
-          type="button"
+          attr-type="button"
+          size="small"
+          quaternary
+          :bordered="false"
           :title="t(leftSidebarVisible ? 'nav.left_panel_close' : 'nav.left_panel_open')"
           :aria-label="t(leftSidebarVisible ? 'nav.left_panel_close' : 'nav.left_panel_open')"
           :aria-pressed="!leftSidebarCollapsed"
           data-testid="left-panel-toggle"
           @click="toggleSidePanel"
         >
-          <span class="left-panel-toggle-icon" aria-hidden="true" v-html="ICON_PANEL_LEFT_OPEN" />
-        </button>
-        <button
+          <NIcon class="left-panel-toggle-icon" aria-hidden="true"><LayoutSidebarLeftExpand /></NIcon>
+        </NButton>
+        <NButton
           v-if="props.isVault && !isLedger && !isDiaryCalendarVisible"
           class="right-rail-toggle"
-          type="button"
+          attr-type="button"
+          size="small"
+          quaternary
+          :bordered="false"
           :title="t(rightRailCollapsed ? 'nav.right_rail_open' : 'nav.right_rail_close')"
           :aria-label="t(rightRailCollapsed ? 'nav.right_rail_open' : 'nav.right_rail_close')"
           :aria-pressed="!rightRailCollapsed"
           @click="toggleRightRail"
         >
-          <span class="right-rail-toggle-icon" aria-hidden="true" v-html="ICON_PANEL_RIGHT_OPEN" />
-        </button>
+          <NIcon class="right-rail-toggle-icon" aria-hidden="true"><LayoutSidebarRightExpand /></NIcon>
+        </NButton>
         <AccountMenu
           v-if="props.isVault"
           :username="props.username"

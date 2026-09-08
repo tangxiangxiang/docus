@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { NButton, NIcon } from 'naive-ui'
+import { Lock, Logout, Settings, User } from '@vicons/tabler'
 import { useI18n } from '../../composables/useI18n'
-import { ICON_AB_SETTINGS, ICON_AB_USER, ICON_LOGOUT } from './icons'
 
 const props = withDefaults(defineProps<{
   username?: string | null
@@ -23,10 +24,14 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const rootRef = ref<HTMLElement | null>(null)
-const buttonRef = ref<HTMLButtonElement | null>(null)
+const buttonRef = ref<{ $el: HTMLButtonElement } | null>(null)
 const menuRef = ref<HTMLElement | null>(null)
 const accountMenuOpen = ref(false)
 const displayUsername = computed(() => props.username?.trim() || t('activity.owner'))
+
+function focusTrigger(): void {
+  buttonRef.value?.$el.focus()
+}
 
 function getEnabledMenuItems(): HTMLElement[] {
   if (!menuRef.value) return []
@@ -46,7 +51,7 @@ function closeAccountMenu(restoreFocus = false): void {
   if (!accountMenuOpen.value) return
   accountMenuOpen.value = false
   if (restoreFocus) {
-    void nextTick(() => buttonRef.value?.focus())
+    void nextTick(focusTrigger)
   }
 }
 
@@ -76,7 +81,7 @@ async function handleSettings(): Promise<void> {
   // trigger and return focus here when it closes.
   closeAccountMenu()
   await nextTick()
-  buttonRef.value?.focus()
+  focusTrigger()
   emit('open-settings')
 }
 
@@ -150,9 +155,12 @@ onBeforeUnmount(() => {
 
 <template>
   <div ref="rootRef" class="account-menu-root">
-    <button
+    <NButton
       ref="buttonRef"
-      type="button"
+      attr-type="button"
+      size="small"
+      quaternary
+      :bordered="false"
       class="ab-btn ab-btn-account"
       :title="t('activity.account')"
       :aria-label="t('activity.account')"
@@ -164,8 +172,8 @@ onBeforeUnmount(() => {
       data-testid="account-button"
       @click="toggleAccountMenu"
     >
-      <span class="ab-btn-icon" v-html="ICON_AB_USER" aria-hidden="true" />
-    </button>
+      <NIcon class="ab-btn-icon" aria-hidden="true"><User /></NIcon>
+    </NButton>
 
     <div
       v-if="accountMenuOpen"
@@ -182,8 +190,10 @@ onBeforeUnmount(() => {
         <span class="account-menu-username" :title="displayUsername">{{ displayUsername }}</span>
       </div>
       <div class="account-menu-divider" role="separator" />
-      <button
-        type="button"
+      <NButton
+        attr-type="button"
+        size="small"
+        text
         class="account-menu-item"
         role="menuitem"
         tabindex="-1"
@@ -191,12 +201,14 @@ onBeforeUnmount(() => {
         data-testid="account-settings"
         @click="handleSettings"
       >
-        <span class="account-menu-item-icon" v-html="ICON_AB_SETTINGS" aria-hidden="true" />
+        <NIcon class="account-menu-item-icon" aria-hidden="true"><Settings /></NIcon>
         <span>{{ t('activity.settings') }}</span>
-      </button>
-      <button
+      </NButton>
+      <NButton
         v-if="props.diaryUnlocked"
-        type="button"
+        attr-type="button"
+        size="small"
+        text
         class="account-menu-item"
         role="menuitem"
         tabindex="-1"
@@ -205,11 +217,13 @@ onBeforeUnmount(() => {
         data-testid="account-lock-diary"
         @click="handleLockDiary"
       >
-        <span class="account-menu-item-icon" aria-hidden="true">&#128274;</span>
+        <NIcon class="account-menu-item-icon" aria-hidden="true"><Lock /></NIcon>
         <span>{{ props.diaryLockBusy ? t('diary_access.working') : t('diary_access.lock') }}</span>
-      </button>
-      <button
-        type="button"
+      </NButton>
+      <NButton
+        attr-type="button"
+        size="small"
+        text
         class="account-menu-item"
         role="menuitem"
         tabindex="-1"
@@ -218,9 +232,9 @@ onBeforeUnmount(() => {
         data-testid="account-logout"
         @click="handleLogout"
       >
-        <span class="account-menu-item-icon" v-html="ICON_LOGOUT" aria-hidden="true" />
+        <NIcon class="account-menu-item-icon" aria-hidden="true"><Logout /></NIcon>
         <span>{{ props.logoutBusy ? t('auth.logging_out') : t('nav.logout') }}</span>
-      </button>
+      </NButton>
     </div>
   </div>
 </template>

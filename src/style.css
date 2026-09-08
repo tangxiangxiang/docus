@@ -331,24 +331,13 @@ hr {
   font-size: 0.73rem;
   line-height: 1.45;
 }
-.auth-field input {
+.auth-field > .auth-control {
   width: 100%;
   box-sizing: border-box;
   min-height: 34px;
-  padding: 6px 9px;
-  border: 1px solid var(--border);
   border-radius: 6px;
-  background: var(--bg);
-  color: var(--text-h);
-  font: inherit;
   font-size: 0.86rem;
 }
-.auth-field input:hover:not(:disabled) { border-color: var(--accent); }
-.auth-field input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent); }
-.auth-field input[aria-invalid="true"] {
-  border-color: color-mix(in srgb, #b42318 70%, var(--border));
-}
-.auth-field input:disabled { opacity: 0.65; }
 .auth-form[aria-busy="true"] .auth-submit { cursor: wait; }
 .auth-error {
   margin: 0;
@@ -363,17 +352,10 @@ hr {
 .auth-submit {
   min-height: 34px;
   margin-top: 4px;
-  padding: 6px 14px;
-  border: 1px solid var(--accent);
   border-radius: 6px;
-  background: var(--accent);
-  color: #fff;
-  font: inherit;
   font-size: 0.84rem;
   font-weight: 600;
-  cursor: pointer;
 }
-.auth-submit:hover:not(:disabled) { background: var(--accent-hover); }
 .auth-submit:disabled { cursor: wait; opacity: 0.65; }
 .auth-bootstrap-surface {
   display: grid;
@@ -395,16 +377,10 @@ hr {
   font-size: 0.86rem;
 }
 .auth-bootstrap-card p { margin: 0; }
-.auth-bootstrap-card button {
+.auth-bootstrap-card > .n-button {
   min-height: 32px;
-  border: 1px solid var(--border);
   border-radius: 6px;
-  background: transparent;
-  color: var(--text-h);
-  cursor: pointer;
 }
-.auth-bootstrap-card button:hover { border-color: var(--accent); color: var(--accent); }
-.auth-bootstrap-card button:disabled { cursor: wait; opacity: 0.65; }
 
 @media (max-width: 420px) {
   .auth-page { padding: 20px 12px; }
@@ -2330,10 +2306,6 @@ main.container.auth-page-shell {
   color: var(--settings-text);
   background: color-mix(in srgb, var(--settings-muted) 12%, transparent);
 }
-.settings-icon-btn:focus-visible {
-  outline: 2px solid var(--settings-accent);
-  outline-offset: 2px;
-}
 .settings-body {
   flex: 1 1 auto;
   min-height: 0;
@@ -2393,10 +2365,6 @@ main.container.auth-page-shell {
 }
 .settings-nav-item.active::before {
   background: var(--settings-accent);
-}
-.settings-nav-item:focus-visible {
-  outline: 2px solid var(--settings-accent);
-  outline-offset: 2px;
 }
 .settings-nav-icon {
   width: 18px;
@@ -2633,15 +2601,24 @@ main.container.auth-page-shell {
   line-height: 1.5;
 }
 .settings-field > input,
-.settings-field > select,
+.settings-field > .n-input,
+.settings-field > .n-select,
 .settings-input-wrap {
   grid-column: 2;
   grid-row: 1;
   min-width: 0;
 }
 .settings-field > input,
-.settings-field > select,
-.settings-input-wrap > input {
+.settings-input-wrap > .n-input {
+  width: 100%;
+  min-width: 0;
+}
+.settings-field > .n-input,
+.settings-field > .n-select {
+  width: 100%;
+  min-width: 0;
+}
+.settings-field > input {
   width: 100%;
   min-width: 0;
   height: 32px;
@@ -2657,39 +2634,26 @@ main.container.auth-page-shell {
   line-height: 30px;
   transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
 }
-.settings-field > select {
-  padding-right: 26px;
-  cursor: pointer;
-}
 .settings-field > input::placeholder,
-.settings-input-wrap > input::placeholder {
+.settings-input-wrap > .n-input input::placeholder {
   color: color-mix(in srgb, var(--settings-muted) 82%, transparent);
   opacity: 1;
 }
-.settings-field > input:hover:not(:disabled),
-.settings-field > select:hover:not(:disabled),
-.settings-input-wrap > input:hover:not(:disabled) {
+.settings-field > input:hover:not(:disabled) {
   border-color: color-mix(in srgb, var(--settings-muted) 76%, transparent);
 }
-.settings-field > input:focus,
-.settings-field > select:focus,
-.settings-input-wrap > input:focus {
+.settings-field > input:focus {
   outline: none;
   border-color: var(--settings-accent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--settings-accent) 20%, transparent);
 }
-.settings-field > input:disabled,
-.settings-field > select:disabled,
-.settings-input-wrap > input:disabled {
+.settings-field > input:disabled {
   cursor: not-allowed;
   opacity: 0.68;
 }
 .settings-input-wrap {
   position: relative;
   display: block;
-}
-.settings-input-wrap.is-saved > input {
-  padding-right: 94px;
 }
 .settings-key-status {
   position: absolute;
@@ -2735,7 +2699,7 @@ main.container.auth-page-shell {
 .settings-field-checkbox > .settings-field-label {
   padding-top: 0;
 }
-.settings-field-checkbox > input[type='checkbox'] {
+.settings-field-checkbox > .n-checkbox {
   grid-column: 2;
   grid-row: 1;
 }
@@ -4800,15 +4764,10 @@ main.container.auth-page-shell {
 .palette-input {
   width: 100%;
   box-sizing: border-box;
-  font: inherit;
-  font-size: 1rem;
-  padding: 14px 16px;
-  border: 0;
   border-bottom: 1px solid var(--border);
   background: transparent;
-  color: var(--text-h);
-  outline: none;
 }
+.palette-input input { font-size: 1rem; }
 .palette-list { list-style: none; margin: 0; padding: 4px 0; max-height: 50vh; overflow-y: auto; }
 .palette-item {
   padding: 8px 16px;

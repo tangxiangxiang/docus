@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick, ref } from 'vue'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import NavBar from '../NavBar.vue'
 import { VaultViewModeKey, type VaultViewMode } from '../../composables/vault/viewMode'
 import { useI18n } from '../../composables/useI18n'
+import { useTheme } from '../../composables/useTheme'
 import { useScopeFilter } from '../../composables/vault/useScopeFilter'
+import { __resetVaultLayoutState } from '../../composables/vault/useVaultLayout'
 import { AppShellContextKey } from '../../composables/appShellContext'
 
 function makeViewModeApi(initial: VaultViewMode = 'edit') {
@@ -33,6 +35,8 @@ describe('NavBar — view-toggle button', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     useI18n().setLocale('en')
+    useTheme().set('light')
+    __resetVaultLayoutState()
   })
   afterEach(() => useI18n().setLocale('zh'))
 
@@ -43,12 +47,15 @@ describe('NavBar — view-toggle button', () => {
 
   it('places the theme toggle before the view toggle', () => {
     const { wrapper } = mountNavBar()
-    expect(wrapper.findAll('.nav-actions > button').map((button) => button.classes())).toEqual([
-      ['nav-search'],
-      ['theme-toggle'],
-      ['view-toggle'],
-      ['left-panel-toggle'],
-      ['right-rail-toggle'],
+    expect(wrapper.findAll('.nav-actions > button').map((button) => (
+      ['nav-search', 'theme-toggle', 'view-toggle', 'left-panel-toggle', 'right-rail-toggle']
+        .find((className) => button.classes().includes(className))
+    ))).toEqual([
+      'nav-search',
+      'theme-toggle',
+      'view-toggle',
+      'left-panel-toggle',
+      'right-rail-toggle',
     ])
   })
 
@@ -192,6 +199,30 @@ describe('NavBar — view-toggle button', () => {
 
     expect(wrapper.emitted('open-settings')).toHaveLength(1)
   })
+
+  it('preserves search, theme, and panel action semantics and ARIA state', async () => {
+    const { wrapper } = mountNavBar()
+    const search = wrapper.get('.nav-search')
+    const theme = wrapper.get('.theme-toggle')
+    const left = wrapper.get('[data-testid="left-panel-toggle"]')
+    const right = wrapper.get('.right-rail-toggle')
+
+    expect(search.attributes('aria-label')).toBe('Search')
+    await search.trigger('click')
+    expect(wrapper.emitted('open-search')).toHaveLength(1)
+
+    expect(theme.attributes('aria-label')).toContain('Dark')
+    await theme.trigger('click')
+    expect(useTheme().theme.value).toBe('dark')
+    expect(theme.attributes('aria-label')).toContain('Light')
+
+    expect(left.attributes('aria-pressed')).toBe('true')
+    expect(right.attributes('aria-pressed')).toBe('true')
+    await left.trigger('click')
+    await right.trigger('click')
+    expect(left.attributes('aria-pressed')).toBe('false')
+    expect(right.attributes('aria-pressed')).toBe('false')
+  })
 })
 
 describe('NavBar — scope chips', () => {
@@ -317,6 +348,31 @@ describe('NavBar — brand constellation', () => {
     expect(wrapper.find('.brand-constellation').exists()).toBe(true)
     expect(wrapper.findAll('.brand-network-node')).toHaveLength(9)
     expect(wrapper.find('.brand').element.tagName).toBe('BUTTON')
+  })
+
+  it('keeps the product-specific brand button as the home route action', async () => {
+    const api = makeViewModeApi()
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/', name: 'home', component: { template: '<div />' } },
+        { path: '/vault', name: 'vault', component: { template: '<div />' } },
+      ],
+    })
+    await router.push('/vault')
+    await router.isReady()
+    const wrapper = mount(NavBar, {
+      props: { isVault: true },
+      global: {
+        plugins: [router],
+        provide: { [VaultViewModeKey as symbol]: api },
+      },
+    })
+
+    await wrapper.get('.brand').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('home')
+    wrapper.unmount()
   })
 
   it('closes when the pointer leaves the brand', async () => {

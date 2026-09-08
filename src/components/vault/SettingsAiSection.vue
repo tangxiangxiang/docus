@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { NButton, NIcon, NInput, NSelect, type SelectOption } from 'naive-ui'
+import { AlertTriangle } from '@vicons/tabler'
 import { useI18n } from '../../composables/useI18n'
 import type {
   AiCredentialStatus,
@@ -9,7 +11,6 @@ import type {
   AiProvider,
   AiSettings,
 } from '../../lib/ai-api'
-import { ICON_STATUS_WARNING } from './icons'
 
 const props = defineProps<{
   settings: AiSettings | null
@@ -37,6 +38,10 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const providerOptions: SelectOption[] = [
+  { label: 'Anthropic', value: 'anthropic' },
+  { label: 'OpenAI', value: 'openai' },
+]
 
 /* Per-provider placeholder defaults. The active provider's saved
    value wins when present (rendered in the parent as maskedKey /
@@ -63,15 +68,13 @@ const recoveryProviders = computed<AiProvider[]>(() => {
   return [props.settings?.provider ?? 'anthropic']
 })
 
-function onInput(field: 'apiKey' | 'baseURL' | 'model', event: Event) {
-  const value = (event.target as HTMLInputElement).value
+function onInput(field: 'apiKey' | 'baseURL' | 'model', value: string) {
   if (field === 'apiKey') emit('update:apiKey', value)
   else if (field === 'baseURL') emit('update:baseURL', value)
   else emit('update:model', value)
 }
 
-function onProviderChange(event: Event) {
-  const value = (event.target as HTMLSelectElement).value
+function onProviderChange(value: string | number | null) {
   if (value === 'anthropic' || value === 'openai') {
     emit('switch-provider', value)
   }
@@ -86,25 +89,32 @@ function onProviderChange(event: Event) {
         <p>{{ t('settings.ai_subtitle') }}</p>
       </div>
       <div class="settings-section-actions">
-        <button
+        <NButton
           v-if="settings || recoveryCode === 'master-key-required'"
-          type="button"
+          attr-type="button"
+          size="medium"
+          type="error"
+          ghost
+          :bordered="false"
           class="btn settings-clear-key-btn"
           :disabled="saving"
           @click="emit('clear-key')"
-        >{{ t('settings.clear_key') }}</button>
-        <button
-          type="button"
+        >{{ t('settings.clear_key') }}</NButton>
+        <NButton
+          attr-type="button"
+          size="medium"
+          type="primary"
+          :bordered="false"
           class="btn btn-primary"
           :disabled="loading || saving"
           @click="emit('save')"
-        >{{ t(saving ? 'settings.saving' : 'settings.save') }}</button>
+        >{{ t(saving ? 'settings.saving' : 'settings.save') }}</NButton>
       </div>
     </header>
     <div class="settings-section-body">
       <div v-if="recoveryCode === 'master-key-required'" class="settings-ai-recovery settings-warning-card" role="alert">
         <div class="settings-warning-heading">
-          <span class="settings-warning-icon" v-html="ICON_STATUS_WARNING" aria-hidden="true" />
+          <NIcon class="settings-warning-icon" aria-hidden="true"><AlertTriangle /></NIcon>
           <strong>{{ t('settings.master_key_missing') }}</strong>
         </div>
         <div class="settings-warning-content">
@@ -112,14 +122,18 @@ function onProviderChange(event: Event) {
           <p>{{ t('settings.master_key_forget_warning') }}</p>
         </div>
         <div class="settings-warning-actions">
-          <button
+          <NButton
             v-for="provider in recoveryProviders"
             :key="provider"
-            type="button"
+            attr-type="button"
+            size="medium"
+            type="error"
+            ghost
+            :bordered="false"
             class="btn settings-danger-secondary"
             :disabled="saving"
             @click="emit('forget-credential', provider)"
-          >{{ t('settings.forget_provider_key', { provider }) }}</button>
+          >{{ t('settings.forget_provider_key', { provider }) }}</NButton>
         </div>
       </div>
       <div class="settings-card" aria-labelledby="settings-ai-configuration-title">
@@ -131,25 +145,30 @@ function onProviderChange(event: Event) {
                refreshes the other fields with that provider's saved view. -->
           <label class="settings-field">
             <span class="settings-field-label">{{ t('settings.provider') }}</span>
-            <select
+            <NSelect
+              data-testid="settings-provider"
+              :aria-label="t('settings.provider')"
               :value="activeProvider"
+              :options="providerOptions"
+              size="medium"
               :disabled="loading || saving"
-              @change="onProviderChange"
-            >
-              <option value="anthropic">Anthropic</option>
-              <option value="openai">OpenAI</option>
-            </select>
+              @update:value="onProviderChange"
+            />
           </label>
           <label class="settings-field">
             <span class="settings-field-label">{{ t('settings.api_key') }}</span>
             <span class="settings-input-wrap" :class="{ 'is-saved': hasSavedKey }">
-              <input
+              <NInput
                 :value="apiKey"
                 type="password"
-                autocomplete="off"
+                size="medium"
+                :input-props="{
+                  autocomplete: 'off',
+                  style: hasSavedKey ? { paddingRight: '94px' } : undefined,
+                }"
                 :placeholder="settings?.maskedKey || API_KEY_PLACEHOLDER"
                 :disabled="loading || saving"
-                @input="onInput('apiKey', $event)"
+                @update:value="onInput('apiKey', $event)"
               />
               <span v-if="hasSavedKey" class="settings-key-status" role="status">
                 <span class="settings-key-status-icon" aria-hidden="true">✓</span>
@@ -159,22 +178,25 @@ function onProviderChange(event: Event) {
           </label>
           <label class="settings-field">
             <span class="settings-field-label">{{ t('settings.base_url') }}</span>
-            <input
+            <NInput
               :value="baseURL"
-              type="url"
+              type="text"
+              size="medium"
+              :input-props="{ type: 'url' }"
               :placeholder="activeProvider === 'openai' ? 'https://api.openai.com/v1' : t('settings.optional')"
               :disabled="loading || saving"
-              @input="onInput('baseURL', $event)"
+              @update:value="onInput('baseURL', $event)"
             />
           </label>
           <label class="settings-field">
             <span class="settings-field-label">{{ t('settings.model') }}</span>
-            <input
+            <NInput
               :value="model"
               type="text"
+              size="medium"
               :placeholder="MODEL_PLACEHOLDER"
               :disabled="loading || saving"
-              @input="onInput('model', $event)"
+              @update:value="onInput('model', $event)"
             />
           </label>
         </div>
@@ -184,12 +206,14 @@ function onProviderChange(event: Event) {
           <h4 id="settings-ai-connection-title" class="settings-card-title">
             {{ t('settings.connection_status') }}
           </h4>
-          <button
-            type="button"
+          <NButton
+            attr-type="button"
+            size="medium"
+            :bordered="false"
             class="btn settings-connection-btn"
             :disabled="loading || saving || connectionState === 'checking'"
             @click="emit('test-connection')"
-          >{{ t(connectionState === 'checking' ? 'settings.connection_checking' : connectionState === 'failed' ? 'settings.retest_connection' : 'settings.test_connection') }}</button>
+          >{{ t(connectionState === 'checking' ? 'settings.connection_checking' : connectionState === 'failed' ? 'settings.retest_connection' : 'settings.test_connection') }}</NButton>
         </div>
         <div
           class="settings-connection-status"

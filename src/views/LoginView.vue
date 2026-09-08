@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from 'vue'
+import { NButton, NInput, type InputInst } from 'naive-ui'
 import { useRoute, useRouter } from 'vue-router'
 import { AuthApiError } from '../lib/auth-api'
 import { safeInternalRedirect } from '../lib/auth-redirect'
@@ -15,7 +16,7 @@ const username = ref('')
 const password = ref('')
 const error = ref('')
 const errorCode = ref<string | undefined>()
-const usernameInput = ref<HTMLInputElement | null>(null)
+const usernameInput = ref<InputInst | null>(null)
 
 const credentialError = computed(() => errorCode.value === 'invalid-credentials')
 
@@ -76,37 +77,47 @@ onMounted(() => usernameInput.value?.focus())
       <form class="auth-form" autocomplete="off" :aria-busy="auth.submitting.value" @submit.prevent="submit">
         <div class="auth-field">
           <label for="login-username">{{ t('auth.username') }}</label>
-          <input
-            id="login-username"
+          <NInput
             ref="usernameInput"
-            v-model="username"
-            name="username"
+            v-model:value="username"
+            class="auth-control"
             type="text"
-            autocomplete="off"
-            required
+            size="medium"
+            :input-props="{
+              id: 'login-username',
+              name: 'username',
+              autocomplete: 'off',
+              required: true,
+              'aria-invalid': credentialError ? 'true' : undefined,
+              'aria-describedby': credentialError ? 'login-error' : undefined,
+            }"
             :disabled="auth.submitting.value"
-            :aria-invalid="credentialError ? 'true' : undefined"
-            :aria-describedby="credentialError ? 'login-error' : undefined"
+            :status="credentialError ? 'error' : undefined"
           />
         </div>
         <div class="auth-field">
           <label for="login-password">{{ t('auth.password') }}</label>
-          <input
-            id="login-password"
-            v-model="password"
-            name="password"
+          <NInput
+            v-model:value="password"
+            class="auth-control"
             type="password"
-            autocomplete="new-password"
-            required
+            size="medium"
+            :input-props="{
+              id: 'login-password',
+              name: 'password',
+              autocomplete: 'new-password',
+              required: true,
+              'aria-invalid': credentialError ? 'true' : undefined,
+              'aria-describedby': credentialError ? 'login-error' : undefined,
+            }"
             :disabled="auth.submitting.value"
-            :aria-invalid="credentialError ? 'true' : undefined"
-            :aria-describedby="credentialError ? 'login-error' : undefined"
+            :status="credentialError ? 'error' : undefined"
           />
         </div>
         <p v-if="error" id="login-error" class="auth-error" role="alert">{{ error }}</p>
-        <button class="auth-submit" type="submit" :disabled="auth.submitting.value">
+        <NButton class="auth-submit" attr-type="submit" type="primary" :disabled="auth.submitting.value">
           {{ auth.submitting.value ? t('auth.signing_in') : t('auth.sign_in') }}
-        </button>
+        </NButton>
       </form>
     </div>
   </section>
