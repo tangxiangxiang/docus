@@ -198,7 +198,7 @@ function onDateChange(value: string): void {
         <NCard class="ledger-metric-card" data-testid="ledger-total-assets" size="small">
           <div class="ledger-metric-layout">
             <span class="ledger-metric-icon" aria-hidden="true">
-              <NIcon aria-hidden="true" :size="25"><Coin /></NIcon>
+              <NIcon aria-hidden="true" :size="22"><Coin /></NIcon>
             </span>
             <span class="ledger-metric-copy">
               <NStatistic label="总资产" :value="formatLedgerMoney(overview.assetTotalMinor, overview.currency)" tabular-nums />
@@ -209,7 +209,7 @@ function onDateChange(value: string): void {
         <NCard class="ledger-metric-card" data-testid="ledger-total-liabilities" size="small">
           <div class="ledger-metric-layout">
             <span class="ledger-metric-icon" aria-hidden="true">
-              <NIcon aria-hidden="true" :size="25"><CreditCard /></NIcon>
+              <NIcon aria-hidden="true" :size="22"><CreditCard /></NIcon>
             </span>
             <span class="ledger-metric-copy">
               <NStatistic label="总负债" :value="formatLedgerMoney(overview.liabilityTotalMinor, overview.currency)" tabular-nums />
@@ -220,7 +220,7 @@ function onDateChange(value: string): void {
         <NCard class="ledger-metric-card is-primary" data-testid="ledger-net-worth" size="small">
           <div class="ledger-metric-layout">
             <span class="ledger-metric-icon" aria-hidden="true">
-              <NIcon aria-hidden="true" :size="25"><ChartBar /></NIcon>
+              <NIcon aria-hidden="true" :size="22"><ChartBar /></NIcon>
             </span>
             <span class="ledger-metric-copy">
               <NStatistic label="净资产" :value="formatLedgerMoney(overview.netWorthMinor, overview.currency)" tabular-nums />
@@ -605,7 +605,7 @@ function onDateChange(value: string): void {
 }
 
 .ledger-metric-card {
-  min-height: 112px;
+  min-height: 96px;
   box-sizing: border-box;
   border: 1px solid var(--ledger-border);
   border-radius: 12px;
@@ -616,11 +616,11 @@ function onDateChange(value: string): void {
 
 .ledger-metric-layout {
   display: grid;
-  grid-template-columns: 48px minmax(0, 1fr);
+  grid-template-columns: 40px minmax(0, 1fr);
   align-items: center;
-  gap: 16px;
-  min-height: 112px;
-  padding: 18px 20px;
+  gap: 12px;
+  min-height: 96px;
+  padding: 14px 16px;
   box-sizing: border-box;
 }
 
@@ -631,8 +631,8 @@ function onDateChange(value: string): void {
 
 .ledger-metric-icon {
   display: grid;
-  width: 48px;
-  height: 48px;
+  width: 40px;
+  height: 40px;
   place-items: center;
   border-radius: 50%;
   background: color-mix(in srgb, var(--accent) 10%, var(--bg-soft));
