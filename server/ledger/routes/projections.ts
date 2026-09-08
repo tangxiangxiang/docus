@@ -20,7 +20,10 @@ export function createProjectionRoutes(getProjections: LedgerProjectionFactory):
   )))
 
   routes.get('/trend', (c) => withLedgerErrors(c, () => c.json(
-    getProjections().getTrend(parseTrendMonths(c.req.query('months'))),
+    getProjections().getTrend(
+      parseTrendMonths(c.req.query('months')),
+      parseOverviewAnchorDate(c.req.query('anchorDate')),
+    ),
   )))
 
   return routes

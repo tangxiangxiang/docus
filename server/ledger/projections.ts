@@ -47,7 +47,6 @@ import {
   checkedSumMinor,
 } from './money.js'
 import {
-  calendarMonthRanges,
   calendarMonthRangesForLocalDate,
   ledgerLocalDateForInstant,
   monthRange,
@@ -84,7 +83,7 @@ export interface LedgerProjections {
     query: LedgerTransactionQuery,
   ): LedgerAccountTransactionsDto
   getOverview(input: LedgerOverviewInput): LedgerOverviewDto
-  getTrend(months: number): readonly LedgerTrendPoint[]
+  getTrend(months: number, anchorDate?: string): readonly LedgerTrendPoint[]
 }
 
 interface AccountProjectionState {
@@ -286,22 +285,6 @@ function periodSummary(
     endAt: range.endMs,
     ...cashflow,
   }
-}
-
-function trendForTransactions(
-  months: number,
-  nowMs: number,
-  timezone: string,
-  transactions: readonly LedgerTransaction[],
-): readonly LedgerTrendPoint[] {
-  return calendarMonthRanges(months, nowMs, timezone).map((range) => ({
-    month: range.month,
-    startAt: range.startMs,
-    endAt: range.endMs,
-    ...cashflowForTransactions(
-      transactions.filter((transaction) => isWithinRange(transaction.occurredAt, range)),
-    ),
-  }))
 }
 
 function trendForRanges(
@@ -513,13 +496,18 @@ export function createLedgerProjections(
     }
   }
 
-  function getTrend(months: number): readonly LedgerTrendPoint[] {
+  function getTrend(months: number, anchorDate?: string): readonly LedgerTrendPoint[] {
     const settings = requireSettings()
     const nowMs = captureNow()
-    return trendForTransactions(
-      months,
-      nowMs,
-      settings.timezone,
+    const todayDate = ledgerLocalDateForInstant(nowMs, settings.timezone)
+    const resolvedAnchorDate = anchorDate === undefined
+      ? todayDate
+      : parseLedgerLocalDate(anchorDate, 'anchorDate')
+    if (resolvedAnchorDate > todayDate) {
+      throw new LedgerError('ledger-validation-failed', 400, 'anchorDate cannot be in the future', { field: 'anchorDate' })
+    }
+    return trendForRanges(
+      calendarMonthRangesForLocalDate(months, resolvedAnchorDate, settings.timezone),
       repository.listActiveTransactions(),
     )
   }

@@ -7,8 +7,9 @@ import type {
   LedgerOverviewScope,
   LedgerPeriodName,
   LedgerTransactionDto,
+  LedgerTrendPoint,
 } from '../../../shared/ledgerProtocol'
-import { getLedgerOverview } from '../../features/ledger/api'
+import { getLedgerOverview, getLedgerTrend } from '../../features/ledger/api'
 import { formatLedgerMoney, formatLedgerSignedMoney } from '../../features/ledger/money'
 import { formatLedgerDate, formatLedgerDateTime, formatLedgerPeriodPickerLabel } from '../../features/ledger/time'
 import { ledgerSelectNodeProps } from '../../features/ledger/naiveControls'
@@ -30,6 +31,9 @@ const categoryDateInput = ref('')
 const categoryOverview = ref<LedgerOverviewDto | null>(null)
 const categoryRefreshing = ref(false)
 let categoryRequestEpoch = 0
+const trendDateInput = ref('')
+const trendData = ref<readonly LedgerTrendPoint[]>([])
+let trendRequestEpoch = 0
 const historicalMode = computed(() => overview.value?.context.isToday === false
   || store.overviewRequestedAnchorDate.value !== undefined)
 const scopeOptions = computed<SelectOption[]>(() => {
@@ -203,11 +207,29 @@ async function refreshCategory(scope: LedgerOverviewScope, anchorDate: string): 
 
 watch(dateInputValue, (value) => {
   if (value && !categoryDateInput.value) categoryDateInput.value = value
+  if (value && !trendDateInput.value) {
+    trendDateInput.value = value
+    trendData.value = overview.value?.trend ?? []
+  }
 }, { immediate: true })
 
 watch([categoryScope, categoryDateInput], ([scope, anchorDate]) => {
   if (anchorDate) void refreshCategory(scope, anchorDate)
 }, { immediate: true })
+
+async function refreshTrend(anchorDate: string): Promise<void> {
+  const epoch = ++trendRequestEpoch
+  try {
+    const result = await getLedgerTrend(12, anchorDate)
+    if (epoch === trendRequestEpoch) trendData.value = result
+  } catch {
+    // Keep the last successfully rendered trend visible on a local refresh error.
+  }
+}
+
+watch(trendDateInput, (value, previous) => {
+  if (value && previous) void refreshTrend(value)
+})
 
 function updateScope(value: string | number | null): void {
   if (typeof value !== 'string' || !scopeOptions.value.some((option) => option.value === value)) return
@@ -538,10 +560,21 @@ function onDateChange(value: string): void {
         <div class="ledger-section-heading">
           <div>
             <h2 id="ledger-trend-title">收支趋势</h2>
-            <p v-if="!historicalMode && overview.trend.length">最近 {{ overview.trend.length }} 个月</p>
+            <p v-if="!historicalMode && trendData.length">最近 {{ trendData.length }} 个月</p>
           </div>
+          <LedgerDatePicker
+            class="ledger-trend-date"
+            :model-value="trendDateInput"
+            label="选择趋势时间"
+            type="month"
+            format="yyyy-MM"
+            size="small"
+            test-id="ledger-trend-date"
+            :is-date-disabled="isDashboardDateDisabled"
+            @update:model-value="trendDateInput = $event"
+          />
         </div>
-        <LedgerCashflowTrend :trend="overview.trend" :currency="overview.currency" />
+        <LedgerCashflowTrend :trend="trendData" :currency="overview.currency" />
       </NCard>
       </template>
     </template>
@@ -815,6 +848,8 @@ function onDateChange(value: string): void {
 }
 .ledger-category-date,
 .ledger-category-date :deep(.n-input) { width: 148px; }
+.ledger-trend-date,
+.ledger-trend-date :deep(.n-input) { width: 148px; }
 .ledger-period-toolbar :deep(.ledger-period-scope .n-base-selection) { width: 96px; }
 
 .ledger-historical-hint {
