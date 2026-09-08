@@ -1,10 +1,17 @@
 import { expect, test } from '@playwright/test'
-import { instantFromLocalDateTime } from '../src/features/ledger/time'
+import { instantFromLocalDateTime, localDateTimeInputFromInstant } from '../src/features/ledger/time'
 
-const browserTimezones = ['UTC', 'America/Los_Angeles', 'Asia/Shanghai', 'Pacific/Kiritimati']
-const ledgerTimezone = 'America/New_York'
+const temporalMatrix = [
+  { browserTimezone: 'UTC', ledgerTimezone: 'UTC', value: '2026-01-01T00:30' },
+  { browserTimezone: 'UTC', ledgerTimezone: 'Asia/Shanghai', value: '2026-03-08T02:30' },
+  { browserTimezone: 'America/New_York', ledgerTimezone: 'Asia/Shanghai', value: '2026-03-08T02:30' },
+  { browserTimezone: 'Asia/Shanghai', ledgerTimezone: 'America/New_York', value: '2026-03-08T02:30' },
+]
+const dstLedgerTimezone = 'America/New_York'
 
-async function assertTemporalBridge(page: import('@playwright/test').Page, value: string, roundTrip: string): Promise<void> {
+async function assertTemporalBridge(page: import('@playwright/test').Page, value: string, ledgerTimezone: string, roundTrip: string): Promise<void> {
+  await expect(page.getByTestId('ledger-temporal-date-only').locator('input')).toHaveValue(value.slice(0, 10))
+  await expect(page.getByTestId('ledger-temporal-date-only-model')).toHaveText(value.slice(0, 10))
   await expect(page.getByTestId('ledger-temporal-date').locator('input')).toHaveValue(value.slice(0, 10))
   await expect(page.getByTestId('ledger-temporal-time').locator('input')).toHaveValue(value.slice(11))
   await expect(page.getByTestId('ledger-temporal-model')).toHaveText(value)
@@ -14,12 +21,13 @@ async function assertTemporalBridge(page: import('@playwright/test').Page, value
   await expect(page.getByTestId('ledger-temporal-roundtrip')).toHaveText(roundTrip)
 }
 
-test('Ledger wall-clock controls stay stable across browser timezone contexts', async ({ browser }) => {
-  for (const browserTimezone of browserTimezones) {
+test('Ledger date and wall-clock controls stay stable across the browser/Ledger timezone matrix', async ({ browser }) => {
+  for (const { browserTimezone, ledgerTimezone, value } of temporalMatrix) {
     const context = await browser.newContext({ timezoneId: browserTimezone, viewport: { width: 900, height: 700 } })
     const page = await context.newPage()
-    await page.goto(`/e2e/ledger-temporal/?timezone=${encodeURIComponent(ledgerTimezone)}&value=2026-03-08T02:30`)
-    await assertTemporalBridge(page, '2026-03-08T02:30', '2026-03-08T03:30')
+    const roundTrip = localDateTimeInputFromInstant(instantFromLocalDateTime(value, ledgerTimezone), ledgerTimezone)
+    await page.goto(`/e2e/ledger-temporal/?timezone=${encodeURIComponent(ledgerTimezone)}&value=${encodeURIComponent(value)}&date=${encodeURIComponent(value.slice(0, 10))}`)
+    await assertTemporalBridge(page, value, ledgerTimezone, roundTrip)
     await context.close()
   }
 })
@@ -28,11 +36,11 @@ test('Ledger browser bridge preserves DST gap and overlap semantics', async ({ b
   const context = await browser.newContext({ timezoneId: 'Asia/Shanghai', viewport: { width: 900, height: 700 } })
   const page = await context.newPage()
 
-  await page.goto(`/e2e/ledger-temporal/?timezone=${encodeURIComponent(ledgerTimezone)}&value=2026-03-08T02:30`)
-  await assertTemporalBridge(page, '2026-03-08T02:30', '2026-03-08T03:30')
+  await page.goto(`/e2e/ledger-temporal/?timezone=${encodeURIComponent(dstLedgerTimezone)}&value=2026-03-08T02:30`)
+  await assertTemporalBridge(page, '2026-03-08T02:30', dstLedgerTimezone, '2026-03-08T03:30')
 
-  await page.goto(`/e2e/ledger-temporal/?timezone=${encodeURIComponent(ledgerTimezone)}&value=2026-11-01T01:30`)
-  await assertTemporalBridge(page, '2026-11-01T01:30', '2026-11-01T01:30')
+  await page.goto(`/e2e/ledger-temporal/?timezone=${encodeURIComponent(dstLedgerTimezone)}&value=2026-11-01T01:30`)
+  await assertTemporalBridge(page, '2026-11-01T01:30', dstLedgerTimezone, '2026-11-01T01:30')
 
   await context.close()
 })

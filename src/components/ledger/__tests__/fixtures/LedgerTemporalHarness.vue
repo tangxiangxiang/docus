@@ -2,11 +2,13 @@
 import { ref } from 'vue'
 import { NAlert, NButton } from 'naive-ui'
 import { instantFromLocalDateTime, localDateTimeInputFromInstant } from '../../../../features/ledger/time'
+import LedgerDatePicker from '../../LedgerDatePicker.vue'
 import LedgerDateTimePicker from '../../LedgerDateTimePicker.vue'
 
 const query = new URLSearchParams(window.location.search)
 const ledgerTimezone = query.get('timezone') ?? 'America/New_York'
 const occurredAt = ref(query.get('value') ?? '2026-03-08T02:30')
+const dateOnly = ref(query.get('date') ?? occurredAt.value.slice(0, 10))
 const instant = ref<number | null>(null)
 const roundTrip = ref('')
 const error = ref('')
@@ -28,6 +30,8 @@ function validate(): void {
   <main>
     <h1>Ledger temporal bridge</h1>
     <p data-testid="ledger-temporal-timezone">{{ ledgerTimezone }}</p>
+    <LedgerDatePicker v-model="dateOnly" label="日期" test-id="ledger-temporal-date-only" />
+    <p data-testid="ledger-temporal-date-only-model">{{ dateOnly }}</p>
     <LedgerDateTimePicker v-model="occurredAt" label="发生时间" test-id="ledger-temporal" />
     <p data-testid="ledger-temporal-model">{{ occurredAt }}</p>
     <NButton data-testid="ledger-temporal-validate" attr-type="button" @click="validate">验证 Ledger 时间</NButton>
