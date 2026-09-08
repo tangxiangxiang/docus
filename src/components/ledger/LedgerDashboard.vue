@@ -1193,6 +1193,7 @@ function onDateChange(value: string): void {
   min-width: 0;
   align-items: baseline;
   gap: 8px;
+  justify-content: space-between;
 }
 
 .ledger-period-card h3 {
@@ -1204,10 +1205,11 @@ function onDateChange(value: string): void {
 }
 
 .ledger-period-date-control {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   position: relative;
   min-width: 0;
   min-height: 1rem;
+  text-align: right;
 }
 
 .ledger-period-date-label {
@@ -1223,7 +1225,7 @@ function onDateChange(value: string): void {
 .ledger-period-date-editor {
   position: absolute;
   top: 50%;
-  left: 0;
+  right: 0;
   z-index: 2;
   width: 148px;
   transform: translateY(-50%);
