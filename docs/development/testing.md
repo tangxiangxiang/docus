@@ -62,10 +62,14 @@ not change ordinary unit-test timing.
 
 `test:platform-smoke` is the short cross-platform lane. It imports the server
 runtime/configuration, exercises safe path and symlink handling, applies the
-SQLite migrations, verifies basic API route mounting, and covers the create-only
-file/directory move protocol.
-It reuses existing tests rather than duplicating a reduced copy of the
-application suite. CI runs this lane on Ubuntu with Node.js 22, Windows with
+SQLite migrations, verifies basic API route mounting, covers the create-only
+file/directory move protocol, and pins the cross-platform slice of the atomic
+text-write contract (atomic replace / create / rollback, conflict, missing
+target, managed Diary rejection). The lane reuses existing tests rather than
+duplicating a reduced copy of the application suite. The full POSIX-mode and
+file-symlink race coverage stays in the Linux unit suite where the platform
+behavior is exercised; Windows and macOS get the slice that is safe across all
+three runners. CI runs this lane on Ubuntu with Node.js 22, Windows with
 Node.js 24, and macOS with Node.js 24.
 
 OpenAI-compatible protocol tests use a local fake HTTP server and, where
