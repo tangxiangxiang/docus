@@ -1,17 +1,18 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, h, onMounted, ref } from 'vue'
 import {
   NAlert,
   NButton,
   NCard,
+  NDataTable,
   NEmpty,
   NForm,
   NFormItem,
-  NList,
-  NListItem,
+  NPagination,
   NSelect,
   NSpin,
   type SelectOption,
+  type DataTableColumns,
 } from 'naive-ui'
 import { useRoute } from 'vue-router'
 import type {
@@ -43,6 +44,8 @@ const filterTo = ref('')
 const filtersLoading = ref(false)
 const loadMoreLoading = ref(false)
 const filterError = ref('')
+const tablePage = ref(1)
+const tablePageSize = 10
 
 const typeOptions: SelectOption[] = [
   { value: 'all', label: '全部类型' },
@@ -68,6 +71,8 @@ const categoryOptions = computed<SelectOption[]>(() => [
 const loading = computed(() => store.workspaceState.value === 'BOOTSTRAPPING' || filtersLoading.value)
 const page = computed(() => store.transactions.value)
 const transactions = computed(() => page.value?.transactions ?? [])
+const tablePageCount = computed(() => Math.ceil(transactions.value.length / tablePageSize) + (page.value?.page.nextCursor ? 1 : 0))
+const visibleTransactions = computed(() => transactions.value.slice((tablePage.value - 1) * tablePageSize, tablePage.value * tablePageSize))
 const hasFilters = computed(() => filterType.value !== 'all' || Boolean(filterAccountId.value || filterCategoryId.value || filterFrom.value || filterTo.value))
 
 function queryValue(value: unknown): string {
@@ -129,6 +134,27 @@ function transactionAmount(transaction: LedgerTransactionDto): string {
   return formatLedgerMoney(transaction.amountMinor, currency)
 }
 
+const transactionColumns = computed<DataTableColumns<LedgerTransactionDto>>(() => [
+  {
+    title: '交易',
+    key: 'transaction',
+    render: (transaction) => h('span', { class: 'ledger-table-primary' }, [
+      h('strong', transactionTitle(transaction)),
+      h('small', `${typeLabel(transaction.type)} · ${transactionMeta(transaction)}`),
+    ]),
+  },
+  {
+    title: '时间',
+    key: 'occurredAt',
+    render: (transaction) => h('span', { class: 'ledger-transaction-date' }, formatLedgerDateTime(transaction.occurredAt, store.settings.value?.timezone ?? 'UTC')),
+  },
+  {
+    title: '金额',
+    key: 'amount',
+    render: (transaction) => h('strong', { class: ['ledger-transaction-amount', `is-${transaction.type}`] }, transactionAmount(transaction)),
+  },
+])
+
 function buildQuery(): LedgerTransactionQuery {
   const timezone = store.settings.value?.timezone ?? 'UTC'
   return {
@@ -144,6 +170,7 @@ function buildQuery(): LedgerTransactionQuery {
 async function loadTransactions(): Promise<void> {
   if (!store.settings.value || filtersLoading.value) return
   filtersLoading.value = true
+  tablePage.value = 1
   filterError.value = ''
   try {
     await store.refreshTransactions(buildQuery())
@@ -172,6 +199,13 @@ async function clearFilters(): Promise<void> {
   filterFrom.value = ''
   filterTo.value = ''
   await loadTransactions()
+}
+
+async function changeTablePage(nextPage: number): Promise<void> {
+  if (nextPage > Math.ceil(transactions.value.length / tablePageSize) && page.value?.page.nextCursor) {
+    await loadMore()
+  }
+  tablePage.value = nextPage
 }
 
 async function loadMore(): Promise<void> {
@@ -268,22 +302,16 @@ function onRecoveryResolved(): void {
       </div>
 
       <NAlert v-if="filterError" class="ledger-inline-error" type="error" :show-icon="false" role="alert"><span>{{ filterError }}</span><NButton class="ledger-link-button" attr-type="button" size="small" text :bordered="false" @click="loadTransactions">重试</NButton></NAlert>
-      <NList v-if="transactions.length" class="ledger-transaction-list" data-testid="ledger-transaction-list" :show-divider="false" hoverable>
-        <NListItem v-for="transaction in transactions" :key="transaction.id" class="ledger-transaction-list-item">
-          <NButton
-            class="ledger-transaction-row"
-            attr-type="button"
-            text
-            block
-            :data-testid="`ledger-transaction-row-${transaction.id}`"
-            @click="inspect(transaction)"
-          >
-            <span class="ledger-transaction-main"><strong>{{ transactionTitle(transaction) }}</strong><small>{{ typeLabel(transaction.type) }} · {{ transactionMeta(transaction) }}</small></span>
-            <span class="ledger-transaction-date">{{ formatLedgerDateTime(transaction.occurredAt, store.settings.value?.timezone ?? 'UTC') }}</span>
-            <strong :class="['ledger-transaction-amount', `is-${transaction.type}`]">{{ transactionAmount(transaction) }}</strong>
-          </NButton>
-        </NListItem>
-      </NList>
+      <NDataTable
+        v-if="transactions.length"
+        class="ledger-transaction-table"
+        data-testid="ledger-transaction-list"
+        :columns="transactionColumns"
+        :data="visibleTransactions"
+        :bordered="false"
+        :single-line="false"
+        :row-props="(transaction) => ({ class: 'ledger-transaction-row', 'data-testid': `ledger-transaction-row-${transaction.id}`, onClick: () => inspect(transaction) })"
+      />
       <NEmpty v-else class="ledger-transactions-empty" data-testid="ledger-transactions-empty" :show-icon="false" :description="hasFilters ? '没有符合筛选条件的交易' : '还没有交易记录'">
         <template #extra>
           <p>{{ hasFilters ? '可以清除筛选，或换一个日期和账户。' : '保存第一笔收入、支出或转账后，它会显示在这里。' }}</p>
@@ -291,7 +319,18 @@ function onRecoveryResolved(): void {
           <NButton v-else class="ledger-primary-button" attr-type="button" type="primary" size="medium" :bordered="false" :disabled="!store.activeAccounts.value.length" @click="transactionSheetOpen = true">记下第一笔</NButton>
         </template>
       </NEmpty>
-      <NButton v-if="page?.page.nextCursor" class="ledger-load-more" attr-type="button" size="medium" :bordered="false" data-testid="ledger-load-more" :disabled="loadMoreLoading" @click="loadMore">{{ loadMoreLoading ? '正在加载…' : '加载更多' }}</NButton>
+      <div v-if="transactions.length" class="ledger-transaction-pagination">
+        <NPagination
+          :page="tablePage"
+          :page-count="tablePageCount"
+          :page-size="tablePageSize"
+          :disabled="loadMoreLoading"
+          show-quick-jumper
+          @update:page="changeTablePage"
+        />
+        <span v-if="loadMoreLoading" class="ledger-pagination-loading">正在加载…</span>
+      </div>
+      <NButton v-if="page?.page.nextCursor" class="ledger-load-more" attr-type="button" size="small" :bordered="false" data-testid="ledger-load-more" :disabled="loadMoreLoading" @click="loadMore">{{ loadMoreLoading ? '正在加载…' : '加载更多' }}</NButton>
     </NCard>
 
     <LedgerTransactionSheet v-if="!store.recoveryGateVisible.value" :open="transactionSheetOpen" @close="transactionSheetOpen = false" />
@@ -345,17 +384,16 @@ function onRecoveryResolved(): void {
 .ledger-inline-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; color: #b42318; font-size: .78rem; }
 .ledger-inline-error :deep(.n-alert-body) { width: 100%; }
 .ledger-inline-error :deep(.n-alert__content) { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; }
-.ledger-transaction-list { display: grid; }
-.ledger-transaction-list :deep(.n-list-item) { padding: 0; }
-.ledger-transaction-list :deep(.n-list-item__main) { width: 100%; }
-.ledger-transaction-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, auto) minmax(100px, auto); align-items: center; gap: 16px; width: 100%; min-height: 68px; padding: 10px 4px; box-sizing: border-box; border-radius: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
-.ledger-transaction-row :deep(.n-button__content) { display: contents; }
-.ledger-transaction-row:hover { background: var(--bg-soft); }
-.ledger-transaction-main { display: grid; gap: 3px; min-width: 0; }
-.ledger-transaction-main strong { overflow: hidden; color: var(--text-h); font-size: .84rem; text-overflow: ellipsis; white-space: nowrap; }
-.ledger-transaction-main small,
+.ledger-transaction-table { margin: 0 -4px; }
+.ledger-transaction-table :deep(.n-data-table-th) { color: var(--text-muted); font-size: .73rem; font-weight: 650; }
+.ledger-transaction-table :deep(.n-data-table-td) { padding: 13px 8px; }
+.ledger-transaction-table :deep(.n-data-table-tr) { cursor: pointer; }
+.ledger-transaction-table :deep(.n-data-table-tr:hover .n-data-table-td) { background: var(--bg-soft); }
+.ledger-table-primary { display: grid; gap: 3px; min-width: 0; }
+.ledger-table-primary strong { overflow: hidden; color: var(--text-h); font-size: .84rem; text-overflow: ellipsis; white-space: nowrap; }
+.ledger-table-primary small,
 .ledger-transaction-date { overflow: hidden; color: var(--text-muted); font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
-.ledger-transaction-date { text-align: right; }
+.ledger-transaction-date { display: block; text-align: right; }
 .ledger-transaction-amount { text-align: right; color: var(--text-h); font-size: .83rem; }
 .ledger-transaction-amount.is-income { color: #18794e; }
 .ledger-transaction-amount.is-expense { color: #b42318; }
@@ -370,6 +408,8 @@ function onRecoveryResolved(): void {
 .ledger-load-more { display: block; min-height: 36px; margin: 16px auto 0; padding: 6px 16px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-soft); color: var(--text-h); font: inherit; font-size: .8rem; cursor: pointer; }
 .ledger-load-more:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .ledger-load-more:disabled { cursor: wait; opacity: .65; }
+.ledger-transaction-pagination { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 18px; }
+.ledger-pagination-loading { color: var(--text-muted); font-size: .75rem; }
 @media (max-width: 850px) {
   .ledger-filters-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .ledger-filter-submit { grid-column: span 3; }
@@ -383,8 +423,9 @@ function onRecoveryResolved(): void {
   .ledger-filters-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ledger-filter-submit { grid-column: span 2; }
   .ledger-transaction-history { padding: 16px 13px; }
-  .ledger-transaction-row { grid-template-columns: minmax(0, 1fr) auto; gap: 5px 12px; }
-  .ledger-transaction-date { grid-column: 1; grid-row: 2; text-align: left; }
-  .ledger-transaction-amount { grid-column: 2; grid-row: 1 / span 2; }
+  .ledger-transaction-table :deep(.n-data-table-th),
+  .ledger-transaction-table :deep(.n-data-table-td) { padding-right: 6px; padding-left: 6px; }
+  .ledger-transaction-table :deep(.n-data-table-th:nth-child(2)),
+  .ledger-transaction-table :deep(.n-data-table-td:nth-child(2)) { display: none; }
 }
 </style>
