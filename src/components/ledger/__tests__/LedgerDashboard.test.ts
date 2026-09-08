@@ -297,6 +297,20 @@ describe('Ledger live dashboard', () => {
     expect(api.getLedgerTrend).not.toHaveBeenCalled()
   })
 
+  it('rehydrates period projections when the main overview refreshes in place', async () => {
+    const wrapper = mount(LedgerView)
+    wrappers.push(wrapper)
+    await flushPromises()
+    expect(wrapper.get('[data-testid="ledger-period-today"]').text()).toContain('-¥38.00')
+
+    api.getLedgerOverview.mockResolvedValueOnce(overviewFor('2026-09-05', 2_200, 0))
+    await useLedgerStore().refreshOverview()
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="ledger-period-today"]').text()).toContain('¥22.00')
+    expect(wrapper.get('[data-testid="ledger-period-today"]').text()).not.toContain('-¥38.00')
+  })
+
   it('does not present stale period amounts while a local request is pending or fails', async () => {
     const wrapper = mount(LedgerView)
     wrappers.push(wrapper)
@@ -309,7 +323,7 @@ describe('Ledger live dashboard', () => {
 
     const periodCard = wrapper.get('[data-testid="ledger-period-today"]')
     expect(periodCard.text()).not.toContain('-¥38.00')
-    expect(periodCard.get('[data-testid="ledger-period-loading-today"]').exists()).toBe(true)
+    expect(periodCard.find('[data-testid="ledger-period-loading-today"]').exists()).toBe(true)
 
     pending.reject(new LedgerApiError('period unavailable', 500, 'ledger-internal-error'))
     await flushPromises()
@@ -440,6 +454,19 @@ describe('Ledger live dashboard', () => {
     expect(categorySection.get('[data-testid="ledger-category-error"]').text()).toContain('这段期间的数据暂时无法加载')
     expect(categorySection.text()).not.toContain('这段期间还没有收入分类。')
     expect(categorySection.text()).not.toContain('这段期间还没有支出分类。')
+  })
+
+  it('keeps all-time category reads independent of the disabled date picker', async () => {
+    const wrapper = mount(LedgerView)
+    wrappers.push(wrapper)
+    await flushPromises()
+    api.getLedgerOverview.mockClear()
+
+    await setNaiveSelect(wrapper, '选择统计期间', 'all')
+    await flushPromises()
+
+    expect(api.getLedgerOverview).toHaveBeenLastCalledWith({ scope: 'all', anchorDate: undefined })
+    expect(datePickerFor(wrapper, 'ledger-category-date').props('disabled')).toBe(true)
   })
 
   it('keeps the newest category request authoritative when an older success resolves later', async () => {
@@ -578,6 +605,41 @@ describe('Ledger live dashboard', () => {
     for (const accountItem of accounts) {
       expect(viewport.text()).toContain(accountItem.name)
     }
+  })
+
+  it('sorts accounts by current balance within each nature group', async () => {
+    const smallerAsset = { ...accountSummary, id: 'asset-small', name: '小额资产', currentBalanceMinor: 1_000 }
+    const largerAsset = { ...accountSummary, id: 'asset-large', name: '大额资产', currentBalanceMinor: 20_000 }
+    const smallerLiability: LedgerAccountSummary = {
+      ...accountSummary,
+      id: 'liability-small',
+      name: '小额负债',
+      nature: 'liability',
+      currentBalanceMinor: 2_000,
+    }
+    const largerLiability: LedgerAccountSummary = {
+      ...smallerLiability,
+      id: 'liability-large',
+      name: '大额负债',
+      currentBalanceMinor: 30_000,
+    }
+    api.getLedgerOverview.mockResolvedValue({
+      ...overview(),
+      accounts: [smallerAsset, largerLiability, largerAsset, smallerLiability],
+    })
+
+    const wrapper = mount(LedgerView)
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="ledger-dashboard-assets-viewport"]').findAll('.ledger-account-identity strong').map((node) => node.text())).toEqual([
+      '大额资产',
+      '小额资产',
+    ])
+    expect(wrapper.get('[data-testid="ledger-dashboard-liabilities-viewport"]').findAll('.ledger-account-identity strong').map((node) => node.text())).toEqual([
+      '大额负债',
+      '小额负债',
+    ])
   })
 
   it('uses the server scope endpoint when the selected cashflow period changes', async () => {

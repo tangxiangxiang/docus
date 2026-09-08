@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { NAlert, NButton, NCard, NEmpty, NIcon, NList, NListItem, NSelect, NSpin, NStatistic, type SelectOption } from 'naive-ui'
 import { ChartBar, Coin, CreditCard, Wallet } from '@vicons/tabler'
 import type {
@@ -28,15 +28,93 @@ const overview = computed(() => store.overview.value)
 const selectedScope = ref<LedgerOverviewScope>('month')
 const categoryScope = ref<LedgerOverviewScope>('month')
 const categoryDateInput = ref('')
-const categoryOverview = ref<LedgerOverviewDto | null>(null)
-const categoryRefreshing = ref(false)
-let categoryRequestEpoch = 0
-const trendDateInput = ref('')
-const trendData = ref<readonly LedgerTrendPoint[]>([])
-let trendRequestEpoch = 0
 const periodNames: readonly LedgerPeriodName[] = ['today', 'week', 'month', 'year']
 const periodDateInputs = ref<Record<LedgerPeriodName, string>>({ today: '', week: '', month: '', year: '' })
-const periodOverviews = ref<Record<LedgerPeriodName, LedgerOverviewDto | null>>({ today: null, week: null, month: null, year: null })
+
+type LocalProjectionStatus = 'idle' | 'loading' | 'ready' | 'error'
+
+type LocalProjectionState<T> = {
+  requestedKey: string | null
+  resolvedKey: string | null
+  status: LocalProjectionStatus
+  data: T | null
+  error: unknown | null
+}
+
+function createProjectionState<T>(): LocalProjectionState<T> {
+  return {
+    requestedKey: null,
+    resolvedKey: null,
+    status: 'idle',
+    data: null,
+    error: null,
+  }
+}
+
+function projectionKey(scope: LedgerOverviewScope, anchorDate: string | undefined): string {
+  return `${scope}:${anchorDate ?? 'all'}`
+}
+
+function trendProjectionKey(anchorDate: string): string {
+  return `trend:${anchorDate}`
+}
+
+function projectionIsReady<T>(projection: LocalProjectionState<T>): projection is LocalProjectionState<T> & {
+  status: 'ready'
+  data: T
+  requestedKey: string
+  resolvedKey: string
+} {
+  return projection.status === 'ready'
+    && projection.data !== null
+    && projection.requestedKey !== null
+    && projection.resolvedKey === projection.requestedKey
+}
+
+function setProjectionReady<T>(projection: LocalProjectionState<T>, key: string, data: T): void {
+  projection.requestedKey = key
+  projection.resolvedKey = key
+  projection.status = 'ready'
+  projection.data = data
+  projection.error = null
+}
+
+function startProjection<T>(projection: LocalProjectionState<T>, key: string): void {
+  projection.requestedKey = key
+  projection.resolvedKey = null
+  projection.status = 'loading'
+  projection.data = null
+  projection.error = null
+}
+
+function setProjectionError<T>(projection: LocalProjectionState<T>, key: string, error: unknown): void {
+  projection.requestedKey = key
+  projection.resolvedKey = null
+  projection.status = 'error'
+  projection.data = null
+  projection.error = error
+}
+
+const categoryProjection = reactive<LocalProjectionState<LedgerOverviewDto>>(createProjectionState())
+const categoryRefreshing = computed(() => categoryProjection.status === 'loading')
+const categoryDataReady = computed(() => projectionIsReady(categoryProjection))
+const categoryOverview = computed(() => categoryDataReady.value ? categoryProjection.data : null)
+let categoryRequestEpoch = 0
+
+const trendDateInput = ref('')
+const trendProjection = reactive<LocalProjectionState<readonly LedgerTrendPoint[]>>(createProjectionState())
+const trendDataReady = computed(() => projectionIsReady(trendProjection))
+const trendData = computed<readonly LedgerTrendPoint[]>(() => trendDataReady.value ? trendProjection.data ?? [] : [])
+const trendRefreshing = computed(() => trendProjection.status === 'loading')
+const trendError = computed(() => trendProjection.status === 'error' ? trendProjection.error : null)
+let trendRequestEpoch = 0
+
+const periodProjectionStates = reactive<Record<LedgerPeriodName, LocalProjectionState<LedgerOverviewDto>>>({
+  today: createProjectionState<LedgerOverviewDto>(),
+  week: createProjectionState<LedgerOverviewDto>(),
+  month: createProjectionState<LedgerOverviewDto>(),
+  year: createProjectionState<LedgerOverviewDto>(),
+})
 const periodRequestEpochs: Record<LedgerPeriodName, number> = { today: 0, week: 0, month: 0, year: 0 }
 const historicalMode = computed(() => overview.value?.context.isToday === false
   || store.overviewRequestedAnchorDate.value !== undefined)
@@ -186,7 +264,17 @@ function transactionMark(transaction: LedgerTransactionDto): string {
 
 function periodSummary(period: LedgerPeriodName) {
   if (!periodDataReady.value) return null
-  return periodOverviews.value[period]?.periods.find((item) => item.period === period) ?? null
+  const projection = periodProjectionStates[period]
+  if (!projectionIsReady(projection)) return null
+  return projection.data.periods.find((item) => item.period === period) ?? null
+}
+
+function periodProjectionLoading(period: LedgerPeriodName): boolean {
+  return periodProjectionStates[period].status === 'loading'
+}
+
+function periodProjectionError(period: LedgerPeriodName): boolean {
+  return periodProjectionStates[period].status === 'error'
 }
 
 function retryScope(): void {
@@ -194,51 +282,106 @@ function retryScope(): void {
 }
 
 async function refreshCategory(scope: LedgerOverviewScope, anchorDate: string): Promise<void> {
+  const requestedAnchor = scope === 'all' ? undefined : anchorDate
+  const requestKey = projectionKey(scope, requestedAnchor)
   const epoch = ++categoryRequestEpoch
-  categoryRefreshing.value = true
+  startProjection(categoryProjection, requestKey)
   try {
     const result = await getLedgerOverview({
       scope,
-      anchorDate: scope === 'all' ? undefined : anchorDate,
+      anchorDate: requestedAnchor,
     })
-    if (epoch === categoryRequestEpoch) categoryOverview.value = result
-  } catch {
-    if (epoch === categoryRequestEpoch) categoryOverview.value = null
-  } finally {
-    if (epoch === categoryRequestEpoch) categoryRefreshing.value = false
+    if (epoch !== categoryRequestEpoch || categoryProjection.requestedKey !== requestKey) return
+    const resolvedKey = projectionKey(
+      result.context.scope,
+      scope === 'all' ? undefined : result.context.anchorDate,
+    )
+    if (resolvedKey === requestKey) setProjectionReady(categoryProjection, requestKey, result)
+    else setProjectionError(categoryProjection, requestKey, new Error('Ledger category response did not match the requested period.'))
+  } catch (error) {
+    if (epoch === categoryRequestEpoch && categoryProjection.requestedKey === requestKey) {
+      setProjectionError(categoryProjection, requestKey, error)
+    }
   }
 }
 
-watch(dateInputValue, (value) => {
-  if (value && !categoryDateInput.value) categoryDateInput.value = value
-  if (value) {
-    for (const period of periodNames) {
+let lastMainProjectionKey: string | null = null
+watch([dateInputValue, () => store.overviewScope.value, overview], ([value, scope, currentOverview]) => {
+  if (!value || !currentOverview) return
+
+  const requestedAnchor = store.overviewRequestedAnchorDate.value
+    ?? (scope === 'all' ? undefined : value)
+  const mainProjectionKey = projectionKey(scope, requestedAnchor)
+  const mainContextChanged = mainProjectionKey !== lastMainProjectionKey
+
+  for (const period of periodNames) {
+    const projection = periodProjectionStates[period]
+    if (mainContextChanged) {
       periodDateInputs.value[period] = value
-      periodOverviews.value[period] = overview.value
+      periodRequestEpochs[period] += 1
+      setProjectionReady(projection, mainProjectionKey, currentOverview)
+    } else if (periodDateInputs.value[period] === value && projection.requestedKey === mainProjectionKey) {
+      // A mutation refresh replaces the main Overview object without changing
+      // its request key. Rehydrate only cards still showing that main key; a
+      // card with an independent local date remains untouched.
+      periodRequestEpochs[period] += 1
+      setProjectionReady(projection, mainProjectionKey, currentOverview)
     }
   }
-  if (value && !trendDateInput.value) {
-    trendDateInput.value = value
-    trendData.value = overview.value?.trend ?? []
+
+  if (!categoryDateInput.value) {
+    categoryDateInput.value = value
+    if (categoryScope.value === scope) {
+      categoryRequestEpoch += 1
+      setProjectionReady(categoryProjection, projectionKey(scope, requestedAnchor), currentOverview)
+    }
+  } else if (categoryDateInput.value === value && categoryProjection.requestedKey === mainProjectionKey) {
+    categoryRequestEpoch += 1
+    setProjectionReady(categoryProjection, mainProjectionKey, currentOverview)
   }
+
+  const mainTrendKey = trendProjectionKey(value)
+  if (!trendDateInput.value) {
+    trendDateInput.value = value
+    trendRequestEpoch += 1
+    setProjectionReady(trendProjection, mainTrendKey, currentOverview.trend)
+  } else if (trendDateInput.value === value && trendProjection.requestedKey === mainTrendKey) {
+    trendRequestEpoch += 1
+    setProjectionReady(trendProjection, mainTrendKey, currentOverview.trend)
+  }
+
+  lastMainProjectionKey = mainProjectionKey
 }, { immediate: true })
 
 watch([categoryScope, categoryDateInput], ([scope, anchorDate]) => {
-  if (anchorDate) void refreshCategory(scope, anchorDate)
+  const requestedAnchor = scope === 'all' ? undefined : anchorDate
+  if (requestedAnchor || scope === 'all') {
+    const requestKey = projectionKey(scope, requestedAnchor)
+    if (categoryDataReady.value
+      && categoryProjection.requestedKey === requestKey
+      && categoryProjection.resolvedKey === requestKey) return
+    void refreshCategory(scope, anchorDate)
+  }
 }, { immediate: true })
 
 async function refreshTrend(anchorDate: string): Promise<void> {
+  const requestKey = trendProjectionKey(anchorDate)
   const epoch = ++trendRequestEpoch
+  startProjection(trendProjection, requestKey)
   try {
     const result = await getLedgerTrend(12, anchorDate)
-    if (epoch === trendRequestEpoch) trendData.value = result
-  } catch {
-    // Keep the last successfully rendered trend visible on a local refresh error.
+    if (epoch === trendRequestEpoch && trendProjection.requestedKey === requestKey) {
+      setProjectionReady(trendProjection, requestKey, result)
+    }
+  } catch (error) {
+    if (epoch === trendRequestEpoch && trendProjection.requestedKey === requestKey) {
+      setProjectionError(trendProjection, requestKey, error)
+    }
   }
 }
 
 watch(trendDateInput, (value, previous) => {
-  if (value && previous) void refreshTrend(value)
+  if (value && previous && value !== previous) void refreshTrend(value)
 })
 
 function updateScope(value: string | number | null): void {
@@ -264,12 +407,23 @@ function updateTrendDate(value: string): void {
 }
 
 async function refreshPeriodSummary(period: LedgerPeriodName, anchorDate: string): Promise<void> {
+  const scope = store.overviewScope.value
+  const requestKey = projectionKey(scope, anchorDate)
   const epoch = ++periodRequestEpochs[period]
+  startProjection(periodProjectionStates[period], requestKey)
   try {
-    const result = await getLedgerOverview({ scope: store.overviewScope.value, anchorDate })
-    if (epoch === periodRequestEpochs[period]) periodOverviews.value[period] = result
-  } catch {
-    // Keep the last successfully rendered summary visible on a local refresh error.
+    const result = await getLedgerOverview({ scope, anchorDate })
+    if (epoch !== periodRequestEpochs[period]) return
+    const projection = periodProjectionStates[period]
+    if (projection.requestedKey !== requestKey) return
+    const resolvedKey = projectionKey(result.context.scope, result.context.anchorDate)
+    if (resolvedKey === requestKey) setProjectionReady(projection, requestKey, result)
+    else setProjectionError(projection, requestKey, new Error('Ledger period response did not match the requested date.'))
+  } catch (error) {
+    const projection = periodProjectionStates[period]
+    if (epoch === periodRequestEpochs[period] && projection.requestedKey === requestKey) {
+      setProjectionError(projection, requestKey, error)
+    }
   }
 }
 
@@ -278,6 +432,19 @@ function onDateChange(period: LedgerPeriodName, value: string): void {
     periodDateInputs.value[period] = value
     void refreshPeriodSummary(period, value)
   }
+}
+
+function retryPeriodSummary(period: LedgerPeriodName): void {
+  const anchorDate = periodDateInputs.value[period]
+  if (anchorDate) void refreshPeriodSummary(period, anchorDate)
+}
+
+function retryCategory(): void {
+  void refreshCategory(categoryScope.value, categoryDateInput.value)
+}
+
+function retryTrend(): void {
+  if (trendDateInput.value) void refreshTrend(trendDateInput.value)
 }
 </script>
 
@@ -475,10 +642,14 @@ function onDateChange(period: LedgerPeriodName, value: string): void {
               />
             </div>
           </div>
-          <div v-if="categoryRefreshing && !categoryOverview" class="ledger-period-analysis-loading" data-testid="ledger-category-analysis-loading" role="status" aria-live="polite">
+          <div v-if="categoryRefreshing" class="ledger-period-analysis-loading" data-testid="ledger-category-analysis-loading" role="status" aria-live="polite">
             <NSpin size="medium" description="正在加载所选期间…" />
           </div>
-          <div class="ledger-breakdown-columns" data-testid="ledger-category-breakdown">
+          <NAlert v-else-if="categoryProjection.status === 'error'" class="ledger-inline-error" data-testid="ledger-category-error" type="error" :show-icon="false" role="alert">
+            <span>这段期间的数据暂时无法加载。</span>
+            <NButton class="ledger-link-button" attr-type="button" size="small" text :bordered="false" @click="retryCategory">重试</NButton>
+          </NAlert>
+          <div v-else-if="categoryDataReady" class="ledger-breakdown-columns" data-testid="ledger-category-breakdown">
             <div>
               <h3><i class="is-income" aria-hidden="true" />收入分类</h3>
               <div v-if="selectedPeriods.income.length" class="ledger-breakdown-list-viewport" data-testid="ledger-income-breakdown-viewport">
@@ -562,7 +733,7 @@ function onDateChange(period: LedgerPeriodName, value: string): void {
           <NCard v-for="period in (['today', 'week', 'month', 'year'] as const)" :key="period" class="ledger-period-card" :data-testid="`ledger-period-${period}`" :bordered="false" size="small">
             <div class="ledger-period-card-heading">
               <h3>{{ periodLabels[period] }}</h3>
-              <div v-if="periodSummary(period)" class="ledger-period-date-control" :data-testid="`ledger-period-date-control-${period}`">
+              <div v-if="periodDateInputs[period]" class="ledger-period-date-control" :data-testid="`ledger-period-date-control-${period}`">
                 <span class="ledger-period-date-label">{{ formatLedgerPeriodPickerLabel(period, periodDateInputs[period]) }}</span>
                 <div class="ledger-period-date-editor">
                   <LedgerDatePicker
@@ -583,6 +754,14 @@ function onDateChange(period: LedgerPeriodName, value: string): void {
               <span>支出 <strong class="is-expense">{{ formatLedgerMoney(periodSummary(period)!.expenseMinor, overview.currency) }}</strong></span>
               <span>收支结余 <strong>{{ formatLedgerSignedMoney(periodSummary(period)!.balanceMinor, overview.currency) }}</strong></span>
             </div>
+            <div v-else-if="periodProjectionLoading(period)" class="ledger-period-local-state" :data-testid="`ledger-period-loading-${period}`" role="status" aria-live="polite">
+              <NSpin size="small" />
+              <span>正在加载…</span>
+            </div>
+            <div v-else-if="periodProjectionError(period)" class="ledger-period-local-state is-error" :data-testid="`ledger-period-error-${period}`" role="alert">
+              <span>该期间数据暂时无法加载</span>
+              <NButton class="ledger-link-button" attr-type="button" size="small" text :bordered="false" @click="retryPeriodSummary(period)">重试</NButton>
+            </div>
           </NCard>
         </div>
         <div v-else class="ledger-period-summary-loading" data-testid="ledger-period-summary-loading" role="status" aria-live="polite">
@@ -595,7 +774,7 @@ function onDateChange(period: LedgerPeriodName, value: string): void {
         <div class="ledger-section-heading">
           <div>
             <h2 id="ledger-trend-title">收支趋势</h2>
-            <p v-if="trendData.length">最近 {{ trendData.length }} 个月</p>
+            <p v-if="trendDataReady && trendData.length">最近 {{ trendData.length }} 个月</p>
           </div>
           <LedgerDatePicker
             class="ledger-trend-date"
@@ -609,7 +788,14 @@ function onDateChange(period: LedgerPeriodName, value: string): void {
             @update:model-value="updateTrendDate"
           />
         </div>
-        <LedgerCashflowTrend :trend="trendData" :currency="overview.currency" />
+        <div v-if="trendRefreshing" class="ledger-period-analysis-loading" data-testid="ledger-trend-loading" role="status" aria-live="polite">
+          <NSpin size="medium" description="正在加载趋势数据…" />
+        </div>
+        <NAlert v-else-if="trendError" class="ledger-inline-error" data-testid="ledger-trend-error" type="error" :show-icon="false" role="alert">
+          <span>趋势数据暂时无法加载。</span>
+          <NButton class="ledger-link-button" attr-type="button" size="small" text :bordered="false" @click="retryTrend">重试</NButton>
+        </NAlert>
+        <LedgerCashflowTrend v-show="trendDataReady" :trend="trendData" :currency="overview.currency" />
       </NCard>
       </template>
     </template>
@@ -1427,6 +1613,20 @@ function onDateChange(period: LedgerPeriodName, value: string): void {
   color: var(--text-muted);
   font-size: .68rem;
 }
+
+.ledger-period-local-state {
+  display: flex;
+  min-width: 0;
+  min-height: 2.6rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: auto;
+  color: var(--text-muted);
+  font-size: .68rem;
+}
+
+.ledger-period-local-state.is-error { color: var(--ledger-expense); }
 
 .ledger-period-values span {
   display: flex;
