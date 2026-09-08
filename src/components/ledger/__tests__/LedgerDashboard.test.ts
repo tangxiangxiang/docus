@@ -376,6 +376,10 @@ describe('Ledger live dashboard', () => {
     const linkedWeekPicker = wrapper.findAllComponents(LedgerDatePicker).find((picker) => picker.props('testId') === 'ledger-category-date')
     expect(linkedWeekPicker?.props('type')).toBe('week')
     expect(api.getLedgerOverview).toHaveBeenLastCalledWith({ scope: 'week', anchorDate: '2026-09-05' })
+
+    await setNaiveSelect(wrapper, '选择统计期间', 'month')
+    await flushPromises()
+    expect(wrapper.get('#ledger-category-breakdown-title').text()).toBe('本月分类')
   })
 
   it('supports the all-time scope without changing server-owned balances or fixed periods', async () => {

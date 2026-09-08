@@ -91,7 +91,15 @@ const categoryNames = computed(() => new Map(
   store.categories.value.map((category) => [category.id, category.name]),
 ))
 const selectedPeriodLabel = computed(() => scopeOptions.value.find((option) => option.value === selectedScope.value)?.label ?? '本月')
-const categoryPeriodLabel = computed(() => scopeOptions.value.find((option) => option.value === categoryScope.value)?.label ?? '本月')
+const categoryPeriodLabel = computed(() => {
+  switch (categoryScope.value) {
+    case 'today': return '今天'
+    case 'week': return '本周'
+    case 'month': return '本月'
+    case 'year': return '今年'
+    case 'all': return '全部'
+  }
+})
 const categoryScopeOptions = computed<SelectOption[]>(() => [
   { value: 'today' as const, label: '天' },
   { value: 'week' as const, label: '周' },
