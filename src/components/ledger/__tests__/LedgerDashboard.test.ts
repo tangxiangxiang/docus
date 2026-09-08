@@ -242,10 +242,10 @@ describe('Ledger live dashboard', () => {
     expect(wrapper.get('[data-testid="ledger-category-breakdown"]').text()).toContain('餐饮')
     expect(wrapper.get('[data-testid="ledger-category-breakdown"]').text()).toContain('这段期间还没有收入分类。')
     expect(wrapper.get('[data-testid="ledger-recent-transactions"]').text()).toContain('午餐')
-    expect(wrapper.get('[data-testid="ledger-period-today"]').text()).toContain('2026年9月5日')
-    expect(wrapper.get('[data-testid="ledger-period-week"]').text()).toContain('2026年8月31日 – 9月6日')
-    expect(wrapper.get('[data-testid="ledger-period-month"]').text()).toContain('2026年9月')
-    expect(wrapper.get('[data-testid="ledger-period-year"]').text()).toContain('2026年')
+    expect(wrapper.get('[data-testid="ledger-period-today"]').text()).toContain('2026-09-05')
+    expect(wrapper.get('[data-testid="ledger-period-week"]').text()).toContain('2026-36周')
+    expect(wrapper.get('[data-testid="ledger-period-month"]').text()).toContain('2026-09')
+    expect(wrapper.get('[data-testid="ledger-period-year"]').text()).toContain('2026')
     for (const period of ['today', 'week', 'month', 'year']) {
       expect(wrapper.get(`[data-testid="ledger-period-${period}"]`).text()).not.toMatch(/00:00|23:59/)
     }
@@ -264,7 +264,7 @@ describe('Ledger live dashboard', () => {
     expect(wrapper.find('.ledger-period-navigation').exists()).toBe(false)
     expect(wrapper.find('#ledger-period-navigation-title').exists()).toBe(false)
     expect(cashflowSection.find('[data-testid="ledger-period-date"]').exists()).toBe(false)
-    expect(periodSummarySection.get('[data-testid="ledger-period-date-control-today"]').text()).toContain('2026年9月5日')
+    expect(periodSummarySection.get('[data-testid="ledger-period-date-control-today"]').text()).toContain('2026-09-05')
     const periodPickers = periodSummarySection.findAllComponents(LedgerDatePicker)
     expect(periodPickers).toHaveLength(4)
     expect(periodPickers.map((picker: VueWrapper<any>) => picker.props('type'))).toEqual(['date', 'week', 'month', 'year'])

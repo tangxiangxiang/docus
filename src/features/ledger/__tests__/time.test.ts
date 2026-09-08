@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   formatLedgerDateTime,
   formatLedgerPeriodLabel,
+  formatLedgerPeriodPickerLabel,
   instantFromLedgerDate,
   instantFromLocalDateTime,
   localDateTimeInputFromInstant,
@@ -41,6 +42,14 @@ describe('Ledger timezone presentation boundary', () => {
       .toBe('2026年9月')
     expect(formatLedgerPeriodLabel('year', shanghaiMidnight('2026-01-01'), shanghaiMidnight('2027-01-01'), 'Asia/Shanghai'))
       .toBe('2026年')
+  })
+
+  it('matches the Naive UI picker text for each period type', () => {
+    expect(formatLedgerPeriodPickerLabel('today', '2026-09-08')).toBe('2026-09-08')
+    expect(formatLedgerPeriodPickerLabel('week', '2026-09-08')).toBe('2026-37周')
+    expect(formatLedgerPeriodPickerLabel('month', '2026-09-08')).toBe('2026-09')
+    expect(formatLedgerPeriodPickerLabel('year', '2026-09-08')).toBe('2026')
+    expect(formatLedgerPeriodPickerLabel('week', '2027-01-01')).toBe('2026-53周')
   })
 
   it('uses the Ledger timezone when determining the displayed calendar date', () => {

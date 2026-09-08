@@ -103,6 +103,23 @@ export function formatLedgerPeriodLabel(
   return `${startLabel} – ${endLabel}`
 }
 
+/** Format a period anchor exactly as the matching Naive UI picker displays it. */
+export function formatLedgerPeriodPickerLabel(period: LedgerPeriodName, date: string): string {
+  const plainDate = Temporal.PlainDate.from(date)
+  if (period === 'today') return date
+  if (period === 'month') return date.slice(0, 7)
+  if (period === 'year') return date.slice(0, 4)
+
+  // Naive UI's zh-CN date locale uses ISO week numbering: Monday starts the
+  // week and the week containing January 4 is week one.
+  const weekYearDate = plainDate.add({ days: 4 - plainDate.dayOfWeek })
+  const januaryFourth = Temporal.PlainDate.from({ year: weekYearDate.year, month: 1, day: 4 })
+  const firstWeekStart = januaryFourth.subtract({ days: januaryFourth.dayOfWeek - 1 })
+  const daysFromFirstWeek = firstWeekStart.until(plainDate, { largestUnit: 'days' }).days
+  const weekNumber = Math.floor(daysFromFirstWeek / 7) + 1
+  return `${weekYearDate.year}-${weekNumber}周`
+}
+
 export function formatLedgerDate(
   date: string,
   timezone: string,

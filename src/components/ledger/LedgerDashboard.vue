@@ -8,7 +8,7 @@ import type {
   LedgerTransactionDto,
 } from '../../../shared/ledgerProtocol'
 import { formatLedgerMoney, formatLedgerSignedMoney } from '../../features/ledger/money'
-import { formatLedgerDate, formatLedgerDateTime, formatLedgerPeriodLabel } from '../../features/ledger/time'
+import { formatLedgerDate, formatLedgerDateTime, formatLedgerPeriodPickerLabel } from '../../features/ledger/time'
 import { ledgerSelectNodeProps } from '../../features/ledger/naiveControls'
 import { calendarDateFromNaivePickerTimestamp } from '../../features/ledger/naiveTemporal'
 import { useLedgerStore } from '../../features/ledger/ledgerStore'
@@ -428,7 +428,7 @@ function onDateChange(value: string): void {
             <div class="ledger-period-card-heading">
               <h3>{{ periodLabels[period] }}</h3>
               <div v-if="periodSummary(period)" class="ledger-period-date-control" :data-testid="`ledger-period-date-control-${period}`">
-                <span class="ledger-period-date-label">{{ formatLedgerPeriodLabel(period, periodSummary(period)!.startAt, periodSummary(period)!.endAt, store.settings.value?.timezone ?? 'UTC') }}</span>
+                <span class="ledger-period-date-label">{{ formatLedgerPeriodPickerLabel(period, dateInputValue) }}</span>
                 <div class="ledger-period-date-editor">
                   <LedgerDatePicker
                     :model-value="dateInputValue"

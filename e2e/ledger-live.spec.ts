@@ -450,7 +450,7 @@ test('historical period navigation keeps one anchor across periods, reload, and 
   await expect(page.getByTestId('ledger-dashboard')).toBeVisible()
   await expect(page.getByRole('heading', { name: '所在月收支' })).toBeVisible()
   await expect(ledgerDateInput(page, 'ledger-period-date')).toHaveValue(anchorDate)
-  await expect(page.getByTestId('ledger-period-month')).toContainText(`${anchor.year}年${anchor.month}月`)
+  await expect(page.getByTestId('ledger-period-month')).toContainText(`${anchor.year}-${String(anchor.month).padStart(2, '0')}`)
   await expect(page.getByTestId('ledger-period-month')).toContainText('¥114.00')
   await expect(page.getByTestId('ledger-recent-transactions')).toContainText(anchorPayee)
   await expect(page.getByTestId('ledger-recent-transactions')).not.toContainText(afterAnchorPayee)
