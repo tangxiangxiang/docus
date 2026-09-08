@@ -190,8 +190,11 @@ const selectedPeriods = computed(() => categoryOverview.value
   ? categoryOverview.value.categoryBreakdown
   : { income: [], expense: [] })
 const selectedPeriodSummary = computed(() => periodDataReady.value ? overview.value?.cashflow ?? null : null)
-const assetAccounts = computed(() => (overview.value?.accounts ?? []).filter((account) => account.nature === 'asset'))
-const liabilityAccounts = computed(() => (overview.value?.accounts ?? []).filter((account) => account.nature === 'liability'))
+const accountsByBalance = (nature: 'asset' | 'liability') => (overview.value?.accounts ?? [])
+  .filter((account) => account.nature === nature)
+  .sort((left, right) => right.currentBalanceMinor - left.currentBalanceMinor)
+const assetAccounts = computed(() => accountsByBalance('asset'))
+const liabilityAccounts = computed(() => accountsByBalance('liability'))
 
 const periodLabels = computed<Record<LedgerPeriodName, string>>(() => ({
   today: historicalMode.value ? '当日' : '今天',
