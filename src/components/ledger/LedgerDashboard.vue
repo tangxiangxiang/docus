@@ -180,7 +180,7 @@ function transactionAmount(transaction: LedgerTransactionDto): string {
 function transactionMark(transaction: LedgerTransactionDto): string {
   if (transaction.type === 'income') return '↑'
   if (transaction.type === 'expense') return '↓'
-  if (transaction.type === 'transfer') return '↔'
+  if (transaction.type === 'transfer') return '→'
   return '='
 }
 
