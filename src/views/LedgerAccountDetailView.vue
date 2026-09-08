@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { NButton } from 'naive-ui'
 import { useRoute } from 'vue-router'
 import { useConfirm } from '../composables/useConfirm'
 import LedgerAccountEditForm from '../components/ledger/LedgerAccountEditForm.vue'
@@ -103,7 +104,7 @@ function onSaved(next: LedgerAccountDto): void {
       <h1>账户详情无法加载</h1>
       <p>{{ actionError }}</p>
       <div class="ledger-page-actions">
-        <button class="ledger-primary-button" type="button" @click="load">重新加载</button>
+        <NButton class="ledger-primary-button" attr-type="button" type="primary" size="medium" :bordered="false" @click="load">重新加载</NButton>
         <RouterLink class="ledger-secondary-button" :to="{ name: 'ledger-accounts' }">返回账户</RouterLink>
       </div>
     </section>
@@ -120,9 +121,9 @@ function onSaved(next: LedgerAccountDto): void {
           <p>{{ account.nature === 'asset' ? '资产' : '负债' }} · {{ typeLabel(account.type) }} · {{ account.currency }}</p>
         </div>
         <div class="ledger-page-actions">
-          <button class="ledger-secondary-button" type="button" @click="editing = true">编辑账户</button>
-          <button v-if="account.archivedAt === null" class="ledger-secondary-button" type="button" :disabled="account.currentBalanceMinor !== 0" @click="archive">归档账户</button>
-          <button v-else class="ledger-primary-button" type="button" @click="restore">恢复账户</button>
+          <NButton class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" @click="editing = true">编辑账户</NButton>
+          <NButton v-if="account.archivedAt === null" class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" :disabled="account.currentBalanceMinor !== 0" @click="archive">归档账户</NButton>
+          <NButton v-else class="ledger-primary-button" attr-type="button" type="primary" size="medium" :bordered="false" @click="restore">恢复账户</NButton>
         </div>
       </header>
 

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { NButton } from 'naive-ui'
 import LedgerFirstAccountForm from '../components/ledger/LedgerFirstAccountForm.vue'
 import LedgerPendingCreateGate from '../components/ledger/LedgerPendingCreateGate.vue'
 import { ledgerAccountTypeOptionsForNature } from '../features/ledger/accountPresentation'
@@ -60,7 +61,7 @@ function onAccountSaved(): void {
       </div>
       <div class="ledger-page-actions">
         <RouterLink class="ledger-secondary-button" :to="{ name: 'ledger' }">返回总览</RouterLink>
-        <button class="ledger-primary-button" type="button" :disabled="loading || store.hasUnresolvedCreate.value" @click="createOpen = true">新增账户</button>
+        <NButton class="ledger-primary-button" attr-type="button" type="primary" size="medium" :bordered="false" :disabled="loading || store.hasUnresolvedCreate.value" @click="createOpen = true">新增账户</NButton>
       </div>
     </header>
 
@@ -69,7 +70,7 @@ function onAccountSaved(): void {
     <section v-else-if="store.workspaceState.value === 'RECOVERABLE_ERROR'" class="ledger-state-panel" data-testid="ledger-accounts-error" role="alert">
       <h2>账户暂时无法加载</h2>
       <p>{{ ledgerWorkspaceReadErrorMessage(store.workspaceError.value) }}</p>
-      <button class="ledger-primary-button" type="button" @click="store.bootstrap">重新加载</button>
+      <NButton class="ledger-primary-button" attr-type="button" type="primary" size="medium" :bordered="false" @click="store.bootstrap">重新加载</NButton>
     </section>
     <section v-else-if="!store.settings.value" class="ledger-state-panel" data-testid="ledger-accounts-needs-settings">
       <h2>请先设置 Ledger</h2>
@@ -107,7 +108,7 @@ function onAccountSaved(): void {
         </div>
         <div v-else class="ledger-inline-empty" data-testid="ledger-active-account-empty">
           <p>还没有可用账户。</p>
-          <button class="ledger-secondary-button" type="button" @click="createOpen = true">创建账户</button>
+          <NButton class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" @click="createOpen = true">创建账户</NButton>
         </div>
       </section>
 
@@ -127,9 +128,9 @@ function onAccountSaved(): void {
             </RouterLink>
             <div class="ledger-row-actions">
               <strong class="ledger-account-balance">{{ balance(account) }}</strong>
-              <button class="ledger-secondary-button" type="button" :disabled="Boolean(restoreId)" @click="restore(account.id, account.version)">
+              <NButton class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" :disabled="Boolean(restoreId)" @click="restore(account.id, account.version)">
                 {{ restoreId === account.id ? '正在恢复…' : '恢复' }}
-              </button>
+              </NButton>
             </div>
           </div>
         </div>

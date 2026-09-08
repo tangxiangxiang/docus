@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { NButton, NSelect, type SelectOption } from 'naive-ui'
 import type {
   LedgerOverviewScope,
   LedgerPeriodName,
@@ -21,13 +22,13 @@ const overview = computed(() => store.overview.value)
 const selectedScope = ref<LedgerOverviewScope>('month')
 const historicalMode = computed(() => overview.value?.context.isToday === false
   || store.overviewRequestedAnchorDate.value !== undefined)
-const scopeOptions = computed<ReadonlyArray<{ value: LedgerOverviewScope; label: string }>>(() => {
+const scopeOptions = computed<SelectOption[]>(() => {
   const historical = historicalMode.value
   return [
-    { value: 'today', label: historical ? '当日' : '今天' },
-    { value: 'week', label: historical ? '所在周' : '本周' },
-    { value: 'month', label: historical ? '所在月' : '本月' },
-    { value: 'year', label: historical ? '所在年' : '今年' },
+    { value: 'today' as const, label: historical ? '当日' : '今天' },
+    { value: 'week' as const, label: historical ? '所在周' : '本周' },
+    { value: 'month' as const, label: historical ? '所在月' : '本月' },
+    { value: 'year' as const, label: historical ? '所在年' : '今年' },
     { value: 'all', label: '全部' },
   ]
 })
@@ -144,6 +145,11 @@ function retryScope(): void {
   void store.refreshOverview()
 }
 
+function updateScope(value: string | number | null): void {
+  if (typeof value !== 'string' || !scopeOptions.value.some((option) => option.value === value)) return
+  selectedScope.value = value as LedgerOverviewScope
+}
+
 function onDateChange(event: Event): void {
   const value = (event.target as HTMLInputElement).value
   if (value) emit('selectDate', value)
@@ -160,7 +166,7 @@ function onDateChange(event: Event): void {
       </div>
       <div class="ledger-dashboard-actions">
         <RouterLink class="ledger-secondary-button" :to="{ name: 'ledger-accounts' }">管理账户</RouterLink>
-        <button class="ledger-primary-button" type="button" :disabled="!store.activeAccounts.value.length" data-testid="ledger-record-button" @click="emit('record')">＋ 记一笔</button>
+        <NButton class="ledger-primary-button" attr-type="button" type="primary" size="medium" :bordered="false" :disabled="!store.activeAccounts.value.length" data-testid="ledger-record-button" @click="emit('record')">＋ 记一笔</NButton>
       </div>
     </header>
 
@@ -215,15 +221,21 @@ function onDateChange(event: Event): void {
               :max="dateMax || undefined"
               @change="onDateChange"
             >
-            <select v-model="selectedScope" aria-label="选择收支期间">
-              <option v-for="option in scopeOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-            </select>
-            <button v-if="showReturnToday" class="ledger-secondary-button" type="button" data-testid="ledger-return-today" @click="emit('returnToday')">回到今天</button>
+            <NSelect
+              class="ledger-period-scope"
+              size="small"
+              :value="selectedScope"
+              :options="scopeOptions"
+              aria-label="选择收支期间"
+              :input-props="{ name: 'scope' }"
+              @update:value="updateScope"
+            />
+            <NButton v-if="showReturnToday" class="ledger-secondary-button" attr-type="button" size="small" :bordered="false" data-testid="ledger-return-today" @click="emit('returnToday')">回到今天</NButton>
           </div>
         </div>
         <div v-if="scopeError" class="ledger-inline-error" role="alert">
           <span>{{ scopeErrorMessage }}</span>
-          <button class="ledger-link-button" type="button" @click="retryScope">重试</button>
+          <NButton class="ledger-link-button" attr-type="button" size="small" text :bordered="false" @click="retryScope">重试</NButton>
         </div>
         <div v-if="periodDataLoading" class="ledger-period-analysis-loading" data-testid="ledger-period-analysis-loading" role="status" aria-live="polite">
           正在加载所选期间…
@@ -355,7 +367,7 @@ function onDateChange(event: Event): void {
               <h2 id="ledger-recent-title">最近交易</h2>
               <p v-if="historicalMode">截至 {{ formatLedgerDate(dateInputValue, ledgerTimezone) }}</p>
             </div>
-            <button class="ledger-link-button" type="button" @click="emit('viewTransactions')">查看全部</button>
+            <NButton class="ledger-link-button" attr-type="button" size="small" text :bordered="false" @click="emit('viewTransactions')">查看全部</NButton>
           </div>
           <div v-if="overview.recentTransactions.length" class="ledger-recent-list" data-testid="ledger-recent-transactions">
             <div v-for="transaction in overview.recentTransactions" :key="transaction.id" class="ledger-recent-row">
@@ -368,7 +380,7 @@ function onDateChange(event: Event): void {
             <p v-if="historicalMode">截至该日期还没有交易记录。</p>
             <template v-else>
               <p>还没有交易记录。</p>
-              <button class="ledger-secondary-button" type="button" @click="emit('record')">记下第一笔</button>
+              <NButton class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" @click="emit('record')">记下第一笔</NButton>
             </template>
           </div>
         </section>
@@ -673,7 +685,8 @@ function onDateChange(event: Event): void {
 }
 
 .ledger-period-toolbar input { width: 148px; }
-.ledger-period-toolbar select { width: 96px; }
+.ledger-period-scope { width: 96px; }
+.ledger-period-toolbar :deep(.ledger-period-scope .n-base-selection) { width: 96px; }
 
 .ledger-period-toolbar input:focus,
 .ledger-period-toolbar select:focus {

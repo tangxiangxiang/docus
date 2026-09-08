@@ -95,20 +95,26 @@ async function createPeriodExpense(
   expect(response.status(), await response.text()).toBe(201)
 }
 
-async function selectOptionContaining(page: Page, selector: string, text: string): Promise<string> {
-  const option = page.locator(`${selector} option`).filter({ hasText: text }).first()
-  await expect(option).toHaveCount(1)
-  const value = await option.getAttribute('value')
-  expect(value).toBeTruthy()
-  await page.locator(selector).selectOption(value as string)
-  return value as string
+async function selectOptionContaining(page: Page, label: string, text: string): Promise<void> {
+  const control = page.locator(`[aria-label="${label}"]`).first()
+  await expect(control).toHaveCount(1)
+  const trigger = control.locator('[tabindex="0"]').first()
+  await trigger.click()
+  const pendingOption = page.locator('.n-base-select-option.n-base-select-option--pending').filter({ hasText: text }).first()
+  for (let index = 0; index < 300 && await pendingOption.count() === 0; index += 1) {
+    // NSelect virtualizes long lists such as ISO currency metadata. Moving
+    // the pending option with the real keyboard path scrolls it into view.
+    await trigger.press('ArrowDown')
+  }
+  await expect(pendingOption).toHaveCount(1)
+  await trigger.press('Enter')
 }
 
 test('real Ledger onboarding and expense survive dashboard refresh', async ({ page, request }) => {
   await page.goto('/ledger')
 
   await expect(page.getByTestId('ledger-settings-form')).toBeVisible()
-  await page.locator('#ledger-base-currency').selectOption('CNY')
+  await selectOptionContaining(page, '基础货币', 'CNY')
   await page.locator('#ledger-timezone').fill('Asia/Shanghai')
   await page.getByRole('button', { name: '保存设置并继续' }).click()
 
@@ -124,7 +130,7 @@ test('real Ledger onboarding and expense survive dashboard refresh', async ({ pa
   await expect(page.locator('.ledger-metric-card')).toHaveCount(3)
   await expect(page.getByRole('heading', { name: '本月收支' })).toBeVisible()
   await expect(page.getByTestId('ledger-period-date')).toHaveValue(Temporal.Now.plainDateISO('Asia/Shanghai').toString())
-  await expect(page.getByRole('combobox', { name: '选择收支期间' })).toHaveValue('month')
+  await expect(page.locator('[aria-label="选择收支期间"]')).toContainText('本月')
   await expect(page.locator('.ledger-period-navigation')).toHaveCount(0)
   await expect(page.getByTestId('ledger-dashboard-accounts')).toContainText('招商银行')
   await expect(page.getByTestId('ledger-dashboard-account-viewport')).toBeVisible()
@@ -135,8 +141,8 @@ test('real Ledger onboarding and expense survive dashboard refresh', async ({ pa
   await page.getByTestId('ledger-record-button').click()
   await expect(page.getByRole('dialog')).toBeVisible()
   await page.locator('#ledger-transaction-amount').fill('38')
-  await selectOptionContaining(page, '#ledger-transaction-account', '招商银行')
-  await selectOptionContaining(page, '#ledger-transaction-category', '餐饮')
+  await selectOptionContaining(page, '账户', '招商银行')
+  await selectOptionContaining(page, '分类', '餐饮')
   await page.getByRole('button', { name: '保存交易' }).click()
 
   await expect(page.getByRole('dialog')).toBeHidden()
@@ -198,8 +204,8 @@ test('response loss recovers one real transaction with the original intent key',
 
   await page.getByTestId('ledger-record-button').click()
   await page.locator('#ledger-transaction-amount').fill('12')
-  await selectOptionContaining(page, '#ledger-transaction-account', account!.name)
-  await selectOptionContaining(page, '#ledger-transaction-category', '餐饮')
+  await selectOptionContaining(page, '账户', account!.name)
+  await selectOptionContaining(page, '分类', '餐饮')
   await page.getByRole('button', { name: '保存交易' }).click()
 
   await expect(page.getByTestId('ledger-recovery')).toBeVisible()
@@ -257,8 +263,8 @@ test('an unreadable successful transaction response replays the same committed i
 
   await page.getByTestId('ledger-record-button').click()
   await page.locator('#ledger-transaction-amount').fill('13')
-  await selectOptionContaining(page, '#ledger-transaction-account', account!.name)
-  await selectOptionContaining(page, '#ledger-transaction-category', '餐饮')
+  await selectOptionContaining(page, '账户', account!.name)
+  await selectOptionContaining(page, '分类', '餐饮')
   await page.getByRole('button', { name: '保存交易' }).click()
 
   await expect(page.getByTestId('ledger-recovery')).toBeVisible()

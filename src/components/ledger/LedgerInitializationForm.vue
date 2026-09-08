@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { NButton, NInput, NSelect, type SelectOption } from 'naive-ui'
 import {
   LEDGER_CURRENCY_METADATA,
 } from '../../../shared/ledgerCurrency'
@@ -42,15 +43,15 @@ const timezoneOptions = computed(() => {
   return [...values]
 })
 
-const currencyOptions = LEDGER_CURRENCY_METADATA.map((entry) => ({
-  ...entry,
-  label: entry.code === 'CNY'
+const currencyOptions: SelectOption[] = LEDGER_CURRENCY_METADATA.map((entry) => ({
+  value: entry.code,
+  label: `${entry.code === 'CNY'
     ? 'CNY — 人民币'
     : entry.code === 'JPY'
       ? 'JPY — 日元'
       : entry.code === 'KWD'
         ? 'KWD — 科威特第纳尔'
-        : entry.code,
+        : entry.code}（${entry.exponent} 位小数）`,
 }))
 
 function resetFromSettings(): void {
@@ -153,33 +154,30 @@ async function retryPendingSettings(): Promise<void> {
     <template v-else-if="!isLocked">
       <div class="ledger-form-field">
         <label for="ledger-base-currency">基础货币</label>
-        <select
-          id="ledger-base-currency"
-          v-model="baseCurrency"
-          name="baseCurrency"
-          required
+        <NSelect
+          v-model:value="baseCurrency"
+          class="ledger-form-control"
+          size="medium"
+          :options="currencyOptions"
+          :input-props="{ id: 'ledger-base-currency', name: 'baseCurrency', required: true }"
+          aria-label="基础货币"
           :disabled="saving"
           :aria-invalid="fieldError('baseCurrency') ? 'true' : undefined"
           :aria-describedby="fieldError('baseCurrency') ? 'ledger-base-currency-error' : 'ledger-base-currency-help'"
-        >
-          <option value="" disabled>请选择货币</option>
-          <option v-for="option in currencyOptions" :key="option.code" :value="option.code">
-            {{ option.label }}（{{ option.exponent }} 位小数）
-          </option>
-        </select>
+          placeholder="请选择货币"
+        />
         <small id="ledger-base-currency-help">金额会按该货币的实际小数位显示；例如 JPY 不使用两位小数。</small>
         <small v-if="fieldError('baseCurrency')" id="ledger-base-currency-error" class="ledger-field-error">{{ fieldError('baseCurrency') }}</small>
       </div>
 
       <div class="ledger-form-field">
         <label for="ledger-timezone">Ledger 时区</label>
-        <input
-          id="ledger-timezone"
-          v-model="timezone"
-          name="timezone"
-          list="ledger-timezone-options"
-          required
-          autocomplete="off"
+        <NInput
+          v-model:value="timezone"
+          class="ledger-form-control"
+          type="text"
+          size="medium"
+          :input-props="{ id: 'ledger-timezone', name: 'timezone', list: 'ledger-timezone-options', required: true, autocomplete: 'off' }"
           :disabled="saving"
           :aria-invalid="fieldError('timezone') ? 'true' : undefined"
           :aria-describedby="fieldError('timezone') ? 'ledger-timezone-error' : 'ledger-timezone-help'"
@@ -193,9 +191,9 @@ async function retryPendingSettings(): Promise<void> {
 
       <p v-if="formError" class="ledger-form-error" role="alert">{{ formError }}</p>
 
-      <button class="ledger-primary-button" type="submit" :disabled="saving">
+      <NButton class="ledger-primary-button" attr-type="submit" type="primary" size="medium" :bordered="false" :disabled="saving">
         {{ saving ? '正在保存…' : (isEditing ? '确认并继续' : '保存设置并继续') }}
-      </button>
+      </NButton>
     </template>
   </form>
 </template>
@@ -230,6 +228,9 @@ async function retryPendingSettings(): Promise<void> {
   font: inherit;
   font-size: .88rem;
 }
+.ledger-form-control { width: 100%; }
+.ledger-form-field :deep(.ledger-form-control .n-input),
+.ledger-form-field :deep(.ledger-form-control .n-base-selection) { width: 100%; }
 .ledger-form-field input:focus,
 .ledger-form-field select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent); }
 .ledger-form-field input:disabled,

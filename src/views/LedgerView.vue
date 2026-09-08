@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { NButton } from 'naive-ui'
 import { useRoute, useRouter, type RouteLocationNormalizedLoaded } from 'vue-router'
 import { useAuth } from '../composables/useAuth'
 import LedgerDashboard from '../components/ledger/LedgerDashboard.vue'
@@ -171,7 +172,7 @@ function closeTransactionSheet(): void {
     <section v-else-if="store.workspaceState.value === 'RECOVERABLE_ERROR'" class="ledger-error-state" data-testid="ledger-bootstrap-error" aria-labelledby="ledger-bootstrap-error-title">
       <h1 id="ledger-bootstrap-error-title">Ledger 暂时无法打开</h1>
       <p>{{ ledgerWorkspaceReadErrorMessage(store.workspaceError.value) }}</p>
-      <button class="ledger-primary-button" type="button" @click="retry">重新加载</button>
+      <NButton class="ledger-primary-button" attr-type="button" type="primary" size="medium" :bordered="false" @click="retry">重新加载</NButton>
     </section>
 
     <LedgerOnboarding

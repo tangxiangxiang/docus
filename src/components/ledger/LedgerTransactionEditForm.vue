@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { NButton, NInput, NSelect, type SelectOption } from 'naive-ui'
 import type { LedgerTransactionDto } from '../../../shared/ledgerProtocol'
 import { ledgerErrorMessage } from '../../features/ledger/ledgerErrors'
 import { ledgerDecimalFromMinor, parseLedgerMoney } from '../../features/ledger/money'
@@ -44,6 +45,14 @@ const categories = computed(() => {
   if (current && !active.some((category) => category.id === current.id)) return [current, ...active]
   return active
 })
+const accountOptions = computed<SelectOption[]>(() => store.activeAccounts.value.map((account) => ({
+  value: account.id,
+  label: account.name,
+})))
+const categoryOptions = computed<SelectOption[]>(() => categories.value.map((category) => ({
+  value: category.id,
+  label: `${category.name}${category.archivedAt !== null ? '（已归档）' : ''}`,
+})))
 
 function associatedAccountIds(): string[] {
   const value = transaction.value
@@ -205,32 +214,67 @@ async function submit(): Promise<void> {
     <template v-if="financialFieldsEditable">
       <div class="ledger-form-field">
         <label for="ledger-edit-transaction-amount">金额</label>
-        <input id="ledger-edit-transaction-amount" v-model="amount" name="amount" type="text" inputmode="decimal" required :disabled="saving" />
+        <NInput
+          v-model:value="amount"
+          class="ledger-form-control"
+          type="text"
+          size="medium"
+          :input-props="{ id: 'ledger-edit-transaction-amount', name: 'amount', inputmode: 'decimal', required: true }"
+          :disabled="saving"
+        />
       </div>
 
       <template v-if="transaction.type === 'income' || transaction.type === 'expense'">
         <div class="ledger-form-field">
           <label for="ledger-edit-transaction-account">账户</label>
-          <select id="ledger-edit-transaction-account" v-model="accountId" name="accountId" :disabled="saving">
-            <option v-for="account in store.activeAccounts.value" :key="account.id" :value="account.id">{{ account.name }}</option>
-          </select>
+          <NSelect
+            v-model:value="accountId"
+            class="ledger-form-control"
+            size="medium"
+            :options="accountOptions"
+            :input-props="{ id: 'ledger-edit-transaction-account', name: 'accountId' }"
+            aria-label="账户"
+            :disabled="saving"
+          />
         </div>
         <div class="ledger-form-field">
           <label for="ledger-edit-transaction-category">分类</label>
-          <select id="ledger-edit-transaction-category" v-model="categoryId" name="categoryId" :disabled="saving">
-            <option v-for="category in categories" :key="category.id" :value="category.id">{{ category.name }}{{ category.archivedAt !== null ? '（已归档）' : '' }}</option>
-          </select>
+          <NSelect
+            v-model:value="categoryId"
+            class="ledger-form-control"
+            size="medium"
+            :options="categoryOptions"
+            :input-props="{ id: 'ledger-edit-transaction-category', name: 'categoryId' }"
+            aria-label="分类"
+            :disabled="saving"
+          />
         </div>
       </template>
 
       <div v-else class="ledger-form-grid">
         <div class="ledger-form-field">
           <label for="ledger-edit-transaction-from">转出账户</label>
-          <select id="ledger-edit-transaction-from" v-model="fromAccountId" name="fromAccountId" :disabled="saving"><option v-for="account in store.activeAccounts.value" :key="account.id" :value="account.id">{{ account.name }}</option></select>
+          <NSelect
+            v-model:value="fromAccountId"
+            class="ledger-form-control"
+            size="medium"
+            :options="accountOptions"
+            :input-props="{ id: 'ledger-edit-transaction-from', name: 'fromAccountId' }"
+            aria-label="转出账户"
+            :disabled="saving"
+          />
         </div>
         <div class="ledger-form-field">
           <label for="ledger-edit-transaction-to">转入账户</label>
-          <select id="ledger-edit-transaction-to" v-model="toAccountId" name="toAccountId" :disabled="saving"><option v-for="account in store.activeAccounts.value" :key="account.id" :value="account.id">{{ account.name }}</option></select>
+          <NSelect
+            v-model:value="toAccountId"
+            class="ledger-form-control"
+            size="medium"
+            :options="accountOptions"
+            :input-props="{ id: 'ledger-edit-transaction-to', name: 'toAccountId' }"
+            aria-label="转入账户"
+            :disabled="saving"
+          />
         </div>
       </div>
 
@@ -247,17 +291,31 @@ async function submit(): Promise<void> {
 
     <div v-if="transaction.type === 'income' || transaction.type === 'expense'" class="ledger-form-field">
       <label for="ledger-edit-transaction-payee">交易对象（可选）</label>
-      <input id="ledger-edit-transaction-payee" v-model="payee" name="payee" type="text" autocomplete="off" :disabled="saving" />
+      <NInput
+        v-model:value="payee"
+        class="ledger-form-control"
+        type="text"
+        size="medium"
+        :input-props="{ id: 'ledger-edit-transaction-payee', name: 'payee', autocomplete: 'off' }"
+        :disabled="saving"
+      />
     </div>
     <div class="ledger-form-field">
       <label for="ledger-edit-transaction-note">备注（可选）</label>
-      <textarea id="ledger-edit-transaction-note" v-model="note" name="note" rows="3" :disabled="saving" />
+      <NInput
+        v-model:value="note"
+        class="ledger-form-control"
+        type="textarea"
+        size="medium"
+        :input-props="{ id: 'ledger-edit-transaction-note', name: 'note', rows: 3 }"
+        :disabled="saving"
+      />
     </div>
 
     <p v-if="error" class="ledger-form-error" role="alert">{{ error }}</p>
     <div class="ledger-form-actions">
-      <button v-if="props.cancelable" class="ledger-secondary-button" type="button" :disabled="saving" @click="emit('cancel')">取消</button>
-      <button class="ledger-primary-button" type="submit" :disabled="saving">{{ saving ? '正在保存…' : '保存交易' }}</button>
+      <NButton v-if="props.cancelable" class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" :disabled="saving" @click="emit('cancel')">取消</NButton>
+      <NButton class="ledger-primary-button" attr-type="submit" type="primary" size="medium" :bordered="false" :disabled="saving">{{ saving ? '正在保存…' : '保存交易' }}</NButton>
     </div>
   </form>
 </template>
@@ -272,6 +330,9 @@ async function submit(): Promise<void> {
 .ledger-form-field input,
 .ledger-form-field select,
 .ledger-form-field textarea { width: 100%; min-height: 38px; padding: 7px 10px; box-sizing: border-box; border: 1px solid var(--border); border-radius: 7px; background: var(--bg); color: var(--text-h); font: inherit; font-size: .86rem; }
+.ledger-form-control { width: 100%; }
+.ledger-form-field :deep(.ledger-form-control .n-input),
+.ledger-form-field :deep(.ledger-form-control .n-base-selection) { width: 100%; }
 .ledger-form-field textarea { resize: vertical; }
 .ledger-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .ledger-readonly-fields { display: flex; flex-wrap: wrap; gap: 8px; color: var(--text-muted); font-size: .78rem; }

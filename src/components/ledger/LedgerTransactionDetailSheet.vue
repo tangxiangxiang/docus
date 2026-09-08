@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
+import { NButton, NIcon } from 'naive-ui'
+import { X } from '@vicons/tabler'
 import type { LedgerTransactionDto } from '../../../shared/ledgerProtocol'
 import { useConfirm } from '../../composables/useConfirm'
 import { useFocusTrap } from '../../composables/useFocusTrap'
@@ -150,7 +152,7 @@ async function remove(): Promise<void> {
             <p class="ledger-eyebrow">交易详情</p>
             <h2 id="ledger-transaction-detail-title">{{ typeLabel(transaction.type) }}</h2>
           </div>
-          <button class="ledger-close-button" type="button" aria-label="关闭交易详情" @click="emit('close')">×</button>
+          <NButton class="ledger-close-button" attr-type="button" size="small" :bordered="false" aria-label="关闭交易详情" @click="emit('close')"><NIcon aria-hidden="true" :size="18"><X /></NIcon></NButton>
         </header>
 
         <LedgerTransactionEditForm v-if="editing && canEdit" :transaction="transaction" @saved="onSaved" @cancel="editing = false" />
@@ -183,17 +185,17 @@ async function remove(): Promise<void> {
             <p>历史记录仍可查看。恢复账户后，才能修改交易的财务字段或删除这笔记录。</p>
             <div v-for="account in archivedAccounts" :key="account.id" class="ledger-restore-row">
               <span>{{ account.name }}（已归档）</span>
-              <button class="ledger-secondary-button" type="button" :disabled="Boolean(restoringId)" @click="restoreAccount(account.id)">{{ restoringId === account.id ? '正在恢复…' : '恢复账户' }}</button>
+              <NButton class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" :disabled="Boolean(restoringId)" @click="restoreAccount(account.id)">{{ restoringId === account.id ? '正在恢复…' : '恢复账户' }}</NButton>
             </div>
           </section>
 
           <p v-if="transaction.type === 'adjustment'" class="ledger-form-info">余额调整为只读记录，不能通过普通交易编辑或删除。</p>
           <p v-if="actionError" class="ledger-form-error" role="alert">{{ actionError }}</p>
           <div class="ledger-form-actions">
-            <button v-if="canEdit" class="ledger-secondary-button" type="button" :disabled="Boolean(restoringId)" @click="editing = true">编辑交易</button>
-            <button v-if="canDelete" class="ledger-danger-button" type="button" :disabled="Boolean(restoringId)" @click="remove">删除记录</button>
-            <button v-else-if="canEdit && archivedAccounts.length" class="ledger-secondary-button" type="button" disabled>恢复账户后可删除</button>
-            <button class="ledger-primary-button" type="button" @click="emit('close')">完成</button>
+            <NButton v-if="canEdit" class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" :disabled="Boolean(restoringId)" @click="editing = true">编辑交易</NButton>
+            <NButton v-if="canDelete" class="ledger-danger-button" attr-type="button" size="medium" :bordered="false" :disabled="Boolean(restoringId)" @click="remove">删除记录</NButton>
+            <NButton v-else-if="canEdit && archivedAccounts.length" class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" disabled>恢复账户后可删除</NButton>
+            <NButton class="ledger-primary-button" attr-type="button" type="primary" size="medium" :bordered="false" @click="emit('close')">完成</NButton>
           </div>
         </template>
       </section>
@@ -247,4 +249,3 @@ async function remove(): Promise<void> {
   .ledger-form-actions > * { flex: 1 1 135px; }
 }
 </style>
-

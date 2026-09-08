@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { NButton, NInput, NSelect, type SelectOption } from 'naive-ui'
 import type { LedgerAccountDto, LedgerAccountNature, LedgerAccountType } from '../../../shared/ledgerProtocol'
 import { ledgerAccountTypeOptionsForNature } from '../../features/ledger/accountPresentation'
 import { ledgerErrorMessage } from '../../features/ledger/ledgerErrors'
@@ -26,7 +27,14 @@ const submitted = ref(false)
 const saving = ref(false)
 
 const financialFieldsEditable = computed(() => !props.hasHistory && props.account.archivedAt === null)
-const typeOptions = computed(() => ledgerAccountTypeOptionsForNature(nature.value))
+const natureOptions: SelectOption[] = [
+  { value: 'asset', label: '资产（我拥有的）' },
+  { value: 'liability', label: '负债（我需要偿还的）' },
+]
+const typeOptions = computed<SelectOption[]>(() => ledgerAccountTypeOptionsForNature(nature.value).map((option) => ({
+  value: option.value,
+  label: option.label,
+})))
 
 function reset(): void {
   name.value = props.account.name
@@ -42,7 +50,8 @@ function reset(): void {
 watch(() => props.account, reset, { immediate: true })
 watch(nature, (nextNature) => {
   if (!typeOptions.value.some((option) => option.value === type.value)) {
-    type.value = typeOptions.value[0]?.value ?? (nextNature === 'asset' ? 'bank' : 'credit_card')
+    type.value = (typeOptions.value[0]?.value as LedgerAccountType | undefined)
+      ?? (nextNature === 'asset' ? 'bank' : 'credit_card')
   }
 })
 
@@ -110,26 +119,51 @@ async function submit(): Promise<void> {
 
     <div class="ledger-form-field">
       <label for="ledger-edit-account-name">账户名称</label>
-      <input id="ledger-edit-account-name" v-model="name" name="name" type="text" required :disabled="saving" />
+      <NInput
+        v-model:value="name"
+        class="ledger-form-control"
+        type="text"
+        size="medium"
+        :input-props="{ id: 'ledger-edit-account-name', name: 'name', required: true }"
+        :disabled="saving"
+      />
     </div>
 
     <div v-if="financialFieldsEditable" class="ledger-form-grid">
       <div class="ledger-form-field">
         <label for="ledger-edit-account-nature">账户性质</label>
-        <select id="ledger-edit-account-nature" v-model="nature" name="nature" :disabled="saving">
-          <option value="asset">资产（我拥有的）</option>
-          <option value="liability">负债（我需要偿还的）</option>
-        </select>
+        <NSelect
+          v-model:value="nature"
+          class="ledger-form-control"
+          size="medium"
+          :options="natureOptions"
+          :input-props="{ id: 'ledger-edit-account-nature', name: 'nature' }"
+          aria-label="账户性质"
+          :disabled="saving"
+        />
       </div>
       <div class="ledger-form-field">
         <label for="ledger-edit-account-type">账户类型</label>
-        <select id="ledger-edit-account-type" v-model="type" name="type" :disabled="saving">
-          <option v-for="option in typeOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-        </select>
+        <NSelect
+          v-model:value="type"
+          class="ledger-form-control"
+          size="medium"
+          :options="typeOptions"
+          :input-props="{ id: 'ledger-edit-account-type', name: 'type' }"
+          aria-label="账户类型"
+          :disabled="saving"
+        />
       </div>
       <div class="ledger-form-field">
         <label for="ledger-edit-account-opening-balance">期初余额</label>
-        <input id="ledger-edit-account-opening-balance" v-model="openingBalance" name="openingBalance" type="text" inputmode="decimal" :disabled="saving" />
+        <NInput
+          v-model:value="openingBalance"
+          class="ledger-form-control"
+          type="text"
+          size="medium"
+          :input-props="{ id: 'ledger-edit-account-opening-balance', name: 'openingBalance', inputmode: 'decimal' }"
+          :disabled="saving"
+        />
       </div>
       <div class="ledger-form-field">
         <label for="ledger-edit-account-opening-date">期初日期</label>
@@ -146,13 +180,20 @@ async function submit(): Promise<void> {
 
     <div class="ledger-form-field">
       <label for="ledger-edit-account-note">备注（可选）</label>
-      <textarea id="ledger-edit-account-note" v-model="note" name="note" rows="3" :disabled="saving" />
+      <NInput
+        v-model:value="note"
+        class="ledger-form-control"
+        type="textarea"
+        size="medium"
+        :input-props="{ id: 'ledger-edit-account-note', name: 'note', rows: 3 }"
+        :disabled="saving"
+      />
     </div>
 
     <p v-if="error" class="ledger-form-error" role="alert">{{ error }}</p>
     <div class="ledger-form-actions">
-      <button v-if="props.cancelable" class="ledger-secondary-button" type="button" :disabled="saving" @click="emit('cancel')">取消</button>
-      <button class="ledger-primary-button" type="submit" :disabled="saving">{{ saving ? '正在保存…' : '保存账户' }}</button>
+      <NButton v-if="props.cancelable" class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" :disabled="saving" @click="emit('cancel')">取消</NButton>
+      <NButton class="ledger-primary-button" attr-type="submit" type="primary" size="medium" :bordered="false" :disabled="saving">{{ saving ? '正在保存…' : '保存账户' }}</NButton>
     </div>
   </form>
 </template>
@@ -168,6 +209,9 @@ async function submit(): Promise<void> {
 .ledger-form-field input,
 .ledger-form-field select,
 .ledger-form-field textarea { width: 100%; box-sizing: border-box; min-height: 38px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg); color: var(--text-h); font: inherit; font-size: .88rem; }
+.ledger-form-control { width: 100%; }
+.ledger-form-field :deep(.ledger-form-control .n-input),
+.ledger-form-field :deep(.ledger-form-control .n-base-selection) { width: 100%; }
 .ledger-form-field textarea { resize: vertical; }
 .ledger-readonly-fields { display: flex; flex-wrap: wrap; gap: 7px 12px; color: var(--text-muted); font-size: .8rem; }
 .ledger-readonly-fields span { padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }

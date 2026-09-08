@@ -10,6 +10,7 @@ import type {
   LedgerSettingsDto,
 } from '../../../../shared/ledgerProtocol'
 import LedgerView from '../../../views/LedgerView.vue'
+import { setNaiveSelect } from './selectTestUtils'
 
 const api = vi.hoisted(() => ({
   getLedgerSettings: vi.fn(),
@@ -107,7 +108,7 @@ describe('Ledger initialization and first-account onboarding', () => {
     await flushPromises()
 
     const settingsForm = wrapper.get('[data-testid="ledger-settings-form"]')
-    await settingsForm.get('select[name="baseCurrency"]').setValue('CNY')
+    await setNaiveSelect(settingsForm, '基础货币', 'CNY')
     await settingsForm.get('input[name="timezone"]').setValue('Asia/Shanghai')
 
     api.getLedgerSettings.mockResolvedValue(settings(false))
@@ -195,7 +196,7 @@ describe('Ledger initialization and first-account onboarding', () => {
     const wrapper = mount(LedgerView)
     await flushPromises()
     const settingsForm = wrapper.get('[data-testid="ledger-settings-form"]')
-    await settingsForm.get('select[name="baseCurrency"]').setValue('CNY')
+    await setNaiveSelect(settingsForm, '基础货币', 'CNY')
     await settingsForm.get('input[name="timezone"]').setValue('Asia/Shanghai')
     await settingsForm.trigger('submit')
     await flushPromises()
@@ -205,7 +206,7 @@ describe('Ledger initialization and first-account onboarding', () => {
     await firstAccount.findAll('button').find((button) => button.text() === '修改 Ledger 设置')!.trigger('click')
 
     const editSettingsForm = wrapper.get('[data-testid="ledger-settings-form"]')
-    await editSettingsForm.get('select[name="baseCurrency"]').setValue('JPY')
+    await setNaiveSelect(editSettingsForm, '基础货币', 'JPY')
     await editSettingsForm.get('input[name="timezone"]').setValue('Asia/Tokyo')
     api.getLedgerSettings.mockResolvedValue(editedSettings)
     await editSettingsForm.trigger('submit')

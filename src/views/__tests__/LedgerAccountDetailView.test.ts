@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { LedgerAccountDto, LedgerOverviewDto, LedgerSettingsDto } from '../../../shared/ledgerProtocol'
 import { resetLedgerStoreForTesting } from '../../features/ledger/ledgerStore'
 import LedgerAccountDetailView from '../LedgerAccountDetailView.vue'
+import { getNaiveSelect } from '../../components/ledger/__tests__/selectTestUtils'
 
 const api = vi.hoisted(() => ({
   getLedgerSettings: vi.fn(),
@@ -119,7 +120,7 @@ describe('Ledger account detail lifecycle', () => {
     await flushPromises()
 
     await wrapper.findAll('button').find((button) => button.text() === '编辑账户')!.trigger('click')
-    expect(wrapper.find('select[name="nature"]').exists()).toBe(true)
+    expect(getNaiveSelect(wrapper, '账户性质').exists()).toBe(true)
     await wrapper.get('input[name="name"]').setValue('招商银行主账户')
     api.patchLedgerAccount.mockResolvedValue(account({ name: '招商银行主账户', version: 4 }))
     api.getLedgerAccount.mockResolvedValue(account({ name: '招商银行主账户', version: 4 }))
@@ -144,7 +145,7 @@ describe('Ledger account detail lifecycle', () => {
     await flushPromises()
 
     await wrapper.findAll('button').find((button) => button.text() === '编辑账户')!.trigger('click')
-    expect(wrapper.find('select[name="nature"]').exists()).toBe(false)
+    expect(wrapper.findAllComponents({ name: 'NSelect' }).length).toBe(0)
     expect(wrapper.text()).toContain('账户已有历史记录')
     await wrapper.get('input[name="name"]').setValue('历史账户')
     api.patchLedgerAccount.mockResolvedValue(account({ name: '历史账户', version: 4 }))

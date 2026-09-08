@@ -12,6 +12,7 @@ import type {
 import { LedgerApiError } from '../../../features/ledger/ledgerErrors'
 import { resetLedgerStoreForTesting } from '../../../features/ledger/ledgerStore'
 import LedgerView from '../../../views/LedgerView.vue'
+import { getNaiveSelect, naiveSelectValue, setNaiveSelect } from './selectTestUtils'
 
 const api = vi.hoisted(() => ({
   getLedgerSettings: vi.fn(),
@@ -122,11 +123,12 @@ describe('Ledger transaction creation sheet', () => {
 
     expect(sheet.get('[role="tab"][aria-selected="true"]').text()).toBe('支出')
     expect((sheet.get('input[name="occurredAt"]').element as HTMLInputElement).value).toContain('T')
-    expect(sheet.findAll('select[name="categoryId"] option').map((option) => option.text())).toEqual(['请选择分类', '餐饮'])
+    expect(getNaiveSelect(sheet, '分类').props('placeholder')).toBe('请选择分类')
+    expect(getNaiveSelect(sheet, '分类').props('options')).toEqual([{ value: 'food', label: '餐饮' }])
 
     await sheet.get('input[name="amount"]').setValue('38')
-    await sheet.get('select[name="accountId"]').setValue('bank-1')
-    await sheet.get('select[name="categoryId"]').setValue('food')
+    await setNaiveSelect(sheet, '账户', 'bank-1')
+    await setNaiveSelect(sheet, '分类', 'food')
     await sheet.get('input[name="occurredAt"]').setValue('2026-09-05T12:30')
     api.createLedgerTransaction.mockResolvedValue(savedTransaction)
     await sheet.get('form').trigger('submit')
@@ -147,15 +149,15 @@ describe('Ledger transaction creation sheet', () => {
   it('preselects the only active account', async () => {
     setup([account('only-bank', '唯一账户')])
     await openSheet()
-    expect((getSheet().get('select[name="accountId"]').element as HTMLSelectElement).value).toBe('only-bank')
+    expect(naiveSelectValue(getSheet(), '账户')).toBe('only-bank')
   })
 
   it('does not guess an account when multiple active accounts are available', async () => {
     await openSheet()
     const sheet = getSheet()
-    expect((sheet.get('select[name="accountId"]').element as HTMLSelectElement).value).toBe('')
+    expect(naiveSelectValue(sheet, '账户')).toBe('')
     await sheet.get('input[name="amount"]').setValue('5')
-    await sheet.get('select[name="categoryId"]').setValue('food')
+    await setNaiveSelect(sheet, '分类', 'food')
     await sheet.get('input[name="occurredAt"]').setValue('2026-09-05T12:30')
     await sheet.get('form').trigger('submit')
     expect(sheet.text()).toContain('请选择账户')
@@ -167,11 +169,11 @@ describe('Ledger transaction creation sheet', () => {
     const sheet = getSheet()
 
     await sheet.findAll('[role="tab"]').find((button) => button.text() === '收入')!.trigger('click')
-    expect(sheet.find('select[name="categoryId"]').exists()).toBe(true)
-    expect(sheet.findAll('select[name="categoryId"] option').map((option) => option.text())).toEqual(['请选择分类', '工资'])
+    expect(getNaiveSelect(sheet, '分类').props('options')).toEqual([{ value: 'salary', label: '工资' }])
+    expect(getNaiveSelect(sheet, '分类').props('placeholder')).toBe('请选择分类')
     await sheet.get('input[name="amount"]').setValue('12.50')
-    await sheet.get('select[name="accountId"]').setValue('bank-1')
-    await sheet.get('select[name="categoryId"]').setValue('salary')
+    await setNaiveSelect(sheet, '账户', 'bank-1')
+    await setNaiveSelect(sheet, '分类', 'salary')
     await sheet.get('input[name="occurredAt"]').setValue('2026-09-05T12:30')
     api.createLedgerTransaction.mockResolvedValue(savedTransaction)
     await sheet.get('form').trigger('submit')
@@ -182,13 +184,13 @@ describe('Ledger transaction creation sheet', () => {
     await wrapper.get('[data-testid="ledger-record-button"]').trigger('click')
     const transferSheet = getSheet()
     await transferSheet.findAll('[role="tab"]').find((button) => button.text() === '转账')!.trigger('click')
-    expect(transferSheet.find('select[name="categoryId"]').exists()).toBe(false)
+    expect(transferSheet.find('[aria-label="分类"]').exists()).toBe(false)
     expect(transferSheet.find('input[name="payee"]').exists()).toBe(false)
-    expect((transferSheet.get('select[name="fromAccountId"]').element as HTMLSelectElement).value).toBe('')
-    expect((transferSheet.get('select[name="toAccountId"]').element as HTMLSelectElement).value).toBe('')
+    expect(naiveSelectValue(transferSheet, '转出账户')).toBe('')
+    expect(naiveSelectValue(transferSheet, '转入账户')).toBe('')
     await transferSheet.get('input[name="amount"]').setValue('5')
-    await transferSheet.get('select[name="fromAccountId"]').setValue('bank-1')
-    await transferSheet.get('select[name="toAccountId"]').setValue('wallet-1')
+    await setNaiveSelect(transferSheet, '转出账户', 'bank-1')
+    await setNaiveSelect(transferSheet, '转入账户', 'wallet-1')
     await transferSheet.get('input[name="occurredAt"]').setValue('2026-09-05T12:30')
     api.createLedgerTransaction.mockResolvedValue({ id: 'tx-2', type: 'transfer' } as unknown as LedgerTransactionDto)
     await transferSheet.get('form').trigger('submit')
@@ -203,8 +205,8 @@ describe('Ledger transaction creation sheet', () => {
     await openSheet()
     const sheet = getSheet()
     await sheet.get('input[name="amount"]').setValue('12.50')
-    await sheet.get('select[name="accountId"]').setValue('bank-1')
-    await sheet.get('select[name="categoryId"]').setValue('food')
+    await setNaiveSelect(sheet, '账户', 'bank-1')
+    await setNaiveSelect(sheet, '分类', 'food')
     await sheet.get('input[name="occurredAt"]').setValue('2026-09-05T12:30')
     await sheet.get('input[name="payee"]').setValue('午餐')
     await sheet.get('textarea[name="note"]').setValue('共同备注')
@@ -213,16 +215,16 @@ describe('Ledger transaction creation sheet', () => {
     expect((sheet.get('input[name="amount"]').element as HTMLInputElement).value).toBe('12.50')
     expect((sheet.get('input[name="occurredAt"]').element as HTMLInputElement).value).toBe('2026-09-05T12:30')
     expect((sheet.get('textarea[name="note"]').element as HTMLTextAreaElement).value).toBe('共同备注')
-    expect((sheet.get('select[name="accountId"]').element as HTMLSelectElement).value).toBe('')
-    expect((sheet.get('select[name="categoryId"]').element as HTMLSelectElement).value).toBe('')
+    expect(naiveSelectValue(sheet, '账户')).toBe('')
+    expect(naiveSelectValue(sheet, '分类')).toBe('')
     expect((sheet.get('input[name="payee"]').element as HTMLInputElement).value).toBe('')
 
     await sheet.findAll('[role="tab"]').find((button) => button.text() === '转账')!.trigger('click')
     expect((sheet.get('input[name="amount"]').element as HTMLInputElement).value).toBe('12.50')
     expect((sheet.get('input[name="occurredAt"]').element as HTMLInputElement).value).toBe('2026-09-05T12:30')
     expect((sheet.get('textarea[name="note"]').element as HTMLTextAreaElement).value).toBe('共同备注')
-    expect((sheet.get('select[name="fromAccountId"]').element as HTMLSelectElement).value).toBe('')
-    expect((sheet.get('select[name="toAccountId"]').element as HTMLSelectElement).value).toBe('')
+    expect(naiveSelectValue(sheet, '转出账户')).toBe('')
+    expect(naiveSelectValue(sheet, '转入账户')).toBe('')
   })
 
   it('quick-creates a contextual category and selects the server result', async () => {
@@ -239,7 +241,7 @@ describe('Ledger transaction creation sheet', () => {
     await flushPromises()
 
     expect(api.createLedgerCategory).toHaveBeenCalledWith({ kind: 'expense', name: '交通' }, expect.any(String))
-    expect((sheet.get('select[name="categoryId"]').element as HTMLSelectElement).value).toBe('transport')
+    expect(naiveSelectValue(sheet, '分类')).toBe('transport')
     expect(sheet.find('[data-testid="ledger-category-quick-create"]').exists()).toBe(false)
   })
 
@@ -247,8 +249,8 @@ describe('Ledger transaction creation sheet', () => {
     const wrapper = await openSheet()
     const sheet = getSheet()
     await sheet.get('input[name="amount"]').setValue('38')
-    await sheet.get('select[name="accountId"]').setValue('bank-1')
-    await sheet.get('select[name="categoryId"]').setValue('food')
+    await setNaiveSelect(sheet, '账户', 'bank-1')
+    await setNaiveSelect(sheet, '分类', 'food')
     await sheet.get('input[name="occurredAt"]').setValue('2026-09-05T12:30')
     api.createLedgerTransaction.mockRejectedValueOnce(new LedgerApiError('unknown', 0, 'ledger-network-error', null, true))
     await sheet.get('form').trigger('submit')
@@ -273,8 +275,8 @@ describe('Ledger transaction creation sheet', () => {
     const sheet = getSheet()
     await sheet.findAll('[role="tab"]').find((button) => button.text() === '转账')!.trigger('click')
     await sheet.get('input[name="amount"]').setValue('5')
-    await sheet.get('select[name="fromAccountId"]').setValue('bank-1')
-    await sheet.get('select[name="toAccountId"]').setValue('bank-1')
+    await setNaiveSelect(sheet, '转出账户', 'bank-1')
+    await setNaiveSelect(sheet, '转入账户', 'bank-1')
     await sheet.get('input[name="occurredAt"]').setValue('2026-09-05T12:30')
     await sheet.get('form').trigger('submit')
 

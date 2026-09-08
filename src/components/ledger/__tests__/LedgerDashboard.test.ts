@@ -15,6 +15,7 @@ import { resetLedgerStoreForTesting, useLedgerStore } from '../../../features/le
 import { instantFromLocalDateTime } from '../../../features/ledger/time'
 import LedgerCashflowTrend from '../LedgerCashflowTrend.vue'
 import LedgerView from '../../../views/LedgerView.vue'
+import { getNaiveSelect, setNaiveSelect } from './selectTestUtils'
 
 const api = vi.hoisted(() => ({
   getLedgerSettings: vi.fn(),
@@ -261,7 +262,7 @@ describe('Ledger live dashboard', () => {
     expect(wrapper.find('.ledger-period-navigation').exists()).toBe(false)
     expect(wrapper.find('#ledger-period-navigation-title').exists()).toBe(false)
     expect(cashflowSection.find('[data-testid="ledger-period-date"]').exists()).toBe(true)
-    expect(cashflowSection.find('select[aria-label="选择收支期间"]').exists()).toBe(true)
+    expect(getNaiveSelect(cashflowSection, '选择收支期间').exists()).toBe(true)
     expect(cashflowSection.find('[data-testid="ledger-return-today"]').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('期间分析')
     expect(wrapper.text()).not.toContain('breakdown')
@@ -341,7 +342,7 @@ describe('Ledger live dashboard', () => {
     wrappers.push(wrapper)
     await flushPromises()
 
-    await wrapper.get('select[aria-label="选择收支期间"]').setValue('today')
+    await setNaiveSelect(wrapper, '选择收支期间', 'today')
     await flushPromises()
 
     expect(api.getLedgerOverview).toHaveBeenLastCalledWith({ scope: 'today', anchorDate: undefined })
@@ -354,7 +355,7 @@ describe('Ledger live dashboard', () => {
     wrappers.push(wrapper)
     await flushPromises()
 
-    await wrapper.get('select[aria-label="选择收支期间"]').setValue('all')
+    await setNaiveSelect(wrapper, '选择收支期间', 'all')
     await flushPromises()
 
     expect(api.getLedgerOverview).toHaveBeenLastCalledWith({ scope: 'all', anchorDate: undefined })
@@ -370,7 +371,7 @@ describe('Ledger live dashboard', () => {
 
     const refreshError = new LedgerApiError('overview unavailable', 500, 'ledger-internal-error')
     api.getLedgerOverview.mockRejectedValueOnce(refreshError)
-    await wrapper.get('select[aria-label="选择收支期间"]').setValue('today')
+    await setNaiveSelect(wrapper, '选择收支期间', 'today')
     await flushPromises()
 
     expect(wrapper.get('.ledger-inline-error').text()).toContain('这段期间的数据暂时无法加载。')

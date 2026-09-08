@@ -14,6 +14,7 @@ import { resetLedgerStoreForTesting } from '../../features/ledger/ledgerStore'
 import { LEDGER_PENDING_CREATE_STORAGE_KEY, createLedgerPendingIntent } from '../../features/ledger/recovery'
 import { instantFromLedgerDate } from '../../features/ledger/time'
 import LedgerTransactionsView from '../LedgerTransactionsView.vue'
+import { getNaiveSelect, naiveSelectValue, setNaiveSelect } from '../../components/ledger/__tests__/selectTestUtils'
 
 const api = vi.hoisted(() => ({
   getLedgerSettings: vi.fn(),
@@ -243,17 +244,17 @@ describe('Ledger live transaction history workspace', () => {
     expect(wrapper.find('[data-testid="ledger-transaction-list"]').text()).toContain('午餐')
     expect(wrapper.text()).toContain('工资')
     expect(wrapper.text()).toContain('余额调整')
-    expect(wrapper.get('select[name="accountId"] option[value="old-bank"]').text()).toContain('已归档')
-    expect(wrapper.get('select[name="categoryId"] option[value="old-food"]').text()).toContain('已归档')
+    expect(getNaiveSelect(wrapper, '账户').props('options')).toEqual(expect.arrayContaining([{ value: 'old-bank', label: '旧账户（已归档）' }]))
+    expect(getNaiveSelect(wrapper, '分类').props('options')).toEqual(expect.arrayContaining([{ value: 'old-food', label: '旧餐饮（已归档）' }]))
     expect(wrapper.text()).not.toContain('billsMockData')
   })
 
   it('sends supported type, entity, and Ledger-timezone date filters to the API', async () => {
     const wrapper = await mountView()
 
-    await wrapper.get('select[name="type"]').setValue('expense')
-    await wrapper.get('select[name="accountId"]').setValue('old-bank')
-    await wrapper.get('select[name="categoryId"]').setValue('old-food')
+    await setNaiveSelect(wrapper, '类型', 'expense')
+    await setNaiveSelect(wrapper, '账户', 'old-bank')
+    await setNaiveSelect(wrapper, '分类', 'old-food')
     await wrapper.get('input[name="from"]').setValue('2026-09-01')
     await wrapper.get('input[name="to"]').setValue('2026-09-05')
     await wrapper.get('[data-testid="ledger-filter-submit"]').trigger('click')
@@ -272,7 +273,7 @@ describe('Ledger live transaction history workspace', () => {
   it('applies an Account deep-link query before loading history', async () => {
     const wrapper = await mountView('/ledger/transactions?accountId=old-bank')
 
-    expect((wrapper.get('select[name="accountId"]').element as HTMLSelectElement).value).toBe('old-bank')
+    expect(naiveSelectValue(wrapper, '账户')).toBe('old-bank')
     expect(api.listLedgerTransactions).toHaveBeenLastCalledWith({
       type: 'all',
       accountId: 'old-bank',
@@ -306,7 +307,7 @@ describe('Ledger live transaction history workspace', () => {
     api.listLedgerTransactions.mockResolvedValue(emptyPage)
     const wrapper = await mountView()
 
-    await wrapper.get('select[name="type"]').setValue('income')
+    await setNaiveSelect(wrapper, '类型', 'income')
     await wrapper.get('[data-testid="ledger-filter-submit"]').trigger('click')
     await flushPromises()
 
@@ -320,8 +321,8 @@ describe('Ledger live transaction history workspace', () => {
 
     expect(wrapper.get('[data-testid="ledger-transactions-no-account"]').text()).toContain('当前没有可用于新增交易的账户')
     expect(wrapper.get('[data-testid="ledger-transaction-list"]').text()).toContain('午餐')
-    expect(wrapper.get('select[name="accountId"] option[value="old-bank"]').text()).toContain('已归档')
-    expect(wrapper.get('select[name="categoryId"] option[value="old-food"]').text()).toContain('已归档')
+    expect(getNaiveSelect(wrapper, '账户').props('options')).toEqual(expect.arrayContaining([{ value: 'old-bank', label: '旧账户（已归档）' }]))
+    expect(getNaiveSelect(wrapper, '分类').props('options')).toEqual(expect.arrayContaining([{ value: 'old-food', label: '旧餐饮（已归档）' }]))
     expect(wrapper.get('[data-testid="ledger-transactions-record-button"]').attributes('disabled')).toBeDefined()
   })
 

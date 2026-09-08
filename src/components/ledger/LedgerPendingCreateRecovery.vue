@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { NButton } from 'naive-ui'
 import type { LedgerPendingCreateIntent } from '../../features/ledger/recovery'
 
 defineProps<{
@@ -28,15 +29,18 @@ function operationLabel(operation: LedgerPendingCreateIntent['operation']): stri
     </p>
     <p class="ledger-recovery-detail">原始提交时间：{{ new Date(intent.createdAt).toLocaleString('zh-CN') }}</p>
     <p v-if="error" class="ledger-form-error" role="alert">{{ error }}</p>
-    <button
+    <NButton
       class="ledger-primary-button"
-      type="button"
+      attr-type="button"
+      type="primary"
+      size="medium"
+      :bordered="false"
       :disabled="busy"
       :aria-busy="busy ? 'true' : undefined"
       @click="emit('retry')"
     >
       {{ busy ? '正在确认…' : '用同一内容重试' }}
-    </button>
+    </NButton>
   </section>
 </template>
 

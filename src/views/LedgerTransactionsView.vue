@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { NButton, NSelect, type SelectOption } from 'naive-ui'
 import { useRoute } from 'vue-router'
 import type {
   LedgerCategoryDto,
@@ -28,6 +29,27 @@ const filterTo = ref('')
 const filtersLoading = ref(false)
 const loadMoreLoading = ref(false)
 const filterError = ref('')
+
+const typeOptions: SelectOption[] = [
+  { value: 'all', label: '全部类型' },
+  { value: 'income', label: '收入' },
+  { value: 'expense', label: '支出' },
+  { value: 'transfer', label: '转账' },
+]
+const accountOptions = computed<SelectOption[]>(() => [
+  { value: '', label: '全部账户' },
+  ...store.accounts.value.map((account) => ({
+    value: account.id,
+    label: `${account.name}${account.archivedAt !== null ? '（已归档）' : ''}`,
+  })),
+])
+const categoryOptions = computed<SelectOption[]>(() => [
+  { value: '', label: '全部分类' },
+  ...store.categories.value.map((category) => ({
+    value: category.id,
+    label: categoryLabel(category),
+  })),
+])
 
 const loading = computed(() => store.workspaceState.value === 'BOOTSTRAPPING' || filtersLoading.value)
 const page = computed(() => store.transactions.value)
@@ -179,7 +201,7 @@ function onRecoveryResolved(): void {
         <h1>交易记录</h1>
         <p>查看真实交易历史，或快速记下一笔。</p>
       </div>
-      <button class="ledger-primary-button" type="button" :disabled="loading || store.hasUnresolvedCreate.value || !store.activeAccounts.value.length" data-testid="ledger-transactions-record-button" @click="transactionSheetOpen = true">＋ 记一笔</button>
+      <NButton class="ledger-primary-button" attr-type="button" type="primary" size="medium" :bordered="false" :disabled="loading || store.hasUnresolvedCreate.value || !store.activeAccounts.value.length" data-testid="ledger-transactions-record-button" @click="transactionSheetOpen = true">＋ 记一笔</NButton>
     </header>
 
     <LedgerPendingCreateGate v-if="store.recoveryGateVisible.value" @resolved="onRecoveryResolved" />
@@ -187,15 +209,15 @@ function onRecoveryResolved(): void {
     <section v-else-if="store.settings.value" class="ledger-filters" aria-labelledby="ledger-filters-title">
       <div class="ledger-filters-heading">
         <h2 id="ledger-filters-title">筛选</h2>
-        <button v-if="hasFilters" class="ledger-link-button" type="button" @click="clearFilters">清除筛选</button>
+        <NButton v-if="hasFilters" class="ledger-link-button" attr-type="button" size="small" text :bordered="false" @click="clearFilters">清除筛选</NButton>
       </div>
       <div class="ledger-filters-grid">
-        <label><span>类型</span><select v-model="filterType" name="type"><option value="all">全部类型</option><option value="income">收入</option><option value="expense">支出</option><option value="transfer">转账</option></select></label>
-        <label><span>账户</span><select v-model="filterAccountId" name="accountId"><option value="">全部账户</option><option v-for="account in store.accounts.value" :key="account.id" :value="account.id">{{ account.name }}{{ account.archivedAt !== null ? '（已归档）' : '' }}</option></select></label>
-        <label><span>分类</span><select v-model="filterCategoryId" name="categoryId"><option value="">全部分类</option><option v-for="category in store.categories.value" :key="category.id" :value="category.id">{{ categoryLabel(category) }}</option></select></label>
+        <label for="ledger-filter-type"><span>类型</span><NSelect v-model:value="filterType" class="ledger-filter-control" size="small" :options="typeOptions" :input-props="{ id: 'ledger-filter-type', name: 'type' }" aria-label="类型" /></label>
+        <label for="ledger-filter-account"><span>账户</span><NSelect v-model:value="filterAccountId" class="ledger-filter-control" size="small" :options="accountOptions" :input-props="{ id: 'ledger-filter-account', name: 'accountId' }" aria-label="账户" /></label>
+        <label for="ledger-filter-category"><span>分类</span><NSelect v-model:value="filterCategoryId" class="ledger-filter-control" size="small" :options="categoryOptions" :input-props="{ id: 'ledger-filter-category', name: 'categoryId' }" aria-label="分类" /></label>
         <label><span>从日期</span><input v-model="filterFrom" name="from" type="date" /></label>
         <label><span>到日期</span><input v-model="filterTo" name="to" type="date" /></label>
-        <button class="ledger-secondary-button ledger-filter-submit" data-testid="ledger-filter-submit" type="button" :disabled="filtersLoading" @click="applyFilters">{{ filtersLoading ? '正在加载…' : '应用筛选' }}</button>
+        <NButton class="ledger-secondary-button ledger-filter-submit" attr-type="button" size="small" :bordered="false" data-testid="ledger-filter-submit" :disabled="filtersLoading" @click="applyFilters">{{ filtersLoading ? '正在加载…' : '应用筛选' }}</NButton>
       </div>
     </section>
 
@@ -220,7 +242,7 @@ function onRecoveryResolved(): void {
         <span v-if="store.settings.value" class="ledger-timezone-note">按 {{ store.settings.value.timezone }} 显示</span>
       </div>
 
-      <div v-if="filterError" class="ledger-inline-error" role="alert"><span>{{ filterError }}</span><button class="ledger-link-button" type="button" @click="loadTransactions">重试</button></div>
+      <div v-if="filterError" class="ledger-inline-error" role="alert"><span>{{ filterError }}</span><NButton class="ledger-link-button" attr-type="button" size="small" text :bordered="false" @click="loadTransactions">重试</NButton></div>
       <div v-if="transactions.length" class="ledger-transaction-list" data-testid="ledger-transaction-list">
         <button v-for="transaction in transactions" :key="transaction.id" :data-testid="`ledger-transaction-row-${transaction.id}`" class="ledger-transaction-row" type="button" @click="inspect(transaction)">
           <span class="ledger-transaction-main"><strong>{{ transactionTitle(transaction) }}</strong><small>{{ typeLabel(transaction.type) }} · {{ transactionMeta(transaction) }}</small></span>
@@ -231,10 +253,10 @@ function onRecoveryResolved(): void {
       <div v-else class="ledger-transactions-empty" data-testid="ledger-transactions-empty" role="status">
         <h3>{{ hasFilters ? '没有符合筛选条件的交易' : '还没有交易记录' }}</h3>
         <p>{{ hasFilters ? '可以清除筛选，或换一个日期和账户。' : '保存第一笔收入、支出或转账后，它会显示在这里。' }}</p>
-        <button v-if="hasFilters" class="ledger-secondary-button" type="button" @click="clearFilters">清除筛选</button>
-        <button v-else class="ledger-primary-button" type="button" :disabled="!store.activeAccounts.value.length" @click="transactionSheetOpen = true">记下第一笔</button>
+        <NButton v-if="hasFilters" class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" @click="clearFilters">清除筛选</NButton>
+        <NButton v-else class="ledger-primary-button" attr-type="button" type="primary" size="medium" :bordered="false" :disabled="!store.activeAccounts.value.length" @click="transactionSheetOpen = true">记下第一笔</NButton>
       </div>
-      <button v-if="page?.page.nextCursor" class="ledger-load-more" data-testid="ledger-load-more" type="button" :disabled="loadMoreLoading" @click="loadMore">{{ loadMoreLoading ? '正在加载…' : '加载更多' }}</button>
+      <NButton v-if="page?.page.nextCursor" class="ledger-load-more" attr-type="button" size="medium" :bordered="false" data-testid="ledger-load-more" :disabled="loadMoreLoading" @click="loadMore">{{ loadMoreLoading ? '正在加载…' : '加载更多' }}</NButton>
     </section>
 
     <LedgerTransactionSheet v-if="!store.recoveryGateVisible.value" :open="transactionSheetOpen" @close="transactionSheetOpen = false" />
@@ -267,6 +289,8 @@ function onRecoveryResolved(): void {
 .ledger-filters-grid label > span { color: var(--text-muted); font-size: .72rem; }
 .ledger-filters-grid select,
 .ledger-filters-grid input { width: 100%; min-height: 35px; padding: 5px 8px; box-sizing: border-box; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text-h); font: inherit; font-size: .78rem; }
+.ledger-filter-control { width: 100%; }
+.ledger-filters-grid :deep(.ledger-filter-control .n-base-selection) { width: 100%; }
 .ledger-filter-submit { white-space: nowrap; }
 .ledger-transactions-state { display: grid; min-height: 340px; place-items: center; align-content: center; gap: 9px; padding: 30px 18px; color: var(--text-muted); text-align: center; }
 .ledger-transactions-state h2,

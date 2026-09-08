@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { NButton, NIcon, NInput, NSelect, type InputInst, type SelectOption } from 'naive-ui'
+import { X } from '@vicons/tabler'
 import type {
   LedgerCategoryDto,
   LedgerTransactionDto,
@@ -21,7 +23,7 @@ const toast = useToast()
 const { confirm } = useConfirm()
 const trap = useFocusTrap()
 const dialogRef = ref<HTMLElement | null>(null)
-const amountInput = ref<HTMLInputElement | null>(null)
+const amountInput = ref<InputInst | null>(null)
 
 type EntryType = 'expense' | 'income' | 'transfer'
 const type = ref<EntryType>('expense')
@@ -47,6 +49,18 @@ const settings = computed(() => store.settings.value)
 const activeAccounts = computed(() => store.activeAccounts.value)
 const activeCategories = computed(() => store.activeCategories.value)
 const applicableCategories = computed(() => activeCategories.value.filter((category) => category.kind === type.value))
+const accountOptions = computed<SelectOption[]>(() => activeAccounts.value.map((account) => ({
+  value: account.id,
+  label: `${account.name} · ${formatLedgerMoney(account.currentBalanceMinor, account.currency)}`,
+})))
+const transferAccountOptions = computed<SelectOption[]>(() => activeAccounts.value.map((account) => ({
+  value: account.id,
+  label: account.name,
+})))
+const categoryOptions = computed<SelectOption[]>(() => applicableCategories.value.map((category) => ({
+  value: category.id,
+  label: categoryLabel(category),
+})))
 const pendingTransaction = computed(() => {
   const pending = store.pendingCreate.value
   return store.mutationState.value === 'UNCERTAIN' && pending?.operation === 'transaction' ? pending : null
@@ -304,7 +318,7 @@ onBeforeUnmount(() => {
             <p class="ledger-eyebrow">Ledger</p>
             <h2 id="ledger-sheet-title">{{ formTitle }}</h2>
           </div>
-          <button class="ledger-close-button" type="button" :disabled="saving || categorySaving" aria-label="关闭记账窗口" @click="requestClose">×</button>
+          <NButton class="ledger-close-button" attr-type="button" size="small" :bordered="false" :disabled="saving || categorySaving" aria-label="关闭记账窗口" @click="requestClose"><NIcon aria-hidden="true" :size="18"><X /></NIcon></NButton>
         </header>
 
         <LedgerPendingCreateRecovery
@@ -325,7 +339,17 @@ onBeforeUnmount(() => {
               <label for="ledger-transaction-amount">金额</label>
               <div class="ledger-money-input">
                 <span>{{ settings?.baseCurrency }}</span>
-                <input id="ledger-transaction-amount" ref="amountInput" v-model="amount" name="amount" type="text" inputmode="decimal" autocomplete="off" placeholder="0.00" :disabled="saving" />
+                <NInput
+                  ref="amountInput"
+                  v-model:value="amount"
+                  class="ledger-money-control"
+                  type="text"
+                  size="medium"
+                  :bordered="false"
+                  :input-props="{ id: 'ledger-transaction-amount', name: 'amount', inputmode: 'decimal', autocomplete: 'off' }"
+                  placeholder="0.00"
+                  :disabled="saving"
+                />
               </div>
               <small>输入正常货币金额，例如 {{ settings?.baseCurrency }} 38；无需输入 minor units。</small>
             </div>
@@ -333,27 +357,47 @@ onBeforeUnmount(() => {
             <template v-if="type !== 'transfer'">
               <div class="ledger-form-field">
                 <label for="ledger-transaction-account">账户</label>
-                <select id="ledger-transaction-account" v-model="accountId" name="accountId" required :disabled="saving">
-                  <option value="" disabled>请选择账户</option>
-                  <option v-for="account in activeAccounts" :key="account.id" :value="account.id">{{ account.name }} · {{ formatLedgerMoney(account.currentBalanceMinor, account.currency) }}</option>
-                </select>
+                <NSelect
+                  v-model:value="accountId"
+                  class="ledger-form-control"
+                  size="medium"
+                  :options="accountOptions"
+                  :input-props="{ id: 'ledger-transaction-account', name: 'accountId', required: true }"
+                  aria-label="账户"
+                  placeholder="请选择账户"
+                  :disabled="saving"
+                />
               </div>
 
               <div class="ledger-form-field">
                 <div class="ledger-field-heading">
                   <label for="ledger-transaction-category">分类</label>
-                  <button class="ledger-link-button" type="button" :disabled="saving || categorySaving" @click="categoryCreateOpen = !categoryCreateOpen">{{ categoryCreateOpen ? '选择已有分类' : '新建分类' }}</button>
+                  <NButton class="ledger-link-button" attr-type="button" size="small" text :bordered="false" :disabled="saving || categorySaving" @click="categoryCreateOpen = !categoryCreateOpen">{{ categoryCreateOpen ? '选择已有分类' : '新建分类' }}</NButton>
                 </div>
-                <select id="ledger-transaction-category" v-model="categoryId" name="categoryId" :disabled="saving || categoryCreateOpen" :required="!categoryCreateOpen">
-                  <option value="" disabled>{{ applicableCategories.length ? '请选择分类' : '暂无可用分类' }}</option>
-                  <option v-for="category in applicableCategories" :key="category.id" :value="category.id">{{ categoryLabel(category) }}</option>
-                </select>
+                <NSelect
+                  v-model:value="categoryId"
+                  class="ledger-form-control"
+                  size="medium"
+                  :options="categoryOptions"
+                  :input-props="{ id: 'ledger-transaction-category', name: 'categoryId', required: !categoryCreateOpen }"
+                  aria-label="分类"
+                  :placeholder="applicableCategories.length ? '请选择分类' : '暂无可用分类'"
+                  :disabled="saving || categoryCreateOpen"
+                />
                 <small>只显示 active 的{{ type === 'income' ? '收入' : '支出' }}分类。</small>
                 <div v-if="categoryCreateOpen" class="ledger-quick-create" data-testid="ledger-category-quick-create">
                   <label for="ledger-quick-category-name">新分类名称</label>
                   <div class="ledger-quick-create-row">
-                    <input id="ledger-quick-category-name" v-model="categoryName" name="categoryName" type="text" autocomplete="off" :disabled="categorySaving" @keydown.enter.prevent="createCategory" />
-                    <button class="ledger-secondary-button" type="button" :disabled="categorySaving" @click="createCategory">{{ categorySaving ? '正在创建…' : '创建' }}</button>
+                    <NInput
+                      v-model:value="categoryName"
+                      class="ledger-form-control"
+                      type="text"
+                      size="medium"
+                      :input-props="{ id: 'ledger-quick-category-name', name: 'categoryName', autocomplete: 'off' }"
+                      :disabled="categorySaving"
+                      @keydown.enter.prevent="createCategory"
+                    />
+                    <NButton class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" :disabled="categorySaving" @click="createCategory">{{ categorySaving ? '正在创建…' : '创建' }}</NButton>
                   </div>
                   <small v-if="categoryError" class="ledger-form-error" role="alert">{{ categoryError }}</small>
                 </div>
@@ -364,17 +408,29 @@ onBeforeUnmount(() => {
               <div class="ledger-form-grid">
                 <div class="ledger-form-field">
                   <label for="ledger-transaction-from-account">转出账户</label>
-                  <select id="ledger-transaction-from-account" v-model="fromAccountId" name="fromAccountId" required :disabled="saving">
-                    <option value="" disabled>请选择转出账户</option>
-                    <option v-for="account in activeAccounts" :key="account.id" :value="account.id">{{ account.name }}</option>
-                  </select>
+                <NSelect
+                  v-model:value="fromAccountId"
+                  class="ledger-form-control"
+                  size="medium"
+                  :options="transferAccountOptions"
+                  :input-props="{ id: 'ledger-transaction-from-account', name: 'fromAccountId', required: true }"
+                  aria-label="转出账户"
+                  placeholder="请选择转出账户"
+                  :disabled="saving"
+                />
                 </div>
                 <div class="ledger-form-field">
                   <label for="ledger-transaction-to-account">转入账户</label>
-                  <select id="ledger-transaction-to-account" v-model="toAccountId" name="toAccountId" required :disabled="saving">
-                    <option value="" disabled>请选择转入账户</option>
-                    <option v-for="account in activeAccounts" :key="account.id" :value="account.id">{{ account.name }}</option>
-                  </select>
+                <NSelect
+                  v-model:value="toAccountId"
+                  class="ledger-form-control"
+                  size="medium"
+                  :options="transferAccountOptions"
+                  :input-props="{ id: 'ledger-transaction-to-account', name: 'toAccountId', required: true }"
+                  aria-label="转入账户"
+                  placeholder="请选择转入账户"
+                  :disabled="saving"
+                />
                 </div>
               </div>
               <small class="ledger-form-note">转出账户和转入账户不能相同。转账不使用分类或交易对象。</small>
@@ -388,19 +444,33 @@ onBeforeUnmount(() => {
 
             <div v-if="type !== 'transfer'" class="ledger-form-field">
               <label for="ledger-transaction-payee">交易对象（可选）</label>
-              <input id="ledger-transaction-payee" v-model="payee" name="payee" type="text" autocomplete="off" :disabled="saving" />
+              <NInput
+                v-model:value="payee"
+                class="ledger-form-control"
+                type="text"
+                size="medium"
+                :input-props="{ id: 'ledger-transaction-payee', name: 'payee', autocomplete: 'off' }"
+                :disabled="saving"
+              />
             </div>
 
             <div class="ledger-form-field">
               <label for="ledger-transaction-note">备注（可选）</label>
-              <textarea id="ledger-transaction-note" v-model="note" name="note" rows="3" :disabled="saving" />
+              <NInput
+                v-model:value="note"
+                class="ledger-form-control"
+                type="textarea"
+                size="medium"
+                :input-props="{ id: 'ledger-transaction-note', name: 'note', rows: 3 }"
+                :disabled="saving"
+              />
             </div>
 
             <p v-if="!activeAccounts.length" class="ledger-form-error" role="alert">请先创建一个可用账户，再记账。</p>
             <p v-if="formError" class="ledger-form-error" role="alert">{{ formError }}</p>
             <div class="ledger-form-actions">
-              <button class="ledger-secondary-button" type="button" :disabled="saving || categorySaving" @click="requestClose">取消</button>
-              <button class="ledger-primary-button" type="submit" :disabled="!canSubmit">{{ saving ? '正在保存…' : '保存交易' }}</button>
+              <NButton class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" :disabled="saving || categorySaving" @click="requestClose">取消</NButton>
+              <NButton class="ledger-primary-button" attr-type="submit" type="primary" size="medium" :bordered="false" :disabled="!canSubmit">{{ saving ? '正在保存…' : '保存交易' }}</NButton>
             </div>
           </form>
         </template>
@@ -428,6 +498,9 @@ onBeforeUnmount(() => {
 .ledger-form-field input,
 .ledger-form-field select,
 .ledger-form-field textarea { width: 100%; min-height: 38px; padding: 7px 10px; box-sizing: border-box; border: 1px solid var(--border); border-radius: 7px; background: var(--bg); color: var(--text-h); font: inherit; font-size: .87rem; }
+.ledger-form-control { width: 100%; }
+.ledger-form-field :deep(.ledger-form-control .n-input),
+.ledger-form-field :deep(.ledger-form-control .n-base-selection) { width: 100%; }
 .ledger-form-field textarea { resize: vertical; }
 .ledger-form-field input:focus,
 .ledger-form-field select:focus,
@@ -440,7 +513,8 @@ onBeforeUnmount(() => {
 .ledger-money-input { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 3px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
 .ledger-money-input:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent); }
 .ledger-money-input span { color: var(--text-muted); font-size: .9rem; font-weight: 650; }
-.ledger-money-input input { flex: 1; min-height: 34px; padding: 0; border: 0; outline: 0; background: transparent; color: var(--text-h); font: inherit; font-size: 1.05rem; }
+.ledger-money-control { flex: 1; min-width: 0; }
+.ledger-money-input :deep(.ledger-money-control .n-input__input-el) { font-size: 1.05rem; }
 .ledger-field-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .ledger-link-button { padding: 0; border: 0; background: transparent; color: var(--accent); font: inherit; font-size: .76rem; cursor: pointer; }
 .ledger-link-button:hover:not(:disabled) { text-decoration: underline; }

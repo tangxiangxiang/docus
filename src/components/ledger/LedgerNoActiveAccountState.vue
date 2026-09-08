@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { NButton } from 'naive-ui'
 import type { LedgerAccountDto } from '../../../shared/ledgerProtocol'
 import { ledgerErrorMessage } from '../../features/ledger/ledgerErrors'
 import { useLedgerStore } from '../../features/ledger/ledgerStore'
@@ -35,12 +36,12 @@ async function restore(account: LedgerAccountDto): Promise<void> {
           <strong>{{ account.name }}</strong>
           <span>已归档 · {{ account.currency }}</span>
         </div>
-        <button class="ledger-secondary-button" type="button" :disabled="Boolean(restoringId)" @click="restore(account)">
+        <NButton class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" :disabled="Boolean(restoringId)" @click="restore(account)">
           {{ restoringId === account.id ? '正在恢复…' : '恢复账户' }}
-        </button>
+        </NButton>
       </div>
     </div>
-    <button class="ledger-primary-button" type="button" :disabled="Boolean(restoringId)" @click="emit('create')">创建新账户</button>
+    <NButton class="ledger-primary-button" attr-type="button" type="primary" size="medium" :bordered="false" :disabled="Boolean(restoringId)" @click="emit('create')">创建新账户</NButton>
   </section>
 </template>
 
@@ -68,4 +69,3 @@ async function restore(account: LedgerAccountDto): Promise<void> {
   .ledger-archived-row { align-items: stretch; flex-direction: column; }
 }
 </style>
-

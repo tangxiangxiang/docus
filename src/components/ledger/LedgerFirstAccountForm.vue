@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { NButton, NInput, NSelect, type SelectOption } from 'naive-ui'
 import type { LedgerAccountNature, LedgerAccountType } from '../../../shared/ledgerProtocol'
 import { ledgerAccountTypeOptionsForNature } from '../../features/ledger/accountPresentation'
 import { ledgerErrorMessage, ledgerFieldError } from '../../features/ledger/ledgerErrors'
@@ -41,7 +42,14 @@ const pendingAccount = computed(() => (
     ? store.pendingCreate.value
     : null
 ))
-const typeOptions = computed(() => ledgerAccountTypeOptionsForNature(nature.value))
+const natureOptions: SelectOption[] = [
+  { value: 'asset', label: '资产（我拥有的）' },
+  { value: 'liability', label: '负债（我需要偿还的）' },
+]
+const typeOptions = computed<SelectOption[]>(() => ledgerAccountTypeOptionsForNature(nature.value).map((option) => ({
+  value: option.value,
+  label: option.label,
+})))
 const balanceExample = computed(() => currency.value ? formatLedgerMoney(100, currency.value) : '金额')
 
 function resetOpeningDate(): void {
@@ -59,7 +67,8 @@ watch(
 
 watch(nature, (nextNature) => {
   if (!typeOptions.value.some((option) => option.value === type.value)) {
-    type.value = typeOptions.value[0]?.value ?? (nextNature === 'asset' ? 'bank' : 'credit_card')
+    type.value = (typeOptions.value[0]?.value as LedgerAccountType | undefined)
+      ?? (nextNature === 'asset' ? 'bank' : 'credit_card')
   }
 })
 
@@ -157,13 +166,12 @@ async function retryPendingAccount(): Promise<void> {
     <template v-else>
     <div class="ledger-form-field">
       <label for="ledger-account-name">账户名称</label>
-      <input
-        id="ledger-account-name"
-        v-model="name"
-        name="name"
+      <NInput
+        v-model:value="name"
+        class="ledger-form-control"
         type="text"
-        autocomplete="off"
-        required
+        size="medium"
+        :input-props="{ id: 'ledger-account-name', name: 'name', autocomplete: 'off', required: true }"
         :disabled="saving"
         :aria-invalid="fieldError('name') ? 'true' : undefined"
       />
@@ -172,17 +180,28 @@ async function retryPendingAccount(): Promise<void> {
     <div class="ledger-form-grid">
       <div class="ledger-form-field">
         <label for="ledger-account-nature">账户性质</label>
-        <select id="ledger-account-nature" v-model="nature" name="nature" :disabled="saving">
-          <option value="asset">资产（我拥有的）</option>
-          <option value="liability">负债（我需要偿还的）</option>
-        </select>
+        <NSelect
+          v-model:value="nature"
+          class="ledger-form-control"
+          size="medium"
+          :options="natureOptions"
+          :input-props="{ id: 'ledger-account-nature', name: 'nature' }"
+          aria-label="账户性质"
+          :disabled="saving"
+        />
         <small>资产会增加你的净资产；负债表示你欠下的金额。</small>
       </div>
       <div class="ledger-form-field">
         <label for="ledger-account-type">账户类型</label>
-        <select id="ledger-account-type" v-model="type" name="type" :disabled="saving">
-          <option v-for="option in typeOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-        </select>
+        <NSelect
+          v-model:value="type"
+          class="ledger-form-control"
+          size="medium"
+          :options="typeOptions"
+          :input-props="{ id: 'ledger-account-type', name: 'type' }"
+          aria-label="账户类型"
+          :disabled="saving"
+        />
         <small>选择最接近这个账户的日常称呼。</small>
       </div>
     </div>
@@ -190,12 +209,12 @@ async function retryPendingAccount(): Promise<void> {
     <div class="ledger-form-grid">
       <div class="ledger-form-field">
         <label for="ledger-account-opening-balance">期初余额</label>
-        <input
-          id="ledger-account-opening-balance"
-          v-model="openingBalance"
-          name="openingBalance"
+        <NInput
+          v-model:value="openingBalance"
+          class="ledger-form-control"
           type="text"
-          inputmode="decimal"
+          size="medium"
+          :input-props="{ id: 'ledger-account-opening-balance', name: 'openingBalance', inputmode: 'decimal' }"
           :placeholder="balanceExample"
           :disabled="saving"
           :aria-invalid="fieldError('openingBalanceMinor') ? 'true' : undefined"
@@ -219,23 +238,37 @@ async function retryPendingAccount(): Promise<void> {
 
     <div class="ledger-form-field">
       <label for="ledger-account-currency">账户货币</label>
-      <input id="ledger-account-currency" :value="currency" name="currency" type="text" readonly aria-readonly="true" />
+      <NInput
+        :value="currency"
+        class="ledger-form-control"
+        type="text"
+        size="medium"
+        readonly
+        :input-props="{ id: 'ledger-account-currency', name: 'currency', readonly: true, 'aria-readonly': 'true' }"
+      />
       <small>账户货币继承 Ledger 基础货币；L1 不支持账户间换汇。</small>
     </div>
 
     <div class="ledger-form-field">
       <label for="ledger-account-note">备注（可选）</label>
-      <textarea id="ledger-account-note" v-model="note" name="note" rows="3" :disabled="saving" />
+      <NInput
+        v-model:value="note"
+        class="ledger-form-control"
+        type="textarea"
+        size="medium"
+        :input-props="{ id: 'ledger-account-note', name: 'note', rows: 3 }"
+        :disabled="saving"
+      />
     </div>
 
     <p v-if="formError" class="ledger-form-error" role="alert">{{ formError }}</p>
 
     <div class="ledger-form-actions">
-      <button v-if="props.cancelable" class="ledger-secondary-button" type="button" :disabled="saving" @click="emit('cancel')">取消</button>
-      <button v-if="props.firstAccount && !settings?.hasCreatedAccount" class="ledger-secondary-button" type="button" :disabled="saving" @click="emit('edit-settings')">修改 Ledger 设置</button>
-      <button class="ledger-primary-button" type="submit" :disabled="saving">
+      <NButton v-if="props.cancelable" class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" :disabled="saving" @click="emit('cancel')">取消</NButton>
+      <NButton v-if="props.firstAccount && !settings?.hasCreatedAccount" class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" :disabled="saving" @click="emit('edit-settings')">修改 Ledger 设置</NButton>
+      <NButton class="ledger-primary-button" attr-type="submit" type="primary" size="medium" :bordered="false" :disabled="saving">
         {{ saving ? '正在保存…' : (props.firstAccount ? '创建账户并继续' : '创建账户') }}
-      </button>
+      </NButton>
     </div>
     </template>
   </form>
@@ -253,6 +286,9 @@ async function retryPendingAccount(): Promise<void> {
 .ledger-form-field input,
 .ledger-form-field select,
 .ledger-form-field textarea { width: 100%; box-sizing: border-box; min-height: 38px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg); color: var(--text-h); font: inherit; font-size: .88rem; }
+.ledger-form-control { width: 100%; }
+.ledger-form-field :deep(.ledger-form-control .n-input),
+.ledger-form-field :deep(.ledger-form-control .n-base-selection) { width: 100%; }
 .ledger-form-field textarea { resize: vertical; }
 .ledger-form-field input:focus,
 .ledger-form-field select:focus,
