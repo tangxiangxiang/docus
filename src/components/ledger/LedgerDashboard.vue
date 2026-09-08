@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { NAlert, NButton, NCard, NEmpty, NIcon, NList, NListItem, NSelect, NSpin, NStatistic, type SelectOption } from 'naive-ui'
-import { ChartBar, Coin, CreditCard, Wallet } from '@vicons/tabler'
+import { CreditCard, Scale, Wallet } from '@vicons/tabler'
 import type {
   LedgerOverviewDto,
   LedgerOverviewScope,
@@ -470,7 +470,7 @@ function retryTrend(): void {
         <NCard class="ledger-metric-card" data-testid="ledger-total-assets" size="small">
           <div class="ledger-metric-layout">
             <span class="ledger-metric-icon" aria-hidden="true">
-              <NIcon aria-hidden="true" :size="22"><Coin /></NIcon>
+              <NIcon aria-hidden="true" :size="22"><Wallet /></NIcon>
             </span>
             <span class="ledger-metric-copy">
               <NStatistic label="总资产" :value="formatLedgerMoney(overview.assetTotalMinor, overview.currency)" tabular-nums />
@@ -492,7 +492,7 @@ function retryTrend(): void {
         <NCard class="ledger-metric-card is-primary" data-testid="ledger-net-worth" size="small">
           <div class="ledger-metric-layout">
             <span class="ledger-metric-icon" aria-hidden="true">
-              <NIcon aria-hidden="true" :size="22"><ChartBar /></NIcon>
+              <NIcon aria-hidden="true" :size="22"><Scale /></NIcon>
             </span>
             <span class="ledger-metric-copy">
               <NStatistic label="净资产" :value="formatLedgerMoney(overview.netWorthMinor, overview.currency)" tabular-nums />
