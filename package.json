@@ -16,6 +16,7 @@
     "test:tags-scale": "vitest run --config vitest.tags-scale.config.ts",
     "test:history-integration": "vitest run --config vitest.history.config.ts",
     "test:recovery-integration": "vitest run --config vitest.recovery.config.ts",
+    "test:platform-smoke": "vitest run server/__tests__/prodConfig.test.ts server/__tests__/paths.test.ts server/__tests__/db.test.ts server/__tests__/mount.test.ts server/__tests__/createOnlyMove.test.ts",
     "test:ui-foundation-spike": "vitest run src/ui/__tests__/naive-ui-foundation-spike.test.ts src/ui/__tests__/naiveTheme.test.ts src/ui/__tests__/DocusUiRoot.test.ts",
     "test:feedback-overlay": "vitest run src/components/__tests__/ConfirmHost.test.ts src/components/__tests__/FeedbackHosts.test.ts",
     "test:watch": "vitest",

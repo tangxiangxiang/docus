@@ -140,7 +140,11 @@ npm run test:e2e:auth
 npm run test:deployment-auth
 ```
 
-CI verifies Node.js 22 on Ubuntu for production parity and Node.js 24 on Ubuntu, macOS, and Windows for forward compatibility, along with crash-recovery, browser E2E, visual, and Docker smoke tests.
+CI runs the canonical static, unit/integration, and application browser
+verification once on Ubuntu with Node.js 24. Node.js 22 on Ubuntu and Node.js
+24 on Windows/macOS run targeted platform-compatibility smoke tests; crash
+recovery, Draft Store, authentication, visual, tags-scale, and Docker smoke
+coverage remain explicit CI lanes.
 
 ## Project Status
 

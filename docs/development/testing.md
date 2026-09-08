@@ -58,6 +58,16 @@ have a larger timeout within this lane because they intentionally exercise many
 recovery seeds. The larger boundary is local to Recovery integration and does
 not change ordinary unit-test timing.
 
+### Platform compatibility smoke
+
+`test:platform-smoke` is the short cross-platform lane. It imports the server
+runtime/configuration, exercises safe path and symlink handling, applies the
+SQLite migrations, verifies basic API route mounting, and covers the create-only
+file/directory move protocol.
+It reuses existing tests rather than duplicating a reduced copy of the
+application suite. CI runs this lane on Ubuntu with Node.js 22, Windows with
+Node.js 24, and macOS with Node.js 24.
+
 OpenAI-compatible protocol tests use a local fake HTTP server and, where
 practical, the real provider SDK path. They never access the public internet.
 This real-wire coverage verifies request paths, authorization headers, request
@@ -123,12 +133,16 @@ origin interpolation before running the packaged smoke.
 
 ## CI Lanes
 
-The workflow keeps the existing cross-platform matrix: Node.js 24 on Ubuntu,
-macOS, and Windows, plus Node.js 22 on Ubuntu. It runs typecheck, build,
-`npm test`, cross-platform browser E2E, Draft Store browser E2E, visual tests,
-the dedicated `npm run test:e2e:auth` browser smoke, and the Ubuntu packaged
-Docker auth smoke. No authentication lane disables checks, widens global
-timeouts, or uses `continue-on-error`.
+The workflow runs static checks, unit tests, History integration, Recovery
+integration, the Draft Store browser suite, and the application-level browser
+suite once on Ubuntu with Node.js 24. The application browser suite is split
+into two Playwright shards; its config keeps `workers: 1` because the tests
+share one server generation, Vault, and browser persistence within a shard.
+
+An independent compatibility matrix runs only `test:platform-smoke` on Ubuntu
+Node.js 22, Windows Node.js 24, and macOS Node.js 24. Dedicated authentication,
+macOS visual, tags-scale, and Docker smoke jobs remain separate. No critical
+lane disables checks, widens global timeouts, or uses `continue-on-error`.
 
 ## Before opening a change
 
