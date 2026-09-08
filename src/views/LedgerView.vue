@@ -147,10 +147,6 @@ function selectDate(date: string): void {
   void router.push({ name: 'ledger', query: { date: parsed }, hash: route?.hash })
 }
 
-function returnToday(): void {
-  if (router) void router.push({ name: 'ledger', hash: route?.hash })
-}
-
 function onRecoveryResolved(): void {
   transactionSheetOpen.value = false
   newAccountOpen.value = false
@@ -196,7 +192,6 @@ function closeTransactionSheet(): void {
       @record="transactionSheetOpen = true"
       @view-transactions="openTransactions"
       @select-date="selectDate"
-      @return-today="returnToday"
     />
 
     <LedgerTransactionSheet v-if="!store.recoveryGateVisible.value" :open="transactionSheetOpen" @close="closeTransactionSheet" />

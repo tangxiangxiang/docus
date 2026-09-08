@@ -19,7 +19,6 @@ const emit = defineEmits<{
   record: []
   viewTransactions: []
   selectDate: [date: string]
-  returnToday: []
 }>()
 const store = useLedgerStore()
 const overview = computed(() => store.overview.value)
@@ -53,7 +52,6 @@ const dateInputValue = computed(() => store.overviewRequestedAnchorDate.value
   ?? '')
 const dateMax = computed(() => overview.value?.context.todayDate ?? '')
 const ledgerTimezone = computed(() => store.settings.value?.timezone ?? 'UTC')
-const showReturnToday = computed(() => historicalMode.value)
 const isDashboardDateDisabled = (timestamp: number, detail: { type: string }) => {
   if (!dateMax.value) return false
   const candidate = calendarDateFromNaivePickerTimestamp(timestamp)
@@ -253,7 +251,6 @@ function onDateChange(value: string): void {
               :input-props="{ name: 'scope' }"
               @update:value="updateScope"
             />
-            <NButton v-if="showReturnToday" class="ledger-secondary-button" attr-type="button" size="small" :bordered="false" data-testid="ledger-return-today" @click="emit('returnToday')">回到今天</NButton>
           </div>
         </div>
         <NAlert v-if="scopeError" class="ledger-inline-error" type="error" :show-icon="false" role="alert">

@@ -430,7 +430,7 @@ describe('Ledger live dashboard', () => {
     await store.refreshOverview()
     await nextTick()
     expect((wrapper.get('[data-testid="ledger-period-date"] input').element as HTMLInputElement).value).toBe('2026-08-20')
-    expect(wrapper.get('.ledger-cashflow-section').find('[data-testid="ledger-return-today"]').exists()).toBe(true)
+    expect(wrapper.get('.ledger-cashflow-section').find('[data-testid="ledger-return-today"]').exists()).toBe(false)
     expect(wrapper.get('.ledger-cashflow-section').text()).toContain('2026年8月20日 · 账户余额为当前值')
 
     api.getLedgerOverview.mockRejectedValueOnce(new LedgerApiError('projection unavailable', 500, 'ledger-internal-error'))

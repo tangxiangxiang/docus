@@ -179,14 +179,14 @@ describe('Ledger historical period route coordination', () => {
     expect(router.currentRoute.value.fullPath).toBe('/ledger?date=2026-08-20')
     expect(api.getLedgerOverview).toHaveBeenCalledWith({ scope: 'month', anchorDate: '2026-08-20' })
     expect((wrapper.get('[data-testid="ledger-period-date"] input').element as HTMLInputElement).value).toBe('2026-08-20')
-    expect(wrapper.find('[data-testid="ledger-return-today"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ledger-return-today"]').exists()).toBe(false)
     expect(wrapper.get('[data-testid="ledger-dashboard-assets"] .ledger-dashboard-account').element.tagName).toBe('A')
     expect(wrapper.get('[data-testid="ledger-dashboard-assets"] .ledger-dashboard-account').attributes('href')).toBe('/ledger/accounts/bank-1')
     expect(wrapper.text()).toContain('2026年8月20日 · 账户余额为当前值')
     expect(wrapper.text()).toContain('截至 2026年8月20日')
   })
 
-  it('uses browser history for date changes and clears only the anchor when returning today', async () => {
+  it('uses browser history for date changes and clears only the anchor when selecting today', async () => {
     const { router, wrapper } = await mountAt('/ledger?date=2026-08-20')
     api.getLedgerOverview.mockClear()
 
@@ -196,7 +196,7 @@ describe('Ledger historical period route coordination', () => {
     expect(router.currentRoute.value.query.date).toBe('2026-08-19')
     expect(api.getLedgerOverview).toHaveBeenLastCalledWith({ scope: 'month', anchorDate: '2026-08-19' })
 
-    await wrapper.get('[data-testid="ledger-return-today"]').trigger('click')
+    await setLedgerDate(wrapper, '2026-09-05')
     await flushPromises()
     await flushPromises()
     expect(router.currentRoute.value.query.date).toBeUndefined()
@@ -340,7 +340,7 @@ describe('Ledger historical period route coordination', () => {
     await flushPromises()
     expect(router.currentRoute.value.fullPath).toBe('/ledger?date=2026-06-15')
     expect(api.getLedgerOverview).toHaveBeenCalledTimes(2)
-    expect(wrapper.find('[data-testid="ledger-return-today"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ledger-return-today"]').exists()).toBe(false)
 
     historical.resolve(overviewFor({ scope: 'month', anchorDate: '2026-06-15' }))
     await flushPromises()

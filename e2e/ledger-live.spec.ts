@@ -454,7 +454,7 @@ test('historical period navigation keeps one anchor across periods, reload, and 
   await expect(page.getByTestId('ledger-period-month')).toContainText('¥114.00')
   await expect(page.getByTestId('ledger-recent-transactions')).toContainText(anchorPayee)
   await expect(page.getByTestId('ledger-recent-transactions')).not.toContainText(afterAnchorPayee)
-  await expect(page.getByTestId('ledger-return-today')).toBeVisible()
+  await expect(page.getByTestId('ledger-return-today')).toHaveCount(0)
 
   // The trend follows the same anchor as the rest of the Overview: six months
   // ending with the anchor month, so the current month is outside the window.
@@ -483,9 +483,11 @@ test('historical period navigation keeps one anchor across periods, reload, and 
   await expect(ledgerDateInput(page, 'ledger-period-date')).toHaveValue(anchorDate)
   await expect(page.getByTestId('ledger-recent-transactions')).not.toContainText(afterAnchorPayee)
 
-  await page.getByTestId('ledger-return-today').click()
+  await page.getByTestId('ledger-period-date-control-today').hover()
+  await periodDate.fill(today.toString())
+  await periodDate.press('Tab')
   await expect(page).toHaveURL(/\/ledger$/)
-  await expect(page.getByTestId('ledger-return-today')).toBeHidden()
+  await expect(page.getByTestId('ledger-return-today')).toHaveCount(0)
   await expect(page.getByTestId('ledger-cashflow-trend-canvas')).toBeVisible()
   await expect(trendRows.last()).toContainText(`${today.year}年${today.month}月`)
 })
