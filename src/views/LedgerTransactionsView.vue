@@ -226,7 +226,10 @@ function onRecoveryResolved(): void {
         <h1>交易记录</h1>
         <p>查看真实交易历史，或快速记下一笔。</p>
       </div>
-      <NButton class="ledger-primary-button" attr-type="button" type="primary" size="medium" :bordered="false" :disabled="loading || store.hasUnresolvedCreate.value || !store.activeAccounts.value.length" data-testid="ledger-transactions-record-button" @click="transactionSheetOpen = true">＋ 记一笔</NButton>
+      <div class="ledger-transactions-header-actions">
+        <RouterLink class="ledger-secondary-button" :to="{ name: 'ledger' }" data-testid="ledger-transactions-overview-button">返回总览</RouterLink>
+        <NButton class="ledger-primary-button" attr-type="button" type="primary" size="medium" :bordered="false" :disabled="loading || store.hasUnresolvedCreate.value || !store.activeAccounts.value.length" data-testid="ledger-transactions-record-button" @click="transactionSheetOpen = true">＋ 记一笔</NButton>
+      </div>
     </header>
 
     <LedgerPendingCreateGate v-if="store.recoveryGateVisible.value" @resolved="onRecoveryResolved" />
@@ -336,6 +339,7 @@ function onRecoveryResolved(): void {
 .ledger-page { min-height: calc(100vh - 52px); background: var(--bg); }
 .ledger-transactions-page { width: min(100%, 1120px); margin: 0 auto; padding: 34px 28px 64px; box-sizing: border-box; }
 .ledger-transactions-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 22px; margin-bottom: 22px; }
+.ledger-transactions-header-actions { display: flex; align-items: center; gap: 10px; }
 .ledger-eyebrow { margin: 0 0 5px; color: var(--accent); font-size: .75rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
 .ledger-transactions-header h1 { margin: 0; color: var(--text-h); font-size: 2rem; line-height: 1.2; }
 .ledger-transactions-header p:not(.ledger-eyebrow) { margin: 8px 0 0; color: var(--text-muted); font-size: .84rem; }
@@ -429,7 +433,8 @@ function onRecoveryResolved(): void {
 @media (max-width: 620px) {
   .ledger-transactions-page { padding: 28px 16px 48px; }
   .ledger-transactions-header { align-items: stretch; flex-direction: column; }
-  .ledger-transactions-header > button { width: 100%; }
+  .ledger-transactions-header-actions { width: 100%; }
+  .ledger-transactions-header-actions > * { flex: 1; }
   .ledger-no-active-account-notice { align-items: stretch; flex-direction: column; }
   .ledger-notice-actions > * { flex: 1 1 140px; }
   .ledger-filters-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
