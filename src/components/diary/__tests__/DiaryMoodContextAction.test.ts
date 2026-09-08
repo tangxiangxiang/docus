@@ -23,6 +23,9 @@ describe('DiaryMoodContextAction', () => {
     })
     const trigger = wrapper.get('[data-testid="diary-mood-trigger"]')
 
+    expect(trigger.element.tagName).toBe('BUTTON')
+    expect(trigger.element.classList).toContain('n-button')
+    expect(trigger.attributes('type')).toBe('button')
     expect(document.body.querySelectorAll('[data-testid="diary-mood-picker"]')).toHaveLength(0)
     await trigger.trigger('click')
     await flushPromises()

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { NButton } from 'naive-ui'
 import { Calendar } from 'v-calendar'
 import 'v-calendar/style.css'
 import { getMoodDefinition, isMoodId, type MoodId } from '../../../shared/diaryMood'
@@ -384,9 +385,12 @@ defineExpose({ focusDate, closeMoodPicker })
                 {{ t('mood.label') }}: {{ moodLabelForDay(day) }}
               </span>
             </button>
-            <button
+            <NButton
+              attr-type="button"
+              size="small"
+              quaternary
+              :bordered="false"
               v-if="hasDiaryCalendarAttribute(attributes) || moodDefinitionForDay(day) || hasUnknownMoodForDay(day)"
-              type="button"
               class="diary-calendar-mood"
               :class="{
                 'diary-calendar-mood-unknown': hasUnknownMoodForDay(day),
@@ -409,7 +413,7 @@ defineExpose({ focusDate, closeMoodPicker })
               >
               <span v-else-if="hasUnknownMoodForDay(day)" aria-hidden="true">?</span>
               <span v-else class="diary-calendar-mood-empty-mark" aria-hidden="true">?</span>
-            </button>
+            </NButton>
           </div>
         </template>
       </Calendar>

@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { NButton, NIcon } from 'naive-ui'
+import { X } from '@vicons/tabler'
 import { MOOD_CATALOG, isMoodId, type MoodId } from '../../../shared/diaryMood'
 import { useI18n } from '../../composables/useI18n'
 
@@ -152,13 +154,17 @@ defineExpose({ focusInitial })
   >
     <header class="diary-mood-picker-header">
       <span class="diary-mood-picker-title">{{ t('mood.picker_label') }}</span>
-      <button
-        type="button"
+      <NButton
+        attr-type="button"
+        size="small"
+        quaternary
+        :bordered="false"
         class="diary-mood-picker-close"
         data-testid="diary-mood-picker-close"
         :aria-label="t('mood.close')"
         @click="emit('close')"
-      >×</button>
+        @keydown="onPickerKeydown"
+      ><NIcon aria-hidden="true" :size="18"><X /></NIcon></NButton>
     </header>
 
     <p
@@ -202,15 +208,19 @@ defineExpose({ focusInitial })
     </div>
 
     <div class="diary-mood-picker-footer">
-      <button
-        type="button"
+      <NButton
+        attr-type="button"
+        size="small"
+        quaternary
+        :bordered="false"
         class="diary-mood-clear"
         data-testid="diary-mood-clear"
         :disabled="props.busy || props.currentMood === null"
         @click="clearMood"
+        @keydown="onPickerKeydown"
       >
         {{ t('mood.clear') }}
-      </button>
+      </NButton>
       <span v-if="props.busy" class="diary-mood-saving" role="status" aria-live="polite">
         {{ t('mood.saving') }}
       </span>

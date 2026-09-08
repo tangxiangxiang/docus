@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { NButton } from 'naive-ui'
 import { getMoodDefinition, isMoodId, type MoodId } from '../../../shared/diaryMood'
 import { useI18n } from '../../composables/useI18n'
 import DiaryMoodPicker from './DiaryMoodPicker.vue'
@@ -21,7 +22,7 @@ const emit = defineEmits<{
 
 const { locale, t } = useI18n()
 const rootRef = ref<HTMLElement | null>(null)
-const triggerRef = ref<HTMLButtonElement | null>(null)
+const triggerRef = ref<{ $el: HTMLButtonElement } | null>(null)
 const pickerRef = ref<InstanceType<typeof DiaryMoodPicker> | null>(null)
 const pickerStyle = ref<Record<string, string>>({
   top: '12px',
@@ -55,7 +56,7 @@ function pickerElement(): HTMLElement | null {
 function updatePickerPosition(): void {
   if (!open.value) return
 
-  const trigger = triggerRef.value
+  const trigger = triggerRef.value?.$el
   const picker = pickerElement()
   if (!trigger || !picker) return
 
@@ -106,7 +107,7 @@ function closePicker(restoreFocus = true): void {
   if (!open.value) return
   open.value = false
   pickerStyle.value = { top: '12px', left: '12px' }
-  if (restoreFocus) void nextTick(() => triggerRef.value?.focus())
+  if (restoreFocus) void nextTick(() => triggerRef.value?.$el.focus())
 }
 
 function openPicker(): void {
@@ -136,7 +137,7 @@ function onDocumentPointerDown(event: PointerEvent): void {
 }
 
 function focusTrigger(): void {
-  triggerRef.value?.focus()
+  triggerRef.value?.$el.focus()
 }
 
 onMounted(() => {
@@ -156,9 +157,12 @@ defineExpose({ close: closePicker, focusTrigger })
 
 <template>
   <div ref="rootRef" class="diary-mood-context" data-testid="diary-native-mood-context">
-    <button
+    <NButton
       ref="triggerRef"
-      type="button"
+      attr-type="button"
+      size="small"
+      quaternary
+      :bordered="false"
       class="diary-mood-trigger"
       data-testid="diary-mood-trigger"
       :aria-label="triggerLabel"
@@ -176,7 +180,7 @@ defineExpose({ close: closePicker, focusTrigger })
       >
       <span v-else class="diary-mood-trigger-empty" aria-hidden="true">○</span>
       <span class="diary-mood-trigger-label">{{ currentLabel }}</span>
-    </button>
+    </NButton>
 
     <Teleport to="body">
       <DiaryMoodPicker

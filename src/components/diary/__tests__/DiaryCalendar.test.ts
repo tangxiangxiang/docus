@@ -206,6 +206,8 @@ describe('DiaryCalendar presentation adapter', () => {
     expect(knownCell.text()).not.toContain('+')
     expect(knownCell.text()).not.toContain('✎')
     expect(wrapper.findAll('button button')).toHaveLength(0)
+    expect(knownCell.get('[data-testid="diary-calendar-mood"]').element.classList).toContain('n-button')
+    expect(knownCell.get('[data-testid="diary-calendar-mood"]').attributes('type')).toBe('button')
     expect(knownCell.get('[data-testid="diary-calendar-mood"]').attributes('aria-label')).toContain('Happy')
 
     await knownCell.get('[data-testid="diary-calendar-mood"]').trigger('click')

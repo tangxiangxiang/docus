@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { NButton } from 'naive-ui'
 import { useI18n } from '../../composables/useI18n'
+import { usePrompt } from '../../composables/usePrompt'
 import { useToast } from '../../composables/useToast'
 import { useOptionalVaultContext } from '../../composables/vault/context/useVaultContext'
 import {
@@ -21,6 +23,7 @@ import {
 } from '../../lib/diary-migration-api'
 
 const { t } = useI18n()
+const { prompt } = usePrompt()
 const toast = useToast()
 const vaultContext = useOptionalVaultContext()
 const draftStore = createDraftStore()
@@ -29,6 +32,8 @@ const managedDrafts = ref<Array<{ kind: 'primary'; record: UnsavedDraft } | { ki
 const loading = ref(false)
 const working = ref(false)
 const errorCode = ref('')
+const discardConfirmationPending = ref(false)
+const LEGACY_RECOVERY_CONFIRMATION = 'DISCARD LEGACY DIARY RECOVERY'
 
 const runReady = computed(() => Boolean(status.value?.runId && status.value.inventoryRevision !== undefined))
 const pendingItems = computed(() => status.value?.items.filter((item) => item.state !== 'COMPLETE') ?? [])
@@ -75,6 +80,21 @@ function isDeleteSuccess(result: DraftConditionalDeleteOutcome): boolean {
   return result.status === 'deleted' || result.status === 'missing'
 }
 
+async function requestDiscardConfirmation(): Promise<string | null> {
+  if (discardConfirmationPending.value) return null
+  discardConfirmationPending.value = true
+  try {
+    return await prompt({
+      title: `Type ${LEGACY_RECOVERY_CONFIRMATION} to confirm`,
+      placeholder: LEGACY_RECOVERY_CONFIRMATION,
+      actionLabel: t('common.confirm'),
+      actionTitle: t('common.confirm'),
+    })
+  } finally {
+    discardConfirmationPending.value = false
+  }
+}
+
 async function importDraft(item: MigrationItem, entry: { kind: 'primary'; record: UnsavedDraft } | { kind: 'conflict'; record: DraftConflictRecord }) {
   if (!item.documentId || !draftStore.inspectManagedDiaryRecovery) return
   working.value = true
@@ -97,8 +117,8 @@ async function importDraft(item: MigrationItem, entry: { kind: 'primary'; record
 }
 
 async function discardDraft(item: MigrationItem, entry: { kind: 'primary'; record: UnsavedDraft } | { kind: 'conflict'; record: DraftConflictRecord }) {
-  const confirmation = window.prompt('Type DISCARD LEGACY DIARY RECOVERY to confirm')
-  if (confirmation !== 'DISCARD LEGACY DIARY RECOVERY') return
+  const confirmation = await requestDiscardConfirmation()
+  if (confirmation !== LEGACY_RECOVERY_CONFIRMATION) return
   working.value = true
   errorCode.value = ''
   try {
@@ -189,13 +209,14 @@ async function resolveItem(
   action: 'adopt-metadata' | 'acknowledge-attention' | 'retain-ai-history' | 'discard-ai-session' | 'discard-draft' | 'bind-frontmatter-identity' | 'retry-item',
 ) {
   if (!status.value?.runId || status.value.inventoryRevision === undefined) return
+  let confirmation: string | undefined
+  if (action === 'discard-draft') {
+    const answer = await requestDiscardConfirmation()
+    if (answer !== LEGACY_RECOVERY_CONFIRMATION) return
+    confirmation = answer
+  }
   working.value = true
   try {
-    let confirmation: string | undefined
-    if (action === 'discard-draft') {
-      confirmation = window.prompt('Type DISCARD LEGACY DIARY RECOVERY to confirm') ?? undefined
-      if (confirmation === undefined) return
-    }
     status.value = await resolveDiaryMigrationItem(status.value.runId, item.itemKey, status.value.inventoryRevision, action, confirmation)
   } catch (error) {
     errorCode.value = safeError(error)
@@ -213,9 +234,9 @@ onMounted(() => { void load() })
         <p>{{ t('settings.diary_migration_subtitle') }}</p>
       </div>
       <div class="settings-section-actions">
-        <button type="button" class="btn" :disabled="loading || working" @click="scan">
+        <NButton attr-type="button" size="medium" class="btn" :bordered="false" :disabled="loading || working" @click="scan">
           {{ t(loading ? 'settings.checking' : 'settings.diary_migration_scan') }}
-        </button>
+        </NButton>
       </div>
     </header>
     <div class="settings-section-body diary-migration-body">
@@ -248,77 +269,95 @@ onMounted(() => { void load() })
             <span>{{ item.classification }} · {{ item.state }}</span>
             <template v-for="entry in draftsFor(item)" :key="`${entry.kind}-${entry.record.documentId}-${entry.kind === 'conflict' ? entry.record.conflictId : entry.record.updatedAt}`">
               <span class="diary-migration-draft-label">{{ t('settings.diary_migration_legacy_draft') }}</span>
-              <button
-                type="button"
+              <NButton
+                attr-type="button"
+                size="medium"
                 class="btn"
+                :bordered="false"
                 :disabled="working"
                 @click="importDraft(item, entry)"
-              >{{ t('settings.diary_migration_import_draft') }}</button>
-              <button
-                type="button"
+              >{{ t('settings.diary_migration_import_draft') }}</NButton>
+              <NButton
+                attr-type="button"
+                size="medium"
                 class="btn"
-                :disabled="working"
+                :bordered="false"
+                :disabled="working || discardConfirmationPending"
                 @click="discardDraft(item, entry)"
-              >{{ t('settings.diary_migration_discard_draft') }}</button>
+              >{{ t('settings.diary_migration_discard_draft') }}</NButton>
             </template>
-            <button
+            <NButton
               v-if="item.canonicalPath.startsWith('diary/') && (item.classification === 'USER_FINALIZE_REQUIRED' || item.classification === 'CLEANUP_PENDING') && (item.state === 'PUBLISHED' || item.state === 'CLEANUP_PENDING' || item.state === 'COMPLETE')"
-              type="button"
+              attr-type="button"
+              size="medium"
               class="btn"
+              :bordered="false"
               :disabled="working || item.userResidualState === 'USER_CONTROLLED_PLAINTEXT_RESIDUAL'"
               @click="acknowledgePlaintextResidual(item)"
-            >{{ t('settings.diary_migration_acknowledge_plaintext') }}</button>
-            <button
+            >{{ t('settings.diary_migration_acknowledge_plaintext') }}</NButton>
+            <NButton
               v-if="item.classification === 'METADATA_MISSING'"
-              type="button"
+              attr-type="button"
+              size="medium"
               class="btn"
+              :bordered="false"
               :disabled="working"
               @click="resolveItem(item, 'adopt-metadata')"
-            >{{ t('settings.diary_migration_adopt') }}</button>
-            <button
+            >{{ t('settings.diary_migration_adopt') }}</NButton>
+            <NButton
               v-else-if="item.classification === 'LEGACY_DIARY_AI_HISTORY'"
-              type="button"
+              attr-type="button"
+              size="medium"
               class="btn"
+              :bordered="false"
               :disabled="working"
               @click="resolveItem(item, 'retain-ai-history')"
-            >{{ t('settings.diary_migration_retain_ai') }}</button>
-            <button
+            >{{ t('settings.diary_migration_retain_ai') }}</NButton>
+            <NButton
               v-if="item.classification === 'LEGACY_DIARY_AI_HISTORY'"
-              type="button"
+              attr-type="button"
+              size="medium"
               class="btn"
+              :bordered="false"
               :disabled="working"
               @click="resolveItem(item, 'discard-ai-session')"
-            >{{ t('settings.diary_migration_discard_ai') }}</button>
-            <button
+            >{{ t('settings.diary_migration_discard_ai') }}</NButton>
+            <NButton
               v-else-if="item.classification === 'FRONTMATTER_IDENTITY_UNRESOLVED'"
-              type="button"
+              attr-type="button"
+              size="medium"
               class="btn"
+              :bordered="false"
               :disabled="working"
               @click="resolveItem(item, 'bind-frontmatter-identity')"
-            >{{ t('settings.diary_migration_bind_frontmatter') }}</button>
-            <button
+            >{{ t('settings.diary_migration_bind_frontmatter') }}</NButton>
+            <NButton
               v-else-if="item.classification === 'NEEDS_ATTENTION' && item.canonicalPath !== '@git/retention'"
-              type="button"
+              attr-type="button"
+              size="medium"
               class="btn"
+              :bordered="false"
               :disabled="working"
               @click="resolveItem(item, 'retry-item')"
-            >{{ t('settings.diary_migration_retry') }}</button>
-            <button
+            >{{ t('settings.diary_migration_retry') }}</NButton>
+            <NButton
               v-else-if="item.state === 'NEEDS_ATTENTION' && item.canonicalPath !== '@git/retention'"
-              type="button"
+              attr-type="button"
+              size="medium"
               class="btn"
+              :bordered="false"
               :disabled="working"
               @click="resolveItem(item, 'acknowledge-attention')"
-            >{{ t('settings.diary_migration_acknowledge') }}</button>
+            >{{ t('settings.diary_migration_acknowledge') }}</NButton>
           </li>
         </ul>
         <div class="settings-metadata-actions">
-          <button type="button" class="btn btn-primary" :disabled="!runReady || working" @click="start">
+          <NButton attr-type="button" type="primary" size="medium" class="btn btn-primary" :bordered="false" :disabled="!runReady || working" @click="start">
             {{ t('settings.diary_migration_start') }}
-          </button>
-          <button type="button" class="btn" :disabled="!runReady || working" @click="resume">
+          </NButton>
+          <NButton attr-type="button" size="medium" class="btn" :bordered="false" :disabled="!runReady || working" @click="resume">
             {{ t('settings.diary_migration_resume') }}
-          </button>
+          </NButton>
         </div>
       </div>
       <p v-else class="settings-empty">{{ t('settings.diary_migration_scan_first') }}</p>

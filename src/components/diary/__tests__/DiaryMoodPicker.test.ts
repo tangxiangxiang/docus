@@ -28,6 +28,9 @@ describe('DiaryMoodPicker', () => {
     expect(radios[0]!.get('img').attributes('src')).toBe('/emoji/亲亲.svg')
     expect(radios[10]!.attributes('data-row')).toBe('3')
     expect(radios[10]!.attributes('data-column')).toBe('3')
+    expect(wrapper.get('[data-testid="diary-mood-picker-close"]').element.tagName).toBe('BUTTON')
+    expect(wrapper.get('[data-testid="diary-mood-picker-close"]').element.classList).toContain('n-button')
+    expect(wrapper.get('[data-testid="diary-mood-clear"]').element.classList).toContain('n-button')
     expect(wrapper.get('[data-testid="diary-mood-clear"]').attributes('disabled')).toBeDefined()
   })
 
