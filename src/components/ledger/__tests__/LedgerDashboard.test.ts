@@ -364,7 +364,7 @@ describe('Ledger live dashboard', () => {
     await setNaiveSelect(wrapper, '选择统计期间', 'today')
     await flushPromises()
 
-    expect(api.getLedgerOverview).toHaveBeenLastCalledWith({ scope: 'today', anchorDate: undefined })
+    expect(api.getLedgerOverview).toHaveBeenLastCalledWith({ scope: 'today', anchorDate: '2026-09-05' })
     expect(wrapper.get('#ledger-dashboard-cashflow-title').text()).toBe('本月收支')
     expect(wrapper.get('#ledger-category-breakdown-title').text()).toBe('今天分类')
   })

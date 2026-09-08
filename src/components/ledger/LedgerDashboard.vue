@@ -26,6 +26,7 @@ const store = useLedgerStore()
 const overview = computed(() => store.overview.value)
 const selectedScope = ref<LedgerOverviewScope>('month')
 const categoryScope = ref<LedgerOverviewScope>('month')
+const categoryDateInput = ref('')
 const categoryOverview = ref<LedgerOverviewDto | null>(null)
 const categoryRefreshing = ref(false)
 let categoryRequestEpoch = 0
@@ -91,6 +92,15 @@ const categoryNames = computed(() => new Map(
 ))
 const selectedPeriodLabel = computed(() => scopeOptions.value.find((option) => option.value === selectedScope.value)?.label ?? '本月')
 const categoryPeriodLabel = computed(() => scopeOptions.value.find((option) => option.value === categoryScope.value)?.label ?? '本月')
+const categoryScopeOptions = computed<SelectOption[]>(() => [
+  { value: 'today' as const, label: '天' },
+  { value: 'week' as const, label: '周' },
+  { value: 'month' as const, label: '月' },
+  { value: 'year' as const, label: '年' },
+  { value: 'all' as const, label: '全部' },
+])
+const categoryPickerType = computed(() => periodPickerTypes[categoryScope.value === 'all' ? 'today' : categoryScope.value])
+const categoryPickerFormat = computed(() => periodPickerFormats[categoryScope.value === 'all' ? 'today' : categoryScope.value])
 const selectedPeriods = computed(() => categoryOverview.value
   ? categoryOverview.value.categoryBreakdown
   : { income: [], expense: [] })
@@ -176,11 +186,14 @@ function retryScope(): void {
   void store.refreshOverview()
 }
 
-async function refreshCategory(scope: LedgerOverviewScope): Promise<void> {
+async function refreshCategory(scope: LedgerOverviewScope, anchorDate: string): Promise<void> {
   const epoch = ++categoryRequestEpoch
   categoryRefreshing.value = true
   try {
-    const result = await getLedgerOverview({ scope, anchorDate: store.overviewRequestedAnchorDate.value })
+    const result = await getLedgerOverview({
+      scope,
+      anchorDate: scope === 'all' ? undefined : anchorDate,
+    })
     if (epoch === categoryRequestEpoch) categoryOverview.value = result
   } catch {
     if (epoch === categoryRequestEpoch) categoryOverview.value = null
@@ -189,8 +202,12 @@ async function refreshCategory(scope: LedgerOverviewScope): Promise<void> {
   }
 }
 
-watch([categoryScope, dateInputValue], ([scope, anchorDate]) => {
-  if (anchorDate) void refreshCategory(scope)
+watch(dateInputValue, (value) => {
+  if (value && !categoryDateInput.value) categoryDateInput.value = value
+}, { immediate: true })
+
+watch([categoryScope, categoryDateInput], ([scope, anchorDate]) => {
+  if (anchorDate) void refreshCategory(scope, anchorDate)
 }, { immediate: true })
 
 function updateScope(value: string | number | null): void {
@@ -199,8 +216,12 @@ function updateScope(value: string | number | null): void {
 }
 
 function updateCategoryScope(value: string | number | null): void {
-  if (typeof value !== 'string' || !scopeOptions.value.some((option) => option.value === value)) return
+  if (typeof value !== 'string' || !categoryScopeOptions.value.some((option) => option.value === value)) return
   categoryScope.value = value as LedgerOverviewScope
+}
+
+function updateCategoryDate(value: string): void {
+  if (value) categoryDateInput.value = value
 }
 
 function onDateChange(value: string): void {
@@ -373,19 +394,33 @@ function onDateChange(value: string): void {
         <NCard class="ledger-dashboard-section" :bordered="false" size="small" aria-labelledby="ledger-category-breakdown-title">
           <div class="ledger-section-heading">
             <h2 id="ledger-category-breakdown-title">{{ categoryPeriodLabel }}分类</h2>
-            <NSelect
-              class="ledger-category-scope"
-              size="small"
-              :value="categoryScope"
-              :options="scopeOptions"
-              :node-props="ledgerSelectNodeProps"
-              aria-label="选择统计期间"
-              aria-haspopup="listbox"
-              role="combobox"
-              :input-props="{ name: 'categoryScope' }"
-              :loading="categoryRefreshing"
-              @update:value="updateCategoryScope"
-            />
+            <div class="ledger-category-toolbar">
+              <NSelect
+                class="ledger-category-scope"
+                size="small"
+                :value="categoryScope"
+                :options="categoryScopeOptions"
+                :node-props="ledgerSelectNodeProps"
+                aria-label="选择统计期间"
+                aria-haspopup="listbox"
+                role="combobox"
+                :input-props="{ name: 'categoryScope' }"
+                :loading="categoryRefreshing"
+                @update:value="updateCategoryScope"
+              />
+              <LedgerDatePicker
+                class="ledger-category-date"
+                :model-value="categoryDateInput"
+                label="选择统计时间"
+                :type="categoryPickerType"
+                :format="categoryPickerFormat"
+                size="small"
+                test-id="ledger-category-date"
+                :disabled="categoryScope === 'all'"
+                :is-date-disabled="isDashboardDateDisabled"
+                @update:model-value="updateCategoryDate"
+              />
+            </div>
           </div>
           <div v-if="categoryRefreshing && !categoryOverview" class="ledger-period-analysis-loading" data-testid="ledger-category-analysis-loading" role="status" aria-live="polite">
             <NSpin size="medium" description="正在加载所选期间…" />
@@ -763,6 +798,14 @@ function onDateChange(value: string): void {
 
 .ledger-period-scope { width: 96px; }
 .ledger-category-scope { width: 96px; }
+.ledger-category-toolbar {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 6px;
+}
+.ledger-category-date,
+.ledger-category-date :deep(.n-input) { width: 148px; }
 .ledger-period-toolbar :deep(.ledger-period-scope .n-base-selection) { width: 96px; }
 
 .ledger-historical-hint {
