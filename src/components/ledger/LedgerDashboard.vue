@@ -626,7 +626,6 @@ function onDateChange(value: string): void {
 
 .ledger-metric-card.is-primary {
   border-color: color-mix(in srgb, var(--accent) 54%, var(--ledger-border));
-  background: color-mix(in srgb, var(--accent) 8%, var(--bg));
 }
 
 .ledger-metric-icon {
