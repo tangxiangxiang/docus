@@ -34,9 +34,10 @@ let categoryRequestEpoch = 0
 const trendDateInput = ref('')
 const trendData = ref<readonly LedgerTrendPoint[]>([])
 let trendRequestEpoch = 0
-const periodDateInput = ref('')
-const periodOverview = ref<LedgerOverviewDto | null>(null)
-let periodRequestEpoch = 0
+const periodNames: readonly LedgerPeriodName[] = ['today', 'week', 'month', 'year']
+const periodDateInputs = ref<Record<LedgerPeriodName, string>>({ today: '', week: '', month: '', year: '' })
+const periodOverviews = ref<Record<LedgerPeriodName, LedgerOverviewDto | null>>({ today: null, week: null, month: null, year: null })
+const periodRequestEpochs: Record<LedgerPeriodName, number> = { today: 0, week: 0, month: 0, year: 0 }
 const historicalMode = computed(() => overview.value?.context.isToday === false
   || store.overviewRequestedAnchorDate.value !== undefined)
 const scopeOptions = computed<SelectOption[]>(() => {
@@ -185,7 +186,7 @@ function transactionMark(transaction: LedgerTransactionDto): string {
 
 function periodSummary(period: LedgerPeriodName) {
   if (!periodDataReady.value) return null
-  return periodOverview.value?.periods.find((item) => item.period === period) ?? null
+  return periodOverviews.value[period]?.periods.find((item) => item.period === period) ?? null
 }
 
 function retryScope(): void {
@@ -210,9 +211,11 @@ async function refreshCategory(scope: LedgerOverviewScope, anchorDate: string): 
 
 watch(dateInputValue, (value) => {
   if (value && !categoryDateInput.value) categoryDateInput.value = value
-  if (value && value !== periodDateInput.value) {
-    periodDateInput.value = value
-    periodOverview.value = overview.value
+  if (value) {
+    for (const period of periodNames) {
+      periodDateInputs.value[period] = value
+      periodOverviews.value[period] = overview.value
+    }
   }
   if (value && !trendDateInput.value) {
     trendDateInput.value = value
@@ -252,21 +255,20 @@ function updateCategoryDate(value: string): void {
   if (value) categoryDateInput.value = value
 }
 
-async function refreshPeriodSummary(anchorDate: string): Promise<void> {
-  const epoch = ++periodRequestEpoch
+async function refreshPeriodSummary(period: LedgerPeriodName, anchorDate: string): Promise<void> {
+  const epoch = ++periodRequestEpochs[period]
   try {
     const result = await getLedgerOverview({ scope: store.overviewScope.value, anchorDate })
-    if (epoch === periodRequestEpoch) periodOverview.value = result
+    if (epoch === periodRequestEpochs[period]) periodOverviews.value[period] = result
   } catch {
     // Keep the last successfully rendered summary visible on a local refresh error.
   }
 }
 
-function onDateChange(value: string): void {
-  if (value && value !== periodDateInput.value) {
-    periodDateInput.value = value
-    void refreshPeriodSummary(value)
-    emit('selectDate', value)
+function onDateChange(period: LedgerPeriodName, value: string): void {
+  if (value && value !== periodDateInputs.value[period]) {
+    periodDateInputs.value[period] = value
+    void refreshPeriodSummary(period, value)
   }
 }
 </script>
@@ -549,17 +551,17 @@ function onDateChange(value: string): void {
             <div class="ledger-period-card-heading">
               <h3>{{ periodLabels[period] }}</h3>
               <div v-if="periodSummary(period)" class="ledger-period-date-control" :data-testid="`ledger-period-date-control-${period}`">
-                <span class="ledger-period-date-label">{{ formatLedgerPeriodPickerLabel(period, periodDateInput) }}</span>
+                <span class="ledger-period-date-label">{{ formatLedgerPeriodPickerLabel(period, periodDateInputs[period]) }}</span>
                 <div class="ledger-period-date-editor">
                   <LedgerDatePicker
-                    :model-value="periodDateInput"
+                    :model-value="periodDateInputs[period]"
                     :type="periodPickerTypes[period]"
                     :format="periodPickerFormats[period]"
                     :label="`${periodLabels[period]}日期`"
                     size="small"
                     :test-id="periodPickerTestId(period)"
                     :is-date-disabled="isDashboardDateDisabled"
-                    @update:model-value="onDateChange"
+                    @update:model-value="onDateChange(period, $event)"
                   />
                 </div>
               </div>
