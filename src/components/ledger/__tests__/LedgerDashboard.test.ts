@@ -356,6 +356,19 @@ describe('Ledger live dashboard', () => {
     expect(wrapper.get('[data-testid="ledger-dashboard-cashflow"]').text()).toContain('38.00')
   })
 
+  it('refreshes category breakdown independently from the cashflow period', async () => {
+    const wrapper = mount(LedgerView)
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    await setNaiveSelect(wrapper, '选择统计期间', 'today')
+    await flushPromises()
+
+    expect(api.getLedgerOverview).toHaveBeenLastCalledWith({ scope: 'today', anchorDate: undefined })
+    expect(wrapper.get('#ledger-dashboard-cashflow-title').text()).toBe('本月收支')
+    expect(wrapper.get('#ledger-category-breakdown-title').text()).toBe('今天分类')
+  })
+
   it('supports the all-time scope without changing server-owned balances or fixed periods', async () => {
     const wrapper = mount(LedgerView)
     wrappers.push(wrapper)

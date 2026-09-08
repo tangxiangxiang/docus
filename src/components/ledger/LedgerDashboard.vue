@@ -3,10 +3,12 @@ import { computed, ref, watch } from 'vue'
 import { NAlert, NButton, NCard, NEmpty, NIcon, NList, NListItem, NSelect, NSpin, NStatistic, type SelectOption } from 'naive-ui'
 import { ChartBar, Coin, CreditCard, Wallet } from '@vicons/tabler'
 import type {
+  LedgerOverviewDto,
   LedgerOverviewScope,
   LedgerPeriodName,
   LedgerTransactionDto,
 } from '../../../shared/ledgerProtocol'
+import { getLedgerOverview } from '../../features/ledger/api'
 import { formatLedgerMoney, formatLedgerSignedMoney } from '../../features/ledger/money'
 import { formatLedgerDate, formatLedgerDateTime, formatLedgerPeriodPickerLabel } from '../../features/ledger/time'
 import { ledgerSelectNodeProps } from '../../features/ledger/naiveControls'
@@ -23,6 +25,10 @@ const emit = defineEmits<{
 const store = useLedgerStore()
 const overview = computed(() => store.overview.value)
 const selectedScope = ref<LedgerOverviewScope>('month')
+const categoryScope = ref<LedgerOverviewScope>('month')
+const categoryOverview = ref<LedgerOverviewDto | null>(null)
+const categoryRefreshing = ref(false)
+let categoryRequestEpoch = 0
 const historicalMode = computed(() => overview.value?.context.isToday === false
   || store.overviewRequestedAnchorDate.value !== undefined)
 const scopeOptions = computed<SelectOption[]>(() => {
@@ -84,8 +90,9 @@ const categoryNames = computed(() => new Map(
   store.categories.value.map((category) => [category.id, category.name]),
 ))
 const selectedPeriodLabel = computed(() => scopeOptions.value.find((option) => option.value === selectedScope.value)?.label ?? '本月')
-const selectedPeriods = computed(() => periodDataReady.value
-  ? overview.value?.categoryBreakdown ?? { income: [], expense: [] }
+const categoryPeriodLabel = computed(() => scopeOptions.value.find((option) => option.value === categoryScope.value)?.label ?? '本月')
+const selectedPeriods = computed(() => categoryOverview.value
+  ? categoryOverview.value.categoryBreakdown
   : { income: [], expense: [] })
 const selectedPeriodSummary = computed(() => periodDataReady.value ? overview.value?.cashflow ?? null : null)
 const assetAccounts = computed(() => (overview.value?.accounts ?? []).filter((account) => account.nature === 'asset'))
@@ -169,9 +176,31 @@ function retryScope(): void {
   void store.refreshOverview()
 }
 
+async function refreshCategory(scope: LedgerOverviewScope): Promise<void> {
+  const epoch = ++categoryRequestEpoch
+  categoryRefreshing.value = true
+  try {
+    const result = await getLedgerOverview({ scope, anchorDate: store.overviewRequestedAnchorDate.value })
+    if (epoch === categoryRequestEpoch) categoryOverview.value = result
+  } catch {
+    if (epoch === categoryRequestEpoch) categoryOverview.value = null
+  } finally {
+    if (epoch === categoryRequestEpoch) categoryRefreshing.value = false
+  }
+}
+
+watch([categoryScope, dateInputValue], ([scope, anchorDate]) => {
+  if (anchorDate) void refreshCategory(scope)
+}, { immediate: true })
+
 function updateScope(value: string | number | null): void {
   if (typeof value !== 'string' || !scopeOptions.value.some((option) => option.value === value)) return
   selectedScope.value = value as LedgerOverviewScope
+}
+
+function updateCategoryScope(value: string | number | null): void {
+  if (typeof value !== 'string' || !scopeOptions.value.some((option) => option.value === value)) return
+  categoryScope.value = value as LedgerOverviewScope
 }
 
 function onDateChange(value: string): void {
@@ -343,9 +372,23 @@ function onDateChange(value: string): void {
       <div class="ledger-dashboard-two-column">
         <NCard class="ledger-dashboard-section" :bordered="false" size="small" aria-labelledby="ledger-category-breakdown-title">
           <div class="ledger-section-heading">
-            <div>
-              <h2 id="ledger-category-breakdown-title">{{ selectedPeriodLabel }}分类</h2>
-            </div>
+            <h2 id="ledger-category-breakdown-title">{{ categoryPeriodLabel }}分类</h2>
+            <NSelect
+              class="ledger-category-scope"
+              size="small"
+              :value="categoryScope"
+              :options="scopeOptions"
+              :node-props="ledgerSelectNodeProps"
+              aria-label="选择统计期间"
+              aria-haspopup="listbox"
+              role="combobox"
+              :input-props="{ name: 'categoryScope' }"
+              :loading="categoryRefreshing"
+              @update:value="updateCategoryScope"
+            />
+          </div>
+          <div v-if="categoryRefreshing && !categoryOverview" class="ledger-period-analysis-loading" data-testid="ledger-category-analysis-loading" role="status" aria-live="polite">
+            <NSpin size="medium" description="正在加载所选期间…" />
           </div>
           <div class="ledger-breakdown-columns" data-testid="ledger-category-breakdown">
             <div>
@@ -719,6 +762,7 @@ function onDateChange(value: string): void {
 }
 
 .ledger-period-scope { width: 96px; }
+.ledger-category-scope { width: 96px; }
 .ledger-period-toolbar :deep(.ledger-period-scope .n-base-selection) { width: 96px; }
 
 .ledger-historical-hint {
