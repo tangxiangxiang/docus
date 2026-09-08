@@ -994,16 +994,17 @@ function onDateChange(period: LedgerPeriodName, value: string): void {
 .ledger-dashboard-account-groups {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 26px;
+  gap: 0;
 }
 
 .ledger-dashboard-account-group {
   min-width: 0;
-  padding-right: 2px;
+  padding-right: 26px;
 }
 
 .ledger-dashboard-account-group + .ledger-dashboard-account-group {
   padding-left: 26px;
+  padding-right: 0;
   border-left: 1px solid var(--ledger-divider);
 }
 
@@ -1156,9 +1157,10 @@ function onDateChange(period: LedgerPeriodName, value: string): void {
 .ledger-breakdown-columns {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 20px;
+  gap: 0;
 }
 
+.ledger-breakdown-columns > div:first-child { padding-right: 20px; }
 .ledger-breakdown-columns > div + div {
   padding-left: 20px;
   border-left: 1px solid var(--ledger-divider);
@@ -1470,6 +1472,7 @@ function onDateChange(period: LedgerPeriodName, value: string): void {
   }
   .ledger-dashboard-actions > * { flex: 1 1 140px; }
   .ledger-dashboard-account-groups { grid-template-columns: 1fr; gap: 18px; }
+  .ledger-dashboard-account-group { padding-right: 2px; }
   .ledger-dashboard-account-group + .ledger-dashboard-account-group {
     padding: 18px 2px 0 0;
     border-top: 1px solid var(--ledger-divider);
@@ -1500,6 +1503,7 @@ function onDateChange(period: LedgerPeriodName, value: string): void {
   }
   .ledger-cashflow-grid > div:last-child { padding-bottom: 4px; }
   .ledger-breakdown-columns { grid-template-columns: 1fr; gap: 20px; }
+  .ledger-breakdown-columns > div:first-child { padding-right: 0; }
   .ledger-breakdown-columns > div + div {
     padding: 20px 0 0;
     border-top: 1px solid var(--ledger-divider);
