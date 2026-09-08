@@ -1193,6 +1193,8 @@ function onDateChange(value: string): void {
   min-width: 0;
   align-items: baseline;
   gap: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--ledger-divider);
   justify-content: space-between;
 }
 
