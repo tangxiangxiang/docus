@@ -181,8 +181,7 @@ function buildOption(): LedgerTrendChartOption {
       data: [SERIES_LABEL.income, SERIES_LABEL.expense],
     },
     tooltip: {
-      trigger: 'axis',
-      axisPointer: { type: 'none', show: false },
+      trigger: 'item',
       backgroundColor: palette.surface,
       borderColor: palette.border,
       extraCssText: 'box-shadow:0 8px 24px rgba(0,0,0,.08);border-radius:8px',
@@ -195,7 +194,6 @@ function buildOption(): LedgerTrendChartOption {
       axisTick: { show: false },
       axisLine: { lineStyle: { color: palette.border } },
       axisLabel: { color: palette.muted, fontSize: 11, interval: 0, hideOverlap: true },
-      axisPointer: { show: false },
     },
     yAxis: {
       type: 'value',
