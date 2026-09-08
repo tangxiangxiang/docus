@@ -281,7 +281,7 @@ function onRecoveryResolved(): void {
       </NForm>
     </NCard>
 
-    <div v-if="!store.hasUnresolvedCreate.value && loading && !page" class="ledger-transactions-state" data-testid="ledger-transactions-loading" role="status"><NSpin size="medium" description="正在加载交易…" /></div>
+    <div v-if="!store.hasUnresolvedCreate.value && loading && !page && !store.settings.value" class="ledger-transactions-state" data-testid="ledger-transactions-loading" role="status"><NSpin size="medium" description="正在加载交易…" /></div>
     <NEmpty v-else-if="!store.hasUnresolvedCreate.value && !store.settings.value" class="ledger-transactions-state" data-testid="ledger-transactions-needs-settings" :show-icon="false" description="请先完成 Ledger 初始化">
       <template #extra>设置基础货币、时区并创建账户后，交易记录才会出现在这里。</template>
     </NEmpty>
@@ -302,8 +302,9 @@ function onRecoveryResolved(): void {
       </div>
 
       <NAlert v-if="filterError" class="ledger-inline-error" type="error" :show-icon="false" role="alert"><span>{{ filterError }}</span><NButton class="ledger-link-button" attr-type="button" size="small" text :bordered="false" @click="loadTransactions">重试</NButton></NAlert>
+      <div v-if="loading && !page" class="ledger-transactions-inline-loading" data-testid="ledger-transactions-inline-loading" role="status"><NSpin size="medium" description="正在加载交易…" /></div>
       <NDataTable
-        v-if="transactions.length"
+        v-else-if="transactions.length"
         class="ledger-transaction-table"
         data-testid="ledger-transaction-list"
         :columns="transactionColumns"
@@ -384,6 +385,7 @@ function onRecoveryResolved(): void {
 .ledger-inline-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; color: #b42318; font-size: .78rem; }
 .ledger-inline-error :deep(.n-alert-body) { width: 100%; }
 .ledger-inline-error :deep(.n-alert__content) { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; }
+.ledger-transactions-inline-loading { display: grid; min-height: 220px; place-items: center; color: var(--text-muted); }
 .ledger-transaction-table { margin: 0 -4px; }
 .ledger-transaction-table :deep(.n-data-table-th) { color: var(--text-muted); font-size: .73rem; font-weight: 650; }
 .ledger-transaction-table :deep(.n-data-table-td) { padding: 13px 8px; }
