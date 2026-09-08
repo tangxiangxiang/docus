@@ -366,7 +366,7 @@ describe('Ledger live dashboard', () => {
 
     expect(api.getLedgerOverview).toHaveBeenLastCalledWith({ scope: 'today', anchorDate: '2026-09-05' })
     expect(wrapper.get('#ledger-dashboard-cashflow-title').text()).toBe('本月收支')
-    expect(wrapper.get('#ledger-category-breakdown-title').text()).toBe('2026-09-05分类')
+    expect(wrapper.get('#ledger-category-breakdown-title').text()).toBe('收支分类')
 
     const categoryPicker = wrapper.findAllComponents(LedgerDatePicker).find((picker) => picker.props('testId') === 'ledger-category-date')
     expect(categoryPicker?.props('type')).toBe('date')
@@ -379,7 +379,7 @@ describe('Ledger live dashboard', () => {
 
     await setNaiveSelect(wrapper, '选择统计期间', 'month')
     await flushPromises()
-    expect(wrapper.get('#ledger-category-breakdown-title').text()).toBe('2026-09分类')
+    expect(wrapper.get('#ledger-category-breakdown-title').text()).toBe('收支分类')
   })
 
   it('supports the all-time scope without changing server-owned balances or fixed periods', async () => {

@@ -91,11 +91,6 @@ const categoryNames = computed(() => new Map(
   store.categories.value.map((category) => [category.id, category.name]),
 ))
 const selectedPeriodLabel = computed(() => scopeOptions.value.find((option) => option.value === selectedScope.value)?.label ?? '本月')
-const categoryPeriodLabel = computed(() => {
-  if (categoryScope.value === 'all') return '全部'
-  if (!categoryDateInput.value) return '本月'
-  return formatLedgerPeriodPickerLabel(categoryScope.value, categoryDateInput.value)
-})
 const categoryScopeOptions = computed<SelectOption[]>(() => [
   { value: 'today' as const, label: '天' },
   { value: 'week' as const, label: '周' },
@@ -397,7 +392,7 @@ function onDateChange(value: string): void {
       <div class="ledger-dashboard-two-column">
         <NCard class="ledger-dashboard-section" :bordered="false" size="small" aria-labelledby="ledger-category-breakdown-title">
           <div class="ledger-section-heading">
-            <h2 id="ledger-category-breakdown-title">{{ categoryPeriodLabel }}分类</h2>
+            <h2 id="ledger-category-breakdown-title">收支分类</h2>
             <div class="ledger-category-toolbar">
               <NSelect
                 class="ledger-category-scope"
@@ -802,18 +797,12 @@ function onDateChange(value: string): void {
 }
 
 .ledger-period-scope { width: 96px; }
-.ledger-category-scope { width: 96px; }
+.ledger-category-scope { display: none; width: 96px; }
 .ledger-category-toolbar {
   display: flex;
   flex: 0 1 auto;
   align-items: center;
   gap: 6px;
-  opacity: 0;
-  transition: opacity .14s ease;
-}
-.ledger-category-toolbar:hover,
-.ledger-category-toolbar:focus-within {
-  opacity: 1;
 }
 .ledger-category-date,
 .ledger-category-date :deep(.n-input) { width: 148px; }
