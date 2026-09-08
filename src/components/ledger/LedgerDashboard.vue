@@ -34,6 +34,9 @@ let categoryRequestEpoch = 0
 const trendDateInput = ref('')
 const trendData = ref<readonly LedgerTrendPoint[]>([])
 let trendRequestEpoch = 0
+const periodDateInput = ref('')
+const periodOverview = ref<LedgerOverviewDto | null>(null)
+let periodRequestEpoch = 0
 const historicalMode = computed(() => overview.value?.context.isToday === false
   || store.overviewRequestedAnchorDate.value !== undefined)
 const scopeOptions = computed<SelectOption[]>(() => {
@@ -182,7 +185,7 @@ function transactionMark(transaction: LedgerTransactionDto): string {
 
 function periodSummary(period: LedgerPeriodName) {
   if (!periodDataReady.value) return null
-  return overview.value?.periods.find((item) => item.period === period) ?? null
+  return periodOverview.value?.periods.find((item) => item.period === period) ?? null
 }
 
 function retryScope(): void {
@@ -207,6 +210,10 @@ async function refreshCategory(scope: LedgerOverviewScope, anchorDate: string): 
 
 watch(dateInputValue, (value) => {
   if (value && !categoryDateInput.value) categoryDateInput.value = value
+  if (value && value !== periodDateInput.value) {
+    periodDateInput.value = value
+    periodOverview.value = overview.value
+  }
   if (value && !trendDateInput.value) {
     trendDateInput.value = value
     trendData.value = overview.value?.trend ?? []
@@ -245,8 +252,22 @@ function updateCategoryDate(value: string): void {
   if (value) categoryDateInput.value = value
 }
 
+async function refreshPeriodSummary(anchorDate: string): Promise<void> {
+  const epoch = ++periodRequestEpoch
+  try {
+    const result = await getLedgerOverview({ scope: store.overviewScope.value, anchorDate })
+    if (epoch === periodRequestEpoch) periodOverview.value = result
+  } catch {
+    // Keep the last successfully rendered summary visible on a local refresh error.
+  }
+}
+
 function onDateChange(value: string): void {
-  if (value) emit('selectDate', value)
+  if (value && value !== periodDateInput.value) {
+    periodDateInput.value = value
+    void refreshPeriodSummary(value)
+    emit('selectDate', value)
+  }
 }
 </script>
 
@@ -528,10 +549,10 @@ function onDateChange(value: string): void {
             <div class="ledger-period-card-heading">
               <h3>{{ periodLabels[period] }}</h3>
               <div v-if="periodSummary(period)" class="ledger-period-date-control" :data-testid="`ledger-period-date-control-${period}`">
-                <span class="ledger-period-date-label">{{ formatLedgerPeriodPickerLabel(period, dateInputValue) }}</span>
+                <span class="ledger-period-date-label">{{ formatLedgerPeriodPickerLabel(period, periodDateInput) }}</span>
                 <div class="ledger-period-date-editor">
                   <LedgerDatePicker
-                    :model-value="dateInputValue"
+                    :model-value="periodDateInput"
                     :type="periodPickerTypes[period]"
                     :format="periodPickerFormats[period]"
                     :label="`${periodLabels[period]}日期`"
