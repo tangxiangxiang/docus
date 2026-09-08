@@ -409,6 +409,7 @@ function onDateChange(value: string): void {
                 @update:value="updateCategoryScope"
               />
               <LedgerDatePicker
+                :key="categoryPickerType"
                 class="ledger-category-date"
                 :model-value="categoryDateInput"
                 label="选择统计时间"
