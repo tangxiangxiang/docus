@@ -850,8 +850,6 @@ function onDateChange(period: LedgerPeriodName, value: string): void {
   text-decoration: none;
 }
 
-.ledger-section-heading > a::after { content: ' →'; }
-
 .ledger-period-heading { align-items: flex-start; }
 .ledger-period-heading-copy { min-width: 0; }
 
