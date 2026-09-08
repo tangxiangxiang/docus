@@ -182,7 +182,10 @@ function buildOption(): LedgerTrendChartOption {
     },
     tooltip: {
       trigger: 'axis',
-      axisPointer: { type: 'shadow', shadowStyle: { color: palette.grid } },
+      // A shadow pointer paints a full category-width rectangle above the
+      // bars. Use a thin guide instead so the selected month stays readable
+      // without obscuring either series.
+      axisPointer: { type: 'line', lineStyle: { color: palette.border, width: 1, type: 'dashed' } },
       backgroundColor: palette.surface,
       borderColor: palette.border,
       extraCssText: 'box-shadow:0 8px 24px rgba(0,0,0,.08);border-radius:8px',
