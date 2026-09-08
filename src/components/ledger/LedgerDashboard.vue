@@ -624,10 +624,6 @@ function onDateChange(value: string): void {
   box-sizing: border-box;
 }
 
-.ledger-metric-card.is-primary {
-  border-color: color-mix(in srgb, var(--accent) 54%, var(--ledger-border));
-}
-
 .ledger-metric-icon {
   display: grid;
   width: 40px;
