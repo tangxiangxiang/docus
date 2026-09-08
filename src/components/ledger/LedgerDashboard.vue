@@ -1233,11 +1233,13 @@ function onDateChange(value: string): void {
   transform: translateY(-50%);
   opacity: 0;
   pointer-events: none;
+  text-align: left;
   transition: opacity .14s ease;
 }
 
 .ledger-period-date-editor :deep(.ledger-date-picker),
 .ledger-period-date-editor :deep(.ledger-date-picker .n-input) { width: 100%; }
+.ledger-period-date-editor :deep(.n-input__input-el) { text-align: left; }
 
 .ledger-period-date-control:hover .ledger-period-date-label,
 .ledger-period-date-control:focus-within .ledger-period-date-label { opacity: 0; }
