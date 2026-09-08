@@ -560,6 +560,8 @@ describe('Ledger live dashboard', () => {
     const recent = wrapper.get('[data-testid="ledger-recent-transactions"]')
     const rows = recent.findAll('.ledger-recent-row')
     expect(rows).toHaveLength(5)
+    expect(rows[0].element.tagName).toBe('DIV')
+    expect(rows[0].element.parentElement?.classList.contains('n-list-item__main')).toBe(true)
     expect(rows[0].text()).toContain('餐饮 · 现金账户（已归档）')
     expect(rows[1].text()).toContain('招商银行 → 现金账户（已归档）')
     expect(rows[2].text()).toContain('现金账户（已归档） → 招商银行')

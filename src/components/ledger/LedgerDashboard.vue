@@ -391,10 +391,12 @@ function onDateChange(value: string): void {
             <NButton class="ledger-link-button" attr-type="button" size="small" text :bordered="false" @click="emit('viewTransactions')">查看全部</NButton>
           </div>
           <NList v-if="overview.recentTransactions.length" class="ledger-recent-list" data-testid="ledger-recent-transactions" :show-divider="false" hoverable>
-            <NListItem v-for="transaction in overview.recentTransactions" :key="transaction.id" class="ledger-recent-row">
-              <span :class="['ledger-recent-icon', `is-${transaction.type}`]" aria-hidden="true">{{ transactionMark(transaction) }}</span>
-              <span class="ledger-recent-info"><strong>{{ transactionTitle(transaction) }}</strong><small>{{ transactionMeta(transaction) }} · {{ formatLedgerDateTime(transaction.occurredAt, store.settings.value?.timezone ?? 'UTC') }}</small></span>
-              <strong :class="['ledger-recent-amount', `is-${transaction.type}`]">{{ transactionAmount(transaction) }}</strong>
+            <NListItem v-for="transaction in overview.recentTransactions" :key="transaction.id">
+              <div class="ledger-recent-row">
+                <span :class="['ledger-recent-icon', `is-${transaction.type}`]" aria-hidden="true">{{ transactionMark(transaction) }}</span>
+                <span class="ledger-recent-info"><strong>{{ transactionTitle(transaction) }}</strong><small>{{ transactionMeta(transaction) }} · {{ formatLedgerDateTime(transaction.occurredAt, store.settings.value?.timezone ?? 'UTC') }}</small></span>
+                <strong :class="['ledger-recent-amount', `is-${transaction.type}`]">{{ transactionAmount(transaction) }}</strong>
+              </div>
             </NListItem>
           </NList>
           <NEmpty v-else class="ledger-inline-empty" data-testid="ledger-recent-empty" size="small" :show-icon="false" :description="historicalMode ? '截至该日期还没有交易记录。' : '还没有交易记录。'">
@@ -1050,6 +1052,8 @@ function onDateChange(value: string): void {
 }
 
 .ledger-recent-list { display: grid; }
+.ledger-recent-list :deep(.n-list-item) { padding: 0; }
+.ledger-recent-list :deep(.n-list-item__main) { width: 100%; min-width: 0; }
 
 .ledger-recent-row {
   display: grid;

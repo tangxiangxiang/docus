@@ -156,6 +156,22 @@ test('real Ledger onboarding and expense survive dashboard refresh', async ({ pa
   await expect(page.getByRole('dialog')).toBeHidden()
   await expect(page.getByTestId('ledger-recent-transactions')).toContainText('餐饮')
   await expect(page.getByTestId('ledger-recent-transactions')).toContainText('-¥38.00')
+  const recentRow = page.locator('.ledger-recent-row').first()
+  await expect(recentRow).toHaveCSS('display', 'grid')
+  const recentRowBox = await recentRow.boundingBox()
+  const recentIconBox = await recentRow.locator('.ledger-recent-icon').boundingBox()
+  const recentInfoBox = await recentRow.locator('.ledger-recent-info').boundingBox()
+  const recentAmountBox = await recentRow.locator('.ledger-recent-amount').boundingBox()
+  if (!recentRowBox || !recentIconBox || !recentInfoBox || !recentAmountBox) {
+    throw new Error('最近交易行布局节点不可测量')
+  }
+  expect(recentRowBox.height).toBeLessThan(72)
+  expect(recentIconBox.x).toBeLessThan(recentInfoBox.x)
+  expect(recentInfoBox.x).toBeLessThan(recentAmountBox.x)
+  const rowCenterY = recentRowBox.y + recentRowBox.height / 2
+  expect(Math.abs(recentIconBox.y + recentIconBox.height / 2 - rowCenterY)).toBeLessThan(4)
+  expect(Math.abs(recentInfoBox.y + recentInfoBox.height / 2 - rowCenterY)).toBeLessThan(4)
+  expect(Math.abs(recentAmountBox.y + recentAmountBox.height / 2 - rowCenterY)).toBeLessThan(4)
   await expect(page.locator('.ledger-breakdown-columns > div')).toHaveCount(2)
   await expect(page.getByRole('heading', { name: '收入分类' })).toBeVisible()
   await expect(page.getByRole('heading', { name: '支出分类' })).toBeVisible()
