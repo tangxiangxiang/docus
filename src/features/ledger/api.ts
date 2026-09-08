@@ -414,6 +414,6 @@ export function getLedgerOverview(input: {
   )
 }
 
-export function getLedgerTrend(months = 6): Promise<readonly LedgerTrendPoint[]> {
+export function getLedgerTrend(months = 12): Promise<readonly LedgerTrendPoint[]> {
   return request(`/api/ledger/trend${queryString({ months })}`, {}, arrayResponse<LedgerTrendPoint>('Trend response'))
 }

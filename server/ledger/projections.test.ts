@@ -629,6 +629,7 @@ describe('Ledger Overview and trend projections', () => {
     expect(overview.recentTransactions.every((row) => row.deletedAt === null)).toBe(true)
     expect(overview.recentTransactions.some((row) => row.type === 'adjustment')).toBe(true)
     expect(overview.trend.map((point) => point.month)).toEqual([
+      '2025-10', '2025-11', '2025-12', '2026-01', '2026-02', '2026-03',
       '2026-04', '2026-05', '2026-06', '2026-07', '2026-08', '2026-09',
     ])
     expect(fixture.projections.getTrend(3).map((point) => point.month)).toEqual([

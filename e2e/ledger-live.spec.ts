@@ -205,7 +205,7 @@ test('real Ledger onboarding and expense survive dashboard refresh', async ({ pa
   // The trend section is a chart now. Assert the container and the
   // screen-reader table, never anything inside the canvas.
   await expect(page.getByTestId('ledger-cashflow-trend-canvas')).toBeVisible()
-  await expect(page.getByTestId('ledger-cashflow-trend-table').locator('tbody tr')).toHaveCount(6)
+  await expect(page.getByTestId('ledger-cashflow-trend-table').locator('tbody tr')).toHaveCount(12)
   await expect(page.getByTestId('ledger-cashflow-trend-table')).toContainText('¥38.00')
 
   await page.reload()
@@ -456,11 +456,11 @@ test('historical period navigation keeps one anchor across periods, reload, and 
   await expect(page.getByTestId('ledger-recent-transactions')).not.toContainText(afterAnchorPayee)
   await expect(page.getByTestId('ledger-return-today')).toHaveCount(0)
 
-  // The trend follows the same anchor as the rest of the Overview: six months
-  // ending with the anchor month, so the current month is outside the window.
+  // The trend follows the same anchor as the rest of the Overview: twelve
+  // months ending with the anchor month, so the current month is outside the window.
   const trendRows = page.getByTestId('ledger-cashflow-trend-table').locator('tbody tr')
   await expect(page.getByTestId('ledger-cashflow-trend-canvas')).toBeVisible()
-  await expect(trendRows).toHaveCount(6)
+  await expect(trendRows).toHaveCount(12)
   await expect(trendRows.last()).toContainText(`${anchor.year}年${anchor.month}月`)
   await expect(page.getByTestId('ledger-cashflow-trend-table')).not.toContainText(`${today.year}年${today.month}月`)
 

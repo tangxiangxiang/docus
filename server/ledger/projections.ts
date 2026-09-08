@@ -438,7 +438,7 @@ export function createLedgerProjections(
 
     const scope = input.scope
     const fixedPeriods = periodRangesForLocalDate(resolvedAnchorDate, settings.timezone)
-    const trendRanges = calendarMonthRangesForLocalDate(6, resolvedAnchorDate, settings.timezone)
+    const trendRanges = calendarMonthRangesForLocalDate(12, resolvedAnchorDate, settings.timezone)
     const allAccounts = repository.listAccounts({ includeArchived: true })
     const accountStates = allAccounts.map(accountState)
     const activeAccounts = accountStates.filter((state) => state.account.archivedAt === null)

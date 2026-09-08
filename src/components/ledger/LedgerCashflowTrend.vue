@@ -199,7 +199,7 @@ function buildOption(): LedgerTrendChartOption {
     yAxis: {
       type: 'value',
       splitNumber: 3,
-      // A trend of six all-zero months has no range for ECharts to scale, so
+      // A trend of twelve all-zero months has no range for ECharts to scale, so
       // pin one major unit of headroom rather than letting the axis collapse.
       ...(allZero.value ? { min: 0, max: 10 ** currencyExponentFor(props.currency) } : {}),
       axisLine: { show: false },
