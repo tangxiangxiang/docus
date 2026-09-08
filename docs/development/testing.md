@@ -138,10 +138,11 @@ origin interpolation before running the packaged smoke.
 ## CI Lanes
 
 The workflow runs static checks, unit tests, History integration, Recovery
-integration, the Draft Store browser suite, and the application-level browser
-suite once on Ubuntu with Node.js 24. The application browser suite is split
-into two Playwright shards; its config keeps `workers: 1` because the tests
-share one server generation, Vault, and browser persistence within a shard.
+integration, the Draft Store browser suite, and the `e2e-application`
+application-level browser suite once on Ubuntu with Node.js 24. The application
+browser suite is split into two Playwright shards; its config keeps
+`workers: 1` because the tests share one server generation, Vault, and browser
+persistence within a shard.
 
 An independent compatibility matrix runs only `test:platform-smoke` on Ubuntu
 Node.js 22, Windows Node.js 24, and macOS Node.js 24. Dedicated authentication,
