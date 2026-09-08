@@ -809,8 +809,8 @@ function onDateChange(value: string): void {
   align-items: center;
   gap: 6px;
 }
-.ledger-category-toolbar:hover .ledger-category-scope,
-.ledger-category-toolbar:focus-within .ledger-category-scope {
+.ledger-category-scope:hover,
+.ledger-category-scope:focus-within {
   opacity: 1;
 }
 .ledger-category-date,
