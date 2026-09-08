@@ -172,7 +172,7 @@ function buildOption(): LedgerTrendChartOption {
     grid: { top: 38, left: 8, right: 8, bottom: 4, containLabel: true },
     legend: {
       top: 0,
-      right: 0,
+      left: 'center',
       icon: 'roundRect',
       itemWidth: 9,
       itemHeight: 9,
