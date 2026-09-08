@@ -12,6 +12,7 @@ import type {
 } from '../../../shared/ledgerProtocol'
 import { LedgerApiError } from '../../features/ledger/ledgerErrors'
 import { resetLedgerStoreForTesting, useLedgerStore } from '../../features/ledger/ledgerStore'
+import LedgerDatePicker from '../../components/ledger/LedgerDatePicker.vue'
 import LedgerView from '../LedgerView.vue'
 
 const api = vi.hoisted(() => ({
@@ -97,6 +98,12 @@ function overviewFor(input: { scope: LedgerOverviewScope; anchorDate: string | u
 
 const wrappers: VueWrapper[] = []
 
+async function setLedgerDate(wrapper: VueWrapper, value: string): Promise<void> {
+  const picker = wrapper.findComponent(LedgerDatePicker)
+  if (!picker.exists()) throw new Error('Ledger dashboard date picker is not mounted')
+  await picker.vm.$emit('update:modelValue', value)
+}
+
 function setupApi(): void {
   api.getLedgerSettings.mockResolvedValue(settings)
   api.listLedgerAccounts.mockResolvedValue([account])
@@ -171,7 +178,7 @@ describe('Ledger historical period route coordination', () => {
 
     expect(router.currentRoute.value.fullPath).toBe('/ledger?date=2026-08-20')
     expect(api.getLedgerOverview).toHaveBeenCalledWith({ scope: 'month', anchorDate: '2026-08-20' })
-    expect((wrapper.get('[data-testid="ledger-period-date"]').element as HTMLInputElement).value).toBe('2026-08-20')
+    expect((wrapper.get('[data-testid="ledger-period-date"] input').element as HTMLInputElement).value).toBe('2026-08-20')
     expect(wrapper.find('[data-testid="ledger-return-today"]').exists()).toBe(true)
     expect(wrapper.get('[data-testid="ledger-dashboard-assets"] .ledger-dashboard-account').element.tagName).toBe('A')
     expect(wrapper.get('[data-testid="ledger-dashboard-assets"] .ledger-dashboard-account').attributes('href')).toBe('/ledger/accounts/bank-1')
@@ -183,7 +190,7 @@ describe('Ledger historical period route coordination', () => {
     const { router, wrapper } = await mountAt('/ledger?date=2026-08-20')
     api.getLedgerOverview.mockClear()
 
-    await wrapper.get('[data-testid="ledger-period-date"]').setValue('2026-08-19')
+    await setLedgerDate(wrapper, '2026-08-19')
     await flushPromises()
     await flushPromises()
     expect(router.currentRoute.value.query.date).toBe('2026-08-19')
@@ -295,7 +302,7 @@ describe('Ledger historical period route coordination', () => {
     await router.push('/ledger?date=2026-06-15')
     await nextTick()
     expect(api.getLedgerOverview).toHaveBeenNthCalledWith(2, { scope: 'month', anchorDate: '2026-06-15' })
-    expect((wrapper.get('[data-testid="ledger-period-date"]').element as HTMLInputElement).value).toBe('2026-06-15')
+    expect((wrapper.get('[data-testid="ledger-period-date"] input').element as HTMLInputElement).value).toBe('2026-06-15')
     expect(useLedgerStore().overviewRequestedAnchorDate.value).toBe('2026-06-15')
 
     first.resolve(overviewFor({ scope: 'month', anchorDate: '2026-08-20' }))
@@ -378,7 +385,7 @@ describe('Ledger historical period route coordination', () => {
     expect(store.workspaceState.value).toBe('READY')
     expect(wrapper.find('[data-testid="ledger-dashboard"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="ledger-loading"]').exists()).toBe(false)
-    expect((wrapper.get('[data-testid="ledger-period-date"]').element as HTMLInputElement).value).toBe('2026-06-15')
+    expect((wrapper.get('[data-testid="ledger-period-date"] input').element as HTMLInputElement).value).toBe('2026-06-15')
     expect(store.overviewMatchesRequest.value).toBe(true)
     expect(store.error.value).toBeNull()
     expect(router.currentRoute.value.fullPath).toBe('/ledger?date=2026-06-15')
@@ -412,7 +419,7 @@ describe('Ledger historical period route coordination', () => {
     expect(store.overviewMatchesRequest.value).toBe(true)
     expect(store.error.value).toBeNull()
     expect(wrapper.find('[data-testid="ledger-dashboard"]').exists()).toBe(true)
-    expect((wrapper.get('[data-testid="ledger-period-date"]').element as HTMLInputElement).value).toBe('2026-06-15')
+    expect((wrapper.get('[data-testid="ledger-period-date"] input').element as HTMLInputElement).value).toBe('2026-06-15')
     expect(router.currentRoute.value.fullPath).toBe('/ledger?date=2026-06-15')
   })
 
@@ -536,7 +543,7 @@ describe('Ledger historical period route coordination', () => {
     expect(store.error.value).toBeNull()
     expect(wrapper.find('[data-testid="ledger-dashboard"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="ledger-loading"]').exists()).toBe(false)
-    expect((wrapper.get('[data-testid="ledger-period-date"]').element as HTMLInputElement).value).toBe('2026-06-15')
+    expect((wrapper.get('[data-testid="ledger-period-date"] input').element as HTMLInputElement).value).toBe('2026-06-15')
     expect(router.currentRoute.value.fullPath).toBe('/ledger?date=2026-06-15')
   })
 })

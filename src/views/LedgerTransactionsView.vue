@@ -1,6 +1,18 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { NButton, NSelect, type SelectOption } from 'naive-ui'
+import {
+  NAlert,
+  NButton,
+  NCard,
+  NEmpty,
+  NForm,
+  NFormItem,
+  NList,
+  NListItem,
+  NSelect,
+  NSpin,
+  type SelectOption,
+} from 'naive-ui'
 import { useRoute } from 'vue-router'
 import type {
   LedgerCategoryDto,
@@ -15,6 +27,8 @@ import { ledgerErrorMessage } from '../features/ledger/ledgerErrors'
 import { formatLedgerMoney } from '../features/ledger/money'
 import { instantFromLedgerDate, formatLedgerDateTime } from '../features/ledger/time'
 import { useLedgerStore } from '../features/ledger/ledgerStore'
+import { ledgerSelectNodeProps } from '../features/ledger/naiveControls'
+import LedgerDatePicker from '../components/ledger/LedgerDatePicker.vue'
 
 const store = useLedgerStore()
 const route = useRoute()
@@ -206,27 +220,38 @@ function onRecoveryResolved(): void {
 
     <LedgerPendingCreateGate v-if="store.recoveryGateVisible.value" @resolved="onRecoveryResolved" />
 
-    <section v-else-if="store.settings.value" class="ledger-filters" aria-labelledby="ledger-filters-title">
-      <div class="ledger-filters-heading">
-        <h2 id="ledger-filters-title">筛选</h2>
-        <NButton v-if="hasFilters" class="ledger-link-button" attr-type="button" size="small" text :bordered="false" @click="clearFilters">清除筛选</NButton>
-      </div>
-      <div class="ledger-filters-grid">
-        <label for="ledger-filter-type"><span>类型</span><NSelect v-model:value="filterType" class="ledger-filter-control" size="small" :options="typeOptions" :input-props="{ id: 'ledger-filter-type', name: 'type' }" aria-label="类型" /></label>
-        <label for="ledger-filter-account"><span>账户</span><NSelect v-model:value="filterAccountId" class="ledger-filter-control" size="small" :options="accountOptions" :input-props="{ id: 'ledger-filter-account', name: 'accountId' }" aria-label="账户" /></label>
-        <label for="ledger-filter-category"><span>分类</span><NSelect v-model:value="filterCategoryId" class="ledger-filter-control" size="small" :options="categoryOptions" :input-props="{ id: 'ledger-filter-category', name: 'categoryId' }" aria-label="分类" /></label>
-        <label><span>从日期</span><input v-model="filterFrom" name="from" type="date" /></label>
-        <label><span>到日期</span><input v-model="filterTo" name="to" type="date" /></label>
-        <NButton class="ledger-secondary-button ledger-filter-submit" attr-type="button" size="small" :bordered="false" data-testid="ledger-filter-submit" :disabled="filtersLoading" @click="applyFilters">{{ filtersLoading ? '正在加载…' : '应用筛选' }}</NButton>
-      </div>
-    </section>
+    <NCard v-else-if="store.settings.value" class="ledger-filters" :bordered="false" size="small" aria-labelledby="ledger-filters-title">
+      <NForm class="ledger-filters-form" data-testid="ledger-filters-form" @submit.prevent="applyFilters">
+        <div class="ledger-filters-heading">
+          <h2 id="ledger-filters-title">筛选</h2>
+          <NButton v-if="hasFilters" class="ledger-link-button" attr-type="button" size="small" text :bordered="false" @click="clearFilters">清除筛选</NButton>
+        </div>
+        <div class="ledger-filters-grid">
+          <NFormItem class="ledger-filter-item" label="类型" :show-feedback="false">
+            <NSelect v-model:value="filterType" class="ledger-filter-control" size="small" :options="typeOptions" :node-props="ledgerSelectNodeProps" :input-props="{ id: 'ledger-filter-type', name: 'type' }" role="combobox" aria-haspopup="listbox" aria-label="类型" />
+          </NFormItem>
+          <NFormItem class="ledger-filter-item" label="账户" :show-feedback="false">
+            <NSelect v-model:value="filterAccountId" class="ledger-filter-control" size="small" :options="accountOptions" :node-props="ledgerSelectNodeProps" :input-props="{ id: 'ledger-filter-account', name: 'accountId' }" role="combobox" aria-haspopup="listbox" aria-label="账户" />
+          </NFormItem>
+          <NFormItem class="ledger-filter-item" label="分类" :show-feedback="false">
+            <NSelect v-model:value="filterCategoryId" class="ledger-filter-control" size="small" :options="categoryOptions" :node-props="ledgerSelectNodeProps" :input-props="{ id: 'ledger-filter-category', name: 'categoryId' }" role="combobox" aria-haspopup="listbox" aria-label="分类" />
+          </NFormItem>
+          <NFormItem class="ledger-filter-item" label="从日期" :show-feedback="false">
+            <LedgerDatePicker v-model="filterFrom" label="从日期" test-id="ledger-filter-from" clearable placeholder="开始日期" />
+          </NFormItem>
+          <NFormItem class="ledger-filter-item" label="到日期" :show-feedback="false">
+            <LedgerDatePicker v-model="filterTo" label="到日期" test-id="ledger-filter-to" clearable placeholder="结束日期" />
+          </NFormItem>
+          <NButton class="ledger-secondary-button ledger-filter-submit" attr-type="submit" size="small" :bordered="false" data-testid="ledger-filter-submit" :disabled="filtersLoading">{{ filtersLoading ? '正在加载…' : '应用筛选' }}</NButton>
+        </div>
+      </NForm>
+    </NCard>
 
-    <div v-if="!store.hasUnresolvedCreate.value && loading && !page" class="ledger-transactions-state" data-testid="ledger-transactions-loading" role="status">正在加载交易…</div>
-    <section v-else-if="!store.hasUnresolvedCreate.value && !store.settings.value" class="ledger-transactions-state" data-testid="ledger-transactions-needs-settings">
-      <h2>请先完成 Ledger 初始化</h2>
-      <p>设置基础货币、时区并创建账户后，交易记录才会出现在这里。</p>
-    </section>
-    <section v-else-if="!store.hasUnresolvedCreate.value && store.settings.value" class="ledger-transaction-history" aria-labelledby="ledger-history-title">
+    <div v-if="!store.hasUnresolvedCreate.value && loading && !page" class="ledger-transactions-state" data-testid="ledger-transactions-loading" role="status"><NSpin size="medium" description="正在加载交易…" /></div>
+    <NEmpty v-else-if="!store.hasUnresolvedCreate.value && !store.settings.value" class="ledger-transactions-state" data-testid="ledger-transactions-needs-settings" :show-icon="false" description="请先完成 Ledger 初始化">
+      <template #extra>设置基础货币、时区并创建账户后，交易记录才会出现在这里。</template>
+    </NEmpty>
+    <NCard v-else-if="!store.hasUnresolvedCreate.value && store.settings.value" class="ledger-transaction-history" :bordered="false" size="small" aria-labelledby="ledger-history-title">
       <div v-if="!store.activeAccounts.value.length" class="ledger-no-active-account-notice" data-testid="ledger-transactions-no-account" role="status">
         <div>
           <strong>当前没有可用于新增交易的账户。</strong>
@@ -242,22 +267,32 @@ function onRecoveryResolved(): void {
         <span v-if="store.settings.value" class="ledger-timezone-note">按 {{ store.settings.value.timezone }} 显示</span>
       </div>
 
-      <div v-if="filterError" class="ledger-inline-error" role="alert"><span>{{ filterError }}</span><NButton class="ledger-link-button" attr-type="button" size="small" text :bordered="false" @click="loadTransactions">重试</NButton></div>
-      <div v-if="transactions.length" class="ledger-transaction-list" data-testid="ledger-transaction-list">
-        <button v-for="transaction in transactions" :key="transaction.id" :data-testid="`ledger-transaction-row-${transaction.id}`" class="ledger-transaction-row" type="button" @click="inspect(transaction)">
-          <span class="ledger-transaction-main"><strong>{{ transactionTitle(transaction) }}</strong><small>{{ typeLabel(transaction.type) }} · {{ transactionMeta(transaction) }}</small></span>
-          <span class="ledger-transaction-date">{{ formatLedgerDateTime(transaction.occurredAt, store.settings.value?.timezone ?? 'UTC') }}</span>
-          <strong :class="['ledger-transaction-amount', `is-${transaction.type}`]">{{ transactionAmount(transaction) }}</strong>
-        </button>
-      </div>
-      <div v-else class="ledger-transactions-empty" data-testid="ledger-transactions-empty" role="status">
-        <h3>{{ hasFilters ? '没有符合筛选条件的交易' : '还没有交易记录' }}</h3>
-        <p>{{ hasFilters ? '可以清除筛选，或换一个日期和账户。' : '保存第一笔收入、支出或转账后，它会显示在这里。' }}</p>
-        <NButton v-if="hasFilters" class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" @click="clearFilters">清除筛选</NButton>
-        <NButton v-else class="ledger-primary-button" attr-type="button" type="primary" size="medium" :bordered="false" :disabled="!store.activeAccounts.value.length" @click="transactionSheetOpen = true">记下第一笔</NButton>
-      </div>
+      <NAlert v-if="filterError" class="ledger-inline-error" type="error" :show-icon="false" role="alert"><span>{{ filterError }}</span><NButton class="ledger-link-button" attr-type="button" size="small" text :bordered="false" @click="loadTransactions">重试</NButton></NAlert>
+      <NList v-if="transactions.length" class="ledger-transaction-list" data-testid="ledger-transaction-list" :show-divider="false" hoverable>
+        <NListItem v-for="transaction in transactions" :key="transaction.id" class="ledger-transaction-list-item">
+          <NButton
+            class="ledger-transaction-row"
+            attr-type="button"
+            text
+            block
+            :data-testid="`ledger-transaction-row-${transaction.id}`"
+            @click="inspect(transaction)"
+          >
+            <span class="ledger-transaction-main"><strong>{{ transactionTitle(transaction) }}</strong><small>{{ typeLabel(transaction.type) }} · {{ transactionMeta(transaction) }}</small></span>
+            <span class="ledger-transaction-date">{{ formatLedgerDateTime(transaction.occurredAt, store.settings.value?.timezone ?? 'UTC') }}</span>
+            <strong :class="['ledger-transaction-amount', `is-${transaction.type}`]">{{ transactionAmount(transaction) }}</strong>
+          </NButton>
+        </NListItem>
+      </NList>
+      <NEmpty v-else class="ledger-transactions-empty" data-testid="ledger-transactions-empty" :show-icon="false" :description="hasFilters ? '没有符合筛选条件的交易' : '还没有交易记录'">
+        <template #extra>
+          <p>{{ hasFilters ? '可以清除筛选，或换一个日期和账户。' : '保存第一笔收入、支出或转账后，它会显示在这里。' }}</p>
+          <NButton v-if="hasFilters" class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" @click="clearFilters">清除筛选</NButton>
+          <NButton v-else class="ledger-primary-button" attr-type="button" type="primary" size="medium" :bordered="false" :disabled="!store.activeAccounts.value.length" @click="transactionSheetOpen = true">记下第一笔</NButton>
+        </template>
+      </NEmpty>
       <NButton v-if="page?.page.nextCursor" class="ledger-load-more" attr-type="button" size="medium" :bordered="false" data-testid="ledger-load-more" :disabled="loadMoreLoading" @click="loadMore">{{ loadMoreLoading ? '正在加载…' : '加载更多' }}</NButton>
-    </section>
+    </NCard>
 
     <LedgerTransactionSheet v-if="!store.recoveryGateVisible.value" :open="transactionSheetOpen" @close="transactionSheetOpen = false" />
     <LedgerTransactionDetailSheet :open="detailOpen" :transaction="selectedTransaction" @close="detailOpen = false" @updated="onTransactionUpdated" @deleted="onTransactionDeleted" />
@@ -282,17 +317,23 @@ function onRecoveryResolved(): void {
 .ledger-link-button { padding: 0; border: 0; background: transparent; color: var(--accent); font: inherit; font-size: .78rem; cursor: pointer; }
 .ledger-link-button:hover { text-decoration: underline; }
 .ledger-filters { margin-bottom: 21px; padding: 17px 18px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-soft); }
+.ledger-filters :deep(.n-card__content),
+.ledger-transaction-history :deep(.n-card__content) { padding: 0; }
+.ledger-filters-form { display: grid; gap: 12px; }
 .ledger-filters-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .ledger-filters-heading h2 { margin: 0; color: var(--text-h); font-size: .92rem; }
 .ledger-filters-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)) auto; gap: 10px; align-items: end; }
-.ledger-filters-grid label { display: grid; gap: 5px; min-width: 0; }
-.ledger-filters-grid label > span { color: var(--text-muted); font-size: .72rem; }
-.ledger-filters-grid select,
-.ledger-filters-grid input { width: 100%; min-height: 35px; padding: 5px 8px; box-sizing: border-box; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text-h); font: inherit; font-size: .78rem; }
+.ledger-filter-item { min-width: 0; }
+.ledger-filter-item :deep(.n-form-item-label) { color: var(--text-muted); font-size: .72rem; }
 .ledger-filter-control { width: 100%; }
-.ledger-filters-grid :deep(.ledger-filter-control .n-base-selection) { width: 100%; }
+.ledger-filters-grid :deep(.ledger-filter-control .n-base-selection),
+.ledger-filters-grid :deep(.ledger-date-picker),
+.ledger-filters-grid :deep(.ledger-date-picker .n-date-picker) { width: 100%; }
+.ledger-filters-grid :deep(.ledger-date-picker .n-input) { width: 100%; }
 .ledger-filter-submit { white-space: nowrap; }
 .ledger-transactions-state { display: grid; min-height: 340px; place-items: center; align-content: center; gap: 9px; padding: 30px 18px; color: var(--text-muted); text-align: center; }
+.ledger-transactions-state :deep(.n-empty__description) { color: var(--text-h); font-size: 1.1rem; }
+.ledger-transactions-state :deep(.n-empty__extra) { max-width: 34rem; color: var(--text-muted); font-size: .82rem; line-height: 1.5; }
 .ledger-transactions-state h2,
 .ledger-transactions-state p { margin: 0; }
 .ledger-transactions-state h2 { color: var(--text-h); font-size: 1.2rem; }
@@ -301,9 +342,14 @@ function onRecoveryResolved(): void {
 .ledger-history-heading h2 { margin: 0; color: var(--text-h); font-size: 1rem; }
 .ledger-history-heading p { margin: 4px 0 0; color: var(--text-muted); font-size: .75rem; }
 .ledger-timezone-note { color: var(--text-muted); font-size: .73rem; }
-.ledger-inline-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; padding: 9px 11px; border: 1px solid color-mix(in srgb, #b42318 30%, var(--border)); border-radius: 7px; color: #b42318; font-size: .78rem; }
+.ledger-inline-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; color: #b42318; font-size: .78rem; }
+.ledger-inline-error :deep(.n-alert-body) { width: 100%; }
+.ledger-inline-error :deep(.n-alert__content) { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; }
 .ledger-transaction-list { display: grid; }
-.ledger-transaction-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, auto) minmax(100px, auto); align-items: center; gap: 16px; width: 100%; min-height: 68px; padding: 10px 4px; box-sizing: border-box; border: 0; border-bottom: 1px solid var(--border); background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.ledger-transaction-list :deep(.n-list-item) { padding: 0; }
+.ledger-transaction-list :deep(.n-list-item__main) { width: 100%; }
+.ledger-transaction-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, auto) minmax(100px, auto); align-items: center; gap: 16px; width: 100%; min-height: 68px; padding: 10px 4px; box-sizing: border-box; border-radius: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.ledger-transaction-row :deep(.n-button__content) { display: contents; }
 .ledger-transaction-row:hover { background: var(--bg-soft); }
 .ledger-transaction-main { display: grid; gap: 3px; min-width: 0; }
 .ledger-transaction-main strong { overflow: hidden; color: var(--text-h); font-size: .84rem; text-overflow: ellipsis; white-space: nowrap; }
@@ -314,10 +360,9 @@ function onRecoveryResolved(): void {
 .ledger-transaction-amount.is-income { color: #18794e; }
 .ledger-transaction-amount.is-expense { color: #b42318; }
 .ledger-transactions-empty { display: grid; min-height: 240px; place-items: center; align-content: center; gap: 8px; color: var(--text-muted); text-align: center; }
-.ledger-transactions-empty h3,
+.ledger-transactions-empty :deep(.n-empty__description) { color: var(--text-h); font-size: 1rem; }
+.ledger-transactions-empty :deep(.n-empty__extra) { display: grid; gap: 8px; color: var(--text-muted); font-size: .8rem; }
 .ledger-transactions-empty p { margin: 0; }
-.ledger-transactions-empty h3 { color: var(--text-h); font-size: 1rem; }
-.ledger-transactions-empty p { font-size: .8rem; }
 .ledger-no-active-account-notice { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 18px; padding: 12px 13px; border: 1px solid color-mix(in srgb, #b7791f 30%, var(--border)); border-radius: 8px; background: color-mix(in srgb, #f6ad55 7%, var(--bg-soft)); }
 .ledger-no-active-account-notice strong { color: var(--text-h); font-size: .8rem; }
 .ledger-no-active-account-notice p { margin: 4px 0 0; color: var(--text-muted); font-size: .75rem; }

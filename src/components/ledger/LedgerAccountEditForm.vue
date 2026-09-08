@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { NButton, NInput, NSelect, type SelectOption } from 'naive-ui'
+import { NButton, NForm, NFormItem, NInput, NSelect, type SelectOption } from 'naive-ui'
 import type { LedgerAccountDto, LedgerAccountNature, LedgerAccountType } from '../../../shared/ledgerProtocol'
 import { ledgerAccountTypeOptionsForNature } from '../../features/ledger/accountPresentation'
 import { ledgerErrorMessage } from '../../features/ledger/ledgerErrors'
 import { useLedgerStore } from '../../features/ledger/ledgerStore'
 import { formatLedgerMoney, ledgerDecimalFromMinor, parseLedgerMoney } from '../../features/ledger/money'
+import { ledgerSelectNodeProps } from '../../features/ledger/naiveControls'
+import LedgerDatePicker from './LedgerDatePicker.vue'
 
 const props = withDefaults(defineProps<{
   account: LedgerAccountDto
@@ -108,7 +110,7 @@ async function submit(): Promise<void> {
 </script>
 
 <template>
-  <form class="ledger-account-edit-form" data-testid="ledger-account-edit-form" :aria-busy="saving ? 'true' : undefined" @submit.prevent="submit">
+  <NForm class="ledger-account-edit-form" data-testid="ledger-account-edit-form" :aria-busy="saving ? 'true' : undefined" @submit.prevent="submit">
     <div>
       <p class="ledger-eyebrow">账户设置</p>
       <h2>编辑 {{ props.account.name }}</h2>
@@ -117,8 +119,7 @@ async function submit(): Promise<void> {
       </p>
     </div>
 
-    <div class="ledger-form-field">
-      <label for="ledger-edit-account-name">账户名称</label>
+    <NFormItem class="ledger-form-field" label="账户名称" :show-feedback="false" required>
       <NInput
         v-model:value="name"
         class="ledger-form-control"
@@ -127,35 +128,38 @@ async function submit(): Promise<void> {
         :input-props="{ id: 'ledger-edit-account-name', name: 'name', required: true }"
         :disabled="saving"
       />
-    </div>
+    </NFormItem>
 
     <div v-if="financialFieldsEditable" class="ledger-form-grid">
-      <div class="ledger-form-field">
-        <label for="ledger-edit-account-nature">账户性质</label>
+      <NFormItem class="ledger-form-field" label="账户性质" :show-feedback="false" required>
         <NSelect
           v-model:value="nature"
           class="ledger-form-control"
           size="medium"
           :options="natureOptions"
+          :node-props="ledgerSelectNodeProps"
           :input-props="{ id: 'ledger-edit-account-nature', name: 'nature' }"
           aria-label="账户性质"
+          aria-haspopup="listbox"
+          role="combobox"
           :disabled="saving"
         />
-      </div>
-      <div class="ledger-form-field">
-        <label for="ledger-edit-account-type">账户类型</label>
+      </NFormItem>
+      <NFormItem class="ledger-form-field" label="账户类型" :show-feedback="false" required>
         <NSelect
           v-model:value="type"
           class="ledger-form-control"
           size="medium"
           :options="typeOptions"
+          :node-props="ledgerSelectNodeProps"
           :input-props="{ id: 'ledger-edit-account-type', name: 'type' }"
           aria-label="账户类型"
+          aria-haspopup="listbox"
+          role="combobox"
           :disabled="saving"
         />
-      </div>
-      <div class="ledger-form-field">
-        <label for="ledger-edit-account-opening-balance">期初余额</label>
+      </NFormItem>
+      <NFormItem class="ledger-form-field" label="期初余额" :show-feedback="false">
         <NInput
           v-model:value="openingBalance"
           class="ledger-form-control"
@@ -164,11 +168,15 @@ async function submit(): Promise<void> {
           :input-props="{ id: 'ledger-edit-account-opening-balance', name: 'openingBalance', inputmode: 'decimal' }"
           :disabled="saving"
         />
-      </div>
-      <div class="ledger-form-field">
-        <label for="ledger-edit-account-opening-date">期初日期</label>
-        <input id="ledger-edit-account-opening-date" v-model="openingDate" name="openingDate" type="date" required :disabled="saving" />
-      </div>
+      </NFormItem>
+      <NFormItem class="ledger-form-field" label="期初日期" :show-feedback="false" required>
+        <LedgerDatePicker
+          v-model="openingDate"
+          label="期初日期"
+          test-id="ledger-edit-account-opening-date"
+          :disabled="saving"
+        />
+      </NFormItem>
     </div>
 
     <div v-else class="ledger-readonly-fields" aria-label="只读账户解释">
@@ -178,8 +186,7 @@ async function submit(): Promise<void> {
       <span>期初日期：{{ props.account.openingDate }}</span>
     </div>
 
-    <div class="ledger-form-field">
-      <label for="ledger-edit-account-note">备注（可选）</label>
+    <NFormItem class="ledger-form-field" label="备注（可选）" :show-feedback="false">
       <NInput
         v-model:value="note"
         class="ledger-form-control"
@@ -188,14 +195,14 @@ async function submit(): Promise<void> {
         :input-props="{ id: 'ledger-edit-account-note', name: 'note', rows: 3 }"
         :disabled="saving"
       />
-    </div>
+    </NFormItem>
 
     <p v-if="error" class="ledger-form-error" role="alert">{{ error }}</p>
     <div class="ledger-form-actions">
       <NButton v-if="props.cancelable" class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" :disabled="saving" @click="emit('cancel')">取消</NButton>
       <NButton class="ledger-primary-button" attr-type="submit" type="primary" size="medium" :bordered="false" :disabled="saving">{{ saving ? '正在保存…' : '保存账户' }}</NButton>
     </div>
-  </form>
+  </NForm>
 </template>
 
 <style scoped>
@@ -205,14 +212,12 @@ async function submit(): Promise<void> {
 .ledger-form-info { margin: 9px 0 0; color: var(--text-muted); font-size: .81rem; line-height: 1.5; }
 .ledger-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .ledger-form-field { display: grid; gap: 6px; }
-.ledger-form-field label { color: var(--text-h); font-size: .83rem; font-weight: 650; }
-.ledger-form-field input,
-.ledger-form-field select,
-.ledger-form-field textarea { width: 100%; box-sizing: border-box; min-height: 38px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg); color: var(--text-h); font: inherit; font-size: .88rem; }
+.ledger-form-field :deep(.n-form-item-label) { color: var(--text-h); font-size: .83rem; font-weight: 650; }
 .ledger-form-control { width: 100%; }
 .ledger-form-field :deep(.ledger-form-control .n-input),
-.ledger-form-field :deep(.ledger-form-control .n-base-selection) { width: 100%; }
-.ledger-form-field textarea { resize: vertical; }
+.ledger-form-field :deep(.ledger-form-control .n-base-selection),
+.ledger-form-field :deep(.ledger-date-picker) { width: 100%; }
+.ledger-form-field :deep(.ledger-date-picker .n-input) { width: 100%; }
 .ledger-readonly-fields { display: flex; flex-wrap: wrap; gap: 7px 12px; color: var(--text-muted); font-size: .8rem; }
 .ledger-readonly-fields span { padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
 .ledger-form-error { margin: 0; color: #b42318; font-size: .82rem; }

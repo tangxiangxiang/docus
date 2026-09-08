@@ -12,6 +12,7 @@ import type {
 import { LedgerApiError } from '../../../features/ledger/ledgerErrors'
 import { resetLedgerStoreForTesting } from '../../../features/ledger/ledgerStore'
 import LedgerView from '../../../views/LedgerView.vue'
+import LedgerDateTimePicker from '../LedgerDateTimePicker.vue'
 import { getNaiveSelect, naiveSelectValue, setNaiveSelect } from './selectTestUtils'
 
 const api = vi.hoisted(() => ({
@@ -104,6 +105,19 @@ function getSheet(): InstanceType<typeof DOMWrapper> {
   return new DOMWrapper(element)
 }
 
+async function setLedgerDateTime(sheet: InstanceType<typeof DOMWrapper>, value: string): Promise<void> {
+  const picker = sheet.findComponent(LedgerDateTimePicker)
+  if (!picker.exists()) throw new Error('Ledger datetime picker is not mounted')
+  await picker.vm.$emit('update:modelValue', value)
+  await nextTick()
+}
+
+function ledgerDateTimeValue(sheet: InstanceType<typeof DOMWrapper>): string {
+  const date = (sheet.get('[data-testid="ledger-transaction-occurred-at-date"] input').element as HTMLInputElement).value
+  const time = (sheet.get('[data-testid="ledger-transaction-occurred-at-time"] input').element as HTMLInputElement).value
+  return `${date}T${time}`
+}
+
 describe('Ledger transaction creation sheet', () => {
   beforeEach(() => {
     sessionStorage.clear()
@@ -122,14 +136,14 @@ describe('Ledger transaction creation sheet', () => {
     const sheet = getSheet()
 
     expect(sheet.get('[role="tab"][aria-selected="true"]').text()).toBe('支出')
-    expect((sheet.get('input[name="occurredAt"]').element as HTMLInputElement).value).toContain('T')
+    expect(ledgerDateTimeValue(sheet)).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/)
     expect(getNaiveSelect(sheet, '分类').props('placeholder')).toBe('请选择分类')
     expect(getNaiveSelect(sheet, '分类').props('options')).toEqual([{ value: 'food', label: '餐饮' }])
 
     await sheet.get('input[name="amount"]').setValue('38')
     await setNaiveSelect(sheet, '账户', 'bank-1')
     await setNaiveSelect(sheet, '分类', 'food')
-    await sheet.get('input[name="occurredAt"]').setValue('2026-09-05T12:30')
+    await setLedgerDateTime(sheet, '2026-09-05T12:30')
     api.createLedgerTransaction.mockResolvedValue(savedTransaction)
     await sheet.get('form').trigger('submit')
     await flushPromises()
@@ -158,7 +172,7 @@ describe('Ledger transaction creation sheet', () => {
     expect(naiveSelectValue(sheet, '账户')).toBe('')
     await sheet.get('input[name="amount"]').setValue('5')
     await setNaiveSelect(sheet, '分类', 'food')
-    await sheet.get('input[name="occurredAt"]').setValue('2026-09-05T12:30')
+    await setLedgerDateTime(sheet, '2026-09-05T12:30')
     await sheet.get('form').trigger('submit')
     expect(sheet.text()).toContain('请选择账户')
     expect(api.createLedgerTransaction).not.toHaveBeenCalled()
@@ -174,7 +188,7 @@ describe('Ledger transaction creation sheet', () => {
     await sheet.get('input[name="amount"]').setValue('12.50')
     await setNaiveSelect(sheet, '账户', 'bank-1')
     await setNaiveSelect(sheet, '分类', 'salary')
-    await sheet.get('input[name="occurredAt"]').setValue('2026-09-05T12:30')
+    await setLedgerDateTime(sheet, '2026-09-05T12:30')
     api.createLedgerTransaction.mockResolvedValue(savedTransaction)
     await sheet.get('form').trigger('submit')
     await flushPromises()
@@ -191,7 +205,7 @@ describe('Ledger transaction creation sheet', () => {
     await transferSheet.get('input[name="amount"]').setValue('5')
     await setNaiveSelect(transferSheet, '转出账户', 'bank-1')
     await setNaiveSelect(transferSheet, '转入账户', 'wallet-1')
-    await transferSheet.get('input[name="occurredAt"]').setValue('2026-09-05T12:30')
+    await setLedgerDateTime(transferSheet, '2026-09-05T12:30')
     api.createLedgerTransaction.mockResolvedValue({ id: 'tx-2', type: 'transfer' } as unknown as LedgerTransactionDto)
     await transferSheet.get('form').trigger('submit')
     await flushPromises()
@@ -207,13 +221,13 @@ describe('Ledger transaction creation sheet', () => {
     await sheet.get('input[name="amount"]').setValue('12.50')
     await setNaiveSelect(sheet, '账户', 'bank-1')
     await setNaiveSelect(sheet, '分类', 'food')
-    await sheet.get('input[name="occurredAt"]').setValue('2026-09-05T12:30')
+    await setLedgerDateTime(sheet, '2026-09-05T12:30')
     await sheet.get('input[name="payee"]').setValue('午餐')
     await sheet.get('textarea[name="note"]').setValue('共同备注')
 
     await sheet.findAll('[role="tab"]').find((button) => button.text() === '收入')!.trigger('click')
     expect((sheet.get('input[name="amount"]').element as HTMLInputElement).value).toBe('12.50')
-    expect((sheet.get('input[name="occurredAt"]').element as HTMLInputElement).value).toBe('2026-09-05T12:30')
+    expect(ledgerDateTimeValue(sheet)).toBe('2026-09-05T12:30')
     expect((sheet.get('textarea[name="note"]').element as HTMLTextAreaElement).value).toBe('共同备注')
     expect(naiveSelectValue(sheet, '账户')).toBe('')
     expect(naiveSelectValue(sheet, '分类')).toBe('')
@@ -221,7 +235,7 @@ describe('Ledger transaction creation sheet', () => {
 
     await sheet.findAll('[role="tab"]').find((button) => button.text() === '转账')!.trigger('click')
     expect((sheet.get('input[name="amount"]').element as HTMLInputElement).value).toBe('12.50')
-    expect((sheet.get('input[name="occurredAt"]').element as HTMLInputElement).value).toBe('2026-09-05T12:30')
+    expect(ledgerDateTimeValue(sheet)).toBe('2026-09-05T12:30')
     expect((sheet.get('textarea[name="note"]').element as HTMLTextAreaElement).value).toBe('共同备注')
     expect(naiveSelectValue(sheet, '转出账户')).toBe('')
     expect(naiveSelectValue(sheet, '转入账户')).toBe('')
@@ -251,7 +265,7 @@ describe('Ledger transaction creation sheet', () => {
     await sheet.get('input[name="amount"]').setValue('38')
     await setNaiveSelect(sheet, '账户', 'bank-1')
     await setNaiveSelect(sheet, '分类', 'food')
-    await sheet.get('input[name="occurredAt"]').setValue('2026-09-05T12:30')
+    await setLedgerDateTime(sheet, '2026-09-05T12:30')
     api.createLedgerTransaction.mockRejectedValueOnce(new LedgerApiError('unknown', 0, 'ledger-network-error', null, true))
     await sheet.get('form').trigger('submit')
     await flushPromises()
@@ -277,7 +291,7 @@ describe('Ledger transaction creation sheet', () => {
     await sheet.get('input[name="amount"]').setValue('5')
     await setNaiveSelect(sheet, '转出账户', 'bank-1')
     await setNaiveSelect(sheet, '转入账户', 'bank-1')
-    await sheet.get('input[name="occurredAt"]').setValue('2026-09-05T12:30')
+    await setLedgerDateTime(sheet, '2026-09-05T12:30')
     await sheet.get('form').trigger('submit')
 
     expect(sheet.text()).toContain('转出账户和转入账户必须不同')

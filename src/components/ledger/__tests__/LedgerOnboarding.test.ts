@@ -78,11 +78,31 @@ function setupLoadedState(
   api.listLedgerTransactions.mockResolvedValue({ transactions: [], page: { nextCursor: null } })
 }
 
+function installBrowserApiShims(): void {
+  if (!window.matchMedia) {
+    window.matchMedia = ((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => undefined,
+      removeListener: () => undefined,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      dispatchEvent: () => false,
+    })) as typeof window.matchMedia
+  }
+  globalThis.matchMedia = window.matchMedia
+  if (!HTMLElement.prototype.scrollTo) {
+    HTMLElement.prototype.scrollTo = (() => undefined) as typeof HTMLElement.prototype.scrollTo
+  }
+}
+
 describe('Ledger initialization and first-account onboarding', () => {
   beforeEach(() => {
     sessionStorage.clear()
     resetLedgerStoreForTesting()
     vi.clearAllMocks()
+    installBrowserApiShims()
   })
 
   it('shows an explicit settings step when the Ledger is uninitialized', async () => {
@@ -131,7 +151,7 @@ describe('Ledger initialization and first-account onboarding', () => {
     const form = wrapper.get('[data-testid="ledger-account-form"]')
     await form.get('input[name="name"]').setValue('招商银行')
     await form.get('input[name="openingBalance"]').setValue('10000.00')
-    await form.get('input[name="openingDate"]').setValue('2026-09-05')
+    await form.get('[data-testid="ledger-account-opening-date"] input').setValue('2026-09-05')
 
     api.createLedgerAccount.mockResolvedValue(account('bank-1'))
     api.getLedgerSettings.mockResolvedValue(settings(true))

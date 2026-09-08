@@ -287,8 +287,8 @@ describe('Ledger live dashboard', () => {
       wrapper.get('.ledger-cashflow-section').element,
       wrapper.get('[data-testid="ledger-dashboard-accounts"]').element,
       wrapper.get('.ledger-dashboard-two-column').element,
-      wrapper.get('#ledger-periods-title').element.closest('section')!,
-      wrapper.get('#ledger-trend-title').element.closest('section')!,
+      wrapper.get('#ledger-periods-title').element.closest('.ledger-dashboard-section')!,
+      wrapper.get('#ledger-trend-title').element.closest('.ledger-dashboard-section')!,
     ]
     for (let index = 1; index < sectionOrder.length; index += 1) {
       const position = sectionOrder[index - 1].compareDocumentPosition(sectionOrder[index])
@@ -302,7 +302,7 @@ describe('Ledger live dashboard', () => {
     expect(wrapper.get('#ledger-dashboard-assets-title').text()).toContain('¥9,962.00')
     expect(wrapper.get('#ledger-dashboard-liabilities-title').text()).toContain('¥0.00')
 
-    const periodItems = wrapper.get('[data-testid="ledger-period-summaries"]').findAll('article')
+    const periodItems = wrapper.get('[data-testid="ledger-period-summaries"]').findAll('.ledger-period-card')
     expect(periodItems).toHaveLength(4)
     expect(periodItems.map((item) => item.attributes('data-testid'))).toEqual([
       'ledger-period-today',
@@ -423,7 +423,7 @@ describe('Ledger live dashboard', () => {
     store.setOverviewRequestContext({ scope: 'month', anchorDate: '2026-08-20' })
     await store.refreshOverview()
     await nextTick()
-    expect((wrapper.get('[data-testid="ledger-period-date"]').element as HTMLInputElement).value).toBe('2026-08-20')
+    expect((wrapper.get('[data-testid="ledger-period-date"] input').element as HTMLInputElement).value).toBe('2026-08-20')
     expect(wrapper.get('.ledger-cashflow-section').find('[data-testid="ledger-return-today"]').exists()).toBe(true)
     expect(wrapper.get('.ledger-cashflow-section').text()).toContain('2026年8月20日 · 账户余额为当前值')
 
@@ -671,7 +671,7 @@ describe('Ledger live dashboard', () => {
     wrappers.push(wrapper)
     await flushPromises()
 
-    const trendSection = wrapper.get('#ledger-trend-title').element.closest('section')!
+    const trendSection = wrapper.get('#ledger-trend-title').element.closest('.ledger-dashboard-section')!
     expect(trendSection.textContent).toContain('收支趋势')
     expect(trendSection.textContent).toContain('最近 6 个月')
 
@@ -682,7 +682,7 @@ describe('Ledger live dashboard', () => {
 
     // Anchored to a past date the six months are no longer "the latest", so
     // the qualifier is dropped rather than left saying something untrue.
-    expect(wrapper.get('#ledger-trend-title').element.closest('section')!.textContent).not.toContain('最近 6 个月')
+    expect(wrapper.get('#ledger-trend-title').element.closest('.ledger-dashboard-section')!.textContent).not.toContain('最近 6 个月')
     expect(wrapper.findComponent(LedgerCashflowTrend).props('trend')).toEqual(sixMonthTrend)
   })
 
@@ -694,6 +694,6 @@ describe('Ledger live dashboard', () => {
 
     expect(wrapper.get('[data-testid="ledger-cashflow-trend-empty"]').text()).toContain('还没有趋势数据')
     expect(wrapper.find('[data-testid="ledger-cashflow-trend-canvas"]').exists()).toBe(false)
-    expect(wrapper.get('#ledger-trend-title').element.closest('section')!.textContent).not.toContain('最近')
+    expect(wrapper.get('#ledger-trend-title').element.closest('.ledger-dashboard-section')!.textContent).not.toContain('最近')
   })
 })

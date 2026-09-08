@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { NButton, NInput, NSelect, type SelectOption } from 'naive-ui'
+import { NAlert, NAutoComplete, NButton, NForm, NFormItem, NSelect, type SelectOption } from 'naive-ui'
 import {
   LEDGER_CURRENCY_METADATA,
 } from '../../../shared/ledgerCurrency'
 import { browserTimezone } from '../../features/ledger/time'
 import { ledgerErrorMessage, ledgerFieldError } from '../../features/ledger/ledgerErrors'
 import { useLedgerStore } from '../../features/ledger/ledgerStore'
+import { ledgerSelectNodeProps } from '../../features/ledger/naiveControls'
 import LedgerPendingCreateRecovery from './LedgerPendingCreateRecovery.vue'
 
 const store = useLedgerStore()
@@ -124,7 +125,7 @@ async function retryPendingSettings(): Promise<void> {
 </script>
 
 <template>
-  <form
+  <NForm
     class="ledger-onboarding-card"
     data-testid="ledger-settings-form"
     :aria-busy="saving ? 'true' : undefined"
@@ -139,9 +140,9 @@ async function retryPendingSettings(): Promise<void> {
       </p>
     </div>
 
-    <div v-if="isLocked" class="ledger-info" role="status">
+    <NAlert v-if="isLocked" class="ledger-info" type="info" :show-icon="false" role="status">
       Ledger 已经创建过账户，基础货币和时区已锁定。请返回账户流程继续。
-    </div>
+    </NAlert>
 
     <LedgerPendingCreateRecovery
       v-if="pendingSettings"
@@ -152,15 +153,17 @@ async function retryPendingSettings(): Promise<void> {
     />
 
     <template v-else-if="!isLocked">
-      <div class="ledger-form-field">
-        <label for="ledger-base-currency">基础货币</label>
+      <NFormItem class="ledger-form-field" label="基础货币" :show-feedback="false" required>
         <NSelect
           v-model:value="baseCurrency"
           class="ledger-form-control"
           size="medium"
           :options="currencyOptions"
+          :node-props="ledgerSelectNodeProps"
           :input-props="{ id: 'ledger-base-currency', name: 'baseCurrency', required: true }"
           aria-label="基础货币"
+          aria-haspopup="listbox"
+          role="combobox"
           :disabled="saving"
           :aria-invalid="fieldError('baseCurrency') ? 'true' : undefined"
           :aria-describedby="fieldError('baseCurrency') ? 'ledger-base-currency-error' : 'ledger-base-currency-help'"
@@ -168,34 +171,31 @@ async function retryPendingSettings(): Promise<void> {
         />
         <small id="ledger-base-currency-help">金额会按该货币的实际小数位显示；例如 JPY 不使用两位小数。</small>
         <small v-if="fieldError('baseCurrency')" id="ledger-base-currency-error" class="ledger-field-error">{{ fieldError('baseCurrency') }}</small>
-      </div>
+      </NFormItem>
 
-      <div class="ledger-form-field">
-        <label for="ledger-timezone">Ledger 时区</label>
-        <NInput
+      <NFormItem class="ledger-form-field" label="Ledger 时区" :show-feedback="false" required>
+        <NAutoComplete
           v-model:value="timezone"
           class="ledger-form-control"
           type="text"
           size="medium"
-          :input-props="{ id: 'ledger-timezone', name: 'timezone', list: 'ledger-timezone-options', required: true, autocomplete: 'off' }"
+          :options="timezoneOptions"
+          :input-props="{ id: 'ledger-timezone', name: 'timezone', required: true, autocomplete: 'off' }"
           :disabled="saving"
           :aria-invalid="fieldError('timezone') ? 'true' : undefined"
           :aria-describedby="fieldError('timezone') ? 'ledger-timezone-error' : 'ledger-timezone-help'"
         />
-        <datalist id="ledger-timezone-options">
-          <option v-for="option in timezoneOptions" :key="option" :value="option" />
-        </datalist>
         <small id="ledger-timezone-help">已预选浏览器时区，仅作为提示；请确认它符合你记录 Ledger 的时间习惯。</small>
         <small v-if="fieldError('timezone')" id="ledger-timezone-error" class="ledger-field-error">{{ fieldError('timezone') }}</small>
-      </div>
+      </NFormItem>
 
-      <p v-if="formError" class="ledger-form-error" role="alert">{{ formError }}</p>
+      <NAlert v-if="formError" class="ledger-form-error" type="error" :show-icon="false" role="alert">{{ formError }}</NAlert>
 
       <NButton class="ledger-primary-button" attr-type="submit" type="primary" size="medium" :bordered="false" :disabled="saving">
         {{ saving ? '正在保存…' : (isEditing ? '确认并继续' : '保存设置并继续') }}
       </NButton>
     </template>
-  </form>
+  </NForm>
 </template>
 
 <style scoped>
@@ -214,27 +214,13 @@ async function retryPendingSettings(): Promise<void> {
 .ledger-onboarding-card h2 { margin: 0; color: var(--text-h); font-size: 1.45rem; line-height: 1.3; }
 .ledger-intro { margin: 10px 0 0; color: var(--text-muted); font-size: .86rem; line-height: 1.55; }
 .ledger-form-field { display: grid; gap: 6px; }
-.ledger-form-field label { color: var(--text-h); font-size: .83rem; font-weight: 650; }
-.ledger-form-field input,
-.ledger-form-field select {
-  width: 100%;
-  box-sizing: border-box;
-  min-height: 38px;
-  padding: 7px 10px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--bg);
-  color: var(--text-h);
-  font: inherit;
-  font-size: .88rem;
-}
+.ledger-form-field :deep(.n-form-item-label) { color: var(--text-h); font-size: .83rem; font-weight: 650; }
 .ledger-form-control { width: 100%; }
 .ledger-form-field :deep(.ledger-form-control .n-input),
-.ledger-form-field :deep(.ledger-form-control .n-base-selection) { width: 100%; }
-.ledger-form-field input:focus,
-.ledger-form-field select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent); }
-.ledger-form-field input:disabled,
-.ledger-form-field select:disabled { cursor: wait; opacity: .65; }
+.ledger-form-field :deep(.ledger-form-control .n-base-selection),
+.ledger-form-field :deep(.ledger-form-control .n-auto-complete) { width: 100%; }
+.ledger-form-field :deep(.n-input--disabled),
+.ledger-form-field :deep(.n-base-selection--disabled) { cursor: wait; opacity: .65; }
 .ledger-form-field small { color: var(--text-muted); font-size: .75rem; line-height: 1.45; }
 .ledger-field-error,
 .ledger-form-error { color: #b42318 !important; }

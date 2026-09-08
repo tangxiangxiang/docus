@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { NButton } from 'naive-ui'
+import { NAlert, NButton, NCard } from 'naive-ui'
 import type { LedgerPendingCreateIntent } from '../../features/ledger/recovery'
 
 defineProps<{
@@ -21,14 +21,14 @@ function operationLabel(operation: LedgerPendingCreateIntent['operation']): stri
 </script>
 
 <template>
-  <section class="ledger-recovery-card" data-testid="ledger-recovery" aria-labelledby="ledger-recovery-title">
+  <NCard class="ledger-recovery-card" data-testid="ledger-recovery" :bordered="false" size="small" aria-labelledby="ledger-recovery-title">
     <p class="ledger-eyebrow">需要确认</p>
     <h2 id="ledger-recovery-title">上一次{{ operationLabel(intent.operation) }}保存结果未知</h2>
     <p>
       上一次提交的结果尚未确认。为避免重复保存，已保留这次操作的原始内容；请用同一份内容安全重试。
     </p>
     <p class="ledger-recovery-detail">原始提交时间：{{ new Date(intent.createdAt).toLocaleString('zh-CN') }}</p>
-    <p v-if="error" class="ledger-form-error" role="alert">{{ error }}</p>
+    <NAlert v-if="error" class="ledger-form-error" type="error" :show-icon="false" role="alert">{{ error }}</NAlert>
     <NButton
       class="ledger-primary-button"
       attr-type="button"
@@ -41,20 +41,18 @@ function operationLabel(operation: LedgerPendingCreateIntent['operation']): stri
     >
       {{ busy ? '正在确认…' : '用同一内容重试' }}
     </NButton>
-  </section>
+  </NCard>
 </template>
 
 <style scoped>
 .ledger-recovery-card {
-  display: grid;
-  gap: 12px;
   width: min(100%, 560px);
   box-sizing: border-box;
-  padding: 28px;
   border: 1px solid color-mix(in srgb, #b7791f 35%, var(--border));
   border-radius: 14px;
   background: color-mix(in srgb, #f6ad55 9%, var(--bg));
 }
+.ledger-recovery-card :deep(.n-card__content) { display: grid; gap: 12px; padding: 28px; }
 .ledger-recovery-card h2,
 .ledger-recovery-card p { margin: 0; }
 .ledger-recovery-card h2 { color: var(--text-h); font-size: 1.28rem; line-height: 1.3; }
@@ -62,6 +60,7 @@ function operationLabel(operation: LedgerPendingCreateIntent['operation']): stri
 .ledger-eyebrow { color: #8a5a16; font-size: .75rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .ledger-recovery-detail { color: var(--text-muted); font-size: .78rem; }
 .ledger-form-error { color: #b42318; font-size: .82rem; }
+.ledger-form-error :deep(.n-alert-body) { color: #b42318; }
 .ledger-primary-button {
   min-height: 38px;
   padding: 8px 15px;
@@ -76,6 +75,6 @@ function operationLabel(operation: LedgerPendingCreateIntent['operation']): stri
 .ledger-primary-button:hover:not(:disabled) { background: var(--accent-hover); }
 .ledger-primary-button:disabled { cursor: wait; opacity: .65; }
 @media (max-width: 560px) {
-  .ledger-recovery-card { padding: 22px 18px; }
+  .ledger-recovery-card :deep(.n-card__content) { padding: 22px 18px; }
 }
 </style>

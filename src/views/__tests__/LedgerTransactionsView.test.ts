@@ -14,6 +14,7 @@ import { resetLedgerStoreForTesting } from '../../features/ledger/ledgerStore'
 import { LEDGER_PENDING_CREATE_STORAGE_KEY, createLedgerPendingIntent } from '../../features/ledger/recovery'
 import { instantFromLedgerDate } from '../../features/ledger/time'
 import LedgerTransactionsView from '../LedgerTransactionsView.vue'
+import LedgerDatePicker from '../../components/ledger/LedgerDatePicker.vue'
 import { getNaiveSelect, naiveSelectValue, setNaiveSelect } from '../../components/ledger/__tests__/selectTestUtils'
 
 const api = vi.hoisted(() => ({
@@ -185,6 +186,12 @@ const emptyPage: LedgerTransactionPageDto = {
 
 const wrappers: VueWrapper[] = []
 
+async function setLedgerDate(wrapper: VueWrapper, testId: string, value: string): Promise<void> {
+  const picker = wrapper.findAllComponents(LedgerDatePicker).find((candidate) => candidate.props('testId') === testId)
+  if (!picker) throw new Error(`Ledger date picker not found: ${testId}`)
+  await picker.vm.$emit('update:modelValue', value)
+}
+
 function setup(
   page: LedgerTransactionPageDto = { transactions: [expense, income, transfer, adjustment], page: { nextCursor: null } },
   accounts: LedgerAccountDto[] = [activeAccount, archivedAccount],
@@ -255,9 +262,9 @@ describe('Ledger live transaction history workspace', () => {
     await setNaiveSelect(wrapper, '类型', 'expense')
     await setNaiveSelect(wrapper, '账户', 'old-bank')
     await setNaiveSelect(wrapper, '分类', 'old-food')
-    await wrapper.get('input[name="from"]').setValue('2026-09-01')
-    await wrapper.get('input[name="to"]').setValue('2026-09-05')
-    await wrapper.get('[data-testid="ledger-filter-submit"]').trigger('click')
+    await setLedgerDate(wrapper, 'ledger-filter-from', '2026-09-01')
+    await setLedgerDate(wrapper, 'ledger-filter-to', '2026-09-05')
+    await wrapper.get('[data-testid="ledger-filters-form"]').trigger('submit')
     await flushPromises()
 
     expect(api.listLedgerTransactions).toHaveBeenLastCalledWith({
@@ -308,7 +315,7 @@ describe('Ledger live transaction history workspace', () => {
     const wrapper = await mountView()
 
     await setNaiveSelect(wrapper, '类型', 'income')
-    await wrapper.get('[data-testid="ledger-filter-submit"]').trigger('click')
+    await wrapper.get('[data-testid="ledger-filters-form"]').trigger('submit')
     await flushPromises()
 
     expect(wrapper.get('[data-testid="ledger-transactions-empty"]').text()).toContain('没有符合筛选条件的交易')
@@ -350,6 +357,30 @@ describe('Ledger live transaction history workspace', () => {
     })
   })
 
+  it('guards every detail close path when an edit is dirty', async () => {
+    const wrapper = await mountView()
+    await wrapper.find('[data-testid="ledger-transaction-row-tx-expense"]').trigger('click')
+    await flushPromises()
+
+    let detail = getDetail()
+    await detail.findAll('button').find((button) => button.text() === '编辑交易')!.trigger('click')
+    await getDetail().get('input[name="payee"]').setValue('未保存商户')
+    await flushPromises()
+
+    confirm.mockResolvedValueOnce(false)
+    await getDetail().find('.ledger-close-button').trigger('click')
+    await flushPromises()
+
+    expect(confirm).toHaveBeenCalledWith('放弃这笔尚未保存的修改？', '已填写的内容将不会保存。')
+    expect(document.body.querySelector('.ledger-detail-sheet')).not.toBeNull()
+
+    confirm.mockResolvedValueOnce(true)
+    await getDetail().find('.ledger-close-button').trigger('click')
+    await flushPromises()
+
+    expect(document.body.querySelector('.ledger-detail-sheet')).toBeNull()
+  })
+
   it('restricts financial edits for an archived-account transaction to payee and note', async () => {
     const archivedExpense: LedgerTransactionDto = {
       ...expense,
@@ -359,7 +390,8 @@ describe('Ledger live transaction history workspace', () => {
     const wrapper = await mountView()
     const storePage: LedgerTransactionPageDto = { transactions: [archivedExpense], page: { nextCursor: null } }
     api.listLedgerTransactions.mockResolvedValue(storePage)
-    await wrapper.get('[data-testid="ledger-filter-submit"]').trigger('click')
+    await setNaiveSelect(wrapper, '类型', 'expense')
+    await wrapper.get('[data-testid="ledger-filters-form"]').trigger('submit')
     await flushPromises()
     await wrapper.get('[data-testid="ledger-transaction-row-tx-archived-account"]').trigger('click')
     await flushPromises()

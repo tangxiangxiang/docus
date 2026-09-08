@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { NButton } from 'naive-ui'
+import { NAlert, NButton, NCard, NResult, NSpin, NStatistic } from 'naive-ui'
 import { useRoute } from 'vue-router'
 import { useConfirm } from '../composables/useConfirm'
 import LedgerAccountEditForm from '../components/ledger/LedgerAccountEditForm.vue'
@@ -99,14 +99,16 @@ function onSaved(next: LedgerAccountDto): void {
 
     <LedgerPendingCreateGate v-if="store.recoveryGateVisible.value" />
 
-    <div v-else-if="loading" class="ledger-state-panel" data-testid="ledger-account-loading" role="status">正在加载账户…</div>
+    <div v-else-if="loading" class="ledger-state-panel" data-testid="ledger-account-loading" role="status"><NSpin size="medium" description="正在加载账户…" /></div>
     <section v-else-if="!account" class="ledger-state-panel" data-testid="ledger-account-error" role="alert">
-      <h1>账户详情无法加载</h1>
-      <p>{{ actionError }}</p>
-      <div class="ledger-page-actions">
-        <NButton class="ledger-primary-button" attr-type="button" type="primary" size="medium" :bordered="false" @click="load">重新加载</NButton>
-        <RouterLink class="ledger-secondary-button" :to="{ name: 'ledger-accounts' }">返回账户</RouterLink>
-      </div>
+      <NResult status="error" title="账户详情无法加载" :description="actionError">
+        <template #footer>
+          <div class="ledger-page-actions">
+            <NButton class="ledger-primary-button" attr-type="button" type="primary" size="medium" :bordered="false" @click="load">重新加载</NButton>
+            <RouterLink class="ledger-secondary-button" :to="{ name: 'ledger-accounts' }">返回账户</RouterLink>
+          </div>
+        </template>
+      </NResult>
     </section>
 
     <template v-else-if="editing">
@@ -127,30 +129,27 @@ function onSaved(next: LedgerAccountDto): void {
         </div>
       </header>
 
-      <p v-if="actionError" class="ledger-form-error" role="alert">{{ actionError }}</p>
-      <p v-if="account.archivedAt === null && account.currentBalanceMinor !== 0" class="ledger-action-help">
+      <NAlert v-if="actionError" class="ledger-form-error" type="error" :show-icon="false" role="alert">{{ actionError }}</NAlert>
+      <NAlert v-if="account.archivedAt === null && account.currentBalanceMinor !== 0" class="ledger-action-help" type="info" :show-icon="false">
         当前余额为 {{ formatLedgerMoney(account.currentBalanceMinor, account.currency) }}；归档前需要先把余额调整为 0。
-      </p>
+      </NAlert>
 
       <div class="ledger-detail-grid">
-        <article class="ledger-detail-card ledger-detail-balance">
-          <span>当前余额</span>
-          <strong>{{ formatLedgerMoney(account.currentBalanceMinor, account.currency) }}</strong>
+        <NCard class="ledger-detail-card ledger-detail-balance" :bordered="false" size="small">
+          <NStatistic label="当前余额" :value="formatLedgerMoney(account.currentBalanceMinor, account.currency)" tabular-nums />
           <small>{{ account.archivedAt === null ? '来自 Ledger 服务端账户投影' : '已归档，不会出现在新交易账户选择器中' }}</small>
-        </article>
-        <article class="ledger-detail-card">
-          <span>期初余额</span>
-          <strong>{{ formatLedgerMoney(account.openingBalanceMinor, account.currency) }}</strong>
+        </NCard>
+        <NCard class="ledger-detail-card" :bordered="false" size="small">
+          <NStatistic label="期初余额" :value="formatLedgerMoney(account.openingBalanceMinor, account.currency)" tabular-nums />
           <small>期初日期：{{ account.openingDate }}</small>
-        </article>
-        <article class="ledger-detail-card">
-          <span>历史记录</span>
-          <strong>{{ hasHistory ? '已有记录' : '尚无记录' }}</strong>
+        </NCard>
+        <NCard class="ledger-detail-card" :bordered="false" size="small">
+          <NStatistic label="历史记录" :value="hasHistory ? '已有记录' : '尚无记录'" />
           <small>{{ hasHistory ? '有历史后，财务解释字段会保持只读。' : '尚无历史时可以调整期初解释。' }}</small>
-        </article>
+        </NCard>
       </div>
 
-      <section class="ledger-detail-movement" data-testid="ledger-account-movement" aria-labelledby="ledger-account-movement-title">
+      <NCard class="ledger-detail-movement" :bordered="false" size="small" data-testid="ledger-account-movement" aria-labelledby="ledger-account-movement-title">
         <div class="ledger-section-heading">
           <div>
             <h2 id="ledger-account-movement-title">本月变动</h2>
@@ -167,16 +166,16 @@ function onSaved(next: LedgerAccountDto): void {
             <strong>{{ formatLedgerMoney(movement.balanceDecreaseMinor, account.currency) }}</strong>
           </div>
         </div>
-      </section>
+      </NCard>
 
       <RouterLink class="ledger-account-history-link" :to="{ name: 'ledger-transactions', query: { accountId: account.id } }">
         查看该账户全部交易
       </RouterLink>
 
-      <section class="ledger-detail-note" aria-labelledby="ledger-account-note-title">
+      <NCard class="ledger-detail-note" :bordered="false" size="small" aria-labelledby="ledger-account-note-title">
         <h2 id="ledger-account-note-title">备注</h2>
         <p>{{ account.note || '暂无备注' }}</p>
-      </section>
+      </NCard>
     </section>
   </main>
 </template>
@@ -202,12 +201,17 @@ function onSaved(next: LedgerAccountDto): void {
 .ledger-secondary-button:disabled { cursor: wait; opacity: .65; }
 .ledger-form-error { margin: 0 0 14px; color: #b42318; font-size: .82rem; }
 .ledger-action-help { margin: 0 0 14px; color: var(--text-muted); font-size: .82rem; }
+.ledger-form-error :deep(.n-alert-body) { color: #b42318; }
+.ledger-action-help :deep(.n-alert-body) { color: var(--text-muted); }
 .ledger-detail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-.ledger-detail-card { display: grid; gap: 7px; min-height: 130px; padding: 18px; box-sizing: border-box; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-soft); }
-.ledger-detail-card span { color: var(--text-muted); font-size: .78rem; }
-.ledger-detail-card strong { color: var(--text-h); font-size: 1.22rem; }
+.ledger-detail-card { min-height: 130px; box-sizing: border-box; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-soft); }
+.ledger-detail-card :deep(.n-card__content) { display: grid; gap: 7px; min-height: 130px; padding: 18px; box-sizing: border-box; }
+.ledger-detail-card :deep(.n-statistic) { min-width: 0; }
+.ledger-detail-card :deep(.n-statistic .n-statistic-label) { color: var(--text-muted); font-size: .78rem; }
+.ledger-detail-card :deep(.n-statistic .n-statistic-value) { overflow: hidden; color: var(--text-h); font-size: 1.22rem; text-overflow: ellipsis; white-space: nowrap; }
 .ledger-detail-card small { color: var(--text-muted); font-size: .75rem; line-height: 1.45; }
-.ledger-detail-movement { margin-top: 22px; padding: 18px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-soft); }
+.ledger-detail-movement { margin-top: 22px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-soft); }
+.ledger-detail-movement :deep(.n-card__content) { padding: 18px; }
 .ledger-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 13px; }
 .ledger-section-heading h2 { margin: 0; color: var(--text-h); font-size: .98rem; }
 .ledger-section-heading p { margin: 5px 0 0; color: var(--text-muted); font-size: .76rem; }
@@ -217,18 +221,23 @@ function onSaved(next: LedgerAccountDto): void {
 .ledger-movement-grid strong { color: var(--text-h); font-size: 1rem; }
 .ledger-account-history-link { display: inline-flex; margin-top: 18px; color: var(--accent); font-size: .82rem; text-decoration: none; }
 .ledger-account-history-link:hover { text-decoration: underline; }
-.ledger-detail-note { margin-top: 22px; padding: 18px; border-top: 1px solid var(--border); }
+.ledger-detail-note { margin-top: 22px; border-top: 1px solid var(--border); }
+.ledger-detail-note :deep(.n-card__content) { padding: 18px 0; }
 .ledger-detail-note h2 { margin: 0 0 7px; color: var(--text-h); font-size: .95rem; }
 .ledger-detail-note p { margin: 0; color: var(--text-muted); font-size: .84rem; white-space: pre-wrap; }
 .ledger-state-panel { display: grid; min-height: 300px; place-items: center; align-content: center; gap: 10px; color: var(--text-muted); text-align: center; }
 .ledger-state-panel h1,
 .ledger-state-panel p { margin: 0; }
 .ledger-state-panel h1 { color: var(--text-h); font-size: 1.35rem; }
+.ledger-state-panel :deep(.n-result) { padding: 0; }
+.ledger-state-panel :deep(.n-result-header__title) { color: var(--text-h); }
+.ledger-state-panel :deep(.n-result-footer) { margin-top: 18px; }
 @media (max-width: 720px) {
   .ledger-account-page { padding: 24px 16px 48px; }
   .ledger-detail-header { align-items: stretch; flex-direction: column; }
   .ledger-page-actions > * { flex: 1 1 150px; }
   .ledger-detail-grid { grid-template-columns: 1fr; }
   .ledger-movement-grid { grid-template-columns: 1fr; }
+  .ledger-detail-movement :deep(.n-card__content) { padding: 16px 13px; }
 }
 </style>

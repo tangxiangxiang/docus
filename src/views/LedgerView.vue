@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { NButton } from 'naive-ui'
+import { NButton, NResult, NSpin } from 'naive-ui'
 import { useRoute, useRouter, type RouteLocationNormalizedLoaded } from 'vue-router'
 import { useAuth } from '../composables/useAuth'
 import LedgerDashboard from '../components/ledger/LedgerDashboard.vue'
@@ -164,15 +164,15 @@ function closeTransactionSheet(): void {
 <template>
   <main class="ledger-page" data-testid="ledger-page">
     <div v-if="bootstrapping" class="ledger-loading-state" data-testid="ledger-loading" role="status" aria-live="polite">
-      正在加载 Ledger…
+      <NSpin size="medium" description="正在加载 Ledger…" />
     </div>
 
     <LedgerPendingCreateGate v-else-if="store.recoveryGateVisible.value" @resolved="onRecoveryResolved" />
 
-    <section v-else-if="store.workspaceState.value === 'RECOVERABLE_ERROR'" class="ledger-error-state" data-testid="ledger-bootstrap-error" aria-labelledby="ledger-bootstrap-error-title">
-      <h1 id="ledger-bootstrap-error-title">Ledger 暂时无法打开</h1>
-      <p>{{ ledgerWorkspaceReadErrorMessage(store.workspaceError.value) }}</p>
-      <NButton class="ledger-primary-button" attr-type="button" type="primary" size="medium" :bordered="false" @click="retry">重新加载</NButton>
+    <section v-else-if="store.workspaceState.value === 'RECOVERABLE_ERROR'" class="ledger-error-state" data-testid="ledger-bootstrap-error" role="alert" aria-label="Ledger 暂时无法打开">
+      <NResult status="error" title="Ledger 暂时无法打开" :description="ledgerWorkspaceReadErrorMessage(store.workspaceError.value)">
+        <template #footer><NButton class="ledger-primary-button" attr-type="button" type="primary" size="medium" :bordered="false" @click="retry">重新加载</NButton></template>
+      </NResult>
     </section>
 
     <LedgerOnboarding
@@ -208,6 +208,9 @@ function closeTransactionSheet(): void {
 .ledger-loading-state,
 .ledger-error-state,
 .ledger-ready-placeholder { display: grid; min-height: 420px; place-items: center; align-content: center; gap: 12px; padding: 32px 18px; box-sizing: border-box; color: var(--text-muted); text-align: center; }
+.ledger-loading-state :deep(.n-spin-container),
+.ledger-error-state :deep(.n-result) { display: grid; place-items: center; }
+.ledger-error-state :deep(.n-result) { padding: 0; }
 .ledger-error-state h1,
 .ledger-ready-placeholder h1 { margin: 0; color: var(--text-h); font-size: 1.5rem; }
 .ledger-error-state p,

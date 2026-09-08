@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { NButton, NSelect, type SelectOption } from 'naive-ui'
+import { NAlert, NButton, NCard, NEmpty, NList, NListItem, NSelect, NSpin, NStatistic, type SelectOption } from 'naive-ui'
 import type {
   LedgerOverviewScope,
   LedgerPeriodName,
@@ -8,8 +8,11 @@ import type {
 } from '../../../shared/ledgerProtocol'
 import { formatLedgerMoney, formatLedgerSignedMoney } from '../../features/ledger/money'
 import { formatLedgerDate, formatLedgerDateTime, formatLedgerPeriodLabel } from '../../features/ledger/time'
+import { ledgerSelectNodeProps } from '../../features/ledger/naiveControls'
+import { calendarDateFromNaivePickerTimestamp } from '../../features/ledger/naiveTemporal'
 import { useLedgerStore } from '../../features/ledger/ledgerStore'
 import LedgerCashflowTrend from './LedgerCashflowTrend.vue'
+import LedgerDatePicker from './LedgerDatePicker.vue'
 
 const emit = defineEmits<{
   record: []
@@ -50,6 +53,11 @@ const dateInputValue = computed(() => store.overviewRequestedAnchorDate.value
 const dateMax = computed(() => overview.value?.context.todayDate ?? '')
 const ledgerTimezone = computed(() => store.settings.value?.timezone ?? 'UTC')
 const showReturnToday = computed(() => historicalMode.value)
+const isDashboardDateDisabled = (timestamp: number, detail: { type: string }) => (
+  detail.type === 'date'
+  && Boolean(dateMax.value)
+  && calendarDateFromNaivePickerTimestamp(timestamp) > dateMax.value
+)
 
 watch(() => store.overviewScope.value, (scope) => {
   selectedScope.value = scope
@@ -150,8 +158,7 @@ function updateScope(value: string | number | null): void {
   selectedScope.value = value as LedgerOverviewScope
 }
 
-function onDateChange(event: Event): void {
-  const value = (event.target as HTMLInputElement).value
+function onDateChange(value: string): void {
   if (value) emit('selectDate', value)
 }
 </script>
@@ -172,39 +179,42 @@ function onDateChange(event: Event): void {
 
     <template v-if="overview">
       <section class="ledger-metric-grid" aria-label="资产概览">
-        <article class="ledger-metric-card" data-testid="ledger-total-assets">
-          <span class="ledger-metric-icon" aria-hidden="true">
+        <NCard class="ledger-metric-card" data-testid="ledger-total-assets" size="small">
+          <div class="ledger-metric-layout">
+            <span class="ledger-metric-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none"><ellipse cx="12" cy="6" rx="6" ry="3"/><path d="M6 6v4c0 1.7 2.7 3 6 3s6-1.3 6-3V6M6 10v4c0 1.7 2.7 3 6 3s6-1.3 6-3v-4M6 14v4c0 1.7 2.7 3 6 3s6-1.3 6-3v-4"/></svg>
-          </span>
-          <span class="ledger-metric-copy">
-            <span>总资产</span>
-            <strong>{{ formatLedgerMoney(overview.assetTotalMinor, overview.currency) }}</strong>
+            </span>
+            <span class="ledger-metric-copy">
+              <NStatistic label="总资产" :value="formatLedgerMoney(overview.assetTotalMinor, overview.currency)" tabular-nums />
             <small>当前所有资产账户余额</small>
-          </span>
-        </article>
-        <article class="ledger-metric-card" data-testid="ledger-total-liabilities">
-          <span class="ledger-metric-icon" aria-hidden="true">
+            </span>
+          </div>
+        </NCard>
+        <NCard class="ledger-metric-card" data-testid="ledger-total-liabilities" size="small">
+          <div class="ledger-metric-layout">
+            <span class="ledger-metric-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none"><rect x="4" y="5" width="16" height="14" rx="3"/><path d="M4 9h16M8 15h4"/></svg>
-          </span>
-          <span class="ledger-metric-copy">
-            <span>总负债</span>
-            <strong>{{ formatLedgerMoney(overview.liabilityTotalMinor, overview.currency) }}</strong>
+            </span>
+            <span class="ledger-metric-copy">
+              <NStatistic label="总负债" :value="formatLedgerMoney(overview.liabilityTotalMinor, overview.currency)" tabular-nums />
             <small>当前所有负债账户余额</small>
-          </span>
-        </article>
-        <article class="ledger-metric-card is-primary" data-testid="ledger-net-worth">
-          <span class="ledger-metric-icon" aria-hidden="true">
+            </span>
+          </div>
+        </NCard>
+        <NCard class="ledger-metric-card is-primary" data-testid="ledger-net-worth" size="small">
+          <div class="ledger-metric-layout">
+            <span class="ledger-metric-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none"><path d="M6 19v-5M12 19V9M18 19V5"/></svg>
-          </span>
-          <span class="ledger-metric-copy">
-            <span>净资产</span>
-            <strong>{{ formatLedgerMoney(overview.netWorthMinor, overview.currency) }}</strong>
+            </span>
+            <span class="ledger-metric-copy">
+              <NStatistic label="净资产" :value="formatLedgerMoney(overview.netWorthMinor, overview.currency)" tabular-nums />
             <small>当前净资产</small>
-          </span>
-        </article>
+            </span>
+          </div>
+        </NCard>
       </section>
 
-      <section class="ledger-dashboard-section ledger-cashflow-section" aria-labelledby="ledger-dashboard-cashflow-title">
+      <NCard class="ledger-dashboard-section ledger-cashflow-section" :bordered="false" size="small" aria-labelledby="ledger-dashboard-cashflow-title">
         <div class="ledger-section-heading ledger-period-heading">
           <div class="ledger-period-heading-copy">
             <h2 id="ledger-dashboard-cashflow-title">{{ selectedPeriodLabel }}收支</h2>
@@ -213,32 +223,34 @@ function onDateChange(event: Event): void {
             </p>
           </div>
           <div class="ledger-period-toolbar">
-            <input
-              type="date"
-              data-testid="ledger-period-date"
-              aria-label="查看日期"
-              :value="dateInputValue"
-              :max="dateMax || undefined"
-              @change="onDateChange"
-            >
+            <LedgerDatePicker
+              :model-value="dateInputValue"
+              label="查看日期"
+              test-id="ledger-period-date"
+              :is-date-disabled="isDashboardDateDisabled"
+              @update:model-value="onDateChange"
+            />
             <NSelect
               class="ledger-period-scope"
               size="small"
               :value="selectedScope"
               :options="scopeOptions"
+              :node-props="ledgerSelectNodeProps"
               aria-label="选择收支期间"
+              aria-haspopup="listbox"
+              role="combobox"
               :input-props="{ name: 'scope' }"
               @update:value="updateScope"
             />
             <NButton v-if="showReturnToday" class="ledger-secondary-button" attr-type="button" size="small" :bordered="false" data-testid="ledger-return-today" @click="emit('returnToday')">回到今天</NButton>
           </div>
         </div>
-        <div v-if="scopeError" class="ledger-inline-error" role="alert">
+        <NAlert v-if="scopeError" class="ledger-inline-error" type="error" :show-icon="false" role="alert">
           <span>{{ scopeErrorMessage }}</span>
           <NButton class="ledger-link-button" attr-type="button" size="small" text :bordered="false" @click="retryScope">重试</NButton>
-        </div>
+        </NAlert>
         <div v-if="periodDataLoading" class="ledger-period-analysis-loading" data-testid="ledger-period-analysis-loading" role="status" aria-live="polite">
-          正在加载所选期间…
+          <NSpin size="medium" description="正在加载所选期间…" />
         </div>
         <div v-else-if="selectedPeriodSummary" class="ledger-cashflow-grid" data-testid="ledger-dashboard-cashflow">
           <div>
@@ -254,9 +266,9 @@ function onDateChange(event: Event): void {
             <span class="ledger-cashflow-copy"><span>收支结余</span><strong :class="{ 'is-income': selectedPeriodSummary.balanceMinor >= 0, 'is-expense': selectedPeriodSummary.balanceMinor < 0 }">{{ formatLedgerSignedMoney(selectedPeriodSummary.balanceMinor, overview.currency) }}</strong></span>
           </div>
         </div>
-      </section>
+      </NCard>
 
-      <section class="ledger-dashboard-section" data-testid="ledger-dashboard-accounts" aria-labelledby="ledger-dashboard-accounts-title">
+      <NCard class="ledger-dashboard-section" data-testid="ledger-dashboard-accounts" :bordered="false" size="small" aria-labelledby="ledger-dashboard-accounts-title">
         <div class="ledger-section-heading">
           <div>
             <h2 id="ledger-dashboard-accounts-title">账户</h2>
@@ -270,50 +282,54 @@ function onDateChange(event: Event): void {
                 <span><i class="is-asset" aria-hidden="true" />资产账户 <small>({{ assetAccounts.length }})</small></span>
                 <strong>{{ formatLedgerMoney(overview.assetTotalMinor, overview.currency) }}</strong>
               </h3>
-              <div v-if="assetAccounts.length" class="ledger-dashboard-accounts">
-                <RouterLink v-for="account in assetAccounts" :key="account.id" class="ledger-dashboard-account" :to="{ name: 'ledger-account', params: { id: account.id } }">
-                  <span class="ledger-account-identity">
-                    <span class="ledger-account-icon is-asset" aria-hidden="true">
-                      <svg viewBox="0 0 24 24" fill="none"><rect x="5" y="7" width="14" height="12" rx="3"/><path d="M8 7V5h8v2M9 12h6"/></svg>
+              <NList v-if="assetAccounts.length" class="ledger-dashboard-accounts" :show-divider="false" hoverable>
+                <NListItem v-for="account in assetAccounts" :key="account.id" class="ledger-dashboard-account-item">
+                  <RouterLink class="ledger-dashboard-account" :to="{ name: 'ledger-account', params: { id: account.id } }">
+                    <span class="ledger-account-identity">
+                      <span class="ledger-account-icon is-asset" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none"><rect x="5" y="7" width="14" height="12" rx="3"/><path d="M8 7V5h8v2M9 12h6"/></svg>
+                      </span>
+                      <span>
+                        <strong>{{ account.name }}</strong>
+                        <small>资产 · {{ account.currency }}</small>
+                      </span>
                     </span>
-                    <span>
-                      <strong>{{ account.name }}</strong>
-                      <small>资产 · {{ account.currency }}</small>
-                    </span>
-                  </span>
-                  <strong class="ledger-account-amount">{{ formatLedgerMoney(account.currentBalanceMinor, account.currency) }}</strong>
-                </RouterLink>
-              </div>
-              <p v-else class="ledger-inline-empty">还没有资产账户。</p>
+                    <strong class="ledger-account-amount">{{ formatLedgerMoney(account.currentBalanceMinor, account.currency) }}</strong>
+                  </RouterLink>
+                </NListItem>
+              </NList>
+              <NEmpty v-else class="ledger-inline-empty" size="small" :show-icon="false" description="还没有资产账户。" />
             </section>
             <section class="ledger-dashboard-account-group" data-testid="ledger-dashboard-liabilities" aria-labelledby="ledger-dashboard-liabilities-title">
               <h3 id="ledger-dashboard-liabilities-title">
                 <span><i class="is-liability" aria-hidden="true" />负债账户 <small>({{ liabilityAccounts.length }})</small></span>
                 <strong>{{ formatLedgerMoney(overview.liabilityTotalMinor, overview.currency) }}</strong>
               </h3>
-              <div v-if="liabilityAccounts.length" class="ledger-dashboard-accounts">
-                <RouterLink v-for="account in liabilityAccounts" :key="account.id" class="ledger-dashboard-account" :to="{ name: 'ledger-account', params: { id: account.id } }">
-                  <span class="ledger-account-identity">
-                    <span class="ledger-account-icon is-liability" aria-hidden="true">
-                      <svg viewBox="0 0 24 24" fill="none"><rect x="4" y="6" width="16" height="13" rx="3"/><path d="M4 10h16M8 15h3"/></svg>
+              <NList v-if="liabilityAccounts.length" class="ledger-dashboard-accounts" :show-divider="false" hoverable>
+                <NListItem v-for="account in liabilityAccounts" :key="account.id" class="ledger-dashboard-account-item">
+                  <RouterLink class="ledger-dashboard-account" :to="{ name: 'ledger-account', params: { id: account.id } }">
+                    <span class="ledger-account-identity">
+                      <span class="ledger-account-icon is-liability" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none"><rect x="4" y="6" width="16" height="13" rx="3"/><path d="M4 10h16M8 15h3"/></svg>
+                      </span>
+                      <span>
+                        <strong>{{ account.name }}</strong>
+                        <small>负债 · {{ account.currency }}</small>
+                      </span>
                     </span>
-                    <span>
-                      <strong>{{ account.name }}</strong>
-                      <small>负债 · {{ account.currency }}</small>
-                    </span>
-                  </span>
-                  <strong class="ledger-account-amount">{{ formatLedgerMoney(account.currentBalanceMinor, account.currency) }}</strong>
-                </RouterLink>
-              </div>
-              <p v-else class="ledger-inline-empty">还没有负债账户。</p>
+                    <strong class="ledger-account-amount">{{ formatLedgerMoney(account.currentBalanceMinor, account.currency) }}</strong>
+                  </RouterLink>
+                </NListItem>
+              </NList>
+              <NEmpty v-else class="ledger-inline-empty" size="small" :show-icon="false" description="还没有负债账户。" />
             </section>
           </div>
         </div>
-      </section>
+      </NCard>
 
       <template v-if="periodDataReady">
       <div class="ledger-dashboard-two-column">
-        <section class="ledger-dashboard-section" aria-labelledby="ledger-category-breakdown-title">
+        <NCard class="ledger-dashboard-section" :bordered="false" size="small" aria-labelledby="ledger-category-breakdown-title">
           <div class="ledger-section-heading">
             <div>
               <h2 id="ledger-category-breakdown-title">{{ selectedPeriodLabel }}分类</h2>
@@ -322,46 +338,50 @@ function onDateChange(event: Event): void {
           <div class="ledger-breakdown-columns" data-testid="ledger-category-breakdown">
             <div>
               <h3><i class="is-income" aria-hidden="true" />收入分类</h3>
-              <div v-if="selectedPeriods.income.length" class="ledger-breakdown-list">
-                <div v-for="item in selectedPeriods.income" :key="item.categoryId" class="ledger-breakdown-row">
-                  <span class="ledger-breakdown-label">
-                    <span class="ledger-breakdown-name">{{ item.name }}</span>
-                    <span class="ledger-breakdown-share">{{ categoryShare(selectedPeriods.income, item.amountMinor) }}</span>
-                  </span>
-                  <strong class="ledger-breakdown-amount">{{ formatLedgerMoney(item.amountMinor, overview.currency) }}</strong>
-                  <span class="ledger-breakdown-bar" aria-hidden="true">
-                    <span
-                      class="ledger-breakdown-bar-fill is-income"
-                      :style="{ width: `${categorySharePercent(selectedPeriods.income, item.amountMinor)}%` }"
-                    />
-                  </span>
-                </div>
-              </div>
-              <p v-else class="ledger-inline-empty">这段期间还没有收入分类。</p>
+              <NList v-if="selectedPeriods.income.length" class="ledger-breakdown-list" :show-divider="false">
+                <NListItem v-for="item in selectedPeriods.income" :key="item.categoryId" class="ledger-breakdown-list-item">
+                  <div class="ledger-breakdown-row">
+                    <span class="ledger-breakdown-label">
+                      <span class="ledger-breakdown-name">{{ item.name }}</span>
+                      <span class="ledger-breakdown-share">{{ categoryShare(selectedPeriods.income, item.amountMinor) }}</span>
+                    </span>
+                    <strong class="ledger-breakdown-amount">{{ formatLedgerMoney(item.amountMinor, overview.currency) }}</strong>
+                    <span class="ledger-breakdown-bar" aria-hidden="true">
+                      <span
+                        class="ledger-breakdown-bar-fill is-income"
+                        :style="{ width: `${categorySharePercent(selectedPeriods.income, item.amountMinor)}%` }"
+                      />
+                    </span>
+                  </div>
+                </NListItem>
+              </NList>
+              <NEmpty v-else class="ledger-inline-empty" size="small" :show-icon="false" description="这段期间还没有收入分类。" />
             </div>
             <div>
               <h3><i class="is-expense" aria-hidden="true" />支出分类</h3>
-              <div v-if="selectedPeriods.expense.length" class="ledger-breakdown-list">
-                <div v-for="item in selectedPeriods.expense" :key="item.categoryId" class="ledger-breakdown-row">
-                  <span class="ledger-breakdown-label">
-                    <span class="ledger-breakdown-name">{{ item.name }}</span>
-                    <span class="ledger-breakdown-share">{{ categoryShare(selectedPeriods.expense, item.amountMinor) }}</span>
-                  </span>
-                  <strong class="ledger-breakdown-amount">{{ formatLedgerMoney(item.amountMinor, overview.currency) }}</strong>
-                  <span class="ledger-breakdown-bar" aria-hidden="true">
-                    <span
-                      class="ledger-breakdown-bar-fill is-expense"
-                      :style="{ width: `${categorySharePercent(selectedPeriods.expense, item.amountMinor)}%` }"
-                    />
-                  </span>
-                </div>
-              </div>
-              <p v-else class="ledger-inline-empty">这段期间还没有支出分类。</p>
+              <NList v-if="selectedPeriods.expense.length" class="ledger-breakdown-list" :show-divider="false">
+                <NListItem v-for="item in selectedPeriods.expense" :key="item.categoryId" class="ledger-breakdown-list-item">
+                  <div class="ledger-breakdown-row">
+                    <span class="ledger-breakdown-label">
+                      <span class="ledger-breakdown-name">{{ item.name }}</span>
+                      <span class="ledger-breakdown-share">{{ categoryShare(selectedPeriods.expense, item.amountMinor) }}</span>
+                    </span>
+                    <strong class="ledger-breakdown-amount">{{ formatLedgerMoney(item.amountMinor, overview.currency) }}</strong>
+                    <span class="ledger-breakdown-bar" aria-hidden="true">
+                      <span
+                        class="ledger-breakdown-bar-fill is-expense"
+                        :style="{ width: `${categorySharePercent(selectedPeriods.expense, item.amountMinor)}%` }"
+                      />
+                    </span>
+                  </div>
+                </NListItem>
+              </NList>
+              <NEmpty v-else class="ledger-inline-empty" size="small" :show-icon="false" description="这段期间还没有支出分类。" />
             </div>
           </div>
-        </section>
+        </NCard>
 
-        <section class="ledger-dashboard-section" aria-labelledby="ledger-recent-title">
+        <NCard class="ledger-dashboard-section" :bordered="false" size="small" aria-labelledby="ledger-recent-title">
           <div class="ledger-section-heading">
             <div>
               <h2 id="ledger-recent-title">最近交易</h2>
@@ -369,29 +389,27 @@ function onDateChange(event: Event): void {
             </div>
             <NButton class="ledger-link-button" attr-type="button" size="small" text :bordered="false" @click="emit('viewTransactions')">查看全部</NButton>
           </div>
-          <div v-if="overview.recentTransactions.length" class="ledger-recent-list" data-testid="ledger-recent-transactions">
-            <div v-for="transaction in overview.recentTransactions" :key="transaction.id" class="ledger-recent-row">
+          <NList v-if="overview.recentTransactions.length" class="ledger-recent-list" data-testid="ledger-recent-transactions" :show-divider="false" hoverable>
+            <NListItem v-for="transaction in overview.recentTransactions" :key="transaction.id" class="ledger-recent-row">
               <span :class="['ledger-recent-icon', `is-${transaction.type}`]" aria-hidden="true">{{ transactionMark(transaction) }}</span>
               <span class="ledger-recent-info"><strong>{{ transactionTitle(transaction) }}</strong><small>{{ transactionMeta(transaction) }} · {{ formatLedgerDateTime(transaction.occurredAt, store.settings.value?.timezone ?? 'UTC') }}</small></span>
               <strong :class="['ledger-recent-amount', `is-${transaction.type}`]">{{ transactionAmount(transaction) }}</strong>
-            </div>
-          </div>
-          <div v-else class="ledger-inline-empty" data-testid="ledger-recent-empty">
-            <p v-if="historicalMode">截至该日期还没有交易记录。</p>
-            <template v-else>
-              <p>还没有交易记录。</p>
+            </NListItem>
+          </NList>
+          <NEmpty v-else class="ledger-inline-empty" data-testid="ledger-recent-empty" size="small" :show-icon="false" :description="historicalMode ? '截至该日期还没有交易记录。' : '还没有交易记录。'">
+            <template v-if="!historicalMode" #extra>
               <NButton class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" @click="emit('record')">记下第一笔</NButton>
             </template>
-          </div>
-        </section>
+          </NEmpty>
+        </NCard>
       </div>
 
-      <section class="ledger-dashboard-section" aria-labelledby="ledger-periods-title">
+      <NCard class="ledger-dashboard-section" :bordered="false" size="small" aria-labelledby="ledger-periods-title">
         <div class="ledger-section-heading">
           <h2 id="ledger-periods-title">期间摘要</h2>
         </div>
         <div class="ledger-period-grid" data-testid="ledger-period-summaries">
-          <article v-for="period in (['today', 'week', 'month', 'year'] as const)" :key="period" class="ledger-period-card" :data-testid="`ledger-period-${period}`">
+            <NCard v-for="period in (['today', 'week', 'month', 'year'] as const)" :key="period" class="ledger-period-card" :data-testid="`ledger-period-${period}`" :bordered="false" size="small">
             <h3>{{ periodLabels[period] }}</h3>
             <small v-if="periodSummary(period)">{{ formatLedgerPeriodLabel(period, periodSummary(period)!.startAt, periodSummary(period)!.endAt, store.settings.value?.timezone ?? 'UTC') }}</small>
               <div v-if="periodSummary(period)" class="ledger-period-values">
@@ -399,11 +417,11 @@ function onDateChange(event: Event): void {
                 <span>支出 <strong class="is-expense">{{ formatLedgerMoney(periodSummary(period)!.expenseMinor, overview.currency) }}</strong></span>
                 <span>收支结余 <strong>{{ formatLedgerSignedMoney(periodSummary(period)!.balanceMinor, overview.currency) }}</strong></span>
               </div>
-          </article>
+            </NCard>
         </div>
-      </section>
+      </NCard>
 
-      <section class="ledger-dashboard-section" aria-labelledby="ledger-trend-title">
+      <NCard class="ledger-dashboard-section" :bordered="false" size="small" aria-labelledby="ledger-trend-title">
         <div class="ledger-section-heading">
           <div>
             <h2 id="ledger-trend-title">收支趋势</h2>
@@ -411,7 +429,7 @@ function onDateChange(event: Event): void {
           </div>
         </div>
         <LedgerCashflowTrend :trend="overview.trend" :currency="overview.currency" />
-      </section>
+      </NCard>
       </template>
     </template>
   </section>
@@ -552,6 +570,16 @@ function onDateChange(event: Event): void {
 }
 
 .ledger-metric-card {
+  min-height: 112px;
+  box-sizing: border-box;
+  border: 1px solid var(--ledger-border);
+  border-radius: 12px;
+  background: var(--ledger-surface);
+}
+
+.ledger-metric-card :deep(.n-card__content) { padding: 0; }
+
+.ledger-metric-layout {
   display: grid;
   grid-template-columns: 48px minmax(0, 1fr);
   align-items: center;
@@ -559,9 +587,6 @@ function onDateChange(event: Event): void {
   min-height: 112px;
   padding: 18px 20px;
   box-sizing: border-box;
-  border: 1px solid var(--ledger-border);
-  border-radius: 12px;
-  background: var(--ledger-surface);
 }
 
 .ledger-metric-card.is-primary {
@@ -621,11 +646,12 @@ function onDateChange(event: Event): void {
 
 .ledger-dashboard-section {
   margin-top: 22px;
-  padding: 20px;
   border: 1px solid var(--ledger-border);
   border-radius: 12px;
   background: var(--ledger-surface);
 }
+
+.ledger-dashboard-section :deep(.n-card__content) { padding: 20px; }
 
 .ledger-section-heading {
   display: flex;
@@ -671,29 +697,10 @@ function onDateChange(event: Event): void {
   gap: 8px;
 }
 
-.ledger-period-toolbar input,
-.ledger-period-toolbar select {
-  min-height: 36px;
-  box-sizing: border-box;
-  padding: 6px 10px;
-  border: 1px solid var(--ledger-border);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--bg) 86%, transparent);
-  color: var(--text-h);
-  font: inherit;
-  font-size: .78rem;
-}
-
-.ledger-period-toolbar input { width: 148px; }
+.ledger-period-toolbar :deep(.ledger-date-picker) { width: 148px; }
+.ledger-period-toolbar :deep(.ledger-date-picker .n-input) { width: 100%; }
 .ledger-period-scope { width: 96px; }
 .ledger-period-toolbar :deep(.ledger-period-scope .n-base-selection) { width: 96px; }
-
-.ledger-period-toolbar input:focus,
-.ledger-period-toolbar select:focus {
-  border-color: var(--accent);
-  outline: 2px solid color-mix(in srgb, var(--accent) 22%, transparent);
-  outline-offset: 1px;
-}
 
 .ledger-historical-hint {
   margin: 5px 0 0;
@@ -856,6 +863,9 @@ function onDateChange(event: Event): void {
 
 .ledger-dashboard-accounts { display: grid; }
 
+.ledger-dashboard-accounts :deep(.n-list-item) { padding: 0; }
+.ledger-dashboard-accounts :deep(.n-list-item__main) { width: 100%; }
+
 .ledger-dashboard-account {
   display: flex;
   align-items: center;
@@ -868,6 +878,8 @@ function onDateChange(event: Event): void {
   text-decoration: none;
   transition: background-color .14s ease;
 }
+
+.ledger-dashboard-account-item { padding: 0; }
 
 .ledger-dashboard-account:last-child { border-bottom: 0; }
 .ledger-dashboard-account:hover { background: var(--ledger-row-hover); }
@@ -976,10 +988,11 @@ function onDateChange(event: Event): void {
   font-weight: 600;
 }
 
-.ledger-breakdown-list {
-  display: grid;
-  gap: 12px;
-}
+.ledger-breakdown-list { display: grid; }
+.ledger-breakdown-list :deep(.n-list-item) { padding: 0; }
+.ledger-breakdown-list :deep(.n-list-item__main) { width: 100%; }
+
+.ledger-breakdown-list-item + .ledger-breakdown-list-item { border-top: 1px solid var(--ledger-divider); }
 
 .ledger-breakdown-row {
   display: grid;
@@ -1126,20 +1139,25 @@ function onDateChange(event: Event): void {
 }
 
 .ledger-period-card {
+  min-height: 100px;
+  border-left: 1px solid var(--ledger-divider);
+}
+
+.ledger-period-card :deep(.n-card__content) {
   display: grid;
   min-width: 0;
   gap: 6px;
   min-height: 100px;
   padding: 2px 22px;
-  border-left: 1px solid var(--ledger-divider);
+  box-sizing: border-box;
 }
 
 .ledger-period-card:first-child {
-  padding-left: 0;
   border-left: 0;
 }
 
-.ledger-period-card:last-child { padding-right: 0; }
+.ledger-period-card:first-child :deep(.n-card__content) { padding-left: 0; }
+.ledger-period-card:last-child :deep(.n-card__content) { padding-right: 0; }
 
 .ledger-period-card h3 {
   margin: 0;
@@ -1185,14 +1203,14 @@ function onDateChange(event: Event): void {
   .ledger-dashboard-two-column { grid-template-columns: 1fr; row-gap: 14px; }
   .ledger-period-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ledger-period-card:nth-child(odd) {
-    padding-left: 0;
     border-left: 0;
   }
-  .ledger-period-card:nth-child(even) { padding-right: 0; }
+  .ledger-period-card:nth-child(odd) :deep(.n-card__content) { padding-left: 0; }
+  .ledger-period-card:nth-child(even) :deep(.n-card__content) { padding-right: 0; }
   .ledger-period-card:nth-child(n + 3) {
-    padding-top: 18px;
     border-top: 1px solid var(--ledger-divider);
   }
+  .ledger-period-card:nth-child(n + 3) :deep(.n-card__content) { padding-top: 18px; }
 }
 
 @media (max-width: 760px) {
@@ -1224,7 +1242,7 @@ function onDateChange(event: Event): void {
 @media (max-width: 620px) {
   .ledger-metric-grid { grid-template-columns: 1fr; }
   .ledger-metric-card.is-primary { grid-column: auto; }
-  .ledger-dashboard-section { padding: 17px 15px; }
+  .ledger-dashboard-section :deep(.n-card__content) { padding: 17px 15px; }
   .ledger-cashflow-grid { grid-template-columns: 1fr; }
   .ledger-cashflow-grid > div {
     min-height: 60px;
@@ -1259,21 +1277,23 @@ function onDateChange(event: Event): void {
   .ledger-period-card,
   .ledger-period-card:nth-child(odd),
   .ledger-period-card:nth-child(even) {
-    padding: 14px 0;
     border-top: 1px solid var(--ledger-divider);
     border-left: 0;
   }
+  .ledger-period-card :deep(.n-card__content),
+  .ledger-period-card:nth-child(odd) :deep(.n-card__content),
+  .ledger-period-card:nth-child(even) :deep(.n-card__content) { padding: 14px 0; }
   .ledger-period-card:first-child {
-    padding-top: 0;
     border-top: 0;
   }
-  .ledger-period-card:last-child { padding-bottom: 0; }
-  .ledger-period-toolbar input {
+  .ledger-period-card:first-child :deep(.n-card__content) { padding-top: 0; }
+  .ledger-period-card:last-child :deep(.n-card__content) { padding-bottom: 0; }
+  .ledger-period-toolbar :deep(.ledger-date-picker) {
     flex: 1 1 142px;
     min-width: 0;
     width: auto;
   }
-  .ledger-period-toolbar select {
+  .ledger-period-toolbar :deep(.ledger-period-scope) {
     flex: 1 1 96px;
     min-width: 0;
     width: auto;

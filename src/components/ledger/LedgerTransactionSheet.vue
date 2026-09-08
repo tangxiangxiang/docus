@@ -1,18 +1,32 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { NButton, NIcon, NInput, NSelect, type InputInst, type SelectOption } from 'naive-ui'
+import { computed, nextTick, ref, watch } from 'vue'
+import {
+  NButton,
+  NCard,
+  NForm,
+  NFormItem,
+  NIcon,
+  NInput,
+  NModal,
+  NSelect,
+  NTab,
+  NTabs,
+  type InputInst,
+  type SelectOption,
+} from 'naive-ui'
 import { X } from '@vicons/tabler'
 import type {
   LedgerCategoryDto,
   LedgerTransactionDto,
 } from '../../../shared/ledgerProtocol'
 import { useConfirm } from '../../composables/useConfirm'
-import { useFocusTrap } from '../../composables/useFocusTrap'
 import { useToast } from '../../composables/useToast'
 import { ledgerErrorMessage } from '../../features/ledger/ledgerErrors'
 import { formatLedgerMoney, parseLedgerMoney } from '../../features/ledger/money'
+import { ledgerSelectNodeProps } from '../../features/ledger/naiveControls'
 import { useLedgerStore } from '../../features/ledger/ledgerStore'
 import { instantFromLocalDateTime, localDateTimeInputFromInstant } from '../../features/ledger/time'
+import LedgerDateTimePicker from './LedgerDateTimePicker.vue'
 import LedgerPendingCreateRecovery from './LedgerPendingCreateRecovery.vue'
 
 const props = defineProps<{ open: boolean }>()
@@ -21,11 +35,14 @@ const emit = defineEmits<{ close: []; saved: [transaction: LedgerTransactionDto]
 const store = useLedgerStore()
 const toast = useToast()
 const { confirm } = useConfirm()
-const trap = useFocusTrap()
-const dialogRef = ref<HTMLElement | null>(null)
 const amountInput = ref<InputInst | null>(null)
 
 type EntryType = 'expense' | 'income' | 'transfer'
+const entryTypeOptions: ReadonlyArray<readonly [EntryType, string]> = [
+  ['expense', '支出'],
+  ['income', '收入'],
+  ['transfer', '转账'],
+]
 const type = ref<EntryType>('expense')
 const amount = ref('')
 const accountId = ref('')
@@ -106,11 +123,10 @@ function resetForm(): void {
 watch(() => props.open, async (open) => {
   if (open) {
     resetForm()
-    trap.activate()
+    // NModal owns trapping and restoration. The public NInput instance only
+    // supplies the sheet's initial field focus after its content is mounted.
     await nextTick()
     amountInput.value?.focus()
-  } else {
-    void trap.deactivate()
   }
 })
 
@@ -144,13 +160,26 @@ watch(activeAccounts, (accounts) => {
   if (toAccountId.value && !accounts.some((account) => account.id === toAccountId.value)) toAccountId.value = ''
 })
 
-function onKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape') {
+function onTypeTabKeydown(event: KeyboardEvent, selectedType: EntryType): void {
+  const current = event.currentTarget as HTMLElement | null
+  if (event.key === 'Enter' || event.key === ' ') {
     event.preventDefault()
-    void requestClose()
+    type.value = selectedType
     return
   }
-  if (event.key === 'Tab') trap.onTab(() => dialogRef.value, event)
+  if (!current || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+  event.preventDefault()
+  const currentIndex = entryTypeOptions.findIndex(([value]) => value === selectedType)
+  const nextIndex = event.key === 'Home'
+    ? 0
+    : event.key === 'End'
+      ? entryTypeOptions.length - 1
+      : (currentIndex + (event.key === 'ArrowRight' ? 1 : -1) + entryTypeOptions.length) % entryTypeOptions.length
+  const nextType = entryTypeOptions[nextIndex]![0]
+  type.value = nextType
+  void nextTick(() => {
+    current.closest('[role="tablist"]')?.querySelector<HTMLElement>(`[data-ledger-tab="${nextType}"]`)?.focus()
+  })
 }
 
 async function requestClose(): Promise<void> {
@@ -160,6 +189,14 @@ async function requestClose(): Promise<void> {
     if (!leave) return
   }
   emit('close')
+}
+
+function handleVisibilityChange(value: boolean): void {
+  if (!value && props.open) void requestClose()
+}
+
+function focusInitialInput(): void {
+  void nextTick(() => amountInput.value?.focus())
 }
 
 function categoryLabel(category: LedgerCategoryDto): string {
@@ -304,22 +341,42 @@ async function retryPending(): Promise<void> {
   }
 }
 
-onBeforeUnmount(() => {
-  if (props.open) void trap.deactivate()
-})
 </script>
 
 <template>
-  <Teleport to="body">
-    <div v-if="props.open" class="ledger-sheet-backdrop" @click.self="requestClose">
-      <section ref="dialogRef" class="ledger-sheet" role="dialog" aria-modal="true" aria-labelledby="ledger-sheet-title" tabindex="-1" @keydown="onKeydown">
-        <header class="ledger-sheet-header">
+  <NModal
+    v-if="props.open"
+    :show="props.open"
+    class="ledger-sheet-modal"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="ledger-sheet-title"
+    :mask-closable="false"
+    :close-on-esc="false"
+    :auto-focus="false"
+    :trap-focus="true"
+    :on-esc="requestClose"
+    :on-mask-click="requestClose"
+    :on-update-show="handleVisibilityChange"
+    :on-after-enter="focusInitialInput"
+  >
+    <NCard
+      class="ledger-sheet-card ledger-sheet"
+      :bordered="false"
+      size="small"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="ledger-sheet-title"
+    >
+      <template #header>
           <div>
             <p class="ledger-eyebrow">Ledger</p>
             <h2 id="ledger-sheet-title">{{ formTitle }}</h2>
           </div>
+      </template>
+      <template #header-extra>
           <NButton class="ledger-close-button" attr-type="button" size="small" :bordered="false" :disabled="saving || categorySaving" aria-label="关闭记账窗口" @click="requestClose"><NIcon aria-hidden="true" :size="18"><X /></NIcon></NButton>
-        </header>
+      </template>
 
         <LedgerPendingCreateRecovery
           v-if="pendingTransaction || pendingCategory"
@@ -330,13 +387,33 @@ onBeforeUnmount(() => {
         />
 
         <template v-else>
-          <div class="ledger-entry-types" role="tablist" aria-label="交易类型">
-            <button v-for="option in ([['expense', '支出'], ['income', '收入'], ['transfer', '转账']] as const)" :key="option[0]" class="ledger-entry-type" :class="{ 'is-selected': type === option[0] }" type="button" role="tab" :aria-selected="type === option[0]" :disabled="saving" @click="type = option[0]">{{ option[1] }}</button>
-          </div>
+          <NTabs
+            v-model:value="type"
+            class="ledger-entry-types"
+            type="segment"
+            size="medium"
+            role="tablist"
+            aria-label="交易类型"
+            :animated="false"
+            :tabs-padding="0"
+          >
+            <NTab
+              v-for="option in entryTypeOptions"
+              :key="option[0]"
+              :name="option[0]"
+              :tab="option[1]"
+              class="ledger-entry-type"
+              :data-ledger-tab="option[0]"
+              role="tab"
+              :aria-selected="type === option[0] ? 'true' : 'false'"
+              :tabindex="type === option[0] ? 0 : -1"
+              :disabled="saving"
+              @keydown="onTypeTabKeydown($event, option[0])"
+            />
+          </NTabs>
 
-          <form class="ledger-entry-form" :aria-busy="saving ? 'true' : undefined" @submit.prevent="submit">
-            <div class="ledger-form-field ledger-amount-field">
-              <label for="ledger-transaction-amount">金额</label>
+          <NForm class="ledger-entry-form" :aria-busy="saving ? 'true' : undefined" @submit.prevent="submit">
+            <NFormItem class="ledger-form-field ledger-amount-field" label="金额" :show-feedback="false" required>
               <div class="ledger-money-input">
                 <span>{{ settings?.baseCurrency }}</span>
                 <NInput
@@ -352,26 +429,27 @@ onBeforeUnmount(() => {
                 />
               </div>
               <small>输入正常货币金额，例如 {{ settings?.baseCurrency }} 38；无需输入 minor units。</small>
-            </div>
+            </NFormItem>
 
             <template v-if="type !== 'transfer'">
-              <div class="ledger-form-field">
-                <label for="ledger-transaction-account">账户</label>
+              <NFormItem class="ledger-form-field" label="账户" :show-feedback="false" required>
                 <NSelect
                   v-model:value="accountId"
                   class="ledger-form-control"
                   size="medium"
                   :options="accountOptions"
+                  :node-props="ledgerSelectNodeProps"
                   :input-props="{ id: 'ledger-transaction-account', name: 'accountId', required: true }"
                   aria-label="账户"
+                  aria-haspopup="listbox"
+                  role="combobox"
                   placeholder="请选择账户"
                   :disabled="saving"
                 />
-              </div>
+              </NFormItem>
 
-              <div class="ledger-form-field">
+              <NFormItem class="ledger-form-field" label="分类" :show-feedback="false" required>
                 <div class="ledger-field-heading">
-                  <label for="ledger-transaction-category">分类</label>
                   <NButton class="ledger-link-button" attr-type="button" size="small" text :bordered="false" :disabled="saving || categorySaving" @click="categoryCreateOpen = !categoryCreateOpen">{{ categoryCreateOpen ? '选择已有分类' : '新建分类' }}</NButton>
                 </div>
                 <NSelect
@@ -379,8 +457,11 @@ onBeforeUnmount(() => {
                   class="ledger-form-control"
                   size="medium"
                   :options="categoryOptions"
+                  :node-props="ledgerSelectNodeProps"
                   :input-props="{ id: 'ledger-transaction-category', name: 'categoryId', required: !categoryCreateOpen }"
                   aria-label="分类"
+                  aria-haspopup="listbox"
+                  role="combobox"
                   :placeholder="applicableCategories.length ? '请选择分类' : '暂无可用分类'"
                   :disabled="saving || categoryCreateOpen"
                 />
@@ -401,49 +482,56 @@ onBeforeUnmount(() => {
                   </div>
                   <small v-if="categoryError" class="ledger-form-error" role="alert">{{ categoryError }}</small>
                 </div>
-              </div>
+              </NFormItem>
             </template>
 
             <template v-else>
               <div class="ledger-form-grid">
-                <div class="ledger-form-field">
-                  <label for="ledger-transaction-from-account">转出账户</label>
+                <NFormItem class="ledger-form-field" label="转出账户" :show-feedback="false" required>
                 <NSelect
                   v-model:value="fromAccountId"
                   class="ledger-form-control"
                   size="medium"
                   :options="transferAccountOptions"
+                  :node-props="ledgerSelectNodeProps"
                   :input-props="{ id: 'ledger-transaction-from-account', name: 'fromAccountId', required: true }"
                   aria-label="转出账户"
+                  aria-haspopup="listbox"
+                  role="combobox"
                   placeholder="请选择转出账户"
                   :disabled="saving"
                 />
-                </div>
-                <div class="ledger-form-field">
-                  <label for="ledger-transaction-to-account">转入账户</label>
+                </NFormItem>
+                <NFormItem class="ledger-form-field" label="转入账户" :show-feedback="false" required>
                 <NSelect
                   v-model:value="toAccountId"
                   class="ledger-form-control"
                   size="medium"
                   :options="transferAccountOptions"
+                  :node-props="ledgerSelectNodeProps"
                   :input-props="{ id: 'ledger-transaction-to-account', name: 'toAccountId', required: true }"
                   aria-label="转入账户"
+                  aria-haspopup="listbox"
+                  role="combobox"
                   placeholder="请选择转入账户"
                   :disabled="saving"
                 />
-                </div>
+                </NFormItem>
               </div>
               <small class="ledger-form-note">转出账户和转入账户不能相同。转账不使用分类或交易对象。</small>
             </template>
 
-            <div class="ledger-form-field">
-              <label for="ledger-transaction-occurred-at">发生时间</label>
-              <input id="ledger-transaction-occurred-at" v-model="occurredAt" name="occurredAt" type="datetime-local" required :disabled="saving" />
+            <NFormItem class="ledger-form-field" label="发生时间" :show-feedback="false" required>
+              <LedgerDateTimePicker
+                v-model="occurredAt"
+                label="发生时间"
+                test-id="ledger-transaction-occurred-at"
+                :disabled="saving"
+              />
               <small>按 Ledger 时区 {{ settings?.timezone }} 解释和显示。</small>
-            </div>
+            </NFormItem>
 
-            <div v-if="type !== 'transfer'" class="ledger-form-field">
-              <label for="ledger-transaction-payee">交易对象（可选）</label>
+            <NFormItem v-if="type !== 'transfer'" class="ledger-form-field" label="交易对象（可选）" :show-feedback="false">
               <NInput
                 v-model:value="payee"
                 class="ledger-form-control"
@@ -452,10 +540,9 @@ onBeforeUnmount(() => {
                 :input-props="{ id: 'ledger-transaction-payee', name: 'payee', autocomplete: 'off' }"
                 :disabled="saving"
               />
-            </div>
+            </NFormItem>
 
-            <div class="ledger-form-field">
-              <label for="ledger-transaction-note">备注（可选）</label>
+            <NFormItem class="ledger-form-field" label="备注（可选）" :show-feedback="false">
               <NInput
                 v-model:value="note"
                 class="ledger-form-control"
@@ -464,7 +551,7 @@ onBeforeUnmount(() => {
                 :input-props="{ id: 'ledger-transaction-note', name: 'note', rows: 3 }"
                 :disabled="saving"
               />
-            </div>
+            </NFormItem>
 
             <p v-if="!activeAccounts.length" class="ledger-form-error" role="alert">请先创建一个可用账户，再记账。</p>
             <p v-if="formError" class="ledger-form-error" role="alert">{{ formError }}</p>
@@ -472,49 +559,45 @@ onBeforeUnmount(() => {
               <NButton class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" :disabled="saving || categorySaving" @click="requestClose">取消</NButton>
               <NButton class="ledger-primary-button" attr-type="submit" type="primary" size="medium" :bordered="false" :disabled="!canSubmit">{{ saving ? '正在保存…' : '保存交易' }}</NButton>
             </div>
-          </form>
+          </NForm>
         </template>
-      </section>
-    </div>
-  </Teleport>
+    </NCard>
+  </NModal>
 </template>
 
 <style scoped>
-.ledger-sheet-backdrop { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: flex-end; justify-content: center; padding: 20px; box-sizing: border-box; background: color-mix(in srgb, #0f172a 35%, transparent); }
-.ledger-sheet { display: grid; gap: 18px; width: min(100%, 620px); max-height: min(92vh, 820px); overflow: auto; padding: 24px; box-sizing: border-box; border: 1px solid var(--border); border-radius: 16px 16px 10px 10px; background: var(--bg); color: var(--text); box-shadow: 0 20px 60px color-mix(in srgb, #0f172a 28%, transparent); }
-.ledger-sheet-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.ledger-sheet-modal { display: flex; align-items: flex-end; justify-content: center; }
+.ledger-sheet-card { align-self: flex-end; width: min(100%, 620px); max-height: min(92vh, 820px); margin: 20px auto; overflow: auto; box-sizing: border-box; border-radius: 16px 16px 10px 10px; color: var(--text); }
+.ledger-sheet-card :deep(.n-card__content) { display: grid; gap: 18px; }
+.ledger-sheet-card :deep(.n-card__header) { align-items: flex-start; gap: 16px; }
 .ledger-eyebrow { margin: 0 0 5px; color: var(--accent); font-size: .72rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
-.ledger-sheet-header h2 { margin: 0; color: var(--text-h); font-size: 1.35rem; line-height: 1.25; }
+.ledger-sheet-card h2 { margin: 0; color: var(--text-h); font-size: 1.35rem; line-height: 1.25; }
 .ledger-close-button { width: 32px; height: 32px; padding: 0; border: 1px solid var(--border); border-radius: 7px; background: transparent; color: var(--text-muted); font-size: 1.3rem; line-height: 1; cursor: pointer; }
 .ledger-close-button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .ledger-close-button:disabled { cursor: wait; opacity: .6; }
-.ledger-entry-types { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 4px; border-radius: 9px; background: var(--bg-soft); }
-.ledger-entry-type { min-height: 36px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text-muted); font: inherit; font-size: .84rem; cursor: pointer; }
-.ledger-entry-type.is-selected { border-color: var(--border); background: var(--bg); color: var(--text-h); font-weight: 700; box-shadow: 0 1px 3px color-mix(in srgb, #0f172a 10%, transparent); }
-.ledger-entry-type:disabled { cursor: wait; opacity: .6; }
+.ledger-entry-types { width: 100%; }
+.ledger-entry-types :deep(.n-tabs-rail) { padding: 4px; border-radius: 9px; background: var(--bg-soft); }
+.ledger-entry-types :deep(.n-tabs-tab) { min-height: 36px; border-radius: 6px; color: var(--text-muted); font: inherit; font-size: .84rem; }
+.ledger-entry-types :deep(.n-tabs-tab--active) { color: var(--text-h); font-weight: 700; }
+.ledger-entry-types :deep(.n-tabs-tab:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ledger-entry-types :deep(.n-tabs-tab--disabled) { cursor: wait; opacity: .6; }
 .ledger-entry-form { display: grid; gap: 15px; }
 .ledger-form-field { display: grid; gap: 6px; }
-.ledger-form-field label { color: var(--text-h); font-size: .82rem; font-weight: 650; }
-.ledger-form-field input,
-.ledger-form-field select,
-.ledger-form-field textarea { width: 100%; min-height: 38px; padding: 7px 10px; box-sizing: border-box; border: 1px solid var(--border); border-radius: 7px; background: var(--bg); color: var(--text-h); font: inherit; font-size: .87rem; }
+.ledger-form-field :deep(.n-form-item-label) { color: var(--text-h); font-size: .82rem; font-weight: 650; }
 .ledger-form-control { width: 100%; }
 .ledger-form-field :deep(.ledger-form-control .n-input),
-.ledger-form-field :deep(.ledger-form-control .n-base-selection) { width: 100%; }
-.ledger-form-field textarea { resize: vertical; }
-.ledger-form-field input:focus,
-.ledger-form-field select:focus,
-.ledger-form-field textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent); }
-.ledger-form-field input:disabled,
-.ledger-form-field select:disabled,
-.ledger-form-field textarea:disabled { cursor: wait; opacity: .65; }
+.ledger-form-field :deep(.ledger-form-control .n-base-selection),
+.ledger-form-field :deep(.ledger-date-time-picker) { width: 100%; }
+.ledger-form-field :deep(.ledger-date-time-picker .n-input-group) { width: 100%; }
+.ledger-form-field :deep(.ledger-date-time-picker .n-date-picker),
+.ledger-form-field :deep(.ledger-date-time-picker .n-time-picker) { min-width: 0; flex: 1 1 0; }
 .ledger-form-field small,
 .ledger-form-note { color: var(--text-muted); font-size: .74rem; line-height: 1.4; }
 .ledger-money-input { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 3px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
 .ledger-money-input:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent); }
 .ledger-money-input span { color: var(--text-muted); font-size: .9rem; font-weight: 650; }
 .ledger-money-control { flex: 1; min-width: 0; }
-.ledger-money-input :deep(.ledger-money-control .n-input__input-el) { font-size: 1.05rem; }
+.ledger-money-control { font-size: 1.05rem; }
 .ledger-field-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .ledger-link-button { padding: 0; border: 0; background: transparent; color: var(--accent); font: inherit; font-size: .76rem; cursor: pointer; }
 .ledger-link-button:hover:not(:disabled) { text-decoration: underline; }
@@ -522,7 +605,7 @@ onBeforeUnmount(() => {
 .ledger-quick-create { display: grid; gap: 6px; margin-top: 3px; padding: 10px; border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--accent) 6%, transparent); }
 .ledger-quick-create label { font-size: .78rem; }
 .ledger-quick-create-row { display: flex; gap: 7px; }
-.ledger-quick-create-row input { flex: 1; min-width: 0; }
+.ledger-quick-create-row :deep(.ledger-form-control) { flex: 1; min-width: 0; }
 .ledger-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .ledger-form-actions { display: flex; justify-content: flex-end; gap: 9px; padding-top: 3px; }
 .ledger-primary-button,
@@ -535,8 +618,8 @@ onBeforeUnmount(() => {
 .ledger-secondary-button:disabled { cursor: wait; opacity: .65; }
 .ledger-form-error { margin: 0; color: #b42318; font-size: .81rem; line-height: 1.45; }
 @media (max-width: 600px) {
-  .ledger-sheet-backdrop { align-items: stretch; padding: 0; }
-  .ledger-sheet { width: 100%; max-height: 100%; border-radius: 0; }
+  .ledger-sheet-modal { align-items: stretch; }
+  .ledger-sheet-card { align-self: flex-end; width: 100%; max-height: 100%; margin: auto 0 0; border-radius: 16px 16px 0 0; }
   .ledger-form-grid { grid-template-columns: 1fr; }
   .ledger-form-actions > * { flex: 1 1 140px; }
 }

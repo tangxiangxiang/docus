@@ -96,18 +96,26 @@ async function createPeriodExpense(
 }
 
 async function selectOptionContaining(page: Page, label: string, text: string): Promise<void> {
-  const control = page.locator(`[aria-label="${label}"]`).first()
+  const control = page.getByRole('combobox', { name: label }).first()
   await expect(control).toHaveCount(1)
   const trigger = control.locator('[tabindex="0"]').first()
   await trigger.click()
-  const pendingOption = page.locator('.n-base-select-option.n-base-select-option--pending').filter({ hasText: text }).first()
-  for (let index = 0; index < 300 && await pendingOption.count() === 0; index += 1) {
+  const option = page.getByRole('option').filter({ hasText: text }).first()
+  for (let index = 0; index < 300 && !await option.isVisible().catch(() => false); index += 1) {
     // NSelect virtualizes long lists such as ISO currency metadata. Moving
-    // the pending option with the real keyboard path scrolls it into view.
+    // through the public keyboard path scrolls the option into view.
     await trigger.press('ArrowDown')
   }
-  await expect(pendingOption).toHaveCount(1)
-  await trigger.press('Enter')
+  await expect(option).toBeVisible()
+  // The option is virtualized and can be replaced between the visibility
+  // check and a stability-based click. Dispatch the public option click on
+  // the currently rendered node instead of depending on a private class or
+  // virtual-list timing.
+  await option.dispatchEvent('click')
+}
+
+function ledgerDateInput(page: Page, testId: string) {
+  return page.getByTestId(testId).locator('input').first()
 }
 
 test('real Ledger onboarding and expense survive dashboard refresh', async ({ page, request }) => {
@@ -129,7 +137,7 @@ test('real Ledger onboarding and expense survive dashboard refresh', async ({ pa
   await expect(page.getByTestId('ledger-record-button')).toHaveCount(1)
   await expect(page.locator('.ledger-metric-card')).toHaveCount(3)
   await expect(page.getByRole('heading', { name: '本月收支' })).toBeVisible()
-  await expect(page.getByTestId('ledger-period-date')).toHaveValue(Temporal.Now.plainDateISO('Asia/Shanghai').toString())
+  await expect(ledgerDateInput(page, 'ledger-period-date')).toHaveValue(Temporal.Now.plainDateISO('Asia/Shanghai').toString())
   await expect(page.locator('[aria-label="选择收支期间"]')).toContainText('本月')
   await expect(page.locator('.ledger-period-navigation')).toHaveCount(0)
   await expect(page.getByTestId('ledger-dashboard-accounts')).toContainText('招商银行')
@@ -407,7 +415,7 @@ test('historical period navigation keeps one anchor across periods, reload, and 
   await expect(page).toHaveURL(new RegExp(`/ledger\\?date=${anchorDate}$`))
   await expect(page.getByTestId('ledger-dashboard')).toBeVisible()
   await expect(page.getByRole('heading', { name: '所在月收支' })).toBeVisible()
-  await expect(page.getByTestId('ledger-period-date')).toHaveValue(anchorDate)
+  await expect(ledgerDateInput(page, 'ledger-period-date')).toHaveValue(anchorDate)
   await expect(page.getByTestId('ledger-period-month')).toContainText(`${anchor.year}年${anchor.month}月`)
   await expect(page.getByTestId('ledger-period-month')).toContainText('¥114.00')
   await expect(page.getByTestId('ledger-recent-transactions')).toContainText(anchorPayee)
@@ -424,20 +432,20 @@ test('historical period navigation keeps one anchor across periods, reload, and 
 
   await page.reload()
   await expect(page).toHaveURL(new RegExp(`/ledger\\?date=${anchorDate}$`))
-  await expect(page.getByTestId('ledger-period-date')).toHaveValue(anchorDate)
+  await expect(ledgerDateInput(page, 'ledger-period-date')).toHaveValue(anchorDate)
   await expect(page.getByTestId('ledger-period-month')).toContainText('¥114.00')
   await expect(page.getByTestId('ledger-recent-transactions')).not.toContainText(afterAnchorPayee)
 
-  const periodDate = page.getByTestId('ledger-period-date')
+  const periodDate = ledgerDateInput(page, 'ledger-period-date')
   await periodDate.fill(laterDateValue)
   await periodDate.press('Tab')
   await expect(page).toHaveURL(new RegExp(`/ledger\\?date=${laterDateValue}$`))
-  await expect(page.getByTestId('ledger-period-date')).toHaveValue(laterDateValue)
+  await expect(ledgerDateInput(page, 'ledger-period-date')).toHaveValue(laterDateValue)
   await expect(page.getByTestId('ledger-recent-transactions')).toContainText(afterAnchorPayee)
 
   await page.goBack()
   await expect(page).toHaveURL(new RegExp(`/ledger\\?date=${anchorDate}$`))
-  await expect(page.getByTestId('ledger-period-date')).toHaveValue(anchorDate)
+  await expect(ledgerDateInput(page, 'ledger-period-date')).toHaveValue(anchorDate)
   await expect(page.getByTestId('ledger-recent-transactions')).not.toContainText(afterAnchorPayee)
 
   await page.getByTestId('ledger-return-today').click()
