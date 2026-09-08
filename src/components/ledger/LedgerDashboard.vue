@@ -804,6 +804,12 @@ function onDateChange(value: string): void {
   flex: 0 1 auto;
   align-items: center;
   gap: 6px;
+  opacity: 0;
+  transition: opacity .14s ease;
+}
+.ledger-category-toolbar:hover,
+.ledger-category-toolbar:focus-within {
+  opacity: 1;
 }
 .ledger-category-date,
 .ledger-category-date :deep(.n-input) { width: 148px; }
