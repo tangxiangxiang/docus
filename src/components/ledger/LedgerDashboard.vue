@@ -581,7 +581,7 @@ function onDateChange(value: string): void {
         <div class="ledger-section-heading">
           <div>
             <h2 id="ledger-trend-title">收支趋势</h2>
-            <p v-if="!historicalMode && trendData.length">最近 {{ trendData.length }} 个月</p>
+            <p v-if="trendData.length">最近 {{ trendData.length }} 个月</p>
           </div>
           <LedgerDatePicker
             class="ledger-trend-date"

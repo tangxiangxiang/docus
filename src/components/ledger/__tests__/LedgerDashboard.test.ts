@@ -716,9 +716,9 @@ describe('Ledger live dashboard', () => {
     await store.refreshOverview()
     await nextTick()
 
-    // Anchored to a past date the six months are no longer "the latest", so
-    // the qualifier is dropped rather than left saying something untrue.
-    expect(wrapper.get('#ledger-trend-title').element.closest('.ledger-dashboard-section')!.textContent).not.toContain('最近 6 个月')
+    // The trend has its own selected month, so its window remains meaningful
+    // even when the rest of the dashboard is anchored in the past.
+    expect(wrapper.get('#ledger-trend-title').element.closest('.ledger-dashboard-section')!.textContent).toContain('最近 6 个月')
     expect(wrapper.findComponent(LedgerCashflowTrend).props('trend')).toEqual(sixMonthTrend)
   })
 
