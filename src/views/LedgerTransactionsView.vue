@@ -288,6 +288,7 @@ function onRecoveryResolved(): void {
         <thead>
           <tr>
             <th scope="col">交易</th>
+            <th scope="col">类型</th>
             <th scope="col">时间</th>
             <th scope="col">金额</th>
           </tr>
@@ -295,8 +296,9 @@ function onRecoveryResolved(): void {
         <tbody>
           <tr v-for="transaction in visibleTransactions" :key="transaction.id" class="ledger-transaction-row" :data-testid="`ledger-transaction-row-${transaction.id}`" @click="inspect(transaction)">
             <td>
-              <span class="ledger-table-primary"><strong>{{ transactionTitle(transaction) }}</strong><small>{{ typeLabel(transaction.type) }} · {{ transactionMeta(transaction) }}</small></span>
+              <span class="ledger-table-primary"><strong>{{ transactionTitle(transaction) }}</strong><small>{{ transactionMeta(transaction) }}</small></span>
             </td>
+            <td><span :class="['ledger-transaction-type', `is-${transaction.type}`]">{{ typeLabel(transaction.type) }}</span></td>
             <td><span class="ledger-transaction-date">{{ formatLedgerDateTime(transaction.occurredAt, store.settings.value?.timezone ?? 'UTC') }}</span></td>
             <td><strong :class="['ledger-transaction-amount', `is-${transaction.type}`]">{{ transactionAmount(transaction) }}</strong></td>
           </tr>
@@ -378,14 +380,17 @@ function onRecoveryResolved(): void {
 .ledger-transaction-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
 .ledger-transaction-table th { padding: 0 8px 9px; border-bottom: 1px solid var(--border); color: var(--text-muted); font-size: .73rem; font-weight: 650; text-align: left; }
 .ledger-transaction-table th:nth-child(2),
-.ledger-transaction-table th:nth-child(3) { text-align: right; }
+.ledger-transaction-table th:nth-child(3),
+.ledger-transaction-table th:nth-child(4) { text-align: right; }
 .ledger-transaction-table td { padding: 13px 8px; border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent); vertical-align: middle; }
 .ledger-transaction-table th:first-child,
-.ledger-transaction-table td:first-child { width: 52%; }
+.ledger-transaction-table td:first-child { width: 42%; }
 .ledger-transaction-table th:nth-child(2),
-.ledger-transaction-table td:nth-child(2) { width: 28%; }
+.ledger-transaction-table td:nth-child(2) { width: 16%; }
 .ledger-transaction-table th:nth-child(3),
-.ledger-transaction-table td:nth-child(3) { width: 20%; }
+.ledger-transaction-table td:nth-child(3) { width: 25%; }
+.ledger-transaction-table th:nth-child(4),
+.ledger-transaction-table td:nth-child(4) { width: 17%; }
 .ledger-transaction-row { cursor: pointer; }
 .ledger-transaction-row:hover td { background: var(--bg-soft); }
 .ledger-table-primary { display: grid; gap: 3px; min-width: 0; }
@@ -393,6 +398,9 @@ function onRecoveryResolved(): void {
 .ledger-table-primary small,
 .ledger-transaction-date { overflow: hidden; color: var(--text-muted); font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
 .ledger-transaction-date { display: block; text-align: right; }
+.ledger-transaction-type { color: var(--text-muted); font-size: .78rem; }
+.ledger-transaction-type.is-income { color: #18794e; }
+.ledger-transaction-type.is-expense { color: #b42318; }
 .ledger-transaction-amount { text-align: right; color: var(--text-h); font-size: .83rem; }
 .ledger-transaction-amount.is-income { color: #18794e; }
 .ledger-transaction-amount.is-expense { color: #b42318; }
@@ -424,11 +432,13 @@ function onRecoveryResolved(): void {
   .ledger-transaction-history { padding: 16px 13px; }
   .ledger-transaction-table th,
   .ledger-transaction-table td { padding-right: 6px; padding-left: 6px; }
-  .ledger-transaction-table th:nth-child(2),
-  .ledger-transaction-table td:nth-child(2) { display: none; }
-  .ledger-transaction-table th:first-child,
-  .ledger-transaction-table td:first-child { width: 68%; }
   .ledger-transaction-table th:nth-child(3),
-  .ledger-transaction-table td:nth-child(3) { width: 32%; }
+  .ledger-transaction-table td:nth-child(3) { display: none; }
+  .ledger-transaction-table th:first-child,
+  .ledger-transaction-table td:first-child { width: 52%; }
+  .ledger-transaction-table th:nth-child(2),
+  .ledger-transaction-table td:nth-child(2) { width: 22%; }
+  .ledger-transaction-table th:nth-child(4),
+  .ledger-transaction-table td:nth-child(4) { width: 26%; }
 }
 </style>
