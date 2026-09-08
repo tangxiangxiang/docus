@@ -1144,7 +1144,7 @@ function onDateChange(period: LedgerPeriodName, value: string): void {
 
 .ledger-dashboard-two-column {
   display: grid;
-  grid-template-columns: minmax(0, 1.04fr) minmax(0, .96fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
   margin-top: 22px;
 }
