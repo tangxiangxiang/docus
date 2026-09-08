@@ -144,7 +144,7 @@ describe('LedgerCashflowTrend', () => {
     mountTrend(sixMonths)
     const option = lastOption()
 
-    expect(option.xAxis.data).toEqual(['4月', '5月', '6月', '7月', '8月', '9月'])
+    expect(option.xAxis.data).toEqual(['2026/04', '2026/05', '2026/06', '2026/07', '2026/08', '2026/09'])
     expect(option.series.map((series) => [series.name, series.type])).toEqual([
       ['收入', 'bar'],
       ['支出', 'bar'],
@@ -306,7 +306,7 @@ describe('LedgerCashflowTrend', () => {
     expect(echarts.init).toHaveBeenCalledTimes(1)
     expect(echarts.instances[0].dispose).not.toHaveBeenCalled()
     expect(echarts.instances[0].setOption).toHaveBeenCalledTimes(2)
-    expect(lastOption().xAxis.data).toEqual(['3月', '4月', '5月', '6月', '7月', '8月'])
+    expect(lastOption().xAxis.data).toEqual(['2026/03', '2026/04', '2026/05', '2026/06', '2026/07', '2026/08'])
   })
 
   it('refreshes the option when the appearance changes', async () => {

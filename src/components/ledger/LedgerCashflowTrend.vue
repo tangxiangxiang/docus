@@ -72,12 +72,10 @@ function fullMonthLabel(month: string): string {
   return `${parts.year}年${Number(parts.month)}月`
 }
 
-const crossesYear = computed(() => new Set(props.trend.map((point) => point.month.slice(0, 4))).size > 1)
-
 const axisLabels = computed(() => props.trend.map((point) => {
   const parts = monthParts(point.month)
   if (parts === null) return point.month
-  return crossesYear.value ? `${parts.year}/${parts.month}` : `${Number(parts.month)}月`
+  return `${parts.year}/${parts.month}`
 }))
 
 const allZero = computed(() => props.trend.every((point) => point.incomeMinor === 0
