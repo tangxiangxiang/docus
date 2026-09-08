@@ -2331,6 +2331,7 @@ main.container.auth-page-shell {
   min-height: 40px;
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 8px;
   box-sizing: border-box;
   padding: 0 12px;
