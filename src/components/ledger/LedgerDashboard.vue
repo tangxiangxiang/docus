@@ -1156,6 +1156,7 @@ function onDateChange(value: string): void {
 
 .ledger-period-grid {
   display: grid;
+  gap: 6px;
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
