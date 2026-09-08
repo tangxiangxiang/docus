@@ -1,10 +1,9 @@
 <script setup lang="ts">
-import { computed, h, onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import {
   NAlert,
   NButton,
   NCard,
-  NDataTable,
   NEmpty,
   NForm,
   NFormItem,
@@ -12,7 +11,6 @@ import {
   NSelect,
   NSpin,
   type SelectOption,
-  type DataTableColumns,
 } from 'naive-ui'
 import { useRoute } from 'vue-router'
 import type {
@@ -133,27 +131,6 @@ function transactionAmount(transaction: LedgerTransactionDto): string {
   if (transaction.type === 'expense') return `-${formatLedgerMoney(transaction.amountMinor, currency)}`
   return formatLedgerMoney(transaction.amountMinor, currency)
 }
-
-const transactionColumns = computed<DataTableColumns<LedgerTransactionDto>>(() => [
-  {
-    title: '交易',
-    key: 'transaction',
-    render: (transaction) => h('span', { class: 'ledger-table-primary' }, [
-      h('strong', transactionTitle(transaction)),
-      h('small', `${typeLabel(transaction.type)} · ${transactionMeta(transaction)}`),
-    ]),
-  },
-  {
-    title: '时间',
-    key: 'occurredAt',
-    render: (transaction) => h('span', { class: 'ledger-transaction-date' }, formatLedgerDateTime(transaction.occurredAt, store.settings.value?.timezone ?? 'UTC')),
-  },
-  {
-    title: '金额',
-    key: 'amount',
-    render: (transaction) => h('strong', { class: ['ledger-transaction-amount', `is-${transaction.type}`] }, transactionAmount(transaction)),
-  },
-])
 
 function buildQuery(): LedgerTransactionQuery {
   const timezone = store.settings.value?.timezone ?? 'UTC'
@@ -303,16 +280,28 @@ function onRecoveryResolved(): void {
 
       <NAlert v-if="filterError" class="ledger-inline-error" type="error" :show-icon="false" role="alert"><span>{{ filterError }}</span><NButton class="ledger-link-button" attr-type="button" size="small" text :bordered="false" @click="loadTransactions">重试</NButton></NAlert>
       <div v-if="loading && !page" class="ledger-transactions-inline-loading" data-testid="ledger-transactions-inline-loading" role="status"><NSpin size="medium" description="正在加载交易…" /></div>
-      <NDataTable
+      <table
         v-else-if="transactions.length"
         class="ledger-transaction-table"
         data-testid="ledger-transaction-list"
-        :columns="transactionColumns"
-        :data="visibleTransactions"
-        :bordered="false"
-        :single-line="false"
-        :row-props="(transaction) => ({ class: 'ledger-transaction-row', 'data-testid': `ledger-transaction-row-${transaction.id}`, onClick: () => inspect(transaction) })"
-      />
+      >
+        <thead>
+          <tr>
+            <th scope="col">交易</th>
+            <th scope="col">时间</th>
+            <th scope="col">金额</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="transaction in visibleTransactions" :key="transaction.id" class="ledger-transaction-row" :data-testid="`ledger-transaction-row-${transaction.id}`" @click="inspect(transaction)">
+            <td>
+              <span class="ledger-table-primary"><strong>{{ transactionTitle(transaction) }}</strong><small>{{ typeLabel(transaction.type) }} · {{ transactionMeta(transaction) }}</small></span>
+            </td>
+            <td><span class="ledger-transaction-date">{{ formatLedgerDateTime(transaction.occurredAt, store.settings.value?.timezone ?? 'UTC') }}</span></td>
+            <td><strong :class="['ledger-transaction-amount', `is-${transaction.type}`]">{{ transactionAmount(transaction) }}</strong></td>
+          </tr>
+        </tbody>
+      </table>
       <NEmpty v-else class="ledger-transactions-empty" data-testid="ledger-transactions-empty" :show-icon="false" :description="hasFilters ? '没有符合筛选条件的交易' : '还没有交易记录'">
         <template #extra>
           <p>{{ hasFilters ? '可以清除筛选，或换一个日期和账户。' : '保存第一笔收入、支出或转账后，它会显示在这里。' }}</p>
@@ -386,11 +375,19 @@ function onRecoveryResolved(): void {
 .ledger-inline-error :deep(.n-alert-body) { width: 100%; }
 .ledger-inline-error :deep(.n-alert__content) { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; }
 .ledger-transactions-inline-loading { display: grid; min-height: 220px; place-items: center; color: var(--text-muted); }
-.ledger-transaction-table { margin: 0 -4px; }
-.ledger-transaction-table :deep(.n-data-table-th) { color: var(--text-muted); font-size: .73rem; font-weight: 650; }
-.ledger-transaction-table :deep(.n-data-table-td) { padding: 13px 8px; }
-.ledger-transaction-table :deep(.n-data-table-tr) { cursor: pointer; }
-.ledger-transaction-table :deep(.n-data-table-tr:hover .n-data-table-td) { background: var(--bg-soft); }
+.ledger-transaction-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.ledger-transaction-table th { padding: 0 8px 9px; border-bottom: 1px solid var(--border); color: var(--text-muted); font-size: .73rem; font-weight: 650; text-align: left; }
+.ledger-transaction-table th:nth-child(2),
+.ledger-transaction-table th:nth-child(3) { text-align: right; }
+.ledger-transaction-table td { padding: 13px 8px; border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent); vertical-align: middle; }
+.ledger-transaction-table th:first-child,
+.ledger-transaction-table td:first-child { width: 52%; }
+.ledger-transaction-table th:nth-child(2),
+.ledger-transaction-table td:nth-child(2) { width: 28%; }
+.ledger-transaction-table th:nth-child(3),
+.ledger-transaction-table td:nth-child(3) { width: 20%; }
+.ledger-transaction-row { cursor: pointer; }
+.ledger-transaction-row:hover td { background: var(--bg-soft); }
 .ledger-table-primary { display: grid; gap: 3px; min-width: 0; }
 .ledger-table-primary strong { overflow: hidden; color: var(--text-h); font-size: .84rem; text-overflow: ellipsis; white-space: nowrap; }
 .ledger-table-primary small,
@@ -425,9 +422,13 @@ function onRecoveryResolved(): void {
   .ledger-filters-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ledger-filter-submit { grid-column: span 2; }
   .ledger-transaction-history { padding: 16px 13px; }
-  .ledger-transaction-table :deep(.n-data-table-th),
-  .ledger-transaction-table :deep(.n-data-table-td) { padding-right: 6px; padding-left: 6px; }
-  .ledger-transaction-table :deep(.n-data-table-th:nth-child(2)),
-  .ledger-transaction-table :deep(.n-data-table-td:nth-child(2)) { display: none; }
+  .ledger-transaction-table th,
+  .ledger-transaction-table td { padding-right: 6px; padding-left: 6px; }
+  .ledger-transaction-table th:nth-child(2),
+  .ledger-transaction-table td:nth-child(2) { display: none; }
+  .ledger-transaction-table th:first-child,
+  .ledger-transaction-table td:first-child { width: 68%; }
+  .ledger-transaction-table th:nth-child(3),
+  .ledger-transaction-table td:nth-child(3) { width: 32%; }
 }
 </style>
