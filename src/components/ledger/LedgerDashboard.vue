@@ -481,44 +481,48 @@ function onDateChange(period: LedgerPeriodName, value: string): void {
           <div class="ledger-breakdown-columns" data-testid="ledger-category-breakdown">
             <div>
               <h3><i class="is-income" aria-hidden="true" />收入分类</h3>
-              <NList v-if="selectedPeriods.income.length" class="ledger-breakdown-list" :show-divider="false">
-                <NListItem v-for="item in selectedPeriods.income" :key="item.categoryId" class="ledger-breakdown-list-item">
-                  <div class="ledger-breakdown-row">
-                    <span class="ledger-breakdown-label">
-                      <span class="ledger-breakdown-name">{{ item.name }}</span>
-                      <span class="ledger-breakdown-share">{{ categoryShare(selectedPeriods.income, item.amountMinor) }}</span>
-                    </span>
-                    <strong class="ledger-breakdown-amount">{{ formatLedgerMoney(item.amountMinor, overview.currency) }}</strong>
-                    <span class="ledger-breakdown-bar" aria-hidden="true">
-                      <span
-                        class="ledger-breakdown-bar-fill is-income"
-                        :style="{ width: `${categorySharePercent(selectedPeriods.income, item.amountMinor)}%` }"
-                      />
-                    </span>
-                  </div>
-                </NListItem>
-              </NList>
+              <div v-if="selectedPeriods.income.length" class="ledger-breakdown-list-viewport" data-testid="ledger-income-breakdown-viewport">
+                <NList class="ledger-breakdown-list" :show-divider="false">
+                  <NListItem v-for="item in selectedPeriods.income" :key="item.categoryId" class="ledger-breakdown-list-item">
+                    <div class="ledger-breakdown-row">
+                      <span class="ledger-breakdown-label">
+                        <span class="ledger-breakdown-name">{{ item.name }}</span>
+                        <span class="ledger-breakdown-share">{{ categoryShare(selectedPeriods.income, item.amountMinor) }}</span>
+                      </span>
+                      <strong class="ledger-breakdown-amount">{{ formatLedgerMoney(item.amountMinor, overview.currency) }}</strong>
+                      <span class="ledger-breakdown-bar" aria-hidden="true">
+                        <span
+                          class="ledger-breakdown-bar-fill is-income"
+                          :style="{ width: `${categorySharePercent(selectedPeriods.income, item.amountMinor)}%` }"
+                        />
+                      </span>
+                    </div>
+                  </NListItem>
+                </NList>
+              </div>
               <NEmpty v-else class="ledger-inline-empty" size="small" :show-icon="false" description="这段期间还没有收入分类。" />
             </div>
             <div>
               <h3><i class="is-expense" aria-hidden="true" />支出分类</h3>
-              <NList v-if="selectedPeriods.expense.length" class="ledger-breakdown-list" :show-divider="false">
-                <NListItem v-for="item in selectedPeriods.expense" :key="item.categoryId" class="ledger-breakdown-list-item">
-                  <div class="ledger-breakdown-row">
-                    <span class="ledger-breakdown-label">
-                      <span class="ledger-breakdown-name">{{ item.name }}</span>
-                      <span class="ledger-breakdown-share">{{ categoryShare(selectedPeriods.expense, item.amountMinor) }}</span>
-                    </span>
-                    <strong class="ledger-breakdown-amount">{{ formatLedgerMoney(item.amountMinor, overview.currency) }}</strong>
-                    <span class="ledger-breakdown-bar" aria-hidden="true">
-                      <span
-                        class="ledger-breakdown-bar-fill is-expense"
-                        :style="{ width: `${categorySharePercent(selectedPeriods.expense, item.amountMinor)}%` }"
-                      />
-                    </span>
-                  </div>
-                </NListItem>
-              </NList>
+              <div v-if="selectedPeriods.expense.length" class="ledger-breakdown-list-viewport" data-testid="ledger-expense-breakdown-viewport">
+                <NList class="ledger-breakdown-list" :show-divider="false">
+                  <NListItem v-for="item in selectedPeriods.expense" :key="item.categoryId" class="ledger-breakdown-list-item">
+                    <div class="ledger-breakdown-row">
+                      <span class="ledger-breakdown-label">
+                        <span class="ledger-breakdown-name">{{ item.name }}</span>
+                        <span class="ledger-breakdown-share">{{ categoryShare(selectedPeriods.expense, item.amountMinor) }}</span>
+                      </span>
+                      <strong class="ledger-breakdown-amount">{{ formatLedgerMoney(item.amountMinor, overview.currency) }}</strong>
+                      <span class="ledger-breakdown-bar" aria-hidden="true">
+                        <span
+                          class="ledger-breakdown-bar-fill is-expense"
+                          :style="{ width: `${categorySharePercent(selectedPeriods.expense, item.amountMinor)}%` }"
+                        />
+                      </span>
+                    </div>
+                  </NListItem>
+                </NList>
+              </div>
               <NEmpty v-else class="ledger-inline-empty" size="small" :show-icon="false" description="这段期间还没有支出分类。" />
             </div>
           </div>
@@ -974,6 +978,14 @@ function onDateChange(period: LedgerPeriodName, value: string): void {
 }
 
 .ledger-dashboard-account-list-viewport {
+  max-height: 280px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: color-mix(in srgb, var(--text-muted) 34%, transparent) transparent;
+  scrollbar-width: thin;
+}
+
+.ledger-breakdown-list-viewport {
   max-height: 280px;
   overflow-y: auto;
   overscroll-behavior: contain;
