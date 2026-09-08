@@ -255,6 +255,14 @@ function updateCategoryDate(value: string): void {
   if (value) categoryDateInput.value = value
 }
 
+function updateTrendDate(value: string): void {
+  if (!value) return
+  const year = value.slice(0, 4)
+  trendDateInput.value = year === dateMax.value.slice(0, 4)
+    ? dateMax.value
+    : `${year}-12-31`
+}
+
 async function refreshPeriodSummary(period: LedgerPeriodName, anchorDate: string): Promise<void> {
   const epoch = ++periodRequestEpochs[period]
   try {
@@ -589,12 +597,12 @@ function onDateChange(period: LedgerPeriodName, value: string): void {
             class="ledger-trend-date"
             :model-value="trendDateInput"
             label="选择趋势时间"
-            type="month"
-            format="yyyy-MM"
+            type="year"
+            format="yyyy"
             size="small"
             test-id="ledger-trend-date"
             :is-date-disabled="isDashboardDateDisabled"
-            @update:model-value="trendDateInput = $event"
+            @update:model-value="updateTrendDate"
           />
         </div>
         <LedgerCashflowTrend :trend="trendData" :currency="overview.currency" />
