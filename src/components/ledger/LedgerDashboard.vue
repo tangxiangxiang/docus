@@ -224,14 +224,6 @@ function onDateChange(value: string): void {
             </p>
           </div>
           <div class="ledger-period-toolbar">
-            <LedgerDatePicker
-              :model-value="dateInputValue"
-              label="查看日期"
-              size="small"
-              test-id="ledger-period-date"
-              :is-date-disabled="isDashboardDateDisabled"
-              @update:model-value="onDateChange"
-            />
             <NSelect
               class="ledger-period-scope"
               size="small"
@@ -411,12 +403,26 @@ function onDateChange(value: string): void {
           </NEmpty>
         </NCard>
       </div>
+      </template>
 
       <NCard class="ledger-dashboard-section" :bordered="false" size="small" aria-labelledby="ledger-periods-title">
-        <div class="ledger-section-heading">
+        <div class="ledger-section-heading ledger-period-summary-heading">
           <h2 id="ledger-periods-title">期间摘要</h2>
+          <div class="ledger-period-summary-date-control" data-testid="ledger-period-summary-date" aria-label="统计日期，移入后选择日期">
+            <span class="ledger-period-summary-date-label">{{ formatLedgerDate(dateInputValue, ledgerTimezone) }}</span>
+            <div class="ledger-period-summary-date-editor">
+              <LedgerDatePicker
+                :model-value="dateInputValue"
+                label="选择统计日期"
+                size="small"
+                test-id="ledger-period-date"
+                :is-date-disabled="isDashboardDateDisabled"
+                @update:model-value="onDateChange"
+              />
+            </div>
+          </div>
         </div>
-        <div class="ledger-period-grid" data-testid="ledger-period-summaries">
+        <div v-if="periodDataReady" class="ledger-period-grid" data-testid="ledger-period-summaries">
             <NCard v-for="period in (['today', 'week', 'month', 'year'] as const)" :key="period" class="ledger-period-card" :data-testid="`ledger-period-${period}`" :bordered="false" size="small">
             <h3>{{ periodLabels[period] }}</h3>
             <small v-if="periodSummary(period)">{{ formatLedgerPeriodLabel(period, periodSummary(period)!.startAt, periodSummary(period)!.endAt, store.settings.value?.timezone ?? 'UTC') }}</small>
@@ -427,8 +433,12 @@ function onDateChange(value: string): void {
               </div>
             </NCard>
         </div>
+        <div v-else class="ledger-period-summary-loading" data-testid="ledger-period-summary-loading" role="status" aria-live="polite">
+          <NSpin size="small" description="正在加载期间摘要…" />
+        </div>
       </NCard>
 
+      <template v-if="periodDataReady">
       <NCard class="ledger-dashboard-section" :bordered="false" size="small" aria-labelledby="ledger-trend-title">
         <div class="ledger-section-heading">
           <div>
@@ -687,6 +697,46 @@ function onDateChange(value: string): void {
 .ledger-period-heading { align-items: flex-start; }
 .ledger-period-heading-copy { min-width: 0; }
 
+.ledger-period-summary-heading { align-items: center; }
+
+.ledger-period-summary-date-control {
+  position: relative;
+  width: 148px;
+  min-height: 28px;
+  flex: 0 0 148px;
+}
+
+.ledger-period-summary-date-label {
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: flex-end;
+  color: var(--text-muted);
+  font-size: .7rem;
+  white-space: nowrap;
+  transition: opacity .14s ease;
+}
+
+.ledger-period-summary-date-editor {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .14s ease;
+}
+
+.ledger-period-summary-date-editor :deep(.ledger-date-picker),
+.ledger-period-summary-date-editor :deep(.ledger-date-picker .n-input) { width: 100%; }
+
+.ledger-period-summary-date-control:hover .ledger-period-summary-date-label,
+.ledger-period-summary-date-control:focus-within .ledger-period-summary-date-label { opacity: 0; }
+
+.ledger-period-summary-date-control:hover .ledger-period-summary-date-editor,
+.ledger-period-summary-date-control:focus-within .ledger-period-summary-date-editor {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .ledger-period-toolbar {
   display: flex;
   flex: 0 1 auto;
@@ -696,8 +746,6 @@ function onDateChange(value: string): void {
   gap: 8px;
 }
 
-.ledger-period-toolbar :deep(.ledger-date-picker) { width: 148px; }
-.ledger-period-toolbar :deep(.ledger-date-picker .n-input) { width: 100%; }
 .ledger-period-scope { width: 96px; }
 .ledger-period-toolbar :deep(.ledger-period-scope .n-base-selection) { width: 96px; }
 
@@ -1134,6 +1182,14 @@ function onDateChange(value: string): void {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.ledger-period-summary-loading {
+  display: grid;
+  min-height: 100px;
+  place-items: center;
+  color: var(--text-muted);
+  font-size: .75rem;
+}
+
 .ledger-period-card {
   min-height: 100px;
   border-left: 1px solid var(--ledger-divider);
@@ -1284,11 +1340,6 @@ function onDateChange(value: string): void {
   }
   .ledger-period-card:first-child :deep(.n-card__content) { padding-top: 0; }
   .ledger-period-card:last-child :deep(.n-card__content) { padding-bottom: 0; }
-  .ledger-period-toolbar :deep(.ledger-date-picker) {
-    flex: 1 1 142px;
-    min-width: 0;
-    width: auto;
-  }
   .ledger-period-toolbar :deep(.ledger-period-scope) {
     flex: 1 1 96px;
     min-width: 0;

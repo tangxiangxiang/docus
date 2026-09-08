@@ -253,15 +253,18 @@ describe('Ledger live dashboard', () => {
     expect(wrapper.text()).not.toContain('billsMockData')
   })
 
-  it('places period controls in the cashflow heading and keeps copy user-facing', async () => {
+  it('places the scope control in cashflow and the hover date control in period summaries', async () => {
     const wrapper = mount(LedgerView)
     wrappers.push(wrapper)
     await flushPromises()
 
     const cashflowSection = wrapper.get('.ledger-cashflow-section')
+    const periodSummarySection = wrapper.get('[aria-labelledby="ledger-periods-title"]')
     expect(wrapper.find('.ledger-period-navigation').exists()).toBe(false)
     expect(wrapper.find('#ledger-period-navigation-title').exists()).toBe(false)
-    expect(cashflowSection.find('[data-testid="ledger-period-date"]').exists()).toBe(true)
+    expect(cashflowSection.find('[data-testid="ledger-period-date"]').exists()).toBe(false)
+    expect(periodSummarySection.find('[data-testid="ledger-period-date"]').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="ledger-period-summary-date"]').text()).toContain('2026年9月5日')
     expect(getNaiveSelect(cashflowSection, '选择收支期间').exists()).toBe(true)
     expect(cashflowSection.find('[data-testid="ledger-return-today"]').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('期间分析')
