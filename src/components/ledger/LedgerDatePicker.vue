@@ -3,10 +3,13 @@ import { ref } from 'vue'
 import { NDatePicker, type DatePickerInst, type DatePickerProps } from 'naive-ui'
 
 type LedgerIsDateDisabled = NonNullable<DatePickerProps['isDateDisabled']>
+type LedgerDatePickerType = 'date' | 'week' | 'month' | 'year'
 
 const props = withDefaults(defineProps<{
   modelValue: string
   label: string
+  type?: LedgerDatePickerType
+  format?: string
   size?: DatePickerProps['size']
   testId?: string
   disabled?: boolean
@@ -14,6 +17,8 @@ const props = withDefaults(defineProps<{
   placeholder?: string
   isDateDisabled?: LedgerIsDateDisabled
 }>(), {
+  type: 'date',
+  format: 'yyyy-MM-dd',
   size: 'medium',
   testId: undefined,
   disabled: false,
@@ -40,8 +45,8 @@ defineExpose({
     ref="picker"
     class="ledger-date-picker"
     :size="props.size"
-    type="date"
-    format="yyyy-MM-dd"
+    :type="props.type"
+    :format="props.format"
     value-format="yyyy-MM-dd"
     :formatted-value="props.modelValue || null"
     :clearable="props.clearable"

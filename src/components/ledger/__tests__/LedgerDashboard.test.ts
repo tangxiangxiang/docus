@@ -14,6 +14,7 @@ import { LedgerApiError } from '../../../features/ledger/ledgerErrors'
 import { resetLedgerStoreForTesting, useLedgerStore } from '../../../features/ledger/ledgerStore'
 import { instantFromLocalDateTime } from '../../../features/ledger/time'
 import LedgerCashflowTrend from '../LedgerCashflowTrend.vue'
+import LedgerDatePicker from '../LedgerDatePicker.vue'
 import LedgerView from '../../../views/LedgerView.vue'
 import { getNaiveSelect, setNaiveSelect } from './selectTestUtils'
 
@@ -253,7 +254,7 @@ describe('Ledger live dashboard', () => {
     expect(wrapper.text()).not.toContain('billsMockData')
   })
 
-  it('places the scope control in cashflow and the hover date control in period summaries', async () => {
+  it('uses the matching Naive date picker type for each period summary', async () => {
     const wrapper = mount(LedgerView)
     wrappers.push(wrapper)
     await flushPromises()
@@ -263,8 +264,10 @@ describe('Ledger live dashboard', () => {
     expect(wrapper.find('.ledger-period-navigation').exists()).toBe(false)
     expect(wrapper.find('#ledger-period-navigation-title').exists()).toBe(false)
     expect(cashflowSection.find('[data-testid="ledger-period-date"]').exists()).toBe(false)
-    expect(periodSummarySection.find('[data-testid="ledger-period-date"]').exists()).toBe(true)
-    expect(wrapper.get('[data-testid="ledger-period-summary-date"]').text()).toContain('2026年9月5日')
+    expect(periodSummarySection.get('[data-testid="ledger-period-date-control-today"]').text()).toContain('2026年9月5日')
+    const periodPickers = periodSummarySection.findAllComponents(LedgerDatePicker)
+    expect(periodPickers).toHaveLength(4)
+    expect(periodPickers.map((picker: VueWrapper<any>) => picker.props('type'))).toEqual(['date', 'week', 'month', 'year'])
     expect(getNaiveSelect(cashflowSection, '选择收支期间').exists()).toBe(true)
     expect(cashflowSection.find('[data-testid="ledger-return-today"]').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('期间分析')

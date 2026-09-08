@@ -54,11 +54,13 @@ const dateInputValue = computed(() => store.overviewRequestedAnchorDate.value
 const dateMax = computed(() => overview.value?.context.todayDate ?? '')
 const ledgerTimezone = computed(() => store.settings.value?.timezone ?? 'UTC')
 const showReturnToday = computed(() => historicalMode.value)
-const isDashboardDateDisabled = (timestamp: number, detail: { type: string }) => (
-  detail.type === 'date'
-  && Boolean(dateMax.value)
-  && calendarDateFromNaivePickerTimestamp(timestamp) > dateMax.value
-)
+const isDashboardDateDisabled = (timestamp: number, detail: { type: string }) => {
+  if (!dateMax.value) return false
+  const candidate = calendarDateFromNaivePickerTimestamp(timestamp)
+  if (detail.type === 'year') return candidate.slice(0, 4) > dateMax.value.slice(0, 4)
+  if (detail.type === 'month') return candidate.slice(0, 7) > dateMax.value.slice(0, 7)
+  return candidate > dateMax.value
+}
 
 watch(() => store.overviewScope.value, (scope) => {
   selectedScope.value = scope
@@ -97,9 +99,24 @@ const periodLabels = computed<Record<LedgerPeriodName, string>>(() => ({
   month: historicalMode.value ? '所在月' : '本月',
   year: historicalMode.value ? '所在年' : '今年',
 }))
+const periodPickerTypes: Record<LedgerPeriodName, 'date' | 'week' | 'month' | 'year'> = {
+  today: 'date',
+  week: 'week',
+  month: 'month',
+  year: 'year',
+}
+const periodPickerFormats: Record<LedgerPeriodName, string> = {
+  today: 'yyyy-MM-dd',
+  week: 'YYYY-w周',
+  month: 'yyyy-MM',
+  year: 'yyyy',
+}
 
 function accountLabel(id: string): string { return transactionAccountLabels.value.get(id) ?? '未知账户' }
 function categoryLabel(id: string): string { return categoryNames.value.get(id) ?? '未知分类' }
+function periodPickerTestId(period: LedgerPeriodName): string {
+  return period === 'today' ? 'ledger-period-date' : `ledger-period-picker-${period}`
+}
 
 /**
  * Presentation-only share of the period total. The bar next to each row reads
@@ -406,26 +423,27 @@ function onDateChange(value: string): void {
       </template>
 
       <NCard class="ledger-dashboard-section" :bordered="false" size="small" aria-labelledby="ledger-periods-title">
-        <div class="ledger-section-heading ledger-period-summary-heading">
+        <div class="ledger-section-heading">
           <h2 id="ledger-periods-title">期间摘要</h2>
-          <div class="ledger-period-summary-date-control" data-testid="ledger-period-summary-date" aria-label="统计日期，移入后选择日期">
-            <span class="ledger-period-summary-date-label">{{ formatLedgerDate(dateInputValue, ledgerTimezone) }}</span>
-            <div class="ledger-period-summary-date-editor">
-              <LedgerDatePicker
-                :model-value="dateInputValue"
-                label="选择统计日期"
-                size="small"
-                test-id="ledger-period-date"
-                :is-date-disabled="isDashboardDateDisabled"
-                @update:model-value="onDateChange"
-              />
-            </div>
-          </div>
         </div>
         <div v-if="periodDataReady" class="ledger-period-grid" data-testid="ledger-period-summaries">
             <NCard v-for="period in (['today', 'week', 'month', 'year'] as const)" :key="period" class="ledger-period-card" :data-testid="`ledger-period-${period}`" :bordered="false" size="small">
             <h3>{{ periodLabels[period] }}</h3>
-            <small v-if="periodSummary(period)">{{ formatLedgerPeriodLabel(period, periodSummary(period)!.startAt, periodSummary(period)!.endAt, store.settings.value?.timezone ?? 'UTC') }}</small>
+            <div v-if="periodSummary(period)" class="ledger-period-date-control" :data-testid="`ledger-period-date-control-${period}`">
+              <span class="ledger-period-date-label">{{ formatLedgerPeriodLabel(period, periodSummary(period)!.startAt, periodSummary(period)!.endAt, store.settings.value?.timezone ?? 'UTC') }}</span>
+              <div class="ledger-period-date-editor">
+                <LedgerDatePicker
+                  :model-value="dateInputValue"
+                  :type="periodPickerTypes[period]"
+                  :format="periodPickerFormats[period]"
+                  :label="`${periodLabels[period]}日期`"
+                  size="small"
+                  :test-id="periodPickerTestId(period)"
+                  :is-date-disabled="isDashboardDateDisabled"
+                  @update:model-value="onDateChange"
+                />
+              </div>
+            </div>
               <div v-if="periodSummary(period)" class="ledger-period-values">
                 <span>收入 <strong class="is-income">{{ formatLedgerMoney(periodSummary(period)!.incomeMinor, overview.currency) }}</strong></span>
                 <span>支出 <strong class="is-expense">{{ formatLedgerMoney(periodSummary(period)!.expenseMinor, overview.currency) }}</strong></span>
@@ -696,46 +714,6 @@ function onDateChange(value: string): void {
 
 .ledger-period-heading { align-items: flex-start; }
 .ledger-period-heading-copy { min-width: 0; }
-
-.ledger-period-summary-heading { align-items: center; }
-
-.ledger-period-summary-date-control {
-  position: relative;
-  width: 148px;
-  min-height: 28px;
-  flex: 0 0 148px;
-}
-
-.ledger-period-summary-date-label {
-  display: flex;
-  min-height: 28px;
-  align-items: center;
-  justify-content: flex-end;
-  color: var(--text-muted);
-  font-size: .7rem;
-  white-space: nowrap;
-  transition: opacity .14s ease;
-}
-
-.ledger-period-summary-date-editor {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity .14s ease;
-}
-
-.ledger-period-summary-date-editor :deep(.ledger-date-picker),
-.ledger-period-summary-date-editor :deep(.ledger-date-picker .n-input) { width: 100%; }
-
-.ledger-period-summary-date-control:hover .ledger-period-summary-date-label,
-.ledger-period-summary-date-control:focus-within .ledger-period-summary-date-label { opacity: 0; }
-
-.ledger-period-summary-date-control:hover .ledger-period-summary-date-editor,
-.ledger-period-summary-date-control:focus-within .ledger-period-summary-date-editor {
-  opacity: 1;
-  pointer-events: auto;
-}
 
 .ledger-period-toolbar {
   display: flex;
@@ -1218,12 +1196,43 @@ function onDateChange(value: string): void {
   font-weight: 650;
 }
 
-.ledger-period-card small {
+.ledger-period-date-control {
+  position: relative;
+  min-width: 0;
+  min-height: 1rem;
+}
+
+.ledger-period-date-label {
+  display: block;
   overflow: hidden;
   color: var(--text-muted);
   font-size: .65rem;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition: opacity .14s ease;
+}
+
+.ledger-period-date-editor {
+  position: absolute;
+  top: -6px;
+  left: 0;
+  z-index: 2;
+  width: 148px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .14s ease;
+}
+
+.ledger-period-date-editor :deep(.ledger-date-picker),
+.ledger-period-date-editor :deep(.ledger-date-picker .n-input) { width: 100%; }
+
+.ledger-period-date-control:hover .ledger-period-date-label,
+.ledger-period-date-control:focus-within .ledger-period-date-label { opacity: 0; }
+
+.ledger-period-date-control:hover .ledger-period-date-editor,
+.ledger-period-date-control:focus-within .ledger-period-date-editor {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .ledger-period-values {

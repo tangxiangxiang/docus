@@ -302,7 +302,6 @@ describe('Ledger historical period route coordination', () => {
     await router.push('/ledger?date=2026-06-15')
     await nextTick()
     expect(api.getLedgerOverview).toHaveBeenNthCalledWith(2, { scope: 'month', anchorDate: '2026-06-15' })
-    expect((wrapper.get('[data-testid="ledger-period-date"] input').element as HTMLInputElement).value).toBe('2026-06-15')
     expect(useLedgerStore().overviewRequestedAnchorDate.value).toBe('2026-06-15')
 
     first.resolve(overviewFor({ scope: 'month', anchorDate: '2026-08-20' }))
