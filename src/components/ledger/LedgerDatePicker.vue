@@ -7,12 +7,14 @@ type LedgerIsDateDisabled = NonNullable<DatePickerProps['isDateDisabled']>
 const props = withDefaults(defineProps<{
   modelValue: string
   label: string
+  size?: DatePickerProps['size']
   testId?: string
   disabled?: boolean
   clearable?: boolean
   placeholder?: string
   isDateDisabled?: LedgerIsDateDisabled
 }>(), {
+  size: 'medium',
   testId: undefined,
   disabled: false,
   clearable: false,
@@ -37,6 +39,7 @@ defineExpose({
   <NDatePicker
     ref="picker"
     class="ledger-date-picker"
+    :size="props.size"
     type="date"
     format="yyyy-MM-dd"
     value-format="yyyy-MM-dd"

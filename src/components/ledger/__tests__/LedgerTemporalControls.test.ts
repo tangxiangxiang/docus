@@ -13,6 +13,7 @@ describe('Ledger Naive temporal controls', () => {
     })
     const picker = wrapper.findComponent(NDatePicker)
 
+    expect(picker.props('size')).toBe('medium')
     expect(picker.props('formattedValue')).toBe('2026-09-05')
     expect(picker.props('valueFormat')).toBe('yyyy-MM-dd')
     await picker.vm.$emit('update:formatted-value', '2026-09-06')

@@ -227,6 +227,7 @@ function onDateChange(value: string): void {
             <LedgerDatePicker
               :model-value="dateInputValue"
               label="查看日期"
+              size="small"
               test-id="ledger-period-date"
               :is-date-disabled="isDashboardDateDisabled"
               @update:model-value="onDateChange"
