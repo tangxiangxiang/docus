@@ -33,7 +33,8 @@
 // getPost, no path fallback). The server validates the snapshot
 // strictly and uses it for this run's system prompt only.
 import { onMounted, ref, computed, nextTick } from 'vue'
-import { ICON_HISTORY, ICON_NEW_CHAT } from './icons'
+import { NButton, NIcon } from 'naive-ui'
+import { History, MessagePlus } from '@vicons/tabler'
 import { useAiHistory } from '../../composables/vault/useAiHistory'
 import { useAiLiveContext } from '../../composables/vault/useAiLiveContext'
 import { useI18n } from '../../composables/useI18n'
@@ -144,23 +145,27 @@ async function useQuickPrompt(text: string) {
         :title="history.activeSession.value?.title || t('ai.new_conversation')"
       >{{ history.activeSession.value?.title || t('ai.new_conversation') }}</span>
       <div class="ai-header-actions">
-      <button
+      <NButton
         class="ai-header-btn"
-        type="button"
+        attr-type="button"
+        text
+        :bordered="false"
         :title="t(pickerOpen ? 'ai.close_history' : 'ai.open_history')"
         :aria-label="t(pickerOpen ? 'ai.close_history' : 'ai.open_history')"
         aria-haspopup="dialog"
         :aria-expanded="pickerOpen"
         @click="togglePicker"
-      ><span v-html="ICON_HISTORY" aria-hidden="true" /></button>
-      <button
+      ><NIcon aria-hidden="true"><History /></NIcon></NButton>
+      <NButton
         class="ai-header-btn"
-        type="button"
+        attr-type="button"
+        text
+        :bordered="false"
         :title="t('ai.new_conversation')"
         :aria-label="t('ai.new_conversation')"
         :disabled="history.busy.value"
         @click="onNewSession"
-      ><span v-html="ICON_NEW_CHAT" aria-hidden="true" /></button>
+      ><NIcon aria-hidden="true"><MessagePlus /></NIcon></NButton>
       </div>
     </header>
 

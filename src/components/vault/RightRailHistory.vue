@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { NButton } from 'naive-ui'
 import type { FileHistoryCommitItem, FileHistoryState } from '../../composables/vault/useFileHistory'
 import type { HistoryRevisionSelection } from '../../composables/vault/useHistoryComparisons'
 import { useI18n } from '../../composables/useI18n'
@@ -65,7 +66,7 @@ function onTreeKeydown(event: KeyboardEvent): void {
 
     <div v-else-if="fileHistory.error.value" class="history-error" role="alert">
       <span>{{ t('history.file_history_failed') }}</span>
-      <button type="button" @click="fileHistory.refresh()">{{ t('history.retry') }}</button>
+      <NButton attr-type="button" :bordered="false" @click="fileHistory.refresh()">{{ t('history.retry') }}</NButton>
     </div>
 
     <div

@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { NButton, NIcon, NInput } from 'naive-ui'
+import { FileText, Search } from '@vicons/tabler'
 import type { PostSummary } from '../../lib/api'
 import {
   buildTagIndex,
@@ -8,7 +10,6 @@ import {
   type TagRecord,
 } from '../../lib/tags'
 import { useI18n } from '../../composables/useI18n'
-import { ICON_FILE_MD, ICON_SEARCH } from './icons'
 
 const props = defineProps<{ posts: PostSummary[]; selectedTag: string | null; path: string | null }>()
 const emit = defineEmits<{ select: [tag: string]; open: [path: string] }>()
@@ -99,19 +100,27 @@ function onFilterKeydown(event: KeyboardEvent) {
   <aside class="tag-panel" :class="{ 'has-results': selectedTag }" :aria-label="t('tags.panel_label')">
     <header>
       <div class="tag-filter">
-        <span class="tag-filter-icon" v-html="ICON_SEARCH" aria-hidden="true" />
-        <input v-model="filter" class="tag-filter-input" type="text" :placeholder="t('tags.filter')" :aria-label="t('tags.filter')" @keydown="onFilterKeydown" />
-        <button v-if="filter" class="tag-filter-clear-x" :title="t('tags.clear_filter')" :aria-label="t('tags.clear_filter')" @click="filter = ''">×</button>
+        <NIcon class="tag-filter-icon" aria-hidden="true"><Search /></NIcon>
+        <NInput
+          v-model:value="filter"
+          class="tag-filter-control"
+          size="small"
+          :bordered="false"
+          :placeholder="t('tags.filter')"
+          :input-props="{ class: 'tag-filter-input', type: 'search', 'aria-label': t('tags.filter') }"
+          @keydown="onFilterKeydown"
+        />
+        <NButton v-if="filter" attr-type="button" text :bordered="false" class="tag-filter-clear-x" :title="t('tags.clear_filter')" :aria-label="t('tags.clear_filter')" @click="filter = ''">×</NButton>
       </div>
     </header>
 
     <div class="tag-list-region">
       <ul v-if="visibleTags.length" class="tag-list" role="listbox" :aria-label="t('tags.list_label')">
         <li v-for="tagRecord in visibleTags" :key="tagRecord.normalizedName" role="presentation">
-          <button class="tag-entry" role="option" :class="{ active: selectedTagKey === tagRecord.normalizedName }" :aria-selected="selectedTagKey === tagRecord.normalizedName" :title="selectedTagKey === tagRecord.normalizedName ? t('tags.deselect', { tag: tagRecord.displayName }) : t('tags.browse', { tag: tagRecord.displayName })" @click="emit('select', tagRecord.displayName)">
+          <NButton attr-type="button" text :bordered="false" class="tag-entry" role="option" :class="{ active: selectedTagKey === tagRecord.normalizedName }" :aria-selected="selectedTagKey === tagRecord.normalizedName" :title="selectedTagKey === tagRecord.normalizedName ? t('tags.deselect', { tag: tagRecord.displayName }) : t('tags.browse', { tag: tagRecord.displayName })" @click="emit('select', tagRecord.displayName)">
             <span class="tag-name"><span class="tag-hash" aria-hidden="true">#</span><span class="tag-label">{{ tagRecord.displayName }}</span></span>
             <span class="tag-count">{{ tagRecord.count }}</span>
-          </button>
+          </NButton>
         </li>
       </ul>
       <p v-else-if="filter" class="empty">{{ t('tags.no_match') }}</p>
@@ -125,13 +134,13 @@ function onFilterKeydown(event: KeyboardEvent) {
       </header>
       <ul v-if="filteredPosts.length" class="results-list">
         <li v-for="post in filteredPosts" :key="post.path">
-          <button class="result-entry document-row" :class="{ active: post.path === path }" @click="emit('open', post.path)">
+          <NButton attr-type="button" text :bordered="false" class="result-entry document-row" :class="{ active: post.path === path }" @click="emit('open', post.path)">
             <span class="result-chevron-spacer" aria-hidden="true" />
-            <span class="result-icon" aria-hidden="true" v-html="ICON_FILE_MD" />
+            <NIcon class="result-icon" aria-hidden="true"><FileText /></NIcon>
             <span class="result-label">
               <span class="result-title">{{ post.title }}</span>
             </span>
-          </button>
+          </NButton>
         </li>
       </ul>
       <p v-else class="empty">{{ t('tags.no_notes') }}</p>

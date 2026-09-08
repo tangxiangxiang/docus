@@ -87,7 +87,7 @@ describe('DraftRecoveryCenter', () => {
 
   it('disables selection and deletion for protected records', () => {
     const wrapper = setup(true)
-    expect(wrapper.get('input[type="checkbox"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[role="checkbox"]').attributes('aria-disabled')).toBe('true')
     const buttons = wrapper.findAll('button')
     const deleteButton = buttons.at(-1)!
     expect(deleteButton.attributes('disabled')).toBeDefined()

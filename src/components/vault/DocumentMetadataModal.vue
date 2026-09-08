@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { NButton } from 'naive-ui'
 import { onBeforeUnmount, ref, watch } from 'vue'
 import type { DocumentMetadata } from '../../lib/api'
 import { useFocusTrap } from '../../composables/useFocusTrap'
@@ -54,7 +55,7 @@ onBeforeUnmount(() => { void trap.deactivate() })
             <h2>{{ t('metadata.title') }}</h2>
             <span>{{ path }}</span>
           </div>
-          <button type="button" class="document-metadata-close" :aria-label="t('metadata.close')" :title="t('metadata.close')" @click="emit('close')">×</button>
+          <NButton attr-type="button" text :bordered="false" class="document-metadata-close" :aria-label="t('metadata.close')" :title="t('metadata.close')" @click="emit('close')">×</NButton>
         </header>
 
         <DocumentMetadataForm

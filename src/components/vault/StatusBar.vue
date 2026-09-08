@@ -1,14 +1,9 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, type Component } from 'vue'
+import { NButton, NIcon } from 'naive-ui'
+import { CircleCheck, CircleDot, CircleX, Loader, WifiOff } from '@vicons/tabler'
 import type { DocumentSavePresentation } from '../../composables/vault/editor-tabs/savePresentation'
 import type { ExternalChangeKind } from './tabs'
-import {
-  ICON_STATUS_ERROR,
-  ICON_STATUS_LOADING,
-  ICON_STATUS_MODIFIED,
-  ICON_STATUS_OFFLINE,
-  ICON_STATUS_SUCCESS,
-} from './icons'
 import { useI18n } from '../../composables/useI18n'
 
 const props = defineProps<{
@@ -29,19 +24,18 @@ const emit = defineEmits<{
 }>()
 const { t } = useI18n()
 
-// Status icon. Each presentation status maps to one of the ICON_STATUS_*
-// glyphs (or no glyph for "idle"). The glyph renders inline next
-// to the text label via v-html.
-const statusIcon = computed<string>(() => {
+// Status icon. Each presentation status maps to a public Tabler component
+// (or no glyph for "idle"). It renders inline next to the text label.
+const statusIcon = computed<Component | null>(() => {
   switch (props.save.status) {
-    case 'dirty':    return ICON_STATUS_MODIFIED
-    case 'saving':   return ICON_STATUS_LOADING
-    case 'saving-dirty': return ICON_STATUS_LOADING
-    case 'saved':    return ICON_STATUS_SUCCESS
-    case 'error':    return ICON_STATUS_ERROR
-    case 'offline':  return ICON_STATUS_OFFLINE
-    case 'external': return ICON_STATUS_MODIFIED
-    default:         return ''
+    case 'dirty':    return CircleDot
+    case 'saving':   return Loader
+    case 'saving-dirty': return Loader
+    case 'saved':    return CircleCheck
+    case 'error':    return CircleX
+    case 'offline':  return WifiOff
+    case 'external': return CircleDot
+    default:         return null
   }
 })
 
@@ -84,25 +78,31 @@ const pathLabel = computed(() => {
            change ("Unsaved" → "Saving…" → "Saved") without being
            interrupted. aria-atomic="true" re-announces the whole
            status instead of just the diff. -->
-      <button
+      <NButton
         v-if="save.retryable"
-        type="button"
+        attr-type="button"
+        text
+        :bordered="false"
         class="sb-item sb-status sb-status-retry"
         :data-status="save.status"
         :title="t('status.retry_title', { status: statusLabel })"
         :aria-label="t('status.retry')"
         @click="emit('retry-save')"
       >
-        <span v-if="statusIcon" class="sb-status-glyph" v-html="statusIcon" aria-hidden="true" />
+        <NIcon v-if="statusIcon" class="sb-status-glyph" aria-hidden="true">
+          <component :is="statusIcon" />
+        </NIcon>
         {{ statusLabel }}
-      </button>
+      </NButton>
       <span
         v-else
         class="sb-item sb-status"
         :data-status="save.status"
         :title="save.status === 'error' ? statusLabel : undefined"
       >
-        <span v-if="statusIcon" class="sb-status-glyph" v-html="statusIcon" aria-hidden="true" />
+        <NIcon v-if="statusIcon" class="sb-status-glyph" aria-hidden="true">
+          <component :is="statusIcon" />
+        </NIcon>
         {{ statusLabel }}
       </span>
     </div>
@@ -118,35 +118,39 @@ const pathLabel = computed(() => {
     </div>
     <div class="sb-right">
       <template v-if="save.status === 'external' && externalKind !== 'deleted' && externalKind !== 'unreadable'">
-        <button type="button" class="sb-copy-content" :title="t('status.external_diff')" :aria-label="t('status.external_diff')" @click="emit('external-diff')">⇄</button>
-        <button type="button" class="sb-copy-content" :title="t('status.use_disk')" :aria-label="t('status.use_disk')" @click="emit('external-disk')">↓</button>
-        <button type="button" class="sb-copy-content" :title="t('status.keep_local')" :aria-label="t('status.keep_local')" @click="emit('external-local')">↑</button>
+        <NButton attr-type="button" text :bordered="false" class="sb-copy-content" :title="t('status.external_diff')" :aria-label="t('status.external_diff')" @click="emit('external-diff')">⇄</NButton>
+        <NButton attr-type="button" text :bordered="false" class="sb-copy-content" :title="t('status.use_disk')" :aria-label="t('status.use_disk')" @click="emit('external-disk')">↓</NButton>
+        <NButton attr-type="button" text :bordered="false" class="sb-copy-content" :title="t('status.keep_local')" :aria-label="t('status.keep_local')" @click="emit('external-local')">↑</NButton>
       </template>
       <template v-else-if="save.status === 'external' && externalKind === 'deleted'">
-        <button type="button" class="sb-copy-content" :title="t('status.external_diff')" :aria-label="t('status.external_diff')" @click="emit('external-diff')">&#8644;</button>
-        <button type="button" class="sb-copy-content" :title="t('status.keep_local')" :aria-label="t('status.keep_local')" @click="emit('external-local')">&#8593;</button>
+        <NButton attr-type="button" text :bordered="false" class="sb-copy-content" :title="t('status.external_diff')" :aria-label="t('status.external_diff')" @click="emit('external-diff')">&#8644;</NButton>
+        <NButton attr-type="button" text :bordered="false" class="sb-copy-content" :title="t('status.keep_local')" :aria-label="t('status.keep_local')" @click="emit('external-local')">&#8593;</NButton>
       </template>
       <template v-else-if="save.status === 'external'">
-        <button type="button" class="sb-copy-content" :title="t('status.use_disk')" :aria-label="t('status.use_disk')" @click="emit('external-disk')">&#8595;</button>
-        <button type="button" class="sb-copy-content" :title="t('status.keep_local')" :aria-label="t('status.keep_local')" @click="emit('external-local')">&#8593;</button>
+        <NButton attr-type="button" text :bordered="false" class="sb-copy-content" :title="t('status.use_disk')" :aria-label="t('status.use_disk')" @click="emit('external-disk')">&#8595;</NButton>
+        <NButton attr-type="button" text :bordered="false" class="sb-copy-content" :title="t('status.keep_local')" :aria-label="t('status.keep_local')" @click="emit('external-local')">&#8593;</NButton>
       </template>
-      <button
+      <NButton
         v-if="save.dirty || save.attention"
-        type="button"
+        attr-type="button"
+        text
+        :bordered="false"
         class="sb-copy-content"
         :aria-label="t('status.copy_content')"
         :title="t('status.copy_content')"
         @click="emit('copy-content')"
-      >⧉</button>
-      <button
-        type="button"
+      >⧉</NButton>
+      <NButton
+        attr-type="button"
+        text
+        :bordered="false"
         class="sb-focus-width"
         :class="{ active: focusWidth }"
         :aria-pressed="focusWidth"
         :aria-label="t('status.toggle_focus')"
         :title="t(focusWidth ? 'status.full_width' : 'status.focus_width')"
         @click="emit('toggle-focus-width')"
-      >⇔</button>
+      >⇔</NButton>
       <span class="sb-item">{{ t('status.markdown') }}</span>
       <span v-if="sizeLabel" class="sb-item">{{ sizeLabel }}</span>
     </div>

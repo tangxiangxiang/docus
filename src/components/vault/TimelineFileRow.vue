@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import { NButton, NIcon } from 'naive-ui'
+import { FileText } from '@vicons/tabler'
 import type { HistoryFileItem } from '../../composables/vault/useHistoryTimeline'
-import { ICON_FILE_MD } from './icons'
 
 defineProps<{
   file: HistoryFileItem
@@ -18,8 +19,10 @@ function onKeydown(event: KeyboardEvent): void {
 </script>
 
 <template>
-  <button
-    type="button"
+  <NButton
+    attr-type="button"
+    text
+    :bordered="false"
     class="history-file-row"
     :class="{ active: selected }"
     data-history-row
@@ -31,10 +34,10 @@ function onKeydown(event: KeyboardEvent): void {
     @keydown="onKeydown"
   >
     <span class="history-file-chevron-spacer" aria-hidden="true" />
-    <span class="history-file-icon" aria-hidden="true" v-html="ICON_FILE_MD" />
+    <NIcon class="history-file-icon" aria-hidden="true"><FileText /></NIcon>
     <span class="history-file-label">
       <span class="history-file-title">{{ file.title }}</span>
       <span v-if="showParent && file.parentPath" class="history-file-path">{{ file.parentPath }}/</span>
     </span>
-  </button>
+  </NButton>
 </template>

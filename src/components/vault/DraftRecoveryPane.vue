@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { NButton } from 'naive-ui'
 import type { DraftRecoveryTab } from '../../composables/vault/draft-recovery/useDraftRecoveryTabs'
 import { computeFileDiff } from '../../../shared/file-diff'
 import { useI18n } from '../../composables/useI18n'
@@ -37,35 +38,38 @@ defineExpose({ focusViewer })
       </div>
       <span class="history-readonly-badge">{{ t('history.read_only') }}</span>
       <div class="history-viewer-toolbar" role="toolbar" :aria-label="t('draft_recovery.toolbar')">
-        <button
+        <NButton
           v-if="recovery.canViewDiff && recovery.view !== 'diff'"
-          type="button"
+          attr-type="button"
+          :bordered="false"
           @click="emit('update-view', 'diff')"
         >
           {{ t('draft_recovery.view_diff') }}
-        </button>
-        <button
+        </NButton>
+        <NButton
           v-if="recovery.view !== 'content'"
-          type="button"
+          attr-type="button"
+          :bordered="false"
           @click="emit('update-view', 'content')"
         >
           {{ t('draft_recovery.open_content') }}
-        </button>
-        <button
+        </NButton>
+        <NButton
           v-if="recovery.canViewCurrent"
-          type="button"
+          attr-type="button"
+          :bordered="false"
           @click="emit('view-current', recovery.recoveryId)"
         >
           {{ t('draft_recovery.view_current') }}
-        </button>
-        <button type="button" @click="emit('discard', recovery.recoveryId)">
+        </NButton>
+        <NButton attr-type="button" :bordered="false" @click="emit('discard', recovery.recoveryId)">
           {{ recovery.source === 'conflict' || recovery.diskRaw === null
             ? t('draft_recovery.discard')
             : t('draft_recovery.use_disk') }}
-        </button>
-        <button type="button" @click="emit('close', recovery.tabId)">
+        </NButton>
+        <NButton attr-type="button" :bordered="false" @click="emit('close', recovery.tabId)">
           {{ t('draft_recovery.close') }}
-        </button>
+        </NButton>
       </div>
     </header>
     <div class="history-viewer-meta">

@@ -1,10 +1,19 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, onBeforeUnmount } from 'vue'
-import type { TreeNode } from '../../lib/api'
+import { NButton, NIcon } from 'naive-ui'
 import {
-  ICON_ARCHIVE, ICON_CHEVRON, ICON_DELETE, ICON_FILE_MD, ICON_FILE_PLUS,
-  ICON_FILE_PDF, ICON_FOLDER, ICON_FOLDER_OPEN, ICON_FOLDER_PLUS, ICON_HISTORY, ICON_RENAME,
-} from './icons'
+  Archive,
+  ChevronRight,
+  FileExport,
+  FilePlus,
+  FileText,
+  Folder,
+  FolderPlus,
+  History,
+  Pencil,
+  Trash,
+} from '@vicons/tabler'
+import type { TreeNode } from '../../lib/api'
 import { useI18n } from '../../composables/useI18n'
 import {
   canModify,
@@ -315,12 +324,11 @@ function menuAction(fn: () => void) {
         :class="{ expanded: isExpanded }"
         :aria-hidden="true"
         @click.stop="emit('focus', node.path, node.kind); emit('toggle', node.path)"
-        v-html="ICON_CHEVRON"
-      />
+      ><NIcon aria-hidden="true"><ChevronRight /></NIcon></span>
       <span v-else class="chevron-spacer" />
 
-      <span class="row-icon" v-if="isFolder" :aria-hidden="true" v-html="isExpanded ? ICON_FOLDER_OPEN : ICON_FOLDER" />
-      <span class="row-icon" v-else :aria-hidden="true" v-html="ICON_FILE_MD" />
+      <NIcon v-if="isFolder" class="row-icon" aria-hidden="true"><Folder /></NIcon>
+      <NIcon v-else class="row-icon" aria-hidden="true"><FileText /></NIcon>
 
       <!-- Button, not anchor. A folder row toggles (not navigates) and
            a file row opens in the same SPA (not a new tab). Using an
@@ -334,8 +342,10 @@ function menuAction(fn: () => void) {
            query active), the attribute is omitted entirely. -->
       <div class="row-label">
         <span v-if="!isFolder" class="row-title">{{ displayTitle }}</span>
-        <button
-          type="button"
+        <NButton
+          attr-type="button"
+          text
+          :bordered="false"
           class="row-name"
           :class="{ 'row-file-name': showFilename, 'row-file-name-hidden': !isFolder && !showFilename }"
           :title="matchTooltip"
@@ -343,7 +353,7 @@ function menuAction(fn: () => void) {
           @click.stop="emit('focus', node.path, node.kind); isFolder ? emit('toggle', node.path) : emit('select', node.path)"
         >
           <span class="row-name-text">{{ node.name }}</span>
-        </button>
+        </NButton>
         <span v-if="revealPath" class="row-path-hint">{{ visiblePath }}</span>
       </div>
       <span v-if="isDropTarget" class="drop-hint">{{ t('file_tree.move_here') }}</span>
@@ -364,17 +374,17 @@ function menuAction(fn: () => void) {
              a folder is the first thing under the cursor. -->
         <template v-if="isFolder && canCreateInRow">
           <div class="tree-menu-label">{{ t('file_tree.create') }}</div>
-          <button v-if="canCreateFileChildRow" @click="menuAction(() => emit('create-in', node.path, 'file'))"><span class="menu-icon" v-html="ICON_FILE_PLUS" />{{ t('file_tree.new_file') }}</button>
-          <button @click="menuAction(() => emit('create-in', node.path, 'folder'))"><span class="menu-icon" v-html="ICON_FOLDER_PLUS" />{{ t('file_tree.new_folder') }}</button>
+          <NButton v-if="canCreateFileChildRow" attr-type="button" text :bordered="false" @click="menuAction(() => emit('create-in', node.path, 'file'))"><NIcon class="menu-icon" aria-hidden="true"><FilePlus /></NIcon>{{ t('file_tree.new_file') }}</NButton>
+          <NButton attr-type="button" text :bordered="false" @click="menuAction(() => emit('create-in', node.path, 'folder'))"><NIcon class="menu-icon" aria-hidden="true"><FolderPlus /></NIcon>{{ t('file_tree.new_folder') }}</NButton>
         </template>
         <div v-if="canRenameRow || canArchive" class="tree-menu-label">{{ t('file_tree.organize') }}</div>
-        <button v-if="canRenameRow" @click="menuAction(() => emit('request-rename', node.path, node.kind))"><span class="menu-icon" v-html="ICON_RENAME" />{{ t('file_tree.rename') }}<kbd>F2</kbd></button>
-        <button v-if="canArchive" @click="menuAction(() => emit('archive-note', node.path))"><span class="menu-icon" v-html="ICON_ARCHIVE" />{{ t('file_tree.archive') }}</button>
+        <NButton v-if="canRenameRow" attr-type="button" text :bordered="false" @click="menuAction(() => emit('request-rename', node.path, node.kind))"><NIcon class="menu-icon" aria-hidden="true"><Pencil /></NIcon>{{ t('file_tree.rename') }}<kbd>F2</kbd></NButton>
+        <NButton v-if="canArchive" attr-type="button" text :bordered="false" @click="menuAction(() => emit('archive-note', node.path))"><NIcon class="menu-icon" aria-hidden="true"><Archive /></NIcon>{{ t('file_tree.archive') }}</NButton>
         <div v-if="!isFolder" class="tree-menu-label">{{ t('file_tree.document') }}</div>
-        <button v-if="!isFolder" @click="menuAction(() => emit('export-pdf', node.path))"><span class="menu-icon" v-html="ICON_FILE_PDF" />{{ t('file_tree.export_pdf') }}</button>
-        <button v-if="canViewHistory" @click="menuAction(() => emit('open-history', node.path))"><span class="menu-icon" v-html="ICON_HISTORY" />{{ t('file_tree.view_history') }}</button>
+        <NButton v-if="!isFolder" attr-type="button" text :bordered="false" @click="menuAction(() => emit('export-pdf', node.path))"><NIcon class="menu-icon" aria-hidden="true"><FileExport /></NIcon>{{ t('file_tree.export_pdf') }}</NButton>
+        <NButton v-if="canViewHistory" attr-type="button" text :bordered="false" @click="menuAction(() => emit('open-history', node.path))"><NIcon class="menu-icon" aria-hidden="true"><History /></NIcon>{{ t('file_tree.view_history') }}</NButton>
         <div v-if="canDeleteRow" class="tree-menu-label">{{ t('file_tree.danger') }}</div>
-        <button v-if="canDeleteRow" class="danger" @click="menuAction(() => emit('delete', node.path, node.kind))"><span class="menu-icon" v-html="ICON_DELETE" />{{ t('file_tree.delete') }}<kbd>Delete</kbd></button>
+        <NButton v-if="canDeleteRow" attr-type="button" text :bordered="false" class="danger" @click="menuAction(() => emit('delete', node.path, node.kind))"><NIcon class="menu-icon" aria-hidden="true"><Trash /></NIcon>{{ t('file_tree.delete') }}<kbd>Delete</kbd></NButton>
       </div>
     </Teleport>
 

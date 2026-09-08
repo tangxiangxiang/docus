@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { NButton, NCheckbox, NIcon, NInput } from 'naive-ui'
+import { Stars } from '@vicons/tabler'
 import type { PostSummary } from '../../lib/api'
 import type { StatusEntry } from '../../lib/history-api'
 import { suggestCommitMessage } from '../../lib/ai-api'
 import { useI18n } from '../../composables/useI18n'
 import { useToast } from '../../composables/useToast'
-import { ICON_AI } from './icons'
 
 const props = withDefaults(defineProps<{
   entries: StatusEntry[]
@@ -69,8 +70,14 @@ function statusTone(entry: StatusEntry): 'new' | 'deleted' | 'modified' {
   return 'modified'
 }
 
-function onMessage(event: Event): void {
-  emit('update:message', (event.target as HTMLTextAreaElement).value)
+function onMessage(value: string): void {
+  emit('update:message', value)
+}
+
+function onMessageKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'Enter' || (!event.ctrlKey && !event.metaKey)) return
+  event.preventDefault()
+  submit()
 }
 
 function toggleAll(): void {
@@ -144,9 +151,9 @@ onBeforeUnmount(cancelGeneration)
         <h2 id="history-changes-title">{{ t('history.changes') }}</h2>
         <span>{{ entries.length }}</span>
         <span class="history-changes-actions">
-          <button type="button" :disabled="busy || mutationLocked || entries.length === 0" @click="toggleAll">
+          <NButton attr-type="button" :bordered="false" :disabled="busy || mutationLocked || entries.length === 0" @click="toggleAll">
             {{ t(allSelected ? 'history.clear_selection' : 'history.select_all') }}
-          </button>
+          </NButton>
         </span>
       </header>
 
@@ -160,15 +167,17 @@ onBeforeUnmount(cancelGeneration)
           class="history-change-row"
           :class="{ active: activeDiffPath === entry.path }"
         >
-          <input
-            type="checkbox"
+          <NCheckbox
             :checked="selectedPaths.has(entry.path)"
             :disabled="busy || mutationLocked"
+            :aria-disabled="busy || mutationLocked ? 'true' : undefined"
             :aria-label="t('history.include_document', { path: entry.path })"
-            @change="emit('toggle', entry.path)"
-          >
-          <button
-            type="button"
+            @update:checked="emit('toggle', entry.path)"
+          />
+          <NButton
+            attr-type="button"
+            text
+            :bordered="false"
             class="history-change-open"
             :class="{ active: activeDiffPath === entry.path }"
             :aria-current="activeDiffPath === entry.path ? 'true' : undefined"
@@ -179,54 +188,57 @@ onBeforeUnmount(cancelGeneration)
               <strong>{{ displayTitle(entry.path) }}</strong>
             </span>
             <span class="history-change-status" :class="`is-${statusTone(entry)}`">{{ t(statusKey(entry)) }}</span>
-          </button>
+          </NButton>
         </li>
       </ul>
     </section>
 
     <section class="history-version-composer" :aria-label="t('history.version_message')">
       <div class="history-version-message-field">
-        <textarea
-          id="history-version-message"
-          :aria-label="t('history.version_message')"
+        <NInput
+          type="textarea"
+          :autosize="{ minRows: 2, maxRows: 8 }"
+          :input-props="{ id: 'history-version-message', class: 'history-version-message-input', 'aria-label': t('history.version_message') }"
           :value="message"
-          rows="2"
           :disabled="busy || mutationLocked"
           :placeholder="t('history.version_message_placeholder')"
-          @input="onMessage"
-          @keydown.ctrl.enter.prevent="submit"
-          @keydown.meta.enter.prevent="submit"
+          @update:value="onMessage"
+          @keydown="onMessageKeydown"
         />
-        <button
-          type="button"
+        <NButton
+          attr-type="button"
+          :bordered="false"
           class="history-generate-message"
           :disabled="busy || mutationLocked || generatingMessage || selectedPaths.size === 0"
           :aria-label="t(generatingMessage ? 'history.generating_message' : 'history.generate_message')"
           :title="t(generatingMessage ? 'history.generating_message' : 'history.generate_message')"
           @click="generateMessage"
         >
-          <span v-html="ICON_AI" aria-hidden="true" />
+          <NIcon class="history-generate-message-icon" aria-hidden="true">
+            <Stars />
+          </NIcon>
           <span>{{ t(generatingMessage ? 'history.generating_message' : 'history.generate_message') }}</span>
-        </button>
+        </NButton>
       </div>
       <div v-if="error" class="history-commit-error" role="alert">{{ error }}</div>
-      <button
-        type="button"
+      <NButton
+        attr-type="button"
+        :bordered="false"
         class="history-create-version"
         :disabled="!canCommit || generatingMessage"
         @click="submit"
       >
         {{ busy ? t('history.creating_version') : t('history.create_version') }}
-      </button>
+      </NButton>
       <span v-if="busy" class="sr-only" role="status">{{ t('history.creating_version') }}</span>
       <div v-if="indexRepairPending" class="history-commit-error" role="status">
         <span>{{ t(indexRepairConflict ? 'history.index_repair_conflict' : 'history.commit_index_refresh_failed') }}</span>
-        <button v-if="!indexRepairConflict" type="button" :disabled="indexRepairBusy" @click="emit('repair-index')">
+        <NButton v-if="!indexRepairConflict" attr-type="button" :bordered="false" :disabled="indexRepairBusy" @click="emit('repair-index')">
           {{ t('history.index_repair_action') }}
-        </button>
-        <button v-else type="button" :disabled="indexRepairBusy" @click="emit('discard-index-repair')">
+        </NButton>
+        <NButton v-else attr-type="button" :bordered="false" :disabled="indexRepairBusy" @click="emit('discard-index-repair')">
           {{ t('history.index_repair_discard_action') }}
-        </button>
+        </NButton>
       </div>
     </section>
   </section>

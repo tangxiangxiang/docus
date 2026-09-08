@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { ICON_FILE_MD } from './icons'
+import { NButton, NIcon, NInput } from 'naive-ui'
+import { FileText } from '@vicons/tabler'
 import { useI18n } from '../../composables/useI18n'
 
 const props = defineProps<{
@@ -31,35 +32,41 @@ const filteredPaths = computed(() => {
   >
     <header class="ai-context-picker-header">
       <span class="ai-context-picker-title">{{ t('ai.choose_context') }}</span>
-      <button
+      <NButton
+        attr-type="button"
+        text
+        :bordered="false"
         class="ai-context-picker-close"
-        type="button"
         :aria-label="t('ai.close')"
         @click="emit('close')"
-      >×</button>
+      >×</NButton>
     </header>
 
-    <input
-      v-model="query"
-      class="ai-context-picker-search"
-      type="search"
+    <NInput
+      v-model:value="query"
+      class="ai-context-picker-search-control"
+      type="text"
+      size="small"
+      :bordered="false"
       :placeholder="t('ai.search_context')"
-      :aria-label="t('ai.search_context')"
-    >
+      :input-props="{ class: 'ai-context-picker-search', type: 'search', 'aria-label': t('ai.search_context') }"
+    />
 
     <div class="ai-context-picker-list" role="listbox">
-      <button
+      <NButton
         v-for="path in filteredPaths"
         :key="path"
         class="ai-context-option"
-        type="button"
+        attr-type="button"
+        text
+        :bordered="false"
         role="option"
         @click="emit('select', path)"
       >
-        <span class="ai-context-option-icon" v-html="ICON_FILE_MD" aria-hidden="true" />
+        <NIcon class="ai-context-option-icon" aria-hidden="true"><FileText /></NIcon>
         <span class="ai-context-option-path" :title="path">{{ path }}</span>
         <span class="ai-context-option-add" aria-hidden="true">＋</span>
-      </button>
+      </NButton>
       <span v-if="filteredPaths.length === 0" class="ai-context-empty">
         {{ query ? t('ai.no_context_match') : t('ai.no_context_documents') }}
       </span>
@@ -111,10 +118,10 @@ const filteredPaths = computed(() => {
   background: var(--vs-hover-bg);
   color: var(--vs-text-1);
 }
-.ai-context-picker-search {
-  width: calc(100% - 12px);
+.ai-context-picker-search-control :deep(.ai-context-picker-search) {
+  width: 100%;
   height: 27px;
-  margin: 6px;
+  margin: 0;
   padding: 0 7px;
   box-sizing: border-box;
   border: 1px solid color-mix(in srgb, var(--vs-border) 28%, transparent);
@@ -126,10 +133,14 @@ const filteredPaths = computed(() => {
   font-family: var(--mono);
   font-size: 0.7rem;
 }
-.ai-context-picker-search:focus {
+.ai-context-picker-search-control :deep(.ai-context-picker-search:focus) {
   border-color: color-mix(in srgb, var(--vs-accent) 62%, var(--vs-border));
 }
-.ai-context-picker-search::placeholder { color: var(--vs-text-3); }
+.ai-context-picker-search-control :deep(.ai-context-picker-search::placeholder) { color: var(--vs-text-3); }
+.ai-context-picker-search-control {
+  width: calc(100% - 12px);
+  margin: 6px;
+}
 .ai-context-picker-list {
   min-height: 0;
   overflow-y: auto;

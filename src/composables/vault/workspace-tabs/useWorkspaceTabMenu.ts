@@ -97,12 +97,21 @@ export function useWorkspaceTabMenu({
     return tabIds.value.join('\u0000')
   }
 
+  function resolveElement(element: unknown): HTMLElement | null {
+    if (element instanceof HTMLElement) return element
+    if (!element || typeof element !== 'object') return null
+    const root = (element as { $el?: unknown }).$el
+    return root instanceof HTMLElement ? root : null
+  }
+
   function setMenuElement(element: unknown): void {
-    menuElement.value = element instanceof HTMLElement ? element : null
+    menuElement.value = resolveElement(element)
   }
 
   function setItemElement(element: unknown, index: number): void {
-    if (element instanceof HTMLElement) itemElements.value[index] = element
+    const resolved = resolveElement(element)
+    if (resolved) itemElements.value[index] = resolved
+    else delete itemElements.value[index]
   }
 
   function setActiveItem(index: number): void {

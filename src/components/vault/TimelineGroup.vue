@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ICON_CHEVRON } from './icons'
+import { NButton, NIcon } from 'naive-ui'
+import { ChevronRight } from '@vicons/tabler'
 
 defineProps<{
   label: string
@@ -19,8 +20,10 @@ function onKeydown(event: KeyboardEvent): void {
 
 <template>
   <section class="history-timeline-group">
-    <button
-      type="button"
+    <NButton
+      attr-type="button"
+      text
+      :bordered="false"
       class="history-timeline-group-header"
       data-history-row
       role="treeitem"
@@ -30,10 +33,10 @@ function onKeydown(event: KeyboardEvent): void {
       @click="emit('toggle')"
       @keydown="onKeydown"
     >
-      <span class="history-disclosure" :class="{ expanded }" v-html="ICON_CHEVRON" />
+      <NIcon class="history-disclosure" :class="{ expanded }" aria-hidden="true"><ChevronRight /></NIcon>
       <span class="history-timeline-group-title">{{ label }}</span>
       <span class="history-timeline-count">{{ countLabel }}</span>
-    </button>
+    </NButton>
     <div v-if="expanded" class="history-timeline-group-items" role="group">
       <slot />
     </div>

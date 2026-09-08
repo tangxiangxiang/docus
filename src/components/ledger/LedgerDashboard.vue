@@ -21,7 +21,6 @@ import LedgerDatePicker from './LedgerDatePicker.vue'
 const emit = defineEmits<{
   record: []
   viewTransactions: []
-  selectDate: [date: string]
 }>()
 const store = useLedgerStore()
 const overview = computed(() => store.overview.value)

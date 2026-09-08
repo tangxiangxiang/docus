@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { h } from 'vue'
-import { NCheckbox, NSelect } from 'naive-ui'
+import { NCheckbox, NInputNumber, NSelect } from 'naive-ui'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useI18n } from '../../../composables/useI18n'
 import SettingsModal from '../SettingsModal.vue'
@@ -356,7 +356,7 @@ describe('SettingsModal', () => {
   })
 
   it('switches to the Editor and Metadata sections without changing their behavior surfaces', async () => {
-    mountSettings({ withTags: true })
+    const wrapper = mountSettings({ withTags: true })
     await flushPromises()
 
     findButton('编辑器').click()
@@ -364,7 +364,7 @@ describe('SettingsModal', () => {
     expect(document.body.querySelector('[aria-current="page"]')?.textContent?.trim()).toBe('编辑器')
     expect(document.body.textContent).toContain('此设备上的 Monaco 偏好设置')
     expect(document.body.textContent).toContain('编辑器偏好')
-    expect(fieldControl<HTMLInputElement>('字体大小', 'input').type).toBe('number')
+    expect(wrapper.findAllComponents(NInputNumber)).toHaveLength(3)
 
     findButton('文档元数据').click()
     await flushPromises()
@@ -383,18 +383,18 @@ describe('SettingsModal', () => {
     expect(document.body.querySelectorAll('[role="dialog"]')).toHaveLength(1)
   })
 
-  it('preserves native number bounds and exact numeric/boolean editor preference types', async () => {
+  it('preserves Naive number bounds and exact numeric/boolean editor preference types', async () => {
     const wrapper = mountSettings()
     await flushPromises()
     findButton('编辑器').click()
     await flushPromises()
 
-    const fontSize = fieldControl<HTMLInputElement>('字体大小', 'input')
-    const lineHeight = fieldControl<HTMLInputElement>('行高', 'input')
-    const wrapColumn = fieldControl<HTMLInputElement>('换行列', 'input')
-    expect([fontSize.type, fontSize.min, fontSize.max]).toEqual(['number', '11', '24'])
-    expect([lineHeight.type, lineHeight.min, lineHeight.max]).toEqual(['number', '16', '40'])
-    expect([wrapColumn.type, wrapColumn.min, wrapColumn.max]).toEqual(['number', '60', '160'])
+    const numberInputs = wrapper.findAllComponents(NInputNumber)
+    expect(numberInputs.map((control) => [control.props('min'), control.props('max')])).toEqual([
+      [11, 24],
+      [16, 40],
+      [60, 160],
+    ])
 
     const tabSize = wrapper.getComponent(NSelect)
     expect(tabSize.props('options')).toEqual([

@@ -13,6 +13,7 @@
 //     parent can route through openPost.
 
 import { computed, nextTick, ref, watch } from 'vue'
+import { NButton } from 'naive-ui'
 import { useVaultTocState } from '../../composables/vault/useTocState'
 import { useI18n } from '../../composables/useI18n'
 import type { DocumentMetadata, PostSummary } from '../../lib/api'
@@ -120,24 +121,30 @@ function onHistoryTabClick(): void {
       <!-- Edit-10.3: the old "no AI in read-only views" gate is lifted —
            History/Diff/Recovery views now transport their own live
            context (readOnly snapshots) instead of being cut off. -->
-      <button
+      <NButton
+        attr-type="button"
+        text
+        :bordered="false"
         role="tab"
         data-tab="ai"
         :aria-selected="activeTab === 'ai'"
         :class="{ active: activeTab === 'ai' }"
         @click="emit('update:activeTab', 'ai')"
-      >{{ t('rail.ai') }}</button>
-      <button role="tab" data-tab="toc" :aria-selected="activeTab === 'toc'" :class="{ active: activeTab === 'toc' }" @click="emit('update:activeTab', 'toc')">{{ t('rail.toc') }}</button>
-      <button role="tab" data-tab="links" :aria-selected="activeTab === 'links'" :class="{ active: activeTab === 'links' }" @click="emit('update:activeTab', 'links')">{{ t('rail.links') }}</button>
-      <button
+      >{{ t('rail.ai') }}</NButton>
+      <NButton attr-type="button" text :bordered="false" role="tab" data-tab="toc" :aria-selected="activeTab === 'toc'" :class="{ active: activeTab === 'toc' }" @click="emit('update:activeTab', 'toc')">{{ t('rail.toc') }}</NButton>
+      <NButton attr-type="button" text :bordered="false" role="tab" data-tab="links" :aria-selected="activeTab === 'links'" :class="{ active: activeTab === 'links' }" @click="emit('update:activeTab', 'links')">{{ t('rail.links') }}</NButton>
+      <NButton
+        attr-type="button"
+        text
+        :bordered="false"
         role="tab"
         data-tab="properties"
         :aria-selected="activeTab === 'properties'"
         :aria-label="metadataDirty ? `${t('rail.properties')}，${t('metadata.unsaved')}` : t('rail.properties')"
         :class="{ active: activeTab === 'properties' }"
         @click="emit('update:activeTab', 'properties')"
-      >{{ t('rail.properties') }}<span v-if="metadataDirty" class="metadata-dirty-mark" aria-hidden="true">●</span></button>
-      <button role="tab" data-tab="history" :aria-selected="activeTab === 'history'" :class="{ active: activeTab === 'history' }" @click="onHistoryTabClick">{{ t('rail.history') }}</button>
+      >{{ t('rail.properties') }}<span v-if="metadataDirty" class="metadata-dirty-mark" aria-hidden="true">●</span></NButton>
+      <NButton attr-type="button" text :bordered="false" role="tab" data-tab="history" :aria-selected="activeTab === 'history'" :class="{ active: activeTab === 'history' }" @click="onHistoryTabClick">{{ t('rail.history') }}</NButton>
     </nav>
 
     <section v-show="activeTab === 'toc'" class="toc-panel" role="tabpanel" :aria-label="t('rail.toc')">
@@ -147,12 +154,13 @@ function onHistoryTabClick(): void {
 
       <div v-if="!hasHeadings" class="right-rail-empty-state">
         <p>{{ props.isReadMode ? t('rail.toc_empty') : t('rail.toc_empty_edit') }}</p>
-        <button
+        <NButton
           v-if="!props.isReadMode"
-          type="button"
+          attr-type="button"
+          :bordered="false"
           class="right-rail-empty-action"
           @click="emit('switch-to-read')"
-        >{{ t('rail.switch_to_read') }}</button>
+        >{{ t('rail.switch_to_read') }}</NButton>
       </div>
       <ul v-else class="toc-panel-list">
         <li
@@ -348,8 +356,7 @@ function onHistoryTabClick(): void {
   text-transform: uppercase;
   color: var(--text-muted);
 }
-.metadata-slot :deep(.document-metadata-field > input),
-.metadata-slot :deep(.document-metadata-field > textarea) {
+.metadata-slot :deep(.document-metadata-field > .document-metadata-input) {
   margin-top: 2px;
 }
 
@@ -412,10 +419,10 @@ function onHistoryTabClick(): void {
   color: var(--accent);
   background: var(--code-bg);
 }
-.metadata-slot :deep(.metadata-generate-summary > span:first-child) {
+.metadata-slot :deep(.metadata-generate-summary-icon) {
   flex-basis: 11px;
 }
-.metadata-slot :deep(.metadata-generate-summary > span:first-child svg) {
+.metadata-slot :deep(.metadata-generate-summary-icon svg) {
   width: 11px;
   height: 11px;
 }

@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { ICON_SEND, ICON_STOP } from './icons'
+import { computed, nextTick, ref } from 'vue'
+import { NButton, NIcon, NInput, type InputInst } from 'naive-ui'
+import { PlayerStop, Send } from '@vicons/tabler'
 import { useI18n } from '../../composables/useI18n'
 
 const props = withDefaults(defineProps<{
@@ -28,21 +29,10 @@ const { t } = useI18n()
 const inputPlaceholder = computed(
   () => `${t('ai.input_placeholder')} · ${t('ai.keyboard_hint')}`,
 )
-const inputEl = ref<HTMLTextAreaElement | null>(null)
-const INPUT_MAX_H = 160
+const inputEl = ref<InputInst | null>(null)
 
-function autoresize() {
-  const el = inputEl.value
-  if (!el) return
-  el.style.height = 'auto'
-  const natural = el.scrollHeight
-  el.style.height = Math.min(natural, INPUT_MAX_H) + 'px'
-  el.style.overflowY = natural > INPUT_MAX_H ? 'auto' : 'hidden'
-}
-
-function onInput(event: Event) {
-  emit('update:modelValue', (event.target as HTMLTextAreaElement).value)
-  autoresize()
+function onInput(value: string) {
+  emit('update:modelValue', value)
 }
 
 function onKeydown(event: KeyboardEvent) {
@@ -61,8 +51,6 @@ async function focus() {
   inputEl.value?.focus()
 }
 
-watch(() => props.modelValue, () => nextTick(autoresize))
-onMounted(autoresize)
 defineExpose({ focus })
 </script>
 
@@ -72,29 +60,35 @@ defineExpose({ focus })
       <div v-if="contextPaths.length" class="ai-context-paths" :aria-label="t('ai.attached_context')">
         <span v-for="path in contextPaths" :key="path" class="ai-context-chip" :title="path">
           <span class="ai-context-chip-path">{{ path }}</span>
-          <button
+          <NButton
             class="ai-context-chip-remove"
-            type="button"
+            attr-type="button"
+            text
+            :bordered="false"
             :aria-label="t('ai.remove_context')"
             @click="emit('remove-context', path)"
-          >×</button>
+          >×</NButton>
         </span>
       </div>
-      <textarea
+      <NInput
         ref="inputEl"
+        class="ai-input-control"
+        type="textarea"
+        :autosize="{ minRows: 1, maxRows: 8 }"
         :value="modelValue"
-        class="ai-input"
-        rows="1"
         :placeholder="inputPlaceholder"
-        :aria-label="t('ai.input_placeholder')"
+        :bordered="false"
+        :input-props="{ class: 'ai-input', 'aria-label': t('ai.input_placeholder') }"
         @keydown="onKeydown"
-        @input="onInput"
+        @update:value="onInput"
       />
       <div class="ai-toolbar">
         <div class="ai-toolbar-left">
-          <button
+          <NButton
             class="ai-tool-button"
-            type="button"
+            attr-type="button"
+            text
+            :bordered="false"
             :title="t('ai.add_context')"
             :aria-label="t('ai.add_context')"
             :disabled="!canAddContext"
@@ -103,7 +97,7 @@ defineExpose({ focus })
             @click="emit('toggle-context-picker')"
           >
             <span class="ai-tool-plus">+</span>
-          </button>
+          </NButton>
           <!-- Reserved for a future AI mode selector; currently display-only. -->
           <span class="ai-mode-badge" aria-hidden="true">
             <span class="ai-mode-dot" />
@@ -111,17 +105,22 @@ defineExpose({ focus })
           </span>
         </div>
         <div class="ai-toolbar-right">
-          <button
+          <NButton
             class="ai-send"
             :class="{ 'ai-send-busy': busy }"
-            type="button"
+            attr-type="button"
+            text
+            :bordered="false"
             :title="t(busy ? 'ai.stop' : 'ai.send_hint')"
             :aria-label="t(busy ? 'ai.stop' : 'ai.send')"
             :disabled="!busy && (!modelValue.trim() || !configured)"
             @click="onPrimaryAction"
           >
-            <span class="ai-send-icon" v-html="busy ? ICON_STOP : ICON_SEND" aria-hidden="true" />
-          </button>
+            <NIcon class="ai-send-icon" aria-hidden="true">
+              <PlayerStop v-if="busy" />
+              <Send v-else />
+            </NIcon>
+          </NButton>
         </div>
       </div>
     </div>

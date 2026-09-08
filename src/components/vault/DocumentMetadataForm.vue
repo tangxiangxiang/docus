@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { NButton, NIcon, NInput, type InputInst } from 'naive-ui'
+import { Stars } from '@vicons/tabler'
 import {
   getPost,
   updateDocumentMetadata,
@@ -10,7 +12,6 @@ import {
 import { suggestSummary } from '../../lib/ai-api'
 import { useToast } from '../../composables/useToast'
 import { useI18n } from '../../composables/useI18n'
-import { ICON_AI } from './icons'
 import type { MetadataBase, MetadataContext, MetadataDraft, MetadataDraftKey } from './metadataDraftStore'
 import {
   normalizeTagDisplay,
@@ -51,7 +52,7 @@ const emit = defineEmits<{
 
 const toast = useToast()
 const { locale, t } = useI18n()
-const titleInput = ref<HTMLInputElement | null>(null)
+const titleInput = ref<InputInst | null>(null)
 const loading = ref(false)
 const saving = ref(false)
 const loadError = ref<string | null>(null)
@@ -652,7 +653,7 @@ onBeforeUnmount(cancelSummaryGeneration)
       <div v-if="loading" class="document-metadata-status" role="status">{{ t('metadata.loading') }}</div>
       <div v-else-if="loadError" class="document-metadata-error" role="alert">
         <span>{{ t('metadata.load_failed', { error: loadError }) }}</span>
-        <button type="button" class="btn" @click="retry">{{ t('metadata.retry') }}</button>
+        <NButton attr-type="button" :bordered="false" class="btn" @click="retry">{{ t('metadata.retry') }}</NButton>
       </div>
       <template v-else>
         <p v-if="isReadonly" class="document-metadata-readonly-hint">
@@ -660,30 +661,47 @@ onBeforeUnmount(cancelSummaryGeneration)
         </p>
         <label class="document-metadata-field">
           <span>{{ t('metadata.field_title') }}</span>
-          <input ref="titleInput" v-model="title" maxlength="200" :disabled="loading || isReadonly || !path" required />
+          <NInput
+            ref="titleInput"
+            v-model:value="title"
+            class="document-metadata-input"
+            type="text"
+            size="small"
+            :bordered="false"
+            :maxlength="200"
+            :disabled="loading || isReadonly || !path"
+            :input-props="{ required: true }"
+          />
         </label>
         <div class="document-metadata-field">
           <div class="document-metadata-field-head">
             <span>{{ t('metadata.summary') }}</span>
-            <button
+            <NButton
               v-if="!isReadonly"
-              type="button"
+              attr-type="button"
+              :bordered="false"
               class="metadata-generate-summary"
               :disabled="loading || saving || generatingSummary || !path"
               :aria-label="t(generatingSummary ? 'metadata.ai_generating_summary' : 'metadata.ai_generate_summary')"
               :title="t(generatingSummary ? 'metadata.ai_generating_summary' : 'metadata.ai_generate_summary')"
               @click="generateSummary"
             >
-              <span v-html="ICON_AI" aria-hidden="true" />
+              <NIcon class="metadata-generate-summary-icon" aria-hidden="true">
+                <Stars />
+              </NIcon>
               <span>{{ t(generatingSummary ? 'metadata.ai_generating_summary' : 'metadata.ai_generate_summary') }}</span>
-            </button>
+            </NButton>
           </div>
           <div class="document-metadata-textarea-wrap">
-            <textarea
-              v-model="summary"
-              :aria-label="t('metadata.summary')"
-              maxlength="2000"
-              rows="4"
+            <NInput
+              v-model:value="summary"
+              class="document-metadata-input"
+              type="textarea"
+              size="small"
+              :bordered="false"
+              :maxlength="2000"
+              :rows="4"
+              :input-props="{ 'aria-label': t('metadata.summary') }"
               :disabled="loading || isReadonly || !path"
             />
             <small>{{ summary.length }} / 2000</small>
@@ -691,7 +709,15 @@ onBeforeUnmount(cancelSummaryGeneration)
         </div>
         <label class="document-metadata-field">
           <span>{{ t('metadata.tags') }}</span>
-          <input v-model="tags" placeholder="rag, notes" :disabled="loading || isReadonly || !path" />
+          <NInput
+            v-model:value="tags"
+            class="document-metadata-input"
+            type="text"
+            size="small"
+            :bordered="false"
+            placeholder="rag, notes"
+            :disabled="loading || isReadonly || !path"
+          />
         </label>
         <section class="document-metadata-readonly" :aria-label="t('metadata.readonly')">
           <div><span>{{ t('metadata.created_at') }}</span><output>{{ formatDate(metadata?.createdAt) }}</output></div>
@@ -704,11 +730,11 @@ onBeforeUnmount(cancelSummaryGeneration)
     <div v-else class="document-metadata-empty right-rail-empty-state">{{ t('metadata.no_document') }}</div>
 
     <footer v-if="showActions && path && !isReadonly && !loadError" class="document-metadata-actions">
-      <button v-if="showCancel" type="button" class="btn" @click="emit('cancel')">{{ t('metadata.cancel') }}</button>
-      <button type="button" class="btn" :disabled="loading || saving || generatingSummary || !dirty" @click="reset">{{ t('metadata.reset') }}</button>
-      <button type="submit" class="btn btn-primary" :disabled="!canSave">
+      <NButton v-if="showCancel" attr-type="button" :bordered="false" class="btn" @click="emit('cancel')">{{ t('metadata.cancel') }}</NButton>
+      <NButton attr-type="button" :bordered="false" class="btn" :disabled="loading || saving || generatingSummary || !dirty" @click="reset">{{ t('metadata.reset') }}</NButton>
+      <NButton attr-type="submit" :bordered="false" class="btn btn-primary" :disabled="!canSave">
         {{ t(saving ? 'metadata.saving' : 'metadata.save') }}
-      </button>
+      </NButton>
     </footer>
   </form>
 </template>
@@ -726,16 +752,19 @@ onBeforeUnmount(cancelSummaryGeneration)
    directly inside the field as before. */
 .document-metadata-field-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 0; }
 .document-metadata-field-head > span { color: var(--text-muted); font-size: 0.76rem; font-weight: 600; }
-.document-metadata-field input, .document-metadata-field textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; background: var(--bg-soft); color: var(--text); font: inherit; letter-spacing: 0; outline: none; }
+.document-metadata-field :deep(.document-metadata-input) { width: 100%; }
+.document-metadata-field :deep(.document-metadata-input input),
+.document-metadata-field :deep(.document-metadata-input textarea) { width: 100%; box-sizing: border-box; border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; background: var(--bg-soft); color: var(--text); font: inherit; letter-spacing: 0; outline: none; }
 .document-metadata-textarea-wrap { position: relative; min-width: 0; }
-.document-metadata-textarea-wrap textarea { padding-right: 10px; padding-bottom: 29px; }
-.document-metadata-field textarea { resize: vertical; min-height: 92px; line-height: 1.5; }
-.document-metadata-field input:focus, .document-metadata-field textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.document-metadata-textarea-wrap :deep(.document-metadata-input textarea) { padding-right: 10px; padding-bottom: 29px; }
+.document-metadata-field :deep(.document-metadata-input textarea) { resize: vertical; min-height: 92px; line-height: 1.5; }
+.document-metadata-field :deep(.document-metadata-input input:focus),
+.document-metadata-field :deep(.document-metadata-input textarea:focus) { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 /* AI generate: ghost button sitting on the label row, no longer absolute over
    the textarea. Sizing baseline matches the other ghost buttons in the panel. */
 .metadata-generate-summary { display: inline-flex; align-items: center; gap: 3px; min-height: 18px; padding: 0 5px; border: 0; border-radius: 3px; background: transparent; color: var(--text-muted); font: inherit; font-size: 0.66rem; cursor: pointer; transition: color 0.12s ease, background 0.12s ease; }
-.metadata-generate-summary > span:first-child { display: inline-flex; flex: 0 0 12px; }
-.metadata-generate-summary > span:first-child :deep(svg) { display: block; width: 12px; height: 12px; }
+.metadata-generate-summary-icon { display: inline-flex; flex: 0 0 12px; }
+.metadata-generate-summary-icon :deep(svg) { display: block; width: 12px; height: 12px; }
 .metadata-generate-summary:hover:not(:disabled) { background: var(--code-bg); color: var(--accent); }
 .metadata-generate-summary:focus-visible { outline: 1px solid color-mix(in srgb, var(--accent) 72%, transparent); outline-offset: 1px; }
 .metadata-generate-summary:disabled { cursor: default; opacity: 0.5; }

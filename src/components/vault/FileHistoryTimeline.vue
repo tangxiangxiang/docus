@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { NButton } from 'naive-ui'
 import type { FileHistoryCommitItem, FileHistoryState } from '../../composables/vault/useFileHistory'
 import type { HistoryRevisionSelection } from '../../composables/vault/useHistoryComparisons'
 import { useI18n } from '../../composables/useI18n'
@@ -66,21 +67,23 @@ function onTreeKeydown(event: KeyboardEvent): void {
 <template>
   <section class="history-timeline-section history-file-timeline" aria-labelledby="file-history-title">
     <header class="history-timeline-heading history-file-heading">
-      <button
-        type="button"
+      <NButton
+        attr-type="button"
+        text
+        :bordered="false"
         class="history-back-button"
         :aria-label="t('history.back_to_all')"
         :title="t('history.back_to_all')"
         @click="emit('show-all')"
       >
         ‹
-      </button>
+      </NButton>
       <h2 id="file-history-title">{{ fileHistory.target.value?.documentTitle }}</h2>
     </header>
 
     <div v-if="fileHistory.error.value" class="history-error" role="alert">
       <span>{{ t('history.file_history_failed') }}</span>
-      <button type="button" @click="fileHistory.refresh()">{{ t('history.retry') }}</button>
+      <NButton attr-type="button" :bordered="false" @click="fileHistory.refresh()">{{ t('history.retry') }}</NButton>
     </div>
 
     <div

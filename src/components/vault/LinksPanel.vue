@@ -13,13 +13,14 @@
 // Same shape as FileTree / TagPanel emits.
 
 import { computed, ref, watch, watchEffect, onMounted, onBeforeUnmount } from 'vue'
+import { NButton, NIcon } from 'naive-ui'
+import { FileText } from '@vicons/tabler'
 import { useDebounceFn } from '@vueuse/core'
 import type { PostSummary, BacklinkRecord } from '../../lib/api'
 import { getLinkIndex, fetchBacklinks } from '../../composables/vault/useLinkIndex'
 import { getFallbackVaultFileChanges } from '../../composables/vault/context/fileChanges'
 import { useOptionalVaultContext } from '../../composables/vault/context/useVaultContext'
 import { useVaultTocState } from '../../composables/vault/useTocState'
-import { ICON_FILE_MD } from './icons'
 import { PROTECTED_ROOTS } from '../../../shared/archiveProtocol'
 import { useI18n } from '../../composables/useI18n'
 
@@ -185,18 +186,20 @@ watchEffect(() => {
         </header>
         <ul class="link-list">
           <li v-for="b in backlinks" :key="b.source">
-            <button
+            <NButton
               class="link-entry"
-              type="button"
+              attr-type="button"
+              text
+              :bordered="false"
               :title="b.source"
               @click="emit('navigate', b.source)"
             >
-              <span class="link-icon" aria-hidden="true" v-html="ICON_FILE_MD" />
+              <NIcon class="link-icon" aria-hidden="true"><FileText /></NIcon>
               <span class="link-copy">
                 <span class="link-title">{{ displayTitle(b.source) }}</span>
                 <span class="link-path">{{ directoryLabel(b.source) }}</span>
               </span>
-            </button>
+            </NButton>
           </li>
         </ul>
       </section>
@@ -207,18 +210,20 @@ watchEffect(() => {
         </header>
         <ul class="link-list">
           <li v-for="l in outgoingDisplay" :key="l.target + (l.anchor ?? '')">
-            <button
+            <NButton
               class="link-entry"
-              type="button"
+              attr-type="button"
+              text
+              :bordered="false"
               :title="l.target"
               @click="emit('navigate', l.target)"
             >
-              <span class="link-icon" aria-hidden="true" v-html="ICON_FILE_MD" />
+              <NIcon class="link-icon" aria-hidden="true"><FileText /></NIcon>
               <span class="link-copy">
                 <span class="link-title">{{ l.label }}</span>
                 <span class="link-path">{{ directoryLabel(l.target) }}</span>
               </span>
-            </button>
+            </NButton>
           </li>
         </ul>
       </section>

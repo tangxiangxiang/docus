@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { NButton } from 'naive-ui'
 import { useI18n } from '../../composables/useI18n'
 import type { WorkspaceTab } from './tabs'
 import {
@@ -259,14 +260,17 @@ function onContextMenu(e: MouseEvent, path: string) {
           aria-hidden="true"
         />
         <span class="tab-title">{{ tabPresentations[i].displayTitle }}</span>
-        <button
+        <NButton
           class="tab-close"
+          attr-type="button"
+          text
+          :bordered="false"
           draggable="false"
           :aria-label="translate('workspace_tab.close_named', { name: tabPresentations[i].displayTitle })"
           @pointerdown="onClosePointerDown(t.id, $event)"
           @dragstart.prevent.stop
           @click.stop="onCloseClick(t)"
-        >×</button>
+        >×</NButton>
       </div>
       <span class="sr-only" aria-live="polite" aria-atomic="true">{{ liveAnnouncement }}</span>
     </div>
@@ -287,14 +291,17 @@ function onContextMenu(e: MouseEvent, path: string) {
       >
         <template v-for="(item, index) in menuItems" :key="item.action">
           <div v-if="index === 5" role="separator" />
-          <button
+          <NButton
+            attr-type="button"
+            text
+            :bordered="false"
             :ref="(el) => setMenuItemRef(el, index)"
             role="menuitem"
             :tabindex="activeMenuItem === index ? 0 : -1"
             :disabled="item.disabled"
             @mouseenter="setActiveMenuItem(index)"
             @click="activateMenuAction(item.action)"
-          >{{ translate(menuLabelKeys[item.action]) }}</button>
+          >{{ translate(menuLabelKeys[item.action]) }}</NButton>
         </template>
       </div>
     </Teleport>

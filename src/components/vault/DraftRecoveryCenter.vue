@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { NButton, NCheckbox } from 'naive-ui'
 import { useI18n } from '../../composables/useI18n'
 import {
   recoveryRecordId,
@@ -59,7 +60,7 @@ function decisionLabel(id: string): string {
 
     <div v-else-if="error" class="recovery-state" role="alert">
       <p class="warning">{{ errorMessage }}</p>
-      <button type="button" @click="emit('refresh')">{{ t('draft_recovery.center.refresh') }}</button>
+      <NButton attr-type="button" :bordered="false" @click="emit('refresh')">{{ t('draft_recovery.center.refresh') }}</NButton>
     </div>
 
     <template v-else>
@@ -70,20 +71,20 @@ function decisionLabel(id: string): string {
       </p>
 
       <div class="recovery-toolbar">
-        <button type="button" @click="emit('refresh')">{{ t('draft_recovery.center.refresh') }}</button>
-        <button type="button" :disabled="selectedIds.size === 0" @click="emit('delete-selected')">{{ t('draft_recovery.center.delete_selected') }}</button>
+        <NButton attr-type="button" :bordered="false" @click="emit('refresh')">{{ t('draft_recovery.center.refresh') }}</NButton>
+        <NButton attr-type="button" :bordered="false" :disabled="selectedIds.size === 0" @click="emit('delete-selected')">{{ t('draft_recovery.center.delete_selected') }}</NButton>
       </div>
 
       <p v-if="records.length === 0" class="empty">{{ t('draft_recovery.center.empty') }}</p>
       <ul v-else class="recovery-list">
       <li v-for="entry in records" :key="recoveryRecordId(entry)">
-        <input
-          type="checkbox"
+        <NCheckbox
           :aria-label="t('draft_recovery.center.select_record', { path: entry.record.documentPath })"
           :checked="selectedIds.has(recoveryRecordId(entry))"
           :disabled="protectedIds.has(recoveryRecordId(entry))"
-          @change="emit('toggle', recoveryRecordId(entry))"
-        >
+          :aria-disabled="protectedIds.has(recoveryRecordId(entry)) ? 'true' : undefined"
+          @update:checked="emit('toggle', recoveryRecordId(entry))"
+        />
         <div class="record-main">
           <strong>{{ entry.record.documentPath }}</strong>
           <span class="record-meta">
@@ -93,9 +94,9 @@ function decisionLabel(id: string): string {
           <span v-if="protectedIds.has(recoveryRecordId(entry))" class="in-use">{{ t('draft_recovery.center.in_use') }}</span>
         </div>
         <div class="record-actions">
-          <button type="button" @click="emit('open', recoveryRecordId(entry))">{{ t('draft_recovery.center.open') }}</button>
-          <button type="button" @click="emit('retry', recoveryRecordId(entry))">{{ t('draft_recovery.center.retry') }}</button>
-          <button type="button" :disabled="protectedIds.has(recoveryRecordId(entry))" @click="emit('delete', recoveryRecordId(entry))">{{ t('draft_recovery.center.delete') }}</button>
+          <NButton attr-type="button" :bordered="false" @click="emit('open', recoveryRecordId(entry))">{{ t('draft_recovery.center.open') }}</NButton>
+          <NButton attr-type="button" :bordered="false" @click="emit('retry', recoveryRecordId(entry))">{{ t('draft_recovery.center.retry') }}</NButton>
+          <NButton attr-type="button" :bordered="false" :disabled="protectedIds.has(recoveryRecordId(entry))" @click="emit('delete', recoveryRecordId(entry))">{{ t('draft_recovery.center.delete') }}</NButton>
         </div>
       </li>
     </ul>

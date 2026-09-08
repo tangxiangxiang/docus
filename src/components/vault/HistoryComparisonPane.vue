@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { NButton } from 'naive-ui'
 import type { HistoryComparison } from '../../composables/vault/useHistoryComparisons'
 import { useI18n } from '../../composables/useI18n'
 import HistoryUnifiedDiff from './HistoryUnifiedDiff.vue'
@@ -22,7 +23,7 @@ const emit = defineEmits<{
 const { locale, t } = useI18n()
 const headingRef = ref<HTMLElement | null>(null)
 const menuRef = ref<HTMLElement | null>(null)
-const menuButtonRef = ref<HTMLElement | null>(null)
+const menuButtonRef = ref<{ $el: HTMLButtonElement } | null>(null)
 const menuOpen = ref(false)
 
 const revisionTimeLabel = computed(() => formatHistoryDate(props.comparison.revisionTime, locale.value))
@@ -87,12 +88,16 @@ function closeMenu(restoreFocus = false): void {
   menuOpen.value = false
   document.removeEventListener('pointerdown', onMenuOutside)
   document.removeEventListener('keydown', onMenuEscape)
-  if (restoreFocus) menuButtonRef.value?.focus()
+  if (restoreFocus) menuButtonRef.value?.$el.focus()
+}
+
+function menuButtonElement(): HTMLButtonElement | null {
+  return menuButtonRef.value?.$el ?? null
 }
 
 function onMenuOutside(event: PointerEvent): void {
   if (!menuRef.value?.contains(event.target as Node)
-    && !menuButtonRef.value?.contains(event.target as Node)) {
+    && !menuButtonElement()?.contains(event.target as Node)) {
     closeMenu()
   }
 }
@@ -163,10 +168,12 @@ onBeforeUnmount(() => {
           <span class="is-added">+{{ stats.added }}</span>
           <span class="is-removed">−{{ stats.removed }}</span>
         </span>
-        <button
+        <NButton
+          attr-type="button"
+          text
+          :bordered="false"
           v-if="comparison.status === 'ready'"
           ref="menuButtonRef"
-          type="button"
           class="history-pane-menu-trigger"
           aria-haspopup="menu"
           :aria-expanded="menuOpen"
@@ -174,7 +181,7 @@ onBeforeUnmount(() => {
           @click="toggleMenu"
         >
           ⋯
-        </button>
+        </NButton>
         <div
           v-if="menuOpen"
           ref="menuRef"
@@ -182,40 +189,48 @@ onBeforeUnmount(() => {
           role="menu"
           :aria-label="t('history.version_actions')"
         >
-          <button
+          <NButton
+            attr-type="button"
+            text
+            :bordered="false"
             v-if="comparison.mode === 'commit-change'"
-            type="button"
             role="menuitem"
             @click="compareWithWorkingTree"
           >
             {{ t('history.compare_with_working_tree') }}
-          </button>
-          <button
+          </NButton>
+          <NButton
+            attr-type="button"
+            text
+            :bordered="false"
             v-else
-            type="button"
             role="menuitem"
             @click="viewCommitChanges"
           >
             {{ t('history.view_commit_changes') }}
-          </button>
-          <button
+          </NButton>
+          <NButton
+            attr-type="button"
+            text
+            :bordered="false"
             v-if="restoreTargetExists"
-            type="button"
             role="menuitem"
             :disabled="!canRestore"
             @click="restore"
           >
             {{ t('history.restore_version_ellipsis') }}
-          </button>
-          <button
+          </NButton>
+          <NButton
+            attr-type="button"
+            text
+            :bordered="false"
             v-else
-            type="button"
             role="menuitem"
             disabled
             class="history-pane-menu-disabled"
           >
             {{ t('history.version_deletes_file') }}
-          </button>
+          </NButton>
         </div>
       </div>
     </header>
@@ -234,9 +249,9 @@ onBeforeUnmount(() => {
       role="alert"
     >
       <span>{{ errorLabel }}</span>
-      <button type="button" @click="retry">
+      <NButton attr-type="button" :bordered="false" @click="retry">
         {{ t('history.retry') }}
-      </button>
+      </NButton>
     </div>
     <div
       v-else-if="comparison.diff && comparison.diff.ops.length === 0"

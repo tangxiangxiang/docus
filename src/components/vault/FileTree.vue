@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
+import { NButton, NIcon, NInput, type InputInst } from 'naive-ui'
+import { Search } from '@vicons/tabler'
 import type { TreeNode, PostSummary } from '../../lib/api'
 import { matchesTagQuery, parseTagQuery, type TagQuery } from '../../lib/tags'
 import TreeRow from './TreeRow.vue'
@@ -15,7 +17,6 @@ import { scopeRootsFor } from '../../../shared/scopeProtocol'
 import { useArchiveNote } from '../../composables/vault/useArchiveNote'
 import { getFallbackVaultFileChanges } from '../../composables/vault/context/fileChanges'
 import { useOptionalVaultContext } from '../../composables/vault/context/useVaultContext'
-import { ICON_SEARCH } from './icons'
 import { useI18n } from '../../composables/useI18n'
 import { useFileTreePreferences } from '../../composables/vault/useFileTreePreferences'
 import { clearMetadataDraftForPath, updateMetadataDraftPath } from './metadataDraftStore'
@@ -56,7 +57,7 @@ const { compactFileTree } = useFileTreePreferences()
 const vaultContext = useOptionalVaultContext()
 const lifecycle = vaultContext?.lifecycle
 const publishChange = vaultContext?.fileChanges.publish ?? getFallbackVaultFileChanges().publish
-const searchInputRef = ref<HTMLInputElement | null>(null)
+const searchInputRef = ref<InputInst | null>(null)
 const fileTreeRootRef = ref<HTMLElement | null>(null)
 
 // Presentation defense only. The server-side document mutation policy is the
@@ -774,23 +775,28 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
            case-insensitive and multiple tokens compose with AND.
       -->
       <div class="search">
-        <span class="search-icon" v-html="ICON_SEARCH" aria-hidden="true" />
-        <input
+        <NIcon class="search-icon" aria-hidden="true"><Search /></NIcon>
+        <NInput
           ref="searchInputRef"
-          v-model="contentText"
-          class="search-input"
+          v-model:value="contentText"
+          class="search-input-control"
+          size="small"
+          :bordered="false"
           type="text"
           :placeholder="t('file_tree.search')"
-          :aria-label="t('file_tree.search')"
+          :input-props="{ class: 'search-input', 'aria-label': t('file_tree.search') }"
           @keydown="onQueryKeydown"
         />
-        <button
+        <NButton
           v-if="contentText"
+          attr-type="button"
+          text
+          :bordered="false"
           class="search-clear-x"
           :title="t('file_tree.clear_search')"
           :aria-label="t('file_tree.clear_search')"
           @click="clearContentText"
-        >×</button>
+        >×</NButton>
       </div>
     </header>
     <ul v-if="topLevel.length" class="tree" role="tree">

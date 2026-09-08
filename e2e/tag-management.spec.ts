@@ -58,6 +58,18 @@ async function closeProductionTagManagementPanel(page: Page, panel: Locator): Pr
   await expect(settings).toHaveCount(0)
 }
 
+async function selectTagOption(
+  panel: Locator,
+  controlId: string,
+  displayName: string,
+): Promise<void> {
+  const control = panel.locator(`#${controlId}`)
+  await control.click()
+  const option = control.getByRole('option', { name: `#${displayName}`, exact: false })
+  await expect(option).toHaveCount(1)
+  await option.click()
+}
+
 type PostDetailForTags = {
   raw: string
   metadata: {
@@ -174,7 +186,7 @@ test('authenticated Rename transport preserves Markdown and Git boundaries', asy
     await mountTagManagementHarness(page)
     const dialog = page.locator('[data-tag-management-panel]')
     await expect(dialog).toHaveAttribute('data-state', 'ready')
-    await dialog.locator('#tag-management-source').selectOption(String(java!.id))
+    await selectTagOption(dialog, 'tag-management-source', java!.displayName)
     await dialog.locator('#tag-management-destination').fill('Backend')
     const previewResponsePromise = page.waitForResponse((response) => {
       const url = new URL(response.url())
@@ -250,7 +262,7 @@ test('authenticated Rename transport preserves Markdown and Git boundaries', asy
     const backendTag = managedForProduction.find((tag) => tag.displayName === 'Backend')
     expect(backendTag?.id).toBeGreaterThan(0)
     await productionDialog.locator('[data-operation="rename"]').click()
-    await productionDialog.locator('#tag-management-source').selectOption(String(backendTag!.id))
+    await selectTagOption(productionDialog, 'tag-management-source', backendTag!.displayName)
     await productionDialog.locator('#tag-management-destination').fill(productionRename)
     const productionRenamePreview = page.waitForResponse((response) => (
       response.request().method() === 'POST'
@@ -276,7 +288,7 @@ test('authenticated Rename transport preserves Markdown and Git boundaries', asy
     const productionSource = managedAfterProductionRename.find((tag) => tag.displayName === productionRename)
     expect(productionSource).toMatchObject({ id: backendTag!.id, displayName: productionRename })
     const productionDisplayName = productionRename.toUpperCase()
-    await displayRenameDialog.locator('#tag-management-source').selectOption(String(productionSource!.id))
+    await selectTagOption(displayRenameDialog, 'tag-management-source', productionSource!.displayName)
     await displayRenameDialog.locator('#tag-management-destination').fill(productionDisplayName)
     const displayRenamePreview = page.waitForResponse((response) => (
       response.request().method() === 'POST'
@@ -379,9 +391,9 @@ test('authenticated Merge preserves the destination identity, deduplicates overl
     // focused harness below.
     const productionDialog = await openProductionTagManagementPanel(page)
     await productionDialog.locator('[data-operation="merge"]').click()
-    await productionDialog.locator('#tag-management-source').selectOption(String(productionSource!.id))
+    await selectTagOption(productionDialog, 'tag-management-source', productionSourceName)
     await productionDialog.locator('#tag-management-destination-search').fill(productionDestinationName)
-    await productionDialog.locator('#tag-management-destination').selectOption(String(productionDestination!.id))
+    await selectTagOption(productionDialog, 'tag-management-destination', productionDestinationName)
     const productionPreviewResponse = page.waitForResponse((response) => (
       response.request().method() === 'POST'
       && new URL(response.url()).pathname === '/api/tags/operations/preview'
@@ -446,14 +458,15 @@ test('authenticated Merge preserves the destination identity, deduplicates overl
     await expect(dialog).toHaveAttribute('data-state', 'ready')
     await page.evaluate((tag) => window.__t2TagManagementHarness?.setSelectedTag(tag), sourceName)
     await dialog.locator('[data-operation="merge"]').click()
-    await dialog.locator('#tag-management-source').selectOption(String(source!.id))
+    await selectTagOption(dialog, 'tag-management-source', sourceName)
 
-    const destinationValues = await dialog.locator('#tag-management-destination option').evaluateAll((options) => (
-      options.map((option) => (option as HTMLOptionElement).value)
-    ))
-    expect(destinationValues).not.toContain(String(source!.id))
+    const destinationSelect = dialog.locator('#tag-management-destination')
+    await destinationSelect.click()
+    const destinationOptionLabels = await destinationSelect.getByRole('option').allTextContents()
+    expect(destinationOptionLabels.some((label) => label.includes(`#${sourceName}`))).toBe(false)
+    await page.keyboard.press('Escape')
     await dialog.locator('#tag-management-destination-search').fill(destinationName)
-    await dialog.locator('#tag-management-destination').selectOption(String(destination!.id))
+    await selectTagOption(dialog, 'tag-management-destination', destinationName)
     await expect(dialog.locator('.tag-management-preview .primary')).toHaveCount(0)
 
     const previewResponsePromise = page.waitForResponse((response) => {
@@ -562,9 +575,9 @@ test('authenticated Merge preserves the destination identity, deduplicates overl
     await expect(raceDialog).toHaveAttribute('data-state', 'ready')
     await page.evaluate((tag) => window.__t2TagManagementHarness?.setSelectedTag(tag), raceSourceName)
     await raceDialog.locator('[data-operation="merge"]').click()
-    await raceDialog.locator('#tag-management-source').selectOption(String(raceSource!.id))
+    await selectTagOption(raceDialog, 'tag-management-source', raceSourceName)
     await raceDialog.locator('#tag-management-destination-search').fill(raceDestinationName)
-    await raceDialog.locator('#tag-management-destination').selectOption(String(raceDestination!.id))
+    await selectTagOption(raceDialog, 'tag-management-destination', raceDestinationName)
     const racePreviewResponse = page.waitForResponse((response) => (
       response.request().method() === 'POST'
       && new URL(response.url()).pathname === '/api/tags/operations/preview'
@@ -638,7 +651,7 @@ test('production Remove previews, confirms once, clears selection, and preserves
 
     const dialog = await openProductionTagManagementPanel(page)
     await dialog.locator('[data-operation="remove"]').click()
-    await dialog.locator('#tag-management-source').selectOption(String(source!.id))
+    await selectTagOption(dialog, 'tag-management-source', sourceName)
     await expect(dialog.locator('#tag-management-destination')).toHaveCount(0)
     await expect(dialog.locator('#tag-management-destination-search')).toHaveCount(0)
 
@@ -690,7 +703,7 @@ test('production Remove previews, confirms once, clears selection, and preserves
     await expect(confirmation).toHaveCount(0)
     expect(applyRequests).toBe(0)
     await expect(dialog).toHaveAttribute('data-state', 'preview-ready')
-    await expect(dialog.locator('#tag-management-source')).toHaveValue(String(source!.id))
+    await expect(dialog.locator('#tag-management-source')).toContainText(`#${sourceName}`)
     await expect(dialog).toContainText(`#${sourceName}`)
     await expect(dialog.locator('[data-action="remove-apply"]')).toBeFocused()
 
@@ -798,11 +811,11 @@ test('production Undo previews, confirms, and restores Rename, Display Rename, M
 
   const ordinaryRename = async (
     dialog: Locator,
-    sourceId: number,
+    sourceName: string,
     destinationName: string,
   ): Promise<void> => {
     await dialog.locator('[data-operation="rename"]').click()
-    await dialog.locator('#tag-management-source').selectOption(String(sourceId))
+    await selectTagOption(dialog, 'tag-management-source', sourceName)
     await dialog.locator('#tag-management-destination').fill(destinationName)
     const previewResponse = page.waitForResponse((response) => (
       response.request().method() === 'POST'
@@ -833,7 +846,7 @@ test('production Undo previews, confirms, and restores Rename, Display Rename, M
     const renameSource = await tagByName(renameSourceName)
     await page.locator('.tag-entry').filter({ hasText: `#${renameSourceName}` }).click()
     let dialog = await openDialog()
-    await ordinaryRename(dialog, renameSource.id, renameDestinationName)
+    await ordinaryRename(dialog, renameSourceName, renameDestinationName)
     await undoLatestChange(page, dialog, 'Undo Rename', true)
     await closeDialog(dialog)
     expect(await tagByName(renameSourceName)).toMatchObject({ id: renameSource.id, displayName: renameSourceName })
@@ -842,7 +855,7 @@ test('production Undo previews, confirms, and restores Rename, Display Rename, M
     const displaySource = await tagByName(displaySourceName)
     await page.locator('.tag-entry').filter({ hasText: `#${displaySourceName}` }).click()
     dialog = await openDialog()
-    await ordinaryRename(dialog, displaySource.id, displayDestinationName)
+    await ordinaryRename(dialog, displaySourceName, displayDestinationName)
     await undoLatestChange(page, dialog, 'Undo Display Rename')
     await closeDialog(dialog)
     expect(await tagByName(displaySourceName)).toMatchObject({ id: displaySource.id, displayName: displaySourceName })
@@ -852,9 +865,9 @@ test('production Undo previews, confirms, and restores Rename, Display Rename, M
     await page.locator('.tag-entry').filter({ hasText: `#${mergeSourceName}` }).click()
     dialog = await openDialog()
     await dialog.locator('[data-operation="merge"]').click()
-    await dialog.locator('#tag-management-source').selectOption(String(mergeSource.id))
+    await selectTagOption(dialog, 'tag-management-source', mergeSourceName)
     await dialog.locator('#tag-management-destination-search').fill(mergeDestinationName)
-    await dialog.locator('#tag-management-destination').selectOption(String(mergeDestination.id))
+    await selectTagOption(dialog, 'tag-management-destination', mergeDestinationName)
     let previewResponse = page.waitForResponse((response) => (
       response.request().method() === 'POST'
       && new URL(response.url()).pathname === '/api/tags/operations/preview'
@@ -881,7 +894,7 @@ test('production Undo previews, confirms, and restores Rename, Display Rename, M
     await page.locator('.tag-entry').filter({ hasText: `#${removeSourceName}` }).click()
     dialog = await openDialog()
     await dialog.locator('[data-operation="remove"]').click()
-    await dialog.locator('#tag-management-source').selectOption(String(removeSource.id))
+    await selectTagOption(dialog, 'tag-management-source', removeSourceName)
     previewResponse = page.waitForResponse((response) => (
       response.request().method() === 'POST'
       && new URL(response.url()).pathname === '/api/tags/operations/preview'

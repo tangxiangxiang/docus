@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { NButton, NInput, NSelect, type InputInst, type SelectInst, type SelectNodeProps, type SelectOption } from 'naive-ui'
 import { useConfirm } from '../../composables/useConfirm'
 import { useI18n } from '../../composables/useI18n'
 import { formatHistoryDate } from '../../lib/history-date'
@@ -133,12 +134,12 @@ const { locale, t } = useI18n()
 const { confirmCancellable } = useConfirm()
 const panelRef = ref<HTMLElement | null>(null)
 const isMounted = ref(false)
-const sourceSelectRef = ref<HTMLSelectElement | null>(null)
-const destinationInputRef = ref<HTMLInputElement | null>(null)
-const destinationSelectRef = ref<HTMLSelectElement | null>(null)
+const sourceSelectRef = ref<SelectInst | null>(null)
+const destinationInputRef = ref<InputInst | null>(null)
+const destinationSelectRef = ref<SelectInst | null>(null)
 const previewHeadingRef = ref<HTMLElement | null>(null)
 const undoPreviewHeadingRef = ref<HTMLElement | null>(null)
-const undoApplyButtonRef = ref<HTMLButtonElement | null>(null)
+const undoApplyButtonRef = ref<{ $el: HTMLButtonElement } | null>(null)
 
 const state = ref<ManagerState>('loading')
 const managedTags = ref<ManagedTag[]>([])
@@ -229,6 +230,35 @@ const filteredDestinationTags = computed(() => {
     return selected ? [selected, ...filtered] : filtered
   }
   return filtered
+})
+
+const sourceOptions = computed<SelectOption[]>(() => [
+  { value: '', label: t('tags.manage.source_placeholder') },
+  ...filteredManagedTags.value.map((tag) => ({
+    value: String(tag.id),
+    label: `#${tag.displayName} · ${tag.documentCount}`,
+  })),
+])
+
+const destinationOptions = computed<SelectOption[]>(() => [
+  { value: '', label: t('tags.manage.destination_placeholder') },
+  ...filteredDestinationTags.value.map((tag) => ({
+    value: String(tag.id),
+    label: `#${tag.displayName} · ${tag.documentCount}`,
+  })),
+])
+
+// SettingsModal is a custom teleported surface rather than Naive UI's modal
+// provider, so its backdrop sits above the default body-level follower. Keep
+// these menus above that backdrop without changing the global overlay stack.
+const tagSelectMenuProps = {
+  class: 'tag-management-select-menu',
+  style: { zIndex: 10000 },
+}
+
+const tagSelectNodeProps: SelectNodeProps = (option) => ({
+  role: 'option',
+  'aria-label': String(option.label),
 })
 
 const selectedDestinationTag = computed(() => (
@@ -1106,7 +1136,7 @@ async function requestUndoConfirmation(currentPreview: UndoPreview): Promise<voi
       setDiagnostic('undo-preview-ready')
       announce(t('tags.manage.undo_preview_ready'))
       await nextTick()
-      undoApplyButtonRef.value?.focus()
+      undoApplyButtonRef.value?.$el.focus()
     }
     return
   }
@@ -1526,17 +1556,15 @@ async function reloadManagedTags(): Promise<void> {
   await fetchManagedTagsForOpening()
 }
 
-function onSourceChange(event: Event): void {
-  const value = (event.target as HTMLSelectElement).value
-  sourceTagId.value = value ? Number(value) : null
+function onSourceChange(value: string | number | null): void {
+  sourceTagId.value = value === '' || value === null ? null : Number(value)
   if (sourceTagId.value !== null && sourceTagId.value === destinationTagId.value) {
     destinationTagId.value = null
   }
 }
 
-function onDestinationChange(event: Event): void {
-  const value = (event.target as HTMLSelectElement).value
-  destinationTagId.value = value ? Number(value) : null
+function onDestinationChange(value: string | number | null): void {
+  destinationTagId.value = value === '' || value === null ? null : Number(value)
 }
 
 function setOperationKind(kind: VisibleOperationKind): void {
@@ -1619,9 +1647,9 @@ onBeforeUnmount(() => {
 
           <div v-else-if="state === 'unavailable'" class="tag-management-state tag-management-state-error">
             <p>{{ t('tags.manage.unavailable') }}</p>
-            <button type="button" data-action="reload" class="tag-management-button primary" @click="reloadManagedTags">
+            <NButton attr-type="button" :bordered="false" data-action="reload" class="tag-management-button primary" @click="reloadManagedTags">
               {{ t('tags.manage.reload') }}
-            </button>
+            </NButton>
           </div>
 
           <template v-else>
@@ -1650,14 +1678,15 @@ onBeforeUnmount(() => {
                 {{ t('tags.manage.undo_stable_id_restored') }}
               </p>
               <div class="tag-management-actions">
-                <button
+                <NButton
                   v-if="undoCanDiscoverPreview"
-                  type="button"
+                  attr-type="button"
+                  :bordered="false"
                   class="tag-management-button secondary"
                   data-action="undo-preview"
                   :disabled="undoState === 'undo-previewing'"
                   @click="onUndoPreview"
-                >{{ t('tags.manage.undo_preview') }}</button>
+                >{{ t('tags.manage.undo_preview') }}</NButton>
               </div>
             </section>
 
@@ -1666,15 +1695,15 @@ onBeforeUnmount(() => {
             </section>
             <section v-else-if="undoState === 'undo-conflict'" class="tag-management-undo-state tag-management-conflict" role="alert">
               {{ t('tags.manage.undo_conflict') }}
-              <button v-if="undoCanDiscoverPreview" type="button" class="tag-management-button secondary" data-action="undo-preview" @click="onUndoPreview">
+              <NButton v-if="undoCanDiscoverPreview" attr-type="button" :bordered="false" class="tag-management-button secondary" data-action="undo-preview" @click="onUndoPreview">
                 {{ t('tags.manage.undo_preview') }}
-              </button>
+              </NButton>
             </section>
             <section v-else-if="undoState === 'undo-stale'" class="tag-management-undo-state tag-management-conflict" role="alert">
               {{ t('tags.manage.undo_stale') }}
-              <button v-if="undoCanDiscoverPreview" type="button" class="tag-management-button secondary" data-action="undo-preview" @click="onUndoPreview">
+              <NButton v-if="undoCanDiscoverPreview" attr-type="button" :bordered="false" class="tag-management-button secondary" data-action="undo-preview" @click="onUndoPreview">
                 {{ t('tags.manage.undo_preview') }}
-              </button>
+              </NButton>
             </section>
             <section v-else-if="undoState === 'undo-superseded'" class="tag-management-undo-state" role="status">
               {{ t('tags.manage.undo_superseded') }}
@@ -1732,26 +1761,28 @@ onBeforeUnmount(() => {
                   </li>
                 </ul>
                 <p v-else>{{ t('tags.manage.sample_empty') }}</p>
-                <button
+                <NButton
                   v-if="undoNextCursor"
-                  type="button"
+                  attr-type="button"
+                  :bordered="false"
                   class="tag-management-button secondary"
                   data-action="undo-load-more"
                   :disabled="undoPageLoading"
                   @click="loadMoreUndo"
-                >{{ undoPageLoading ? t('tags.manage.loading_more') : t('tags.manage.load_more') }}</button>
+                >{{ undoPageLoading ? t('tags.manage.loading_more') : t('tags.manage.load_more') }}</NButton>
               </div>
               <p v-if="undoState === 'undo-conflict'" class="tag-management-conflict" role="alert">{{ t('tags.manage.undo_conflict') }}</p>
               <div class="tag-management-actions">
-                <button
+                <NButton
                   ref="undoApplyButtonRef"
-                  type="button"
+                  attr-type="button"
+                  :bordered="false"
                   class="tag-management-button primary destructive"
                   data-action="undo-apply"
                   aria-describedby="tag-management-undo-preservation"
                   :disabled="!undoCanApply"
                   @click="onUndoApply"
-                >{{ undoState === 'undo-confirming' || undoState === 'undo-applying' ? t('tags.manage.undo_applying') : t('tags.manage.undo_apply') }}</button>
+                >{{ undoState === 'undo-confirming' || undoState === 'undo-applying' ? t('tags.manage.undo_applying') : t('tags.manage.undo_apply') }}</NButton>
               </div>
             </section>
 
@@ -1763,9 +1794,9 @@ onBeforeUnmount(() => {
             </section>
             <section v-else-if="undoState === 'undo-sync-pending'" class="tag-management-undo-state tag-management-state-error" role="alert">
               <p>{{ t('tags.manage.undo_sync_pending') }}</p>
-              <button type="button" class="tag-management-button primary" data-action="undo-retry-sync" @click="retryUndoSynchronization">
+              <NButton attr-type="button" :bordered="false" class="tag-management-button primary" data-action="undo-retry-sync" @click="retryUndoSynchronization">
                 {{ t('tags.manage.undo_retry_sync') }}
-              </button>
+              </NButton>
             </section>
             <section
               v-else-if="undoState === 'undo-success'"
@@ -1780,93 +1811,100 @@ onBeforeUnmount(() => {
               <fieldset class="tag-management-mode" :disabled="!canEdit">
                 <legend>{{ t('tags.manage.operation') }}</legend>
                 <div class="tag-management-mode-buttons" role="group" :aria-label="t('tags.manage.operation')">
-                  <button
-                    type="button"
+                  <NButton
+                    attr-type="button"
+                    :bordered="false"
                     class="tag-management-mode-button"
                     data-operation="rename"
                     :aria-pressed="operationKind === 'rename'"
                     @click="setOperationKind('rename')"
-                  >{{ t('tags.manage.rename') }}</button>
-                  <button
-                    type="button"
+                  >{{ t('tags.manage.rename') }}</NButton>
+                  <NButton
+                    attr-type="button"
+                    :bordered="false"
                     class="tag-management-mode-button"
                     data-operation="merge"
                     :aria-pressed="operationKind === 'merge'"
                     @click="setOperationKind('merge')"
-                  >{{ t('tags.manage.merge') }}</button>
-                  <button
-                    type="button"
+                  >{{ t('tags.manage.merge') }}</NButton>
+                  <NButton
+                    attr-type="button"
+                    :bordered="false"
                     class="tag-management-mode-button"
                     data-operation="remove"
                     :aria-pressed="operationKind === 'remove'"
                     @click="setOperationKind('remove')"
-                  >{{ t('tags.manage.remove') }}</button>
+                  >{{ t('tags.manage.remove') }}</NButton>
                 </div>
               </fieldset>
 
               <div class="tag-management-field">
                 <label for="tag-management-search">{{ t('tags.manage.search') }}</label>
-                <input
-                  id="tag-management-search"
-                  v-model="tagSearch"
-                  type="search"
-                  class="tag-management-input"
+                <NInput
+                  v-model:value="tagSearch"
+                  class="tag-management-input-control"
+                  size="medium"
                   :placeholder="t('tags.manage.search')"
                   :disabled="!canEdit"
+                  :input-props="{ id: 'tag-management-search', class: 'tag-management-input', type: 'search', 'aria-label': t('tags.manage.search') }"
                 />
               </div>
 
               <div class="tag-management-field">
                 <label for="tag-management-source">{{ t('tags.manage.source') }}</label>
-                <select
-                  id="tag-management-source"
+                <NSelect
                   ref="sourceSelectRef"
-                  class="tag-management-input"
-                  :value="sourceTagId ?? ''"
+                  id="tag-management-source"
+                  class="tag-management-input-control"
+                  size="medium"
+                  :bordered="false"
+                  :value="sourceTagId === null ? null : String(sourceTagId)"
+                  :options="sourceOptions"
+                  :to="false"
+                  :menu-props="tagSelectMenuProps"
+                  :node-props="tagSelectNodeProps"
                   :disabled="!canEdit || managedTags.length === 0"
                   :aria-invalid="sourceError ? 'true' : undefined"
                   :aria-describedby="sourceError ? 'tag-management-source-error' : undefined"
-                  @change="onSourceChange"
-                >
-                  <option value="">{{ t('tags.manage.source_placeholder') }}</option>
-                  <option v-for="tag in filteredManagedTags" :key="tag.id" :value="tag.id">
-                    #{{ tag.displayName }} · {{ tag.documentCount }}
-                  </option>
-                </select>
+                  :aria-label="t('tags.manage.source')"
+                  @update:value="onSourceChange"
+                />
                 <p v-if="sourceError" id="tag-management-source-error" class="tag-management-error" role="alert">{{ sourceError }}</p>
               </div>
 
               <template v-if="operationKind === 'merge'">
                 <div class="tag-management-field">
                   <label for="tag-management-destination-search">{{ t('tags.manage.destination_search') }}</label>
-                  <input
-                    id="tag-management-destination-search"
-                    v-model="destinationSearch"
-                    type="search"
-                    class="tag-management-input"
+                  <NInput
+                    v-model:value="destinationSearch"
+                    class="tag-management-input-control"
+                    size="medium"
                     :placeholder="t('tags.manage.destination_search_placeholder')"
                     :disabled="!canEdit"
-                    @input="destinationError = ''"
+                    :input-props="{ id: 'tag-management-destination-search', class: 'tag-management-input', type: 'search', 'aria-label': t('tags.manage.destination_search') }"
+                    @update:value="destinationError = ''"
                   />
                 </div>
 
                 <div class="tag-management-field">
                   <label for="tag-management-destination">{{ t('tags.manage.destination_tag') }}</label>
-                  <select
-                    id="tag-management-destination"
+                  <NSelect
                     ref="destinationSelectRef"
-                    class="tag-management-input"
-                    :value="destinationTagId ?? ''"
+                    id="tag-management-destination"
+                    class="tag-management-input-control"
+                    size="medium"
+                    :bordered="false"
+                    :value="destinationTagId === null ? null : String(destinationTagId)"
+                    :options="destinationOptions"
+                    :to="false"
+                    :menu-props="tagSelectMenuProps"
+                    :node-props="tagSelectNodeProps"
                     :disabled="!canEdit || managedTags.length === 0"
                     :aria-invalid="destinationError ? 'true' : undefined"
                     :aria-describedby="destinationError ? 'tag-management-destination-error tag-management-destination-help' : 'tag-management-destination-help'"
-                    @change="onDestinationChange"
-                  >
-                    <option value="">{{ t('tags.manage.destination_placeholder') }}</option>
-                    <option v-for="tag in filteredDestinationTags" :key="tag.id" :value="tag.id">
-                      #{{ tag.displayName }} · {{ tag.documentCount }}
-                    </option>
-                  </select>
+                    :aria-label="t('tags.manage.destination_tag')"
+                    @update:value="onDestinationChange"
+                  />
                   <p id="tag-management-destination-help" class="tag-management-help">{{ t('tags.manage.destination_help_merge') }}</p>
                   <p v-if="selectedDestinationTag" class="tag-management-selected" data-selected-destination>
                     {{ t('tags.manage.destination_selected', { name: selectedDestinationTag.displayName }) }}
@@ -1880,24 +1918,29 @@ onBeforeUnmount(() => {
 
               <div v-else-if="operationKind === 'rename'" class="tag-management-field">
                 <label for="tag-management-destination">{{ t('tags.manage.destination') }}</label>
-                <input
-                  id="tag-management-destination"
+                <NInput
                   ref="destinationInputRef"
-                  v-model="destinationName"
+                  v-model:value="destinationName"
+                  class="tag-management-input-control"
+                  size="medium"
                   type="text"
-                  class="tag-management-input"
                   :disabled="!canEdit"
-                  :aria-invalid="destinationError ? 'true' : undefined"
-                  :aria-describedby="destinationError ? 'tag-management-destination-error tag-management-destination-help' : 'tag-management-destination-help'"
+                  :input-props="{
+                    id: 'tag-management-destination',
+                    class: 'tag-management-input',
+                    'aria-invalid': destinationError ? 'true' : undefined,
+                    'aria-describedby': destinationError ? 'tag-management-destination-error tag-management-destination-help' : 'tag-management-destination-help',
+                    'aria-label': t('tags.manage.destination'),
+                  }"
                 />
                 <p id="tag-management-destination-help" class="tag-management-help">{{ t('tags.manage.destination_help') }}</p>
                 <p v-if="destinationError" id="tag-management-destination-error" class="tag-management-error" role="alert">{{ destinationError }}</p>
               </div>
 
               <div class="tag-management-actions">
-                <button type="submit" class="tag-management-button primary" :disabled="!canPreview">
+                <NButton attr-type="submit" :bordered="false" class="tag-management-button primary" :disabled="!canPreview">
                   {{ state === 'previewing' ? t('tags.manage.previewing') : t('tags.manage.preview') }}
-                </button>
+                </NButton>
               </div>
             </form>
 
@@ -1978,20 +2021,22 @@ onBeforeUnmount(() => {
                   </li>
                 </ul>
                 <p v-else>{{ t('tags.manage.sample_empty') }}</p>
-                <button
+                <NButton
                   v-if="nextAfterDocumentId"
-                  type="button"
+                  attr-type="button"
+                  :bordered="false"
                   class="tag-management-button secondary"
                   :disabled="pageLoading"
                   @click="loadMore"
                 >
                   {{ pageLoading ? t('tags.manage.loading_more') : t('tags.manage.load_more') }}
-                </button>
+                </NButton>
               </div>
 
               <div class="tag-management-actions">
-                <button
-                  type="button"
+                <NButton
+                  attr-type="button"
+                  :bordered="false"
                   class="tag-management-button primary"
                   :class="{ destructive: operationKind === 'remove' }"
                   :data-action="operationKind === 'remove' ? 'remove-apply' : 'apply'"
@@ -2004,9 +2049,9 @@ onBeforeUnmount(() => {
                     : operationKind === 'remove'
                       ? t('tags.manage.apply_remove', { name: preview.sourceTag.displayName })
                       : operationKind === 'merge'
-                        ? t('tags.manage.apply_merge')
-                        : t('tags.manage.apply') }}
-                </button>
+                      ? t('tags.manage.apply_merge')
+                      : t('tags.manage.apply') }}
+                </NButton>
               </div>
             </section>
 
@@ -2016,9 +2061,9 @@ onBeforeUnmount(() => {
 
             <section v-if="state === 'sync-pending'" class="tag-management-state tag-management-state-error" role="alert">
               <p>{{ t('tags.manage.sync_pending') }}</p>
-              <button type="button" class="tag-management-button primary" @click="retrySynchronization">
+              <NButton attr-type="button" :bordered="false" class="tag-management-button primary" @click="retrySynchronization">
                 {{ t('tags.manage.retry_sync') }}
-              </button>
+              </NButton>
             </section>
 
             <section
@@ -2067,10 +2112,10 @@ onBeforeUnmount(() => {
 .tag-management-mode:disabled .tag-management-mode-button { cursor: not-allowed; opacity: 0.55; }
 .tag-management-field { display: grid; gap: 5px; }
 .tag-management-field label { color: var(--text-h); font-size: 0.78rem; font-weight: 600; }
-.tag-management-input {
+.tag-management-input-control {
+  width: 100%;
   min-height: 34px;
   box-sizing: border-box;
-  padding: 6px 9px;
   border: 1px solid var(--border);
   border-radius: 5px;
   background: var(--bg-soft);
@@ -2078,8 +2123,23 @@ onBeforeUnmount(() => {
   font: inherit;
   font-size: 0.84rem;
 }
-.tag-management-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.tag-management-input:disabled { cursor: not-allowed; opacity: 0.55; }
+.tag-management-input-control:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; }
+.tag-management-input-control :deep(.tag-management-input) {
+  min-height: 32px;
+  box-sizing: border-box;
+  padding: 6px 9px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.84rem;
+}
+.tag-management-input {
+  min-height: 32px;
+}
+.tag-management-input-control :deep(.tag-management-input:focus-visible) { outline: none; }
+.tag-management-input-control :deep(.tag-management-input:disabled) { cursor: not-allowed; opacity: 0.55; }
 .tag-management-help { margin: 0; color: var(--text-muted); font-size: 0.72rem; line-height: 1.4; }
 .tag-management-selected { margin: 0; color: var(--text); font-size: 0.76rem; font-weight: 600; }
 .tag-management-error { margin: 0; color: var(--danger, #c94f4f); font-size: 0.76rem; line-height: 1.45; }

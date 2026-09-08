@@ -233,8 +233,10 @@ onBeforeUnmount(() => {
     :aria-busy="props.logoutBusy || undefined"
   >
     <div :class="['navbar-inner', { container: !props.isVault, 'full-width': props.isVault }]">
-      <button
-        type="button"
+      <NButton
+        attr-type="button"
+        text
+        :bordered="false"
         class="brand"
         :aria-label="t('nav.home')"
         @mouseenter="startBrandConstellation"
@@ -243,7 +245,7 @@ onBeforeUnmount(() => {
       >
         <img class="brand-logo" :src="'/logo-48.png'" :alt="t('nav.logo_alt')" width="24" height="24" />
         <span class="brand-wordmark">Docus</span>
-      </button>
+      </NButton>
       <!-- Scope filter: lives in the navbar (the file tree header is too
            narrow on 150px sidebars). The Ledger chip opens the Ledger workspace. -->
       <div v-if="props.isVault" class="scope-chips" role="tablist" :aria-label="t('nav.scope_label')">

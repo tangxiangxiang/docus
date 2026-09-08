@@ -1,42 +1,42 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import type { ToolCallRecord } from '../../lib/ai-api'
+import { computed, ref, type Component } from 'vue'
+import { NButton, NIcon } from 'naive-ui'
 import {
-  ICON_CREATE_FILE,
-  ICON_DELETE_FILE,
-  ICON_LIST_FILES,
-  ICON_PATCH_FILE,
-  ICON_READ_FILE,
-  ICON_RENAME_FILE,
-  ICON_STATUS_ERROR,
-  ICON_STATUS_LOADING,
-  ICON_STATUS_SUCCESS,
-  ICON_WRITE_FILE,
-} from './icons'
+  CircleCheck,
+  CircleX,
+  FileDiff,
+  FilePlus,
+  FileText,
+  List,
+  Loader,
+  Pencil,
+  Trash,
+} from '@vicons/tabler'
+import type { ToolCallRecord } from '../../lib/ai-api'
 
 const props = defineProps<{ call: ToolCallRecord }>()
 
 const expanded = ref(false)
 const collapsible = computed(() => ['read_file', 'list_files'].includes(props.call.name))
 
-const TOOL_ICONS: Record<string, string> = {
-  read_file: ICON_READ_FILE,
-  list_files: ICON_LIST_FILES,
-  create_file: ICON_CREATE_FILE,
-  write_file: ICON_WRITE_FILE,
-  patch_file: ICON_PATCH_FILE,
-  delete_file: ICON_DELETE_FILE,
-  rename_file: ICON_RENAME_FILE,
+const TOOL_ICONS: Record<string, Component> = {
+  read_file: FileText,
+  list_files: List,
+  create_file: FilePlus,
+  write_file: FileText,
+  patch_file: FileDiff,
+  delete_file: Trash,
+  rename_file: Pencil,
 }
 
-const icon = computed(() => TOOL_ICONS[props.call.name] ?? ICON_READ_FILE)
+const icon = computed(() => TOOL_ICONS[props.call.name] ?? FileText)
 
 // Status pill glyph. The pill is icon-only on the screen; the
 // aria-label carries the text meaning for screen readers.
-const statusPill = computed<{ icon: string; label: string; className: string }>(() => {
-  if (props.call.result.is_error) return { icon: ICON_STATUS_ERROR, label: 'error', className: 'ai-tool-pill-error' }
-  if (props.call.result.content) return { icon: ICON_STATUS_SUCCESS, label: 'ok', className: 'ai-tool-pill-ok' }
-  return { icon: ICON_STATUS_LOADING, label: 'pending', className: 'ai-tool-pill-pending' }
+const statusPill = computed<{ icon: Component; label: string; className: string }>(() => {
+  if (props.call.result.is_error) return { icon: CircleX, label: 'error', className: 'ai-tool-pill-error' }
+  if (props.call.result.content) return { icon: CircleCheck, label: 'ok', className: 'ai-tool-pill-ok' }
+  return { icon: Loader, label: 'pending', className: 'ai-tool-pill-pending' }
 })
 
 function stringInput(key: string): string {
@@ -91,22 +91,29 @@ const visibleContent = computed(() => {
 <template>
   <div class="ai-tool-card" :class="{ 'ai-tool-error': call.result.is_error, 'ai-tool-expanded': expanded }">
     <div class="ai-tool-header">
-      <span class="ai-tool-icon" v-html="icon" aria-hidden="true" />
+      <NIcon class="ai-tool-icon" aria-hidden="true">
+        <component :is="icon" />
+      </NIcon>
       <span class="ai-tool-name">{{ call.name }}</span>
       <span class="ai-tool-summary">{{ summary }}</span>
-      <button
+      <NButton
         v-if="call.result.content && collapsible"
-        type="button"
+        attr-type="button"
+        text
+        :bordered="false"
         class="ai-tool-toggle"
         :aria-expanded="expanded"
         @click="expanded = !expanded"
-      >{{ expanded ? '收起' : '展开' }}</button>
+      >{{ expanded ? '收起' : '展开' }}</NButton>
       <span
         class="ai-tool-pill"
         :class="statusPill.className"
         :aria-label="statusPill.label"
-        v-html="statusPill.icon"
-      />
+      >
+        <NIcon aria-hidden="true">
+          <component :is="statusPill.icon" />
+        </NIcon>
+      </span>
     </div>
     <pre
       v-if="call.result.content && (expanded || !collapsible)"

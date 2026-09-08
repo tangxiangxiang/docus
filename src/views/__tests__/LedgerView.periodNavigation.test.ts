@@ -99,8 +99,8 @@ function overviewFor(input: { scope: LedgerOverviewScope; anchorDate: string | u
 const wrappers: VueWrapper[] = []
 
 async function setLedgerDate(wrapper: VueWrapper, value: string): Promise<void> {
-  const picker = wrapper.findComponent(LedgerDatePicker)
-  if (!picker.exists()) throw new Error('Ledger dashboard date picker is not mounted')
+  const picker = wrapper.findAllComponents(LedgerDatePicker).find((candidate) => candidate.props('testId') === 'ledger-period-date')
+  if (!picker) throw new Error('Ledger dashboard date picker is not mounted')
   await picker.vm.$emit('update:modelValue', value)
 }
 
@@ -186,21 +186,23 @@ describe('Ledger historical period route coordination', () => {
     expect(wrapper.text()).toContain('截至 2026年8月20日')
   })
 
-  it('uses browser history for date changes and clears only the anchor when selecting today', async () => {
+  it('keeps the route anchor while the Today period card refreshes independently', async () => {
     const { router, wrapper } = await mountAt('/ledger?date=2026-08-20')
     api.getLedgerOverview.mockClear()
 
     await setLedgerDate(wrapper, '2026-08-19')
     await flushPromises()
     await flushPromises()
-    expect(router.currentRoute.value.query.date).toBe('2026-08-19')
+    expect(router.currentRoute.value.query.date).toBe('2026-08-20')
     expect(api.getLedgerOverview).toHaveBeenLastCalledWith({ scope: 'month', anchorDate: '2026-08-19' })
+    expect((wrapper.get('[data-testid="ledger-period-date"] input').element as HTMLInputElement).value).toBe('2026-08-19')
 
     await setLedgerDate(wrapper, '2026-09-05')
     await flushPromises()
     await flushPromises()
-    expect(router.currentRoute.value.query.date).toBeUndefined()
-    expect(api.getLedgerOverview).toHaveBeenLastCalledWith({ scope: 'month', anchorDate: undefined })
+    expect(router.currentRoute.value.query.date).toBe('2026-08-20')
+    expect(api.getLedgerOverview).toHaveBeenLastCalledWith({ scope: 'month', anchorDate: '2026-09-05' })
+    expect((wrapper.get('[data-testid="ledger-period-date"] input').element as HTMLInputElement).value).toBe('2026-09-05')
     expect(wrapper.find('[data-testid="ledger-return-today"]').exists()).toBe(false)
   })
 

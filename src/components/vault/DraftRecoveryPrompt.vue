@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
+import { NButton } from 'naive-ui'
 import type { DraftRecoveryItem } from '../../composables/vault/draft-recovery/useUnsavedDraftRecovery'
 import { useI18n } from '../../composables/useI18n'
 
@@ -81,70 +82,77 @@ function onKeydown(event: KeyboardEvent): void {
         </p>
 
         <div class="draft-recovery-actions">
-          <button
+          <NButton
             v-if="item.status === 'error'"
-            type="button"
+            attr-type="button"
+            :bordered="false"
             :disabled="busy"
             @click="emit('retry', item.recoveryId)"
           >
             {{ t('draft_recovery.retry') }}
-          </button>
+          </NButton>
           <template v-else-if="item.status === 'ready'">
-            <button
+            <NButton
               v-if="kind === 'baseline-match' && !isConflict"
-              type="button"
+              attr-type="button"
+              :bordered="false"
               :disabled="busy"
               @click="emit('restore', item.recoveryId)"
             >
               {{ t('draft_recovery.restore') }}
-            </button>
-            <button
+            </NButton>
+            <NButton
               v-if="(kind === 'divergent' || kind === 'unknown') && diskReady"
-              type="button"
+              attr-type="button"
+              :bordered="false"
               :disabled="busy"
               @click="emit('diff', item.recoveryId)"
             >
               {{ t('draft_recovery.view_diff') }}
-            </button>
-            <button
+            </NButton>
+            <NButton
               v-if="kind === 'unknown' && diskUnreadable"
-              type="button"
+              attr-type="button"
+              :bordered="false"
               :disabled="busy"
               @click="emit('retry', item.recoveryId)"
             >
               {{ t('draft_recovery.retry') }}
-            </button>
-            <button
+            </NButton>
+            <NButton
               v-if="kind !== 'baseline-match' || isConflict"
-              type="button"
+              attr-type="button"
+              :bordered="false"
               :disabled="busy"
               @click="emit('content', item.recoveryId)"
             >
               {{ t('draft_recovery.open_content') }}
-            </button>
-            <button
+            </NButton>
+            <NButton
               v-if="!isConflict && (kind === 'baseline-match' || kind === 'divergent' || kind === 'unknown')"
-              type="button"
+              attr-type="button"
+              :bordered="false"
               :disabled="busy"
               @click="emit('disk', item.recoveryId)"
             >
               {{ t('draft_recovery.use_disk') }}
-            </button>
-            <button
+            </NButton>
+            <NButton
               v-else
-              type="button"
+              attr-type="button"
+              :bordered="false"
               :disabled="busy"
               @click="emit('discard', item.recoveryId)"
             >
               {{ t('draft_recovery.discard') }}
-            </button>
+            </NButton>
           </template>
-          <button type="button" :disabled="busy" @click="later">
+          <NButton attr-type="button" :bordered="false" :disabled="busy" @click="later">
             {{ t('draft_recovery.later') }}
-          </button>
-          <button type="button" :disabled="busy" @click="emit('manage')">
+          </NButton>
+          <NButton attr-type="button" :bordered="false" :disabled="busy" @click="emit('manage')">
             {{ t('draft_recovery.open_list') }}
-          </button>
+          </NButton>
         </div>
       </section>
     </div>

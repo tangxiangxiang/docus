@@ -497,7 +497,7 @@ describe('HistoryPanel commit-first timeline', () => {
     const { wrapper } = mountPanel({ saveBeforeCommit })
     await flushPromises()
 
-    await wrapper.findAll('input[type="checkbox"]')[1]!.trigger('change')
+    await wrapper.findAll('[role="checkbox"]')[1]!.trigger('click')
     await wrapper.get('#history-version-message').setValue('  Update A  ')
     await wrapper.get('.history-create-version').trigger('click')
     await flushPromises()

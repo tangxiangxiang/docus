@@ -11,6 +11,7 @@
 // matches the rest of the app's destructive prompts instead of the
 // jarring jump to a native window.confirm.
 import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { NButton, NInput } from 'naive-ui'
 import { useAiHistory } from '../../composables/vault/useAiHistory'
 import { useConfirm } from '../../composables/useConfirm'
 import { useFocusTrap } from '../../composables/useFocusTrap'
@@ -45,6 +46,11 @@ function commitEdit() {
 function cancelEdit() {
   editingId.value = null
   editingTitle.value = ''
+}
+
+function onEditingKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Enter') commitEdit()
+  else if (event.key === 'Escape') cancelEdit()
 }
 
 async function onDelete(id: number, title: string) {
@@ -117,13 +123,15 @@ onBeforeUnmount(async () => {
       >
         <header class="ai-sp-header">
           <span class="ai-sp-title">{{ t('ai.sessions') }}</span>
-          <button
+          <NButton
             class="ai-sp-close"
-            type="button"
+            attr-type="button"
+            text
+            :bordered="false"
             :title="t('ai.close')"
             :aria-label="t('ai.close')"
             @click="emit('close')"
-          >×</button>
+          >×</NButton>
         </header>
 
         <ul class="ai-sp-list" role="listbox" :aria-label="t('ai.session_list')">
@@ -138,12 +146,15 @@ onBeforeUnmount(async () => {
           >
             <span class="ai-sp-dot" aria-hidden="true" />
             <template v-if="editingId === s.id">
-              <input
-                v-model="editingTitle"
-                class="ai-sp-input"
+              <NInput
+                v-model:value="editingTitle"
+                class="ai-sp-input-control"
+                type="text"
+                size="small"
+                :bordered="false"
+                :input-props="{ class: 'ai-sp-input' }"
                 autofocus
-                @keydown.enter="commitEdit"
-                @keydown.esc="cancelEdit"
+                @keydown="onEditingKeydown"
                 @blur="commitEdit"
                 @click.stop
               />
@@ -151,20 +162,24 @@ onBeforeUnmount(async () => {
             <template v-else>
               <span class="ai-sp-name">{{ s.title || t('ai.new_session') }}</span>
               <span class="ai-sp-actions" @click.stop>
-                <button
+                <NButton
                   class="ai-sp-action"
-                  type="button"
+                  attr-type="button"
+                  text
+                  :bordered="false"
                   :title="t('ai.rename')"
                   :aria-label="t('ai.rename')"
                   @click.stop="startEdit(s.id, s.title)"
-                >✎</button>
-                <button
+                >✎</NButton>
+                <NButton
                   class="ai-sp-action danger"
-                  type="button"
+                  attr-type="button"
+                  text
+                  :bordered="false"
                   :title="t('ai.delete')"
                   :aria-label="t('ai.delete')"
                   @click.stop="onDelete(s.id, s.title)"
-                >×</button>
+                >×</NButton>
               </span>
             </template>
           </li>
@@ -174,11 +189,12 @@ onBeforeUnmount(async () => {
         </ul>
 
         <footer class="ai-sp-footer">
-          <button
+          <NButton
             class="ai-sp-new"
-            type="button"
+            attr-type="button"
+            :bordered="false"
             @click="onNewSession"
-          >+ {{ t('ai.new_session') }}</button>
+          >+ {{ t('ai.new_session') }}</NButton>
         </footer>
       </div>
     </div>
@@ -310,7 +326,7 @@ onBeforeUnmount(async () => {
 }
 .ai-sp-action:hover { background: var(--bg-soft); color: var(--text); }
 .ai-sp-action.danger:hover { color: #e06060; }
-.ai-sp-input {
+.ai-sp-input-control :deep(.ai-sp-input) {
   flex: 1;
   min-width: 0;
   background: var(--bg);
@@ -321,6 +337,10 @@ onBeforeUnmount(async () => {
   font-size: 0.88rem;
   padding: 2px 6px;
   outline: none;
+}
+.ai-sp-input-control {
+  flex: 1;
+  min-width: 0;
 }
 .ai-sp-empty {
   padding: 18px 14px;

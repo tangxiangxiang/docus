@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import { NButton, NIcon } from 'naive-ui'
+import { History } from '@vicons/tabler'
 import type { FileHistoryCommitItem } from '../../composables/vault/useFileHistory'
-import { ICON_HISTORY } from './icons'
 
 defineProps<{
   commit: FileHistoryCommitItem
@@ -30,8 +31,10 @@ function onKeydown(event: KeyboardEvent): void {
 </script>
 
 <template>
-  <button
-    type="button"
+  <NButton
+    attr-type="button"
+    text
+    :bordered="false"
     class="history-file-commit-row"
     :class="{ selected }"
     data-history-row
@@ -46,12 +49,12 @@ function onKeydown(event: KeyboardEvent): void {
     @keydown="onKeydown"
     @contextmenu.prevent="canWithdraw && emit('contextmenu', $event)"
   >
-    <span class="history-commit-marker" aria-hidden="true" v-html="ICON_HISTORY" />
+    <NIcon class="history-commit-marker" aria-hidden="true"><History /></NIcon>
     <span class="history-row-copy">
       <span class="history-row-title">{{ commit.message }}</span>
       <span class="history-row-meta">
         {{ timeLabel }}
       </span>
     </span>
-  </button>
+  </NButton>
 </template>

@@ -1,6 +1,6 @@
 # Icon System
 
-This page documents the current legacy contract and the approved target contract for
+This page documents the approved target contract and the completed Phase 8 cleanup for
 functional icons. The product and implementation plans are the record of the Icon
 Foundation Design Amendment.
 
@@ -103,66 +103,37 @@ The functional-family rule does not apply to:
 - Mermaid / Markmap output, ECharts output, chart SVG / canvas, and other
   renderer-owned graphics;
 - Markdown / user-authored / generated content SVG;
-- legacy `src/components/vault/icons.ts` exports that still have active consumers
-  during incremental migration.
+- historical references to the former legacy icon source in archived design records;
+  these records do not authorize new production consumers.
 
 Each exception must have an identifiable owner and must not silently become a new
 functional icon vocabulary.
 
-## Current legacy contract (migration only)
+## Phase 8 migration closure
 
-`src/components/vault/icons.ts` is currently a legacy source used by existing
-surfaces. Its contract remains protected by
-`src/components/vault/__tests__/icons.test.ts` and the legacy portions of
-`scripts/icon-lint.ts` until the consumers migrate.
+The Vault/Note migration reached zero production consumers of the former
+`src/components/vault/icons.ts` module. Phase 8 therefore removed that module, its
+contract test, and the old `src/views/IconPreviewView.vue` route. Functional icons in
+current production surfaces now use `NIcon` with the approved `@vicons/tabler` family.
 
-Unless an icon is an explicit legacy exception, legacy exports use:
+`npm run lint:icons` and its strict variant remain active governance checks. They scan
+current production SVG ownership and reject new hand-written functional SVGs or an
+unapproved icon family; brand artwork, renderer output, and generated/user content
+remain explicitly owned exceptions.
 
-| Attribute | Required value |
-| --- | --- |
-| `viewBox` | `0 0 16 16` |
-| `width`, `height` | `14`, `14` |
-| `fill` | `none` |
-| `stroke` | `currentColor` |
-| `stroke-width` | `1.5` |
-| `stroke-linecap`, `stroke-linejoin` | `round`, `round` |
-| `aria-hidden` | `true` |
-| `focusable` | `false` |
+The lint implementation classifies brand, generated, user-content, and third-party
+renderer SVG explicitly, and does not inspect Tabler's dependency-owned viewBox, path,
+or stroke geometry.
 
-Filled presence/state glyphs and toolbar surface glyphs keep their existing tested
-allowlists. Do not add new legacy exports for a new surface unless the matching
-surface is not yet migrated and the exception is documented in review. Critical bug
-fixes, semantic corrections, and migration-required temporary compatibility are the
-only reasons to touch the legacy vocabulary; new generic functional glyphs belong to
-Tabler.
-
-## Lint and preview transition
-
-Before Phase 8, `npm run lint:icons`, the legacy contract test, and
-`src/views/IconPreviewView.vue` continue to protect existing `icons.ts` consumers.
-They are migration safety nets, not permission to expand the legacy system.
-
-The existing brand-constellation geometry finding remains a known classification debt;
-this amendment does not modify `scripts/icon-lint.ts`. Future governance should classify
-brand, generated, user-content, and third-party renderer SVG explicitly, and should not
-inspect Tabler's dependency-owned viewBox, path, or stroke geometry.
-
-The long-term lint job is governance-oriented:
+The lint job is governance-oriented:
 
 ```text
 new functional SVG in business code  → violation
 unapproved icon-family import         → violation
 approved @vicons/tabler import       → allowed
 brand/generated/user SVG             → documented exception
-legacy icons.ts                      → migration-only exception
 ```
-
-Phase 8 may remove the legacy geometry checks, old preview, and legacy contract test
-after `icons.ts` has no consumers. The approved-family rule remains.
 
 ## Source references
 
-- [Icon exports](../../src/components/vault/icons.ts)
-- [Legacy contract tests](../../src/components/vault/__tests__/icons.test.ts)
 - [Repository lint](../../scripts/icon-lint.ts)
-- [Development preview](../../src/views/IconPreviewView.vue)

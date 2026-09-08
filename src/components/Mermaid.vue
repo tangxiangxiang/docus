@@ -29,6 +29,7 @@
 // `stroke` rules).
 
 import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue'
+import { NButton } from 'naive-ui'
 import { useTheme, type Theme } from '../composables/useTheme'
 import { runMermaidExclusive } from '../lib/mermaidRuntime'
 
@@ -619,7 +620,10 @@ watch(isLocked, () => {
              state via attribute selector; currently the button
              inherits from `.mermaid-toolbar button` and only the
              icon changes. -->
-        <button
+        <NButton
+          attr-type="button"
+          text
+          :bordered="false"
           @click="toggleLock"
           :title="isLocked ? '解锁后可拖动' : '锁定后不可拖动'"
           :aria-label="isLocked ? '解锁后可拖动' : '锁定后不可拖动'"
@@ -634,31 +638,55 @@ watch(isLocked, () => {
             <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
             <path d="M7 11V7a5 5 0 0 1 9.9-1" />
           </svg>
-        </button>
-        <button @click="zoomOut" title="缩小" aria-label="缩小">
+        </NButton>
+        <NButton
+          attr-type="button"
+          text
+          :bordered="false"
+          @click="zoomOut"
+          title="缩小"
+          aria-label="缩小"
+        >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="11" cy="11" r="8" />
             <line x1="21" y1="21" x2="16.65" y2="16.65" />
             <line x1="8" y1="11" x2="14" y2="11" />
           </svg>
-        </button>
-        <button @click="zoomIn" title="放大" aria-label="放大">
+        </NButton>
+        <NButton
+          attr-type="button"
+          text
+          :bordered="false"
+          @click="zoomIn"
+          title="放大"
+          aria-label="放大"
+        >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="11" cy="11" r="8" />
             <line x1="21" y1="21" x2="16.65" y2="16.65" />
             <line x1="11" y1="8" x2="11" y2="14" />
             <line x1="8" y1="11" x2="14" y2="11" />
           </svg>
-        </button>
-        <button @click="resetView" title="重置视图" aria-label="重置视图">
+        </NButton>
+        <NButton
+          attr-type="button"
+          text
+          :bordered="false"
+          @click="resetView"
+          title="重置视图"
+          aria-label="重置视图"
+        >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
             <path d="M3 3v5h5" />
             <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
             <path d="M16 16h5v5" />
           </svg>
-        </button>
-        <button
+        </NButton>
+        <NButton
+          attr-type="button"
+          text
+          :bordered="false"
           @click="toggleFullscreen"
           :title="isFullscreen ? '退出全屏' : '全屏'"
           :aria-label="isFullscreen ? '退出全屏' : '全屏'"
@@ -669,7 +697,7 @@ watch(isLocked, () => {
           <svg v-else width="16" height="16" viewBox="0 0 1024 1024" fill="currentColor">
             <path d="M128 384h85.33V213.33H384V128H128zM640 128v85.33h170.67V384H896V128zM810.67 810.67H640V896h256V640h-85.33zM213.33 640H128v256h256v-85.33H213.33z" />
           </svg>
-        </button>
+        </NButton>
       </div>
     </div>
   </div>

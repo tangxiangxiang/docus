@@ -398,7 +398,7 @@ test('Ledger transaction entry remains keyboard-usable in a narrow viewport', as
   await expect(page.getByRole('dialog')).toBeHidden()
 })
 
-test('historical period navigation keeps one anchor across periods, reload, and browser history', async ({ page, request }) => {
+test('historical period navigation keeps the route anchor while period cards refresh independently', async ({ page, request }) => {
   const fixtures = await ensurePeriodNavigationFixtures(request)
   const today = Temporal.Now.plainDateISO(fixtures.timezone)
   const anchor = today.with({ day: 1 }).subtract({ months: 1 }).add({ days: 10 })
@@ -474,20 +474,15 @@ test('historical period navigation keeps one anchor across periods, reload, and 
   await page.getByTestId('ledger-period-date-control-today').hover()
   await periodDate.fill(laterDateValue)
   await periodDate.press('Tab')
-  await expect(page).toHaveURL(new RegExp(`/ledger\\?date=${laterDateValue}$`))
-  await expect(ledgerDateInput(page, 'ledger-period-date')).toHaveValue(laterDateValue)
-  await expect(page.getByTestId('ledger-recent-transactions')).toContainText(afterAnchorPayee)
-
-  await page.goBack()
   await expect(page).toHaveURL(new RegExp(`/ledger\\?date=${anchorDate}$`))
-  await expect(ledgerDateInput(page, 'ledger-period-date')).toHaveValue(anchorDate)
+  await expect(ledgerDateInput(page, 'ledger-period-date')).toHaveValue(laterDateValue)
   await expect(page.getByTestId('ledger-recent-transactions')).not.toContainText(afterAnchorPayee)
 
   await page.getByTestId('ledger-period-date-control-today').hover()
   await periodDate.fill(today.toString())
   await periodDate.press('Tab')
-  await expect(page).toHaveURL(/\/ledger$/)
+  await expect(page).toHaveURL(new RegExp(`/ledger\\?date=${anchorDate}$`))
   await expect(page.getByTestId('ledger-return-today')).toHaveCount(0)
   await expect(page.getByTestId('ledger-cashflow-trend-canvas')).toBeVisible()
-  await expect(trendRows.last()).toContainText(`${today.year}年${today.month}月`)
+  await expect(trendRows.last()).toContainText(`${anchor.year}年${anchor.month}月`)
 })

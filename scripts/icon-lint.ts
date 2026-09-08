@@ -27,12 +27,15 @@ const SRC = join(ROOT, 'src')
 const args = new Set(process.argv.slice(2))
 const STRICT = args.has('--strict')
 const ALLOW_FILES = new Set<string>()
-// Files that legitimately mention <svg>/<text> as strings without
-// actually declaring icons. These are always excluded; consumers can
-// add more via --allow-file.
+// Files that legitimately contain non-icon SVG sources or SVG fixtures.
+// These are always excluded; consumers can add more via --allow-file.
 const DEFAULT_ALLOW_FILES = new Set<string>([
-  'src/components/vault/__tests__/icons.test.ts',
+  'src/components/NavBar.vue',
   'src/components/__tests__/Mermaid.test.ts',
+  'src/lib/__tests__/mermaidRuntime.test.ts',
+  'src/lib/__tests__/pdf-readiness.test.ts',
+  'src/lib/__tests__/pdfExport.test.ts',
+  'src/lib/markmapSecurity.ts',
 ])
 for (const arg of process.argv.slice(2)) {
   if (arg.startsWith('--allow-file=')) {
@@ -104,12 +107,6 @@ function checkFile(filePath: string): { violations: Violation[]; svgCount: numbe
   const source = readFileSync(filePath, 'utf8')
   const violations: Violation[] = []
   let svgCount = 0
-  // icons.ts is the source of truth for the icon module; its fill/stroke
-  // contract is enforced by src/components/vault/__tests__/icons.test.ts
-  // (including the FILLED_ICONS exception). Don't re-report its soft
-  // attribute drift here.
-  const isIconModule = rel === 'src/components/vault/icons.ts'
-
   for (const openMatch of source.matchAll(SVG_OPEN)) {
     const index = openMatch.index ?? 0
     svgCount += 1
@@ -146,18 +143,16 @@ function checkFile(filePath: string): { violations: Violation[]; svgCount: numbe
       })
     }
 
-    if (!isIconModule) {
-      for (const [key, expected] of Object.entries(SHARED_ATTRIBUTES)) {
-        const actual = attrMap.get(key)
-        if (actual !== undefined && actual !== expected) {
-          violations.push({
-            file: rel,
-            line,
-            rule: 'shared-attributes',
-            message: `${key}="${actual}" should be "${expected}"`,
-            severity: 'soft',
-          })
-        }
+    for (const [key, expected] of Object.entries(SHARED_ATTRIBUTES)) {
+      const actual = attrMap.get(key)
+      if (actual !== undefined && actual !== expected) {
+        violations.push({
+          file: rel,
+          line,
+          rule: 'shared-attributes',
+          message: `${key}="${actual}" should be "${expected}"`,
+          severity: 'soft',
+        })
       }
     }
 

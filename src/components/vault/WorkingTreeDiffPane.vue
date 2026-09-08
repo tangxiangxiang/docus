@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { NButton } from 'naive-ui'
 import type { WorkingTreeDiff } from '../../composables/vault/useWorkingTreeDiffs'
 import { useI18n } from '../../composables/useI18n'
 import HistoryUnifiedDiff from './HistoryUnifiedDiff.vue'
@@ -44,7 +45,7 @@ defineExpose({ focusViewer })
     </div>
     <div v-else-if="diff.status === 'error'" class="history-diff-state history-diff-error is-error" role="alert">
       <span>{{ diff.error || t('history.working_tree_diff_load_failed') }}</span>
-      <button type="button" @click="emit('retry', diff.tabId)">{{ t('history.retry') }}</button>
+      <NButton attr-type="button" :bordered="false" @click="emit('retry', diff.tabId)">{{ t('history.retry') }}</NButton>
     </div>
     <div v-else-if="!diff.diff || diff.diff.ops.length === 0" class="history-diff-state">
       {{ t('history.no_working_tree_changes') }}

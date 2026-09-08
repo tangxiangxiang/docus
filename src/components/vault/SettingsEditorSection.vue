@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from '../../composables/useI18n'
-import { NButton, NCheckbox, NInput, NSelect, type SelectOption } from 'naive-ui'
+import { NButton, NCheckbox, NInput, NInputNumber, NSelect, type SelectOption } from 'naive-ui'
 import { useEditorPreferences } from '../../composables/vault/useEditorPreferences'
 import { useFileTreePreferences } from '../../composables/vault/useFileTreePreferences'
 
@@ -37,11 +37,23 @@ const tabSizeOptions = computed<SelectOption[]>(() => [2, 4].map((count) => ({
         <div class="settings-field-grid">
           <label class="settings-field">
             <span class="settings-field-label">{{ t('settings.font_size') }}</span>
-            <input v-model.number="editorPreferences.fontSize.value" type="number" min="11" max="24" />
+            <NInputNumber
+              v-model:value="editorPreferences.fontSize.value"
+              size="medium"
+              :min="11"
+              :max="24"
+              :aria-label="t('settings.font_size')"
+            />
           </label>
           <label class="settings-field">
             <span class="settings-field-label">{{ t('settings.line_height') }}</span>
-            <input v-model.number="editorPreferences.lineHeight.value" type="number" min="16" max="40" />
+            <NInputNumber
+              v-model:value="editorPreferences.lineHeight.value"
+              size="medium"
+              :min="16"
+              :max="40"
+              :aria-label="t('settings.line_height')"
+            />
           </label>
           <label class="settings-field">
             <span class="settings-field-label">{{ t('settings.tab_width') }}</span>
@@ -49,7 +61,13 @@ const tabSizeOptions = computed<SelectOption[]>(() => [2, 4].map((count) => ({
           </label>
           <label class="settings-field">
             <span class="settings-field-label">{{ t('settings.wrap_column') }}</span>
-            <input v-model.number="editorPreferences.wrapColumn.value" type="number" min="60" max="160" />
+            <NInputNumber
+              v-model:value="editorPreferences.wrapColumn.value"
+              size="medium"
+              :min="60"
+              :max="160"
+              :aria-label="t('settings.wrap_column')"
+            />
           </label>
           <label class="settings-field">
             <span class="settings-field-label">{{ t('settings.font_family') }}</span>

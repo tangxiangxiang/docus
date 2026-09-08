@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import { NButton, NIcon } from 'naive-ui'
 import type { Message } from '../../lib/ai-api'
-import { ICON_AI } from './icons'
+import { Stars } from '@vicons/tabler'
 import AiToolCallCard from './AiToolCallCard.vue'
 import AiMarkdown from './AiMarkdown.vue'
 import { useI18n } from '../../composables/useI18n'
@@ -21,7 +22,7 @@ const { t } = useI18n()
   <div class="ai-messages" role="log" aria-live="polite">
     <div v-if="messages.length === 0" class="ai-empty-chat">
       <div class="ai-empty-head">
-        <span class="ai-empty-icon" v-html="ICON_AI" aria-hidden="true" />
+        <NIcon class="ai-empty-icon" aria-hidden="true"><Stars /></NIcon>
         <div>
           <div class="ai-empty-title">
             {{ t(currentPath ? 'ai.ask_note' : 'ai.ask_vault') }}
@@ -32,13 +33,14 @@ const { t } = useI18n()
         </div>
       </div>
       <div class="ai-quick-prompts" :aria-label="t('ai.quick_prompts')">
-        <button
+        <NButton
           v-for="prompt in quickPrompts"
           :key="prompt.label"
-          type="button"
+          attr-type="button"
+          :bordered="false"
           class="ai-quick-prompt"
           @click="emit('prompt', prompt.text)"
-        >{{ prompt.label }}</button>
+        >{{ prompt.label }}</NButton>
       </div>
     </div>
 
@@ -52,9 +54,8 @@ const { t } = useI18n()
       <div
         v-if="message.role === 'assistant'"
         class="ai-avatar"
-        v-html="ICON_AI"
         aria-hidden="true"
-      />
+      ><NIcon aria-hidden="true"><Stars /></NIcon></div>
       <div class="ai-bubble">
         <AiMarkdown
           v-if="message.role === 'assistant' && message.content && message.id !== 0"

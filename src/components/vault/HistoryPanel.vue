@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, toRef, watch } from 'vue'
+import { NButton } from 'naive-ui'
 import type { PostSummary } from '../../lib/api'
 import type { HistoryState } from '../../composables/vault/useHistory'
 import type { HistoryCommitState } from '../../composables/vault/useHistoryCommit'
@@ -269,7 +270,7 @@ onBeforeUnmount(closeCommitMenu)
         </div>
         <div v-if="h.logError.value" class="history-error" role="alert">
           <span>{{ logErrorLabel }}</span>
-          <button type="button" @click="h.refreshLog()">{{ t('history.retry') }}</button>
+          <NButton attr-type="button" :bordered="false" @click="h.refreshLog()">{{ t('history.retry') }}</NButton>
         </div>
         <div
           class="history-timeline-scroll"
@@ -328,9 +329,9 @@ onBeforeUnmount(closeCommitMenu)
           :aria-label="t(props.fileHistory?.target.value ? 'history.latest_version_actions' : 'history.latest_commit_actions')"
           :style="{ left: commitMenuX + 'px', top: commitMenuY + 'px' }"
         >
-          <button type="button" role="menuitem" class="danger" @click="withdrawCommit">
+          <NButton attr-type="button" :bordered="false" role="menuitem" class="danger" @click="withdrawCommit">
             {{ t('history.withdraw_latest') }}
-          </button>
+          </NButton>
         </div>
       </Teleport>
     </template>

@@ -20,11 +20,6 @@ const devRoutes = import.meta.env.DEV
         component: () => import('../views/MarkdownTestView.vue'),
         meta: { fullWidth: true, publicDevPreview: true },
       },
-      {
-        path: '/__icon-preview',
-        component: () => import('../views/IconPreviewView.vue'),
-        meta: { fullWidth: true, publicDevPreview: true },
-      },
     ]
   : []
 

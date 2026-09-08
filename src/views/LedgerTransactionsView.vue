@@ -298,7 +298,16 @@ function onRecoveryResolved(): void {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="transaction in visibleTransactions" :key="transaction.id" class="ledger-transaction-row" :data-testid="`ledger-transaction-row-${transaction.id}`" @click="inspect(transaction)">
+          <tr
+            v-for="transaction in visibleTransactions"
+            :key="transaction.id"
+            class="ledger-transaction-row"
+            :data-testid="`ledger-transaction-row-${transaction.id}`"
+            tabindex="0"
+            @click="inspect(transaction)"
+            @keydown.enter="inspect(transaction)"
+            @keydown.space.prevent="inspect(transaction)"
+          >
             <td>
               <span class="ledger-table-primary"><strong>{{ transactionTitle(transaction) }}</strong><small>{{ transactionMeta(transaction) }}</small></span>
             </td>

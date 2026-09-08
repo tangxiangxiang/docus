@@ -1379,7 +1379,7 @@ main.container.auth-page-shell {
   line-height: 1.4;
   transition: border-color 120ms ease, box-shadow 120ms ease;
 }
-.history-version-composer textarea:has(+ .history-generate-message) { padding-right: 76px; }
+.history-version-composer .history-version-message-input { padding-right: 76px; }
 .history-version-composer textarea::placeholder { color: var(--vs-text-3); opacity: 0.75; }
 .history-version-composer textarea:focus {
   border-color: color-mix(in srgb, var(--vs-accent) 72%, var(--vs-border));
@@ -1404,8 +1404,8 @@ main.container.auth-page-shell {
   font-size: 0.66rem;
   cursor: pointer;
 }
-.history-generate-message > span:first-child { display: inline-flex; flex: 0 0 14px; }
-.history-generate-message > span:first-child :where(svg) { display: block; width: 14px; height: 14px; }
+.history-generate-message-icon { display: inline-flex; flex: 0 0 14px; }
+.history-generate-message-icon :where(svg) { display: block; width: 14px; height: 14px; }
 .history-generate-message:hover:not(:disabled) { background: var(--vs-hover-bg); color: var(--vs-accent); }
 .history-generate-message:focus-visible { outline: 1px solid color-mix(in srgb, var(--vs-accent) 72%, transparent); outline-offset: 1px; }
 .history-generate-message:disabled { cursor: default; opacity: 0.5; }
@@ -2602,56 +2602,27 @@ main.container.auth-page-shell {
   font-weight: 500;
   line-height: 1.5;
 }
-.settings-field > input,
 .settings-field > .n-input,
+.settings-field > .n-input-number,
 .settings-field > .n-select,
 .settings-input-wrap {
   grid-column: 2;
   grid-row: 1;
   min-width: 0;
 }
-.settings-field > input,
 .settings-input-wrap > .n-input {
   width: 100%;
   min-width: 0;
 }
 .settings-field > .n-input,
+.settings-field > .n-input-number,
 .settings-field > .n-select {
   width: 100%;
   min-width: 0;
 }
-.settings-field > input {
-  width: 100%;
-  min-width: 0;
-  height: 32px;
-  min-height: 32px;
-  box-sizing: border-box;
-  border: 1px solid var(--settings-border-strong);
-  border-radius: 6px;
-  padding: 0 10px;
-  color: var(--settings-text);
-  background: var(--settings-control);
-  font: inherit;
-  font-size: 13px;
-  line-height: 30px;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
-}
-.settings-field > input::placeholder,
 .settings-input-wrap > .n-input input::placeholder {
   color: color-mix(in srgb, var(--settings-muted) 82%, transparent);
   opacity: 1;
-}
-.settings-field > input:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--settings-muted) 76%, transparent);
-}
-.settings-field > input:focus {
-  outline: none;
-  border-color: var(--settings-accent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--settings-accent) 20%, transparent);
-}
-.settings-field > input:disabled {
-  cursor: not-allowed;
-  opacity: 0.68;
 }
 .settings-input-wrap {
   position: relative;
@@ -2682,18 +2653,6 @@ main.container.auth-page-shell {
   border-radius: 50%;
   font-size: 0.6rem;
   line-height: 1;
-}
-.settings-field > input[type='checkbox'] {
-  width: 14px;
-  min-width: 14px;
-  height: 14px;
-  min-height: 14px;
-  justify-self: start;
-  align-self: center;
-  margin: 0;
-  padding: 0;
-  accent-color: var(--settings-accent);
-  cursor: pointer;
 }
 .settings-field-checkbox {
   align-items: center;
@@ -2815,8 +2774,9 @@ main.container.auth-page-shell {
     grid-row: auto;
     padding-top: 0;
   }
-  .settings-field > input,
-  .settings-field > select,
+  .settings-field > .n-input,
+  .settings-field > .n-input-number,
+  .settings-field > .n-select,
   .settings-input-wrap {
     grid-column: 1;
     grid-row: auto;
@@ -2825,7 +2785,7 @@ main.container.auth-page-shell {
     grid-template-columns: 22px minmax(0, 1fr);
     column-gap: 10px;
   }
-  .settings-field-checkbox > input[type='checkbox'] {
+  .settings-field-checkbox > .n-checkbox {
     grid-column: 1;
     grid-row: 1;
   }
@@ -3055,6 +3015,10 @@ main.container.auth-page-shell {
   line-height: normal;
   box-sizing: border-box;
 }
+.vault .file-tree header .search-input-control {
+  flex: 1 1 120px;
+  min-width: 0;
+}
 /* TagPanel search input prefers a 0px flex-basis so the input can
    shrink all the way down on narrow sidebars (≈150px) without
    squeezing out the clear-x button or the visible/total count.
@@ -3062,6 +3026,10 @@ main.container.auth-page-shell {
    minimum to coexist with. */
 .vault .tag-panel .tag-filter-input {
   flex: 1 1 0;
+}
+.vault .tag-panel .tag-filter-control {
+  flex: 1 1 0;
+  min-width: 0;
 }
 .vault .file-tree header .search-input::placeholder,
 .vault .tag-panel .tag-filter-input::placeholder {
@@ -5365,6 +5333,10 @@ main.container.auth-page-shell {
   overflow-y: hidden;
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
+}
+.ai-panel .ai-input-control {
+  width: 100%;
+  min-width: 0;
 }
 .ai-panel .ai-input::-webkit-scrollbar { width: 0; background: transparent; }
 .ai-panel .ai-input::placeholder { color: var(--vs-text-3); }

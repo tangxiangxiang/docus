@@ -7,13 +7,10 @@
    dirty files in the working tree. The count comes from the
    vault-scoped useHistory instance (which subscribes to the file-change bus)
    so the badge updates live as the user saves tabs. */
+import { NButton, NIcon } from 'naive-ui'
+import { Folder, GitBranch, Tag } from '@vicons/tabler'
 import { useHistory } from '../../composables/vault/useHistory.js'
 import { useI18n } from '../../composables/useI18n'
-import {
-  ICON_AB_GIT_HISTORY,
-  ICON_FOLDER,
-  ICON_TAG,
-} from './icons'
 export type SidePanel = 'files' | 'tags' | 'history' | 'recovery'
 
 defineProps<{ activePanel: SidePanel | null }>()
@@ -27,7 +24,10 @@ const { t } = useI18n()
 
 <template>
   <aside class="activity-bar" :aria-label="t('activity.label')">
-    <button
+    <NButton
+      attr-type="button"
+      text
+      :bordered="false"
       class="ab-btn"
       :class="{ active: activePanel === 'files' }"
       :title="t('activity.explorer')"
@@ -35,9 +35,12 @@ const { t } = useI18n()
       :aria-pressed="activePanel === 'files'"
       @click="emit('select-panel', 'files')"
     >
-      <span class="ab-btn-icon" v-html="ICON_FOLDER" aria-hidden="true" />
-    </button>
-    <button
+      <NIcon class="ab-btn-icon" aria-hidden="true"><Folder /></NIcon>
+    </NButton>
+    <NButton
+      attr-type="button"
+      text
+      :bordered="false"
       class="ab-btn"
       :class="{ active: activePanel === 'tags' }"
       :title="t('activity.tags')"
@@ -45,9 +48,12 @@ const { t } = useI18n()
       :aria-pressed="activePanel === 'tags'"
       @click="emit('select-panel', 'tags')"
     >
-      <span class="ab-btn-icon" v-html="ICON_TAG" aria-hidden="true" />
-    </button>
-    <button
+      <NIcon class="ab-btn-icon" aria-hidden="true"><Tag /></NIcon>
+    </NButton>
+    <NButton
+      attr-type="button"
+      text
+      :bordered="false"
       class="ab-btn"
       :class="{ active: activePanel === 'history' }"
       :title="t('history.activity_label')"
@@ -55,12 +61,12 @@ const { t } = useI18n()
       :aria-pressed="activePanel === 'history'"
       @click="emit('select-panel', 'history')"
     >
-      <span class="ab-btn-icon" v-html="ICON_AB_GIT_HISTORY" aria-hidden="true" />
+      <NIcon class="ab-btn-icon" aria-hidden="true"><GitBranch /></NIcon>
       <span
         v-if="h.dirtyCount.value > 0"
         class="ab-badge"
         :aria-label="t('history.changed_files', { count: h.dirtyCount.value })"
       >{{ h.dirtyCount.value }}</span>
-    </button>
+    </NButton>
   </aside>
 </template>

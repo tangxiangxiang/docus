@@ -4,27 +4,27 @@ Use icons by meaning, not by shape alone. New functional icons come from the sin
 approved `@vicons/tabler` family through `NIcon`; this page defines stable semantic
 distinctions so component changes do not make the documentation stale.
 
-During incremental migration, the source file `src/components/vault/icons.ts` is a
-legacy inventory for existing consumers only. New surfaces must not add to it by
-default.
+The former `src/components/vault/icons.ts` inventory was removed after the Vault/Note
+migration reached zero production consumers. Historical `ICON_*` names in archived
+plans describe semantics only; current production code uses Tabler components through
+`NIcon`.
 
 ## Semantic mapping authority
 
-`ICON_*` names are the current Legacy Vocabulary, not a second target icon family. The
-semantic distinction remains owned by Docus while the glyph implementation changes one
-surface at a time:
+`ICON_*` names are historical semantic vocabulary, not a second target icon family. The
+semantic distinction remains owned by Docus while current glyphs are implemented by the
+approved Tabler family:
 
 ```text
 Legacy: ICON_* export
 Target: approved @vicons/tabler glyph rendered by NIcon
 ```
 
-Do not rename every legacy constant in one pass or infer a Tabler export from a similar
-name. Each migration must verify the actual TypeScript export from the approved family at
-the Phase 0 candidate version (`@vicons/tabler@0.13.0` for the current spike), review the
-meaning at the consuming surface, and preserve the existing accessible label. The family
-name is the product contract; the candidate version is an implementation detail that can
-change through dependency and regression review.
+Do not infer a Tabler export from a similar name. Each new mapping must verify the actual
+TypeScript export from the installed approved family, review the meaning at the
+consuming surface, and preserve the existing accessible label. The family name is the
+product contract; the package version is an implementation detail that can change
+through dependency and regression review.
 
 ## Target functional vocabulary
 
@@ -66,7 +66,8 @@ label at the consuming surface during its migration. No second icon family is al
 | AI panel | AI identity, conversation actions, tool-specific icons, tool status |
 | History timeline | Git/version and disclosure icons |
 
-Exact call sites are best found with `rg 'ICON_<NAME>' src`; they can change more often than the semantic contract.
+Current call sites are best found by locating the corresponding Tabler component and
+`NIcon`; semantic names in this document remain stable even when glyph exports change.
 
 ## Required distinctions
 
@@ -121,7 +122,10 @@ Brand / Domain exception.
 
 ## Reserved vocabularies
 
-Some exports describe coherent future controls or file types and have no current consumer. Treat them as design vocabulary, not user-facing feature documentation. Before using one, confirm that its existing metaphor still fits and add an accessible labeled control.
+Some historical semantic names describe coherent future controls or file types and have
+no current consumer. Treat them as design vocabulary, not user-facing feature
+documentation. Before using one, confirm that its metaphor still fits and choose an
+actual approved Tabler export with an accessible labeled control.
 
 ## Review checklist
 
@@ -133,7 +137,7 @@ Some exports describe coherent future controls or file types and have no current
 - Hover, focus, active, disabled, and danger states come from the consuming component.
 - Theme and status color flow through `currentColor` or CSS tokens.
 - No new hand-written functional SVG or copied path was added.
-- Existing legacy icon contract tests pass, and no new repository-lint findings are
-  introduced beyond documented brand/generated exceptions in [Icon System](icon-system.md).
+- The current icon lint passes, with only documented brand/generated/renderer
+  exceptions in [Icon System](icon-system.md).
 
 See [Icon System](icon-system.md) for geometry and exception rules.

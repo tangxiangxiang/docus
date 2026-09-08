@@ -28,11 +28,11 @@ describe('HistoryChangesPanel', () => {
     expect(wrapper.text()).toContain('Modified')
     expect(wrapper.text()).toContain('New')
     expect(wrapper.text()).toContain('Deleted')
-    expect(wrapper.findAll('input[type="checkbox"]')).toHaveLength(3)
-    expect(wrapper.get('input').attributes('aria-label')).toContain('inbox/modified.md')
+    expect(wrapper.findAll('[role="checkbox"]')).toHaveLength(3)
+    expect(wrapper.get('[role="checkbox"]').attributes('aria-label')).toContain('inbox/modified.md')
     expect(wrapper.get('#history-version-message').attributes('aria-label')).toBe('Version message')
 
-    await wrapper.findAll('input[type="checkbox"]')[1]!.trigger('change')
+    await wrapper.findAll('[role="checkbox"]')[1]!.trigger('click')
     expect(wrapper.emitted('toggle')?.[0]).toEqual(['inbox/new.md'])
   })
 
@@ -51,7 +51,7 @@ describe('HistoryChangesPanel', () => {
     await wrapper.get('.history-change-open').trigger('click')
     expect(wrapper.emitted('open-diff')?.[0]).toEqual([entries[0]])
 
-    await wrapper.find('input[type="checkbox"]').trigger('change')
+    await wrapper.find('[role="checkbox"]').trigger('click')
     expect(wrapper.emitted('toggle')?.[0]).toEqual(['inbox/modified.md'])
     expect(wrapper.emitted('open-diff')).toHaveLength(1)
 
@@ -241,7 +241,7 @@ describe('HistoryChangesPanel', () => {
     expect(wrapper.get('[role="status"]').text()).toBe('正在创建版本…')
     expect(wrapper.get('[role="alert"]').text()).toBe('提交失败')
     expect(wrapper.get('.history-create-version').text()).toBe('正在创建版本…')
-    expect(wrapper.findAll('input:disabled')).toHaveLength(3)
+    expect(wrapper.findAll('[role="checkbox"][aria-disabled="true"]')).toHaveLength(3)
   })
 
   it('exposes an explicit retry when real-index repair is pending', async () => {
