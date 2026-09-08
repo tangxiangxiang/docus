@@ -3,9 +3,12 @@ import { describe, expect, it } from 'vitest'
 import {
   formatLedgerDateTime,
   formatLedgerPeriodLabel,
+  instantFromLedgerDate,
   instantFromLocalDateTime,
   localDateTimeInputFromInstant,
+  openingDateInputFromInstant,
 } from '../time'
+import { parseLedgerRouteDate } from '../periodNavigation'
 
 describe('Ledger timezone presentation boundary', () => {
   it('round-trips a Ledger-local datetime through a UTC instant', () => {
@@ -45,5 +48,36 @@ describe('Ledger timezone presentation boundary', () => {
 
     expect(formatLedgerPeriodLabel('today', instant, instant + 86_400_000, 'Asia/Shanghai')).toBe('2026年9月5日')
     expect(formatLedgerPeriodLabel('today', instant, instant + 86_400_000, 'America/Los_Angeles')).toBe('2026年9月4日')
+  })
+
+  it('keeps canonical date-only values stable for representative calendar dates', () => {
+    for (const date of ['2026-01-01', '2026-02-28', '2026-12-31']) {
+      expect(parseLedgerRouteDate(date)).toBe(date)
+      const start = instantFromLedgerDate(date, 'Asia/Shanghai', 'start')
+      expect(openingDateInputFromInstant(start, 'Asia/Shanghai')).toBe(date)
+    }
+
+    expect(parseLedgerRouteDate('')).toBeNull()
+  })
+
+  it('uses Ledger-zone boundaries for date-only filters rather than browser-zone boundaries', () => {
+    const expected: Record<string, readonly [number, number]> = {
+      UTC: [1767225600000, 1767312000000],
+      'Asia/Shanghai': [1767196800000, 1767283200000],
+      'America/New_York': [1767243600000, 1767330000000],
+    }
+
+    for (const [timezone, [start, end]] of Object.entries(expected)) {
+      expect(instantFromLedgerDate('2026-01-01', timezone, 'start')).toBe(start)
+      expect(instantFromLedgerDate('2026-01-01', timezone, 'end')).toBe(end)
+    }
+  })
+
+  it('retains Temporal disambiguation for nonexistent and ambiguous Ledger wall-clock times', () => {
+    expect(instantFromLocalDateTime('2026-03-08T02:30', 'America/New_York')).toBe(1772955000000)
+    expect(instantFromLocalDateTime('2026-11-01T01:30', 'America/New_York')).toBe(1793511000000)
+
+    expect(localDateTimeInputFromInstant(1772955000000, 'America/New_York')).toBe('2026-03-08T03:30')
+    expect(localDateTimeInputFromInstant(1793511000000, 'America/New_York')).toBe('2026-11-01T01:30')
   })
 })
