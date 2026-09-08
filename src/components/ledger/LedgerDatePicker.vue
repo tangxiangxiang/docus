@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { NDatePicker, type DatePickerInst } from 'naive-ui'
-import type { IsDateDisabled } from 'naive-ui/es/date-picker/src/interface'
+import { NDatePicker, type DatePickerInst, type DatePickerProps } from 'naive-ui'
+
+type LedgerIsDateDisabled = NonNullable<DatePickerProps['isDateDisabled']>
 
 const props = withDefaults(defineProps<{
   modelValue: string
@@ -10,7 +11,7 @@ const props = withDefaults(defineProps<{
   disabled?: boolean
   clearable?: boolean
   placeholder?: string
-  isDateDisabled?: IsDateDisabled
+  isDateDisabled?: LedgerIsDateDisabled
 }>(), {
   testId: undefined,
   disabled: false,

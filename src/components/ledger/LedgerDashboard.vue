@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { NAlert, NButton, NCard, NEmpty, NList, NListItem, NSelect, NSpin, NStatistic, type SelectOption } from 'naive-ui'
+import { NAlert, NButton, NCard, NEmpty, NIcon, NList, NListItem, NSelect, NSpin, NStatistic, type SelectOption } from 'naive-ui'
+import { ChartBar, Coin, CreditCard, Wallet } from '@vicons/tabler'
 import type {
   LedgerOverviewScope,
   LedgerPeriodName,
@@ -182,7 +183,7 @@ function onDateChange(value: string): void {
         <NCard class="ledger-metric-card" data-testid="ledger-total-assets" size="small">
           <div class="ledger-metric-layout">
             <span class="ledger-metric-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none"><ellipse cx="12" cy="6" rx="6" ry="3"/><path d="M6 6v4c0 1.7 2.7 3 6 3s6-1.3 6-3V6M6 10v4c0 1.7 2.7 3 6 3s6-1.3 6-3v-4M6 14v4c0 1.7 2.7 3 6 3s6-1.3 6-3v-4"/></svg>
+              <NIcon aria-hidden="true" :size="25"><Coin /></NIcon>
             </span>
             <span class="ledger-metric-copy">
               <NStatistic label="总资产" :value="formatLedgerMoney(overview.assetTotalMinor, overview.currency)" tabular-nums />
@@ -193,7 +194,7 @@ function onDateChange(value: string): void {
         <NCard class="ledger-metric-card" data-testid="ledger-total-liabilities" size="small">
           <div class="ledger-metric-layout">
             <span class="ledger-metric-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none"><rect x="4" y="5" width="16" height="14" rx="3"/><path d="M4 9h16M8 15h4"/></svg>
+              <NIcon aria-hidden="true" :size="25"><CreditCard /></NIcon>
             </span>
             <span class="ledger-metric-copy">
               <NStatistic label="总负债" :value="formatLedgerMoney(overview.liabilityTotalMinor, overview.currency)" tabular-nums />
@@ -204,7 +205,7 @@ function onDateChange(value: string): void {
         <NCard class="ledger-metric-card is-primary" data-testid="ledger-net-worth" size="small">
           <div class="ledger-metric-layout">
             <span class="ledger-metric-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none"><path d="M6 19v-5M12 19V9M18 19V5"/></svg>
+              <NIcon aria-hidden="true" :size="25"><ChartBar /></NIcon>
             </span>
             <span class="ledger-metric-copy">
               <NStatistic label="净资产" :value="formatLedgerMoney(overview.netWorthMinor, overview.currency)" tabular-nums />
@@ -287,7 +288,7 @@ function onDateChange(value: string): void {
                   <RouterLink class="ledger-dashboard-account" :to="{ name: 'ledger-account', params: { id: account.id } }">
                     <span class="ledger-account-identity">
                       <span class="ledger-account-icon is-asset" aria-hidden="true">
-                        <svg viewBox="0 0 24 24" fill="none"><rect x="5" y="7" width="14" height="12" rx="3"/><path d="M8 7V5h8v2M9 12h6"/></svg>
+                        <NIcon aria-hidden="true" :size="17"><Wallet /></NIcon>
                       </span>
                       <span>
                         <strong>{{ account.name }}</strong>
@@ -310,7 +311,7 @@ function onDateChange(value: string): void {
                   <RouterLink class="ledger-dashboard-account" :to="{ name: 'ledger-account', params: { id: account.id } }">
                     <span class="ledger-account-identity">
                       <span class="ledger-account-icon is-liability" aria-hidden="true">
-                        <svg viewBox="0 0 24 24" fill="none"><rect x="4" y="6" width="16" height="13" rx="3"/><path d="M4 10h16M8 15h3"/></svg>
+                        <NIcon aria-hidden="true" :size="17"><CreditCard /></NIcon>
                       </span>
                       <span>
                         <strong>{{ account.name }}</strong>
@@ -606,15 +607,6 @@ function onDateChange(value: string): void {
 
 .ledger-metric-card.is-primary .ledger-metric-icon {
   background: color-mix(in srgb, var(--accent) 20%, var(--bg));
-}
-
-.ledger-metric-icon svg {
-  width: 25px;
-  height: 25px;
-  stroke: currentColor;
-  stroke-width: 1.7;
-  stroke-linecap: round;
-  stroke-linejoin: round;
 }
 
 .ledger-metric-copy {
@@ -924,15 +916,6 @@ function onDateChange(value: string): void {
 .ledger-account-icon.is-liability {
   background: color-mix(in srgb, var(--ledger-expense) 10%, var(--bg));
   color: var(--ledger-expense);
-}
-
-.ledger-account-icon svg {
-  width: 17px;
-  height: 17px;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.7;
 }
 
 .ledger-account-identity strong,

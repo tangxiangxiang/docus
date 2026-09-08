@@ -81,6 +81,8 @@ watch(() => props.open, async (open) => {
     editing.value = false
     editDirty.value = false
     actionError.value = ''
+    await nextTick()
+    detailFocusTarget.value?.focus()
   }
 })
 
@@ -160,10 +162,6 @@ async function remove(): Promise<void> {
   <NModal
     v-if="props.open && transaction"
     :show="props.open && Boolean(transaction)"
-    class="ledger-detail-modal"
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="ledger-transaction-detail-title"
     :mask-closable="false"
     :close-on-esc="false"
     :auto-focus="false"
@@ -175,6 +173,7 @@ async function remove(): Promise<void> {
   >
     <NCard
       class="ledger-detail-sheet-card ledger-detail-sheet"
+      data-testid="ledger-transaction-detail-sheet"
       :bordered="false"
       size="small"
       role="dialog"
@@ -240,8 +239,7 @@ async function remove(): Promise<void> {
 </template>
 
 <style scoped>
-.ledger-detail-modal { display: flex; align-items: flex-end; justify-content: center; }
-.ledger-detail-sheet-card { align-self: flex-end; width: min(100%, 620px); max-height: min(92vh, 820px); margin: 20px auto; overflow: auto; box-sizing: border-box; border-radius: 16px 16px 10px 10px; color: var(--text); }
+.ledger-detail-sheet-card { align-self: flex-end; width: min(100%, 620px); max-height: min(92vh, 820px); margin: auto auto 20px; overflow: auto; box-sizing: border-box; border-radius: 16px 16px 10px 10px; color: var(--text); }
 .ledger-detail-sheet-card :deep(.n-card__content) { display: grid; gap: 18px; }
 .ledger-detail-sheet-card :deep(.n-card__header) { align-items: flex-start; gap: 16px; }
 .ledger-eyebrow { margin: 0 0 5px; color: var(--accent); font-size: .72rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
@@ -284,7 +282,6 @@ async function remove(): Promise<void> {
 .ledger-secondary-button:disabled,
 .ledger-danger-button:disabled { cursor: wait; opacity: .65; }
 @media (max-width: 600px) {
-  .ledger-detail-modal { align-items: stretch; }
   .ledger-detail-sheet-card { align-self: flex-end; width: 100%; max-height: 100%; margin: auto 0 0; border-radius: 16px 16px 0 0; }
   .ledger-form-actions > * { flex: 1 1 135px; }
 }

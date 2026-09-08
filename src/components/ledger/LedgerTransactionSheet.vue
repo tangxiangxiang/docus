@@ -347,10 +347,6 @@ async function retryPending(): Promise<void> {
   <NModal
     v-if="props.open"
     :show="props.open"
-    class="ledger-sheet-modal"
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="ledger-sheet-title"
     :mask-closable="false"
     :close-on-esc="false"
     :auto-focus="false"
@@ -362,6 +358,7 @@ async function retryPending(): Promise<void> {
   >
     <NCard
       class="ledger-sheet-card ledger-sheet"
+      data-testid="ledger-transaction-sheet"
       :bordered="false"
       size="small"
       role="dialog"
@@ -566,8 +563,7 @@ async function retryPending(): Promise<void> {
 </template>
 
 <style scoped>
-.ledger-sheet-modal { display: flex; align-items: flex-end; justify-content: center; }
-.ledger-sheet-card { align-self: flex-end; width: min(100%, 620px); max-height: min(92vh, 820px); margin: 20px auto; overflow: auto; box-sizing: border-box; border-radius: 16px 16px 10px 10px; color: var(--text); }
+.ledger-sheet-card { align-self: flex-end; width: min(100%, 620px); max-height: min(92vh, 820px); margin: auto auto 20px; overflow: auto; box-sizing: border-box; border-radius: 16px 16px 10px 10px; color: var(--text); }
 .ledger-sheet-card :deep(.n-card__content) { display: grid; gap: 18px; }
 .ledger-sheet-card :deep(.n-card__header) { align-items: flex-start; gap: 16px; }
 .ledger-eyebrow { margin: 0 0 5px; color: var(--accent); font-size: .72rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
@@ -618,7 +614,6 @@ async function retryPending(): Promise<void> {
 .ledger-secondary-button:disabled { cursor: wait; opacity: .65; }
 .ledger-form-error { margin: 0; color: #b42318; font-size: .81rem; line-height: 1.45; }
 @media (max-width: 600px) {
-  .ledger-sheet-modal { align-items: stretch; }
   .ledger-sheet-card { align-self: flex-end; width: 100%; max-height: 100%; margin: auto 0 0; border-radius: 16px 16px 0 0; }
   .ledger-form-grid { grid-template-columns: 1fr; }
   .ledger-form-actions > * { flex: 1 1 140px; }
