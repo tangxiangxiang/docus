@@ -23,6 +23,7 @@ const api = vi.hoisted(() => ({
   listLedgerAccounts: vi.fn(),
   listLedgerCategories: vi.fn(),
   getLedgerOverview: vi.fn(),
+  getLedgerTrend: vi.fn(),
   listLedgerTransactions: vi.fn(),
 }))
 
@@ -209,13 +210,46 @@ function setup(): void {
       isToday: input.anchorDate === undefined,
     },
   }))
+  api.getLedgerTrend.mockResolvedValue(sixMonthTrend)
   api.listLedgerTransactions.mockResolvedValue({ transactions: [expense], page: { nextCursor: null } })
 }
 
-function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (reason?: unknown) => void } {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>((nextResolve) => { resolve = nextResolve })
-  return { promise, resolve }
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((nextResolve, nextReject) => {
+    resolve = nextResolve
+    reject = nextReject
+  })
+  return { promise, resolve, reject }
+}
+
+function overviewFor(anchorDate: string, incomeMinor = 0, expenseMinor = 3_800): LedgerOverviewDto {
+  const base = overview()
+  return {
+    ...base,
+    context: { ...base.context, anchorDate },
+    cashflow: { incomeMinor, expenseMinor, balanceMinor: incomeMinor - expenseMinor },
+    periods: base.periods.map((period) => period.period === 'today'
+      ? { ...period, incomeMinor, expenseMinor, balanceMinor: incomeMinor - expenseMinor }
+      : period),
+  }
+}
+
+function categoryOverviewFor(anchorDate: string, name: string): LedgerOverviewDto {
+  return {
+    ...overviewFor(anchorDate),
+    categoryBreakdown: {
+      income: [{ categoryId: name, name, kind: 'income', amountMinor: 1_000 }],
+      expense: [],
+    },
+  }
+}
+
+function datePickerFor(wrapper: VueWrapper, testId: string): VueWrapper<any> {
+  const picker = wrapper.findAllComponents(LedgerDatePicker).find((candidate) => candidate.props('testId') === testId)
+  if (!picker) throw new Error(`Missing LedgerDatePicker ${testId}`)
+  return picker
 }
 
 describe('Ledger live dashboard', () => {
@@ -252,6 +286,209 @@ describe('Ledger live dashboard', () => {
     expect(wrapper.get('[data-testid="ledger-period-month"]').text()).toContain('收支结余')
     expect(wrapper.get('[data-testid="ledger-period-month"]').text()).toContain('-¥38.00')
     expect(wrapper.text()).not.toContain('billsMockData')
+  })
+
+  it('hydrates local projections from the main overview without duplicate initial reads', async () => {
+    const wrapper = mount(LedgerView)
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    expect(api.getLedgerOverview).toHaveBeenCalledTimes(1)
+    expect(api.getLedgerTrend).not.toHaveBeenCalled()
+  })
+
+  it('does not present stale period amounts while a local request is pending or fails', async () => {
+    const wrapper = mount(LedgerView)
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    const pending = deferred<LedgerOverviewDto>()
+    api.getLedgerOverview.mockReturnValueOnce(pending.promise)
+    datePickerFor(wrapper, 'ledger-period-date').vm.$emit('update:modelValue', '2025-09-05')
+    await nextTick()
+
+    const periodCard = wrapper.get('[data-testid="ledger-period-today"]')
+    expect(periodCard.text()).not.toContain('-¥38.00')
+    expect(periodCard.get('[data-testid="ledger-period-loading-today"]').exists()).toBe(true)
+
+    pending.reject(new LedgerApiError('period unavailable', 500, 'ledger-internal-error'))
+    await flushPromises()
+
+    expect(periodCard.text()).not.toContain('-¥38.00')
+    expect(periodCard.get('[data-testid="ledger-period-error-today"]').text()).toContain('该期间数据暂时无法加载')
+    expect(periodCard.get('[data-testid="ledger-period-error-today"]').text()).toContain('重试')
+  })
+
+  it('keeps the newest period request authoritative when an older success resolves later', async () => {
+    const wrapper = mount(LedgerView)
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    const first = deferred<LedgerOverviewDto>()
+    const second = deferred<LedgerOverviewDto>()
+    api.getLedgerOverview.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+    const picker = datePickerFor(wrapper, 'ledger-period-date')
+    picker.vm.$emit('update:modelValue', '2024-01-01')
+    picker.vm.$emit('update:modelValue', '2025-01-01')
+    await nextTick()
+
+    second.resolve(overviewFor('2025-01-01', 2_200, 0))
+    await flushPromises()
+    const periodCard = wrapper.get('[data-testid="ledger-period-today"]')
+    expect(periodCard.text()).toContain('¥22.00')
+
+    first.resolve(overviewFor('2024-01-01', 1_100, 0))
+    await flushPromises()
+    expect(periodCard.text()).toContain('¥22.00')
+    expect(periodCard.text()).not.toContain('¥11.00')
+  })
+
+  it('keeps the newest period success when an older request fails later', async () => {
+    const wrapper = mount(LedgerView)
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    const first = deferred<LedgerOverviewDto>()
+    const second = deferred<LedgerOverviewDto>()
+    api.getLedgerOverview.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+    const picker = datePickerFor(wrapper, 'ledger-period-date')
+    picker.vm.$emit('update:modelValue', '2024-01-01')
+    picker.vm.$emit('update:modelValue', '2025-01-01')
+    await nextTick()
+
+    second.resolve(overviewFor('2025-01-01', 2_200, 0))
+    await flushPromises()
+    first.reject(new LedgerApiError('old period unavailable', 500, 'ledger-internal-error'))
+    await flushPromises()
+
+    const periodCard = wrapper.get('[data-testid="ledger-period-today"]')
+    expect(periodCard.text()).toContain('¥22.00')
+    expect(periodCard.find('[data-testid="ledger-period-error-today"]').exists()).toBe(false)
+  })
+
+  it('does not present stale trend data while a new trend request is pending or fails', async () => {
+    const wrapper = mount(LedgerView)
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    const pending = deferred<LedgerOverviewDto['trend']>()
+    api.getLedgerTrend.mockReturnValueOnce(pending.promise)
+    datePickerFor(wrapper, 'ledger-trend-date').vm.$emit('update:modelValue', '2024-01-01')
+    await nextTick()
+
+    const trendSection = wrapper.get('#ledger-trend-title').element.closest('.ledger-dashboard-section')!
+    expect(wrapper.findComponent(LedgerCashflowTrend).props('trend')).toEqual([])
+    expect(trendSection.querySelector('[data-testid="ledger-trend-loading"]')).not.toBeNull()
+
+    pending.reject(new LedgerApiError('trend unavailable', 500, 'ledger-internal-error'))
+    await flushPromises()
+
+    expect(wrapper.findComponent(LedgerCashflowTrend).props('trend')).toEqual([])
+    expect(trendSection.querySelector('[data-testid="ledger-trend-error"]')?.textContent).toContain('趋势数据暂时无法加载')
+    expect(trendSection.textContent).not.toContain('最近 6 个月')
+  })
+
+  it('keeps the newest trend request authoritative when an older success resolves later', async () => {
+    const wrapper = mount(LedgerView)
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    const first = deferred<LedgerOverviewDto['trend']>()
+    const second = deferred<LedgerOverviewDto['trend']>()
+    api.getLedgerTrend.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+    const picker = datePickerFor(wrapper, 'ledger-trend-date')
+    picker.vm.$emit('update:modelValue', '2024-01-01')
+    await nextTick()
+    picker.vm.$emit('update:modelValue', '2025-01-01')
+    await nextTick()
+
+    const secondTrend = [trendPoint('2025-01', 2_200, 0)]
+    second.resolve(secondTrend)
+    await flushPromises()
+    expect(wrapper.findComponent(LedgerCashflowTrend).props('trend')).toEqual(secondTrend)
+
+    const firstTrend = [trendPoint('2024-01', 1_100, 0)]
+    first.resolve(firstTrend)
+    await flushPromises()
+    expect(wrapper.findComponent(LedgerCashflowTrend).props('trend')).toEqual(secondTrend)
+  })
+
+  it('distinguishes an empty category response from a category request failure', async () => {
+    const wrapper = mount(LedgerView)
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    api.getLedgerOverview.mockResolvedValueOnce({
+      ...overviewFor('2025-01-01'),
+      categoryBreakdown: { income: [], expense: [] },
+    })
+    datePickerFor(wrapper, 'ledger-category-date').vm.$emit('update:modelValue', '2025-01-01')
+    await flushPromises()
+
+    const categorySection = wrapper.get('[aria-labelledby="ledger-category-breakdown-title"]')
+    expect(categorySection.text()).toContain('这段期间还没有收入分类。')
+    expect(categorySection.text()).toContain('这段期间还没有支出分类。')
+    expect(categorySection.find('[data-testid="ledger-category-error"]').exists()).toBe(false)
+
+    const failed = deferred<LedgerOverviewDto>()
+    api.getLedgerOverview.mockReturnValueOnce(failed.promise)
+    datePickerFor(wrapper, 'ledger-category-date').vm.$emit('update:modelValue', '2024-01-01')
+    await nextTick()
+    failed.reject(new LedgerApiError('category unavailable', 500, 'ledger-internal-error'))
+    await flushPromises()
+
+    expect(categorySection.get('[data-testid="ledger-category-error"]').text()).toContain('这段期间的数据暂时无法加载')
+    expect(categorySection.text()).not.toContain('这段期间还没有收入分类。')
+    expect(categorySection.text()).not.toContain('这段期间还没有支出分类。')
+  })
+
+  it('keeps the newest category request authoritative when an older success resolves later', async () => {
+    const wrapper = mount(LedgerView)
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    const first = deferred<LedgerOverviewDto>()
+    const second = deferred<LedgerOverviewDto>()
+    api.getLedgerOverview.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+    const picker = datePickerFor(wrapper, 'ledger-category-date')
+    picker.vm.$emit('update:modelValue', '2024-01-01')
+    await nextTick()
+    picker.vm.$emit('update:modelValue', '2025-01-01')
+    await nextTick()
+
+    second.resolve(categoryOverviewFor('2025-01-01', '2025分类'))
+    await flushPromises()
+    const categorySection = wrapper.get('[aria-labelledby="ledger-category-breakdown-title"]')
+    expect(categorySection.text()).toContain('2025分类')
+
+    first.resolve(categoryOverviewFor('2024-01-01', '2024分类'))
+    await flushPromises()
+    expect(categorySection.text()).toContain('2025分类')
+    expect(categorySection.text()).not.toContain('2024分类')
+  })
+
+  it('keeps the newest category success when an older request fails later', async () => {
+    const wrapper = mount(LedgerView)
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    const first = deferred<LedgerOverviewDto>()
+    const second = deferred<LedgerOverviewDto>()
+    api.getLedgerOverview.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+    const picker = datePickerFor(wrapper, 'ledger-category-date')
+    picker.vm.$emit('update:modelValue', '2024-01-01')
+    await nextTick()
+    picker.vm.$emit('update:modelValue', '2025-01-01')
+    await nextTick()
+
+    second.resolve(categoryOverviewFor('2025-01-01', '2025分类'))
+    await flushPromises()
+    first.reject(new LedgerApiError('old category unavailable', 500, 'ledger-internal-error'))
+    await flushPromises()
+
+    const categorySection = wrapper.get('[aria-labelledby="ledger-category-breakdown-title"]')
+    expect(categorySection.text()).toContain('2025分类')
+    expect(categorySection.find('[data-testid="ledger-category-error"]').exists()).toBe(false)
   })
 
   it('uses the matching Naive date picker type for each period summary', async () => {
