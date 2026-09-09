@@ -287,6 +287,7 @@ const netMovement = computed(() => {
   width: min(620px, calc(100vw - 32px));
   max-height: min(90vh, 760px);
   overflow: auto;
+  scrollbar-width: none;
   border: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
   border-radius: 16px;
   background:
@@ -296,6 +297,7 @@ const netMovement = computed(() => {
   -webkit-backdrop-filter: saturate(145%) blur(18px);
   backdrop-filter: saturate(145%) blur(18px);
 }
+.ledger-account-edit-modal-card::-webkit-scrollbar { display: none; }
 .ledger-account-edit-modal-card :deep(.n-card__content) { padding: 28px; }
 .ledger-account-edit-modal-card :deep(.ledger-account-edit-form) { width: 100%; padding: 0; border: 0; background: transparent; }
 .ledger-primary-button,
