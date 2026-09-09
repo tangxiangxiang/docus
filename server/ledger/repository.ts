@@ -46,14 +46,14 @@ const UPDATE_SETTINGS = `
 
 const SELECT_ACCOUNT = `
   SELECT id, name, type, nature, icon, opening_balance_minor, opening_date,
-         currency, note, archived_at, version, created_at, updated_at
+         currency, note, card_number, archived_at, version, created_at, updated_at
   FROM ledger_accounts
   WHERE id = @id
 `
 
 const SELECT_ACCOUNTS = `
   SELECT id, name, type, nature, icon, opening_balance_minor, opening_date,
-         currency, note, archived_at, version, created_at, updated_at
+         currency, note, card_number, archived_at, version, created_at, updated_at
   FROM ledger_accounts
   ORDER BY updated_at DESC, id DESC
 `
@@ -69,10 +69,10 @@ const SELECT_ACTIVE_ACCOUNTS = `
 const INSERT_ACCOUNT = `
   INSERT INTO ledger_accounts (
     id, name, type, nature, icon, opening_balance_minor, opening_date, currency,
-    note, archived_at, version, created_at, updated_at
+    note, card_number, archived_at, version, created_at, updated_at
   ) VALUES (
     @id, @name, @type, @nature, @icon, @openingBalanceMinor, @openingDate, @currency,
-    @note, @archivedAt, @version, @createdAt, @updatedAt
+    @note, @cardNumber, @archivedAt, @version, @createdAt, @updatedAt
   )
 `
 
@@ -86,6 +86,7 @@ const UPDATE_ACCOUNT = `
       opening_date = @openingDate,
       currency = @currency,
       note = @note,
+      card_number = @cardNumber,
       archived_at = @archivedAt,
       version = @version,
       updated_at = @updatedAt
@@ -420,6 +421,7 @@ interface AccountParams {
   readonly openingDate: string
   readonly currency: string
   readonly note: string
+  readonly cardNumber?: string
   readonly archivedAt: number | null
   readonly version: number
   readonly createdAt: number
@@ -519,6 +521,7 @@ function accountParams(account: LedgerAccount): AccountParams {
     openingDate: account.openingDate,
     currency: account.currency,
     note: account.note,
+    cardNumber: account.cardNumber ?? '',
     archivedAt: account.archivedAt,
     version: account.version,
     createdAt: account.createdAt,

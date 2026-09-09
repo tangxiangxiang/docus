@@ -21,6 +21,7 @@ const store = useLedgerStore()
 
 const name = ref('')
 const note = ref('')
+const cardNumber = ref('')
 const icon = ref<AccountIcon>('wallet')
 const nature = ref<LedgerAccountNature>('asset')
 const type = ref<LedgerAccountType>('bank')
@@ -29,6 +30,12 @@ const openingDate = ref('')
 const error = ref('')
 const submitted = ref(false)
 const saving = ref(false)
+
+const maskedCardNumber = computed(() => {
+  const value = cardNumber.value.trim()
+  if (value.length <= 8) return value
+  return `${value.slice(0, 4)}${'*'.repeat(value.length - 8)}${value.slice(-4)}`
+})
 
 const financialFieldsEditable = computed(() => !props.hasHistory && props.account.archivedAt === null)
 const natureOptions: SelectOption[] = [
@@ -43,6 +50,7 @@ const typeOptions = computed<SelectOption[]>(() => ledgerAccountTypeOptionsForNa
 function reset(): void {
   name.value = props.account.name
   note.value = props.account.note
+  cardNumber.value = props.account.cardNumber ?? ''
   icon.value = props.account.icon ?? 'wallet'
   nature.value = props.account.nature
   type.value = props.account.type
@@ -65,6 +73,10 @@ function validate(): number | null {
   error.value = ''
   if (!name.value.trim()) {
     error.value = '请给账户起一个容易识别的名称。'
+    return null
+  }
+  if (!cardNumber.value.trim() && props.account.cardNumber !== undefined) {
+    error.value = '请输入卡号。'
     return null
   }
   if (!financialFieldsEditable.value) return 0
@@ -92,6 +104,7 @@ async function submit(): Promise<void> {
           expectedVersion: props.account.version,
           name: name.value.trim(),
           note: note.value.trim(),
+          ...(cardNumber.value.trim() ? { cardNumber: cardNumber.value.trim() } : {}),
           ...(icon.value !== 'wallet' ? { icon: icon.value } : {}),
           type: type.value,
           nature: nature.value,
@@ -102,6 +115,7 @@ async function submit(): Promise<void> {
           expectedVersion: props.account.version,
           name: name.value.trim(),
           note: note.value.trim(),
+          ...(cardNumber.value.trim() ? { cardNumber: cardNumber.value.trim() } : {}),
           ...(icon.value !== 'wallet' ? { icon: icon.value } : {}),
         }
     const updated = await store.patchAccount(props.account.id, body)
@@ -117,12 +131,21 @@ async function submit(): Promise<void> {
 <template>
   <NForm class="ledger-account-edit-form" data-testid="ledger-account-edit-form" :aria-busy="saving ? 'true' : undefined" @submit.prevent="submit">
     <div>
-      <p class="ledger-eyebrow">账户设置</p>
-      <h2 id="ledger-account-edit-title">编辑 {{ props.account.name }}</h2>
-      <p v-if="!financialFieldsEditable" class="ledger-form-info">
-        {{ props.account.archivedAt !== null ? '账户已归档。' : '账户已有历史记录。' }} 当前只能修改名称和备注，避免改变已有财务解释。
-      </p>
+      <h2 id="ledger-account-edit-title">编辑账户</h2>
+      <p class="ledger-form-info">{{ props.account.currency }} · {{ store.settings.value?.timezone ?? 'UTC' }}</p>
     </div>
+
+    <NFormItem class="ledger-form-field" label="卡号" :show-feedback="false" required>
+      <NInput
+        :value="maskedCardNumber"
+        class="ledger-form-control"
+        type="text"
+        size="medium"
+        disabled
+        :input-props="{ id: 'ledger-edit-account-card-number', name: 'cardNumber', inputmode: 'numeric', autocomplete: 'off', disabled: true }"
+        placeholder="请输入卡号"
+      />
+    </NFormItem>
 
     <NFormItem class="ledger-form-field" label="账户名称" :show-feedback="false" required>
       <NInput

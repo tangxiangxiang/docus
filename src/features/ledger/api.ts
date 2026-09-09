@@ -33,6 +33,7 @@ export type LedgerAccountPatchInput = {
   readonly expectedVersion: number
   readonly name?: string
   readonly note?: string
+  readonly cardNumber?: string
   readonly type?: LedgerAccountType
   readonly nature?: LedgerAccountNature
   readonly icon?: import('../../../shared/ledgerProtocol').LedgerAccountIcon

@@ -113,6 +113,10 @@ function parseNote(record: UnknownRecord): string {
   )
 }
 
+function parseCardNumber(record: UnknownRecord): string {
+  return validateLength(optionalString(record, 'cardNumber', ''), 'cardNumber', 0, 64)
+}
+
 function parsePayee(record: UnknownRecord): string {
   return validateLength(
     optionalString(record, 'payee', ''),
@@ -233,7 +237,7 @@ export function parseSettingsCreateRequest(value: unknown): LedgerSettingsCreate
 export function parseAccountCreateRequest(value: unknown): LedgerAccountCreateRequest {
   const record = asRecord(value)
   assertExactKeys(record, [
-    'name', 'type', 'nature', 'icon', 'openingBalanceMinor', 'openingDate', 'currency', 'note',
+    'name', 'type', 'nature', 'icon', 'openingBalanceMinor', 'openingDate', 'currency', 'note', 'cardNumber',
   ], ['name', 'type', 'nature', 'openingBalanceMinor', 'openingDate', 'currency'])
   return {
     name: parseName(record),
@@ -244,6 +248,7 @@ export function parseAccountCreateRequest(value: unknown): LedgerAccountCreateRe
     openingDate: assertOpeningDate(requireString(record, 'openingDate')),
     currency: parseCurrency(record),
     note: parseNote(record),
+    cardNumber: parseCardNumber(record),
   }
 }
 
@@ -397,6 +402,7 @@ export interface LedgerAccountPatchRequest {
   readonly expectedVersion: number
   readonly name?: string
   readonly note?: string
+  readonly cardNumber?: string
   readonly icon?: LedgerAccountIcon
   readonly type?: LedgerAccountType
   readonly nature?: LedgerAccountNature
@@ -407,7 +413,7 @@ export interface LedgerAccountPatchRequest {
 export function parseAccountPatchRequest(value: unknown): LedgerAccountPatchRequest {
   const record = asRecord(value)
   const mutableKeys = [
-    'name', 'note', 'type', 'nature', 'openingBalanceMinor', 'openingDate',
+    'name', 'note', 'cardNumber', 'type', 'nature', 'openingBalanceMinor', 'openingDate',
     'icon',
   ] as const
   assertExactKeys(record, ['expectedVersion', ...mutableKeys], ['expectedVersion'])
@@ -418,6 +424,7 @@ export function parseAccountPatchRequest(value: unknown): LedgerAccountPatchRequ
     expectedVersion: parseExpectedVersion(record),
     ...(hasOwn(record, 'name') ? { name: parseName(record) } : {}),
     ...(hasOwn(record, 'note') ? { note: parseNote(record) } : {}),
+    ...(hasOwn(record, 'cardNumber') ? { cardNumber: parseCardNumber(record) } : {}),
     ...(hasOwn(record, 'type') ? { type: parseAccountType(record) } : {}),
     ...(hasOwn(record, 'nature') ? { nature: parseAccountNature(record) } : {}),
     ...(hasOwn(record, 'icon') ? { icon: parseAccountIcon(record) } : {}),

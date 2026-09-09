@@ -164,6 +164,7 @@ function accountDto(
     currency: account.currency,
     currencyExponent: currencyExponentFor(account.currency),
     note: account.note,
+    ...(account.cardNumber ? { cardNumber: account.cardNumber } : {}),
     archivedAt: account.archivedAt,
     version: account.version,
     createdAt: account.createdAt,

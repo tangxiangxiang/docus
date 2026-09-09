@@ -127,6 +127,7 @@ export interface LedgerAccount {
   readonly openingDate: string
   readonly currency: string
   readonly note: string
+  readonly cardNumber?: string
   readonly archivedAt: number | null
   readonly version: number
   readonly createdAt: number
@@ -456,6 +457,9 @@ export function ledgerAccountFromRow(row: unknown): LedgerAccount {
     openingDate: persistedOpeningDate(record, 'account', 'opening_date'),
     currency: persistedCurrency(record, 'account', 'currency'),
     note: requiredString(record, 'account', 'note'),
+    ...(hasOwn(record, 'card_number') && typeof record.card_number === 'string' && record.card_number
+      ? { cardNumber: record.card_number }
+      : {}),
     archivedAt: nullableUtcMilliseconds(record, 'account', 'archived_at'),
     version: positiveVersion(record, 'account', 'version'),
     createdAt: utcMilliseconds(record, 'account', 'created_at'),

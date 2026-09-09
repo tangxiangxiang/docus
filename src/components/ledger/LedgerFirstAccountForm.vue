@@ -35,6 +35,7 @@ const type = ref<LedgerAccountType>('bank')
 const openingBalance = ref('0')
 const openingDate = ref('')
 const note = ref('')
+const cardNumber = ref('')
 const icon = ref<AccountIcon>(iconPreferences.defaultIcon.value)
 const formError = ref('')
 const submitted = ref(false)
@@ -90,6 +91,10 @@ function validate(): number | null {
     formError.value = '请给账户起一个容易识别的名称。'
     return null
   }
+  if (!cardNumber.value.trim()) {
+    formError.value = '请输入卡号。'
+    return null
+  }
   if (!currency.value) {
     formError.value = '请先完成 Ledger 基础设置。'
     return null
@@ -122,6 +127,7 @@ async function submit(): Promise<void> {
       openingDate: openingDate.value,
       currency: currency.value,
       note: note.value.trim(),
+      cardNumber: cardNumber.value.trim(),
     })
     emit('saved')
   } catch (error) {
@@ -154,8 +160,7 @@ async function retryPendingAccount(): Promise<void> {
     @submit.prevent="submit"
   >
     <div>
-      <p class="ledger-eyebrow">{{ props.firstAccount ? '第二步 · 第一个账户' : '新增账户' }}</p>
-      <h2 id="ledger-create-account-title">{{ props.firstAccount ? '先加入一个账户' : '创建新账户' }}</h2>
+      <h2 id="ledger-create-account-title">{{ props.firstAccount ? '先加入一个账户' : '创建账户' }}</h2>
       <p v-if="currency" class="ledger-context">{{ currency }} · {{ settings?.timezone }}</p>
     </div>
 
@@ -168,6 +173,18 @@ async function retryPendingAccount(): Promise<void> {
     />
 
     <template v-else>
+    <NFormItem class="ledger-form-field" label="卡号" :show-feedback="false" required>
+      <NInput
+        v-model:value="cardNumber"
+        class="ledger-form-control"
+        type="text"
+        size="medium"
+        placeholder="请输入卡号"
+        :input-props="{ id: 'ledger-account-card-number', name: 'cardNumber', inputmode: 'numeric', autocomplete: 'off', required: true }"
+        :disabled="saving"
+      />
+    </NFormItem>
+
     <NFormItem class="ledger-form-field" label="账户名称" :show-feedback="false" required>
       <NInput
         v-model:value="name"
@@ -237,17 +254,6 @@ async function retryPendingAccount(): Promise<void> {
         />
       </NFormItem>
     </div>
-
-    <NFormItem class="ledger-form-field" label="账户货币" :show-feedback="false">
-      <NInput
-        :value="currency"
-        class="ledger-form-control"
-        type="text"
-        size="medium"
-        readonly
-        :input-props="{ id: 'ledger-account-currency', name: 'currency', readonly: true, 'aria-readonly': 'true' }"
-      />
-    </NFormItem>
 
     <NFormItem class="ledger-form-field" label="备注（可选）" :show-feedback="false">
       <NInput

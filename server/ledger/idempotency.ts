@@ -360,8 +360,10 @@ function assertLedgerAccountReplayBody(value: unknown): asserts value is LedgerA
   const object = replayExactObject(
     value,
     Object.prototype.hasOwnProperty.call(value, 'icon')
-      ? [...LEDGER_ACCOUNT_REPLAY_KEYS, 'icon']
-      : LEDGER_ACCOUNT_REPLAY_KEYS,
+      ? [...LEDGER_ACCOUNT_REPLAY_KEYS, 'icon', ...(Object.prototype.hasOwnProperty.call(value, 'cardNumber') ? ['cardNumber'] : [])]
+      : Object.prototype.hasOwnProperty.call(value, 'cardNumber')
+        ? [...LEDGER_ACCOUNT_REPLAY_KEYS, 'cardNumber']
+        : LEDGER_ACCOUNT_REPLAY_KEYS,
     'account response',
   )
   assertReplayString(object.id, 'account response.id')
@@ -379,6 +381,9 @@ function assertLedgerAccountReplayBody(value: unknown): asserts value is LedgerA
   assertReplayString(object.currency, 'account response.currency')
   assertReplaySafeInteger(object.currencyExponent, 'account response.currencyExponent')
   assertReplayString(object.note, 'account response.note')
+  if (Object.prototype.hasOwnProperty.call(object, 'cardNumber')) {
+    assertReplayString(object.cardNumber, 'account response.cardNumber')
+  }
   assertReplayNullableSafeInteger(object.archivedAt, 'account response.archivedAt')
   assertReplayPositiveSafeInteger(object.version, 'account response.version')
   assertReplaySafeInteger(object.createdAt, 'account response.createdAt')

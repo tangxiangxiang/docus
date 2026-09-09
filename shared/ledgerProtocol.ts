@@ -73,6 +73,7 @@ export interface LedgerAccountDto {
   readonly currency: string
   readonly currencyExponent: number
   readonly note: string
+  readonly cardNumber?: string
   readonly archivedAt: number | null
   readonly version: number
   readonly createdAt: number
@@ -209,6 +210,7 @@ export interface LedgerAccountCreateRequest {
   readonly openingDate: string
   readonly currency: string
   readonly note: string
+  readonly cardNumber?: string
 }
 
 export interface LedgerCategoryCreateRequest {
