@@ -2227,7 +2227,7 @@ main.container.auth-page-shell {
 .ab-status-dot {
   position: absolute;
   right: 6px;
-  bottom: 6px;
+  top: 6px;
   width: 7px;
   height: 7px;
   box-sizing: border-box;
