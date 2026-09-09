@@ -1290,16 +1290,46 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
   max-height: 280px;
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-color: color-mix(in srgb, var(--text-muted) 34%, transparent) transparent;
+  scrollbar-color: transparent transparent;
   scrollbar-width: thin;
+}
+
+.ledger-dashboard-account-list-viewport:hover,
+.ledger-dashboard-account-list-viewport:focus-within {
+  scrollbar-color: color-mix(in srgb, var(--text-muted) 34%, transparent) transparent;
+}
+
+.ledger-dashboard-account-list-viewport::-webkit-scrollbar,
+.ledger-breakdown-list-viewport::-webkit-scrollbar {
+  width: 6px;
+}
+
+.ledger-dashboard-account-list-viewport::-webkit-scrollbar-thumb,
+.ledger-breakdown-list-viewport::-webkit-scrollbar-thumb {
+  background: transparent;
+  transition: background .18s ease;
+}
+
+.ledger-dashboard-account-list-viewport:hover::-webkit-scrollbar-thumb,
+.ledger-dashboard-account-list-viewport:focus-within::-webkit-scrollbar-thumb,
+.ledger-dashboard-account-list-viewport::-webkit-scrollbar-thumb:hover,
+.ledger-breakdown-list-viewport:hover::-webkit-scrollbar-thumb,
+.ledger-breakdown-list-viewport:focus-within::-webkit-scrollbar-thumb,
+.ledger-breakdown-list-viewport::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-muted) 34%, transparent);
 }
 
 .ledger-breakdown-list-viewport {
   max-height: 280px;
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-color: color-mix(in srgb, var(--text-muted) 34%, transparent) transparent;
+  scrollbar-color: transparent transparent;
   scrollbar-width: thin;
+}
+
+.ledger-breakdown-list-viewport:hover,
+.ledger-breakdown-list-viewport:focus-within {
+  scrollbar-color: color-mix(in srgb, var(--text-muted) 34%, transparent) transparent;
 }
 
 .ledger-dashboard-account-groups {
