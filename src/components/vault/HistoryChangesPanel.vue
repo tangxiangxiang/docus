@@ -208,6 +208,7 @@ onBeforeUnmount(cancelGeneration)
         />
         <NButton
           attr-type="button"
+          size="small"
           :bordered="false"
           class="history-generate-message"
           :disabled="busy || mutationLocked || generatingMessage || selectedPaths.size === 0"
@@ -224,6 +225,7 @@ onBeforeUnmount(cancelGeneration)
       <div v-if="error" class="history-commit-error" role="alert">{{ error }}</div>
       <NButton
         attr-type="button"
+        size="small"
         :bordered="false"
         class="history-create-version"
         :disabled="!canCommit || generatingMessage"
