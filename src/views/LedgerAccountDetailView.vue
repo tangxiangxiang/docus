@@ -146,6 +146,12 @@ function formatTimestamp(timestamp: number): string {
   return formatLedgerDateTime(timestamp, store.settings.value?.timezone ?? 'UTC')
 }
 
+function maskCardNumber(cardNumber: string | undefined): string {
+  const value = cardNumber?.trim() ?? ''
+  if (value.length <= 8) return value
+  return `${value.slice(0, 4)}${'*'.repeat(value.length - 8)}${value.slice(-4)}`
+}
+
 const netMovement = computed(() => {
   if (!movement.value) return 0
   return movement.value.balanceIncreaseMinor - movement.value.balanceDecreaseMinor
@@ -258,7 +264,7 @@ const netMovement = computed(() => {
         <dl>
           <div><dt>账户类型</dt><dd>{{ typeLabel(account.type) }}</dd></div><div><dt>账户性质</dt><dd>{{ account.nature === 'asset' ? '资产' : '负债' }}</dd></div><div><dt>币种</dt><dd>{{ account.currency }}</dd></div>
           <div><dt>期初余额</dt><dd>{{ formatLedgerMoney(account.openingBalanceMinor, account.currency) }}</dd></div><div><dt>开户日期</dt><dd>{{ account.openingDate }}</dd></div>
-          <div v-if="account.cardNumber"><dt>卡号</dt><dd>{{ account.cardNumber }}</dd></div>
+          <div v-if="account.cardNumber"><dt>卡号</dt><dd>{{ maskCardNumber(account.cardNumber) }}</dd></div>
           <div><dt>创建时间</dt><dd>{{ formatTimestamp(account.createdAt) }}</dd></div><div><dt>最后更新</dt><dd>{{ formatTimestamp(account.updatedAt) }}</dd></div>
         </dl>
       </NCard>
