@@ -1320,6 +1320,13 @@ main.container.auth-page-shell {
   text-align: left;
   cursor: pointer;
 }
+.history-change-open .n-button__content {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: 100%;
+  min-width: 0;
+}
 .history-change-open:focus-visible { outline: 1px solid color-mix(in srgb, var(--vs-accent) 72%, transparent); outline-offset: 2px; }
 .history-change-copy { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; }
 .history-change-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
