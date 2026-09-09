@@ -131,6 +131,7 @@ function onAccountSaved(): void {
         role="dialog"
         aria-modal="true"
         aria-labelledby="ledger-create-account-title"
+        @scroll="showScrollbarWhileScrolling"
       >
         <LedgerFirstAccountForm :first-account="false" cancelable @cancel="createOpen = false" @saved="onAccountSaved" />
       </NCard>
@@ -271,6 +272,8 @@ function onAccountSaved(): void {
   width: min(620px, calc(100vw - 32px));
   max-height: min(90vh, 820px);
   overflow: auto;
+  scrollbar-color: transparent transparent;
+  scrollbar-width: thin;
   border: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
   border-radius: 16px;
   background:
@@ -282,6 +285,10 @@ function onAccountSaved(): void {
   -webkit-backdrop-filter: saturate(145%) blur(18px);
   backdrop-filter: saturate(145%) blur(18px);
 }
+.ledger-account-create-modal-card.is-scrolling { scrollbar-color: color-mix(in srgb, var(--text-muted) 34%, transparent) transparent; }
+.ledger-account-create-modal-card::-webkit-scrollbar { width: 6px; }
+.ledger-account-create-modal-card::-webkit-scrollbar-thumb { background: transparent; transition: background .18s ease; }
+.ledger-account-create-modal-card.is-scrolling::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--text-muted) 34%, transparent); }
 .ledger-account-create-modal-card :deep(.n-card__content) { padding: 28px; }
 .ledger-account-create-modal-card :deep(.ledger-onboarding-card) { width: 100%; padding: 0; border: 0; background: transparent; box-shadow: none; }
 .ledger-account-sections { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
