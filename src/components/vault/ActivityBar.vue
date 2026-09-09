@@ -54,7 +54,7 @@ const { t } = useI18n()
       attr-type="button"
       text
       :bordered="false"
-      class="ab-btn"
+      class="ab-btn ab-btn-history"
       :class="{ active: activePanel === 'history' }"
       :title="t('history.activity_label')"
       :aria-label="t('history.activity_label')"
