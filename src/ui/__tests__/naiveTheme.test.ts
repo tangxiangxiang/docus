@@ -100,8 +100,8 @@ describe('Docus semantic tokens', () => {
     expect(cssValue(light, '--docus-accent')).toBe('#6366f1')
     expect(cssValue(light, '--docus-accent-hover')).toBe('#4f46e5')
 
-    expect(cssValue(darkFallback, '--docus-bg')).toBe('#111827')
-    expect(cssValue(darkFallback, '--docus-surface-1')).toBe('#1f2937')
+    expect(cssValue(darkFallback, '--docus-bg')).toBe('#1e1e1e')
+    expect(cssValue(darkFallback, '--docus-surface-1')).toBe('#252526')
     expect(cssValue(darkFallback, '--docus-text-1')).toBe('#f9fafb')
     expect(cssValue(darkFallback, '--docus-text-2')).toBe('#d1d5db')
     expect(cssValue(darkFallback, '--docus-text-3')).toBe('#9ca3af')

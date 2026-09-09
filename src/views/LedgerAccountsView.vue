@@ -1,17 +1,25 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { NAlert, NButton, NCard, NEmpty, NList, NListItem, NResult, NSpin } from 'naive-ui'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { NAlert, NButton, NCard, NEmpty, NIcon, NList, NListItem, NNumberAnimation, NResult, NSelect, NSpin } from 'naive-ui'
+import { CreditCard, Wallet } from '@vicons/tabler'
 import LedgerFirstAccountForm from '../components/ledger/LedgerFirstAccountForm.vue'
+import LedgerAnimatedMoney from '../components/ledger/LedgerAnimatedMoney.vue'
 import LedgerPendingCreateGate from '../components/ledger/LedgerPendingCreateGate.vue'
 import { ledgerAccountTypeOptionsForNature } from '../features/ledger/accountPresentation'
 import { ledgerErrorMessage, ledgerWorkspaceReadErrorMessage } from '../features/ledger/ledgerErrors'
-import { formatLedgerMoney } from '../features/ledger/money'
 import { useLedgerStore } from '../features/ledger/ledgerStore'
 
 const store = useLedgerStore()
 const createOpen = ref(false)
 const restoreId = ref<string | null>(null)
 const actionError = ref('')
+const activeAccountTypeFilter = ref<'all' | 'asset' | 'liability'>('asset')
+const archivedAccountTypeFilter = ref<'all' | 'asset' | 'liability'>('asset')
+const accountTypeOptions = [
+  { label: '全部', value: 'all' },
+  { label: '资产', value: 'asset' },
+  { label: '负债', value: 'liability' },
+]
 
 // Keep an open create form mounted while its successful mutation refreshes the
 // shared read model. Otherwise refreshData's loading flag would unmount the
@@ -21,15 +29,29 @@ const typeLabels = new Map(
   ledgerAccountTypeOptionsForNature('asset').concat(ledgerAccountTypeOptionsForNature('liability'))
     .map((option) => [option.value, option.label]),
 )
+const visibleActiveAccounts = computed(() => {
+  const accounts = activeAccountTypeFilter.value === 'all'
+    ? store.activeAccounts.value
+    : store.activeAccounts.value.filter((account) => account.nature === activeAccountTypeFilter.value)
+  return [...accounts].sort((left, right) => right.currentBalanceMinor - left.currentBalanceMinor)
+})
+const sortedArchivedAccounts = computed(() => [...store.archivedAccounts.value]
+  .filter((account) => archivedAccountTypeFilter.value === 'all' || account.nature === archivedAccountTypeFilter.value)
+  .sort((left, right) => right.currentBalanceMinor - left.currentBalanceMinor))
 
-onMounted(() => { void store.bootstrap() })
+onMounted(() => {
+  document.body.classList.add('ledger-accounts-mode')
+  document.documentElement.classList.add('ledger-accounts-mode')
+  void store.bootstrap()
+})
+
+onBeforeUnmount(() => {
+  document.body.classList.remove('ledger-accounts-mode')
+  document.documentElement.classList.remove('ledger-accounts-mode')
+})
 
 function typeLabel(type: string): string {
   return typeLabels.get(type as never) ?? type
-}
-
-function balance(account: { currentBalanceMinor: number; currency: string }): string {
-  return formatLedgerMoney(account.currentBalanceMinor, account.currency)
 }
 
 async function restore(id: string, version: number): Promise<void> {
@@ -61,7 +83,7 @@ function onAccountSaved(): void {
       </div>
       <div class="ledger-page-actions">
         <RouterLink class="ledger-secondary-button" :to="{ name: 'ledger' }">返回总览</RouterLink>
-        <NButton class="ledger-primary-button" attr-type="button" type="primary" size="medium" :bordered="false" :disabled="loading || store.hasUnresolvedCreate.value" @click="createOpen = true">新增账户</NButton>
+        <NButton class="ledger-primary-button" attr-type="button" type="primary" size="small" :bordered="false" :disabled="loading || store.hasUnresolvedCreate.value" @click="createOpen = true">新增账户</NButton>
       </div>
     </header>
 
@@ -86,70 +108,92 @@ function onAccountSaved(): void {
     <template v-else>
       <NAlert v-if="actionError" class="ledger-form-error" type="error" :show-icon="false" role="alert">{{ actionError }}</NAlert>
 
-      <NCard class="ledger-account-section" :bordered="false" size="small" aria-labelledby="ledger-active-accounts-title">
-        <div class="ledger-section-heading">
-          <div>
-            <h2 id="ledger-active-accounts-title">可用账户</h2>
-            <p>新增交易时只能选择这些账户。</p>
-          </div>
-          <span class="ledger-count">{{ store.activeAccounts.value.length }}</span>
-        </div>
-        <NList v-if="store.activeAccounts.value.length" class="ledger-account-list" data-testid="ledger-active-account-list" :show-divider="false" hoverable>
-          <NListItem v-for="account in store.activeAccounts.value" :key="account.id" class="ledger-account-list-item">
-            <RouterLink
-              class="ledger-account-row"
-              :to="{ name: 'ledger-account', params: { id: account.id } }"
-              :data-testid="`ledger-account-row-${account.id}`"
-            >
-              <span class="ledger-account-name">
-                <strong>{{ account.name }}</strong>
-                <small>{{ account.nature === 'asset' ? '资产' : '负债' }} · {{ typeLabel(account.type) }}</small>
-              </span>
-              <strong class="ledger-account-balance">{{ balance(account) }}</strong>
-            </RouterLink>
-          </NListItem>
-        </NList>
-        <NEmpty v-else class="ledger-inline-empty" data-testid="ledger-active-account-empty" :show-icon="false" description="还没有可用账户。">
-          <template #extra><NButton class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" @click="createOpen = true">创建账户</NButton></template>
-        </NEmpty>
-      </NCard>
-
-      <NCard v-if="store.archivedAccounts.value.length" class="ledger-account-section" :bordered="false" size="small" aria-labelledby="ledger-archived-accounts-title">
-        <div class="ledger-section-heading">
-          <div>
-            <h2 id="ledger-archived-accounts-title">已归档账户</h2>
-            <p>历史记录仍然保留；恢复后可以再次用于记账。</p>
-          </div>
-          <span class="ledger-count">{{ store.archivedAccounts.value.length }}</span>
-        </div>
-        <NList class="ledger-account-list" data-testid="ledger-archived-account-list" :show-divider="false">
-          <NListItem v-for="account in store.archivedAccounts.value" :key="account.id" class="ledger-account-list-item">
-            <div class="ledger-account-row is-archived">
-              <RouterLink class="ledger-account-name" :to="{ name: 'ledger-account', params: { id: account.id } }">
-                <strong>{{ account.name }}</strong>
-                <small>已归档 · {{ account.nature === 'asset' ? '资产' : '负债' }} · {{ typeLabel(account.type) }}</small>
-              </RouterLink>
-              <div class="ledger-row-actions">
-                <strong class="ledger-account-balance">{{ balance(account) }}</strong>
-                <NButton class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" :disabled="Boolean(restoreId)" @click="restore(account.id, account.version)">
-                  {{ restoreId === account.id ? '正在恢复…' : '恢复' }}
-                </NButton>
-              </div>
+      <div class="ledger-account-sections">
+        <NCard class="ledger-account-section" :bordered="false" size="small" aria-labelledby="ledger-active-accounts-title">
+          <div class="ledger-section-heading">
+            <div>
+              <h2 id="ledger-active-accounts-title">可用账户 <span class="ledger-count"><NNumberAnimation :from="0" :to="visibleActiveAccounts.length" :duration="2000" /></span></h2>
+              <p>新增交易时只能选择这些账户。</p>
             </div>
-          </NListItem>
-        </NList>
-      </NCard>
+            <NSelect v-model:value="activeAccountTypeFilter" class="ledger-account-type-filter" size="small" :options="accountTypeOptions" :consistent-menu-width="false" aria-label="可用账户类型" />
+          </div>
+          <NList v-if="visibleActiveAccounts.length" class="ledger-account-list" data-testid="ledger-active-account-list" :show-divider="false" hoverable>
+            <NListItem v-for="account in visibleActiveAccounts" :key="account.id" class="ledger-account-list-item">
+              <RouterLink
+                class="ledger-account-row"
+                :to="{ name: 'ledger-account', params: { id: account.id } }"
+                :data-testid="`ledger-account-row-${account.id}`"
+              >
+                <span class="ledger-account-name">
+                  <span class="ledger-account-icon" :class="account.nature === 'asset' ? 'is-asset' : 'is-liability'" aria-hidden="true">
+                    <NIcon :size="17"><Wallet v-if="account.nature === 'asset'" /><CreditCard v-else /></NIcon>
+                  </span>
+                  <span class="ledger-account-copy">
+                    <strong>{{ account.name }}</strong>
+                    <small>{{ account.nature === 'asset' ? '资产' : '负债' }} · {{ typeLabel(account.type) }}</small>
+                  </span>
+                </span>
+                <strong class="ledger-account-balance"><LedgerAnimatedMoney :minor="account.currentBalanceMinor" :currency="account.currency" /></strong>
+              </RouterLink>
+            </NListItem>
+          </NList>
+          <NEmpty v-else class="ledger-inline-empty" data-testid="ledger-active-account-empty" :show-icon="false" :description="store.activeAccounts.value.length ? '没有符合条件的账户。' : '还没有可用账户。'">
+            <template #extra><NButton class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" @click="createOpen = true">创建账户</NButton></template>
+          </NEmpty>
+        </NCard>
+
+        <NCard class="ledger-account-section" :bordered="false" size="small" aria-labelledby="ledger-archived-accounts-title">
+          <div class="ledger-section-heading">
+            <div>
+              <h2 id="ledger-archived-accounts-title">已归档账户 <span class="ledger-count"><NNumberAnimation :from="0" :to="sortedArchivedAccounts.length" :duration="2000" /></span></h2>
+              <p>历史记录仍然保留；恢复后可以再次用于记账。</p>
+            </div>
+            <NSelect v-model:value="archivedAccountTypeFilter" class="ledger-account-type-filter" size="small" :options="accountTypeOptions" :consistent-menu-width="false" aria-label="已归档账户类型" />
+          </div>
+          <NList v-if="sortedArchivedAccounts.length" class="ledger-account-list" data-testid="ledger-archived-account-list" :show-divider="false">
+            <NListItem v-for="account in sortedArchivedAccounts" :key="account.id" class="ledger-account-list-item">
+              <div class="ledger-account-row is-archived">
+                <RouterLink class="ledger-account-name" :to="{ name: 'ledger-account', params: { id: account.id } }">
+                  <span class="ledger-account-icon" :class="account.nature === 'asset' ? 'is-asset' : 'is-liability'" aria-hidden="true">
+                    <NIcon :size="17"><Wallet v-if="account.nature === 'asset'" /><CreditCard v-else /></NIcon>
+                  </span>
+                  <span class="ledger-account-copy">
+                    <strong>{{ account.name }}</strong>
+                    <small>已归档 · {{ account.nature === 'asset' ? '资产' : '负债' }} · {{ typeLabel(account.type) }}</small>
+                  </span>
+                </RouterLink>
+                <div class="ledger-row-actions">
+                  <strong class="ledger-account-balance"><LedgerAnimatedMoney :minor="account.currentBalanceMinor" :currency="account.currency" /></strong>
+                  <NButton class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" :disabled="Boolean(restoreId)" @click="restore(account.id, account.version)">
+                    {{ restoreId === account.id ? '正在恢复…' : '恢复' }}
+                  </NButton>
+                </div>
+              </div>
+            </NListItem>
+          </NList>
+          <NEmpty v-else class="ledger-archived-empty" data-testid="ledger-archived-account-empty" :show-icon="false" :description="store.archivedAccounts.value.length ? '没有符合条件的账户。' : '暂无归档账户。'" />
+        </NCard>
+      </div>
     </template>
   </main>
 </template>
 
 <style scoped>
 .ledger-page { min-height: calc(100vh - 52px); background: var(--bg); }
-.ledger-accounts-page { width: min(100%, 1080px); margin: 0 auto; padding: 36px 28px 64px; box-sizing: border-box; }
+.ledger-accounts-page {
+  --ledger-glass-surface: color-mix(in srgb, var(--bg-soft) 74%, transparent);
+  --ledger-glass-tint: color-mix(in srgb, var(--accent) 3%, transparent);
+  --ledger-glass-highlight: color-mix(in srgb, var(--text-h) 9%, transparent);
+  --ledger-glass-shadow: color-mix(in srgb, var(--text-h) 8%, transparent);
+  width: min(100%, 1240px);
+  margin: 0 auto;
+  padding: 42px 28px 72px;
+  box-sizing: border-box;
+}
 .ledger-page-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 28px; }
-.ledger-eyebrow { margin: 0 0 5px; color: var(--accent); font-size: .75rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
-.ledger-page-header h1 { margin: 0; color: var(--text-h); font-size: 2rem; line-height: 1.2; }
-.ledger-page-header p:not(.ledger-eyebrow) { margin: 8px 0 0; color: var(--text-muted); font-size: .86rem; }
+.ledger-eyebrow { margin: 0 0 7px; color: var(--accent); font-size: .7rem; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }
+.ledger-page-header h1 { margin: 0; color: var(--text-h); font-size: clamp(1.85rem, 3vw, 2.35rem); font-weight: 720; letter-spacing: -.035em; line-height: 1.16; }
+.ledger-page-header p:not(.ledger-eyebrow) { margin: 8px 0 0; color: var(--text-muted); font-size: .78rem; }
 .ledger-page-actions,
 .ledger-row-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
 .ledger-primary-button,
@@ -160,6 +204,8 @@ function onAccountSaved(): void {
 .ledger-secondary-button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .ledger-primary-button:disabled,
 .ledger-secondary-button:disabled { cursor: wait; opacity: .65; }
+.ledger-page-actions .ledger-primary-button,
+.ledger-page-actions .ledger-secondary-button { min-height: 32px; padding: 6px 12px; font-size: .78rem; }
 .ledger-state-panel { display: grid; min-height: 260px; align-content: center; gap: 9px; color: var(--text-muted); }
 .ledger-loading-state { place-items: center; text-align: center; }
 .ledger-result-state,
@@ -175,28 +221,56 @@ function onAccountSaved(): void {
 .ledger-state-panel h2 { color: var(--text-h); }
 .ledger-state-panel :deep(.n-empty__description) { color: var(--text-h); font-size: 1.15rem; }
 .ledger-state-panel :deep(.n-empty__extra) { display: grid; gap: 10px; color: var(--text-muted); font-size: .82rem; line-height: 1.5; }
-.ledger-account-section { margin-top: 22px; border: 1px solid var(--border); border-radius: 11px; background: var(--bg); }
-.ledger-account-section :deep(.n-card__content) { padding: 20px; }
+.ledger-account-section {
+  height: 500px;
+  margin-top: 22px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
+  border-radius: 12px;
+  background:
+    linear-gradient(135deg, var(--ledger-glass-tint), transparent 52%),
+    var(--ledger-glass-surface);
+  box-shadow:
+    inset 0 1px 0 var(--ledger-glass-highlight),
+    0 10px 30px var(--ledger-glass-shadow);
+  -webkit-backdrop-filter: saturate(145%) blur(18px);
+  backdrop-filter: saturate(145%) blur(18px);
+}
+.ledger-account-section :deep(.n-card__content) { display: flex; height: 100%; min-height: 0; flex-direction: column; overflow: hidden; padding: 20px; box-sizing: border-box; }
+.ledger-account-sections { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.ledger-account-sections .ledger-account-section { min-width: 0; margin-top: 0; }
 .ledger-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 10px; }
 .ledger-section-heading h2 { margin: 0; color: var(--text-h); font-size: 1.08rem; }
+.ledger-section-heading h2 .ledger-count { margin-left: 5px; vertical-align: middle; }
 .ledger-section-heading p { margin: 4px 0 0; color: var(--text-muted); font-size: .78rem; }
 .ledger-count { display: inline-grid; min-width: 25px; height: 25px; place-items: center; border-radius: 999px; background: var(--bg-soft); color: var(--text-muted); font-size: .76rem; }
-.ledger-account-list { display: grid; gap: 8px; }
+.ledger-account-type-filter { width: 86px; flex: 0 0 auto; }
+.ledger-account-list { display: grid; height: 395px; min-height: 0; flex: 0 0 395px; overflow-y: auto; overscroll-behavior: contain; scrollbar-color: color-mix(in srgb, var(--text-muted) 34%, transparent) transparent; scrollbar-width: thin; }
 .ledger-account-list :deep(.n-list-item) { padding: 0; }
 .ledger-account-list :deep(.n-list-item__main) { width: 100%; }
 .ledger-account-list-item { padding: 0; }
-.ledger-account-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 70px; padding: 13px 15px; box-sizing: border-box; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-soft); color: inherit; text-decoration: none; }
-.ledger-account-row:hover { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
+.ledger-account-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 64px; padding: 9px 10px; box-sizing: border-box; border-bottom: 1px solid var(--ledger-divider, var(--border)); color: inherit; text-decoration: none; transition: background-color .14s ease; }
+.ledger-account-row:hover { background: var(--ledger-row-hover, var(--bg)); }
 .ledger-account-row.is-archived { background: transparent; }
-.ledger-account-name { display: grid; gap: 3px; min-width: 0; color: inherit; text-decoration: none; }
+.ledger-account-row:last-child { border-bottom: 0; }
+.ledger-archived-empty { flex: 1; min-height: 0; align-content: start; padding: 18px 10px; box-sizing: border-box; }
+.ledger-archived-empty :deep(.n-empty__description) { color: var(--text-muted); font-size: .82rem; }
+.ledger-account-name { display: flex; min-width: 0; align-items: center; gap: 10px; color: inherit; text-decoration: none; }
+.ledger-account-copy { display: grid; min-width: 0; gap: 3px; }
+.ledger-account-icon { display: grid; width: 32px; height: 32px; flex: 0 0 auto; place-items: center; border-radius: 9px; background: color-mix(in srgb, var(--accent) 11%, var(--bg)); color: var(--accent); }
+.ledger-account-icon.is-asset { background: color-mix(in srgb, var(--ledger-income) 10%, var(--bg)); color: var(--ledger-income); }
+.ledger-account-icon.is-liability { background: color-mix(in srgb, var(--ledger-expense) 10%, var(--bg)); color: var(--ledger-expense); }
 .ledger-account-name strong { overflow: hidden; color: var(--text-h); font-size: .9rem; text-overflow: ellipsis; white-space: nowrap; }
 .ledger-account-name small { color: var(--text-muted); font-size: .76rem; }
 .ledger-account-balance { flex: 0 0 auto; color: var(--text-h); font-size: .9rem; }
-.ledger-inline-empty { display: flex; min-height: 90px; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 18px; border: 1px dashed var(--border); border-radius: 10px; color: var(--text-muted); }
+.ledger-inline-empty { display: flex; flex: 1; min-height: 0; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 18px; border: 1px dashed var(--border); border-radius: 10px; color: var(--text-muted); }
 .ledger-inline-empty :deep(.n-empty__description) { color: var(--text-muted); font-size: .82rem; }
 .ledger-inline-empty :deep(.n-empty__extra) { margin: 0; }
 .ledger-form-error { margin: 0 0 12px; color: #b42318; font-size: .82rem; }
 .ledger-form-error :deep(.n-alert-body) { color: #b42318; }
+@media (min-width: 651px) {
+  .ledger-accounts-page { height: calc(100vh - var(--navbar-h, 52px)); min-height: 0; overflow: hidden; }
+}
 @media (max-width: 650px) {
   .ledger-accounts-page { padding: 28px 16px 48px; }
   .ledger-page-header { align-items: stretch; flex-direction: column; }
@@ -204,5 +278,6 @@ function onAccountSaved(): void {
   .ledger-account-row { align-items: flex-start; flex-direction: column; }
   .ledger-row-actions { width: 100%; justify-content: space-between; }
   .ledger-account-section :deep(.n-card__content) { padding: 16px 13px; }
+  .ledger-account-sections { grid-template-columns: 1fr; }
 }
 </style>

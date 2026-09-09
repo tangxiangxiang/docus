@@ -68,9 +68,9 @@
 /* OS preference is only a fallback before Docus has an explicit theme state. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) {
-    --docus-bg: #111827;
-    --docus-surface-1: #1f2937;
-    --docus-surface-2: #1f2937;
+    --docus-bg: #1e1e1e;
+    --docus-surface-1: #252526;
+    --docus-surface-2: #333333;
 
     --docus-text-1: #f9fafb;
     --docus-text-2: #d1d5db;
@@ -122,9 +122,9 @@
 }
 
 :root[data-theme='dark'] {
-  --docus-bg: #111827;
-  --docus-surface-1: #1f2937;
-  --docus-surface-2: #1f2937;
+  --docus-bg: #1e1e1e;
+  --docus-surface-1: #252526;
+  --docus-surface-2: #333333;
 
   --docus-text-1: #f9fafb;
   --docus-text-2: #d1d5db;

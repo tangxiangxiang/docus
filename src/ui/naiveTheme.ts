@@ -31,8 +31,8 @@ const docusNaiveCompositeColors: Readonly<Record<DocusTheme, {
     dividerColor: '#e5e7eb',
   },
   dark: {
-    cardColor: '#1f2937',
-    modalColor: '#1f2937',
+    cardColor: '#252526',
+    modalColor: '#252526',
     borderColor: '#374151',
     dividerColor: '#374151',
   },

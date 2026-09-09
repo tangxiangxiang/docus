@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
-import { NAlert, NButton, NCard, NEmpty, NIcon, NList, NListItem, NSelect, NSpin, NStatistic, type SelectOption } from 'naive-ui'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { NAlert, NButton, NCard, NEmpty, NFlex, NIcon, NList, NListItem, NNumberAnimation, NSelect, NSpin, NStatistic, type SelectOption } from 'naive-ui'
 import { CreditCard, Scale, Wallet } from '@vicons/tabler'
 import type {
   LedgerOverviewDto,
@@ -10,13 +10,14 @@ import type {
   LedgerTrendPoint,
 } from '../../../shared/ledgerProtocol'
 import { getLedgerOverview, getLedgerTrend } from '../../features/ledger/api'
-import { formatLedgerMoney, formatLedgerSignedMoney } from '../../features/ledger/money'
+import { currencyExponentFor, formatLedgerMoney, formatLedgerSignedMoney } from '../../features/ledger/money'
 import { formatLedgerDate, formatLedgerDateTime, formatLedgerPeriodPickerLabel } from '../../features/ledger/time'
 import { ledgerSelectNodeProps } from '../../features/ledger/naiveControls'
 import { calendarDateFromNaivePickerTimestamp } from '../../features/ledger/naiveTemporal'
 import { useLedgerStore } from '../../features/ledger/ledgerStore'
 import LedgerCashflowTrend from './LedgerCashflowTrend.vue'
 import LedgerDatePicker from './LedgerDatePicker.vue'
+import LedgerAnimatedMoney from './LedgerAnimatedMoney.vue'
 
 const emit = defineEmits<{
   record: []
@@ -448,6 +449,65 @@ function retryCategory(): void {
 function retryTrend(): void {
   if (trendDateInput.value) void refreshTrend(trendDateInput.value)
 }
+
+type MetricKey = 'assets' | 'liabilities' | 'netWorth'
+const metricAnimationFrom = reactive<Record<MetricKey, number | null>>({
+  assets: null,
+  liabilities: null,
+  netWorth: null,
+})
+let metricAnimationResetTimer: ReturnType<typeof setTimeout> | undefined
+let metricInitialAnimationTimer: ReturnType<typeof setTimeout> | undefined
+void metricInitialAnimationTimer
+
+watch(overview, (next, previous) => {
+  if (!next) return
+  if (!previous) {
+    metricInitialAnimationTimer = setTimeout(() => {
+      metricAnimationFrom.assets = 0
+      metricAnimationFrom.liabilities = 0
+      metricAnimationFrom.netWorth = 0
+    }, 100)
+    return
+  }
+  if (next.currency !== previous.currency) return
+  metricAnimationFrom.assets = previous.assetTotalMinor
+  metricAnimationFrom.liabilities = previous.liabilityTotalMinor
+  metricAnimationFrom.netWorth = previous.netWorthMinor
+  if (metricAnimationResetTimer) clearTimeout(metricAnimationResetTimer)
+  metricAnimationResetTimer = setTimeout(() => {
+    metricAnimationFrom.assets = null
+    metricAnimationFrom.liabilities = null
+    metricAnimationFrom.netWorth = null
+  }, 700)
+})
+
+onMounted(() => {
+  if (overview.value) {
+    metricInitialAnimationTimer = setTimeout(() => {
+      metricAnimationFrom.assets = 0
+      metricAnimationFrom.liabilities = 0
+      metricAnimationFrom.netWorth = 0
+    }, 100)
+  }
+})
+
+function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { prefix: string; value: number; from: number; precision: number } {
+  const precision = currencyExponentFor(currency)
+  const currencyPart = new Intl.NumberFormat('zh-CN', {
+    style: 'currency',
+    currency,
+    currencyDisplay: 'symbol',
+    minimumFractionDigits: precision,
+    maximumFractionDigits: precision,
+  }).formatToParts(0).find((part) => part.type === 'currency')?.value ?? currency
+  return {
+    prefix: minor < 0 ? `-${currencyPart}` : currencyPart,
+    value: Math.abs(minor) / (10 ** precision),
+    from: Math.abs(metricAnimationFrom[key] ?? minor) / (10 ** precision),
+    precision,
+  }
+}
 </script>
 
 <template>
@@ -458,10 +518,10 @@ function retryTrend(): void {
         <h1>财务概览</h1>
         <p v-if="store.settings.value">{{ store.settings.value.baseCurrency }} · {{ store.settings.value.timezone }}</p>
       </div>
-      <div class="ledger-dashboard-actions">
+      <NFlex class="ledger-dashboard-actions" align="center" :wrap="true" :size="10">
         <RouterLink class="ledger-secondary-button" :to="{ name: 'ledger-accounts' }">管理账户</RouterLink>
-        <NButton class="ledger-primary-button" attr-type="button" type="primary" size="medium" :bordered="false" :disabled="!store.activeAccounts.value.length" data-testid="ledger-record-button" @click="emit('record')">＋ 记一笔</NButton>
-      </div>
+        <NButton class="ledger-primary-button" attr-type="button" type="primary" size="small" :bordered="false" :disabled="!store.activeAccounts.value.length" data-testid="ledger-record-button" @click="emit('record')">＋ 记一笔</NButton>
+      </NFlex>
     </header>
 
     <template v-if="overview">
@@ -472,7 +532,10 @@ function retryTrend(): void {
               <NIcon aria-hidden="true" :size="22"><Wallet /></NIcon>
             </span>
             <span class="ledger-metric-copy">
-              <NStatistic label="总资产" :value="formatLedgerMoney(overview.assetTotalMinor, overview.currency)" tabular-nums />
+              <NStatistic label="总资产" tabular-nums>
+                <template #prefix>{{ animatedMoneyParts(overview.assetTotalMinor, overview.currency, 'assets').prefix }}</template>
+                <NNumberAnimation :from="animatedMoneyParts(overview.assetTotalMinor, overview.currency, 'assets').from" :to="animatedMoneyParts(overview.assetTotalMinor, overview.currency, 'assets').value" :precision="animatedMoneyParts(overview.assetTotalMinor, overview.currency, 'assets').precision" show-separator :duration="2000" />
+              </NStatistic>
             <small>当前所有资产账户余额</small>
             </span>
           </div>
@@ -483,7 +546,10 @@ function retryTrend(): void {
               <NIcon aria-hidden="true" :size="22"><CreditCard /></NIcon>
             </span>
             <span class="ledger-metric-copy">
-              <NStatistic label="总负债" :value="formatLedgerMoney(overview.liabilityTotalMinor, overview.currency)" tabular-nums />
+              <NStatistic label="总负债" tabular-nums>
+                <template #prefix>{{ animatedMoneyParts(overview.liabilityTotalMinor, overview.currency, 'liabilities').prefix }}</template>
+                <NNumberAnimation :from="animatedMoneyParts(overview.liabilityTotalMinor, overview.currency, 'liabilities').from" :to="animatedMoneyParts(overview.liabilityTotalMinor, overview.currency, 'liabilities').value" :precision="animatedMoneyParts(overview.liabilityTotalMinor, overview.currency, 'liabilities').precision" show-separator :duration="2000" />
+              </NStatistic>
             <small>当前所有负债账户余额</small>
             </span>
           </div>
@@ -494,7 +560,10 @@ function retryTrend(): void {
               <NIcon aria-hidden="true" :size="22"><Scale /></NIcon>
             </span>
             <span class="ledger-metric-copy">
-              <NStatistic label="净资产" :value="formatLedgerMoney(overview.netWorthMinor, overview.currency)" tabular-nums />
+              <NStatistic label="净资产" tabular-nums>
+                <template #prefix>{{ animatedMoneyParts(overview.netWorthMinor, overview.currency, 'netWorth').prefix }}</template>
+                <NNumberAnimation :from="animatedMoneyParts(overview.netWorthMinor, overview.currency, 'netWorth').from" :to="animatedMoneyParts(overview.netWorthMinor, overview.currency, 'netWorth').value" :precision="animatedMoneyParts(overview.netWorthMinor, overview.currency, 'netWorth').precision" show-separator :duration="2000" />
+              </NStatistic>
             <small>当前净资产</small>
             </span>
           </div>
@@ -502,14 +571,14 @@ function retryTrend(): void {
       </section>
 
       <NCard class="ledger-dashboard-section ledger-cashflow-section" :bordered="false" size="small" aria-labelledby="ledger-dashboard-cashflow-title">
-        <div class="ledger-section-heading ledger-period-heading">
+        <NFlex class="ledger-section-heading ledger-period-heading" align="flex-start" justify="space-between" :size="18">
           <div class="ledger-period-heading-copy">
             <h2 id="ledger-dashboard-cashflow-title">{{ selectedPeriodLabel }}收支</h2>
             <p v-if="historicalMode" class="ledger-historical-hint" role="note">
               {{ formatLedgerDate(dateInputValue, ledgerTimezone) }} · 账户余额为当前值
             </p>
           </div>
-          <div class="ledger-period-toolbar">
+          <NFlex class="ledger-period-toolbar" align="center" :size="10">
             <NSelect
               class="ledger-period-scope"
               size="small"
@@ -522,8 +591,8 @@ function retryTrend(): void {
               :input-props="{ name: 'scope' }"
               @update:value="updateScope"
             />
-          </div>
-        </div>
+          </NFlex>
+        </NFlex>
         <NAlert v-if="scopeError" class="ledger-inline-error" type="error" :show-icon="false" role="alert">
           <span>{{ scopeErrorMessage }}</span>
           <NButton class="ledger-link-button" attr-type="button" size="small" text :bordered="false" @click="retryScope">重试</NButton>
@@ -534,32 +603,32 @@ function retryTrend(): void {
         <div v-else-if="selectedPeriodSummary" class="ledger-cashflow-grid" data-testid="ledger-dashboard-cashflow">
           <div>
             <span class="ledger-cashflow-mark is-income" aria-hidden="true">↑</span>
-            <span class="ledger-cashflow-copy"><span>收入</span><strong class="is-income">{{ formatLedgerMoney(selectedPeriodSummary.incomeMinor, overview.currency) }}</strong></span>
+            <span class="ledger-cashflow-copy"><span>收入</span><strong class="is-income"><LedgerAnimatedMoney :minor="selectedPeriodSummary.incomeMinor" :currency="overview.currency" /></strong></span>
           </div>
           <div>
             <span class="ledger-cashflow-mark is-expense" aria-hidden="true">↓</span>
-            <span class="ledger-cashflow-copy"><span>支出</span><strong class="is-expense">{{ formatLedgerMoney(selectedPeriodSummary.expenseMinor, overview.currency) }}</strong></span>
+            <span class="ledger-cashflow-copy"><span>支出</span><strong class="is-expense"><LedgerAnimatedMoney :minor="selectedPeriodSummary.expenseMinor" :currency="overview.currency" /></strong></span>
           </div>
           <div>
             <span class="ledger-cashflow-mark" aria-hidden="true">=</span>
-            <span class="ledger-cashflow-copy"><span>收支结余</span><strong :class="{ 'is-income': selectedPeriodSummary.balanceMinor >= 0, 'is-expense': selectedPeriodSummary.balanceMinor < 0 }">{{ formatLedgerSignedMoney(selectedPeriodSummary.balanceMinor, overview.currency) }}</strong></span>
+            <span class="ledger-cashflow-copy"><span>收支结余</span><strong :class="{ 'is-income': selectedPeriodSummary.balanceMinor >= 0, 'is-expense': selectedPeriodSummary.balanceMinor < 0 }"><LedgerAnimatedMoney :minor="selectedPeriodSummary.balanceMinor" :currency="overview.currency" signed /></strong></span>
           </div>
         </div>
       </NCard>
 
       <NCard class="ledger-dashboard-section" data-testid="ledger-dashboard-accounts" :bordered="false" size="small" aria-labelledby="ledger-dashboard-accounts-title">
-        <div class="ledger-section-heading">
+        <NFlex class="ledger-section-heading" align="flex-start" justify="space-between" :size="18">
           <div>
             <h2 id="ledger-dashboard-accounts-title">账户</h2>
           </div>
           <RouterLink :to="{ name: 'ledger-accounts' }">查看全部</RouterLink>
-        </div>
+        </NFlex>
         <div class="ledger-dashboard-account-viewport" data-testid="ledger-dashboard-account-viewport">
           <div class="ledger-dashboard-account-groups">
             <section class="ledger-dashboard-account-group" data-testid="ledger-dashboard-assets" aria-labelledby="ledger-dashboard-assets-title">
               <h3 id="ledger-dashboard-assets-title">
                 <span><i class="is-asset" aria-hidden="true" />资产账户 <small>({{ assetAccounts.length }})</small></span>
-                <strong>{{ formatLedgerMoney(overview.assetTotalMinor, overview.currency) }}</strong>
+                <strong><LedgerAnimatedMoney :minor="overview.assetTotalMinor" :currency="overview.currency" /></strong>
               </h3>
               <div v-if="assetAccounts.length" class="ledger-dashboard-account-list-viewport" data-testid="ledger-dashboard-assets-viewport">
                 <NList class="ledger-dashboard-accounts" :show-divider="false" hoverable>
@@ -574,7 +643,7 @@ function retryTrend(): void {
                           <small>资产 · {{ account.currency }}</small>
                         </span>
                       </span>
-                      <strong class="ledger-account-amount">{{ formatLedgerMoney(account.currentBalanceMinor, account.currency) }}</strong>
+                      <strong class="ledger-account-amount"><LedgerAnimatedMoney :minor="account.currentBalanceMinor" :currency="account.currency" /></strong>
                     </RouterLink>
                   </NListItem>
                 </NList>
@@ -584,7 +653,7 @@ function retryTrend(): void {
             <section class="ledger-dashboard-account-group" data-testid="ledger-dashboard-liabilities" aria-labelledby="ledger-dashboard-liabilities-title">
               <h3 id="ledger-dashboard-liabilities-title">
                 <span><i class="is-liability" aria-hidden="true" />负债账户 <small>({{ liabilityAccounts.length }})</small></span>
-                <strong>{{ formatLedgerMoney(overview.liabilityTotalMinor, overview.currency) }}</strong>
+                <strong><LedgerAnimatedMoney :minor="overview.liabilityTotalMinor" :currency="overview.currency" /></strong>
               </h3>
               <div v-if="liabilityAccounts.length" class="ledger-dashboard-account-list-viewport" data-testid="ledger-dashboard-liabilities-viewport">
                 <NList class="ledger-dashboard-accounts" :show-divider="false" hoverable>
@@ -599,7 +668,7 @@ function retryTrend(): void {
                           <small>负债 · {{ account.currency }}</small>
                         </span>
                       </span>
-                      <strong class="ledger-account-amount">{{ formatLedgerMoney(account.currentBalanceMinor, account.currency) }}</strong>
+                      <strong class="ledger-account-amount"><LedgerAnimatedMoney :minor="account.currentBalanceMinor" :currency="account.currency" /></strong>
                     </RouterLink>
                   </NListItem>
                 </NList>
@@ -613,9 +682,9 @@ function retryTrend(): void {
       <template v-if="periodDataReady">
       <div class="ledger-dashboard-two-column">
         <NCard class="ledger-dashboard-section" :bordered="false" size="small" aria-labelledby="ledger-category-breakdown-title">
-          <div class="ledger-section-heading">
+          <NFlex class="ledger-section-heading" align="flex-start" justify="space-between" :size="18">
             <h2 id="ledger-category-breakdown-title">收支分类</h2>
-            <div class="ledger-category-toolbar">
+            <NFlex class="ledger-category-toolbar" align="center" :wrap="true" :size="10">
               <NSelect
                 class="ledger-category-scope"
                 size="small"
@@ -642,8 +711,8 @@ function retryTrend(): void {
                 :is-date-disabled="isDashboardDateDisabled"
                 @update:model-value="updateCategoryDate"
               />
-            </div>
-          </div>
+            </NFlex>
+          </NFlex>
           <div v-if="categoryRefreshing" class="ledger-period-analysis-loading" data-testid="ledger-category-analysis-loading" role="status" aria-live="polite">
             <NSpin size="medium" description="正在加载所选期间…" />
           </div>
@@ -662,7 +731,7 @@ function retryTrend(): void {
                         <span class="ledger-breakdown-name">{{ item.name }}</span>
                         <span class="ledger-breakdown-share">{{ categoryShare(selectedPeriods.income, item.amountMinor) }}</span>
                       </span>
-                      <strong class="ledger-breakdown-amount">{{ formatLedgerMoney(item.amountMinor, overview.currency) }}</strong>
+                      <strong class="ledger-breakdown-amount"><LedgerAnimatedMoney :minor="item.amountMinor" :currency="overview.currency" /></strong>
                       <span class="ledger-breakdown-bar" aria-hidden="true">
                         <span
                           class="ledger-breakdown-bar-fill is-income"
@@ -685,7 +754,7 @@ function retryTrend(): void {
                         <span class="ledger-breakdown-name">{{ item.name }}</span>
                         <span class="ledger-breakdown-share">{{ categoryShare(selectedPeriods.expense, item.amountMinor) }}</span>
                       </span>
-                      <strong class="ledger-breakdown-amount">{{ formatLedgerMoney(item.amountMinor, overview.currency) }}</strong>
+                      <strong class="ledger-breakdown-amount"><LedgerAnimatedMoney :minor="item.amountMinor" :currency="overview.currency" /></strong>
                       <span class="ledger-breakdown-bar" aria-hidden="true">
                         <span
                           class="ledger-breakdown-bar-fill is-expense"
@@ -702,13 +771,13 @@ function retryTrend(): void {
         </NCard>
 
         <NCard class="ledger-dashboard-section" :bordered="false" size="small" aria-labelledby="ledger-recent-title">
-          <div class="ledger-section-heading">
+          <NFlex class="ledger-section-heading" align="flex-start" justify="space-between" :size="18">
             <div>
               <h2 id="ledger-recent-title">最近交易</h2>
               <p v-if="historicalMode">截至 {{ formatLedgerDate(dateInputValue, ledgerTimezone) }}</p>
             </div>
             <NButton class="ledger-link-button" attr-type="button" size="small" text :bordered="false" @click="emit('viewTransactions')">查看全部</NButton>
-          </div>
+          </NFlex>
           <NList v-if="overview.recentTransactions.length" class="ledger-recent-list" data-testid="ledger-recent-transactions" :show-divider="false" hoverable>
             <NListItem v-for="transaction in overview.recentTransactions" :key="transaction.id">
               <div class="ledger-recent-row">
@@ -728,9 +797,9 @@ function retryTrend(): void {
       </template>
 
       <NCard class="ledger-dashboard-section" :bordered="false" size="small" aria-labelledby="ledger-periods-title">
-        <div class="ledger-section-heading">
+        <NFlex class="ledger-section-heading" align="flex-start" justify="space-between" :size="18">
           <h2 id="ledger-periods-title">期间摘要</h2>
-        </div>
+        </NFlex>
         <div v-if="periodDataReady" class="ledger-period-grid" data-testid="ledger-period-summaries">
           <NCard v-for="period in (['today', 'week', 'month', 'year'] as const)" :key="period" class="ledger-period-card" :data-testid="`ledger-period-${period}`" :bordered="false" size="small">
             <div class="ledger-period-card-heading">
@@ -752,9 +821,9 @@ function retryTrend(): void {
               </div>
             </div>
             <div v-if="periodSummary(period)" class="ledger-period-values">
-              <span>收入 <strong class="is-income">{{ formatLedgerMoney(periodSummary(period)!.incomeMinor, overview.currency) }}</strong></span>
-              <span>支出 <strong class="is-expense">{{ formatLedgerMoney(periodSummary(period)!.expenseMinor, overview.currency) }}</strong></span>
-              <span>收支结余 <strong>{{ formatLedgerSignedMoney(periodSummary(period)!.balanceMinor, overview.currency) }}</strong></span>
+              <span>收入 <strong class="is-income"><LedgerAnimatedMoney :minor="periodSummary(period)!.incomeMinor" :currency="overview.currency" /></strong></span>
+              <span>支出 <strong class="is-expense"><LedgerAnimatedMoney :minor="periodSummary(period)!.expenseMinor" :currency="overview.currency" /></strong></span>
+              <span>收支结余 <strong><LedgerAnimatedMoney :minor="periodSummary(period)!.balanceMinor" :currency="overview.currency" signed /></strong></span>
             </div>
             <div v-else-if="periodProjectionLoading(period)" class="ledger-period-local-state" :data-testid="`ledger-period-loading-${period}`" role="status" aria-live="polite">
               <NSpin size="small" />
@@ -773,7 +842,7 @@ function retryTrend(): void {
 
       <template v-if="periodDataReady">
       <NCard class="ledger-dashboard-section" :bordered="false" size="small" aria-labelledby="ledger-trend-title">
-        <div class="ledger-section-heading">
+        <NFlex class="ledger-section-heading" align="flex-start" justify="space-between" :size="18">
           <div>
             <h2 id="ledger-trend-title">收支趋势</h2>
             <p v-if="trendDataReady && trendData.length">最近 {{ trendData.length }} 个月</p>
@@ -789,7 +858,7 @@ function retryTrend(): void {
             :is-date-disabled="isDashboardDateDisabled"
             @update:model-value="updateTrendDate"
           />
-        </div>
+        </NFlex>
         <div v-if="trendRefreshing" class="ledger-period-analysis-loading" data-testid="ledger-trend-loading" role="status" aria-live="polite">
           <NSpin size="medium" description="正在加载趋势数据…" />
         </div>
@@ -808,7 +877,10 @@ function retryTrend(): void {
 .ledger-dashboard {
   --ledger-border: color-mix(in srgb, var(--border) 76%, transparent);
   --ledger-divider: color-mix(in srgb, var(--border) 58%, transparent);
-  --ledger-surface: color-mix(in srgb, var(--bg-soft) 42%, var(--bg));
+  --ledger-glass-surface: color-mix(in srgb, var(--bg-soft) 74%, transparent);
+  --ledger-glass-tint: color-mix(in srgb, var(--accent) 3%, transparent);
+  --ledger-glass-highlight: color-mix(in srgb, var(--text-h) 9%, transparent);
+  --ledger-glass-shadow: color-mix(in srgb, var(--text-h) 8%, transparent);
   --ledger-row-hover: color-mix(in srgb, var(--accent) 5%, transparent);
   --ledger-income: color-mix(in srgb, #15945f 82%, var(--text-h));
   --ledger-expense: color-mix(in srgb, #dc3f4d 82%, var(--text-h));
@@ -861,14 +933,14 @@ function retryTrend(): void {
 .ledger-primary-button,
 .ledger-secondary-button {
   display: inline-flex;
-  min-height: 40px;
+  min-height: 32px;
   align-items: center;
   justify-content: center;
   box-sizing: border-box;
-  padding: 8px 15px;
+  padding: 6px 12px;
   border-radius: 8px;
   font: inherit;
-  font-size: .82rem;
+  font-size: .78rem;
   font-weight: 650;
   text-decoration: none;
   cursor: pointer;
@@ -939,11 +1011,18 @@ function retryTrend(): void {
 }
 
 .ledger-metric-card {
-  min-height: 96px;
+  min-height: 84px;
   box-sizing: border-box;
   border: 1px solid var(--ledger-border);
   border-radius: 12px;
-  background: var(--ledger-surface);
+  background:
+    linear-gradient(135deg, var(--ledger-glass-tint), transparent 58%),
+    var(--ledger-glass-surface);
+  box-shadow:
+    inset 0 1px 0 var(--ledger-glass-highlight),
+    0 8px 24px var(--ledger-glass-shadow);
+  -webkit-backdrop-filter: saturate(145%) blur(18px);
+  backdrop-filter: saturate(145%) blur(18px);
 }
 
 .ledger-metric-card :deep(.n-card__content) { padding: 0; }
@@ -953,8 +1032,8 @@ function retryTrend(): void {
   grid-template-columns: 40px minmax(0, 1fr);
   align-items: center;
   gap: 12px;
-  min-height: 96px;
-  padding: 14px 16px;
+  min-height: 84px;
+  padding: 10px 16px;
   box-sizing: border-box;
 }
 
@@ -1003,7 +1082,14 @@ function retryTrend(): void {
   margin-top: 22px;
   border: 1px solid var(--ledger-border);
   border-radius: 12px;
-  background: var(--ledger-surface);
+  background:
+    linear-gradient(135deg, var(--ledger-glass-tint), transparent 52%),
+    var(--ledger-glass-surface);
+  box-shadow:
+    inset 0 1px 0 var(--ledger-glass-highlight),
+    0 10px 30px var(--ledger-glass-shadow);
+  -webkit-backdrop-filter: saturate(145%) blur(18px);
+  backdrop-filter: saturate(145%) blur(18px);
 }
 
 .ledger-dashboard-section :deep(.n-card__content) { padding: 20px; }

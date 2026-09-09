@@ -32,7 +32,7 @@ const settings: LedgerSettingsDto = {
   updatedAt: 2,
 }
 
-function account(id: string, archivedAt: number | null = null): LedgerAccountDto {
+function account(id: string, archivedAt: number | null = null, currentBalanceMinor = 100_000): LedgerAccountDto {
   return {
     id,
     name: id,
@@ -47,7 +47,7 @@ function account(id: string, archivedAt: number | null = null): LedgerAccountDto
     version: 1,
     createdAt: 1,
     updatedAt: 1,
-    currentBalanceMinor: 100_000,
+    currentBalanceMinor,
   }
 }
 
@@ -111,6 +111,27 @@ describe('Ledger account management list', () => {
     expect(wrapper.get('[data-testid="ledger-active-account-list"]').text()).toContain('bank-1')
     expect(wrapper.get('[data-testid="ledger-archived-account-list"]').text()).toContain('old-bank')
     expect(wrapper.findAll('button').some((button) => button.text() === '删除')).toBe(false)
+  })
+
+  it('sorts active and archived accounts by current balance descending', async () => {
+    setup([
+      account('active-low', null, 10_000),
+      account('archived-high', 10, 90_000),
+      account('active-high', null, 200_000),
+      account('archived-low', 20, 5_000),
+    ])
+    const nextRouter = router()
+    await nextRouter.push('/ledger/accounts')
+    await nextRouter.isReady()
+    const wrapper = mount(LedgerAccountsView, { global: { plugins: [nextRouter] } })
+    wrappers.push(wrapper)
+
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="ledger-active-account-list"]').findAll('.ledger-account-name strong').map((node) => node.text()))
+      .toEqual(['active-high', 'active-low'])
+    expect(wrapper.get('[data-testid="ledger-archived-account-list"]').findAll('.ledger-account-name strong').map((node) => node.text()))
+      .toEqual(['archived-high', 'archived-low'])
   })
 
   it('opens the shared account-create form and uses the real account API', async () => {
