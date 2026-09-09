@@ -168,6 +168,7 @@ onBeforeUnmount(cancelGeneration)
           :class="{ active: activeDiffPath === entry.path }"
         >
           <NCheckbox
+            size="small"
             :checked="selectedPaths.has(entry.path)"
             :disabled="busy || mutationLocked"
             :aria-disabled="busy || mutationLocked ? 'true' : undefined"
