@@ -3750,6 +3750,13 @@ main.container.auth-page-shell {
 .vault .tag-panel .result-entry:hover { background: var(--vs-hover-bg); }
 .vault .document-row.active,
 .vault .tag-panel .result-entry.active { background: var(--vs-active-bg); }
+.vault .tag-panel .result-entry .n-button__content {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: 100%;
+  min-width: 0;
+}
 .vault .document-row:focus-visible,
 .vault .tag-panel .result-entry:focus-visible {
   outline: 1px solid color-mix(in srgb, var(--vs-accent) 72%, transparent);
