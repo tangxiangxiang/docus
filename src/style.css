@@ -1504,6 +1504,15 @@ main.container.auth-page-shell {
   transition: background 100ms, color 100ms;
 }
 .history-timeline-group-header:hover { background: var(--vs-hover-bg); }
+.history-timeline-group-header .n-button__content,
+.history-commit-row .n-button__content,
+.history-file-row .n-button__content {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: 100%;
+  min-width: 0;
+}
 .history-timeline-group-title {
   flex: 1 1 auto;
   min-width: 0;
