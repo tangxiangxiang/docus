@@ -194,10 +194,15 @@ function closeTransactionSheet(): void {
 .ledger-page { min-height: calc(100vh - 52px); background: var(--bg); }
 .ledger-loading-state,
 .ledger-error-state,
-.ledger-ready-placeholder { display: grid; min-height: 420px; place-items: center; align-content: center; gap: 12px; padding: 32px 18px; box-sizing: border-box; color: var(--text-muted); text-align: center; }
-.ledger-loading-state :deep(.n-spin-container),
-.ledger-error-state :deep(.n-result) { display: grid; place-items: center; }
-.ledger-error-state :deep(.n-result) { padding: 0; }
+.ledger-ready-placeholder { display: grid; min-height: 420px; align-content: center; gap: 12px; padding: 32px 18px; box-sizing: border-box; color: var(--text-muted); }
+.ledger-loading-state { place-items: center; text-align: center; }
+.ledger-error-state { place-items: center start; text-align: left; }
+.ledger-ready-placeholder { place-items: center; text-align: center; }
+.ledger-loading-state :deep(.n-spin-container) { display: grid; place-items: center; }
+.ledger-error-state :deep(.n-result) { display: grid; place-items: center start; width: min(100%, 620px); padding: 0; text-align: left; }
+.ledger-error-state :deep(.n-result-header__title),
+.ledger-error-state :deep(.n-result-header__description),
+.ledger-error-state :deep(.n-result-footer) { text-align: left; }
 .ledger-error-state h1,
 .ledger-ready-placeholder h1 { margin: 0; color: var(--text-h); font-size: 1.5rem; }
 .ledger-error-state p,

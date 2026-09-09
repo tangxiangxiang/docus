@@ -261,9 +261,9 @@ function onRecoveryResolved(): void {
       </NForm>
     </NCard>
 
-    <div v-if="!store.hasUnresolvedCreate.value && loading && !page && !store.settings.value" class="ledger-transactions-state" data-testid="ledger-transactions-loading" role="status"><NSpin size="medium" description="正在加载交易…" /></div>
-    <NEmpty v-else-if="!store.hasUnresolvedCreate.value && !store.settings.value" class="ledger-transactions-state" data-testid="ledger-transactions-needs-settings" :show-icon="false" description="请先完成 Ledger 初始化">
-      <template #extra>设置基础货币、时区并创建账户后，交易记录才会出现在这里。</template>
+    <div v-if="!store.hasUnresolvedCreate.value && loading && !page && !store.settings.value" class="ledger-transactions-state ledger-loading-state" data-testid="ledger-transactions-loading" role="status"><NSpin size="medium" description="正在加载交易…" /></div>
+    <NEmpty v-else-if="!store.hasUnresolvedCreate.value && !store.settings.value" class="ledger-transactions-state ledger-empty-state" data-testid="ledger-transactions-needs-settings" :show-icon="false" description="请先完成 Ledger 初始化">
+      <template #extra><div class="ledger-state-extra">设置基础货币、时区并创建账户后，交易记录才会出现在这里。</div></template>
     </NEmpty>
     <NCard v-else-if="!store.hasUnresolvedCreate.value && store.settings.value" class="ledger-transaction-history" :bordered="false" size="small" aria-labelledby="ledger-history-title">
       <div v-if="!store.activeAccounts.value.length" class="ledger-no-active-account-notice" data-testid="ledger-transactions-no-account" role="status">
@@ -320,9 +320,11 @@ function onRecoveryResolved(): void {
       </table>
       <NEmpty v-else class="ledger-transactions-empty" data-testid="ledger-transactions-empty" :show-icon="false" :description="hasFilters ? '没有符合筛选条件的交易' : '还没有交易记录'">
         <template #extra>
-          <p>{{ hasFilters ? '可以清除筛选，或换一个日期和账户。' : '保存第一笔收入、支出或转账后，它会显示在这里。' }}</p>
-          <NButton v-if="hasFilters" class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" @click="clearFilters">清除筛选</NButton>
-          <NButton v-else class="ledger-primary-button" attr-type="button" type="primary" size="medium" :bordered="false" :disabled="!store.activeAccounts.value.length" @click="transactionSheetOpen = true">记下第一笔</NButton>
+          <div class="ledger-empty-extra">
+            <p>{{ hasFilters ? '可以清除筛选，或换一个日期和账户。' : '保存第一笔收入、支出或转账后，它会显示在这里。' }}</p>
+            <NButton v-if="hasFilters" class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" @click="clearFilters">清除筛选</NButton>
+            <NButton v-else class="ledger-primary-button" attr-type="button" type="primary" size="medium" :bordered="false" :disabled="!store.activeAccounts.value.length" @click="transactionSheetOpen = true">记下第一笔</NButton>
+          </div>
         </template>
       </NEmpty>
       <div v-if="transactions.length" class="ledger-transaction-pagination">
@@ -377,7 +379,11 @@ function onRecoveryResolved(): void {
 .ledger-filters-grid :deep(.ledger-date-picker .n-date-picker) { width: 100%; }
 .ledger-filters-grid :deep(.ledger-date-picker .n-input) { width: 100%; }
 .ledger-filter-submit { white-space: nowrap; }
-.ledger-transactions-state { display: grid; min-height: 340px; place-items: center; align-content: center; gap: 9px; padding: 30px 18px; color: var(--text-muted); text-align: center; }
+.ledger-transactions-state { display: grid; min-height: 340px; align-content: center; gap: 9px; padding: 30px 18px; color: var(--text-muted); }
+.ledger-loading-state { place-items: center; text-align: center; }
+.ledger-empty-state { place-items: center start; text-align: left; }
+.ledger-loading-state :deep(.n-spin-container) { display: grid; place-items: center; }
+.ledger-empty-state :deep(.n-empty__extra) { text-align: left; }
 .ledger-transactions-state :deep(.n-empty__description) { color: var(--text-h); font-size: 1.1rem; }
 .ledger-transactions-state :deep(.n-empty__extra) { max-width: 34rem; color: var(--text-muted); font-size: .82rem; line-height: 1.5; }
 .ledger-transactions-state h2,
@@ -422,9 +428,10 @@ function onRecoveryResolved(): void {
 .ledger-transaction-amount { text-align: right; color: var(--text-h); font-size: .83rem; }
 .ledger-transaction-amount.is-income { color: #18794e; }
 .ledger-transaction-amount.is-expense { color: #b42318; }
-.ledger-transactions-empty { display: grid; min-height: 240px; place-items: center; align-content: center; gap: 8px; color: var(--text-muted); text-align: center; }
+.ledger-transactions-empty { display: grid; min-height: 240px; place-items: center start; align-content: center; gap: 8px; color: var(--text-muted); text-align: left; }
 .ledger-transactions-empty :deep(.n-empty__description) { color: var(--text-h); font-size: 1rem; }
-.ledger-transactions-empty :deep(.n-empty__extra) { display: grid; gap: 8px; color: var(--text-muted); font-size: .8rem; }
+.ledger-transactions-empty :deep(.n-empty__extra) { display: grid; gap: 8px; color: var(--text-muted); font-size: .8rem; text-align: left; }
+.ledger-empty-extra { display: grid; justify-items: start; gap: 8px; text-align: left; }
 .ledger-transactions-empty p { margin: 0; }
 .ledger-no-active-account-notice { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 18px; padding: 12px 13px; border: 1px solid color-mix(in srgb, #b7791f 30%, var(--border)); border-radius: 8px; background: color-mix(in srgb, #f6ad55 7%, var(--bg-soft)); }
 .ledger-no-active-account-notice strong { color: var(--text-h); font-size: .8rem; }

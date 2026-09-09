@@ -99,8 +99,8 @@ function onSaved(next: LedgerAccountDto): void {
 
     <LedgerPendingCreateGate v-if="store.recoveryGateVisible.value" />
 
-    <div v-else-if="loading" class="ledger-state-panel" data-testid="ledger-account-loading" role="status"><NSpin size="medium" description="正在加载账户…" /></div>
-    <section v-else-if="!account" class="ledger-state-panel" data-testid="ledger-account-error" role="alert">
+    <div v-else-if="loading" class="ledger-state-panel ledger-loading-state" data-testid="ledger-account-loading" role="status"><NSpin size="medium" description="正在加载账户…" /></div>
+    <section v-else-if="!account" class="ledger-state-panel ledger-result-state" data-testid="ledger-account-error" role="alert">
       <NResult status="error" title="账户详情无法加载" :description="actionError">
         <template #footer>
           <div class="ledger-page-actions">
@@ -225,11 +225,17 @@ function onSaved(next: LedgerAccountDto): void {
 .ledger-detail-note :deep(.n-card__content) { padding: 18px 0; }
 .ledger-detail-note h2 { margin: 0 0 7px; color: var(--text-h); font-size: .95rem; }
 .ledger-detail-note p { margin: 0; color: var(--text-muted); font-size: .84rem; white-space: pre-wrap; }
-.ledger-state-panel { display: grid; min-height: 300px; place-items: center; align-content: center; gap: 10px; color: var(--text-muted); text-align: center; }
+.ledger-state-panel { display: grid; min-height: 300px; align-content: center; gap: 10px; color: var(--text-muted); }
+.ledger-loading-state { place-items: center; text-align: center; }
+.ledger-result-state { place-items: center start; text-align: left; }
+.ledger-loading-state :deep(.n-spin-container) { display: grid; place-items: center; }
+.ledger-result-state :deep(.n-result) { display: grid; place-items: center start; width: min(100%, 620px); padding: 0; text-align: left; }
+.ledger-result-state :deep(.n-result-header__title),
+.ledger-result-state :deep(.n-result-header__description),
+.ledger-result-state :deep(.n-result-footer) { text-align: left; }
 .ledger-state-panel h1,
 .ledger-state-panel p { margin: 0; }
 .ledger-state-panel h1 { color: var(--text-h); font-size: 1.35rem; }
-.ledger-state-panel :deep(.n-result) { padding: 0; }
 .ledger-state-panel :deep(.n-result-header__title) { color: var(--text-h); }
 .ledger-state-panel :deep(.n-result-footer) { margin-top: 18px; }
 @media (max-width: 720px) {

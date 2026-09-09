@@ -2153,7 +2153,7 @@ onBeforeUnmount(() => {
 .tag-management-button.destructive:hover:not(:disabled) { background: color-mix(in srgb, var(--danger, #b42318) 84%, #000); }
 .tag-management-button.secondary { margin-top: 8px; }
 .tag-management-button:disabled { cursor: not-allowed; opacity: 0.48; }
-.tag-management-state { display: grid; justify-items: center; gap: 12px; min-height: 150px; padding: 36px 12px; color: var(--text-muted); text-align: center; }
+.tag-management-state { display: grid; justify-items: start; gap: 12px; min-height: 150px; padding: 36px 12px; color: var(--text-muted); text-align: left; }
 .tag-management-state-error { color: var(--text); }
 .tag-management-state-success { color: var(--text); }
 .tag-management-state p { max-width: 540px; margin: 0; line-height: 1.55; }
@@ -2171,9 +2171,9 @@ onBeforeUnmount(() => {
 .tag-management-undo-note { margin: 10px 0 0; color: var(--text-muted); font-size: 0.76rem; line-height: 1.45; }
 .tag-management-undo-preservation { display: grid; gap: 4px; margin-top: 14px; padding: 10px 12px; border-left: 3px solid var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); font-size: 0.76rem; line-height: 1.45; }
 .tag-management-undo-preservation span { color: var(--text-muted); }
-.tag-management-undo-state { display: grid; justify-items: center; gap: 9px; margin: 12px 0; padding: 12px; color: var(--text-muted); text-align: center; font-size: 0.78rem; line-height: 1.45; }
+.tag-management-undo-state { display: grid; justify-items: start; gap: 9px; margin: 12px 0; padding: 12px; color: var(--text-muted); text-align: left; font-size: 0.78rem; line-height: 1.45; }
 .tag-management-undo-state.tag-management-conflict { justify-items: stretch; text-align: left; }
-.tag-management-undo-state .tag-management-button { justify-self: center; }
+.tag-management-undo-state .tag-management-button { justify-self: start; }
 .tag-management-summary, .tag-management-undo-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 18px; margin: 0; }
 .tag-management-summary div, .tag-management-undo-summary div { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); font-size: 0.76rem; }
 .tag-management-summary dt, .tag-management-undo-summary dt { color: var(--text-muted); }

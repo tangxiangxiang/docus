@@ -66,16 +66,18 @@ function onAccountSaved(): void {
     </header>
 
     <LedgerPendingCreateGate v-if="store.recoveryGateVisible.value" @resolved="onAccountSaved" />
-    <div v-else-if="loading" class="ledger-state-panel" data-testid="ledger-accounts-loading" role="status"><NSpin size="medium" description="正在加载账户…" /></div>
-    <section v-else-if="store.workspaceState.value === 'RECOVERABLE_ERROR'" class="ledger-state-panel" data-testid="ledger-accounts-error" role="alert">
+    <div v-else-if="loading" class="ledger-state-panel ledger-loading-state" data-testid="ledger-accounts-loading" role="status"><NSpin size="medium" description="正在加载账户…" /></div>
+    <section v-else-if="store.workspaceState.value === 'RECOVERABLE_ERROR'" class="ledger-state-panel ledger-result-state" data-testid="ledger-accounts-error" role="alert">
       <NResult status="error" title="账户暂时无法加载" :description="ledgerWorkspaceReadErrorMessage(store.workspaceError.value)">
         <template #footer><NButton class="ledger-primary-button" attr-type="button" type="primary" size="medium" :bordered="false" @click="store.bootstrap">重新加载</NButton></template>
       </NResult>
     </section>
-    <NEmpty v-else-if="!store.settings.value" class="ledger-state-panel" data-testid="ledger-accounts-needs-settings" :show-icon="false" description="请先设置 Ledger">
+    <NEmpty v-else-if="!store.settings.value" class="ledger-state-panel ledger-empty-state" data-testid="ledger-accounts-needs-settings" :show-icon="false" description="请先设置 Ledger">
       <template #extra>
-        <p>完成基础货币和时区设置后，才能管理账户。</p>
-        <RouterLink class="ledger-primary-button" :to="{ name: 'ledger' }">去设置 Ledger</RouterLink>
+        <div class="ledger-state-extra">
+          <p>完成基础货币和时区设置后，才能管理账户。</p>
+          <RouterLink class="ledger-primary-button" :to="{ name: 'ledger' }">去设置 Ledger</RouterLink>
+        </div>
       </template>
     </NEmpty>
     <template v-else-if="createOpen">
@@ -158,7 +160,16 @@ function onAccountSaved(): void {
 .ledger-secondary-button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .ledger-primary-button:disabled,
 .ledger-secondary-button:disabled { cursor: wait; opacity: .65; }
-.ledger-state-panel { display: grid; min-height: 260px; place-items: center; align-content: center; gap: 9px; color: var(--text-muted); text-align: center; }
+.ledger-state-panel { display: grid; min-height: 260px; align-content: center; gap: 9px; color: var(--text-muted); }
+.ledger-loading-state { place-items: center; text-align: center; }
+.ledger-result-state,
+.ledger-empty-state { place-items: center start; text-align: left; }
+.ledger-loading-state :deep(.n-spin-container) { display: grid; place-items: center; }
+.ledger-result-state :deep(.n-result) { display: grid; place-items: center start; width: min(100%, 620px); padding: 0; text-align: left; }
+.ledger-result-state :deep(.n-result-header__title),
+.ledger-result-state :deep(.n-result-header__description),
+.ledger-result-state :deep(.n-result-footer) { text-align: left; }
+.ledger-state-extra { display: grid; gap: 10px; text-align: left; }
 .ledger-state-panel h2,
 .ledger-state-panel p { margin: 0; }
 .ledger-state-panel h2 { color: var(--text-h); }
@@ -181,7 +192,7 @@ function onAccountSaved(): void {
 .ledger-account-name strong { overflow: hidden; color: var(--text-h); font-size: .9rem; text-overflow: ellipsis; white-space: nowrap; }
 .ledger-account-name small { color: var(--text-muted); font-size: .76rem; }
 .ledger-account-balance { flex: 0 0 auto; color: var(--text-h); font-size: .9rem; }
-.ledger-inline-empty { display: flex; min-height: 90px; align-items: center; justify-content: space-between; gap: 14px; padding: 18px; border: 1px dashed var(--border); border-radius: 10px; color: var(--text-muted); }
+.ledger-inline-empty { display: flex; min-height: 90px; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 18px; border: 1px dashed var(--border); border-radius: 10px; color: var(--text-muted); }
 .ledger-inline-empty :deep(.n-empty__description) { color: var(--text-muted); font-size: .82rem; }
 .ledger-inline-empty :deep(.n-empty__extra) { margin: 0; }
 .ledger-form-error { margin: 0 0 12px; color: #b42318; font-size: .82rem; }

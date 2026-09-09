@@ -347,7 +347,7 @@ onBeforeUnmount(async () => {
   font-size: 0.88rem;
   color: var(--text-muted);
   font-style: italic;
-  text-align: center;
+  text-align: left;
 }
 
 .ai-sp-footer {

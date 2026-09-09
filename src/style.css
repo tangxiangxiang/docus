@@ -1842,10 +1842,11 @@ main.container.auth-page-shell {
 }
 .history-diff-state {
   display: grid;
-  place-items: center;
+  place-items: center start;
   min-height: 0;
   color: var(--vs-text-3);
   font-size: 0.82rem;
+  text-align: left;
 }
 .history-diff-state.is-error { color: var(--vs-danger, #c94f4f); }
 .history-diff-error { gap: 10px; }
@@ -4778,7 +4779,7 @@ main.container.auth-page-shell {
 
 .palette-empty {
   padding: 24px 16px;
-  text-align: center;
+  text-align: left;
   color: var(--text-muted);
   font-size: 0.875rem;
 }

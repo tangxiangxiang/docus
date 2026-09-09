@@ -122,5 +122,5 @@ button { font: inherit; }
 .record-actions { display: flex; flex-direction: column; gap: 4px; }
 .warning { color: var(--warning, #b7791f) !important; }
 .recovery-state { padding: 16px 0; font-size: 12px; color: var(--text-secondary); }
-.empty { text-align: center; padding: 24px 0; }
+.empty { text-align: left; padding: 24px 0; }
 </style>
