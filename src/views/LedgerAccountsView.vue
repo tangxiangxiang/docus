@@ -38,6 +38,18 @@ const visibleActiveAccounts = computed(() => {
 const sortedArchivedAccounts = computed(() => [...store.archivedAccounts.value]
   .filter((account) => archivedAccountTypeFilter.value === 'all' || account.nature === archivedAccountTypeFilter.value)
   .sort((left, right) => right.currentBalanceMinor - left.currentBalanceMinor))
+const scrollbarHideTimers = new WeakMap<HTMLElement, ReturnType<typeof setTimeout>>()
+
+function showScrollbarWhileScrolling(event: Event): void {
+  const viewport = event.currentTarget as HTMLElement
+  viewport.classList.add('is-scrolling')
+  const timer = scrollbarHideTimers.get(viewport)
+  if (timer) clearTimeout(timer)
+  scrollbarHideTimers.set(viewport, setTimeout(() => {
+    viewport.classList.remove('is-scrolling')
+    scrollbarHideTimers.delete(viewport)
+  }, 700))
+}
 
 onMounted(() => {
   document.body.classList.add('ledger-accounts-mode')
@@ -135,7 +147,7 @@ function onAccountSaved(): void {
             </div>
             <NSelect v-model:value="activeAccountTypeFilter" class="ledger-account-type-filter" size="small" :options="accountTypeOptions" :consistent-menu-width="false" aria-label="可用账户类型" />
           </div>
-          <NList v-if="visibleActiveAccounts.length" class="ledger-account-list" data-testid="ledger-active-account-list" :show-divider="false" hoverable>
+          <NList v-if="visibleActiveAccounts.length" class="ledger-account-list" data-testid="ledger-active-account-list" :show-divider="false" hoverable @scroll="showScrollbarWhileScrolling">
             <NListItem v-for="account in visibleActiveAccounts" :key="account.id" class="ledger-account-list-item">
               <RouterLink
                 class="ledger-account-row"
@@ -168,7 +180,7 @@ function onAccountSaved(): void {
             </div>
             <NSelect v-model:value="archivedAccountTypeFilter" class="ledger-account-type-filter" size="small" :options="accountTypeOptions" :consistent-menu-width="false" aria-label="已归档账户类型" />
           </div>
-          <NList v-if="sortedArchivedAccounts.length" class="ledger-account-list" data-testid="ledger-archived-account-list" :show-divider="false">
+          <NList v-if="sortedArchivedAccounts.length" class="ledger-account-list" data-testid="ledger-archived-account-list" :show-divider="false" @scroll="showScrollbarWhileScrolling">
             <NListItem v-for="account in sortedArchivedAccounts" :key="account.id" class="ledger-account-list-item">
               <div class="ledger-account-row is-archived">
                 <RouterLink class="ledger-account-name" :to="{ name: 'ledger-account', params: { id: account.id }, query: { from: 'list' } }">
@@ -290,7 +302,11 @@ function onAccountSaved(): void {
 .ledger-account-type-filter:focus-within {
   opacity: 1;
 }
-.ledger-account-list { display: grid; height: 395px; min-height: 0; flex: 0 0 395px; overflow-y: auto; overscroll-behavior: contain; scrollbar-color: color-mix(in srgb, var(--text-muted) 34%, transparent) transparent; scrollbar-width: thin; }
+.ledger-account-list { display: grid; height: 395px; min-height: 0; flex: 0 0 395px; overflow-y: auto; overscroll-behavior: contain; scrollbar-color: transparent transparent; scrollbar-width: thin; }
+.ledger-account-list.is-scrolling { scrollbar-color: color-mix(in srgb, var(--text-muted) 34%, transparent) transparent; }
+.ledger-account-list::-webkit-scrollbar { width: 6px; }
+.ledger-account-list::-webkit-scrollbar-thumb { background: transparent; transition: background .18s ease; }
+.ledger-account-list.is-scrolling::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--text-muted) 34%, transparent); }
 .ledger-account-list :deep(.n-list-item) { padding: 0; }
 .ledger-account-list :deep(.n-list-item__main) { width: 100%; }
 .ledger-account-list-item { padding: 0; }
