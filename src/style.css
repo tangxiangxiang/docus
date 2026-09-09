@@ -2200,7 +2200,7 @@ main.container.auth-page-shell {
   transition: color 0.12s, background 0.12s;
   position: relative;
 }
-.activity-bar .ab-btn-history { margin-top: auto; }
+.activity-bar .ab-btn-history { margin-top: auto; margin-bottom: 6px; }
 .ab-btn:hover { color: var(--vs-text-1); background: var(--vs-hover-bg); }
 .activity-bar .ab-btn.active,
 .activity-bar .ab-btn.active:hover {
