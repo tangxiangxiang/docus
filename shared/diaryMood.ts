@@ -46,6 +46,23 @@ export const MOOD_CATALOG = [
 
 export type MoodId = typeof MOOD_CATALOG[number]['id']
 
+/** Canonical or user-managed Diary mood icon identity. */
+export type DiaryCustomMoodId = `custom_mood_${string}`
+export type DiaryMoodId = MoodId | DiaryCustomMoodId
+
+export interface DiaryMoodIconConfig {
+  readonly version: number
+  readonly availableIcons: readonly DiaryMoodId[]
+  readonly customIcons: Readonly<Record<string, string>>
+  readonly customIconNames: Readonly<Record<string, string>>
+}
+
+export const DIARY_DEFAULT_MOOD_ICONS: readonly MoodId[] = MOOD_CATALOG.map(({ id }) => id)
+
+export function isDiaryCustomMoodId(value: unknown): value is DiaryCustomMoodId {
+  return typeof value === 'string' && /^custom_mood_[a-z0-9_-]+$/i.test(value)
+}
+
 const MOOD_IDS = new Set<string>(MOOD_CATALOG.map((mood) => mood.id))
 const MOOD_BY_ID = new Map<string, DiaryMoodDefinition>(MOOD_CATALOG.map((mood) => [mood.id, mood]))
 

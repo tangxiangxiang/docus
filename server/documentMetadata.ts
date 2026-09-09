@@ -9,7 +9,8 @@ import {
 import {
   classifyDiaryPath,
 } from '../shared/diaryProtocol.js'
-import { isMoodId, type MoodId } from '../shared/diaryMood.js'
+import { type DiaryMoodId } from '../shared/diaryMood.js'
+import { isConfiguredDiaryMoodId } from './diaryMoodIcons.js'
 import { normalizeLogicalContentPath } from './paths.js'
 import { MetadataVersionError, nextMetadataBatchUpdatedAt, nextMetadataUpdatedAt } from './metadataVersion.js'
 
@@ -41,7 +42,7 @@ export type DocumentMetadataChange =
   | { field: 'title'; value: string }
   | { field: 'summary'; value: string }
   | { field: 'tags'; values: string[] }
-  | { field: 'mood'; value: MoodId | null }
+  | { field: 'mood'; value: DiaryMoodId | null }
 
 export interface PatchDocumentMetadata {
   path: string
@@ -761,9 +762,9 @@ function normalizeStoredMood(value: unknown): string | null {
   return value
 }
 
-function assertCanonicalMood(value: unknown): asserts value is MoodId | null {
-  if (value !== null && !isMoodId(value)) {
-    throw new DocumentMetadataError('INVALID_MOOD', 'mood must be one of the canonical Mood IDs or null')
+function assertConfiguredMood(db: DatabaseT, value: unknown): asserts value is DiaryMoodId | null {
+  if (value !== null && !isConfiguredDiaryMoodId(db, value)) {
+    throw new DocumentMetadataError('INVALID_MOOD', 'mood must be one of the configured mood icons or null')
   }
 }
 
@@ -1060,7 +1061,7 @@ export function patchDocumentMetadataWithinTransaction(
     if (!isMoodMutationPath(path)) {
       throw new DocumentMetadataError('INVALID_MOOD', 'mood is only available for canonical managed Diary dates')
     }
-    assertCanonicalMood(moodChange.value)
+    assertConfiguredMood(db, moodChange.value)
   }
   if ((tagChange || moodChange) && (!Number.isSafeInteger(input.expectedUpdatedAt) || input.expectedUpdatedAt! < 0)) {
     throw new DocumentMetadataError('INVALID_METADATA_CHANGE', 'expectedUpdatedAt is required for explicit tags or mood changes')

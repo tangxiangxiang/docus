@@ -268,6 +268,7 @@ const STRINGS: Strings = {
   'settings.connection_model_unavailable': { zh: '模型不可用，请检查模型名称。', en: 'The model is unavailable. Check the model name.' },
   'settings.editor': { zh: '编辑器', en: 'Editor' },
   'settings.ledger_account_icons': { zh: '账户图标', en: 'Account icons' },
+  'settings.diary_mood_icons': { zh: '表情图标', en: 'Mood icons' },
   'settings.editor_subtitle': { zh: '此设备上的 Monaco 偏好设置', en: 'Device-local Monaco preferences' },
   'settings.editor_configuration': { zh: '编辑器偏好', en: 'Editor preferences' },
   'settings.font_size': { zh: '字体大小', en: 'Font size' },

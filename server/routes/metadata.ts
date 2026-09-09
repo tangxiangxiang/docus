@@ -23,7 +23,8 @@ import {
 import { refreshTagIdentityHealth } from '../tagIdentityMigration.js'
 import { CONTENT_DIR, filePathFor, normalizeLogicalContentPath } from '../paths.js'
 import { classifyDiaryPath } from '../../shared/diaryProtocol.js'
-import { isMoodId, type MoodId } from '../../shared/diaryMood.js'
+import { isMoodId, type DiaryMoodId } from '../../shared/diaryMood.js'
+import { isConfiguredDiaryMoodId } from '../diaryMoodIcons.js'
 import { bad, ensureMetadata, exists, metadataDb } from './shared.js'
 import {
   hasDiaryBodyAccess,
@@ -196,7 +197,7 @@ metadataRoutes.patch('/api/metadata/documents/*', async (c) => {
   // Validate the Diary-only field before ensureMetadata() can create a live
   // row for an otherwise legacy file. A rejected Mood request must not leave
   // behind metadata on an ordinary or unmanaged Diary path.
-  let requestedMood: MoodId | null | undefined
+  let requestedMood: DiaryMoodId | null | undefined
   let hasMoodChange = false
   if (Object.hasOwn(body, 'mood')) {
     hasMoodChange = true
@@ -205,10 +206,10 @@ metadataRoutes.patch('/api/metadata/documents/*', async (c) => {
     }
     if (body.mood === null) {
       requestedMood = null
-    } else if (isMoodId(body.mood)) {
+    } else if (isMoodId(body.mood) || isConfiguredDiaryMoodId(metadataDb(), body.mood)) {
       requestedMood = body.mood
     } else {
-      return bad(c, 'mood must be one of the canonical Mood IDs or null', 400, 'INVALID_MOOD')
+      return bad(c, 'mood must be one of the configured mood icons or null', 400, 'INVALID_MOOD')
     }
   }
 

@@ -20,7 +20,8 @@ const hasMultipleIcons = computed(() => preferences.availableIcons.value.length 
 const usedIcons = computed(() => new Set(ledgerStore.accounts.value.map((account) => account.icon ?? 'wallet')))
 const canDelete = (icon: AccountIcon) => hasMultipleIcons.value && !icon.startsWith('custom_builtin_') && !usedIcons.value.has(icon)
 const builtinLabels = Object.fromEntries(options.map(({ value, label }) => [value, label]))
-const allOptions = computed(() => preferences.availableIcons.value.map((value, index) => ({
+const hiddenBuiltins = new Set<AccountIcon>(['wallet', 'credit_card', 'cash', 'building_bank', 'briefcase'])
+const allOptions = computed(() => preferences.availableIcons.value.filter((value) => !hiddenBuiltins.has(value)).map((value, index) => ({
   value,
   label: preferences.customIconNames.value[value] || builtinLabels[value] || `自定义图标 ${index + 1}`,
 })))
@@ -119,7 +120,9 @@ async function onFileChange({ file }: { file: UploadFileInfo }): Promise<void> {
         <h4 class="settings-card-title">账户图标</h4>
         <div class="settings-ledger-icon-options" role="radiogroup" aria-label="默认账户图标" @click.self="stopManaging">
           <button v-for="option in allOptions" v-show="enabled(option.value)" :key="option.value" type="button" class="settings-ledger-icon-option" :class="{ managing }" :aria-label="option.label" role="listitem" @pointerdown="startHold" @pointerup="cancelHold" @pointerleave="cancelHold" @contextmenu.prevent="managing = true" @click="preferences.defaultIcon.value = option.value; void preferences.persist()">
-            <LedgerAccountIcon :icon="option.value" :size="20" />
+            <span class="settings-ledger-icon-glyph" aria-hidden="true">
+              <LedgerAccountIcon :icon="option.value" :size="20" />
+            </span>
             <input
               v-if="managing && editingIcon === option.value && option.value.startsWith('custom_') && !option.value.startsWith('custom_builtin_')"
               v-model="editingName"
@@ -132,7 +135,7 @@ async function onFileChange({ file }: { file: UploadFileInfo }): Promise<void> {
               @keydown.esc.prevent="editingIcon = null"
               @blur="finishRename"
             >
-            <span v-else @dblclick.stop="startRename(option.value, option.label)">{{ option.label }}</span>
+            <span v-else class="settings-ledger-icon-label" @dblclick.stop="startRename(option.value, option.label)">{{ option.label }}</span>
             <span v-if="managing && canDelete(option.value)" class="settings-ledger-icon-delete" aria-hidden="true" @click.stop="preferences.removeIcon(option.value); void preferences.persist()">×</span>
           </button>
         </div>
@@ -145,15 +148,25 @@ async function onFileChange({ file }: { file: UploadFileInfo }): Promise<void> {
 .settings-section { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .settings-section-body { flex: 1 1 auto; min-height: 0; }
 .settings-ledger-icon-card { display: flex; flex-direction: column; height: 100%; box-sizing: border-box; }
-.settings-ledger-icon-options { display: flex; flex: 1 1 auto; flex-wrap: wrap; align-content: flex-start; gap: 8px 10px; height: 70%; min-height: 0; box-sizing: border-box; overflow-y: auto; padding: 8px 10px 8px 2px; }
+.settings-ledger-icon-options { display: grid; flex: 1 1 auto; grid-template-columns: repeat(5, minmax(0, 1fr)); align-content: start; gap: 10px; height: 70%; min-height: 0; box-sizing: border-box; overflow-y: auto; padding: 8px 10px 8px 2px; }
 .settings-ledger-icon-file { display: none; }
-.settings-ledger-icon-option { position: relative; display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding: 6px 24px 6px 11px; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: var(--text-muted); cursor: pointer; transform-origin: 50% 55%; }
+.settings-ledger-icon-option { position: relative; display: inline-flex; width: 100%; min-width: 0; min-height: 40px; box-sizing: border-box; align-items: center; justify-content: flex-start; gap: 7px; padding: 6px 12px; overflow: visible; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: var(--text-muted); cursor: pointer; font: inherit; text-align: left; transform-origin: 50% 55%; }
+.settings-ledger-icon-glyph { display: grid; width: 22px; height: 22px; flex: 0 0 22px; place-items: center; }
+.settings-ledger-icon-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .settings-ledger-icon-option.managing { animation: settings-ledger-icon-wiggle 180ms ease-in-out infinite alternate; }
 .settings-ledger-icon-option.managing:nth-child(2n) { animation-delay: -90ms; animation-direction: alternate-reverse; }
 .settings-ledger-icon-option.managing:nth-child(3n) { animation-delay: -45ms; animation-duration: 200ms; }
 .settings-ledger-icon-name-input { width: 8em; min-width: 0; padding: 0; border: 0; outline: 0; background: transparent; color: inherit; font: inherit; }
 .settings-ledger-icon-delete { position: absolute; top: 0; right: 0; display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; border: 2px solid var(--surface); border-radius: 50%; background: #ef4444; color: #fff; box-shadow: 0 1px 3px rgb(0 0 0 / 18%); font-size: 11px; font-weight: 700; line-height: 1; cursor: pointer; transform: translate(38%, -38%); }
 .settings-ledger-icon-upload-error { color: #dc4c4c; font-size: .75rem; }
+
+@media (max-width: 900px) {
+  .settings-ledger-icon-options { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 560px) {
+  .settings-ledger-icon-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 
 @keyframes settings-ledger-icon-wiggle {
   from { transform: rotate(-.7deg) translateY(-.25px); }

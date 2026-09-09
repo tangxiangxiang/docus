@@ -4,6 +4,7 @@ import { NAlert, NButton, NCard, NModal, NNumberAnimation, NResult, NSpin, NStat
 import { useRoute } from 'vue-router'
 import { useConfirm } from '../composables/useConfirm'
 import LedgerAnimatedMoney from '../components/ledger/LedgerAnimatedMoney.vue'
+import LedgerAccountIcon from '../components/ledger/LedgerAccountIcon.vue'
 import LedgerAccountEditForm from '../components/ledger/LedgerAccountEditForm.vue'
 import LedgerPendingCreateGate from '../components/ledger/LedgerPendingCreateGate.vue'
 import { ledgerAccountTypeOptionsForNature } from '../features/ledger/accountPresentation'
@@ -179,6 +180,12 @@ function onSaved(next: LedgerAccountDto): void {
 
       <NAlert v-if="actionError" class="ledger-form-error" type="error" :show-icon="false" role="alert">{{ actionError }}</NAlert>
       <div class="ledger-detail-grid">
+        <NCard class="ledger-detail-card ledger-detail-icon-card" :bordered="false" size="small">
+          <span class="ledger-detail-icon-label">账户图标</span>
+          <span class="ledger-detail-account-icon" :class="account.nature === 'asset' ? 'is-asset' : 'is-liability'" aria-hidden="true">
+            <LedgerAccountIcon :icon="account.icon" :size="42" />
+          </span>
+        </NCard>
         <NCard class="ledger-detail-card ledger-detail-balance" :bordered="false" size="small">
           <NStatistic label="当前余额" tabular-nums>
             <LedgerAnimatedMoney :minor="account.currentBalanceMinor" :currency="account.currency" />
@@ -233,7 +240,7 @@ function onSaved(next: LedgerAccountDto): void {
 
 <style scoped>
 .ledger-page { min-height: calc(100vh - 52px); background: var(--bg); }
-.ledger-account-page { width: min(100%, 1080px); margin: 0 auto; padding: 30px 28px 64px; box-sizing: border-box; }
+.ledger-account-page { width: min(100%, 1240px); margin: 0 auto; padding: 30px 28px 64px; box-sizing: border-box; }
 .ledger-detail-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 22px; margin-bottom: 24px; }
 .ledger-eyebrow { margin: 0 0 6px; color: var(--accent); font-size: .75rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .ledger-detail-header h1 { margin: 0; color: var(--text-h); font-size: 2rem; line-height: 1.2; }
@@ -268,9 +275,13 @@ function onSaved(next: LedgerAccountDto): void {
 .ledger-form-error { margin: 0 0 14px; color: #b42318; font-size: .82rem; }
 .ledger-form-error :deep(.n-alert-body) { color: #b42318; }
 .ledger-action-trigger { display: inline-flex; margin: 0; padding: 0; }
-.ledger-detail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.ledger-detail-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .ledger-detail-card { min-height: 130px; box-sizing: border-box; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-soft); }
 .ledger-detail-card :deep(.n-card__content) { display: grid; gap: 7px; min-height: 130px; padding: 18px; box-sizing: border-box; }
+.ledger-detail-icon-card :deep(.n-card__content) { align-content: center; justify-items: center; text-align: center; }
+.ledger-detail-icon-label { color: var(--text-muted); font-size: .78rem; }
+.ledger-detail-account-icon { display: grid; width: 58px; height: 58px; place-items: center; border-radius: 15px; background: color-mix(in srgb, var(--accent) 11%, var(--bg)); color: var(--accent); }
+.ledger-detail-account-icon.is-liability { background: color-mix(in srgb, var(--ledger-expense, #dc3f4d) 11%, var(--bg)); color: var(--ledger-expense, #dc3f4d); }
 .ledger-detail-card :deep(.n-statistic) { min-width: 0; }
 .ledger-detail-card :deep(.n-statistic .n-statistic-label) { color: var(--text-muted); font-size: .78rem; }
 .ledger-detail-card :deep(.n-statistic .n-statistic-value) { overflow: hidden; color: var(--text-h); font-size: 1.22rem; text-overflow: ellipsis; white-space: nowrap; }

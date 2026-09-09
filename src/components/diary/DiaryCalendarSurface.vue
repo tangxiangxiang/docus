@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import type { PostSummary, TreeNode } from '../../lib/api'
 import type { DiaryDate } from '../../../shared/diaryProtocol'
-import type { MoodId } from '../../../shared/diaryMood'
+import type { DiaryMoodId } from '../../../shared/diaryMood'
 import { useI18n } from '../../composables/useI18n'
 import DiaryCalendar from './DiaryCalendar.vue'
 import { projectDiaryDaysFromTree } from './diaryCalendarProjection'
@@ -25,7 +25,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   'date-selected': [date: DiaryDate]
   'month-change': [month: DiaryCalendarMonth]
-  'mood-change': [date: DiaryDate, mood: MoodId | null]
+  'mood-change': [date: DiaryDate, mood: DiaryMoodId | null]
 }>()
 
 const { t } = useI18n()
@@ -40,7 +40,7 @@ function closeMoodPicker(restoreFocus = true): void {
   calendarRef.value?.closeMoodPicker(restoreFocus)
 }
 
-function onMoodChange(date: DiaryDate, mood: MoodId | null): void {
+function onMoodChange(date: DiaryDate, mood: DiaryMoodId | null): void {
   emit('mood-change', date, mood)
 }
 

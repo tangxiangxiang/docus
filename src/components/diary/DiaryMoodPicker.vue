@@ -2,8 +2,9 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { NButton, NIcon } from 'naive-ui'
 import { X } from '@vicons/tabler'
-import { MOOD_CATALOG, isMoodId, type MoodId } from '../../../shared/diaryMood'
+import { getMoodDefinition, isMoodId, type DiaryMoodId } from '../../../shared/diaryMood'
 import { useI18n } from '../../composables/useI18n'
+import { useDiaryMoodIconPreferences } from '../../composables/diary/useDiaryMoodIconPreferences'
 
 const props = withDefaults(defineProps<{
   currentMood?: string | null
@@ -14,37 +15,37 @@ const props = withDefaults(defineProps<{
 })
 
 const emit = defineEmits<{
-  select: [mood: MoodId]
+  select: [mood: DiaryMoodId]
   clear: []
   close: []
 }>()
 
 const { locale, t } = useI18n()
+const preferences = useDiaryMoodIconPreferences()
 const focusedIndex = ref(0)
 const radioRefs = ref<Array<HTMLButtonElement | null>>([])
 let suppressNextClick = false
 
-// D7.2 freezes the picker as a four-column by six-row grid. Keep keyboard
-// movement in that geometry instead of clamping a flattened array index.
+// Keep the picker in the same four-column geometry as the original mood
+// catalog while allowing managed custom icons to extend it below the defaults.
 const MOOD_GRID_COLUMNS = 4
-const MOOD_GRID_ROWS = 6
+const moodOptions = computed(() => preferences.availableIcons.value.flatMap((id, index) => {
+  const presentation = preferences.presentationFor(id, locale.value)
+  if (!presentation) return []
+  const definition = isMoodId(id) ? getMoodDefinition(id) : undefined
+  return [{
+    ...presentation,
+    row: definition?.row ?? Math.floor(index / MOOD_GRID_COLUMNS) + 1,
+    column: definition?.column ?? index % MOOD_GRID_COLUMNS + 1,
+  }]
+}))
 
 const selectedIndex = computed(() => (
-  isMoodId(props.currentMood)
-    ? MOOD_CATALOG.findIndex((mood) => mood.id === props.currentMood)
-    : -1
+  moodOptions.value.findIndex((mood) => mood.id === props.currentMood)
 ))
 const unknownMood = computed(() => (
-  typeof props.currentMood === 'string' && !isMoodId(props.currentMood)
+  typeof props.currentMood === 'string' && selectedIndex.value < 0
 ))
-
-function assetUrl(asset: string): string {
-  return asset.startsWith('public/') ? `/${asset.slice('public/'.length)}` : asset
-}
-
-function displayLabel(mood: typeof MOOD_CATALOG[number]): string {
-  return locale.value === 'zh' ? mood.zhLabel : mood.enLabel
-}
 
 function setRadioRef(index: number, element: unknown): void {
   const node = element as HTMLButtonElement | null
@@ -52,7 +53,7 @@ function setRadioRef(index: number, element: unknown): void {
 }
 
 function clampIndex(index: number): number {
-  return Math.max(0, Math.min(MOOD_CATALOG.length - 1, index))
+  return Math.max(0, Math.min(moodOptions.value.length - 1, index))
 }
 
 function focusRadio(index: number): void {
@@ -64,7 +65,8 @@ function focusRadio(index: number): void {
 function focusGridCell(index: number, rowDelta: number, columnDelta: number): void {
   const row = Math.floor(index / MOOD_GRID_COLUMNS)
   const column = index % MOOD_GRID_COLUMNS
-  const nextRow = Math.max(0, Math.min(MOOD_GRID_ROWS - 1, row + rowDelta))
+  const moodGridRows = Math.max(1, Math.ceil(moodOptions.value.length / MOOD_GRID_COLUMNS))
+  const nextRow = Math.max(0, Math.min(moodGridRows - 1, row + rowDelta))
   const nextColumn = Math.max(0, Math.min(MOOD_GRID_COLUMNS - 1, column + columnDelta))
 
   focusRadio(nextRow * MOOD_GRID_COLUMNS + nextColumn)
@@ -74,11 +76,11 @@ function focusInitial(): void {
   focusRadio(selectedIndex.value >= 0 ? selectedIndex.value : 0)
 }
 
-function isSelected(id: MoodId): boolean {
+function isSelected(id: DiaryMoodId): boolean {
   return props.currentMood === id
 }
 
-function selectMood(id: MoodId): void {
+function selectMood(id: DiaryMoodId): void {
   if (suppressNextClick) {
     suppressNextClick = false
     return
@@ -121,7 +123,7 @@ function onRadioKeydown(index: number, event: KeyboardEvent): void {
     // follow-up click so keyboard activation emits exactly one selection.
     suppressNextClick = true
     void nextTick(() => { suppressNextClick = false })
-    const mood = MOOD_CATALOG[index]
+    const mood = moodOptions.value[index]
     if (mood && !props.busy) emit('select', mood.id)
   }
 }
@@ -182,7 +184,7 @@ defineExpose({ focusInitial })
       :aria-label="t('mood.options_label')"
     >
       <button
-        v-for="(mood, index) in MOOD_CATALOG"
+        v-for="(mood, index) in moodOptions"
         :key="mood.id"
         :ref="(element) => setRadioRef(index, element)"
         type="button"
@@ -196,14 +198,14 @@ defineExpose({ focusInitial })
         :aria-checked="isSelected(mood.id)"
         :aria-disabled="props.busy ? 'true' : undefined"
         :aria-posinset="index + 1"
-        aria-setsize="24"
+        :aria-setsize="moodOptions.length"
         :tabindex="focusedIndex === index ? 0 : -1"
         @focus="focusedIndex = index"
         @click="selectMood(mood.id)"
         @keydown="onRadioKeydown(index, $event)"
       >
-        <img :src="assetUrl(mood.asset)" alt="" aria-hidden="true">
-        <span class="diary-mood-option-label">{{ displayLabel(mood) }}</span>
+        <img v-if="mood.source" :src="mood.source" alt="" aria-hidden="true">
+        <span class="diary-mood-option-label">{{ mood.label }}</span>
       </button>
     </div>
 

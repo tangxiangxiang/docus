@@ -1,7 +1,8 @@
 import type { DocumentMetadata, UpdateDocumentMetadata } from '../../lib/api'
 import { updateDocumentMetadata } from '../../lib/api'
 import { diaryLogicalPathForDate, parseDiaryDate, type DiaryDate } from '../../../shared/diaryProtocol'
-import { isMoodId, type MoodId } from '../../../shared/diaryMood'
+import { isMoodId, type DiaryMoodId } from '../../../shared/diaryMood'
+import { useDiaryMoodIconPreferences } from './useDiaryMoodIconPreferences'
 import { toMutationPaths } from '../vault/pathMutationLock'
 
 export type DiaryMoodCommandResult =
@@ -37,6 +38,7 @@ function invalidError(message: string): Error {
  */
 export function useDiaryMoodCommand(options: DiaryMoodCommandOptions = {}) {
   const writeMetadata = options.updateMetadata ?? updateDocumentMetadata
+  const moodPreferences = useDiaryMoodIconPreferences()
 
   function invalid(
     error: Error,
@@ -56,8 +58,8 @@ export function useDiaryMoodCommand(options: DiaryMoodCommandOptions = {}) {
     if (!date) return invalid(invalidError('invalid Diary date; expected YYYY-MM-DD'))
 
     const path = diaryLogicalPathForDate(date)
-    if (moodValue !== null && !isMoodId(moodValue)) {
-      return invalid(invalidError('invalid Diary mood; expected a canonical MoodId or null'), date, path)
+    if (moodValue !== null && !isMoodId(moodValue) && !moodPreferences.isAvailable(moodValue)) {
+      return invalid(invalidError('invalid Diary mood; expected a configured mood icon or null'), date, path)
     }
     if (typeof expectedUpdatedAt !== 'number'
       || !Number.isSafeInteger(expectedUpdatedAt)
@@ -77,7 +79,7 @@ export function useDiaryMoodCommand(options: DiaryMoodCommandOptions = {}) {
       let metadata: DocumentMetadata
       try {
         metadata = await writeMetadata(path, {
-          mood: moodValue as MoodId | null,
+          mood: moodValue as DiaryMoodId | null,
           expectedUpdatedAt: expectedVersion,
         })
       } catch (error) {

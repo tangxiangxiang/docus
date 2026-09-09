@@ -61,6 +61,7 @@ import type { DocumentLifecycle } from '../composables/vault/useDocumentLifecycl
 import { applyMetadataToPostSummary } from './metadataPostSummary'
 import { useDiaryDateCommand, type DiaryDateCommandResult } from '../composables/diary/useDiaryDateCommand'
 import { useDiaryMoodCommand } from '../composables/diary/useDiaryMoodCommand'
+import { useDiaryMoodIconPreferences } from '../composables/diary/useDiaryMoodIconPreferences'
 import { useDiaryWorkspacePresentation } from '../composables/diary/useDiaryWorkspacePresentation'
 import {
   captureDiarySessionGeneration,
@@ -72,7 +73,7 @@ import { DiaryAccessContextKey } from '../composables/diary/diaryAccessContext'
 import { AppShellContextKey } from '../composables/appShellContext'
 import { localCivilToday } from '../components/diary/diaryCalendarAdapter'
 import { classifyDiaryPath, diaryLogicalPathForDate, type DiaryDate } from '../../shared/diaryProtocol'
-import type { MoodId } from '../../shared/diaryMood'
+import type { DiaryMoodId as MoodId } from '../../shared/diaryMood'
 import { handleDiaryHomeKeydown } from './diaryHomeKeyboard'
 import FileTree from '../components/vault/FileTree.vue'
 import DiaryWorkspace from '../components/diary/DiaryWorkspace.vue'
@@ -1880,6 +1881,7 @@ watch(isDiaryCalendarVisible, (visible, wasVisible) => {
 }, { flush: 'sync', immediate: true })
 
 const diaryMoodBusy = ref(false)
+const diaryMoodPreferences = useDiaryMoodIconPreferences()
 const diaryMoodCommand = useDiaryMoodCommand({
   mutationLock: historyMutationLock,
   onBusy: () => toast.info(t('mood.busy')),
@@ -1888,6 +1890,10 @@ const diaryMoodCommand = useDiaryMoodCommand({
     error: error.message || t('common.unknown_error'),
   })),
 })
+
+watch(isDiaryCalendarVisible, (visible) => {
+  if (visible) void diaryMoodPreferences.load().catch(() => undefined)
+}, { immediate: true })
 
 async function refreshAfterMoodRejection(): Promise<void> {
   try {

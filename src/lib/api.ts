@@ -1,7 +1,7 @@
 import { authFetch, diaryAuthFetch } from './auth-session'
 import { authFetchForPath, authFetchForPaths } from './diary-request'
 import type { DiaryDate } from '../../shared/diaryProtocol'
-import type { MoodId } from '../../shared/diaryMood'
+import type { DiaryMoodIconConfig, DiaryMoodId } from '../../shared/diaryMood'
 
 export interface PostSummary {
   path: string            // e.g. "hello-world" or "notes/draft" or "archive/2024/old" — relative to src/content/, no implicit prefix
@@ -93,7 +93,7 @@ export type UpdateDocumentMetadata = {
   title?: string
   summary?: string
   tags?: string[]
-  mood?: MoodId | null
+  mood?: DiaryMoodId | null
   expectedUpdatedAt?: number
 }
 
@@ -236,6 +236,20 @@ export async function updateDocumentMetadata(
   input: UpdateDocumentMetadata,
 ): Promise<DocumentMetadata> {
   return jsonOrThrow<DocumentMetadata>(await authFetchForPath(path, '/api/metadata/documents/' + splat(path), {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  }))
+}
+
+export async function getDiaryMoodIconConfig(): Promise<DiaryMoodIconConfig> {
+  return jsonOrThrow<DiaryMoodIconConfig>(await authFetch('/api/diary/mood-icons'))
+}
+
+export async function patchDiaryMoodIconConfig(
+  input: Omit<DiaryMoodIconConfig, 'version'> & { expectedVersion: number },
+): Promise<DiaryMoodIconConfig> {
+  return jsonOrThrow<DiaryMoodIconConfig>(await authFetch('/api/diary/mood-icons', {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),

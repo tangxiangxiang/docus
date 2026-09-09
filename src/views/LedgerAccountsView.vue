@@ -279,7 +279,17 @@ function onAccountSaved(): void {
 .ledger-section-heading h2 .ledger-count { margin-left: 5px; vertical-align: middle; }
 .ledger-section-heading p { margin: 4px 0 0; color: var(--text-muted); font-size: .78rem; }
 .ledger-count { display: inline-grid; min-width: 25px; height: 25px; place-items: center; border-radius: 999px; background: var(--bg-soft); color: var(--text-muted); font-size: .76rem; }
-.ledger-account-type-filter { width: 86px; flex: 0 0 auto; }
+.ledger-account-type-filter {
+  width: 86px;
+  flex: 0 0 auto;
+  opacity: 0;
+  pointer-events: auto;
+  transition: opacity .14s ease;
+}
+.ledger-account-type-filter:hover,
+.ledger-account-type-filter:focus-within {
+  opacity: 1;
+}
 .ledger-account-list { display: grid; height: 395px; min-height: 0; flex: 0 0 395px; overflow-y: auto; overscroll-behavior: contain; scrollbar-color: color-mix(in srgb, var(--text-muted) 34%, transparent) transparent; scrollbar-width: thin; }
 .ledger-account-list :deep(.n-list-item) { padding: 0; }
 .ledger-account-list :deep(.n-list-item__main) { width: 100%; }

@@ -3,9 +3,10 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { NButton } from 'naive-ui'
 import { Calendar } from 'v-calendar'
 import 'v-calendar/style.css'
-import { getMoodDefinition, isMoodId, type MoodId } from '../../../shared/diaryMood'
+import type { DiaryMoodId } from '../../../shared/diaryMood'
 import { useI18n } from '../../composables/useI18n'
 import { useTheme } from '../../composables/useTheme'
+import { useDiaryMoodIconPreferences } from '../../composables/diary/useDiaryMoodIconPreferences'
 import type { DiaryDate } from '../../../shared/diaryProtocol'
 import DiaryMoodPicker from './DiaryMoodPicker.vue'
 import {
@@ -43,7 +44,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   'date-selected': [date: DiaryDate]
   'month-change': [month: DiaryCalendarMonth]
-  'mood-change': [date: DiaryDate, mood: MoodId | null]
+  'mood-change': [date: DiaryDate, mood: DiaryMoodId | null]
 }>()
 
 const lastMonthKey = ref<string | null>(null)
@@ -57,6 +58,7 @@ const moodPickerStyle = ref<Record<string, string>>({ top: '12px', left: '12px' 
 let moodPickerPositionFrame: number | null = null
 const { locale, t } = useI18n()
 const { theme } = useTheme()
+const moodPreferences = useDiaryMoodIconPreferences()
 
 const calendarLocale = computed(() => (locale.value === 'zh' ? 'zh-CN' : 'en-US'))
 const isDark = computed(() => theme.value === 'dark')
@@ -73,10 +75,6 @@ const initialPage = computed(() => (
   diaryCalendarMonthFromPage(props.initialMonth) ?? diaryCalendarMonthFromLocalDate()
 ))
 
-function assetUrl(asset: string): string {
-  return asset.startsWith('public/') ? `/${asset.slice('public/'.length)}` : asset
-}
-
 function diaryDayForCalendarDay(day: CalendarDayLike): DiaryCalendarDay | null {
   const date = diaryDateFromCalendarDay(day)
   return date ? daysByDate.value.get(date) ?? null : null
@@ -84,20 +82,18 @@ function diaryDayForCalendarDay(day: CalendarDayLike): DiaryCalendarDay | null {
 
 function moodDefinitionForDay(day: CalendarDayLike) {
   const mood = diaryDayForCalendarDay(day)?.mood
-  return typeof mood === 'string' && isMoodId(mood) ? getMoodDefinition(mood) ?? null : null
+  return moodPreferences.presentationFor(mood, locale.value)
 }
 
 function hasUnknownMoodForDay(day: CalendarDayLike): boolean {
   const mood = diaryDayForCalendarDay(day)?.mood
-  return typeof mood === 'string' && !isMoodId(mood)
+  return typeof mood === 'string' && !moodPreferences.isAvailable(mood)
 }
 
 function moodLabelForDay(day: CalendarDayLike): string {
   const mood = diaryDayForCalendarDay(day)?.mood
-  if (typeof mood === 'string' && isMoodId(mood)) {
-    const definition = getMoodDefinition(mood)
-    if (definition) return locale.value === 'zh' ? definition.zhLabel : definition.enLabel
-  }
+  const presentation = moodPreferences.presentationFor(mood, locale.value)
+  if (presentation) return presentation.label
   return typeof mood === 'string' ? t('mood.unknown') : t('mood.not_set')
 }
 
@@ -228,7 +224,7 @@ function openMoodPicker(day: CalendarDayLike, event: MouseEvent): void {
   openMoodPickerForDate(date, trigger)
 }
 
-function emitMoodChange(mood: MoodId | null): void {
+function emitMoodChange(mood: DiaryMoodId | null): void {
   if (activeMoodDate.value) emit('mood-change', activeMoodDate.value, mood)
 }
 
@@ -407,7 +403,7 @@ defineExpose({ focusDate, closeMoodPicker })
             >
               <img
                 v-if="moodDefinitionForDay(day)"
-                :src="assetUrl(moodDefinitionForDay(day)!.asset)"
+                :src="moodDefinitionForDay(day)!.source"
                 alt=""
                 aria-hidden="true"
               >

@@ -1140,7 +1140,16 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
   gap: 8px;
 }
 
-.ledger-period-scope { width: 96px; }
+.ledger-period-scope {
+  width: 96px;
+  opacity: 0;
+  pointer-events: auto;
+  transition: opacity .14s ease;
+}
+.ledger-period-scope:hover,
+.ledger-period-scope:focus-within {
+  opacity: 1;
+}
 .ledger-category-scope {
   width: 72px;
   opacity: 0;
@@ -1157,9 +1166,27 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
 .ledger-category-scope:focus-within {
   opacity: 1;
 }
-.ledger-category-date,
+.ledger-category-date {
+  width: 148px;
+  opacity: 0;
+  pointer-events: auto;
+  transition: opacity .14s ease;
+}
+.ledger-category-date:hover,
+.ledger-category-date:focus-within {
+  opacity: 1;
+}
 .ledger-category-date :deep(.n-input) { width: 148px; }
-.ledger-trend-date,
+.ledger-trend-date {
+  width: 96px;
+  opacity: 0;
+  pointer-events: auto;
+  transition: opacity .14s ease;
+}
+.ledger-trend-date:hover,
+.ledger-trend-date:focus-within {
+  opacity: 1;
+}
 .ledger-trend-date :deep(.n-input) { width: 96px; }
 .ledger-period-toolbar :deep(.ledger-period-scope .n-base-selection) { width: 96px; }
 

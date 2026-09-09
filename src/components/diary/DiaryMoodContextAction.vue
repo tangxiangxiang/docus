@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { NButton } from 'naive-ui'
-import { getMoodDefinition, isMoodId, type MoodId } from '../../../shared/diaryMood'
+import type { DiaryMoodId } from '../../../shared/diaryMood'
 import { useI18n } from '../../composables/useI18n'
+import { useDiaryMoodIconPreferences } from '../../composables/diary/useDiaryMoodIconPreferences'
 import DiaryMoodPicker from './DiaryMoodPicker.vue'
 
 const props = withDefaults(defineProps<{
@@ -16,11 +17,12 @@ const props = withDefaults(defineProps<{
 })
 
 const emit = defineEmits<{
-  select: [mood: MoodId]
+  select: [mood: DiaryMoodId]
   clear: []
 }>()
 
 const { locale, t } = useI18n()
+const moodPreferences = useDiaryMoodIconPreferences()
 const rootRef = ref<HTMLElement | null>(null)
 const triggerRef = ref<{ $el: HTMLButtonElement } | null>(null)
 const pickerRef = ref<InstanceType<typeof DiaryMoodPicker> | null>(null)
@@ -31,22 +33,14 @@ const pickerStyle = ref<Record<string, string>>({
 const open = ref(false)
 let positionFrame: number | null = null
 
-const currentDefinition = computed(() => (
-  isMoodId(props.currentMood) ? getMoodDefinition(props.currentMood) ?? null : null
-))
+const currentDefinition = computed(() => moodPreferences.presentationFor(props.currentMood, locale.value))
 const currentLabel = computed(() => {
   if (currentDefinition.value) {
-    return locale.value === 'zh'
-      ? currentDefinition.value.zhLabel
-      : currentDefinition.value.enLabel
+    return currentDefinition.value.label
   }
   return props.currentMood === null ? t('mood.not_set') : t('mood.unknown')
 })
 const triggerLabel = computed(() => t('mood.trigger', { mood: currentLabel.value }))
-
-function assetUrl(asset: string): string {
-  return asset.startsWith('public/') ? `/${asset.slice('public/'.length)}` : asset
-}
 
 function pickerElement(): HTMLElement | null {
   const element = pickerRef.value?.$el
@@ -174,7 +168,7 @@ defineExpose({ close: closePicker, focusTrigger })
     >
       <img
         v-if="currentDefinition"
-        :src="assetUrl(currentDefinition.asset)"
+        :src="currentDefinition.source"
         alt=""
         aria-hidden="true"
       >
