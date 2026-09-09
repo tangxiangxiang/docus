@@ -3507,6 +3507,7 @@ main.container.auth-page-shell {
 .vault .tag-panel .tag-entry {
   display: inline-flex;
   align-items: center;
+  justify-content: space-between;
   gap: 6px;
   width: 100%;
   min-width: 0;
@@ -3523,6 +3524,16 @@ main.container.auth-page-shell {
   text-align: left;
   font-family: inherit;
   transition: background 100ms, color 100ms, border-color 100ms;
+}
+/* NButton wraps the two tag slots in its content element. Keep the
+   original tag layout contract explicit at that layer so the name stays
+   on the left and the count stays on the right of every pill. */
+.vault .tag-panel .tag-entry .n-button__content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-width: 0;
 }
 .vault .tag-panel .tag-entry:hover {
   background: var(--vs-hover-bg);
