@@ -177,6 +177,7 @@ const LEDGER_SETTINGS_REPLAY_KEYS = [
   'version',
   'createdAt',
   'updatedAt',
+  'accountIcons',
 ] as const
 
 const LEDGER_ACCOUNT_REPLAY_KEYS = [
@@ -345,14 +346,34 @@ function assertLedgerSettingsReplayBody(value: unknown): asserts value is Ledger
   assertReplayPositiveSafeInteger(object.version, 'settings response.version')
   assertReplaySafeInteger(object.createdAt, 'settings response.createdAt')
   assertReplaySafeInteger(object.updatedAt, 'settings response.updatedAt')
+  const accountIcons = object.accountIcons
+  if (accountIcons === null || typeof accountIcons !== 'object' || Array.isArray(accountIcons)) return replayResponseError('settings response.accountIcons must be an object')
+  const config = accountIcons as Record<string, unknown>
+  if (typeof config.defaultIcon !== 'string' || !Array.isArray(config.availableIcons)
+    || config.customIcons === null || typeof config.customIcons !== 'object'
+    || config.customIconNames === null || typeof config.customIconNames !== 'object') {
+    return replayResponseError('settings response.accountIcons has an invalid shape')
+  }
 }
 
 function assertLedgerAccountReplayBody(value: unknown): asserts value is LedgerAccountDto {
-  const object = replayExactObject(value, LEDGER_ACCOUNT_REPLAY_KEYS, 'account response')
+  const object = replayExactObject(
+    value,
+    Object.prototype.hasOwnProperty.call(value, 'icon')
+      ? [...LEDGER_ACCOUNT_REPLAY_KEYS, 'icon']
+      : LEDGER_ACCOUNT_REPLAY_KEYS,
+    'account response',
+  )
   assertReplayString(object.id, 'account response.id')
   assertReplayString(object.name, 'account response.name')
   assertReplayEnum(object.type, ['cash', 'bank', 'wallet', 'credit_card', 'loan', 'other'], 'account response.type')
   assertReplayEnum(object.nature, ['asset', 'liability'], 'account response.nature')
+  if (Object.prototype.hasOwnProperty.call(object, 'icon')) {
+    if (!(['wallet', 'credit_card', 'cash', 'building_bank', 'briefcase'].includes(object.icon as string)
+      || /^custom_[a-z0-9_]+$/.test(object.icon as string))) {
+      throw new TypeError('Ledger replay response rejected: account response.icon has an unsupported value')
+    }
+  }
   assertReplaySafeInteger(object.openingBalanceMinor, 'account response.openingBalanceMinor')
   assertReplayString(object.openingDate, 'account response.openingDate')
   assertReplayString(object.currency, 'account response.currency')

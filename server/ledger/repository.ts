@@ -13,7 +13,8 @@ import { ledgerValidationError } from './errors.js'
 
 const SELECT_SETTINGS = `
   SELECT singleton_id, base_currency, timezone, has_created_account,
-         version, created_at, updated_at
+         version, created_at, updated_at, account_icon_default,
+         account_icon_available_json, account_icon_custom_json, account_icon_names_json
   FROM ledger_settings
   WHERE singleton_id = 1
 `
@@ -21,9 +22,11 @@ const SELECT_SETTINGS = `
 const INSERT_SETTINGS = `
   INSERT INTO ledger_settings (
     singleton_id, base_currency, timezone, has_created_account,
-    version, created_at, updated_at
+    version, created_at, updated_at, account_icon_default,
+    account_icon_available_json, account_icon_custom_json, account_icon_names_json
   ) VALUES (1, @baseCurrency, @timezone, @hasCreatedAccount,
-            @version, @createdAt, @updatedAt)
+            @version, @createdAt, @updatedAt, @accountIconDefault,
+            @accountIconAvailableJson, @accountIconCustomJson, @accountIconNamesJson)
 `
 
 const UPDATE_SETTINGS = `
@@ -32,27 +35,31 @@ const UPDATE_SETTINGS = `
       timezone = @timezone,
       has_created_account = @hasCreatedAccount,
       version = @version,
-      updated_at = @updatedAt
+      updated_at = @updatedAt,
+      account_icon_default = @accountIconDefault,
+      account_icon_available_json = @accountIconAvailableJson,
+      account_icon_custom_json = @accountIconCustomJson,
+      account_icon_names_json = @accountIconNamesJson
   WHERE singleton_id = 1
     AND version = @expectedVersion
 `
 
 const SELECT_ACCOUNT = `
-  SELECT id, name, type, nature, opening_balance_minor, opening_date,
+  SELECT id, name, type, nature, icon, opening_balance_minor, opening_date,
          currency, note, archived_at, version, created_at, updated_at
   FROM ledger_accounts
   WHERE id = @id
 `
 
 const SELECT_ACCOUNTS = `
-  SELECT id, name, type, nature, opening_balance_minor, opening_date,
+  SELECT id, name, type, nature, icon, opening_balance_minor, opening_date,
          currency, note, archived_at, version, created_at, updated_at
   FROM ledger_accounts
   ORDER BY updated_at DESC, id DESC
 `
 
 const SELECT_ACTIVE_ACCOUNTS = `
-  SELECT id, name, type, nature, opening_balance_minor, opening_date,
+  SELECT id, name, type, nature, icon, opening_balance_minor, opening_date,
          currency, note, archived_at, version, created_at, updated_at
   FROM ledger_accounts
   WHERE archived_at IS NULL
@@ -61,10 +68,10 @@ const SELECT_ACTIVE_ACCOUNTS = `
 
 const INSERT_ACCOUNT = `
   INSERT INTO ledger_accounts (
-    id, name, type, nature, opening_balance_minor, opening_date, currency,
+    id, name, type, nature, icon, opening_balance_minor, opening_date, currency,
     note, archived_at, version, created_at, updated_at
   ) VALUES (
-    @id, @name, @type, @nature, @openingBalanceMinor, @openingDate, @currency,
+    @id, @name, @type, @nature, @icon, @openingBalanceMinor, @openingDate, @currency,
     @note, @archivedAt, @version, @createdAt, @updatedAt
   )
 `
@@ -74,6 +81,7 @@ const UPDATE_ACCOUNT = `
   SET name = @name,
       type = @type,
       nature = @nature,
+      icon = @icon,
       opening_balance_minor = @openingBalanceMinor,
       opening_date = @openingDate,
       currency = @currency,
@@ -392,6 +400,10 @@ interface SettingsParams {
   readonly version: number
   readonly createdAt: number
   readonly updatedAt: number
+  readonly accountIconDefault: string
+  readonly accountIconAvailableJson: string
+  readonly accountIconCustomJson: string
+  readonly accountIconNamesJson: string
 }
 
 interface SettingsUpdateParams extends SettingsParams {
@@ -403,6 +415,7 @@ interface AccountParams {
   readonly name: string
   readonly type: LedgerAccount['type']
   readonly nature: LedgerAccount['nature']
+  readonly icon?: LedgerAccount['icon']
   readonly openingBalanceMinor: number
   readonly openingDate: string
   readonly currency: string
@@ -488,6 +501,10 @@ function settingsParams(settings: LedgerSettings): SettingsParams {
     version: settings.version,
     createdAt: settings.createdAt,
     updatedAt: settings.updatedAt,
+    accountIconDefault: settings.accountIcons.defaultIcon,
+    accountIconAvailableJson: JSON.stringify(settings.accountIcons.availableIcons),
+    accountIconCustomJson: JSON.stringify(settings.accountIcons.customIcons),
+    accountIconNamesJson: JSON.stringify(settings.accountIcons.customIconNames),
   }
 }
 
@@ -497,6 +514,7 @@ function accountParams(account: LedgerAccount): AccountParams {
     name: account.name,
     type: account.type,
     nature: account.nature,
+    icon: account.icon ?? 'wallet',
     openingBalanceMinor: account.openingBalanceMinor,
     openingDate: account.openingDate,
     currency: account.currency,

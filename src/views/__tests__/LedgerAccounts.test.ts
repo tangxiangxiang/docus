@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { DOMWrapper, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
@@ -67,6 +67,7 @@ const overview = (): LedgerOverviewDto => ({
 })
 
 const wrappers: VueWrapper[] = []
+const bodyWrapper = () => new DOMWrapper(document.body)
 
 function router() {
   return createRouter({
@@ -144,8 +145,8 @@ describe('Ledger account management list', () => {
     await flushPromises()
 
     await wrapper.get('button').trigger('click')
-    expect(wrapper.find('[data-testid="ledger-account-form"]').exists()).toBe(true)
-    const form = wrapper.get('[data-testid="ledger-account-form"]')
+    expect(bodyWrapper().find('[data-testid="ledger-account-form"]').exists()).toBe(true)
+    const form = bodyWrapper().get('[data-testid="ledger-account-form"]')
     await form.get('input[name="name"]').setValue('现金账户')
     api.createLedgerAccount.mockResolvedValue(account('cash-1'))
     api.getLedgerSettings.mockResolvedValue(settings)
@@ -154,7 +155,7 @@ describe('Ledger account management list', () => {
     await flushPromises()
 
     expect(api.createLedgerAccount).toHaveBeenCalledWith(expect.objectContaining({ name: '现金账户' }), expect.any(String))
-    expect(wrapper.find('[data-testid="ledger-account-form"]').exists()).toBe(false)
+    expect(bodyWrapper().find('[data-testid="ledger-account-form"]').exists()).toBe(false)
     expect(wrapper.get('[data-testid="ledger-active-account-list"]').text()).toContain('cash-1')
   })
 

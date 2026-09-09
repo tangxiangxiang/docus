@@ -18,6 +18,7 @@ import { useLedgerStore } from '../../features/ledger/ledgerStore'
 import LedgerCashflowTrend from './LedgerCashflowTrend.vue'
 import LedgerDatePicker from './LedgerDatePicker.vue'
 import LedgerAnimatedMoney from './LedgerAnimatedMoney.vue'
+import LedgerAccountIcon from './LedgerAccountIcon.vue'
 
 const emit = defineEmits<{
   record: []
@@ -195,6 +196,8 @@ const accountsByBalance = (nature: 'asset' | 'liability') => (overview.value?.ac
   .sort((left, right) => right.currentBalanceMinor - left.currentBalanceMinor)
 const assetAccounts = computed(() => accountsByBalance('asset'))
 const liabilityAccounts = computed(() => accountsByBalance('liability'))
+const dashboardAccountIcon = (account: { readonly id: string; readonly icon?: import('../../../shared/ledgerProtocol').LedgerAccountIcon }) =>
+  account.icon ?? store.accounts.value.find((candidate) => candidate.id === account.id)?.icon
 
 const periodLabels = computed<Record<LedgerPeriodName, string>>(() => ({
   today: historicalMode.value ? '当日' : '今天',
@@ -610,8 +613,8 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
             <span class="ledger-cashflow-copy"><span>支出</span><strong class="is-expense"><LedgerAnimatedMoney :minor="selectedPeriodSummary.expenseMinor" :currency="overview.currency" /></strong></span>
           </div>
           <div>
-            <span class="ledger-cashflow-mark" aria-hidden="true">=</span>
-            <span class="ledger-cashflow-copy"><span>收支结余</span><strong :class="{ 'is-income': selectedPeriodSummary.balanceMinor >= 0, 'is-expense': selectedPeriodSummary.balanceMinor < 0 }"><LedgerAnimatedMoney :minor="selectedPeriodSummary.balanceMinor" :currency="overview.currency" signed /></strong></span>
+            <span class="ledger-cashflow-mark is-balance" aria-hidden="true">=</span>
+            <span class="ledger-cashflow-copy"><span>收支结余</span><strong class="is-balance"><LedgerAnimatedMoney :minor="selectedPeriodSummary.balanceMinor" :currency="overview.currency" /></strong></span>
           </div>
         </div>
       </NCard>
@@ -633,10 +636,10 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
               <div v-if="assetAccounts.length" class="ledger-dashboard-account-list-viewport" data-testid="ledger-dashboard-assets-viewport">
                 <NList class="ledger-dashboard-accounts" :show-divider="false" hoverable>
                   <NListItem v-for="account in assetAccounts" :key="account.id" class="ledger-dashboard-account-item">
-                    <RouterLink class="ledger-dashboard-account" :to="{ name: 'ledger-account', params: { id: account.id } }">
+                      <RouterLink class="ledger-dashboard-account" :to="{ name: 'ledger-account', params: { id: account.id }, query: { from: 'overview' } }">
                       <span class="ledger-account-identity">
                         <span class="ledger-account-icon is-asset" aria-hidden="true">
-                          <NIcon aria-hidden="true" :size="17"><Wallet /></NIcon>
+                          <LedgerAccountIcon :icon="dashboardAccountIcon(account)" :size="17" />
                         </span>
                         <span>
                           <strong>{{ account.name }}</strong>
@@ -658,10 +661,10 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
               <div v-if="liabilityAccounts.length" class="ledger-dashboard-account-list-viewport" data-testid="ledger-dashboard-liabilities-viewport">
                 <NList class="ledger-dashboard-accounts" :show-divider="false" hoverable>
                   <NListItem v-for="account in liabilityAccounts" :key="account.id" class="ledger-dashboard-account-item">
-                    <RouterLink class="ledger-dashboard-account" :to="{ name: 'ledger-account', params: { id: account.id } }">
+                      <RouterLink class="ledger-dashboard-account" :to="{ name: 'ledger-account', params: { id: account.id }, query: { from: 'overview' } }">
                       <span class="ledger-account-identity">
                         <span class="ledger-account-icon is-liability" aria-hidden="true">
-                          <NIcon aria-hidden="true" :size="17"><CreditCard /></NIcon>
+                          <LedgerAccountIcon :icon="dashboardAccountIcon(account)" :size="17" />
                         </span>
                         <span>
                           <strong>{{ account.name }}</strong>
@@ -823,7 +826,7 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
             <div v-if="periodSummary(period)" class="ledger-period-values">
               <span>收入 <strong class="is-income"><LedgerAnimatedMoney :minor="periodSummary(period)!.incomeMinor" :currency="overview.currency" /></strong></span>
               <span>支出 <strong class="is-expense"><LedgerAnimatedMoney :minor="periodSummary(period)!.expenseMinor" :currency="overview.currency" /></strong></span>
-              <span>收支结余 <strong><LedgerAnimatedMoney :minor="periodSummary(period)!.balanceMinor" :currency="overview.currency" signed /></strong></span>
+              <span>收支结余 <strong><LedgerAnimatedMoney :minor="periodSummary(period)!.balanceMinor" :currency="overview.currency" /></strong></span>
             </div>
             <div v-else-if="periodProjectionLoading(period)" class="ledger-period-local-state" :data-testid="`ledger-period-loading-${period}`" role="status" aria-live="polite">
               <NSpin size="small" />
@@ -884,6 +887,7 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
   --ledger-row-hover: color-mix(in srgb, var(--accent) 5%, transparent);
   --ledger-income: color-mix(in srgb, #15945f 82%, var(--text-h));
   --ledger-expense: color-mix(in srgb, #dc3f4d 82%, var(--text-h));
+  --ledger-balance: var(--docus-info);
   width: min(100%, 1240px);
   margin: 0 auto;
   padding: 42px 28px 72px;
@@ -1221,6 +1225,11 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
   color: var(--ledger-expense);
 }
 
+.ledger-cashflow-mark.is-balance {
+  background: color-mix(in srgb, var(--ledger-balance) 11%, var(--bg));
+  color: var(--ledger-balance);
+}
+
 .ledger-cashflow-copy {
   display: grid;
   min-width: 0;
@@ -1244,6 +1253,7 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
 
 .ledger-cashflow-grid .is-income { color: var(--ledger-income); }
 .ledger-cashflow-grid .is-expense { color: var(--ledger-expense); }
+.ledger-cashflow-grid .is-balance { color: var(--ledger-balance); }
 
 .ledger-dashboard-account-viewport {
   min-width: 0;

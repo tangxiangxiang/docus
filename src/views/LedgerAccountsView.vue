@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { NAlert, NButton, NCard, NEmpty, NIcon, NList, NListItem, NNumberAnimation, NResult, NSelect, NSpin } from 'naive-ui'
-import { CreditCard, Wallet } from '@vicons/tabler'
+import { NAlert, NButton, NCard, NEmpty, NList, NListItem, NModal, NNumberAnimation, NResult, NSelect, NSpin } from 'naive-ui'
 import LedgerFirstAccountForm from '../components/ledger/LedgerFirstAccountForm.vue'
 import LedgerAnimatedMoney from '../components/ledger/LedgerAnimatedMoney.vue'
 import LedgerPendingCreateGate from '../components/ledger/LedgerPendingCreateGate.vue'
+import LedgerAccountIcon from '../components/ledger/LedgerAccountIcon.vue'
 import { ledgerAccountTypeOptionsForNature } from '../features/ledger/accountPresentation'
 import { ledgerErrorMessage, ledgerWorkspaceReadErrorMessage } from '../features/ledger/ledgerErrors'
 import { useLedgerStore } from '../features/ledger/ledgerStore'
@@ -102,9 +102,27 @@ function onAccountSaved(): void {
         </div>
       </template>
     </NEmpty>
-    <template v-else-if="createOpen">
-      <LedgerFirstAccountForm :first-account="false" cancelable @cancel="createOpen = false" @saved="onAccountSaved" />
-    </template>
+    <NModal
+      v-else-if="createOpen"
+      :show="createOpen"
+      :mask-closable="false"
+      :close-on-esc="false"
+      :auto-focus="false"
+      :trap-focus="true"
+      :on-esc="() => { createOpen = false }"
+      :on-update-show="(show) => { if (!show) createOpen = false }"
+    >
+      <NCard
+        class="ledger-account-create-modal-card"
+        :bordered="false"
+        size="small"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="ledger-create-account-title"
+      >
+        <LedgerFirstAccountForm :first-account="false" cancelable @cancel="createOpen = false" @saved="onAccountSaved" />
+      </NCard>
+    </NModal>
     <template v-else>
       <NAlert v-if="actionError" class="ledger-form-error" type="error" :show-icon="false" role="alert">{{ actionError }}</NAlert>
 
@@ -121,12 +139,12 @@ function onAccountSaved(): void {
             <NListItem v-for="account in visibleActiveAccounts" :key="account.id" class="ledger-account-list-item">
               <RouterLink
                 class="ledger-account-row"
-                :to="{ name: 'ledger-account', params: { id: account.id } }"
+                :to="{ name: 'ledger-account', params: { id: account.id }, query: { from: 'list' } }"
                 :data-testid="`ledger-account-row-${account.id}`"
               >
                 <span class="ledger-account-name">
                   <span class="ledger-account-icon" :class="account.nature === 'asset' ? 'is-asset' : 'is-liability'" aria-hidden="true">
-                    <NIcon :size="17"><Wallet v-if="account.nature === 'asset'" /><CreditCard v-else /></NIcon>
+                    <LedgerAccountIcon :icon="account.icon" />
                   </span>
                   <span class="ledger-account-copy">
                     <strong>{{ account.name }}</strong>
@@ -153,9 +171,9 @@ function onAccountSaved(): void {
           <NList v-if="sortedArchivedAccounts.length" class="ledger-account-list" data-testid="ledger-archived-account-list" :show-divider="false">
             <NListItem v-for="account in sortedArchivedAccounts" :key="account.id" class="ledger-account-list-item">
               <div class="ledger-account-row is-archived">
-                <RouterLink class="ledger-account-name" :to="{ name: 'ledger-account', params: { id: account.id } }">
+                <RouterLink class="ledger-account-name" :to="{ name: 'ledger-account', params: { id: account.id }, query: { from: 'list' } }">
                   <span class="ledger-account-icon" :class="account.nature === 'asset' ? 'is-asset' : 'is-liability'" aria-hidden="true">
-                    <NIcon :size="17"><Wallet v-if="account.nature === 'asset'" /><CreditCard v-else /></NIcon>
+                    <LedgerAccountIcon :icon="account.icon" />
                   </span>
                   <span class="ledger-account-copy">
                     <strong>{{ account.name }}</strong>
@@ -237,6 +255,23 @@ function onAccountSaved(): void {
   backdrop-filter: saturate(145%) blur(18px);
 }
 .ledger-account-section :deep(.n-card__content) { display: flex; height: 100%; min-height: 0; flex-direction: column; overflow: hidden; padding: 20px; box-sizing: border-box; }
+.ledger-account-create-modal-card {
+  width: min(620px, calc(100vw - 32px));
+  max-height: min(90vh, 820px);
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
+  border-radius: 16px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 3%, transparent), transparent 52%),
+    color-mix(in srgb, var(--bg-soft) 82%, transparent);
+  box-shadow:
+    0 18px 55px color-mix(in srgb, var(--text-h) 20%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--text-h) 9%, transparent);
+  -webkit-backdrop-filter: saturate(145%) blur(18px);
+  backdrop-filter: saturate(145%) blur(18px);
+}
+.ledger-account-create-modal-card :deep(.n-card__content) { padding: 28px; }
+.ledger-account-create-modal-card :deep(.ledger-onboarding-card) { width: 100%; padding: 0; border: 0; background: transparent; box-shadow: none; }
 .ledger-account-sections { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .ledger-account-sections .ledger-account-section { min-width: 0; margin-top: 0; }
 .ledger-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 10px; }
@@ -279,5 +314,7 @@ function onAccountSaved(): void {
   .ledger-row-actions { width: 100%; justify-content: space-between; }
   .ledger-account-section :deep(.n-card__content) { padding: 16px 13px; }
   .ledger-account-sections { grid-template-columns: 1fr; }
+  .ledger-account-create-modal-card { width: calc(100vw - 24px); max-height: 92vh; }
+  .ledger-account-create-modal-card :deep(.n-card__content) { padding: 21px 17px; }
 }
 </style>

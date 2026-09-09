@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { NButton, NForm, NFormItem, NInput, NSelect, type SelectOption } from 'naive-ui'
-import type { LedgerAccountDto, LedgerAccountNature, LedgerAccountType } from '../../../shared/ledgerProtocol'
+import type { LedgerAccountDto, LedgerAccountIcon as AccountIcon, LedgerAccountNature, LedgerAccountType } from '../../../shared/ledgerProtocol'
 import { ledgerAccountTypeOptionsForNature } from '../../features/ledger/accountPresentation'
 import { ledgerErrorMessage } from '../../features/ledger/ledgerErrors'
 import { useLedgerStore } from '../../features/ledger/ledgerStore'
-import { formatLedgerMoney, ledgerDecimalFromMinor, parseLedgerMoney } from '../../features/ledger/money'
+import { ledgerDecimalFromMinor, parseLedgerMoney } from '../../features/ledger/money'
 import { ledgerSelectNodeProps } from '../../features/ledger/naiveControls'
 import LedgerDatePicker from './LedgerDatePicker.vue'
+import LedgerAccountIconPicker from './LedgerAccountIconPicker.vue'
 
 const props = withDefaults(defineProps<{
   account: LedgerAccountDto
@@ -20,6 +21,7 @@ const store = useLedgerStore()
 
 const name = ref('')
 const note = ref('')
+const icon = ref<AccountIcon>('wallet')
 const nature = ref<LedgerAccountNature>('asset')
 const type = ref<LedgerAccountType>('bank')
 const openingBalance = ref('0')
@@ -41,6 +43,7 @@ const typeOptions = computed<SelectOption[]>(() => ledgerAccountTypeOptionsForNa
 function reset(): void {
   name.value = props.account.name
   note.value = props.account.note
+  icon.value = props.account.icon ?? 'wallet'
   nature.value = props.account.nature
   type.value = props.account.type
   openingBalance.value = ledgerDecimalFromMinor(props.account.openingBalanceMinor, props.account.currency)
@@ -89,6 +92,7 @@ async function submit(): Promise<void> {
           expectedVersion: props.account.version,
           name: name.value.trim(),
           note: note.value.trim(),
+          ...(icon.value !== 'wallet' ? { icon: icon.value } : {}),
           type: type.value,
           nature: nature.value,
           openingBalanceMinor: parsedOpeningBalance,
@@ -98,6 +102,7 @@ async function submit(): Promise<void> {
           expectedVersion: props.account.version,
           name: name.value.trim(),
           note: note.value.trim(),
+          ...(icon.value !== 'wallet' ? { icon: icon.value } : {}),
         }
     const updated = await store.patchAccount(props.account.id, body)
     emit('saved', updated)
@@ -113,7 +118,7 @@ async function submit(): Promise<void> {
   <NForm class="ledger-account-edit-form" data-testid="ledger-account-edit-form" :aria-busy="saving ? 'true' : undefined" @submit.prevent="submit">
     <div>
       <p class="ledger-eyebrow">账户设置</p>
-      <h2>编辑 {{ props.account.name }}</h2>
+      <h2 id="ledger-account-edit-title">编辑 {{ props.account.name }}</h2>
       <p v-if="!financialFieldsEditable" class="ledger-form-info">
         {{ props.account.archivedAt !== null ? '账户已归档。' : '账户已有历史记录。' }} 当前只能修改名称和备注，避免改变已有财务解释。
       </p>
@@ -127,10 +132,14 @@ async function submit(): Promise<void> {
         size="medium"
         :input-props="{ id: 'ledger-edit-account-name', name: 'name', required: true }"
         :disabled="saving"
-      />
+      >
+        <template #suffix>
+          <LedgerAccountIconPicker v-model="icon" :disabled="saving" />
+        </template>
+      </NInput>
     </NFormItem>
 
-    <div v-if="financialFieldsEditable" class="ledger-form-grid">
+    <div class="ledger-form-grid">
       <NFormItem class="ledger-form-field" label="账户性质" :show-feedback="false" required>
         <NSelect
           v-model:value="nature"
@@ -142,7 +151,7 @@ async function submit(): Promise<void> {
           aria-label="账户性质"
           aria-haspopup="listbox"
           role="combobox"
-          :disabled="saving"
+          :disabled="saving || !financialFieldsEditable"
         />
       </NFormItem>
       <NFormItem class="ledger-form-field" label="账户类型" :show-feedback="false" required>
@@ -156,7 +165,7 @@ async function submit(): Promise<void> {
           aria-label="账户类型"
           aria-haspopup="listbox"
           role="combobox"
-          :disabled="saving"
+          :disabled="saving || !financialFieldsEditable"
         />
       </NFormItem>
       <NFormItem class="ledger-form-field" label="期初余额" :show-feedback="false">
@@ -166,7 +175,7 @@ async function submit(): Promise<void> {
           type="text"
           size="medium"
           :input-props="{ id: 'ledger-edit-account-opening-balance', name: 'openingBalance', inputmode: 'decimal' }"
-          :disabled="saving"
+          :disabled="saving || !financialFieldsEditable"
         />
       </NFormItem>
       <NFormItem class="ledger-form-field" label="期初日期" :show-feedback="false" required>
@@ -174,16 +183,9 @@ async function submit(): Promise<void> {
           v-model="openingDate"
           label="期初日期"
           test-id="ledger-edit-account-opening-date"
-          :disabled="saving"
+          :disabled="saving || !financialFieldsEditable"
         />
       </NFormItem>
-    </div>
-
-    <div v-else class="ledger-readonly-fields" aria-label="只读账户解释">
-      <span>性质：{{ props.account.nature === 'asset' ? '资产' : '负债' }}</span>
-      <span>类型：{{ props.account.type }}</span>
-      <span>期初余额：{{ formatLedgerMoney(props.account.openingBalanceMinor, props.account.currency) }}</span>
-      <span>期初日期：{{ props.account.openingDate }}</span>
     </div>
 
     <NFormItem class="ledger-form-field" label="备注（可选）" :show-feedback="false">
@@ -199,8 +201,8 @@ async function submit(): Promise<void> {
 
     <p v-if="error" class="ledger-form-error" role="alert">{{ error }}</p>
     <div class="ledger-form-actions">
-      <NButton v-if="props.cancelable" class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" :disabled="saving" @click="emit('cancel')">取消</NButton>
-      <NButton class="ledger-primary-button" attr-type="submit" type="primary" size="medium" :bordered="false" :disabled="saving">{{ saving ? '正在保存…' : '保存账户' }}</NButton>
+      <NButton v-if="props.cancelable" class="ledger-secondary-button" attr-type="button" size="small" :bordered="false" :disabled="saving" @click="emit('cancel')">取消</NButton>
+      <NButton class="ledger-primary-button" attr-type="submit" type="primary" size="small" :bordered="false" :disabled="saving">{{ saving ? '保存中…' : '保存' }}</NButton>
     </div>
   </NForm>
 </template>
@@ -214,16 +216,15 @@ async function submit(): Promise<void> {
 .ledger-form-field { display: grid; gap: 6px; }
 .ledger-form-field :deep(.n-form-item-label) { color: var(--text-h); font-size: .83rem; font-weight: 650; }
 .ledger-form-control { width: 100%; }
+.ledger-account-name-icon { color: var(--text-muted); opacity: .82; }
 .ledger-form-field :deep(.ledger-form-control .n-input),
 .ledger-form-field :deep(.ledger-form-control .n-base-selection),
 .ledger-form-field :deep(.ledger-date-picker) { width: 100%; }
 .ledger-form-field :deep(.ledger-date-picker .n-input) { width: 100%; }
-.ledger-readonly-fields { display: flex; flex-wrap: wrap; gap: 7px 12px; color: var(--text-muted); font-size: .8rem; }
-.ledger-readonly-fields span { padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
 .ledger-form-error { margin: 0; color: #b42318; font-size: .82rem; }
 .ledger-form-actions { display: flex; justify-content: flex-end; gap: 9px; }
 .ledger-primary-button,
-.ledger-secondary-button { min-height: 40px; padding: 8px 15px; border-radius: 7px; font: inherit; font-weight: 650; cursor: pointer; }
+.ledger-secondary-button { min-height: 32px; padding: 6px 12px; border-radius: 7px; font: inherit; font-size: .78rem; font-weight: 650; cursor: pointer; }
 .ledger-primary-button { border: 1px solid var(--accent); background: var(--accent); color: #fff; }
 .ledger-primary-button:hover:not(:disabled) { background: var(--accent-hover); }
 .ledger-secondary-button { border: 1px solid var(--border); background: var(--bg); color: var(--text-h); }

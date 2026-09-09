@@ -158,6 +158,7 @@ function accountDto(
     name: account.name,
     type: account.type,
     nature: account.nature,
+    ...(account.icon && account.icon !== 'wallet' ? { icon: account.icon } : {}),
     openingBalanceMinor: account.openingBalanceMinor,
     openingDate: account.openingDate,
     currency: account.currency,

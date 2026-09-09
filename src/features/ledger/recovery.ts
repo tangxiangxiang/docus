@@ -84,7 +84,8 @@ function isSafeSettingsPayload(value: unknown): value is LedgerSettingsCreateReq
 
 function isSafeAccountPayload(value: unknown): value is LedgerAccountCreateRequest {
   return isRecord(value)
-    && hasExactKeys(value, ['name', 'type', 'nature', 'openingBalanceMinor', 'openingDate', 'currency', 'note'])
+    && (hasExactKeys(value, ['name', 'type', 'nature', 'openingBalanceMinor', 'openingDate', 'currency', 'note'])
+      || hasExactKeys(value, ['name', 'type', 'nature', 'icon', 'openingBalanceMinor', 'openingDate', 'currency', 'note']))
     && nonEmptyString(value.name)
     && (value.type === 'cash'
       || value.type === 'bank'

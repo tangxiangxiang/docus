@@ -4,6 +4,8 @@ import {
 } from '../../shared/ledgerCurrency.js'
 import type {
   LedgerAccountCreateRequest,
+  LedgerAccountIcon,
+  LedgerAccountIconConfig,
   LedgerAccountNature,
   LedgerAccountType,
   LedgerCategoryCreateRequest,
@@ -152,6 +154,7 @@ export const LEDGER_ACCOUNT_TYPES: readonly LedgerAccountType[] = [
   'cash', 'bank', 'wallet', 'credit_card', 'loan', 'other',
 ]
 export const LEDGER_ACCOUNT_NATURES: readonly LedgerAccountNature[] = ['asset', 'liability']
+export const LEDGER_ACCOUNT_ICONS: readonly LedgerAccountIcon[] = ['wallet', 'credit_card', 'cash', 'building_bank', 'briefcase']
 export const LEDGER_CATEGORY_KINDS: readonly LedgerCategoryKind[] = ['income', 'expense']
 export const LEDGER_TRANSACTION_TYPES: readonly LedgerTransactionType[] = [
   'income', 'expense', 'transfer', 'adjustment',
@@ -163,6 +166,12 @@ export function parseAccountType(record: UnknownRecord, key = 'type'): LedgerAcc
 
 export function parseAccountNature(record: UnknownRecord, key = 'nature'): LedgerAccountNature {
   return parseEnum(record, key, LEDGER_ACCOUNT_NATURES)
+}
+
+export function parseAccountIcon(record: UnknownRecord, key = 'icon'): LedgerAccountIcon {
+  const value = requireString(record, key)
+  if (LEDGER_ACCOUNT_ICONS.includes(value as LedgerAccountIcon) || /^custom_[a-z0-9_]+$/.test(value)) return value as LedgerAccountIcon
+  throw ledgerValidationError(`${key} has an unsupported value`, { field: key })
 }
 
 export function parseCategoryKind(record: UnknownRecord, key = 'kind'): LedgerCategoryKind {
@@ -224,12 +233,13 @@ export function parseSettingsCreateRequest(value: unknown): LedgerSettingsCreate
 export function parseAccountCreateRequest(value: unknown): LedgerAccountCreateRequest {
   const record = asRecord(value)
   assertExactKeys(record, [
-    'name', 'type', 'nature', 'openingBalanceMinor', 'openingDate', 'currency', 'note',
+    'name', 'type', 'nature', 'icon', 'openingBalanceMinor', 'openingDate', 'currency', 'note',
   ], ['name', 'type', 'nature', 'openingBalanceMinor', 'openingDate', 'currency'])
   return {
     name: parseName(record),
     type: parseAccountType(record),
     nature: parseAccountNature(record),
+    ...(hasOwn(record, 'icon') ? { icon: parseAccountIcon(record) } : {}),
     openingBalanceMinor: parseSafeInteger(record, 'openingBalanceMinor'),
     openingDate: assertOpeningDate(requireString(record, 'openingDate')),
     currency: parseCurrency(record),
@@ -351,25 +361,43 @@ export interface LedgerSettingsPatchRequest {
   readonly expectedVersion: number
   readonly baseCurrency?: string
   readonly timezone?: string
+  readonly accountIcons?: LedgerAccountIconConfig
 }
 
 export function parseSettingsPatchRequest(value: unknown): LedgerSettingsPatchRequest {
   const record = asRecord(value)
-  assertExactKeys(record, ['expectedVersion', 'baseCurrency', 'timezone'], ['expectedVersion'])
-  if (!hasOwn(record, 'baseCurrency') && !hasOwn(record, 'timezone')) {
+  assertExactKeys(record, ['expectedVersion', 'baseCurrency', 'timezone', 'accountIcons'], ['expectedVersion'])
+  if (!hasOwn(record, 'baseCurrency') && !hasOwn(record, 'timezone') && !hasOwn(record, 'accountIcons')) {
     throw ledgerValidationError('settings PATCH must contain at least one mutable field')
   }
   return {
     expectedVersion: parseExpectedVersion(record),
     ...(hasOwn(record, 'baseCurrency') ? { baseCurrency: parseBaseCurrency(record) } : {}),
     ...(hasOwn(record, 'timezone') ? { timezone: parseTimezone(record) } : {}),
+    ...(hasOwn(record, 'accountIcons') ? { accountIcons: parseAccountIconConfig(record.accountIcons) } : {}),
   }
+}
+
+function parseAccountIconConfig(value: unknown): LedgerAccountIconConfig {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) throw ledgerValidationError('accountIcons must be an object')
+  const config = value as Record<string, unknown>
+  if (!Array.isArray(config.availableIcons) || typeof config.defaultIcon !== 'string'
+    || config.customIcons === null || typeof config.customIcons !== 'object'
+    || config.customIconNames === null || typeof config.customIconNames !== 'object') {
+    throw ledgerValidationError('accountIcons has an invalid shape')
+  }
+  const availableIcons = config.availableIcons.filter((icon): icon is string => typeof icon === 'string')
+  if (!availableIcons.length || !availableIcons.includes(config.defaultIcon)) throw ledgerValidationError('accountIcons must contain a valid default icon')
+  const customIcons = Object.fromEntries(Object.entries(config.customIcons).filter(([, svg]) => typeof svg === 'string'))
+  const customIconNames = Object.fromEntries(Object.entries(config.customIconNames).filter(([, name]) => typeof name === 'string'))
+  return { defaultIcon: config.defaultIcon as LedgerAccountIcon, availableIcons: availableIcons as LedgerAccountIcon[], customIcons, customIconNames }
 }
 
 export interface LedgerAccountPatchRequest {
   readonly expectedVersion: number
   readonly name?: string
   readonly note?: string
+  readonly icon?: LedgerAccountIcon
   readonly type?: LedgerAccountType
   readonly nature?: LedgerAccountNature
   readonly openingBalanceMinor?: number
@@ -380,6 +408,7 @@ export function parseAccountPatchRequest(value: unknown): LedgerAccountPatchRequ
   const record = asRecord(value)
   const mutableKeys = [
     'name', 'note', 'type', 'nature', 'openingBalanceMinor', 'openingDate',
+    'icon',
   ] as const
   assertExactKeys(record, ['expectedVersion', ...mutableKeys], ['expectedVersion'])
   if (!mutableKeys.some((key) => hasOwn(record, key))) {
@@ -391,6 +420,7 @@ export function parseAccountPatchRequest(value: unknown): LedgerAccountPatchRequ
     ...(hasOwn(record, 'note') ? { note: parseNote(record) } : {}),
     ...(hasOwn(record, 'type') ? { type: parseAccountType(record) } : {}),
     ...(hasOwn(record, 'nature') ? { nature: parseAccountNature(record) } : {}),
+    ...(hasOwn(record, 'icon') ? { icon: parseAccountIcon(record) } : {}),
     ...(hasOwn(record, 'openingBalanceMinor')
       ? { openingBalanceMinor: parseSafeInteger(record, 'openingBalanceMinor') }
       : {}),

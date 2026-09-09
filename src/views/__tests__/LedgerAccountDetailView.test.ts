@@ -1,11 +1,10 @@
 // @vitest-environment jsdom
-import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { DOMWrapper, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { LedgerAccountDto, LedgerOverviewDto, LedgerSettingsDto } from '../../../shared/ledgerProtocol'
 import { resetLedgerStoreForTesting } from '../../features/ledger/ledgerStore'
 import LedgerAccountDetailView from '../LedgerAccountDetailView.vue'
-import { getNaiveSelect } from '../../components/ledger/__tests__/selectTestUtils'
 
 const api = vi.hoisted(() => ({
   getLedgerSettings: vi.fn(),
@@ -70,6 +69,7 @@ const overview = (): LedgerOverviewDto => ({
 })
 
 const wrappers: VueWrapper[] = []
+const bodyWrapper = () => new DOMWrapper(document.body)
 
 function createTestRouter() {
   return createRouter({
@@ -120,11 +120,11 @@ describe('Ledger account detail lifecycle', () => {
     await flushPromises()
 
     await wrapper.findAll('button').find((button) => button.text() === '编辑账户')!.trigger('click')
-    expect(getNaiveSelect(wrapper, '账户性质').exists()).toBe(true)
-    await wrapper.get('input[name="name"]').setValue('招商银行主账户')
+    expect(bodyWrapper().findAll('.n-base-selection').length).toBeGreaterThan(0)
+    await bodyWrapper().get('input[name="name"]').setValue('招商银行主账户')
     api.patchLedgerAccount.mockResolvedValue(account({ name: '招商银行主账户', version: 4 }))
     api.getLedgerAccount.mockResolvedValue(account({ name: '招商银行主账户', version: 4 }))
-    await wrapper.get('[data-testid="ledger-account-edit-form"]').trigger('submit')
+    await bodyWrapper().get('[data-testid="ledger-account-edit-form"]').trigger('submit')
     await flushPromises()
 
     expect(api.patchLedgerAccount).toHaveBeenCalledWith('bank-1', expect.objectContaining({
@@ -145,11 +145,11 @@ describe('Ledger account detail lifecycle', () => {
     await flushPromises()
 
     await wrapper.findAll('button').find((button) => button.text() === '编辑账户')!.trigger('click')
-    expect(wrapper.findAllComponents({ name: 'NSelect' }).length).toBe(0)
-    expect(wrapper.text()).toContain('账户已有历史记录')
-    await wrapper.get('input[name="name"]').setValue('历史账户')
+    expect(bodyWrapper().findAllComponents({ name: 'NSelect' }).length).toBe(0)
+    expect(bodyWrapper().text()).toContain('账户已有历史记录')
+    await bodyWrapper().get('input[name="name"]').setValue('历史账户')
     api.patchLedgerAccount.mockResolvedValue(account({ name: '历史账户', version: 4 }))
-    await wrapper.get('[data-testid="ledger-account-edit-form"]').trigger('submit')
+    await bodyWrapper().get('[data-testid="ledger-account-edit-form"]').trigger('submit')
     await flushPromises()
 
     expect(api.patchLedgerAccount).toHaveBeenCalledWith('bank-1', {
@@ -199,7 +199,7 @@ describe('Ledger account detail lifecycle', () => {
     expect(movement.text()).toContain('¥500.00')
     expect(movement.text()).toContain('¥120.00')
     expect(wrapper.get('.ledger-account-history-link').attributes('href')).toBe('/ledger/transactions?accountId=bank-1')
-    expect(api.getLedgerAccountTransactions).toHaveBeenCalledWith('bank-1', { includeDeleted: true, limit: 1 })
+    expect(api.getLedgerAccountTransactions).toHaveBeenCalledWith('bank-1', { includeDeleted: true, limit: 200, cursor: undefined })
   })
 
   it('uses liability movement language instead of cashflow language', async () => {

@@ -21,6 +21,7 @@ import type {
   LedgerTransactionCreateRequest,
   LedgerTransactionDto,
 } from '../../shared/ledgerProtocol.js'
+import { LEDGER_BUILTIN_ACCOUNT_ICON_NAMES, LEDGER_DEFAULT_ACCOUNT_ICONS } from '../../shared/ledgerProtocol.js'
 import {
   deriveCurrentBalance,
 } from './balance.js'
@@ -240,6 +241,7 @@ function toSettingsDto(settings: LedgerSettings): LedgerSettingsDto {
     version: settings.version,
     createdAt: settings.createdAt,
     updatedAt: settings.updatedAt,
+    accountIcons: settings.accountIcons,
   }
 }
 
@@ -331,6 +333,7 @@ export function createLedgerService(
       name: account.name,
       type: account.type,
       nature: account.nature,
+      ...(account.icon && account.icon !== 'wallet' ? { icon: account.icon } : {}),
       openingBalanceMinor: account.openingBalanceMinor,
       openingDate: account.openingDate,
       currency: account.currency,
@@ -536,6 +539,7 @@ export function createLedgerService(
         ...settings,
         ...(patch.baseCurrency === undefined ? {} : { baseCurrency: patch.baseCurrency }),
         ...(patch.timezone === undefined ? {} : { timezone: patch.timezone }),
+        ...(patch.accountIcons === undefined ? {} : { accountIcons: patch.accountIcons }),
         version: nextVersion(settings.version),
         updatedAt: generatedTimestamp(now),
       }
@@ -570,6 +574,12 @@ export function createLedgerService(
           version: 1,
           createdAt: timestamp,
           updatedAt: timestamp,
+          accountIcons: {
+            defaultIcon: 'wallet',
+            availableIcons: LEDGER_DEFAULT_ACCOUNT_ICONS,
+            customIcons: {},
+            customIconNames: LEDGER_BUILTIN_ACCOUNT_ICON_NAMES,
+          },
         }
         repository.insertSettings(settings)
         seedDefaultLedgerCategories(repository, {
@@ -627,6 +637,7 @@ export function createLedgerService(
           name: request.name,
           type: request.type,
           nature: request.nature,
+          icon: request.icon ?? 'wallet',
           openingBalanceMinor: request.openingBalanceMinor,
           openingDate: request.openingDate,
           currency: request.currency,
@@ -701,6 +712,7 @@ export function createLedgerService(
         ...account,
         ...(patch.name === undefined ? {} : { name: patch.name }),
         ...(patch.note === undefined ? {} : { note: patch.note }),
+        ...(patch.icon === undefined ? {} : { icon: patch.icon }),
         type,
         nature,
         ...(patch.openingBalanceMinor === undefined

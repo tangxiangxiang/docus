@@ -15,6 +15,35 @@ export type LedgerAccountType =
   | 'other'
 
 export type LedgerAccountNature = 'asset' | 'liability'
+export const LEDGER_BUILTIN_ACCOUNT_ICONS = [
+  { id: 'custom_builtin_boc', name: '中国银行', src: '/account-icons/boc.svg' },
+  { id: 'custom_builtin_icbc', name: '工商银行', src: '/account-icons/icbc.svg' },
+  { id: 'custom_builtin_cmb', name: '招商银行', src: '/account-icons/cmb.svg' },
+  { id: 'custom_builtin_abc', name: '农业银行', src: '/account-icons/abc.svg' },
+  { id: 'custom_builtin_psbc', name: '邮政银行', src: '/account-icons/psbc.svg' },
+  { id: 'custom_builtin_ccb', name: '建设银行', src: '/account-icons/ccb.svg' },
+  { id: 'custom_builtin_wechat_pay', name: '微信钱包', src: '/account-icons/wechat-pay.svg' },
+  { id: 'custom_builtin_alipay', name: '支付宝', src: '/account-icons/alipay.svg' },
+  { id: 'custom_builtin_unionpay', name: '云闪付', src: '/account-icons/unionpay.svg' },
+] as const
+
+export type LedgerBuiltinAccountIcon = typeof LEDGER_BUILTIN_ACCOUNT_ICONS[number]['id']
+export type LedgerAccountIcon = 'wallet' | 'credit_card' | 'cash' | 'building_bank' | 'briefcase' | LedgerBuiltinAccountIcon | `custom_${string}`
+
+export const LEDGER_DEFAULT_ACCOUNT_ICONS: readonly LedgerAccountIcon[] = [
+  'wallet', 'credit_card', 'cash', 'building_bank', 'briefcase',
+  ...LEDGER_BUILTIN_ACCOUNT_ICONS.map(({ id }) => id),
+]
+
+export const LEDGER_BUILTIN_ACCOUNT_ICON_NAMES: Readonly<Record<string, string>> = Object.fromEntries(
+  LEDGER_BUILTIN_ACCOUNT_ICONS.map(({ id, name }) => [id, name]),
+)
+export interface LedgerAccountIconConfig {
+  readonly defaultIcon: LedgerAccountIcon
+  readonly availableIcons: readonly LedgerAccountIcon[]
+  readonly customIcons: Readonly<Record<string, string>>
+  readonly customIconNames: Readonly<Record<string, string>>
+}
 export type LedgerCategoryKind = 'income' | 'expense'
 export type LedgerTransactionType = 'income' | 'expense' | 'transfer' | 'adjustment'
 export type LedgerTransactionFilterType = 'income' | 'expense' | 'transfer'
@@ -30,6 +59,7 @@ export interface LedgerSettingsDto {
   readonly version: number
   readonly createdAt: number
   readonly updatedAt: number
+  readonly accountIcons?: LedgerAccountIconConfig
 }
 
 export interface LedgerAccountDto {
@@ -37,6 +67,7 @@ export interface LedgerAccountDto {
   readonly name: string
   readonly type: LedgerAccountType
   readonly nature: LedgerAccountNature
+  readonly icon?: LedgerAccountIcon
   readonly openingBalanceMinor: number
   readonly openingDate: string
   readonly currency: string
@@ -173,6 +204,7 @@ export interface LedgerAccountCreateRequest {
   readonly name: string
   readonly type: LedgerAccountType
   readonly nature: LedgerAccountNature
+  readonly icon?: LedgerAccountIcon
   readonly openingBalanceMinor: number
   readonly openingDate: string
   readonly currency: string

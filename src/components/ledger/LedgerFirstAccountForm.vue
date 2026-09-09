@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { NButton, NForm, NFormItem, NInput, NSelect, type SelectOption } from 'naive-ui'
-import type { LedgerAccountNature, LedgerAccountType } from '../../../shared/ledgerProtocol'
+import type { LedgerAccountIcon as AccountIcon, LedgerAccountNature, LedgerAccountType } from '../../../shared/ledgerProtocol'
 import { ledgerAccountTypeOptionsForNature } from '../../features/ledger/accountPresentation'
 import { ledgerErrorMessage, ledgerFieldError } from '../../features/ledger/ledgerErrors'
 import { useLedgerStore } from '../../features/ledger/ledgerStore'
@@ -10,6 +10,8 @@ import { ledgerSelectNodeProps } from '../../features/ledger/naiveControls'
 import { openingDateInputFromInstant } from '../../features/ledger/time'
 import LedgerDatePicker from './LedgerDatePicker.vue'
 import LedgerPendingCreateRecovery from './LedgerPendingCreateRecovery.vue'
+import LedgerAccountIconPicker from './LedgerAccountIconPicker.vue'
+import { useLedgerAccountIconPreferences } from '../../composables/useLedgerAccountIconPreferences'
 
 const props = withDefaults(defineProps<{
   firstAccount?: boolean
@@ -26,12 +28,14 @@ const emit = defineEmits<{
 }>()
 
 const store = useLedgerStore()
+const iconPreferences = useLedgerAccountIconPreferences()
 const name = ref('')
 const nature = ref<LedgerAccountNature>('asset')
 const type = ref<LedgerAccountType>('bank')
 const openingBalance = ref('0')
 const openingDate = ref('')
 const note = ref('')
+const icon = ref<AccountIcon>(iconPreferences.defaultIcon.value)
 const formError = ref('')
 const submitted = ref(false)
 const saving = ref(false)
@@ -113,6 +117,7 @@ async function submit(): Promise<void> {
       name: name.value.trim(),
       type: type.value,
       nature: nature.value,
+      ...(icon.value !== 'wallet' ? { icon: icon.value } : {}),
       openingBalanceMinor,
       openingDate: openingDate.value,
       currency: currency.value,
@@ -150,11 +155,8 @@ async function retryPendingAccount(): Promise<void> {
   >
     <div>
       <p class="ledger-eyebrow">{{ props.firstAccount ? '第二步 · 第一个账户' : '新增账户' }}</p>
-      <h2>{{ props.firstAccount ? '先加入一个账户' : '创建新账户' }}</h2>
-      <p class="ledger-intro">
-        账户是 Ledger 记录余额的地方。期初余额表示从期初日期开始、你希望 Ledger 采用的当前余额；没有期初余额时可以保留为 0。
-      </p>
-      <p v-if="currency" class="ledger-context">当前 Ledger：{{ currency }} · {{ settings?.timezone }}</p>
+      <h2 id="ledger-create-account-title">{{ props.firstAccount ? '先加入一个账户' : '创建新账户' }}</h2>
+      <p v-if="currency" class="ledger-context">{{ currency }} · {{ settings?.timezone }}</p>
     </div>
 
     <LedgerPendingCreateRecovery
@@ -175,7 +177,11 @@ async function retryPendingAccount(): Promise<void> {
         :input-props="{ id: 'ledger-account-name', name: 'name', autocomplete: 'off', required: true }"
         :disabled="saving"
         :aria-invalid="fieldError('name') ? 'true' : undefined"
-      />
+      >
+        <template #suffix>
+          <LedgerAccountIconPicker v-model="icon" :disabled="saving" />
+        </template>
+      </NInput>
     </NFormItem>
 
     <div class="ledger-form-grid">
@@ -192,7 +198,6 @@ async function retryPendingAccount(): Promise<void> {
           role="combobox"
           :disabled="saving"
         />
-        <small>资产会增加你的净资产；负债表示你欠下的金额。</small>
       </NFormItem>
       <NFormItem class="ledger-form-field" label="账户类型" :show-feedback="false" required>
         <NSelect
@@ -207,7 +212,6 @@ async function retryPendingAccount(): Promise<void> {
           role="combobox"
           :disabled="saving"
         />
-        <small>选择最接近这个账户的日常称呼。</small>
       </NFormItem>
     </div>
 
@@ -223,7 +227,6 @@ async function retryPendingAccount(): Promise<void> {
           :disabled="saving"
           :aria-invalid="fieldError('openingBalanceMinor') ? 'true' : undefined"
         />
-        <small>输入 {{ currency }} 金额；可使用负数，留空按 0 处理。</small>
       </NFormItem>
       <NFormItem class="ledger-form-field" label="期初日期" :show-feedback="false" required>
         <LedgerDatePicker
@@ -232,7 +235,6 @@ async function retryPendingAccount(): Promise<void> {
           test-id="ledger-account-opening-date"
           :disabled="saving"
         />
-        <small>默认使用 Ledger 时区的今天。</small>
       </NFormItem>
     </div>
 
@@ -245,7 +247,6 @@ async function retryPendingAccount(): Promise<void> {
         readonly
         :input-props="{ id: 'ledger-account-currency', name: 'currency', readonly: true, 'aria-readonly': 'true' }"
       />
-      <small>账户货币继承 Ledger 基础货币；L1 不支持账户间换汇。</small>
     </NFormItem>
 
     <NFormItem class="ledger-form-field" label="备注（可选）" :show-feedback="false">
@@ -262,10 +263,10 @@ async function retryPendingAccount(): Promise<void> {
     <p v-if="formError" class="ledger-form-error" role="alert">{{ formError }}</p>
 
     <div class="ledger-form-actions">
-      <NButton v-if="props.cancelable" class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" :disabled="saving" @click="emit('cancel')">取消</NButton>
-      <NButton v-if="props.firstAccount && !settings?.hasCreatedAccount" class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" :disabled="saving" @click="emit('edit-settings')">修改 Ledger 设置</NButton>
-      <NButton class="ledger-primary-button" attr-type="submit" type="primary" size="medium" :bordered="false" :disabled="saving">
-        {{ saving ? '正在保存…' : (props.firstAccount ? '创建账户并继续' : '创建账户') }}
+      <NButton v-if="props.cancelable" class="ledger-secondary-button" attr-type="button" size="small" :bordered="false" :disabled="saving" @click="emit('cancel')">取消</NButton>
+      <NButton v-if="props.firstAccount && !settings?.hasCreatedAccount" class="ledger-secondary-button" attr-type="button" size="small" :bordered="false" :disabled="saving" @click="emit('edit-settings')">修改 Ledger 设置</NButton>
+      <NButton class="ledger-primary-button" attr-type="submit" type="primary" size="small" :bordered="false" :disabled="saving">
+        {{ saving ? '保存中…' : (props.firstAccount ? '继续' : '创建') }}
       </NButton>
     </div>
     </template>
@@ -276,8 +277,7 @@ async function retryPendingAccount(): Promise<void> {
 .ledger-onboarding-card { display: grid; gap: 18px; width: min(100%, 620px); box-sizing: border-box; padding: 30px; border: 1px solid var(--border); border-radius: 14px; background: var(--bg-soft); box-shadow: 0 12px 36px color-mix(in srgb, #0f172a 12%, transparent); }
 .ledger-eyebrow { margin: 0 0 6px; color: var(--accent); font-size: .75rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .ledger-onboarding-card h2 { margin: 0; color: var(--text-h); font-size: 1.45rem; line-height: 1.3; }
-.ledger-intro { margin: 10px 0 0; color: var(--text-muted); font-size: .86rem; line-height: 1.55; }
-.ledger-context { margin: 10px 0 0; color: var(--text); font-size: .8rem; font-weight: 600; }
+.ledger-context { margin: 8px 0 0; color: var(--text-muted); font-size: .8rem; }
 .ledger-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .ledger-form-field { display: grid; gap: 6px; }
 .ledger-form-field :deep(.n-form-item-label) { color: var(--text-h); font-size: .83rem; font-weight: 650; }
@@ -293,7 +293,7 @@ async function retryPendingAccount(): Promise<void> {
 .ledger-form-error { margin: 0; color: #b42318; font-size: .82rem; line-height: 1.45; }
 .ledger-form-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 9px; }
 .ledger-primary-button,
-.ledger-secondary-button { min-height: 40px; padding: 8px 15px; border-radius: 7px; font: inherit; font-weight: 650; cursor: pointer; }
+.ledger-secondary-button { min-height: 32px; padding: 6px 12px; border-radius: 7px; font: inherit; font-size: .78rem; font-weight: 650; cursor: pointer; }
 .ledger-primary-button { border: 1px solid var(--accent); background: var(--accent); color: #fff; }
 .ledger-primary-button:hover:not(:disabled) { background: var(--accent-hover); }
 .ledger-secondary-button { border: 1px solid var(--border); background: var(--bg); color: var(--text-h); }

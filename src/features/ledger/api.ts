@@ -15,6 +15,7 @@ import type {
   LedgerTrendPoint,
   LedgerSettingsCreateRequest,
   LedgerSettingsDto,
+  LedgerAccountIconConfig,
   LedgerTransactionDto,
   LedgerTransactionPageDto,
   LedgerTransactionQuery,
@@ -34,6 +35,7 @@ export type LedgerAccountPatchInput = {
   readonly note?: string
   readonly type?: LedgerAccountType
   readonly nature?: LedgerAccountNature
+  readonly icon?: import('../../../shared/ledgerProtocol').LedgerAccountIcon
   readonly openingBalanceMinor?: number
   readonly openingDate?: string
 }
@@ -267,6 +269,7 @@ export function patchLedgerSettings(body: {
   readonly expectedVersion: number
   readonly baseCurrency?: string
   readonly timezone?: string
+  readonly accountIcons?: LedgerAccountIconConfig
 }): Promise<LedgerSettingsDto> {
   return request('/api/ledger/settings', jsonInit('PATCH', body), settingsResponse)
 }

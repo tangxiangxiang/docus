@@ -14,9 +14,12 @@ import {
 import { normalizeLedgerCategoryName } from '../../shared/ledgerNormalization.js'
 import type {
   LedgerAccountNature,
+  LedgerAccountIcon,
+  LedgerAccountIconConfig,
   LedgerAccountType,
   LedgerCategoryKind,
 } from '../../shared/ledgerProtocol.js'
+import { LEDGER_BUILTIN_ACCOUNT_ICON_NAMES, LEDGER_DEFAULT_ACCOUNT_ICONS } from '../../shared/ledgerProtocol.js'
 import {
   assertPositiveMinor,
   assertSafeMinor,
@@ -46,6 +49,10 @@ export interface LedgerSettingsRow {
   readonly version?: unknown
   readonly created_at?: unknown
   readonly updated_at?: unknown
+  readonly account_icon_default?: unknown
+  readonly account_icon_available_json?: unknown
+  readonly account_icon_custom_json?: unknown
+  readonly account_icon_names_json?: unknown
   readonly [column: string]: unknown
 }
 
@@ -107,6 +114,7 @@ export interface LedgerSettings {
   readonly version: number
   readonly createdAt: number
   readonly updatedAt: number
+  readonly accountIcons: LedgerAccountIconConfig
 }
 
 export interface LedgerAccount {
@@ -114,6 +122,7 @@ export interface LedgerAccount {
   readonly name: string
   readonly type: LedgerAccountType
   readonly nature: LedgerAccountNature
+  readonly icon?: LedgerAccountIcon
   readonly openingBalanceMinor: number
   readonly openingDate: string
   readonly currency: string
@@ -389,6 +398,35 @@ export function ledgerSettingsFromRow(row: unknown): LedgerSettings {
     invalidRow('settings', 'has_created_account', 'freeze marker must be 0 or 1')
   }
 
+  const jsonArray = (value: unknown, fallback: string[]): string[] => {
+    if (typeof value !== 'string') return fallback
+    try {
+      const parsed = JSON.parse(value)
+      return Array.isArray(parsed) && parsed.every((item) => typeof item === 'string') ? parsed : fallback
+    } catch { return fallback }
+  }
+  const jsonRecord = (value: unknown): Record<string, string> => {
+    if (typeof value !== 'string') return {}
+    try {
+      const parsed = JSON.parse(value)
+      return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+        && Object.values(parsed).every((item) => typeof item === 'string') ? parsed as Record<string, string> : {}
+    } catch { return {} }
+  }
+  const storedAvailableIcons = jsonArray(record.account_icon_available_json, []) as LedgerAccountIcon[]
+  const storedIconNames = jsonRecord(record.account_icon_names_json)
+  const storedNames = new Set(Object.values(storedIconNames))
+  const missingDefaults = LEDGER_DEFAULT_ACCOUNT_ICONS.filter((icon) => {
+    const builtinName = LEDGER_BUILTIN_ACCOUNT_ICON_NAMES[icon]
+    return !builtinName || !storedNames.has(builtinName)
+  })
+  const availableIcons = [...new Set([...missingDefaults, ...storedAvailableIcons])]
+  const accountIcons: LedgerAccountIconConfig = {
+    defaultIcon: (typeof record.account_icon_default === 'string' ? record.account_icon_default : 'wallet') as LedgerAccountIcon,
+    availableIcons,
+    customIcons: jsonRecord(record.account_icon_custom_json),
+    customIconNames: { ...LEDGER_BUILTIN_ACCOUNT_ICON_NAMES, ...storedIconNames },
+  }
   return {
     baseCurrency: persistedCurrency(record, 'settings', 'base_currency'),
     timezone: persistedTimezone(record, 'settings', 'timezone'),
@@ -396,6 +434,7 @@ export function ledgerSettingsFromRow(row: unknown): LedgerSettings {
     version: positiveVersion(record, 'settings', 'version'),
     createdAt: utcMilliseconds(record, 'settings', 'created_at'),
     updatedAt: utcMilliseconds(record, 'settings', 'updated_at'),
+    accountIcons,
   }
 }
 
@@ -412,6 +451,7 @@ export function ledgerAccountFromRow(row: unknown): LedgerAccount {
     name: persistedName(record, 'account', 'name'),
     type,
     nature,
+    ...(record.icon && record.icon !== 'wallet' ? { icon: record.icon as LedgerAccountIcon } : {}),
     openingBalanceMinor: safeMinor(record, 'account', 'opening_balance_minor'),
     openingDate: persistedOpeningDate(record, 'account', 'opening_date'),
     currency: persistedCurrency(record, 'account', 'currency'),

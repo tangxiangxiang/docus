@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NButton, NIcon } from 'naive-ui'
-import { Book, Edit, FileText, Robot, Tag, X } from '@vicons/tabler'
+import { Book, Edit, FileText, Robot, Tag, Wallet, X } from '@vicons/tabler'
 import {
   clearAiApiKey,
   getAiCredentialStatus,
@@ -36,6 +36,7 @@ import SettingsEditorSection from './SettingsEditorSection.vue'
 import SettingsMetadataSection from './SettingsMetadataSection.vue'
 import SettingsTagsSection from './SettingsTagsSection.vue'
 import SettingsDiaryMigrationSection from './SettingsDiaryMigrationSection.vue'
+import SettingsLedgerAccountIconsSection from './SettingsLedgerAccountIconsSection.vue'
 
 const props = withDefaults(defineProps<{
   open: boolean
@@ -79,13 +80,14 @@ const cleanedPaths = ref<string[]>([])
    so the shell stays a routing layer — no inline form templates.
    The active pane resets to AI every time the modal opens so a
    returning user always lands somewhere predictable. */
-type SectionId = 'ai' | 'editor' | 'metadata' | 'diary-migration' | 'tags'
+type SectionId = 'ai' | 'editor' | 'metadata' | 'diary-migration' | 'tags' | 'ledger-account-icons'
 const SECTIONS = [
   { id: 'ai', labelKey: 'settings.ai', icon: Robot },
   { id: 'editor', labelKey: 'settings.editor', icon: Edit },
   { id: 'metadata', labelKey: 'settings.metadata', icon: FileText },
   { id: 'diary-migration', labelKey: 'settings.diary_migration', icon: Book },
   { id: 'tags', labelKey: 'settings.tags', icon: Tag },
+  { id: 'ledger-account-icons', labelKey: 'settings.ledger_account_icons', icon: Wallet },
 ] as const satisfies ReadonlyArray<{ id: SectionId; labelKey: string; icon: typeof Robot }>
 const active = ref<SectionId>('ai')
 
@@ -483,6 +485,7 @@ onBeforeUnmount(() => {
               @remove="removeFrontmatter"
             />
             <SettingsDiaryMigrationSection v-else-if="active === 'diary-migration'" />
+            <SettingsLedgerAccountIconsSection v-else-if="active === 'ledger-account-icons'" />
             <SettingsTagsSection v-else>
               <slot name="tags" />
             </SettingsTagsSection>
