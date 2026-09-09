@@ -64,9 +64,10 @@ const { t } = useI18n()
       <NIcon class="ab-btn-icon" aria-hidden="true"><GitBranch /></NIcon>
       <span
         v-if="h.dirtyCount.value > 0"
-        class="ab-badge"
+        class="ab-status-dot"
+        role="img"
         :aria-label="t('history.changed_files', { count: h.dirtyCount.value })"
-      >{{ h.dirtyCount.value }}</span>
+      />
     </NButton>
   </aside>
 </template>
