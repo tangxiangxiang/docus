@@ -2204,8 +2204,23 @@ main.container.auth-page-shell {
 .ab-btn:hover { color: var(--vs-text-1); background: var(--vs-hover-bg); }
 .activity-bar .ab-btn.active,
 .activity-bar .ab-btn.active:hover {
+  position: relative;
   color: var(--vs-text-1);
+  background: transparent;
+}
+.activity-bar .ab-btn.active::after {
+  position: absolute;
+  z-index: 0;
+  inset: 4px;
+  border-radius: 5px;
   background: var(--vs-active-bg);
+  content: '';
+  pointer-events: none;
+}
+.activity-bar .ab-btn.active .n-button__content,
+.activity-bar .ab-btn.active .ab-badge {
+  position: relative;
+  z-index: 1;
 }
 /* Small count badge anchored to the bottom-right of the activity-
    bar button. Currently only used by the History button (dirty
