@@ -2988,9 +2988,9 @@ main.container.auth-page-shell {
   color: var(--vs-text-3);
   transition: color 100ms;
 }
-/* Tag filter picks up the accent on focus-within so it visually
-   matches the editor .tabs focus state — FileTree has no equivalent
-   focus-within accent (chips are not interactive in the same way). */
+/* Both sidebar filters pick up the accent on focus-within so the active
+   search surface is equally clear in Tags and FileTree. */
+.vault .file-tree header .search:focus-within .search-icon,
 .vault .tag-panel .tag-filter:focus-within .tag-filter-icon {
   color: var(--vs-accent);
 }
