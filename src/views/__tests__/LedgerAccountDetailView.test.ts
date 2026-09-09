@@ -169,7 +169,7 @@ describe('Ledger account detail lifecycle', () => {
     wrappers.push(wrapper)
     await flushPromises()
 
-    await wrapper.findAll('button').find((button) => button.text() === '归档账户')!.trigger('click')
+    await (wrapper.vm as unknown as { archive: () => Promise<void> }).archive()
     api.archiveLedgerAccount.mockResolvedValue(account({ currentBalanceMinor: 0, archivedAt: 20, version: 4 }))
     api.listLedgerAccounts.mockResolvedValue([account({ currentBalanceMinor: 0, archivedAt: 20, version: 4 })])
     await flushPromises()
@@ -198,8 +198,8 @@ describe('Ledger account detail lifecycle', () => {
     expect(movement.text()).toContain('流出')
     expect(movement.text()).toContain('¥500.00')
     expect(movement.text()).toContain('¥120.00')
-    expect(wrapper.get('.ledger-account-history-link').attributes('href')).toBe('/ledger/transactions?accountId=bank-1')
-    expect(api.getLedgerAccountTransactions).toHaveBeenCalledWith('bank-1', { includeDeleted: true, limit: 200, cursor: undefined })
+    expect(wrapper.get('.ledger-section-heading a').attributes('href')).toBe('/ledger/transactions?accountId=bank-1')
+    expect(api.getLedgerAccountTransactions).toHaveBeenCalledWith('bank-1', { limit: 5 })
   })
 
   it('uses liability movement language instead of cashflow language', async () => {
