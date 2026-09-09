@@ -199,6 +199,18 @@ const liabilityAccounts = computed(() => accountsByBalance('liability'))
 const dashboardAccountIcon = (account: { readonly id: string; readonly icon?: import('../../../shared/ledgerProtocol').LedgerAccountIcon }) =>
   account.icon ?? store.accounts.value.find((candidate) => candidate.id === account.id)?.icon
 
+const scrollbarHideTimers = new WeakMap<HTMLElement, ReturnType<typeof setTimeout>>()
+function showScrollbarWhileScrolling(event: Event): void {
+  const viewport = event.currentTarget as HTMLElement
+  viewport.classList.add('is-scrolling')
+  const timer = scrollbarHideTimers.get(viewport)
+  if (timer) clearTimeout(timer)
+  scrollbarHideTimers.set(viewport, setTimeout(() => {
+    viewport.classList.remove('is-scrolling')
+    scrollbarHideTimers.delete(viewport)
+  }, 700))
+}
+
 const periodLabels = computed<Record<LedgerPeriodName, string>>(() => ({
   today: historicalMode.value ? '当日' : '今天',
   week: historicalMode.value ? '所在周' : '本周',
@@ -633,7 +645,7 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
                 <span><i class="is-asset" aria-hidden="true" />资产账户 <small>({{ assetAccounts.length }})</small></span>
                 <strong><LedgerAnimatedMoney :minor="overview.assetTotalMinor" :currency="overview.currency" /></strong>
               </h3>
-              <div v-if="assetAccounts.length" class="ledger-dashboard-account-list-viewport" data-testid="ledger-dashboard-assets-viewport">
+              <div v-if="assetAccounts.length" class="ledger-dashboard-account-list-viewport" data-testid="ledger-dashboard-assets-viewport" @scroll="showScrollbarWhileScrolling">
                 <NList class="ledger-dashboard-accounts" :show-divider="false" hoverable>
                   <NListItem v-for="account in assetAccounts" :key="account.id" class="ledger-dashboard-account-item">
                       <RouterLink class="ledger-dashboard-account" :to="{ name: 'ledger-account', params: { id: account.id }, query: { from: 'overview' } }">
@@ -658,7 +670,7 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
                 <span><i class="is-liability" aria-hidden="true" />负债账户 <small>({{ liabilityAccounts.length }})</small></span>
                 <strong><LedgerAnimatedMoney :minor="overview.liabilityTotalMinor" :currency="overview.currency" /></strong>
               </h3>
-              <div v-if="liabilityAccounts.length" class="ledger-dashboard-account-list-viewport" data-testid="ledger-dashboard-liabilities-viewport">
+              <div v-if="liabilityAccounts.length" class="ledger-dashboard-account-list-viewport" data-testid="ledger-dashboard-liabilities-viewport" @scroll="showScrollbarWhileScrolling">
                 <NList class="ledger-dashboard-accounts" :show-divider="false" hoverable>
                   <NListItem v-for="account in liabilityAccounts" :key="account.id" class="ledger-dashboard-account-item">
                       <RouterLink class="ledger-dashboard-account" :to="{ name: 'ledger-account', params: { id: account.id }, query: { from: 'overview' } }">
@@ -726,7 +738,7 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
           <div v-else-if="categoryDataReady" class="ledger-breakdown-columns" data-testid="ledger-category-breakdown">
             <div>
               <h3><i class="is-income" aria-hidden="true" />收入分类</h3>
-              <div v-if="selectedPeriods.income.length" class="ledger-breakdown-list-viewport" data-testid="ledger-income-breakdown-viewport">
+              <div v-if="selectedPeriods.income.length" class="ledger-breakdown-list-viewport" data-testid="ledger-income-breakdown-viewport" @scroll="showScrollbarWhileScrolling">
                 <NList class="ledger-breakdown-list" :show-divider="false">
                   <NListItem v-for="item in selectedPeriods.income" :key="item.categoryId" class="ledger-breakdown-list-item">
                     <div class="ledger-breakdown-row">
@@ -749,7 +761,7 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
             </div>
             <div>
               <h3><i class="is-expense" aria-hidden="true" />支出分类</h3>
-              <div v-if="selectedPeriods.expense.length" class="ledger-breakdown-list-viewport" data-testid="ledger-expense-breakdown-viewport">
+              <div v-if="selectedPeriods.expense.length" class="ledger-breakdown-list-viewport" data-testid="ledger-expense-breakdown-viewport" @scroll="showScrollbarWhileScrolling">
                 <NList class="ledger-breakdown-list" :show-divider="false">
                   <NListItem v-for="item in selectedPeriods.expense" :key="item.categoryId" class="ledger-breakdown-list-item">
                     <div class="ledger-breakdown-row">
@@ -1294,8 +1306,7 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
   scrollbar-width: thin;
 }
 
-.ledger-dashboard-account-list-viewport:hover,
-.ledger-dashboard-account-list-viewport:focus-within {
+.ledger-dashboard-account-list-viewport.is-scrolling {
   scrollbar-color: color-mix(in srgb, var(--text-muted) 34%, transparent) transparent;
 }
 
@@ -1310,12 +1321,8 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
   transition: background .18s ease;
 }
 
-.ledger-dashboard-account-list-viewport:hover::-webkit-scrollbar-thumb,
-.ledger-dashboard-account-list-viewport:focus-within::-webkit-scrollbar-thumb,
-.ledger-dashboard-account-list-viewport::-webkit-scrollbar-thumb:hover,
-.ledger-breakdown-list-viewport:hover::-webkit-scrollbar-thumb,
-.ledger-breakdown-list-viewport:focus-within::-webkit-scrollbar-thumb,
-.ledger-breakdown-list-viewport::-webkit-scrollbar-thumb:hover {
+.ledger-dashboard-account-list-viewport.is-scrolling::-webkit-scrollbar-thumb,
+.ledger-breakdown-list-viewport.is-scrolling::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--text-muted) 34%, transparent);
 }
 
@@ -1327,8 +1334,7 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
   scrollbar-width: thin;
 }
 
-.ledger-breakdown-list-viewport:hover,
-.ledger-breakdown-list-viewport:focus-within {
+.ledger-breakdown-list-viewport.is-scrolling {
   scrollbar-color: color-mix(in srgb, var(--text-muted) 34%, transparent) transparent;
 }
 
