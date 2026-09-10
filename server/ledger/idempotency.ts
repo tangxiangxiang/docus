@@ -338,7 +338,13 @@ function assertReplayEnum<T extends string>(
 }
 
 function assertLedgerSettingsReplayBody(value: unknown): asserts value is LedgerSettingsDto {
-  const object = replayExactObject(value, LEDGER_SETTINGS_REPLAY_KEYS, 'settings response')
+  const object = replayExactObject(
+    value,
+    Object.prototype.hasOwnProperty.call(value, 'accountIcons')
+      ? LEDGER_SETTINGS_REPLAY_KEYS
+      : LEDGER_SETTINGS_REPLAY_KEYS.filter((key) => key !== 'accountIcons'),
+    'settings response',
+  )
   assertReplayString(object.baseCurrency, 'settings response.baseCurrency')
   assertReplaySafeInteger(object.currencyExponent, 'settings response.currencyExponent')
   assertReplayString(object.timezone, 'settings response.timezone')
@@ -347,6 +353,7 @@ function assertLedgerSettingsReplayBody(value: unknown): asserts value is Ledger
   assertReplaySafeInteger(object.createdAt, 'settings response.createdAt')
   assertReplaySafeInteger(object.updatedAt, 'settings response.updatedAt')
   const accountIcons = object.accountIcons
+  if (accountIcons === undefined) return
   if (accountIcons === null || typeof accountIcons !== 'object' || Array.isArray(accountIcons)) return replayResponseError('settings response.accountIcons must be an object')
   const config = accountIcons as Record<string, unknown>
   if (typeof config.defaultIcon !== 'string' || !Array.isArray(config.availableIcons)

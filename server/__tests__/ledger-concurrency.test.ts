@@ -23,6 +23,10 @@ import {
   createLedgerTestDatabase,
   type LedgerTestDatabase,
 } from './helpers/ledgerDb.js'
+import {
+  LEDGER_BUILTIN_ACCOUNT_ICON_NAMES,
+  LEDGER_DEFAULT_ACCOUNT_ICONS,
+} from '../../shared/ledgerProtocol.js'
 
 const databases: LedgerTestDatabase[] = []
 
@@ -85,6 +89,12 @@ function settings(overrides: Partial<LedgerSettings> = {}): LedgerSettings {
     version: 1,
     createdAt: 1_000,
     updatedAt: 1_000,
+    accountIcons: {
+      defaultIcon: 'wallet',
+      availableIcons: LEDGER_DEFAULT_ACCOUNT_ICONS,
+      customIcons: {},
+      customIconNames: LEDGER_BUILTIN_ACCOUNT_ICON_NAMES,
+    },
     ...overrides,
   }
 }
