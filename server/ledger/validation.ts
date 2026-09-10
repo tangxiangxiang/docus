@@ -300,7 +300,7 @@ function parseIncomeOrExpenseCreate(
 function parseTransferCreate(value: unknown): LedgerTransferCreateRequest {
   const record = asRecord(value)
   assertExactKeys(record, [
-    'type', 'amountMinor', 'fromAccountId', 'toAccountId', 'occurredAt', 'note',
+    'type', 'amountMinor', 'fromAccountId', 'toAccountId', 'occurredAt', 'payee', 'note',
   ], ['type', 'amountMinor', 'fromAccountId', 'toAccountId', 'occurredAt'])
   if (parseTransactionType(record) !== 'transfer') {
     throw ledgerValidationError('transaction type discriminator does not match the parser', { field: 'type' })
@@ -311,6 +311,7 @@ function parseTransferCreate(value: unknown): LedgerTransferCreateRequest {
     fromAccountId: requireNonEmptyId(record, 'fromAccountId'),
     toAccountId: requireNonEmptyId(record, 'toAccountId'),
     occurredAt: parseOccurredAt(record),
+    payee: parsePayee(record),
     note: parseNote(record),
   }
 }

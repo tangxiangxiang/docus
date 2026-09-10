@@ -119,6 +119,7 @@ function createCategory(
 function transactionRequest(value: Record<string, unknown>): LedgerTransactionCreateRequest {
   return parseTransactionCreateRequest({
     occurredAt: TEST_NOW,
+    payee: '',
     ...value,
   })
 }

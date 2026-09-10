@@ -142,6 +142,7 @@ export interface LedgerTransferTransactionDto extends LedgerTransactionDtoBase {
   readonly type: 'transfer'
   readonly fromAccountId: string
   readonly toAccountId: string
+  readonly payee: string
 }
 
 export interface LedgerAdjustmentTransactionDto extends LedgerTransactionDtoBase {
@@ -199,6 +200,7 @@ export interface LedgerTransferCreateRequest {
   readonly fromAccountId: string
   readonly toAccountId: string
   readonly occurredAt: number
+  readonly payee: string
   readonly note: string
 }
 

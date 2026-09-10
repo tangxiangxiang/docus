@@ -277,6 +277,7 @@ async function submit(): Promise<void> {
             fromAccountId: fromAccountId.value,
             toAccountId: toAccountId.value,
             occurredAt: parsed.occurredAtMs,
+            payee: payee.value.trim(),
             note: note.value.trim(),
           }
     const saved = await store.createTransaction(payload)
@@ -327,7 +328,6 @@ async function retryPending(): Promise<void> {
     >
       <template #header>
           <div>
-            <p class="ledger-eyebrow">Ledger</p>
             <h2 id="ledger-sheet-title">{{ formTitle }}</h2>
           </div>
       </template>
@@ -348,7 +348,7 @@ async function retryPending(): Promise<void> {
             v-model:value="type"
             class="ledger-entry-types"
             type="segment"
-            size="medium"
+            size="small"
             role="tablist"
             aria-label="交易类型"
             :animated="false"
@@ -381,46 +381,46 @@ async function retryPending(): Promise<void> {
                   size="medium"
                   :bordered="false"
                   :input-props="{ id: 'ledger-transaction-amount', name: 'amount', inputmode: 'decimal', autocomplete: 'off' }"
-                  placeholder="0.00"
+                placeholder="0.00"
                   :disabled="saving"
                 />
               </div>
-              <small>输入正常货币金额，例如 {{ settings?.baseCurrency }} 38；无需输入 minor units。</small>
             </NFormItem>
 
             <template v-if="type !== 'transfer'">
-              <NFormItem class="ledger-form-field" label="账户" :show-feedback="false" required>
-                <NSelect
-                  v-model:value="accountId"
-                  class="ledger-form-control"
-                  size="medium"
-                  :options="accountOptions"
-                  :node-props="ledgerSelectNodeProps"
-                  :input-props="{ id: 'ledger-transaction-account', name: 'accountId', required: true }"
-                  aria-label="账户"
-                  aria-haspopup="listbox"
-                  role="combobox"
-                  placeholder="请选择账户"
-                  :disabled="saving"
-                />
-              </NFormItem>
+              <div class="ledger-form-grid">
+                <NFormItem class="ledger-form-field" label="账户" :show-feedback="false" required>
+                  <NSelect
+                    v-model:value="accountId"
+                    class="ledger-form-control"
+                    size="medium"
+                    :options="accountOptions"
+                    :node-props="ledgerSelectNodeProps"
+                    :input-props="{ id: 'ledger-transaction-account', name: 'accountId', required: true }"
+                    aria-label="账户"
+                    aria-haspopup="listbox"
+                    role="combobox"
+                    placeholder="请选择账户"
+                    :disabled="saving"
+                  />
+                </NFormItem>
 
-              <NFormItem class="ledger-form-field" label="分类" :show-feedback="false" required>
-                <NSelect
-                  v-model:value="categoryId"
-                  class="ledger-form-control"
-                  size="medium"
-                  :options="categoryOptions"
-                  :node-props="ledgerSelectNodeProps"
-                  :input-props="{ id: 'ledger-transaction-category', name: 'categoryId', required: true }"
-                  aria-label="分类"
-                  aria-haspopup="listbox"
-                  role="combobox"
-                  :placeholder="applicableCategories.length ? '请选择分类' : '暂无可用分类'"
-                  :disabled="saving"
-                />
-                <small>如需新增分类，请前往设置中的“交易分类”。</small>
-              </NFormItem>
+                <NFormItem class="ledger-form-field" label="分类" :show-feedback="false" required>
+                  <NSelect
+                    v-model:value="categoryId"
+                    class="ledger-form-control"
+                    size="medium"
+                    :options="categoryOptions"
+                    :node-props="ledgerSelectNodeProps"
+                    :input-props="{ id: 'ledger-transaction-category', name: 'categoryId', required: true }"
+                    aria-label="分类"
+                    aria-haspopup="listbox"
+                    role="combobox"
+                    :placeholder="applicableCategories.length ? '请选择分类' : '暂无可用分类'"
+                    :disabled="saving"
+                  />
+                </NFormItem>
+              </div>
             </template>
 
             <template v-else>
@@ -456,7 +456,6 @@ async function retryPending(): Promise<void> {
                 />
                 </NFormItem>
               </div>
-              <small class="ledger-form-note">转出账户和转入账户不能相同。转账不使用分类或交易对象。</small>
             </template>
 
             <NFormItem class="ledger-form-field" label="发生时间" :show-feedback="false" required>
@@ -466,10 +465,9 @@ async function retryPending(): Promise<void> {
                 test-id="ledger-transaction-occurred-at"
                 :disabled="saving"
               />
-              <small>按 Ledger 时区 {{ settings?.timezone }} 解释和显示。</small>
             </NFormItem>
 
-            <NFormItem v-if="type !== 'transfer'" class="ledger-form-field" label="交易对象（可选）" :show-feedback="false">
+            <NFormItem class="ledger-form-field" label="交易对象（可选）" :show-feedback="false">
               <NInput
                 v-model:value="payee"
                 class="ledger-form-control"
@@ -494,8 +492,8 @@ async function retryPending(): Promise<void> {
             <p v-if="!activeAccounts.length" class="ledger-form-error" role="alert">请先创建一个可用账户，再记账。</p>
             <p v-if="formError" class="ledger-form-error" role="alert">{{ formError }}</p>
             <div class="ledger-form-actions">
-              <NButton class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" :disabled="saving" @click="requestClose">取消</NButton>
-              <NButton class="ledger-primary-button" attr-type="submit" type="primary" size="medium" :bordered="false" :disabled="!canSubmit">{{ saving ? '正在保存…' : '保存交易' }}</NButton>
+              <NButton class="ledger-secondary-button" attr-type="button" size="small" :bordered="false" :disabled="saving" @click="requestClose">取消</NButton>
+              <NButton class="ledger-primary-button" attr-type="submit" type="primary" size="small" :bordered="false" :disabled="!canSubmit">{{ saving ? '正在保存…' : '保存' }}</NButton>
             </div>
           </NForm>
         </template>
@@ -505,32 +503,31 @@ async function retryPending(): Promise<void> {
 
 <style scoped>
 .ledger-sheet-card { align-self: flex-end; width: min(100%, 640px); max-height: min(92vh, 820px); margin: auto auto 20px; overflow: auto; box-sizing: border-box; border: 1px solid color-mix(in srgb, var(--border) 78%, transparent); border-radius: 18px 18px 12px 12px; background: color-mix(in srgb, var(--bg-soft) 82%, transparent); box-shadow: 0 24px 70px color-mix(in srgb, #0f172a 25%, transparent); backdrop-filter: blur(18px); color: var(--text); }
-.ledger-sheet-card :deep(.n-card__content) { display: grid; gap: 20px; }
+.ledger-sheet-card :deep(.n-card__content) { display: grid; gap: 14px; }
 .ledger-sheet-card :deep(.n-card__header) { align-items: flex-start; gap: 16px; padding-bottom: 2px; }
-.ledger-eyebrow { margin: 0 0 5px; color: var(--accent); font-size: .72rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
 .ledger-sheet-card h2 { margin: 0; color: var(--text-h); font-size: 1.35rem; line-height: 1.25; }
 .ledger-close-button { width: 36px; height: 36px; padding: 0; border: 1px solid color-mix(in srgb, var(--border) 86%, transparent); border-radius: 9px; background: color-mix(in srgb, var(--bg) 58%, transparent); color: var(--text-muted); font-size: 1.3rem; line-height: 1; cursor: pointer; transition: border-color .18s ease, background-color .18s ease, color .18s ease; }
 .ledger-close-button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .ledger-close-button:disabled { cursor: wait; opacity: .6; }
 .ledger-entry-types { width: 100%; }
-.ledger-entry-types :deep(.n-tabs-rail) { padding: 4px; border: 1px solid color-mix(in srgb, var(--border) 82%, transparent); border-radius: 11px; background: color-mix(in srgb, var(--bg) 54%, transparent); }
-.ledger-entry-types :deep(.n-tabs-tab) { min-height: 38px; border-radius: 8px; color: var(--text-muted); font: inherit; font-size: .84rem; transition: background-color .18s ease, color .18s ease; }
+.ledger-entry-types :deep(.n-tabs-rail) { padding: 3px; border: 1px solid color-mix(in srgb, var(--border) 82%, transparent); border-radius: 9px; background: color-mix(in srgb, var(--bg) 54%, transparent); }
+.ledger-entry-types :deep(.n-tabs-tab) { min-height: 30px; padding: 0 12px; border-radius: 7px; color: var(--text-muted); font: inherit; font-size: .78rem; transition: background-color .18s ease, color .18s ease; }
 .ledger-entry-types :deep(.n-tabs-tab--active) { background: color-mix(in srgb, var(--accent) 11%, transparent); color: var(--accent); font-weight: 700; }
 .ledger-entry-types :deep(.n-tabs-tab:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 .ledger-entry-types :deep(.n-tabs-tab--disabled) { cursor: wait; opacity: .6; }
-.ledger-entry-form { display: grid; gap: 17px; }
-.ledger-form-field { display: grid; gap: 6px; }
+.ledger-entry-form { display: grid; gap: 12px; }
+.ledger-form-field { display: grid; gap: 4px; min-width: 0; }
+.ledger-amount-field { margin-top: 12px; }
 .ledger-form-field :deep(.n-form-item-label) { color: var(--text-h); font-size: .8rem; font-weight: 700; letter-spacing: .01em; }
 .ledger-form-control { width: 100%; }
+.ledger-form-field :deep(.n-form-item-blank) { min-width: 0; }
 .ledger-form-field :deep(.ledger-form-control .n-input),
 .ledger-form-field :deep(.ledger-form-control .n-base-selection),
 .ledger-form-field :deep(.ledger-date-time-picker) { width: 100%; }
 .ledger-form-field :deep(.ledger-date-time-picker .n-input-group) { width: 100%; }
 .ledger-form-field :deep(.ledger-date-time-picker .n-date-picker),
 .ledger-form-field :deep(.ledger-date-time-picker .n-time-picker) { min-width: 0; flex: 1 1 0; }
-.ledger-form-field small,
-.ledger-form-note { color: var(--text-muted); font-size: .74rem; line-height: 1.4; }
-.ledger-money-input { display: flex; align-items: center; gap: 10px; min-height: 50px; padding: 3px 12px; border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border)); border-radius: 10px; background: color-mix(in srgb, var(--bg) 78%, transparent); box-shadow: 0 3px 12px color-mix(in srgb, var(--accent) 5%, transparent); }
+.ledger-money-input { display: flex; align-items: center; width: 100%; box-sizing: border-box; gap: 10px; min-height: 50px; padding: 3px 12px; border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border)); border-radius: 10px; background: color-mix(in srgb, var(--bg) 78%, transparent); box-shadow: 0 3px 12px color-mix(in srgb, var(--accent) 5%, transparent); }
 .ledger-money-input:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent); }
 .ledger-money-input span { color: var(--accent); font-size: .86rem; font-weight: 750; }
 .ledger-money-control { flex: 1; min-width: 0; }
@@ -544,9 +541,9 @@ async function retryPending(): Promise<void> {
 .ledger-quick-create-row { display: flex; gap: 7px; }
 .ledger-quick-create-row :deep(.ledger-form-control) { flex: 1; min-width: 0; }
 .ledger-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.ledger-form-actions { display: flex; justify-content: flex-end; gap: 9px; margin: 2px -4px -4px; padding: 16px 4px 0; border-top: 1px solid color-mix(in srgb, var(--border) 72%, transparent); }
+.ledger-form-actions { display: flex; justify-content: flex-end; gap: 9px; margin: 2px -4px -4px; padding: 4px 4px 0; border-top: 1px solid color-mix(in srgb, var(--border) 72%, transparent); }
 .ledger-primary-button,
-.ledger-secondary-button { min-height: 39px; padding: 7px 14px; border-radius: 7px; font: inherit; font-size: .84rem; font-weight: 650; cursor: pointer; }
+.ledger-secondary-button { min-height: 34px; padding: 5px 12px; border-radius: 7px; font: inherit; font-size: .82rem; font-weight: 650; cursor: pointer; }
 .ledger-primary-button { border: 1px solid var(--accent); background: var(--accent); color: #fff; }
 .ledger-primary-button:hover:not(:disabled) { background: var(--accent-hover); }
 .ledger-secondary-button { border: 1px solid var(--border); background: var(--bg); color: var(--text-h); }

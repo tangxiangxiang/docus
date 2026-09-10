@@ -176,6 +176,7 @@ export interface TransferTransaction extends LedgerTransactionBase {
   readonly type: 'transfer'
   readonly fromAccountId: string
   readonly toAccountId: string
+  readonly payee: string
 }
 
 export interface AdjustmentTransaction extends LedgerTransactionBase {
@@ -247,6 +248,10 @@ function requiredString(row: UnknownRow, entity: string, field: string): string 
   const value = valueAt(row, entity, field)
   if (typeof value !== 'string') return invalidRow(entity, field, 'column must be a string')
   return value
+}
+
+function assertEmptyPayee(payee: string, entity: string): void {
+  if (payee !== '') invalidRow(entity, 'payee', 'payee must be empty for this transaction type')
 }
 
 function requiredId(row: UnknownRow, entity: string, field: string): string {
@@ -385,10 +390,6 @@ function readTransactionBase(row: UnknownRow): LedgerTransactionBase & { readonl
     createdAt: utcMilliseconds(row, entity, 'created_at'),
     updatedAt: utcMilliseconds(row, entity, 'updated_at'),
   }
-}
-
-function assertEmptyPayee(payee: string, entity: string): void {
-  if (payee !== '') invalidRow(entity, 'payee', 'payee must be empty for this transaction type')
 }
 
 export function ledgerSettingsFromRow(row: unknown): LedgerSettings {
@@ -548,7 +549,6 @@ export function ledgerTransactionFromRow(row: unknown): LedgerTransaction {
       if (categoryId !== null) invalidRow('transaction', 'category_id', 'must be null for transfer')
       if (calculated !== null) invalidRow('transaction', 'adjustment_calculated_balance_minor', 'must be null for transfer')
       if (target !== null) invalidRow('transaction', 'adjustment_target_balance_minor', 'must be null for transfer')
-      assertEmptyPayee(payee, 'transaction')
       const transferFrom = requiredNullableId(fromAccountId, 'transaction', 'from_account_id')
       const transferTo = requiredNullableId(toAccountId, 'transaction', 'to_account_id')
       if (transferFrom === transferTo) {
@@ -559,6 +559,7 @@ export function ledgerTransactionFromRow(row: unknown): LedgerTransaction {
         type: 'transfer',
         fromAccountId: transferFrom,
         toAccountId: transferTo,
+        payee,
       }
 
     case 'adjustment':

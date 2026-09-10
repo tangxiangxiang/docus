@@ -107,7 +107,7 @@ describe('Ledger stateless request validation', () => {
     expect(income).toMatchObject({ type: 'income', payee: 'Employer', note: '' })
     expect(parseTransactionCreateRequest({
       type: 'transfer', amountMinor: 1, fromAccountId: 'a', toAccountId: 'b', occurredAt,
-    })).toEqual({ type: 'transfer', amountMinor: 1, fromAccountId: 'a', toAccountId: 'b', occurredAt, note: '' })
+    })).toEqual({ type: 'transfer', amountMinor: 1, fromAccountId: 'a', toAccountId: 'b', occurredAt, payee: '', note: '' })
     expect(parseTransactionCreateRequest({
       type: 'adjustment', accountId: 'a', targetBalanceMinor: 10,
       expectedCalculatedBalanceMinor: 5, occurredAt,

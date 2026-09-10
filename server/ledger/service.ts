@@ -294,6 +294,7 @@ function toTransactionDto(transaction: LedgerTransaction): LedgerTransactionDto 
         type: 'transfer',
         fromAccountId: transaction.fromAccountId,
         toAccountId: transaction.toAccountId,
+        payee: transaction.payee,
       }
     case 'adjustment':
       return {
@@ -466,7 +467,7 @@ export function createLedgerService(
     const inapplicable = transaction.type === 'income' || transaction.type === 'expense'
       ? ['fromAccountId', 'toAccountId', 'adjustmentCalculatedBalanceMinor', 'adjustmentTargetBalanceMinor']
       : transaction.type === 'transfer'
-        ? ['accountId', 'categoryId', 'payee', 'adjustmentCalculatedBalanceMinor', 'adjustmentTargetBalanceMinor']
+        ? ['accountId', 'categoryId', 'adjustmentCalculatedBalanceMinor', 'adjustmentTargetBalanceMinor']
         : ['amountMinor', 'accountId', 'fromAccountId', 'toAccountId', 'categoryId', 'occurredAt', 'payee',
           'adjustmentCalculatedBalanceMinor', 'adjustmentTargetBalanceMinor']
 
@@ -917,6 +918,7 @@ export function createLedgerService(
               fromAccountId: fromAccount.id,
               toAccountId: toAccount.id,
               occurredAt: request.occurredAt,
+              payee: request.payee,
               note: request.note,
               deletedAt: null,
               version: 1,
@@ -1047,6 +1049,7 @@ export function createLedgerService(
             fromAccountId: fromAccount.id,
             toAccountId: toAccount.id,
             occurredAt,
+            payee: patch.payee ?? transaction.payee,
             note: patch.note ?? transaction.note,
             version: nextVersion(transaction.version),
             updatedAt: timestamp,

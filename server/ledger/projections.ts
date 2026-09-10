@@ -137,6 +137,7 @@ function transactionDto(transaction: LedgerTransaction): LedgerTransactionDto {
         type: 'transfer',
         fromAccountId: transaction.fromAccountId,
         toAccountId: transaction.toAccountId,
+        payee: transaction.payee,
       }
     case 'adjustment':
       return {

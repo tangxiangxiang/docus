@@ -142,6 +142,7 @@ const transfer: LedgerTransactionDto = {
   fromAccountId: activeAccount.id,
   toAccountId: archivedAccount.id,
   occurredAt: Date.UTC(2026, 8, 3, 4, 30),
+  payee: '',
   note: '转入旧账户',
   deletedAt: null,
   version: 1,

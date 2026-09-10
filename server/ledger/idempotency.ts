@@ -238,6 +238,7 @@ const LEDGER_TRANSFER_REPLAY_KEYS = [
   ...LEDGER_TRANSACTION_BASE_REPLAY_KEYS,
   'fromAccountId',
   'toAccountId',
+  'payee',
 ] as const
 
 const LEDGER_ADJUSTMENT_REPLAY_KEYS = [
@@ -453,11 +454,20 @@ function assertLedgerTransactionReplayBody(value: unknown): asserts value is Led
       assertReplayString(object.payee, 'expense response.payee')
       return
     case 'transfer':
-      replayExactObject(object, LEDGER_TRANSFER_REPLAY_KEYS, 'transfer response')
+      replayExactObject(
+        object,
+        Object.prototype.hasOwnProperty.call(object, 'payee')
+          ? LEDGER_TRANSFER_REPLAY_KEYS
+          : LEDGER_TRANSFER_REPLAY_KEYS.filter((key) => key !== 'payee'),
+        'transfer response',
+      )
       assertReplayEnum(object.type, ['transfer'], 'transfer response.type')
       assertLedgerTransactionBaseReplayBody(object, 'transfer response')
       assertReplayString(object.fromAccountId, 'transfer response.fromAccountId')
       assertReplayString(object.toAccountId, 'transfer response.toAccountId')
+      if (Object.prototype.hasOwnProperty.call(object, 'payee')) {
+        assertReplayString(object.payee, 'transfer response.payee')
+      }
       return
     case 'adjustment':
       replayExactObject(object, LEDGER_ADJUSTMENT_REPLAY_KEYS, 'adjustment response')

@@ -129,10 +129,12 @@ function isSafeTransactionPayload(value: unknown): value is LedgerTransactionCre
   }
 
   if (value.type === 'transfer') {
-    return hasExactKeys(value, ['type', 'amountMinor', 'fromAccountId', 'toAccountId', 'occurredAt', 'note'])
+    return (hasExactKeys(value, ['type', 'amountMinor', 'fromAccountId', 'toAccountId', 'occurredAt', 'payee', 'note'])
+      || hasExactKeys(value, ['type', 'amountMinor', 'fromAccountId', 'toAccountId', 'occurredAt', 'note']))
       && nonEmptyString(value.fromAccountId)
       && nonEmptyString(value.toAccountId)
       && value.fromAccountId !== value.toAccountId
+      && (value.payee === undefined || typeof value.payee === 'string')
       && typeof value.note === 'string'
   }
 

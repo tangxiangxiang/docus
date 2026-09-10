@@ -178,7 +178,7 @@ describe('Ledger transaction creation sheet', () => {
     expect(api.createLedgerTransaction).not.toHaveBeenCalled()
   })
 
-  it('switches to income and transfer with only their contract fields', async () => {
+  it('switches to income and transfer with their applicable fields', async () => {
     const wrapper = await openSheet()
     const sheet = getSheet()
 
@@ -199,19 +199,20 @@ describe('Ledger transaction creation sheet', () => {
     const transferSheet = getSheet()
     await transferSheet.findAll('[role="tab"]').find((button) => button.text() === '转账')!.trigger('click')
     expect(transferSheet.find('[aria-label="分类"]').exists()).toBe(false)
-    expect(transferSheet.find('input[name="payee"]').exists()).toBe(false)
+    expect(transferSheet.find('input[name="payee"]').exists()).toBe(true)
     expect(naiveSelectValue(transferSheet, '转出账户')).toBe('')
     expect(naiveSelectValue(transferSheet, '转入账户')).toBe('')
     await transferSheet.get('input[name="amount"]').setValue('5')
     await setNaiveSelect(transferSheet, '转出账户', 'bank-1')
     await setNaiveSelect(transferSheet, '转入账户', 'wallet-1')
     await setLedgerDateTime(transferSheet, '2026-09-05T12:30')
+    await transferSheet.get('input[name="payee"]').setValue('银行卡还款')
     api.createLedgerTransaction.mockResolvedValue({ id: 'tx-2', type: 'transfer' } as unknown as LedgerTransactionDto)
     await transferSheet.get('form').trigger('submit')
     await flushPromises()
 
     expect(api.createLedgerTransaction).toHaveBeenLastCalledWith(expect.objectContaining({
-      type: 'transfer', amountMinor: 500, fromAccountId: 'bank-1', toAccountId: 'wallet-1',
+      type: 'transfer', amountMinor: 500, fromAccountId: 'bank-1', toAccountId: 'wallet-1', payee: '银行卡还款',
     }), expect.any(String))
   })
 
@@ -244,7 +245,7 @@ describe('Ledger transaction creation sheet', () => {
   it('keeps category lifecycle in settings instead of offering inline quick-create', async () => {
     await openSheet()
     const sheet = getSheet()
-    expect(sheet.text()).toContain('如需新增分类，请前往设置中的“交易分类”。')
+    expect(sheet.text()).not.toContain('如需新增分类，请前往设置中的“交易分类”。')
     expect(sheet.findAll('button').some((button) => button.text() === '新建分类')).toBe(false)
     expect(sheet.find('[data-testid="ledger-category-quick-create"]').exists()).toBe(false)
     expect(api.createLedgerCategory).not.toHaveBeenCalled()
