@@ -227,5 +227,12 @@ describe('Ledger account detail lifecycle', () => {
     expect(movement.text()).toContain('减少负债')
     expect(movement.text()).not.toContain('流入')
     expect(movement.text()).not.toContain('流出')
+
+    const metrics = movement.findAll('.ledger-metric-item')
+    expect(metrics[1]?.find('.ledger-metric-icon').classes()).toContain('is-expense')
+    expect(metrics[1]?.find('strong').classes()).toContain('is-expense')
+    expect(metrics[2]?.find('.ledger-metric-icon').classes()).toContain('is-income')
+    expect(metrics[2]?.find('strong').classes()).toContain('is-income')
+    expect(metrics[3]?.find('strong').classes()).toContain('is-expense')
   })
 })
