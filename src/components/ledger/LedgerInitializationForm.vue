@@ -134,10 +134,6 @@ async function retryPendingSettings(): Promise<void> {
     <div>
       <p class="ledger-eyebrow">{{ isEditing ? 'Ledger 设置' : '开始使用 Ledger' }}</p>
       <h2>{{ isEditing ? '确认 Ledger 设置' : '先设置你的 Ledger' }}</h2>
-      <p class="ledger-intro">
-        基础货币决定金额的表达方式，时区决定交易时间和 Today / Week / Month / Year 的所属边界。
-        这两个值会成为 Ledger 的基础设置；创建第一个账户后将锁定。
-      </p>
     </div>
 
     <NAlert v-if="isLocked" class="ledger-info" type="info" :show-icon="false" role="status">
@@ -166,10 +162,9 @@ async function retryPendingSettings(): Promise<void> {
           role="combobox"
           :disabled="saving"
           :aria-invalid="fieldError('baseCurrency') ? 'true' : undefined"
-          :aria-describedby="fieldError('baseCurrency') ? 'ledger-base-currency-error' : 'ledger-base-currency-help'"
+          :aria-describedby="fieldError('baseCurrency') ? 'ledger-base-currency-error' : undefined"
           placeholder="请选择货币"
         />
-        <small id="ledger-base-currency-help">金额会按该货币的实际小数位显示；例如 JPY 不使用两位小数。</small>
         <small v-if="fieldError('baseCurrency')" id="ledger-base-currency-error" class="ledger-field-error">{{ fieldError('baseCurrency') }}</small>
       </NFormItem>
 
@@ -183,15 +178,14 @@ async function retryPendingSettings(): Promise<void> {
           :input-props="{ id: 'ledger-timezone', name: 'timezone', required: true, autocomplete: 'off' }"
           :disabled="saving"
           :aria-invalid="fieldError('timezone') ? 'true' : undefined"
-          :aria-describedby="fieldError('timezone') ? 'ledger-timezone-error' : 'ledger-timezone-help'"
+          :aria-describedby="fieldError('timezone') ? 'ledger-timezone-error' : undefined"
         />
-        <small id="ledger-timezone-help">已预选浏览器时区，仅作为提示；请确认它符合你记录 Ledger 的时间习惯。</small>
         <small v-if="fieldError('timezone')" id="ledger-timezone-error" class="ledger-field-error">{{ fieldError('timezone') }}</small>
       </NFormItem>
 
       <NAlert v-if="formError" class="ledger-form-error" type="error" :show-icon="false" role="alert">{{ formError }}</NAlert>
 
-      <NButton class="ledger-primary-button" attr-type="submit" type="primary" size="medium" :bordered="false" :disabled="saving">
+      <NButton class="ledger-primary-button" attr-type="submit" type="primary" size="small" :bordered="false" :disabled="saving">
         {{ saving ? '正在保存…' : (isEditing ? '确认并继续' : '保存设置并继续') }}
       </NButton>
     </template>
@@ -212,7 +206,6 @@ async function retryPendingSettings(): Promise<void> {
 }
 .ledger-eyebrow { margin: 0 0 6px; color: var(--accent); font-size: .75rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .ledger-onboarding-card h2 { margin: 0; color: var(--text-h); font-size: 1.45rem; line-height: 1.3; }
-.ledger-intro { margin: 10px 0 0; color: var(--text-muted); font-size: .86rem; line-height: 1.55; }
 .ledger-form-field { display: grid; gap: 6px; }
 .ledger-form-field :deep(.n-form-item-label) { color: var(--text-h); font-size: .83rem; font-weight: 650; }
 .ledger-form-control { width: 100%; }
@@ -225,7 +218,7 @@ async function retryPendingSettings(): Promise<void> {
 .ledger-field-error,
 .ledger-form-error { color: #b42318 !important; }
 .ledger-info { padding: 11px 12px; border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--accent) 7%, transparent); color: var(--text); font-size: .82rem; }
-.ledger-primary-button { min-height: 40px; padding: 8px 16px; border: 1px solid var(--accent); border-radius: 7px; background: var(--accent); color: #fff; font: inherit; font-weight: 650; cursor: pointer; }
+.ledger-primary-button { min-height: 32px; padding: 6px 12px; border: 1px solid var(--accent); border-radius: 7px; background: var(--accent); color: #fff; font: inherit; font-size: .78rem; font-weight: 650; cursor: pointer; }
 .ledger-primary-button:hover:not(:disabled) { background: var(--accent-hover); }
 .ledger-primary-button:disabled { cursor: wait; opacity: .65; }
 @media (max-width: 560px) {

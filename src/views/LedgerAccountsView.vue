@@ -305,7 +305,7 @@ function onAccountSaved(): void {
 .ledger-account-type-filter:focus-within {
   opacity: 1;
 }
-.ledger-account-list { display: grid; height: 395px; min-height: 0; flex: 0 0 395px; overflow-y: auto; overscroll-behavior: contain; scrollbar-color: transparent transparent; scrollbar-width: thin; }
+.ledger-account-list { display: grid; grid-auto-rows: max-content; align-content: start; height: 395px; min-height: 0; flex: 0 0 395px; overflow-y: auto; overscroll-behavior: contain; scrollbar-color: transparent transparent; scrollbar-width: thin; }
 .ledger-account-list.is-scrolling { scrollbar-color: color-mix(in srgb, var(--text-muted) 34%, transparent) transparent; }
 .ledger-account-list::-webkit-scrollbar { width: 6px; }
 .ledger-account-list::-webkit-scrollbar-thumb { background: transparent; transition: background .18s ease; }

@@ -113,7 +113,8 @@ describe('Ledger initialization and first-account onboarding', () => {
 
     expect(wrapper.find('[data-testid="ledger-settings-form"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="ledger-account-form"]').exists()).toBe(false)
-    expect(wrapper.text()).toContain('基础货币决定金额的表达方式')
+    expect(wrapper.text()).toContain('先设置你的 Ledger')
+    expect(wrapper.text()).not.toContain('基础货币决定金额的表达方式')
   })
 
   it('requires an explicit currency and timezone confirmation before moving to the account step', async () => {

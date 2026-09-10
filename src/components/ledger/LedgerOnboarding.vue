@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { NStep, NSteps } from 'naive-ui'
 import LedgerFirstAccountForm from './LedgerFirstAccountForm.vue'
 import LedgerInitializationForm from './LedgerInitializationForm.vue'
 import LedgerPendingCreateRecovery from './LedgerPendingCreateRecovery.vue'
@@ -10,6 +11,7 @@ const props = defineProps<{ initialStep: 'settings' | 'account' }>()
 const store = useLedgerStore()
 const step = ref(props.initialStep)
 const recoveryError = ref('')
+const currentStep = computed(() => step.value === 'settings' ? 1 : 2)
 
 watch(() => props.initialStep, (next) => { step.value = next })
 
@@ -45,41 +47,55 @@ async function retryRecovery(): Promise<void> {
 </script>
 
 <template>
-  <section class="ledger-onboarding" data-testid="ledger-onboarding" aria-labelledby="ledger-onboarding-title">
+  <section
+    class="ledger-onboarding"
+    data-testid="ledger-onboarding"
+    aria-labelledby="ledger-onboarding-title"
+  >
     <div class="ledger-onboarding-heading">
       <div>
         <p class="ledger-eyebrow">Ledger 首次使用</p>
         <h1 id="ledger-onboarding-title">把 Ledger 设置成你的账本</h1>
       </div>
-      <ol class="ledger-onboarding-steps" aria-label="Ledger 设置步骤">
-        <li :class="{ 'is-current': step === 'settings', 'is-complete': step === 'account' }">1. 基础设置</li>
-        <li :class="{ 'is-current': step === 'account' }">2. 第一个账户</li>
-      </ol>
     </div>
 
-    <LedgerPendingCreateRecovery
-      v-if="pendingOnboardingIntent"
-      :intent="pendingOnboardingIntent"
-      :busy="recoveryBusy"
-      :error="recoveryError"
-      @retry="retryRecovery"
-    />
-    <LedgerInitializationForm v-else-if="step === 'settings'" @saved="settingsSaved" />
-    <LedgerFirstAccountForm v-else @edit-settings="showSettings" />
+    <NSteps
+      class="ledger-onboarding-steps"
+      :current="currentStep"
+      size="small"
+      aria-label="Ledger 设置步骤"
+    >
+      <NStep title="基础设置" />
+      <NStep title="添加账户" />
+    </NSteps>
+
+    <div class="ledger-onboarding-stage">
+      <LedgerPendingCreateRecovery
+        v-if="pendingOnboardingIntent"
+        :intent="pendingOnboardingIntent"
+        :busy="recoveryBusy"
+        :error="recoveryError"
+        @retry="retryRecovery"
+      />
+      <LedgerInitializationForm v-else-if="step === 'settings'" @saved="settingsSaved" />
+      <LedgerFirstAccountForm v-else @edit-settings="showSettings" />
+    </div>
   </section>
 </template>
 
 <style scoped>
-.ledger-onboarding { display: grid; gap: 24px; width: min(100%, 980px); margin: 0 auto; padding: 46px 28px 64px; box-sizing: border-box; }
-.ledger-onboarding-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 28px; }
+.ledger-onboarding { --ledger-content-width: 620px; display: grid; align-content: center; justify-items: center; gap: 24px; width: min(100%, 980px); min-height: calc(100vh - 52px); margin: 0 auto; padding: 46px 28px 64px; box-sizing: border-box; }
+.ledger-onboarding-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 28px; width: min(100%, var(--ledger-content-width)); text-align: left; }
 .ledger-eyebrow { margin: 0 0 6px; color: var(--accent); font-size: .75rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .ledger-onboarding-heading h1 { margin: 0; color: var(--text-h); font-size: clamp(1.7rem, 3vw, 2.2rem); line-height: 1.2; }
-.ledger-onboarding-steps { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; color: var(--text-muted); font-size: .78rem; }
-.ledger-onboarding-steps li { padding: 5px 9px; border: 1px solid var(--border); border-radius: 999px; }
-.ledger-onboarding-steps li.is-current { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--accent); font-weight: 650; }
-.ledger-onboarding-steps li.is-complete { color: var(--text); }
+.ledger-onboarding-steps { width: min(100%, var(--ledger-content-width)); margin: -8px 0 0; }
+.ledger-onboarding-stage { display: flex; align-items: flex-start; width: min(100%, var(--ledger-content-width)); height: 666px; }
+.ledger-onboarding-stage :deep(.ledger-onboarding-card) { width: 100%; }
 @media (max-width: 680px) {
   .ledger-onboarding { padding: 30px 16px 48px; }
   .ledger-onboarding-heading { align-items: flex-start; flex-direction: column; gap: 16px; }
+}
+@media (max-width: 620px) {
+  .ledger-onboarding-stage { height: auto; }
 }
 </style>
