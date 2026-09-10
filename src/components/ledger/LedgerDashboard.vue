@@ -1055,7 +1055,7 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
   width: 40px;
   height: 40px;
   place-items: center;
-  border-radius: 50%;
+  border-radius: 13px;
   background: color-mix(in srgb, var(--accent) 10%, var(--bg-soft));
   color: color-mix(in srgb, var(--accent) 76%, var(--text-h));
 }
@@ -1215,6 +1215,8 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
 .ledger-cashflow-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-inline: -20px;
 }
 
 .ledger-cashflow-grid > div {
@@ -1223,23 +1225,23 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
   align-items: center;
   gap: 12px;
   min-height: 64px;
-  padding: 4px 22px;
+  padding: 4px 36px;
   border-left: 1px solid var(--ledger-divider);
 }
 
 .ledger-cashflow-grid > div:first-child {
-  padding-left: 2px;
+  padding-left: 36px;
   border-left: 0;
 }
 
-.ledger-cashflow-grid > div:last-child { padding-right: 2px; }
+.ledger-cashflow-grid > div:last-child { padding-right: 36px; }
 
 .ledger-cashflow-mark {
   display: grid;
-  width: 38px;
-  height: 38px;
+  width: 40px;
+  height: 40px;
   place-items: center;
-  border-radius: 50%;
+  border-radius: 13px;
   background: color-mix(in srgb, var(--accent) 11%, var(--bg));
   color: var(--accent);
   font-size: 1.15rem;
@@ -1353,7 +1355,7 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
   justify-content: space-between;
   gap: 14px;
   margin: 0 0 5px;
-  padding: 0 10px 8px;
+  padding: 0 18px 8px 10px;
   color: var(--text-muted);
   font-size: .75rem;
   font-weight: 550;
@@ -1407,7 +1409,7 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
   justify-content: space-between;
   gap: 14px;
   min-height: 54px;
-  padding: 7px 10px;
+  padding: 7px 4px 7px 10px;
   border-bottom: 1px solid var(--ledger-divider);
   color: inherit;
   text-decoration: none;
@@ -1843,7 +1845,7 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
   .ledger-metric-grid { grid-template-columns: 1fr; }
   .ledger-metric-card.is-primary { grid-column: auto; }
   .ledger-dashboard-section :deep(.n-card__content) { padding: 17px 15px; }
-  .ledger-cashflow-grid { grid-template-columns: 1fr; }
+  .ledger-cashflow-grid { grid-template-columns: 1fr; margin-inline: 0; }
   .ledger-cashflow-grid > div {
     min-height: 60px;
     padding: 12px 2px;
