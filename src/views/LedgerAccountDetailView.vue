@@ -1,8 +1,16 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
-import { NAlert, NButton, NCard, NModal, NResult, NSpin, NStatistic, NTooltip } from 'naive-ui'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { NAlert, NButton, NCard, NModal, NResult, NSpin, NTooltip } from 'naive-ui'
+import { LineChart } from 'echarts/charts'
+import { GridComponent, TooltipComponent } from 'echarts/components'
+import { init, use } from 'echarts/core'
+import { CanvasRenderer } from 'echarts/renderers'
+import type { LineSeriesOption } from 'echarts/charts'
+import type { GridComponentOption, TooltipComponentOption } from 'echarts/components'
+import type { ComposeOption, ECharts } from 'echarts/core'
 import { useRoute } from 'vue-router'
 import { useConfirm } from '../composables/useConfirm'
+import { useTheme } from '../composables/useTheme'
 import LedgerAnimatedMoney from '../components/ledger/LedgerAnimatedMoney.vue'
 import LedgerAccountIcon from '../components/ledger/LedgerAccountIcon.vue'
 import LedgerAccountEditForm from '../components/ledger/LedgerAccountEditForm.vue'
@@ -14,24 +22,43 @@ import { formatLedgerDateTime } from '../features/ledger/time'
 import { useLedgerStore } from '../features/ledger/ledgerStore'
 import type { LedgerAccountDto, LedgerMovementSummary, LedgerTransactionDto } from '../../shared/ledgerProtocol'
 
+use([LineChart, GridComponent, TooltipComponent, CanvasRenderer])
+
+type LedgerBalanceChartOption = ComposeOption<
+  | LineSeriesOption
+  | GridComponentOption
+  | TooltipComponentOption
+>
+
 const route = useRoute()
 const store = useLedgerStore()
 const { confirm } = useConfirm()
+const { theme } = useTheme()
 
 const account = ref<LedgerAccountDto | null>(null)
 const hasHistory = ref(false)
 const transactionCount = ref(0)
 const recentTransactions = ref<readonly LedgerTransactionDto[]>([])
+const allTransactions = ref<readonly LedgerTransactionDto[]>([])
 const movement = ref<LedgerMovementSummary | null>(null)
 const loading = ref(false)
 const editing = ref(false)
 const actionError = ref('')
+const trendRange = ref<7 | 30 | 90 | 365>(30)
+const trendOptions = [
+  { value: 7, label: '近7天' },
+  { value: 30, label: '近30天' },
+  { value: 90, label: '近3个月' },
+  { value: 365, label: '近1年' },
+] as const
+const balanceTrendPlot = ref<HTMLElement | null>(null)
+const balanceTrendChart = shallowRef<ECharts | null>(null)
+let balanceTrendResizeObserver: ResizeObserver | null = null
 let loadSequence = 0
 
 const accountId = computed(() => String(route.params.id ?? ''))
 const returnFromOverview = computed(() => route.query.from === 'overview')
-const returnLabel = computed(() => returnFromOverview.value ? '返回总览' : '返回列表')
-const returnRoute = computed(() => ({ name: returnFromOverview.value ? 'ledger' : 'ledger-accounts' }))
+const breadcrumbRootRoute = computed(() => ({ name: returnFromOverview.value ? 'ledger' : 'ledger-accounts' }))
 const typeLabels = new Map(
   ledgerAccountTypeOptionsForNature('asset').concat(ledgerAccountTypeOptionsForNature('liability'))
     .map((option) => [option.value, option.label]),
@@ -55,6 +82,7 @@ async function load(): Promise<void> {
     hasHistory.value = history.transactions.length > 0
     transactionCount.value = history.transactionCount
     recentTransactions.value = history.transactions
+    allTransactions.value = history.allTransactions
     movement.value = history.movement
   } catch (cause) {
     if (sequence !== loadSequence) return
@@ -67,18 +95,21 @@ async function load(): Promise<void> {
 
 async function loadAccountHistory(id: string): Promise<{
   readonly transactions: readonly LedgerTransactionDto[]
+  readonly allTransactions: readonly LedgerTransactionDto[]
   readonly movement: LedgerMovementSummary
   readonly transactionCount: number
 }> {
   const page = await store.getAccountTransactions(id, { limit: 5 })
+  const transactions = [...page.transactions]
   let transactionCount = page.transactions.length
   let cursor = page.page.nextCursor
   while (cursor) {
     const nextPage = await store.getAccountTransactions(id, { limit: 200, cursor })
+    transactions.push(...nextPage.transactions)
     transactionCount += nextPage.transactions.length
     cursor = nextPage.page.nextCursor
   }
-  return { transactions: page.transactions, movement: page.movement, transactionCount }
+  return { transactions: page.transactions, allTransactions: transactions, movement: page.movement, transactionCount }
 }
 
 watch(accountId, () => { void load() }, { immediate: true })
@@ -152,6 +183,216 @@ function maskCardNumber(cardNumber: string | undefined): string {
   return `${value.slice(0, 4)}${'*'.repeat(value.length - 8)}${value.slice(-4)}`
 }
 
+function accountEffect(transaction: LedgerTransactionDto): number {
+  const current = account.value
+  if (!current || transaction.deletedAt !== null) return 0
+  const amount = transaction.amountMinor
+  const positive = current.nature === 'asset'
+  if (transaction.type === 'income') return transaction.accountId === current.id ? (positive ? amount : -amount) : 0
+  if (transaction.type === 'expense') return transaction.accountId === current.id ? (positive ? -amount : amount) : 0
+  if (transaction.type === 'transfer') {
+    if (transaction.fromAccountId === current.id) return positive ? -amount : amount
+    if (transaction.toAccountId === current.id) return positive ? amount : -amount
+    return 0
+  }
+  return transaction.accountId === current.id ? amount : 0
+}
+
+function shortDate(timestamp: number): string {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return '—'
+  return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit' }).format(new Date(timestamp))
+}
+
+function monthKey(timestamp: number, timezone: string): string {
+  const parts = new Intl.DateTimeFormat('en', { timeZone: timezone, year: 'numeric', month: '2-digit' }).formatToParts(new Date(timestamp))
+  const year = parts.find((part) => part.type === 'year')?.value ?? ''
+  const month = parts.find((part) => part.type === 'month')?.value ?? ''
+  return `${year}-${month}`
+}
+
+function transactionCategory(transaction: LedgerTransactionDto): string {
+  if (transaction.type === 'income' || transaction.type === 'expense') {
+    return store.categories.value.find((category) => category.id === transaction.categoryId)?.name ?? '未分类'
+  }
+  if (transaction.type === 'transfer') return '账户转账'
+  return '余额调整'
+}
+
+const largestMonthlyTransaction = computed(() => {
+  const timezone = store.settings.value?.timezone ?? 'UTC'
+  const currentMonth = monthKey(Date.now(), timezone)
+  return allTransactions.value
+    .filter((transaction) => transaction.deletedAt === null && monthKey(transaction.occurredAt, timezone) === currentMonth)
+    .reduce<LedgerTransactionDto | null>((largest, transaction) => {
+      if (largest === null || Math.abs(transaction.amountMinor) > Math.abs(largest.amountMinor)) return transaction
+      return largest
+    }, null)
+})
+
+const largestMonthlyTransactionAmount = computed(() => {
+  const transaction = largestMonthlyTransaction.value
+  return transaction === null ? '—' : transactionAmount(transaction)
+})
+
+const transactionBalances = computed(() => {
+  const balances = new Map<string, number>()
+  const sorted = [...allTransactions.value]
+    .filter((transaction) => transaction.deletedAt === null)
+    .sort((left, right) => left.occurredAt - right.occurredAt || left.createdAt - right.createdAt)
+  let balance = account.value?.openingBalanceMinor ?? 0
+  for (const transaction of sorted) {
+    balance += accountEffect(transaction)
+    balances.set(transaction.id, balance)
+  }
+  return balances
+})
+
+const balanceTrend = computed(() => {
+  const current = account.value
+  if (!current) return [] as Array<{ timestamp: number; label: string; balanceMinor: number }>
+  const end = Date.now()
+  const start = end - trendRange.value * 24 * 60 * 60 * 1000
+  const sorted = [...allTransactions.value]
+    .filter((transaction) => transaction.deletedAt === null)
+    .sort((left, right) => left.occurredAt - right.occurredAt || left.createdAt - right.createdAt)
+  let balance = current.openingBalanceMinor
+  let cursor = 0
+  while (cursor < sorted.length && sorted[cursor]!.occurredAt <= start) {
+    balance += accountEffect(sorted[cursor]!)
+    cursor += 1
+  }
+  const pointCount = trendRange.value <= 30 ? trendRange.value : 12
+  const points: Array<{ timestamp: number; label: string; balanceMinor: number }> = []
+  for (let index = 0; index < pointCount; index += 1) {
+    const timestamp = start + ((end - start) * index) / Math.max(pointCount - 1, 1)
+    while (cursor < sorted.length && sorted[cursor]!.occurredAt <= timestamp) {
+      balance += accountEffect(sorted[cursor]!)
+      cursor += 1
+    }
+    points.push({ timestamp, label: shortDate(timestamp), balanceMinor: balance })
+  }
+  if (points.length > 0) points[points.length - 1]!.balanceMinor = current.currentBalanceMinor
+  return points
+})
+
+function balanceChartToken(name: string, fallback: string): string {
+  const element = balanceTrendPlot.value
+  if (element === null || typeof getComputedStyle !== 'function') return fallback
+  const value = getComputedStyle(element).getPropertyValue(name).trim()
+  return value === '' ? fallback : value
+}
+
+function balanceAxisMoney(value: number): string {
+  if (!Number.isFinite(value)) return ''
+  const currency = account.value?.currency ?? 'CNY'
+  return formatLedgerMoney(Math.round(value), currency)
+}
+
+function balanceTooltip(params: unknown): string {
+  const entry = Array.isArray(params) ? params[0] : params
+  const dataIndex = (entry as { dataIndex?: unknown } | null | undefined)?.dataIndex
+  if (typeof dataIndex !== 'number') return ''
+  const point = balanceTrend.value[dataIndex]
+  if (point === undefined) return ''
+  return `<strong>${point.label}</strong><br/>余额：${formatLedgerMoney(point.balanceMinor, account.value?.currency ?? 'CNY')}`
+}
+
+function buildBalanceChartOption(): LedgerBalanceChartOption {
+  const points = balanceTrend.value
+  const accent = balanceChartToken('--accent', '#635bff')
+  const text = balanceChartToken('--text-muted', '#6b7280')
+  const textHeading = balanceChartToken('--text-h', '#111827')
+  const border = balanceChartToken('--border', '#e5e7eb')
+  const grid = balanceChartToken('--border', '#edf0f4')
+  const surface = balanceChartToken('--bg-soft', '#ffffff')
+  return {
+    animationDuration: 240,
+    grid: { top: 14, left: 64, right: 12, bottom: 28, containLabel: false },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'line', lineStyle: { color: border, type: 'dashed' } },
+      backgroundColor: surface,
+      borderColor: border,
+      extraCssText: 'box-shadow:0 8px 24px rgba(0,0,0,.08);border-radius:8px',
+      textStyle: { color: textHeading, fontSize: 12 },
+      formatter: balanceTooltip,
+    },
+    xAxis: {
+      type: 'category',
+      data: points.map((point) => point.label),
+      boundaryGap: false,
+      axisTick: { show: false },
+      axisLine: { lineStyle: { color: border } },
+      axisLabel: { color: text, fontSize: 11, interval: Math.max(Math.floor(points.length / 5), 1) - 1, hideOverlap: true },
+    },
+    yAxis: {
+      type: 'value',
+      splitNumber: 3,
+      scale: true,
+      axisLine: { show: false },
+      axisTick: { show: false },
+      axisLabel: { color: text, fontSize: 11, formatter: balanceAxisMoney },
+      splitLine: { lineStyle: { color: grid, type: 'dashed' } },
+    },
+    series: [
+      {
+        name: '账户余额',
+        type: 'line',
+        data: points.map((point) => point.balanceMinor),
+        smooth: 0.22,
+        symbol: 'circle',
+        symbolSize: 7,
+        showSymbol: points.length <= 31,
+        lineStyle: { color: accent, width: 2.5 },
+        itemStyle: { color: surface, borderColor: accent, borderWidth: 2 },
+        areaStyle: { color: accent, opacity: .12 },
+      },
+    ],
+  }
+}
+
+function applyBalanceChartOption(): void {
+  balanceTrendChart.value?.setOption(buildBalanceChartOption(), { notMerge: true })
+}
+
+function createBalanceChart(): void {
+  const element = balanceTrendPlot.value
+  if (element === null || balanceTrendChart.value !== null || element.clientWidth === 0) return
+  balanceTrendChart.value = init(element)
+  if (typeof ResizeObserver === 'function') {
+    balanceTrendResizeObserver = new ResizeObserver(() => balanceTrendChart.value?.resize())
+    balanceTrendResizeObserver.observe(element)
+  } else {
+    window.addEventListener('resize', handleBalanceChartResize)
+  }
+  applyBalanceChartOption()
+}
+
+function handleBalanceChartResize(): void {
+  balanceTrendChart.value?.resize()
+}
+
+function destroyBalanceChart(): void {
+  balanceTrendResizeObserver?.disconnect()
+  balanceTrendResizeObserver = null
+  window.removeEventListener('resize', handleBalanceChartResize)
+  balanceTrendChart.value?.dispose()
+  balanceTrendChart.value = null
+}
+
+async function syncBalanceChart(): Promise<void> {
+  await nextTick()
+  if (balanceTrend.value.length === 0) {
+    destroyBalanceChart()
+    return
+  }
+  createBalanceChart()
+  applyBalanceChartOption()
+}
+
+watch([balanceTrend, () => theme.value], () => { void syncBalanceChart() }, { flush: 'post' })
+onBeforeUnmount(destroyBalanceChart)
+
 const netMovement = computed(() => {
   if (!movement.value) return 0
   return movement.value.balanceIncreaseMinor - movement.value.balanceDecreaseMinor
@@ -197,82 +438,123 @@ const netMovement = computed(() => {
     </NModal>
 
     <section v-else class="ledger-account-detail" aria-labelledby="ledger-account-detail-title">
-      <header class="ledger-detail-header">
+      <nav class="ledger-detail-breadcrumb" aria-label="当前位置">
+        <RouterLink :to="breadcrumbRootRoute">Ledger</RouterLink>
+        <span aria-hidden="true">›</span>
+        <RouterLink :to="{ name: 'ledger-accounts' }">账户列表</RouterLink>
+        <span aria-hidden="true">›</span>
+        <strong>账户详情</strong>
+      </nav>
+
+      <header class="ledger-detail-hero">
         <div class="ledger-account-identity">
-          <span class="ledger-detail-account-icon" :class="account.nature === 'asset' ? 'is-asset' : 'is-liability'" aria-hidden="true"><LedgerAccountIcon :icon="account.icon" :size="34" /></span>
-          <div>
-          <h1 id="ledger-account-detail-title">{{ account.name }}</h1>
-          <p>{{ account.nature === 'asset' ? '资产' : '负债' }} · {{ typeLabel(account.type) }} · {{ account.currency }}</p>
+          <span class="ledger-detail-account-icon" :class="account.nature === 'asset' ? 'is-asset' : 'is-liability'" aria-hidden="true"><LedgerAccountIcon :icon="account.icon" :size="42" /></span>
+          <div class="ledger-account-identity-copy">
+            <div class="ledger-detail-title-row">
+              <h1 id="ledger-account-detail-title">{{ account.name }}</h1>
+            </div>
+            <p>{{ account.nature === 'asset' ? '资产' : '负债' }} · {{ typeLabel(account.type) }} · {{ account.currency }}</p>
+            <p v-if="account.cardNumber" class="ledger-card-number">{{ maskCardNumber(account.cardNumber) }}</p>
           </div>
         </div>
-        <div class="ledger-page-actions">
-          <RouterLink class="ledger-secondary-button ledger-return-button" :to="returnRoute">{{ returnLabel }}</RouterLink>
-          <span class="ledger-action-trigger"><NButton class="ledger-secondary-button" attr-type="button" size="small" :bordered="false" @click="editing = true">编辑账户</NButton></span>
-          <NTooltip v-if="account.archivedAt === null && account.currentBalanceMinor !== 0" placement="bottom">
-            <template #trigger>
-              <span class="ledger-action-trigger"><NButton class="ledger-secondary-button" attr-type="button" size="small" :bordered="false" disabled>归档账户</NButton></span>
-            </template>
-            当前余额需调整为 0 后才能归档账户。
-          </NTooltip>
-          <span v-else-if="account.archivedAt === null" class="ledger-action-trigger"><NButton class="ledger-secondary-button" attr-type="button" size="small" :bordered="false" @click="archive">归档账户</NButton></span>
-          <span v-else class="ledger-action-trigger"><NButton class="ledger-primary-button" attr-type="button" type="primary" size="small" :bordered="false" @click="restore">恢复账户</NButton></span>
+
+        <div class="ledger-account-hero-balance">
+          <span>当前余额 <i aria-hidden="true">◉</i></span>
+          <strong><LedgerAnimatedMoney :minor="account.currentBalanceMinor" :currency="account.currency" /></strong>
+          <p>本月净变动 <em :class="netMovement < 0 ? 'is-negative' : 'is-positive'">{{ formatLedgerSignedMoney(netMovement, account.currency) }}</em></p>
+        </div>
+
+        <div class="ledger-detail-actions-wrap">
+          <span class="ledger-actions-label">操作</span>
+          <div class="ledger-page-actions">
+            <span class="ledger-action-trigger"><NButton class="ledger-secondary-button" attr-type="button" size="small" :bordered="false" @click="editing = true">编辑账户</NButton></span>
+            <NTooltip v-if="account.archivedAt === null && account.currentBalanceMinor !== 0" placement="bottom">
+              <template #trigger>
+                <span class="ledger-action-trigger"><NButton class="ledger-secondary-button" attr-type="button" size="small" :bordered="false" disabled>归档账户</NButton></span>
+              </template>
+              当前余额需调整为 0 后才能归档账户。
+            </NTooltip>
+            <span v-else-if="account.archivedAt === null" class="ledger-action-trigger"><NButton class="ledger-secondary-button" attr-type="button" size="small" :bordered="false" @click="archive">归档账户</NButton></span>
+            <span v-else class="ledger-action-trigger"><NButton class="ledger-primary-button" attr-type="button" type="primary" size="small" :bordered="false" @click="restore">恢复账户</NButton></span>
+          </div>
+          <p class="ledger-actions-description">可编辑账户信息；余额为 0 时可以归档账户。</p>
         </div>
       </header>
 
       <NAlert v-if="actionError" class="ledger-form-error" type="error" :show-icon="false" role="alert">{{ actionError }}</NAlert>
-      <div class="ledger-summary-grid">
-        <NCard class="ledger-detail-card" :bordered="false" size="small"><NStatistic label="当前余额" tabular-nums><LedgerAnimatedMoney :minor="account.currentBalanceMinor" :currency="account.currency" /></NStatistic><p class="ledger-section-description">该账户的最新余额。</p></NCard>
-        <NCard class="ledger-detail-card" :bordered="false" size="small"><NStatistic label="交易笔数" :value="transactionCount"><template #suffix>笔</template></NStatistic><p class="ledger-section-description">该账户关联的历史交易总数。</p></NCard>
-        <NCard class="ledger-detail-card" :bordered="false" size="small"><span class="ledger-summary-label">当前状态</span><strong class="ledger-summary-value" :class="{ 'is-positive': account.archivedAt === null }">{{ account.archivedAt === null ? '可用' : '已归档' }}</strong><p class="ledger-section-description">{{ account.archivedAt === null ? '可用于新增交易。' : '历史记录仍然保留。' }}</p></NCard>
-        <NCard class="ledger-detail-card" :bordered="false" size="small"><span class="ledger-summary-label">本月净变动</span><strong class="ledger-summary-value" :class="netMovement < 0 ? 'is-negative' : 'is-positive'">{{ formatLedgerSignedMoney(netMovement, account.currency) }}</strong><p class="ledger-section-description">本月余额增加与减少的差额。</p></NCard>
-      </div>
-      <NCard class="ledger-detail-movement" :bordered="false" size="small" data-testid="ledger-account-movement" aria-labelledby="ledger-account-movement-title">
-        <div class="ledger-section-heading">
-          <h2 id="ledger-account-movement-title">本月资金变化</h2>
-        </div>
-        <p class="ledger-section-description">本月该账户的资金变化情况。</p>
-        <div v-if="movement" class="ledger-movement-grid">
-          <div>
-            <span>{{ account.nature === 'asset' ? '流入' : '新增负债' }}</span>
-            <strong><LedgerAnimatedMoney :minor="movement.balanceIncreaseMinor" :currency="account.currency" /></strong>
-          </div>
-          <div>
-            <span>{{ account.nature === 'asset' ? '流出' : '减少负债' }}</span>
-            <strong><LedgerAnimatedMoney :minor="movement.balanceDecreaseMinor" :currency="account.currency" /></strong>
-          </div>
-          <div><span>净变动</span><strong :class="{ 'is-negative': netMovement < 0 }">{{ formatLedgerSignedMoney(netMovement, account.currency) }}</strong></div>
-        </div>
-      </NCard>
+
       <div class="ledger-detail-grid">
-      <div class="ledger-detail-main-column">
-      <NCard class="ledger-detail-card ledger-recent-transactions" :bordered="false" size="small" aria-labelledby="ledger-recent-title">
-        <div class="ledger-section-heading"><h2 id="ledger-recent-title">最近交易</h2><RouterLink :to="{ name: 'ledger-transactions', query: { accountId: account.id } }">查看全部 →</RouterLink></div>
-        <p class="ledger-section-description">该账户的最近 5 笔交易记录。</p>
-        <div v-if="recentTransactions.length" class="ledger-recent-list">
-          <div v-for="transaction in recentTransactions" :key="transaction.id" class="ledger-recent-row">
-            <i class="ledger-transaction-symbol" :class="`is-${transaction.type}`" aria-hidden="true">{{ transaction.type === 'income' ? '↑' : transaction.type === 'expense' ? '↓' : transaction.type === 'transfer' ? '→' : '≈' }}</i>
-            <span><strong>{{ transactionTitle(transaction) }}</strong><small>{{ formatTimestamp(transaction.occurredAt) }} · {{ transactionTypeLabel(transaction.type) }}</small></span>
-            <strong :class="[`is-${transaction.type}`]">{{ transactionAmount(transaction) }}</strong>
-          </div>
+        <div class="ledger-detail-main-column">
+          <section class="ledger-detail-card ledger-metric-strip" data-testid="ledger-account-movement" aria-label="账户本月概览">
+            <div class="ledger-metric-item">
+              <span class="ledger-metric-icon is-income" aria-hidden="true">↗</span>
+              <div><span>{{ account.nature === 'asset' ? '本月流入' : '新增负债' }}</span><strong><LedgerAnimatedMoney :minor="movement?.balanceIncreaseMinor ?? 0" :currency="account.currency" /></strong></div>
+            </div>
+            <div class="ledger-metric-item">
+              <span class="ledger-metric-icon is-expense" aria-hidden="true">↘</span>
+              <div><span>{{ account.nature === 'asset' ? '本月流出' : '减少负债' }}</span><strong><LedgerAnimatedMoney :minor="movement?.balanceDecreaseMinor ?? 0" :currency="account.currency" /></strong></div>
+            </div>
+            <div class="ledger-metric-item">
+              <span class="ledger-metric-icon is-net" aria-hidden="true">▤</span>
+              <div><span>本月最大单笔</span><strong>{{ largestMonthlyTransactionAmount }}</strong></div>
+            </div>
+            <div class="ledger-metric-item">
+              <span class="ledger-metric-icon is-count" aria-hidden="true">▥</span>
+              <div><span>交易笔数</span><strong>{{ transactionCount }} <small>笔</small></strong></div>
+            </div>
+          </section>
+
+          <section class="ledger-detail-card ledger-balance-trend" aria-labelledby="ledger-balance-trend-title">
+            <div class="ledger-section-heading">
+              <h2 id="ledger-balance-trend-title">余额趋势</h2>
+              <div class="ledger-trend-range" role="group" aria-label="趋势时间范围">
+                <button v-for="option in trendOptions" :key="option.value" type="button" :class="{ 'is-active': trendRange === option.value }" @click="trendRange = option.value">{{ option.label }}</button>
+              </div>
+            </div>
+            <div class="ledger-trend-chart" role="img" aria-label="账户余额变化趋势图">
+              <div ref="balanceTrendPlot" class="ledger-balance-trend-plot" data-testid="ledger-balance-trend-chart" aria-hidden="true" />
+            </div>
+          </section>
+
+          <section class="ledger-detail-card ledger-recent-transactions" aria-labelledby="ledger-recent-title">
+            <div class="ledger-section-heading"><h2 id="ledger-recent-title">最近交易</h2><RouterLink :to="{ name: 'ledger-transactions', query: { accountId: account.id } }">查看更多 →</RouterLink></div>
+            <div v-if="recentTransactions.length" class="ledger-recent-table">
+              <div class="ledger-recent-table-head"><span>日期</span><span>类型</span><span>分类</span><span>摘要</span><span>金额</span><span>余额</span></div>
+              <div v-for="transaction in recentTransactions" :key="transaction.id" class="ledger-recent-row">
+                <time>{{ formatTimestamp(transaction.occurredAt) }}</time>
+                <span class="ledger-transaction-badge" :class="`is-${transaction.type}`">{{ transactionTypeLabel(transaction.type) }}</span>
+                <span class="ledger-transaction-category">{{ transactionCategory(transaction) }}</span>
+                <span class="ledger-transaction-summary">{{ transactionTitle(transaction) }}</span>
+                <strong :class="`is-${transaction.type}`">{{ transactionAmount(transaction) }}</strong>
+                <span class="ledger-transaction-balance">{{ formatLedgerMoney(transactionBalances.get(transaction.id) ?? account.currentBalanceMinor, account.currency) }}</span>
+              </div>
+            </div>
+            <p v-else class="ledger-empty-copy">暂无交易记录</p>
+          </section>
         </div>
-        <p v-else class="ledger-empty-copy">暂无交易记录</p>
-      </NCard>
-      </div>
-      <aside class="ledger-detail-side-column">
-      <NCard class="ledger-detail-card ledger-account-info" :bordered="false" size="small" aria-labelledby="ledger-account-info-title">
-        <h2 id="ledger-account-info-title">账户信息</h2>
-        <dl>
-          <div><dt>账户类型</dt><dd>{{ typeLabel(account.type) }}</dd></div><div><dt>账户性质</dt><dd>{{ account.nature === 'asset' ? '资产' : '负债' }}</dd></div><div><dt>币种</dt><dd>{{ account.currency }}</dd></div>
-          <div><dt>期初余额</dt><dd>{{ formatLedgerMoney(account.openingBalanceMinor, account.currency) }}</dd></div><div><dt>开户日期</dt><dd>{{ account.openingDate }}</dd></div>
-          <div v-if="account.cardNumber"><dt>卡号</dt><dd>{{ maskCardNumber(account.cardNumber) }}</dd></div>
-          <div><dt>创建时间</dt><dd>{{ formatTimestamp(account.createdAt) }}</dd></div><div><dt>最后更新</dt><dd>{{ formatTimestamp(account.updatedAt) }}</dd></div>
-        </dl>
-      </NCard>
-      <NCard class="ledger-detail-note" :bordered="false" size="small" aria-labelledby="ledger-account-note-title">
-        <h2 id="ledger-account-note-title">备注</h2>
-        <p>{{ account.note || '暂无备注' }}</p>
-      </NCard>
-      </aside>
+
+        <aside class="ledger-detail-side-column">
+          <section class="ledger-detail-card ledger-account-info" aria-labelledby="ledger-account-info-title">
+            <div class="ledger-side-heading"><h2 id="ledger-account-info-title">账户信息</h2><button type="button" @click="editing = true">编辑</button></div>
+            <dl>
+              <div><dt>账户名称</dt><dd>{{ account.name }}</dd></div>
+              <div><dt>账户类型</dt><dd>{{ typeLabel(account.type) }}</dd></div>
+              <div><dt>资产类别</dt><dd>{{ account.nature === 'asset' ? '资产' : '负债' }}</dd></div>
+              <div><dt>币种</dt><dd>{{ account.currency }}</dd></div>
+              <div v-if="account.cardNumber"><dt>卡号</dt><dd>{{ maskCardNumber(account.cardNumber) }}</dd></div>
+              <div><dt>期初余额</dt><dd>{{ formatLedgerMoney(account.openingBalanceMinor, account.currency) }}</dd></div>
+              <div><dt>开户日期</dt><dd>{{ account.openingDate }}</dd></div>
+              <div><dt>创建时间</dt><dd>{{ formatTimestamp(account.createdAt) }}</dd></div>
+              <div><dt>最后更新</dt><dd>{{ formatTimestamp(account.updatedAt) }}</dd></div>
+            </dl>
+          </section>
+
+          <section class="ledger-detail-card ledger-detail-note" aria-labelledby="ledger-account-note-title">
+            <div class="ledger-side-heading"><h2 id="ledger-account-note-title">备注</h2><button type="button" @click="editing = true">编辑</button></div>
+            <p>{{ account.note || '暂无备注' }}</p>
+          </section>
+
+        </aside>
       </div>
     </section>
   </main>
@@ -315,7 +597,6 @@ const netMovement = computed(() => {
 .ledger-primary-button:hover:not(:disabled) { background: var(--accent-hover); }
 .ledger-secondary-button { border: 1px solid var(--border); background: var(--bg); color: var(--text-h); }
 .ledger-secondary-button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
-.ledger-return-button { min-height: 32px; padding: 6px 12px; color: var(--text-h); font-size: .78rem; }
 .ledger-primary-button:disabled,
 .ledger-secondary-button:disabled { cursor: wait; opacity: .65; }
 .ledger-form-error { margin: 0 0 14px; color: #b42318; font-size: .82rem; }
@@ -411,5 +692,167 @@ const netMovement = computed(() => {
   .ledger-detail-movement :deep(.n-card__content) { padding: 16px 13px; }
   .ledger-account-edit-modal-card { width: calc(100vw - 24px); max-height: 92vh; }
   .ledger-account-edit-modal-card :deep(.n-card__content) { padding: 21px 17px; }
+}
+
+/* Account detail visual system: a compact hero followed by a dashboard-like
+   overview. The older detail rules above remain as shared fallbacks for the
+   loading and error states; these selectors intentionally come last so the
+   account view can evolve without changing those states. */
+.ledger-account-page {
+  width: min(100%, 1580px);
+  padding: 24px 28px 64px;
+}
+.ledger-account-detail { min-width: 0; }
+.ledger-detail-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 13px;
+  color: var(--text-muted);
+  font-size: .76rem;
+}
+.ledger-detail-breadcrumb a { color: var(--text-muted); text-decoration: none; }
+.ledger-detail-breadcrumb a:hover { color: var(--accent); }
+.ledger-detail-breadcrumb strong { color: var(--text-h); font-weight: 650; }
+.ledger-detail-hero {
+  display: grid;
+  grid-template-columns: minmax(300px, 1.2fr) minmax(190px, .72fr) minmax(360px, 1.18fr);
+  align-items: center;
+  gap: 26px;
+  min-height: 138px;
+  padding: 22px;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
+  border-radius: 12px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 4%, transparent), transparent 48%),
+    color-mix(in srgb, var(--bg-soft) 82%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-h) 7%, transparent), 0 10px 30px color-mix(in srgb, var(--text-h) 7%, transparent);
+  -webkit-backdrop-filter: saturate(145%) blur(18px);
+  backdrop-filter: saturate(145%) blur(18px);
+}
+.ledger-account-identity { display: flex; min-width: 0; align-items: center; gap: 17px; }
+.ledger-detail-account-icon { width: 88px; height: 88px; border-radius: 18px; }
+.ledger-account-identity-copy { min-width: 0; }
+.ledger-detail-title-row { display: flex; min-width: 0; align-items: center; gap: 10px; }
+.ledger-detail-title-row h1 { overflow: hidden; margin: 0; color: var(--text-h); font-size: clamp(1.35rem, 2vw, 1.72rem); line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+.ledger-account-identity-copy > p { margin: 8px 0 0; color: var(--text-muted); font-size: .82rem; }
+.ledger-account-identity-copy > p.ledger-card-number { margin-top: 7px; color: var(--text); font-variant-numeric: tabular-nums; letter-spacing: .02em; }
+.ledger-account-hero-balance { min-width: 0; padding: 0 24px; border-left: 1px solid var(--border); border-right: 1px solid var(--border); text-align: left; }
+.ledger-account-hero-balance > span { color: var(--text-muted); font-size: .78rem; }
+.ledger-account-hero-balance > span i { margin-left: 4px; color: var(--text-muted); font-size: .67rem; font-style: normal; }
+.ledger-account-hero-balance > strong { display: block; margin-top: 6px; color: var(--text-h); font-size: clamp(1.65rem, 3vw, 2.1rem); line-height: 1.15; font-variant-numeric: tabular-nums; }
+.ledger-account-hero-balance > p { margin: 8px 0 0; color: var(--text-muted); font-size: .76rem; }
+.ledger-account-hero-balance > p em { margin-left: 4px; font-style: normal; font-weight: 650; }
+.ledger-detail-actions-wrap { display: grid; min-width: 0; align-content: center; justify-items: start; gap: 10px; }
+.ledger-actions-label { color: var(--text-muted); font-size: .76rem; font-weight: 650; }
+.ledger-actions-description { margin: 0; color: var(--text-muted); font-size: .7rem; line-height: 1.45; }
+.ledger-page-actions { display: flex; align-items: center; justify-content: flex-start; flex-wrap: wrap; gap: 9px; }
+.ledger-primary-button,
+.ledger-secondary-button { display: inline-flex; min-height: 36px; align-items: center; justify-content: center; box-sizing: border-box; padding: 7px 14px; border-radius: 8px; font: inherit; font-size: .78rem; font-weight: 650; line-height: 1; text-decoration: none; cursor: pointer; }
+.ledger-primary-button { border: 1px solid var(--accent); background: var(--accent); color: #fff; }
+.ledger-primary-button:hover:not(:disabled) { background: var(--accent-hover); }
+.ledger-secondary-button { border: 1px solid var(--border); background: color-mix(in srgb, var(--bg) 76%, transparent); color: var(--text-h); }
+.ledger-secondary-button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.ledger-primary-button:disabled,
+.ledger-secondary-button:disabled { cursor: wait; opacity: .65; }
+.ledger-form-error { margin: 0 0 14px; }
+.ledger-detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 360px); gap: 16px; align-items: stretch; margin-top: 16px; }
+.ledger-detail-main-column,
+.ledger-detail-side-column { display: grid; gap: 16px; min-width: 0; align-content: start; }
+.ledger-detail-card { min-width: 0; box-sizing: border-box; border: 1px solid var(--border); border-radius: 12px; background: color-mix(in srgb, var(--bg-soft) 86%, transparent); }
+.ledger-metric-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); overflow: hidden; }
+.ledger-metric-item { display: flex; min-width: 0; align-items: center; gap: 15px; padding: 22px 20px; }
+.ledger-metric-item + .ledger-metric-item { border-left: 1px solid var(--border); }
+.ledger-metric-item > div { display: grid; min-width: 0; gap: 8px; }
+.ledger-metric-item > div > span { overflow: hidden; color: var(--text-muted); font-size: .78rem; text-overflow: ellipsis; white-space: nowrap; }
+.ledger-metric-item strong { color: var(--text-h); font-size: 1.12rem; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ledger-metric-item strong small { color: var(--text-muted); font-size: .68rem; font-weight: 500; }
+.ledger-metric-icon { display: grid; width: 44px; height: 44px; flex: 0 0 auto; place-items: center; border-radius: 13px; background: color-mix(in srgb, var(--accent) 9%, transparent); color: var(--accent); font-size: 1.42rem; font-weight: 500; }
+.ledger-metric-icon.is-income { background: color-mix(in srgb, #2da76e 9%, transparent); color: #2da76e; }
+.ledger-metric-icon.is-expense { background: color-mix(in srgb, #d94a58 9%, transparent); color: #d94a58; }
+.ledger-metric-icon.is-net { background: color-mix(in srgb, var(--accent) 9%, transparent); color: var(--accent); }
+.ledger-metric-icon.is-count { background: color-mix(in srgb, #7f75ee 9%, transparent); color: #7f75ee; }
+.ledger-balance-trend { padding: 18px 20px 14px; }
+.ledger-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 10px; }
+.ledger-section-heading h2,
+.ledger-side-heading h2 { margin: 0; color: var(--text-h); font-size: .98rem; }
+.ledger-section-heading a,
+.ledger-side-heading button { color: var(--accent); font: inherit; font-size: .78rem; text-decoration: none; }
+.ledger-side-heading button { padding: 0; border: 0; background: transparent; cursor: pointer; }
+.ledger-side-heading button:hover { color: var(--accent-hover); }
+.ledger-trend-range { display: flex; overflow: hidden; border: 1px solid var(--border); border-radius: 9px; }
+.ledger-trend-range button { min-width: 82px; padding: 7px 12px; border: 0; border-left: 1px solid var(--border); background: transparent; color: var(--text-muted); font: inherit; font-size: .74rem; cursor: pointer; }
+.ledger-trend-range button:first-child { border-left: 0; }
+.ledger-trend-range button:hover { color: var(--accent); }
+.ledger-trend-range button.is-active { background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--accent); font-weight: 650; }
+.ledger-trend-chart { min-height: 205px; }
+.ledger-balance-trend-plot { width: 100%; height: 205px; }
+.ledger-recent-transactions { overflow: hidden; padding: 18px 20px 14px; }
+.ledger-recent-table { overflow-x: auto; }
+.ledger-recent-table-head,
+.ledger-recent-row { display: grid; grid-template-columns: minmax(108px, .9fr) 58px minmax(60px, .7fr) minmax(120px, 1.25fr) minmax(96px, .85fr) minmax(96px, .85fr); align-items: center; gap: 12px; min-width: 680px; }
+.ledger-recent-table-head { padding: 0 10px 9px; color: var(--text-muted); font-size: .7rem; }
+.ledger-recent-row { min-height: 48px; padding: 8px 10px; border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent); color: var(--text); font-size: .76rem; }
+.ledger-recent-row time { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.ledger-recent-row strong { color: var(--text-h); font-size: .8rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ledger-recent-row strong.is-income { color: var(--docus-positive, #15803d); }
+.ledger-recent-row strong.is-expense { color: var(--ledger-expense, #dc3f4d); }
+.ledger-transaction-badge { justify-self: start; padding: 3px 8px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--accent); font-size: .68rem; white-space: nowrap; }
+.ledger-transaction-badge.is-income { background: color-mix(in srgb, #2da76e 13%, transparent); color: #168451; }
+.ledger-transaction-badge.is-expense { background: color-mix(in srgb, #d94a58 13%, transparent); color: #c43443; }
+.ledger-transaction-category,
+.ledger-transaction-summary,
+.ledger-transaction-balance { overflow: hidden; color: var(--text-muted); text-overflow: ellipsis; white-space: nowrap; }
+.ledger-transaction-summary { color: var(--text-h); }
+.ledger-empty-copy { margin: 34px 0; color: var(--text-muted); font-size: .82rem; text-align: center; }
+.ledger-detail-side-column { height: 100%; grid-template-rows: auto minmax(0, 1fr); }
+.ledger-account-info,
+.ledger-detail-note { padding: 18px 20px; }
+.ledger-side-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.ledger-account-info dl { display: grid; gap: 0; margin: 0; }
+.ledger-account-info dl div { display: flex; justify-content: space-between; gap: 18px; min-width: 0; padding: 8px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 78%, transparent); font-size: .78rem; }
+.ledger-account-info dl div:last-child { border-bottom: 0; }
+.ledger-account-info dt { color: var(--text-muted); }
+.ledger-account-info dd { overflow: hidden; margin: 0; color: var(--text-h); text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+.ledger-detail-note { min-height: 0; }
+.ledger-detail-note p { margin: 0; color: var(--text-muted); font-size: .82rem; line-height: 1.6; white-space: pre-wrap; }
+.is-positive { color: var(--docus-positive, #15803d) !important; }
+.is-negative { color: var(--ledger-expense, #dc3f4d) !important; }
+@media (max-width: 1120px) {
+  .ledger-detail-hero { grid-template-columns: minmax(270px, 1fr) minmax(180px, .75fr); }
+  .ledger-detail-actions-wrap { grid-column: 1 / -1; align-items: center; justify-items: start; }
+}
+@media (max-width: 900px) {
+  .ledger-detail-grid { grid-template-columns: 1fr; }
+  .ledger-detail-side-column { height: auto; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: auto; }
+  .ledger-account-info { grid-row: span 2; }
+}
+@media (max-width: 680px) {
+  .ledger-account-page { padding: 20px 16px 48px; }
+  .ledger-detail-hero { grid-template-columns: 1fr; gap: 20px; padding: 18px; }
+  .ledger-account-hero-balance { padding: 17px 0 0; border-top: 1px solid var(--border); border-right: 0; border-left: 0; }
+  .ledger-detail-actions-wrap { display: grid; align-items: center; justify-items: start; }
+  .ledger-page-actions { justify-content: flex-start; }
+  .ledger-metric-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ledger-metric-item { padding: 16px 14px; }
+  .ledger-metric-item:nth-child(3) { border-left: 0; border-top: 1px solid var(--border); }
+  .ledger-metric-item:nth-child(4) { border-top: 1px solid var(--border); }
+  .ledger-trend-range { max-width: 100%; overflow-x: auto; }
+  .ledger-trend-range button { min-width: 76px; padding-inline: 8px; }
+  .ledger-balance-trend,
+  .ledger-recent-transactions,
+  .ledger-account-info,
+  .ledger-detail-note { padding: 16px 14px; }
+  .ledger-detail-side-column { grid-template-columns: 1fr; }
+  .ledger-account-info { grid-row: auto; }
+  .ledger-detail-note { min-height: 190px; }
+}
+@media (max-width: 440px) {
+  .ledger-detail-title-row { align-items: flex-start; flex-direction: column; gap: 7px; }
+  .ledger-detail-account-icon { width: 68px; height: 68px; }
+  .ledger-metric-item { gap: 9px; }
+  .ledger-metric-icon { width: 36px; height: 36px; border-radius: 10px; font-size: 1.1rem; }
+  .ledger-metric-item strong { font-size: .95rem; }
 }
 </style>

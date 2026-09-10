@@ -133,6 +133,7 @@ async function submit(): Promise<void> {
     <div>
       <h2 id="ledger-account-edit-title">编辑账户</h2>
       <p class="ledger-form-info">{{ props.account.currency }} · {{ store.settings.value?.timezone ?? 'UTC' }}</p>
+      <p v-if="props.hasHistory" class="ledger-form-history">账户已有历史记录，账户性质、类型、期初余额和日期不可修改。</p>
     </div>
 
     <NFormItem class="ledger-form-field" label="卡号" :show-feedback="false" required>
@@ -235,6 +236,7 @@ async function submit(): Promise<void> {
 .ledger-eyebrow { margin: 0 0 6px; color: var(--accent); font-size: .75rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .ledger-account-edit-form h2 { margin: 0; color: var(--text-h); font-size: 1.35rem; }
 .ledger-form-info { margin: 9px 0 0; color: var(--text-muted); font-size: .81rem; line-height: 1.5; }
+.ledger-form-history { margin: 8px 0 0; color: var(--text-muted); font-size: .78rem; line-height: 1.5; }
 .ledger-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .ledger-form-field { display: grid; gap: 6px; }
 .ledger-form-field :deep(.n-form-item-label) { color: var(--text-h); font-size: .83rem; font-weight: 650; }
