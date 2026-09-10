@@ -37,6 +37,7 @@ import SettingsMetadataSection from './SettingsMetadataSection.vue'
 import SettingsTagsSection from './SettingsTagsSection.vue'
 import SettingsDiaryMigrationSection from './SettingsDiaryMigrationSection.vue'
 import SettingsLedgerAccountIconsSection from './SettingsLedgerAccountIconsSection.vue'
+import SettingsLedgerCategoriesSection from './SettingsLedgerCategoriesSection.vue'
 import SettingsDiaryMoodIconsSection from './SettingsDiaryMoodIconsSection.vue'
 
 const props = withDefaults(defineProps<{
@@ -81,7 +82,7 @@ const cleanedPaths = ref<string[]>([])
    so the shell stays a routing layer — no inline form templates.
    The active pane resets to AI every time the modal opens so a
    returning user always lands somewhere predictable. */
-type SectionId = 'ai' | 'editor' | 'metadata' | 'diary-migration' | 'tags' | 'ledger-account-icons' | 'diary-mood-icons'
+type SectionId = 'ai' | 'editor' | 'metadata' | 'diary-migration' | 'tags' | 'ledger-account-icons' | 'ledger-categories' | 'diary-mood-icons'
 const SECTIONS = [
   { id: 'ai', labelKey: 'settings.ai', icon: Robot },
   { id: 'editor', labelKey: 'settings.editor', icon: Edit },
@@ -89,6 +90,7 @@ const SECTIONS = [
   { id: 'diary-migration', labelKey: 'settings.diary_migration', icon: Book },
   { id: 'tags', labelKey: 'settings.tags', icon: Tag },
   { id: 'ledger-account-icons', labelKey: 'settings.ledger_account_icons', icon: Wallet },
+  { id: 'ledger-categories', labelKey: 'settings.ledger_categories', icon: Tag },
   { id: 'diary-mood-icons', labelKey: 'settings.diary_mood_icons', icon: MoodSmile },
 ] as const satisfies ReadonlyArray<{ id: SectionId; labelKey: string; icon: typeof Robot }>
 const active = ref<SectionId>('ai')
@@ -488,6 +490,7 @@ onBeforeUnmount(() => {
             />
             <SettingsDiaryMigrationSection v-else-if="active === 'diary-migration'" />
             <SettingsLedgerAccountIconsSection v-else-if="active === 'ledger-account-icons'" />
+            <SettingsLedgerCategoriesSection v-else-if="active === 'ledger-categories'" />
             <SettingsDiaryMoodIconsSection v-else-if="active === 'diary-mood-icons'" />
             <SettingsTagsSection v-else>
               <slot name="tags" />

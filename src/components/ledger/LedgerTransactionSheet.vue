@@ -55,10 +55,6 @@ const note = ref('')
 const formError = ref('')
 const saving = ref(false)
 const submitted = ref(false)
-const categoryCreateOpen = ref(false)
-const categoryName = ref('')
-const categoryError = ref('')
-const categorySaving = ref(false)
 const dirty = ref(false)
 let resetting = false
 
@@ -82,12 +78,8 @@ const pendingTransaction = computed(() => {
   const pending = store.pendingCreate.value
   return store.mutationState.value === 'UNCERTAIN' && pending?.operation === 'transaction' ? pending : null
 })
-const pendingCategory = computed(() => {
-  const pending = store.pendingCreate.value
-  return store.mutationState.value === 'UNCERTAIN' && pending?.operation === 'category' ? pending : null
-})
 const recoveryBusy = computed(() => store.mutationState.value === 'SUBMITTING')
-const canSubmit = computed(() => activeAccounts.value.length > 0 && !saving.value && !categorySaving.value)
+const canSubmit = computed(() => activeAccounts.value.length > 0 && !saving.value)
 const formTitle = computed(() => type.value === 'expense' ? '记一笔支出' : type.value === 'income' ? '记一笔收入' : '记一笔转账')
 
 function defaultOccurredAt(): string {
@@ -109,10 +101,6 @@ function resetForm(): void {
   note.value = ''
   formError.value = ''
   submitted.value = false
-  categoryCreateOpen.value = applicableCategories.value.length === 0
-  categoryName.value = ''
-  categoryError.value = ''
-  categorySaving.value = false
   dirty.value = false
   void nextTick(() => {
     resetting = false
@@ -144,7 +132,6 @@ watch(type, (nextType, previousType) => {
   payee.value = ''
   fromAccountId.value = ''
   toAccountId.value = ''
-  categoryCreateOpen.value = nextType !== 'transfer' && applicableCategories.value.length === 0
   if (nextType !== 'transfer' && activeAccounts.value.length === 1) {
     accountId.value = activeAccounts.value[0]!.id
   }
@@ -183,7 +170,7 @@ function onTypeTabKeydown(event: KeyboardEvent, selectedType: EntryType): void {
 }
 
 async function requestClose(): Promise<void> {
-  if (saving.value || categorySaving.value) return
+  if (saving.value) return
   if (dirty.value) {
     const leave = await confirm('放弃这笔尚未保存的记录？', '已填写的内容将不会保存。')
     if (!leave) return
@@ -303,39 +290,12 @@ async function submit(): Promise<void> {
   }
 }
 
-async function createCategory(): Promise<void> {
-  if (categorySaving.value || !categoryName.value.trim()) {
-    categoryError.value = categoryName.value.trim() ? '' : '请输入分类名称。'
-    return
-  }
-  categorySaving.value = true
-  categoryError.value = ''
-  try {
-    const created = await store.createCategory({ kind: type.value as 'income' | 'expense', name: categoryName.value.trim() })
-    categoryId.value = created.id
-    categoryCreateOpen.value = false
-    categoryName.value = ''
-  } catch (cause) {
-    categoryError.value = ledgerErrorMessage(cause, '分类没有创建，请换一个名称后重试。')
-  } finally {
-    categorySaving.value = false
-  }
-}
-
 async function retryPending(): Promise<void> {
-  const wasCategory = pendingCategory.value !== null
   try {
     const result = await store.retryPendingCreate()
-    if (wasCategory) {
-      const created = result as { id?: unknown } | null
-      if (created && typeof created.id === 'string') categoryId.value = created.id
-      categoryCreateOpen.value = false
-      toast.success('分类已保存')
-    } else {
-      toast.success('已确认这笔交易')
-      emit('saved', result as LedgerTransactionDto)
-      emit('close')
-    }
+    toast.success('已确认这笔交易')
+    emit('saved', result as LedgerTransactionDto)
+    emit('close')
   } catch (cause) {
     formError.value = ledgerErrorMessage(cause, '上一次操作仍未确认，请稍后再试。')
   }
@@ -372,12 +332,12 @@ async function retryPending(): Promise<void> {
           </div>
       </template>
       <template #header-extra>
-          <NButton class="ledger-close-button" attr-type="button" size="small" :bordered="false" :disabled="saving || categorySaving" aria-label="关闭记账窗口" @click="requestClose"><NIcon aria-hidden="true" :size="18"><X /></NIcon></NButton>
+          <NButton class="ledger-close-button" attr-type="button" size="small" :bordered="false" :disabled="saving" aria-label="关闭记账窗口" @click="requestClose"><NIcon aria-hidden="true" :size="18"><X /></NIcon></NButton>
       </template>
 
         <LedgerPendingCreateRecovery
-          v-if="pendingTransaction || pendingCategory"
-          :intent="pendingTransaction ?? pendingCategory!"
+          v-if="pendingTransaction"
+          :intent="pendingTransaction"
           :busy="recoveryBusy"
           :error="formError"
           @retry="retryPending"
@@ -446,39 +406,20 @@ async function retryPending(): Promise<void> {
               </NFormItem>
 
               <NFormItem class="ledger-form-field" label="分类" :show-feedback="false" required>
-                <div class="ledger-field-heading">
-                  <NButton class="ledger-link-button" attr-type="button" size="small" text :bordered="false" :disabled="saving || categorySaving" @click="categoryCreateOpen = !categoryCreateOpen">{{ categoryCreateOpen ? '选择已有分类' : '新建分类' }}</NButton>
-                </div>
                 <NSelect
                   v-model:value="categoryId"
                   class="ledger-form-control"
                   size="medium"
                   :options="categoryOptions"
                   :node-props="ledgerSelectNodeProps"
-                  :input-props="{ id: 'ledger-transaction-category', name: 'categoryId', required: !categoryCreateOpen }"
+                  :input-props="{ id: 'ledger-transaction-category', name: 'categoryId', required: true }"
                   aria-label="分类"
                   aria-haspopup="listbox"
                   role="combobox"
                   :placeholder="applicableCategories.length ? '请选择分类' : '暂无可用分类'"
-                  :disabled="saving || categoryCreateOpen"
+                  :disabled="saving"
                 />
-                <small>只显示 active 的{{ type === 'income' ? '收入' : '支出' }}分类。</small>
-                <div v-if="categoryCreateOpen" class="ledger-quick-create" data-testid="ledger-category-quick-create">
-                  <label for="ledger-quick-category-name">新分类名称</label>
-                  <div class="ledger-quick-create-row">
-                    <NInput
-                      v-model:value="categoryName"
-                      class="ledger-form-control"
-                      type="text"
-                      size="medium"
-                      :input-props="{ id: 'ledger-quick-category-name', name: 'categoryName', autocomplete: 'off' }"
-                      :disabled="categorySaving"
-                      @keydown.enter.prevent="createCategory"
-                    />
-                    <NButton class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" :disabled="categorySaving" @click="createCategory">{{ categorySaving ? '正在创建…' : '创建' }}</NButton>
-                  </div>
-                  <small v-if="categoryError" class="ledger-form-error" role="alert">{{ categoryError }}</small>
-                </div>
+                <small>如需新增分类，请前往设置中的“交易分类”。</small>
               </NFormItem>
             </template>
 
@@ -553,7 +494,7 @@ async function retryPending(): Promise<void> {
             <p v-if="!activeAccounts.length" class="ledger-form-error" role="alert">请先创建一个可用账户，再记账。</p>
             <p v-if="formError" class="ledger-form-error" role="alert">{{ formError }}</p>
             <div class="ledger-form-actions">
-              <NButton class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" :disabled="saving || categorySaving" @click="requestClose">取消</NButton>
+              <NButton class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" :disabled="saving" @click="requestClose">取消</NButton>
               <NButton class="ledger-primary-button" attr-type="submit" type="primary" size="medium" :bordered="false" :disabled="!canSubmit">{{ saving ? '正在保存…' : '保存交易' }}</NButton>
             </div>
           </NForm>
@@ -563,23 +504,23 @@ async function retryPending(): Promise<void> {
 </template>
 
 <style scoped>
-.ledger-sheet-card { align-self: flex-end; width: min(100%, 620px); max-height: min(92vh, 820px); margin: auto auto 20px; overflow: auto; box-sizing: border-box; border-radius: 16px 16px 10px 10px; color: var(--text); }
-.ledger-sheet-card :deep(.n-card__content) { display: grid; gap: 18px; }
-.ledger-sheet-card :deep(.n-card__header) { align-items: flex-start; gap: 16px; }
+.ledger-sheet-card { align-self: flex-end; width: min(100%, 640px); max-height: min(92vh, 820px); margin: auto auto 20px; overflow: auto; box-sizing: border-box; border: 1px solid color-mix(in srgb, var(--border) 78%, transparent); border-radius: 18px 18px 12px 12px; background: color-mix(in srgb, var(--bg-soft) 82%, transparent); box-shadow: 0 24px 70px color-mix(in srgb, #0f172a 25%, transparent); backdrop-filter: blur(18px); color: var(--text); }
+.ledger-sheet-card :deep(.n-card__content) { display: grid; gap: 20px; }
+.ledger-sheet-card :deep(.n-card__header) { align-items: flex-start; gap: 16px; padding-bottom: 2px; }
 .ledger-eyebrow { margin: 0 0 5px; color: var(--accent); font-size: .72rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
 .ledger-sheet-card h2 { margin: 0; color: var(--text-h); font-size: 1.35rem; line-height: 1.25; }
-.ledger-close-button { width: 32px; height: 32px; padding: 0; border: 1px solid var(--border); border-radius: 7px; background: transparent; color: var(--text-muted); font-size: 1.3rem; line-height: 1; cursor: pointer; }
+.ledger-close-button { width: 36px; height: 36px; padding: 0; border: 1px solid color-mix(in srgb, var(--border) 86%, transparent); border-radius: 9px; background: color-mix(in srgb, var(--bg) 58%, transparent); color: var(--text-muted); font-size: 1.3rem; line-height: 1; cursor: pointer; transition: border-color .18s ease, background-color .18s ease, color .18s ease; }
 .ledger-close-button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .ledger-close-button:disabled { cursor: wait; opacity: .6; }
 .ledger-entry-types { width: 100%; }
-.ledger-entry-types :deep(.n-tabs-rail) { padding: 4px; border-radius: 9px; background: var(--bg-soft); }
-.ledger-entry-types :deep(.n-tabs-tab) { min-height: 36px; border-radius: 6px; color: var(--text-muted); font: inherit; font-size: .84rem; }
-.ledger-entry-types :deep(.n-tabs-tab--active) { color: var(--text-h); font-weight: 700; }
+.ledger-entry-types :deep(.n-tabs-rail) { padding: 4px; border: 1px solid color-mix(in srgb, var(--border) 82%, transparent); border-radius: 11px; background: color-mix(in srgb, var(--bg) 54%, transparent); }
+.ledger-entry-types :deep(.n-tabs-tab) { min-height: 38px; border-radius: 8px; color: var(--text-muted); font: inherit; font-size: .84rem; transition: background-color .18s ease, color .18s ease; }
+.ledger-entry-types :deep(.n-tabs-tab--active) { background: color-mix(in srgb, var(--accent) 11%, transparent); color: var(--accent); font-weight: 700; }
 .ledger-entry-types :deep(.n-tabs-tab:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 .ledger-entry-types :deep(.n-tabs-tab--disabled) { cursor: wait; opacity: .6; }
-.ledger-entry-form { display: grid; gap: 15px; }
+.ledger-entry-form { display: grid; gap: 17px; }
 .ledger-form-field { display: grid; gap: 6px; }
-.ledger-form-field :deep(.n-form-item-label) { color: var(--text-h); font-size: .82rem; font-weight: 650; }
+.ledger-form-field :deep(.n-form-item-label) { color: var(--text-h); font-size: .8rem; font-weight: 700; letter-spacing: .01em; }
 .ledger-form-control { width: 100%; }
 .ledger-form-field :deep(.ledger-form-control .n-input),
 .ledger-form-field :deep(.ledger-form-control .n-base-selection),
@@ -589,11 +530,11 @@ async function retryPending(): Promise<void> {
 .ledger-form-field :deep(.ledger-date-time-picker .n-time-picker) { min-width: 0; flex: 1 1 0; }
 .ledger-form-field small,
 .ledger-form-note { color: var(--text-muted); font-size: .74rem; line-height: 1.4; }
-.ledger-money-input { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 3px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+.ledger-money-input { display: flex; align-items: center; gap: 10px; min-height: 50px; padding: 3px 12px; border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border)); border-radius: 10px; background: color-mix(in srgb, var(--bg) 78%, transparent); box-shadow: 0 3px 12px color-mix(in srgb, var(--accent) 5%, transparent); }
 .ledger-money-input:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent); }
-.ledger-money-input span { color: var(--text-muted); font-size: .9rem; font-weight: 650; }
+.ledger-money-input span { color: var(--accent); font-size: .86rem; font-weight: 750; }
 .ledger-money-control { flex: 1; min-width: 0; }
-.ledger-money-control { font-size: 1.05rem; }
+.ledger-money-control { font-size: 1.18rem; font-weight: 650; }
 .ledger-field-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .ledger-link-button { padding: 0; border: 0; background: transparent; color: var(--accent); font: inherit; font-size: .76rem; cursor: pointer; }
 .ledger-link-button:hover:not(:disabled) { text-decoration: underline; }
@@ -603,7 +544,7 @@ async function retryPending(): Promise<void> {
 .ledger-quick-create-row { display: flex; gap: 7px; }
 .ledger-quick-create-row :deep(.ledger-form-control) { flex: 1; min-width: 0; }
 .ledger-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.ledger-form-actions { display: flex; justify-content: flex-end; gap: 9px; padding-top: 3px; }
+.ledger-form-actions { display: flex; justify-content: flex-end; gap: 9px; margin: 2px -4px -4px; padding: 16px 4px 0; border-top: 1px solid color-mix(in srgb, var(--border) 72%, transparent); }
 .ledger-primary-button,
 .ledger-secondary-button { min-height: 39px; padding: 7px 14px; border-radius: 7px; font: inherit; font-size: .84rem; font-weight: 650; cursor: pointer; }
 .ledger-primary-button { border: 1px solid var(--accent); background: var(--accent); color: #fff; }
