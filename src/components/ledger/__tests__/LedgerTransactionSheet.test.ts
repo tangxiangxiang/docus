@@ -241,22 +241,13 @@ describe('Ledger transaction creation sheet', () => {
     expect(naiveSelectValue(sheet, '转入账户')).toBe('')
   })
 
-  it('quick-creates a contextual category and selects the server result', async () => {
+  it('keeps category lifecycle in settings instead of offering inline quick-create', async () => {
     await openSheet()
     const sheet = getSheet()
-    await sheet.findAll('button').find((button) => button.text() === '新建分类')!.trigger('click')
-    await sheet.get('input[name="categoryName"]').setValue('交通')
-    const created = category('transport', 'expense', '交通')
-    api.createLedgerCategory.mockImplementation(() => {
-      categories = [...categories, created]
-      return Promise.resolve(created)
-    })
-    await sheet.get('[data-testid="ledger-category-quick-create"] button').trigger('click')
-    await flushPromises()
-
-    expect(api.createLedgerCategory).toHaveBeenCalledWith({ kind: 'expense', name: '交通' }, expect.any(String))
-    expect(naiveSelectValue(sheet, '分类')).toBe('transport')
+    expect(sheet.text()).toContain('如需新增分类，请前往设置中的“交易分类”。')
+    expect(sheet.findAll('button').some((button) => button.text() === '新建分类')).toBe(false)
     expect(sheet.find('[data-testid="ledger-category-quick-create"]').exists()).toBe(false)
+    expect(api.createLedgerCategory).not.toHaveBeenCalled()
   })
 
   it('keeps the same idempotency key and readonly recovery surface after response loss', async () => {

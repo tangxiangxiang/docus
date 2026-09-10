@@ -1,18 +1,22 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { NButton, NInput, NSelect, type SelectOption } from 'naive-ui'
+import { NButton, NInput, NPopover, NSelect, type SelectOption } from 'naive-ui'
+import type { LedgerAccountIcon } from '../../../shared/ledgerProtocol'
 import { ledgerErrorMessage } from '../../features/ledger/ledgerErrors'
 import { useLedgerStore } from '../../features/ledger/ledgerStore'
-import type { LedgerAccountIcon } from '../../../shared/ledgerProtocol'
 import LedgerAccountIconPicker from '../ledger/LedgerAccountIconPicker.vue'
+
+const CATEGORY_ICON_STORAGE_KEY = 'docus.ledger.category-icons'
+const DEFAULT_CATEGORY_ICON: LedgerAccountIcon = 'wallet'
 
 const store = useLedgerStore()
 const kind = ref<'income' | 'expense'>('expense')
 const name = ref('')
-const error = ref('')
+const createError = ref('')
+const operationError = ref('')
 const saving = ref(false)
 const creating = ref(false)
-const newIcon = ref<LedgerAccountIcon>('wallet')
+const newIcon = ref<LedgerAccountIcon>(DEFAULT_CATEGORY_ICON)
 const categoryIcons = ref<Record<string, LedgerAccountIcon>>({})
 const managing = ref(false)
 const editingId = ref<string | null>(null)
@@ -20,34 +24,43 @@ const editingName = ref('')
 const archiveId = ref<string | null>(null)
 let holdTimer: ReturnType<typeof setTimeout> | null = null
 const kindOptions: SelectOption[] = [
-  { label: '支出分类', value: 'expense' },
-  { label: '收入分类', value: 'income' },
+  { label: '支出', value: 'expense' },
+  { label: '收入', value: 'income' },
 ]
 const categories = computed(() => store.activeCategories.value)
 
 onMounted(() => {
   void store.bootstrap()
   try {
-    categoryIcons.value = JSON.parse(localStorage.getItem('docus.ledger.category-icons') ?? '{}') as Record<string, LedgerAccountIcon>
+    categoryIcons.value = JSON.parse(localStorage.getItem(CATEGORY_ICON_STORAGE_KEY) ?? '{}') as Record<string, LedgerAccountIcon>
   } catch {
     categoryIcons.value = {}
   }
 })
 
 onBeforeUnmount(() => {
-  if (holdTimer !== null) clearTimeout(holdTimer)
+  cancelHold()
 })
 
 function persistIcons(): void {
-  localStorage.setItem('docus.ledger.category-icons', JSON.stringify(categoryIcons.value))
+  localStorage.setItem(CATEGORY_ICON_STORAGE_KEY, JSON.stringify(categoryIcons.value))
 }
 
 function iconFor(id: string): LedgerAccountIcon {
-  return categoryIcons.value[id] ?? 'wallet'
+  return categoryIcons.value[id] ?? DEFAULT_CATEGORY_ICON
+}
+
+function updateIcon(id: string, icon: LedgerAccountIcon): void {
+  categoryIcons.value = { ...categoryIcons.value, [id]: icon }
+  persistIcons()
 }
 
 function startHold(): void {
-  holdTimer = setTimeout(() => { managing.value = true }, 550)
+  cancelHold()
+  holdTimer = setTimeout(() => {
+    managing.value = true
+    holdTimer = null
+  }, 550)
 }
 
 function cancelHold(): void {
@@ -61,48 +74,72 @@ function startRename(id: string, currentName: string): void {
   editingName.value = currentName
 }
 
+function cancelRename(): void {
+  editingId.value = null
+  editingName.value = ''
+}
+
 async function finishRename(category: { id: string; name: string; kind: 'income' | 'expense'; version: number }): Promise<void> {
+  if (editingId.value !== category.id) return
   const nextName = editingName.value.trim()
   if (nextName && nextName !== category.name) {
+    operationError.value = ''
     try {
       await store.patchCategory(category.id, { expectedVersion: category.version, name: nextName })
     } catch (cause) {
-      error.value = ledgerErrorMessage(cause, '分类没有更新，请刷新后重试。')
+      operationError.value = ledgerErrorMessage(cause, '分类没有更新，请刷新后重试。')
     }
   }
-  editingId.value = null
-  editingName.value = ''
+  cancelRename()
+}
+
+function stopManaging(): void {
+  cancelHold()
+  cancelRename()
+  managing.value = false
 }
 
 async function archive(category: { id: string; version: number }): Promise<void> {
   if (archiveId.value !== null) return
   archiveId.value = category.id
-  error.value = ''
+  operationError.value = ''
   try {
     await store.archiveCategory(category.id, category.version)
   } catch (cause) {
-    error.value = ledgerErrorMessage(cause, '分类没有归档，请稍后重试。')
+    operationError.value = ledgerErrorMessage(cause, '分类没有归档，请稍后重试。')
   } finally {
     archiveId.value = null
   }
 }
 
+function resetCreateForm(): void {
+  kind.value = 'expense'
+  name.value = ''
+  newIcon.value = DEFAULT_CATEGORY_ICON
+  createError.value = ''
+}
+
+function setCreating(show: boolean): void {
+  if (!show && saving.value) return
+  creating.value = show
+  if (!show) resetCreateForm()
+}
+
 async function create(): Promise<void> {
   const trimmed = name.value.trim()
   if (!trimmed) {
-    error.value = '请输入分类名称。'
+    createError.value = '请输入分类名称。'
     return
   }
   saving.value = true
-  error.value = ''
+  createError.value = ''
   try {
     const created = await store.createCategory({ kind: kind.value, name: trimmed })
-    categoryIcons.value = { ...categoryIcons.value, [created.id]: newIcon.value }
-    persistIcons()
-    name.value = ''
-    newIcon.value = 'wallet'
+    updateIcon(created.id, newIcon.value)
+    creating.value = false
+    resetCreateForm()
   } catch (cause) {
-    error.value = ledgerErrorMessage(cause, '分类没有创建，请换一个名称后重试。')
+    createError.value = ledgerErrorMessage(cause, '分类没有创建，请换一个名称后重试。')
   } finally {
     saving.value = false
   }
@@ -116,24 +153,82 @@ async function create(): Promise<void> {
         <h3 id="settings-ledger-categories-title">交易分类</h3>
         <p>管理记账时使用的分类；已有交易不会受到影响。</p>
       </div>
-      <NButton type="primary" size="small" @click="creating = !creating">{{ creating ? '取消添加' : '＋ 添加分类' }}</NButton>
+      <div class="settings-section-actions">
+        <NPopover :show="creating" trigger="click" placement="bottom-end" :show-arrow="false" raw @update:show="setCreating">
+          <template #trigger>
+            <NButton type="primary" size="small">＋ 添加分类</NButton>
+          </template>
+          <form class="settings-ledger-category-create" aria-label="添加交易分类" @submit.prevent="create" @pointerdown.stop>
+            <header class="settings-ledger-category-create-header">
+              <strong>添加分类</strong>
+              <span>创建后可用于记一笔。</span>
+            </header>
+            <label class="settings-ledger-category-create-field">
+              <span>分类类型</span>
+              <NSelect v-model:value="kind" size="small" :options="kindOptions" aria-label="分类类型" :disabled="saving" />
+            </label>
+            <label class="settings-ledger-category-create-field">
+              <span>分类名称</span>
+              <NInput v-model:value="name" size="small" placeholder="输入分类名称" aria-label="分类名称" :disabled="saving" autofocus />
+            </label>
+            <div class="settings-ledger-category-create-field">
+              <span>分类图标</span>
+              <div class="settings-ledger-category-create-icon" @pointerdown.stop @click.stop>
+                <LedgerAccountIconPicker v-model="newIcon" :disabled="saving" />
+                <span>点击选择图标</span>
+              </div>
+            </div>
+            <p v-if="createError" class="settings-ledger-category-error" role="alert">{{ createError }}</p>
+            <footer class="settings-ledger-category-create-actions">
+              <NButton attr-type="button" size="small" :disabled="saving" @click="setCreating(false)">取消</NButton>
+              <NButton attr-type="submit" type="primary" size="small" :loading="saving">添加</NButton>
+            </footer>
+          </form>
+        </NPopover>
+      </div>
     </header>
     <div class="settings-section-body">
       <div class="settings-card settings-ledger-category-card">
         <h4 class="settings-card-title">交易分类</h4>
-        <div v-if="creating" class="settings-ledger-category-create">
-          <NSelect v-model:value="kind" size="medium" :options="kindOptions" aria-label="分类类型" />
-          <NInput v-model:value="name" size="medium" placeholder="输入分类名称" aria-label="分类名称" :disabled="saving" @keydown.enter.prevent="create" />
-          <LedgerAccountIconPicker v-model="newIcon" :disabled="saving" />
-          <NButton type="primary" size="medium" :loading="saving" @click="create">添加</NButton>
-        </div>
-        <p v-if="error" class="settings-ledger-category-error" role="alert">{{ error }}</p>
-        <div class="settings-ledger-category-list" role="list" aria-live="polite">
-          <div v-for="category in categories" :key="category.id" class="settings-ledger-category-tag" :class="{ managing }" role="listitem" @pointerdown="startHold" @pointerup="cancelHold" @pointerleave="cancelHold" @contextmenu.prevent="managing = true">
-            <LedgerAccountIconPicker :model-value="iconFor(category.id)" @update:model-value="(icon) => { categoryIcons = { ...categoryIcons, [category.id]: icon }; persistIcons() }" />
-            <NInput v-if="editingId === category.id" v-model:value="editingName" size="small" class="settings-ledger-category-name-input" autofocus @keydown.enter.prevent="finishRename(category)" @keydown.esc.prevent="editingId = null" @blur="finishRename(category)" />
-            <span v-else @dblclick="startRename(category.id, category.name)">{{ category.name }}</span>
-            <button v-if="managing" type="button" class="settings-ledger-category-delete" :disabled="archiveId === category.id" aria-label="归档分类" @click.stop="archive(category)">×</button>
+        <p v-if="operationError" class="settings-ledger-category-error" role="alert">{{ operationError }}</p>
+        <div class="settings-ledger-category-options" role="list" aria-live="polite" @click.self="stopManaging">
+          <div
+            v-for="category in categories"
+            :key="category.id"
+            class="settings-ledger-category-option"
+            :class="{ managing }"
+            role="listitem"
+            @pointerdown="startHold"
+            @pointerup="cancelHold"
+            @pointerleave="cancelHold"
+            @pointercancel="cancelHold"
+            @contextmenu.prevent="managing = true"
+          >
+            <span class="settings-ledger-category-glyph" aria-label="修改分类图标" @pointerdown.stop @pointerup.stop @click.stop @contextmenu.stop>
+              <LedgerAccountIconPicker :model-value="iconFor(category.id)" @update:model-value="updateIcon(category.id, $event)" />
+            </span>
+            <input
+              v-if="managing && editingId === category.id"
+              v-model="editingName"
+              class="settings-ledger-category-name-input"
+              aria-label="分类名称"
+              autofocus
+              @click.stop
+              @pointerdown.stop
+              @keydown.enter.prevent="finishRename(category)"
+              @keydown.esc.prevent="cancelRename"
+              @blur="finishRename(category)"
+            >
+            <span v-else class="settings-ledger-category-label" @dblclick.stop="startRename(category.id, category.name)">{{ category.name }}</span>
+            <button
+              v-if="managing"
+              type="button"
+              class="settings-ledger-category-delete"
+              :disabled="archiveId === category.id"
+              :aria-label="`归档分类：${category.name}`"
+              @pointerdown.stop
+              @click.stop="archive(category)"
+            >×</button>
           </div>
           <span v-if="!categories.length" class="settings-ledger-category-empty">暂无交易分类</span>
         </div>
@@ -145,30 +240,46 @@ async function create(): Promise<void> {
 <style scoped>
 .settings-section { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .settings-section-body { flex: 1 1 auto; min-height: 0; }
-.settings-ledger-category-card { height: 100%; box-sizing: border-box; }
-.settings-ledger-category-create { display: grid; grid-template-columns: 140px minmax(0, 1fr) 30px auto; gap: 10px; align-items: center; margin-bottom: 18px; }
-.settings-ledger-category-error { margin: 10px 0 0; color: #dc4c4c; font-size: .75rem; }
-.settings-ledger-category-list { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin-top: 18px; }
-.settings-ledger-category-tag { display: inline-flex; min-width: 0; min-height: 40px; align-items: center; gap: 8px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: var(--text-muted); font-size: .8rem; }
-.settings-ledger-category-tag { position: relative; }
-.settings-ledger-category-tag:hover { border-color: var(--accent); color: var(--text-h); }
-.settings-ledger-category-tag.managing { animation: settings-ledger-category-wiggle 180ms ease-in-out infinite alternate; }
-.settings-ledger-category-tag :deep(.ledger-icon-picker-trigger) { width: 24px; height: 24px; flex: 0 0 24px; }
-.settings-ledger-category-tag > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.settings-ledger-category-name-input { min-width: 0; flex: 1 1 auto; }
-.settings-ledger-category-delete { position: absolute; top: -7px; right: -7px; display: inline-flex; width: 16px; height: 16px; align-items: center; justify-content: center; padding: 0; border: 2px solid var(--surface); border-radius: 50%; background: #ef4444; color: #fff; font-size: 11px; font-weight: 700; line-height: 1; cursor: pointer; }
-.settings-ledger-category-delete:disabled { cursor: wait; opacity: .6; }
-.settings-ledger-category-empty { color: var(--text-muted); font-size: .78rem; }
+.settings-ledger-category-card { display: flex; flex-direction: column; height: 100%; box-sizing: border-box; }
+.settings-ledger-category-options { display: grid; flex: 1 1 auto; grid-template-columns: repeat(5, minmax(0, 1fr)); align-content: start; gap: 10px; height: 70%; min-height: 0; box-sizing: border-box; overflow-y: auto; padding: 8px 10px 8px 2px; }
+.settings-ledger-category-option { position: relative; display: inline-flex; width: 100%; min-width: 0; min-height: 40px; box-sizing: border-box; align-items: center; justify-content: flex-start; gap: 7px; padding: 6px 12px; overflow: visible; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: var(--text-muted); cursor: pointer; font: inherit; text-align: left; transform-origin: 50% 55%; }
+.settings-ledger-category-glyph { display: grid; width: 22px; height: 22px; flex: 0 0 22px; place-items: center; }
+.settings-ledger-category-glyph :deep(.ledger-icon-picker-trigger) { width: 22px; height: 22px; border-radius: 0; }
+.settings-ledger-category-glyph :deep(.ledger-icon-picker-trigger:hover) { background: transparent; }
+.settings-ledger-category-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settings-ledger-category-option.managing { animation: settings-ledger-category-wiggle 180ms ease-in-out infinite alternate; }
+.settings-ledger-category-option.managing:nth-child(2n) { animation-delay: -90ms; animation-direction: alternate-reverse; }
+.settings-ledger-category-option.managing:nth-child(3n) { animation-delay: -45ms; animation-duration: 200ms; }
+.settings-ledger-category-name-input { width: 8em; min-width: 0; padding: 0; border: 0; outline: 0; background: transparent; color: inherit; font: inherit; }
+.settings-ledger-category-delete { position: absolute; top: 0; right: 0; display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; padding: 0; border: 2px solid var(--surface); border-radius: 50%; background: #ef4444; color: #fff; box-shadow: 0 1px 3px rgb(0 0 0 / 18%); font-size: 11px; font-weight: 700; line-height: 1; cursor: pointer; transform: translate(38%, -38%); }
+.settings-ledger-category-delete:disabled { cursor: wait; opacity: .5; }
+.settings-ledger-category-empty { color: var(--text-muted); font-size: .75rem; }
+.settings-ledger-category-error { margin: 0 0 8px; color: #dc4c4c; font-size: .75rem; }
+
+.settings-ledger-category-create { width: min(300px, calc(100vw - 24px)); box-sizing: border-box; padding: 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface, var(--bg)); color: var(--text-h); box-shadow: 0 8px 28px rgb(24 34 56 / 14%); }
+.settings-ledger-category-create-header { display: flex; flex-direction: column; gap: 2px; margin-bottom: 12px; }
+.settings-ledger-category-create-header strong { font-size: .9rem; font-weight: 650; }
+.settings-ledger-category-create-header span { color: var(--text-muted); font-size: .72rem; }
+.settings-ledger-category-create-field { display: grid; gap: 5px; margin-top: 10px; color: var(--text-muted); font-size: .75rem; }
+.settings-ledger-category-create-icon { display: flex; min-height: 34px; box-sizing: border-box; align-items: center; gap: 7px; padding: 1px 7px; border: 1px solid var(--border); border-radius: 6px; color: var(--text-muted); }
+.settings-ledger-category-create-icon > span { font-size: .78rem; }
+.settings-ledger-category-create .settings-ledger-category-error { margin: 8px 0 0; }
+.settings-ledger-category-create-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+
+@media (max-width: 900px) {
+  .settings-ledger-category-options { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 560px) {
+  .settings-ledger-category-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 @keyframes settings-ledger-category-wiggle {
   from { transform: rotate(-.7deg) translateY(-.25px); }
   to { transform: rotate(.7deg) translateY(.25px); }
 }
-@media (max-width: 560px) {
-  .settings-ledger-category-create { grid-template-columns: 1fr auto; }
-  .settings-ledger-category-create :deep(.n-base-selection) { grid-column: 1 / -1; }
-  .settings-ledger-category-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
+
 @media (prefers-reduced-motion: reduce) {
-  .settings-ledger-category-tag.managing { animation: none; }
+  .settings-ledger-category-option.managing { animation: none; }
 }
 </style>
