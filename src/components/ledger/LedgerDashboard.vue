@@ -551,7 +551,6 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
                 <template #prefix>{{ animatedMoneyParts(overview.assetTotalMinor, overview.currency, 'assets').prefix }}</template>
                 <NNumberAnimation :from="animatedMoneyParts(overview.assetTotalMinor, overview.currency, 'assets').from" :to="animatedMoneyParts(overview.assetTotalMinor, overview.currency, 'assets').value" :precision="animatedMoneyParts(overview.assetTotalMinor, overview.currency, 'assets').precision" show-separator :duration="2000" />
               </NStatistic>
-            <small>当前所有资产账户余额</small>
             </span>
           </div>
         </NCard>
@@ -565,7 +564,6 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
                 <template #prefix>{{ animatedMoneyParts(overview.liabilityTotalMinor, overview.currency, 'liabilities').prefix }}</template>
                 <NNumberAnimation :from="animatedMoneyParts(overview.liabilityTotalMinor, overview.currency, 'liabilities').from" :to="animatedMoneyParts(overview.liabilityTotalMinor, overview.currency, 'liabilities').value" :precision="animatedMoneyParts(overview.liabilityTotalMinor, overview.currency, 'liabilities').precision" show-separator :duration="2000" />
               </NStatistic>
-            <small>当前所有负债账户余额</small>
             </span>
           </div>
         </NCard>
@@ -579,7 +577,6 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
                 <template #prefix>{{ animatedMoneyParts(overview.netWorthMinor, overview.currency, 'netWorth').prefix }}</template>
                 <NNumberAnimation :from="animatedMoneyParts(overview.netWorthMinor, overview.currency, 'netWorth').from" :to="animatedMoneyParts(overview.netWorthMinor, overview.currency, 'netWorth').value" :precision="animatedMoneyParts(overview.netWorthMinor, overview.currency, 'netWorth').precision" show-separator :duration="2000" />
               </NStatistic>
-            <small>当前净资产</small>
             </span>
           </div>
         </NCard>
@@ -1087,11 +1084,6 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
   line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.ledger-metric-copy small {
-  color: var(--text-muted);
-  font-size: .7rem;
 }
 
 .ledger-dashboard-section {

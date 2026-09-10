@@ -134,6 +134,48 @@ describe('Ledger account detail lifecycle', () => {
     }))
   })
 
+  it('keeps the balance trend mounted while the edit modal opens and closes', async () => {
+    const original = account()
+    setup(original)
+    const nextRouter = createTestRouter()
+    await nextRouter.push('/ledger/accounts/bank-1')
+    await nextRouter.isReady()
+    const wrapper = mount(LedgerAccountDetailView, { global: { plugins: [nextRouter] } })
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    const chart = wrapper.get('[data-testid="ledger-balance-trend-chart"]')
+    await wrapper.findAll('button').find((button) => button.text() === '编辑账户')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="ledger-balance-trend-chart"]').element).toBe(chart.element)
+
+    await bodyWrapper().findAll('button').find((button) => button.text() === '取消')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="ledger-balance-trend-chart"]').element).toBe(chart.element)
+  })
+
+  it('closes the edit modal when clicking the mask', async () => {
+    const original = account()
+    setup(original)
+    const nextRouter = createTestRouter()
+    await nextRouter.push('/ledger/accounts/bank-1')
+    await nextRouter.isReady()
+    const wrapper = mount(LedgerAccountDetailView, { global: { plugins: [nextRouter] } })
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    await wrapper.findAll('button').find((button) => button.text() === '编辑账户')!.trigger('click')
+    await flushPromises()
+    expect(bodyWrapper().findAll('[data-testid="ledger-account-edit-form"]')).toHaveLength(1)
+
+    const mask = bodyWrapper().get('.n-modal-mask')
+    await mask.trigger('mousedown')
+    await mask.trigger('mouseup')
+    await flushPromises()
+    expect(bodyWrapper().findAll('[data-testid="ledger-account-edit-form"]')).toHaveLength(0)
+    expect(wrapper.findAll('[data-testid="ledger-balance-trend-chart"]')).toHaveLength(1)
+  })
+
   it('sends only name and note when history makes financial fields read-only', async () => {
     const original = account()
     setup(original, [{ id: 'transaction-1', type: 'expense' }])

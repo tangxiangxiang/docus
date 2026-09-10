@@ -396,29 +396,7 @@ const netMovement = computed(() => {
       </NResult>
     </section>
 
-    <NModal
-      v-else-if="editing"
-      :show="editing"
-      :mask-closable="false"
-      :close-on-esc="false"
-      :auto-focus="false"
-      :trap-focus="true"
-      :on-esc="() => { editing = false }"
-      :on-update-show="(show) => { if (!show) editing = false }"
-    >
-      <NCard
-        class="ledger-account-edit-modal-card"
-        :bordered="false"
-        size="small"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="ledger-account-edit-title"
-      >
-        <LedgerAccountEditForm :account="account" :has-history="hasHistory" @saved="onSaved" @cancel="editing = false" />
-      </NCard>
-    </NModal>
-
-    <section v-else class="ledger-account-detail" aria-labelledby="ledger-account-detail-title">
+    <section v-else-if="account" class="ledger-account-detail" aria-labelledby="ledger-account-detail-title">
       <header class="ledger-detail-header">
         <div class="ledger-account-identity">
           <span class="ledger-detail-account-icon" :class="account.nature === 'asset' ? 'is-asset' : 'is-liability'" aria-hidden="true"><LedgerAccountIcon :icon="account.icon" :size="42" /></span>
@@ -520,6 +498,28 @@ const netMovement = computed(() => {
         </aside>
       </div>
     </section>
+
+    <NModal
+      v-if="editing && account"
+      :show="editing"
+      :mask-closable="true"
+      :close-on-esc="false"
+      :auto-focus="false"
+      :trap-focus="true"
+      :on-esc="() => { editing = false }"
+      :on-update-show="(show) => { if (!show) editing = false }"
+    >
+      <NCard
+        class="ledger-account-edit-modal-card"
+        :bordered="false"
+        size="small"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="ledger-account-edit-title"
+      >
+        <LedgerAccountEditForm :account="account" :has-history="hasHistory" @saved="onSaved" @cancel="editing = false" />
+      </NCard>
+    </NModal>
   </main>
 </template>
 
