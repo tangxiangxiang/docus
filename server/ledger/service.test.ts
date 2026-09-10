@@ -7,6 +7,7 @@ import type {
   LedgerSettingsCreateRequest,
   LedgerTransactionCreateRequest,
 } from '../../shared/ledgerProtocol.js'
+import { LEDGER_BUILTIN_CATEGORY_ICONS } from '../../shared/ledgerProtocol.js'
 import { DEFAULT_LEDGER_CATEGORIES_V1 } from './defaultCategories.js'
 import { LedgerError } from './errors.js'
 import { createLedgerRepository, type LedgerRepository } from './repository.js'
@@ -25,26 +26,7 @@ import {
 const databases: LedgerTestDatabase[] = []
 const TEST_NOW = Date.parse('2026-01-01T00:00:00.000Z')
 
-const EXPECTED_DEFAULT_LEDGER_CATEGORIES_V1 = [
-  { kind: 'expense', name: '餐饮' },
-  { kind: 'expense', name: '交通' },
-  { kind: 'expense', name: '购物' },
-  { kind: 'expense', name: '住房' },
-  { kind: 'expense', name: '日用' },
-  { kind: 'expense', name: '娱乐' },
-  { kind: 'expense', name: '医疗' },
-  { kind: 'expense', name: '教育' },
-  { kind: 'expense', name: '旅行' },
-  { kind: 'expense', name: '人情' },
-  { kind: 'expense', name: '其他' },
-  { kind: 'income', name: '工资' },
-  { kind: 'income', name: '奖金' },
-  { kind: 'income', name: '投资收益' },
-  { kind: 'income', name: '兼职' },
-  { kind: 'income', name: '退款' },
-  { kind: 'income', name: '红包' },
-  { kind: 'income', name: '其他' },
-] as const
+const EXPECTED_DEFAULT_LEDGER_CATEGORIES_V1 = LEDGER_BUILTIN_CATEGORY_ICONS.map(({ kind, name, id: icon }) => ({ kind, name, icon }))
 
 function freshService(): {
   database: LedgerTestDatabase

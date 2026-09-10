@@ -1,30 +1,11 @@
 import { normalizeLedgerCategoryName } from '../../shared/ledgerNormalization.js'
-import type { LedgerCategoryKind } from '../../shared/ledgerProtocol.js'
+import { LEDGER_BUILTIN_CATEGORY_ICONS, type LedgerCategoryKind } from '../../shared/ledgerProtocol.js'
 import type { LedgerCategory } from './domain.js'
 import type { LedgerRepository } from './repository.js'
 
 /** The exact ordered v1 catalog created with the first Ledger Settings row. */
-export const DEFAULT_LEDGER_CATEGORIES_V1 = [
-  { kind: 'expense', name: '餐饮' },
-  { kind: 'expense', name: '交通' },
-  { kind: 'expense', name: '购物' },
-  { kind: 'expense', name: '住房' },
-  { kind: 'expense', name: '日用' },
-  { kind: 'expense', name: '娱乐' },
-  { kind: 'expense', name: '医疗' },
-  { kind: 'expense', name: '教育' },
-  { kind: 'expense', name: '旅行' },
-  { kind: 'expense', name: '人情' },
-  { kind: 'expense', name: '其他' },
-
-  { kind: 'income', name: '工资' },
-  { kind: 'income', name: '奖金' },
-  { kind: 'income', name: '投资收益' },
-  { kind: 'income', name: '兼职' },
-  { kind: 'income', name: '退款' },
-  { kind: 'income', name: '红包' },
-  { kind: 'income', name: '其他' },
-] as const satisfies readonly { kind: LedgerCategoryKind; name: string }[]
+export const DEFAULT_LEDGER_CATEGORIES_V1: readonly { kind: LedgerCategoryKind; name: string; icon: string }[] = LEDGER_BUILTIN_CATEGORY_ICONS
+  .map(({ kind, name, id: icon }) => ({ kind, name, icon }))
 
 export interface LedgerCategorySeedDependencies {
   readonly now: () => number
@@ -49,6 +30,7 @@ export function seedDefaultLedgerCategories(
       kind: entry.kind,
       name: entry.name,
       normalizedName,
+      icon: entry.icon as LedgerCategory['icon'],
       archivedAt: null,
       version: 1,
       createdAt: timestamp,

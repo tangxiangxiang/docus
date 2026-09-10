@@ -8,6 +8,7 @@ const availableIcons = ref<LedgerAccountIcon[]>([...LEDGER_DEFAULT_ACCOUNT_ICONS
 const customIcons = ref<Record<string, string>>({})
 const customIconNames = ref<Record<string, string>>({})
 const settingsVersion = ref<number | null>(null)
+let loadPromise: Promise<void> | null = null
 
 function hydrate(config?: LedgerAccountIconConfig, version?: number): void {
   if (!config) return
@@ -17,15 +18,31 @@ function hydrate(config?: LedgerAccountIconConfig, version?: number): void {
     return !builtinName || !configuredNames.has(builtinName)
   })
   defaultIcon.value = config.defaultIcon
-  availableIcons.value = [...new Set([...missingDefaults, ...config.availableIcons])]
-  customIcons.value = { ...config.customIcons }
-  customIconNames.value = { ...LEDGER_BUILTIN_ACCOUNT_ICON_NAMES, ...config.customIconNames }
+  const customNames = { ...LEDGER_BUILTIN_ACCOUNT_ICON_NAMES, ...config.customIconNames }
+  const accidentalTestIcons = new Set<string>(config.availableIcons.filter((icon) => (
+    icon.startsWith('custom_') && customNames[icon] === '测试'
+  )))
+  availableIcons.value = [...new Set([...missingDefaults, ...config.availableIcons.filter((icon) => !accidentalTestIcons.has(icon))])]
+  customIcons.value = Object.fromEntries(Object.entries(config.customIcons).filter(([icon]) => !accidentalTestIcons.has(icon)))
+  customIconNames.value = Object.fromEntries(Object.entries(customNames).filter(([icon]) => !accidentalTestIcons.has(icon)))
   if (version !== undefined) settingsVersion.value = version
 }
 
-async function load(): Promise<void> {
+async function loadSettings(): Promise<void> {
   const settings = await getLedgerSettings()
+  const configuredIcons = settings.accountIcons
+  const accidentalTestIcons = configuredIcons?.availableIcons.filter((icon) => (
+    icon.startsWith('custom_') && configuredIcons.customIconNames[icon] === '测试'
+  )) ?? []
   hydrate(settings.accountIcons, settings.version)
+
+  // Remove the accidental test icon created by the earlier category-upload
+  // implementation. The exact label keeps this cleanup limited to that
+  // mistaken entry and leaves all other user-defined account icons intact.
+  if (accidentalTestIcons.length > 0) {
+    accidentalTestIcons.forEach(removeIcon)
+    await persist()
+  }
 
   // One-time migration for icons created by the previous client-only build.
   // After a successful server write, remove the legacy browser copies.
@@ -54,6 +71,14 @@ async function load(): Promise<void> {
   }
 }
 
+function load(): Promise<void> {
+  if (loadPromise !== null) return loadPromise
+  loadPromise = loadSettings().finally(() => {
+    loadPromise = null
+  })
+  return loadPromise
+}
+
 async function persist(): Promise<void> {
   if (settingsVersion.value === null) return
   const settings = await patchLedgerSettings({
@@ -74,6 +99,8 @@ function removeIcon(icon: LedgerAccountIcon): void {
   if (icon.startsWith('custom_')) {
     const { [icon]: _removed, ...remainingNames } = customIconNames.value
     customIconNames.value = remainingNames
+    const { [icon]: _removedSvg, ...remainingIcons } = customIcons.value
+    customIcons.value = remainingIcons
   }
   if (defaultIcon.value === icon) defaultIcon.value = availableIcons.value[0] ?? 'wallet'
 }

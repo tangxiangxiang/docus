@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
-import { DOMWrapper, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import { defineComponent, h, nextTick } from 'vue'
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { defineComponent, h } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { LedgerAccountIcon, LedgerCategoryDto } from '../../../../shared/ledgerProtocol'
 import SettingsLedgerCategoriesSection from '../SettingsLedgerCategoriesSection.vue'
 
 const ledger = vi.hoisted(() => ({
   activeCategories: { value: [] as LedgerCategoryDto[] },
+  categories: { value: [] as LedgerCategoryDto[] },
   bootstrap: vi.fn(),
   createCategory: vi.fn(),
   patchCategory: vi.fn(),
@@ -55,6 +56,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
   ledger.activeCategories.value = [category('food', '餐饮'), category('salary', '工资', 'income')]
+  ledger.categories.value = ledger.activeCategories.value
   ledger.bootstrap.mockResolvedValue(undefined)
   ledger.patchCategory.mockResolvedValue(category('food', '通勤'))
   ledger.archiveCategory.mockResolvedValue({ ...category('food', '餐饮'), archivedAt: 2 })
@@ -84,7 +86,7 @@ describe('SettingsLedgerCategoriesSection', () => {
 
   it('renames and archives with the existing optimistic version', async () => {
     const wrapper = mountSection()
-    const item = wrapper.get('.settings-ledger-category-option')
+    const item = wrapper.get('[data-category-kind="expense"] .settings-ledger-category-option')
     await item.trigger('contextmenu')
     await item.get('.settings-ledger-category-label').trigger('dblclick')
 
@@ -102,48 +104,35 @@ describe('SettingsLedgerCategoriesSection', () => {
 
   it('does not start the hold gesture when the category icon is operated', async () => {
     const wrapper = mountSection()
-    const picker = wrapper.get('.settings-ledger-category-option .icon-picker-stub')
+    const item = wrapper.get('[data-category-kind="expense"] .settings-ledger-category-option')
+    const picker = item.get('.icon-picker-stub')
 
     await picker.trigger('pointerdown')
     await vi.advanceTimersByTimeAsync(600)
-    expect(wrapper.get('.settings-ledger-category-option').classes()).not.toContain('managing')
+    expect(item.classes()).not.toContain('managing')
 
     await picker.trigger('click')
-    expect(JSON.parse(localStorage.getItem('docus.ledger.category-icons') ?? '{}')).toMatchObject({ food: 'credit_card' })
+    expect(ledger.patchCategory).toHaveBeenCalledWith('food', { expectedVersion: 3, icon: 'credit_card' })
   })
 
-  it('creates inside a popover without inserting a form into the category card', async () => {
+  it('creates an expense category directly from an uploaded SVG', async () => {
     const wrapper = mountSection()
-    expect(wrapper.get('.settings-ledger-category-card').find('form').exists()).toBe(false)
-
-    const addButton = wrapper.findAll('button').find((button) => button.text() === '＋ 添加分类')
-    if (!addButton) throw new Error('add category button is missing')
-    await addButton.trigger('click')
-    await nextTick()
-    const body = new DOMWrapper(document.body)
-    const form = body.get('form[aria-label="添加交易分类"]')
-    await form.get('.n-input input').setValue('交通')
-    await form.trigger('submit')
+    const expenseUpload = wrapper.find('input[type="file"]')
+    Object.defineProperty(expenseUpload.element, 'files', { value: [new File(['<svg></svg>'], 'travel.svg', { type: 'image/svg+xml' })] })
+    await expenseUpload.trigger('change')
     await flushPromises()
 
-    expect(ledger.createCategory).toHaveBeenCalledWith({ kind: 'expense', name: '交通' })
-    expect(body.find('form[aria-label="添加交易分类"]').exists()).toBe(false)
-    expect(JSON.parse(localStorage.getItem('docus.ledger.category-icons') ?? '{}')).toMatchObject({ travel: 'wallet' })
+    expect(ledger.createCategory).toHaveBeenCalledWith({ kind: 'expense', name: 'travel', icon: expect.stringMatching(/^custom_/) })
   })
 
-  it('keeps the create popover open and reports a failed creation', async () => {
+  it('reports a failed direct upload creation', async () => {
     ledger.createCategory.mockRejectedValueOnce(new Error('failed'))
     const wrapper = mountSection()
-    const addButton = wrapper.findAll('button').find((button) => button.text() === '＋ 添加分类')
-    if (!addButton) throw new Error('add category button is missing')
-    await addButton.trigger('click')
-    await nextTick()
-    const body = new DOMWrapper(document.body)
-    await body.get('.settings-ledger-category-create .n-input input').setValue('交通')
-    await body.get('form[aria-label="添加交易分类"]').trigger('submit')
+    const expenseUpload = wrapper.find('input[type="file"]')
+    Object.defineProperty(expenseUpload.element, 'files', { value: [new File(['<svg></svg>'], 'failed.svg', { type: 'image/svg+xml' })] })
+    await expenseUpload.trigger('change')
     await flushPromises()
 
-    expect(body.find('form[aria-label="添加交易分类"]').exists()).toBe(true)
-    expect(body.get('[role="alert"]').text()).not.toBe('')
+    expect(wrapper.get('[role="alert"]').text()).not.toBe('')
   })
 })

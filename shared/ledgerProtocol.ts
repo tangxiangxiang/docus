@@ -45,6 +45,26 @@ export interface LedgerAccountIconConfig {
   readonly customIconNames: Readonly<Record<string, string>>
 }
 export type LedgerCategoryKind = 'income' | 'expense'
+export const LEDGER_BUILTIN_CATEGORY_ICONS = [
+  { kind: 'expense', name: '餐饮', id: 'custom_builtin_category_expense_food' },
+  { kind: 'expense', name: '交通', id: 'custom_builtin_category_expense_transport' },
+  { kind: 'expense', name: '购物', id: 'custom_builtin_category_expense_shopping' },
+  { kind: 'expense', name: '住房', id: 'custom_builtin_category_expense_home' },
+  { kind: 'expense', name: '日用', id: 'custom_builtin_category_expense_daily' },
+  { kind: 'expense', name: '娱乐', id: 'custom_builtin_category_expense_entertainment' },
+  { kind: 'expense', name: '医疗', id: 'custom_builtin_category_expense_medical' },
+  { kind: 'expense', name: '教育', id: 'custom_builtin_category_expense_education' },
+  { kind: 'expense', name: '旅行', id: 'custom_builtin_category_expense_travel' },
+  { kind: 'expense', name: '人情', id: 'custom_builtin_category_expense_gift' },
+  { kind: 'expense', name: '其他', id: 'custom_builtin_category_expense_other' },
+  { kind: 'income', name: '工资', id: 'custom_builtin_category_income_salary' },
+  { kind: 'income', name: '奖金', id: 'custom_builtin_category_income_bonus' },
+  { kind: 'income', name: '投资收益', id: 'custom_builtin_category_income_investment' },
+  { kind: 'income', name: '兼职', id: 'custom_builtin_category_income_part_time' },
+  { kind: 'income', name: '退款', id: 'custom_builtin_category_income_refund' },
+  { kind: 'income', name: '红包', id: 'custom_builtin_category_income_red_packet' },
+  { kind: 'income', name: '其他', id: 'custom_builtin_category_income_other' },
+] as const
 export type LedgerTransactionType = 'income' | 'expense' | 'transfer' | 'adjustment'
 export type LedgerTransactionFilterType = 'income' | 'expense' | 'transfer'
 export type LedgerPeriodName = 'today' | 'week' | 'month' | 'year'

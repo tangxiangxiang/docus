@@ -1,35 +1,99 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { NButton, NInput, NPopover, NSelect, type SelectOption } from 'naive-ui'
-import type { LedgerAccountIcon } from '../../../shared/ledgerProtocol'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { NButton, NDropdown, type DropdownOption } from 'naive-ui'
+import { LEDGER_BUILTIN_CATEGORY_ICONS, type LedgerAccountIcon } from '../../../shared/ledgerProtocol'
 import { ledgerErrorMessage } from '../../features/ledger/ledgerErrors'
 import { DEFAULT_CATEGORY_ICON, migrateLegacyCategoryIcons } from '../../features/ledger/categoryIconMigration'
 import { useLedgerStore } from '../../features/ledger/ledgerStore'
+import { useLedgerAccountIconPreferences } from '../../composables/useLedgerAccountIconPreferences'
 import LedgerAccountIconPicker from '../ledger/LedgerAccountIconPicker.vue'
 
 const store = useLedgerStore()
-const kind = ref<'income' | 'expense'>('expense')
-const name = ref('')
+const accountIconPreferences = useLedgerAccountIconPreferences()
 const createError = ref('')
 const operationError = ref('')
 const saving = ref(false)
-const creating = ref(false)
-const newIcon = ref<LedgerAccountIcon>(DEFAULT_CATEGORY_ICON)
+const uploadInput = ref<HTMLInputElement | null>(null)
+const uploadKind = ref<'income' | 'expense'>('expense')
 const iconSavingId = ref<string | null>(null)
 const managing = ref(false)
 const editingId = ref<string | null>(null)
 const editingName = ref('')
 const archiveId = ref<string | null>(null)
 let holdTimer: ReturnType<typeof setTimeout> | null = null
-const kindOptions: SelectOption[] = [
-  { label: '支出', value: 'expense' },
-  { label: '收入', value: 'income' },
-]
+let lastUploadedSvg = ''
+const categoryCustomIcons = ref<Record<string, string>>({})
+const CATEGORY_CUSTOM_ICON_STORAGE_KEY = 'docus.ledger.category-custom-icons'
 const categories = computed(() => store.activeCategories.value)
+
+try {
+  const stored = JSON.parse(localStorage.getItem(CATEGORY_CUSTOM_ICON_STORAGE_KEY) ?? '{}') as unknown
+  if (stored && typeof stored === 'object' && !Array.isArray(stored)) {
+    categoryCustomIcons.value = Object.fromEntries(Object.entries(stored).filter(([, source]) => typeof source === 'string'))
+  }
+} catch {
+  categoryCustomIcons.value = {}
+}
+const categoryGroups = computed(() => [
+  { kind: 'income' as const, title: '收入分类', empty: '暂无收入分类' },
+  { kind: 'expense' as const, title: '支出分类', empty: '暂无支出分类' },
+].map((group) => ({
+  ...group,
+  categories: categories.value.filter((category) => category.kind === group.kind),
+})))
+const uploadOptions: DropdownOption[] = [
+  { label: '收入图标', key: 'income' },
+  { label: '支出图标', key: 'expense' },
+]
+
+function categoryIconSource(icon: LedgerAccountIcon | undefined): string | undefined {
+  const source = icon ? categoryCustomIcons.value[icon] : undefined
+  return source ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(source)}` : undefined
+}
 
 async function bootstrapAndMigrate(): Promise<void> {
   await store.bootstrap()
+  await migrateBuiltinCategoryIcons()
   await migrateLegacyCategoryIcons(store.categories.value, async (id, patch) => store.patchCategory(id, patch))
+  await migrateLegacyAccountIcons()
+}
+
+async function migrateBuiltinCategoryIcons(): Promise<void> {
+  for (const category of store.categories.value) {
+    if (category.icon) continue
+    const builtin = LEDGER_BUILTIN_CATEGORY_ICONS.find((entry) => entry.kind === category.kind && entry.name === category.name)
+    if (builtin) await store.patchCategory(category.id, { expectedVersion: category.version, icon: builtin.id })
+  }
+}
+
+async function migrateLegacyAccountIcons(): Promise<void> {
+  try {
+    await accountIconPreferences.load()
+  } catch {
+    return
+  }
+  const accountIconUsers = new Set((store.accounts?.value ?? []).map((account) => account.icon).filter(Boolean))
+  const categoryIconUsers = new Map<string, number>()
+  for (const category of store.categories.value) {
+    if (category.icon?.startsWith('custom_')) categoryIconUsers.set(category.icon, (categoryIconUsers.get(category.icon) ?? 0) + 1)
+  }
+
+  let accountIconsChanged = false
+  for (const category of store.categories.value) {
+    const oldIcon = category.icon
+    if (!oldIcon?.startsWith('custom_') || oldIcon.startsWith('custom_category_')) continue
+    const source = accountIconPreferences.getCustomIcon(oldIcon)
+    if (!source) continue
+    const newIcon = `custom_category_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}` as LedgerAccountIcon
+    categoryCustomIcons.value = { ...categoryCustomIcons.value, [newIcon]: source }
+    await store.patchCategory(category.id, { expectedVersion: category.version, icon: newIcon })
+    if (!accountIconUsers.has(oldIcon) && categoryIconUsers.get(oldIcon) === 1) {
+      accountIconPreferences.removeIcon(oldIcon)
+      accountIconsChanged = true
+    }
+  }
+  localStorage.setItem(CATEGORY_CUSTOM_ICON_STORAGE_KEY, JSON.stringify(categoryCustomIcons.value))
+  if (accountIconsChanged) await accountIconPreferences.persist()
 }
 
 onMounted(() => {
@@ -110,36 +174,49 @@ async function archive(category: { id: string; version: number }): Promise<void>
   }
 }
 
-function resetCreateForm(): void {
-  kind.value = 'expense'
-  name.value = ''
-  newIcon.value = DEFAULT_CATEGORY_ICON
+async function addSvgFile(nextKind: 'income' | 'expense', rawFile: File): Promise<void> {
   createError.value = ''
-}
-
-function setCreating(show: boolean): void {
-  if (!show && saving.value) return
-  creating.value = show
-  if (!show) resetCreateForm()
-}
-
-async function create(): Promise<void> {
-  const trimmed = name.value.trim()
-  if (!trimmed) {
-    createError.value = '请输入分类名称。'
+  const source = rawFile.name.toLowerCase().endsWith('.svg') && rawFile.size <= 256 * 1024
+    ? await rawFile.text()
+    : ''
+  const svgStart = source.search(/<svg(?:\s|>)/i)
+  const prefix = svgStart >= 0 ? source.slice(0, svgStart) : source
+  const validPrefix = /^(?:\uFEFF|\s|<\?xml[\s\S]*?\?>|<!DOCTYPE[\s\S]*?>|<!--[\s\S]*?-->)*$/i.test(prefix)
+  if (svgStart < 0 || !validPrefix || /<script(?:\s|>)/i.test(source)) {
+    createError.value = rawFile.size > 256 * 1024 ? 'SVG 文件不能超过 256 KB。' : '请选择有效的 SVG 文件。'
     return
   }
+  if (source === lastUploadedSvg) return
+  lastUploadedSvg = source
+  const categoryName = rawFile.name.replace(/\.svg$/i, '').trim() || '未命名分类'
   saving.value = true
-  createError.value = ''
   try {
-    await store.createCategory({ kind: kind.value, name: trimmed, icon: newIcon.value })
-    setCreating(false)
+    const uploadedIcon = `custom_category_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}` as LedgerAccountIcon
+    categoryCustomIcons.value = { ...categoryCustomIcons.value, [uploadedIcon]: source }
+    localStorage.setItem(CATEGORY_CUSTOM_ICON_STORAGE_KEY, JSON.stringify(categoryCustomIcons.value))
+    await store.createCategory({ kind: nextKind, name: categoryName, icon: uploadedIcon })
+    await nextTick()
+    document.querySelector<HTMLElement>(`[data-category-kind="${nextKind}"]`)?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' })
   } catch (cause) {
-    createError.value = ledgerErrorMessage(cause, '分类没有创建，请换一个名称后重试。')
+    createError.value = ledgerErrorMessage(cause, '分类没有创建，请稍后重试。')
   } finally {
     saving.value = false
   }
 }
+
+function selectUploadKind(nextKind: 'income' | 'expense'): void {
+  if (saving.value || !uploadInput.value) return
+  uploadKind.value = nextKind
+  uploadInput.value.value = ''
+  uploadInput.value.click()
+}
+
+async function onFileSelected(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (file) await addSvgFile(uploadKind.value, file)
+}
+
 </script>
 
 <template>
@@ -150,86 +227,65 @@ async function create(): Promise<void> {
         <p>管理记账时使用的分类；已有交易不会受到影响。</p>
       </div>
       <div class="settings-section-actions">
-        <!-- Settings is a teleported modal with a deliberately high backdrop
-             z-index. Keep this local follower above that backdrop without
-             changing the global Settings stacking context. -->
-        <NPopover v-model:show="creating" trigger="manual" placement="bottom-end" :show-arrow="false" :z-index="10000" raw :on-clickoutside="() => setCreating(false)">
-          <template #trigger>
-            <NButton type="primary" size="small" @click="setCreating(!creating)">＋ 添加分类</NButton>
-          </template>
-          <form class="settings-ledger-category-create" aria-label="添加交易分类" @submit.prevent="create" @pointerdown.stop>
-            <header class="settings-ledger-category-create-header">
-              <strong>添加分类</strong>
-              <span>创建后可用于记一笔。</span>
-            </header>
-            <label class="settings-ledger-category-create-field">
-              <span>分类类型</span>
-              <NSelect v-model:value="kind" size="small" :options="kindOptions" aria-label="分类类型" :disabled="saving" />
-            </label>
-            <label class="settings-ledger-category-create-field">
-              <span>分类名称</span>
-              <NInput v-model:value="name" size="small" placeholder="输入分类名称" aria-label="分类名称" :disabled="saving" autofocus />
-            </label>
-            <div class="settings-ledger-category-create-field">
-              <span>分类图标</span>
-              <div class="settings-ledger-category-create-icon" @pointerdown.stop @click.stop>
-                <LedgerAccountIconPicker v-model="newIcon" :disabled="saving" />
-                <span>点击选择图标</span>
-              </div>
-            </div>
-            <p v-if="createError" class="settings-ledger-category-error" role="alert">{{ createError }}</p>
-            <footer class="settings-ledger-category-create-actions">
-              <NButton attr-type="button" size="small" :disabled="saving" @click="setCreating(false)">取消</NButton>
-              <NButton attr-type="submit" type="primary" size="small" :loading="saving">添加</NButton>
-            </footer>
-          </form>
-        </NPopover>
+        <NDropdown trigger="click" :options="uploadOptions" :z-index="10000" :disabled="saving" @select="selectUploadKind($event as 'income' | 'expense')">
+          <NButton type="primary" size="small" :loading="saving">＋ 添加图标</NButton>
+        </NDropdown>
+        <input ref="uploadInput" class="settings-ledger-category-file-input" type="file" accept=".svg,image/svg+xml" @change="onFileSelected">
+        <p v-if="createError" class="settings-ledger-category-error" role="alert">{{ createError }}</p>
       </div>
     </header>
     <div class="settings-section-body">
-      <div class="settings-card settings-ledger-category-card">
-        <h4 class="settings-card-title">交易分类</h4>
-        <p v-if="operationError" class="settings-ledger-category-error" role="alert">{{ operationError }}</p>
-        <div class="settings-ledger-category-options" role="list" aria-live="polite" @click.self="stopManaging">
-          <div
-            v-for="category in categories"
-            :key="category.id"
-            class="settings-ledger-category-option"
-            :class="{ managing }"
-            role="listitem"
-            @pointerdown="startHold"
-            @pointerup="cancelHold"
-            @pointerleave="cancelHold"
-            @pointercancel="cancelHold"
-            @contextmenu.prevent="managing = true"
-          >
-            <span class="settings-ledger-category-glyph" aria-label="修改分类图标" @pointerdown.stop @pointerup.stop @click.stop @contextmenu.stop>
-              <LedgerAccountIconPicker :model-value="category.icon ?? DEFAULT_CATEGORY_ICON" :disabled="iconSavingId !== null" @update:model-value="updateIcon(category, $event)" />
-            </span>
-            <input
-              v-if="managing && editingId === category.id"
-              v-model="editingName"
-              class="settings-ledger-category-name-input"
-              aria-label="分类名称"
-              autofocus
-              @click.stop
-              @pointerdown.stop
-              @keydown.enter.prevent="finishRename(category)"
-              @keydown.esc.prevent="cancelRename"
-              @blur="finishRename(category)"
+      <p v-if="operationError" class="settings-ledger-category-error" role="alert">{{ operationError }}</p>
+      <div class="settings-ledger-category-groups">
+        <div
+          v-for="group in categoryGroups"
+          :key="group.kind"
+          class="settings-card settings-ledger-category-card"
+          :data-category-kind="group.kind"
+        >
+          <h4 class="settings-card-title">{{ group.title }}</h4>
+          <div class="settings-ledger-category-options" role="list" aria-live="polite" @click.self="stopManaging">
+            <div
+              v-for="category in group.categories"
+              :key="category.id"
+              class="settings-ledger-category-option"
+              :class="{ managing }"
+              role="listitem"
+              @pointerdown="startHold"
+              @pointerup="cancelHold"
+              @pointerleave="cancelHold"
+              @pointercancel="cancelHold"
+              @contextmenu.prevent="managing = true"
             >
-            <span v-else class="settings-ledger-category-label" @dblclick.stop="startRename(category.id, category.name)">{{ category.name }}</span>
-            <button
-              v-if="managing"
-              type="button"
-              class="settings-ledger-category-delete"
-              :disabled="archiveId === category.id"
-              :aria-label="`归档分类：${category.name}`"
-              @pointerdown.stop
-              @click.stop="archive(category)"
-            >×</button>
+              <span class="settings-ledger-category-glyph" aria-label="修改分类图标" @pointerdown.stop @pointerup.stop @click.stop @contextmenu.stop>
+              <img v-if="category.icon?.startsWith('custom_category_') && categoryIconSource(category.icon)" :src="categoryIconSource(category.icon)" alt="">
+              <LedgerAccountIconPicker v-else :model-value="category.icon ?? DEFAULT_CATEGORY_ICON" :disabled="iconSavingId === category.id" @update:model-value="updateIcon(category, $event)" />
+              </span>
+              <input
+                v-if="managing && editingId === category.id"
+                v-model="editingName"
+                class="settings-ledger-category-name-input"
+                aria-label="分类名称"
+                autofocus
+                @click.stop
+                @pointerdown.stop
+                @keydown.enter.prevent="finishRename(category)"
+                @keydown.esc.prevent="cancelRename"
+                @blur="finishRename(category)"
+              >
+              <span v-else class="settings-ledger-category-label" @dblclick.stop="startRename(category.id, category.name)">{{ category.name }}</span>
+              <button
+                v-if="managing"
+                type="button"
+                class="settings-ledger-category-delete"
+                :disabled="archiveId === category.id"
+                :aria-label="`归档分类：${category.name}`"
+                @pointerdown.stop
+                @click.stop="archive(category)"
+              >×</button>
+            </div>
+            <span v-if="!group.categories.length" class="settings-ledger-category-empty">{{ group.empty }}</span>
           </div>
-          <span v-if="!categories.length" class="settings-ledger-category-empty">暂无交易分类</span>
         </div>
       </div>
     </div>
@@ -238,11 +294,14 @@ async function create(): Promise<void> {
 
 <style scoped>
 .settings-section { display: flex; flex-direction: column; height: 100%; min-height: 0; }
-.settings-section-body { flex: 1 1 auto; min-height: 0; }
-.settings-ledger-category-card { display: flex; flex-direction: column; height: 100%; box-sizing: border-box; }
-.settings-ledger-category-options { display: grid; flex: 1 1 auto; grid-template-columns: repeat(5, minmax(0, 1fr)); align-content: start; gap: 10px; height: 70%; min-height: 0; box-sizing: border-box; overflow-y: auto; padding: 8px 10px 8px 2px; }
+.settings-section-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.settings-ledger-category-groups { display: grid; gap: 12px; padding-bottom: 4px; }
+.settings-ledger-category-card { display: flex; flex-direction: column; min-height: 0; box-sizing: border-box; }
+.settings-ledger-category-file-input { display: none; }
+.settings-ledger-category-options { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); align-content: start; gap: 10px; min-height: 88px; box-sizing: border-box; padding: 8px 10px 12px 2px; }
 .settings-ledger-category-option { position: relative; display: inline-flex; width: 100%; min-width: 0; min-height: 40px; box-sizing: border-box; align-items: center; justify-content: flex-start; gap: 7px; padding: 6px 12px; overflow: visible; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: var(--text-muted); cursor: pointer; font: inherit; text-align: left; transform-origin: 50% 55%; }
 .settings-ledger-category-glyph { display: grid; width: 22px; height: 22px; flex: 0 0 22px; place-items: center; }
+.settings-ledger-category-glyph > img { width: 20px; height: 20px; object-fit: contain; }
 .settings-ledger-category-glyph :deep(.ledger-icon-picker-trigger) { width: 22px; height: 22px; border-radius: 0; }
 .settings-ledger-category-glyph :deep(.ledger-icon-picker-trigger:hover) { background: transparent; }
 .settings-ledger-category-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -255,15 +314,6 @@ async function create(): Promise<void> {
 .settings-ledger-category-empty { color: var(--text-muted); font-size: .75rem; }
 .settings-ledger-category-error { margin: 0 0 8px; color: #dc4c4c; font-size: .75rem; }
 
-.settings-ledger-category-create { width: min(300px, calc(100vw - 24px)); box-sizing: border-box; padding: 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface, var(--bg)); color: var(--text-h); box-shadow: 0 8px 28px rgb(24 34 56 / 14%); }
-.settings-ledger-category-create-header { display: flex; flex-direction: column; gap: 2px; margin-bottom: 12px; }
-.settings-ledger-category-create-header strong { font-size: .9rem; font-weight: 650; }
-.settings-ledger-category-create-header span { color: var(--text-muted); font-size: .72rem; }
-.settings-ledger-category-create-field { display: grid; gap: 5px; margin-top: 10px; color: var(--text-muted); font-size: .75rem; }
-.settings-ledger-category-create-icon { display: flex; min-height: 34px; box-sizing: border-box; align-items: center; gap: 7px; padding: 1px 7px; border: 1px solid var(--border); border-radius: 6px; color: var(--text-muted); }
-.settings-ledger-category-create-icon > span { font-size: .78rem; }
-.settings-ledger-category-create .settings-ledger-category-error { margin: 8px 0 0; }
-.settings-ledger-category-create-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 
 @media (max-width: 900px) {
   .settings-ledger-category-options { grid-template-columns: repeat(3, minmax(0, 1fr)); }
