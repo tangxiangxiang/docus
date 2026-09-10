@@ -150,7 +150,10 @@ async function create(): Promise<void> {
         <p>管理记账时使用的分类；已有交易不会受到影响。</p>
       </div>
       <div class="settings-section-actions">
-        <NPopover v-model:show="creating" trigger="manual" placement="bottom-end" :show-arrow="false" raw :on-clickoutside="() => setCreating(false)">
+        <!-- Settings is a teleported modal with a deliberately high backdrop
+             z-index. Keep this local follower above that backdrop without
+             changing the global Settings stacking context. -->
+        <NPopover v-model:show="creating" trigger="manual" placement="bottom-end" :show-arrow="false" :z-index="10000" raw :on-clickoutside="() => setCreating(false)">
           <template #trigger>
             <NButton type="primary" size="small" @click="setCreating(!creating)">＋ 添加分类</NButton>
           </template>
