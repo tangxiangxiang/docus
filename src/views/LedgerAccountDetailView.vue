@@ -18,7 +18,7 @@ import LedgerAccountEditForm from '../components/ledger/LedgerAccountEditForm.vu
 import LedgerPendingCreateGate from '../components/ledger/LedgerPendingCreateGate.vue'
 import { ledgerAccountTypeOptionsForNature } from '../features/ledger/accountPresentation'
 import { ledgerErrorMessage } from '../features/ledger/ledgerErrors'
-import { formatLedgerMoney, formatLedgerSignedMoney } from '../features/ledger/money'
+import { formatLedgerMoney } from '../features/ledger/money'
 import { formatLedgerDateTime } from '../features/ledger/time'
 import { useLedgerStore } from '../features/ledger/ledgerStore'
 import type { LedgerAccountDto, LedgerMovementSummary, LedgerTransactionDto } from '../../shared/ledgerProtocol'
@@ -160,12 +160,11 @@ function transactionTypeLabel(type: LedgerTransactionDto['type']): string {
   return '调整'
 }
 
-function transactionAmount(transaction: LedgerTransactionDto): string {
-  const currency = account.value?.currency ?? 'CNY'
-  if (!Number.isSafeInteger(transaction.amountMinor)) return '—'
-  if (transaction.type === 'income') return `+${formatLedgerMoney(transaction.amountMinor, currency)}`
-  if (transaction.type === 'expense' || (transaction.type === 'transfer' && transaction.fromAccountId === accountId.value)) return `-${formatLedgerMoney(transaction.amountMinor, currency)}`
-  return formatLedgerSignedMoney(transaction.amountMinor, currency)
+function transactionAmountMinor(transaction: LedgerTransactionDto): number | null {
+  if (!Number.isSafeInteger(transaction.amountMinor)) return null
+  if (transaction.type === 'income') return transaction.amountMinor
+  if (transaction.type === 'expense' || (transaction.type === 'transfer' && transaction.fromAccountId === accountId.value)) return -transaction.amountMinor
+  return transaction.amountMinor
 }
 
 function formatTimestamp(timestamp: number): string {
@@ -435,7 +434,7 @@ const netMovement = computed(() => {
         </div>
         <div class="ledger-detail-card ledger-metric-item">
           <span class="ledger-metric-icon is-net" aria-hidden="true"><NIcon><ChartBar /></NIcon></span>
-          <div><span>本月净变动</span><strong :class="account.nature === 'liability' ? (netMovement > 0 ? 'is-expense' : 'is-income') : (netMovement < 0 ? 'is-expense' : 'is-income')">{{ formatLedgerSignedMoney(netMovement, account.currency) }}</strong></div>
+          <div><span>本月净变动</span><strong :class="account.nature === 'liability' ? (netMovement > 0 ? 'is-expense' : 'is-income') : (netMovement < 0 ? 'is-expense' : 'is-income')"><LedgerAnimatedMoney :minor="netMovement" :currency="account.currency" signed /></strong></div>
         </div>
       </section>
 
@@ -466,8 +465,11 @@ const netMovement = computed(() => {
                 <span class="ledger-transaction-badge" :class="`is-${transaction.type}`">{{ transactionTypeLabel(transaction.type) }}</span>
                 <span class="ledger-transaction-category">{{ transactionCategory(transaction) }}</span>
                 <span class="ledger-transaction-summary">{{ transactionTitle(transaction) }}</span>
-                <strong :class="`is-${transaction.type}`">{{ transactionAmount(transaction) }}</strong>
-                <span class="ledger-transaction-balance">{{ formatLedgerMoney(transactionBalances.get(transaction.id) ?? account.currentBalanceMinor, account.currency) }}</span>
+                <strong :class="`is-${transaction.type}`">
+                  <LedgerAnimatedMoney v-if="transactionAmountMinor(transaction) !== null" :minor="transactionAmountMinor(transaction)!" :currency="account.currency" signed />
+                  <span v-else>—</span>
+                </strong>
+                <span class="ledger-transaction-balance"><LedgerAnimatedMoney :minor="transactionBalances.get(transaction.id) ?? account.currentBalanceMinor" :currency="account.currency" /></span>
               </div>
             </div>
             <p v-else class="ledger-empty-copy">暂无交易记录</p>
@@ -483,7 +485,7 @@ const netMovement = computed(() => {
               <div><dt>资产类别</dt><dd>{{ account.nature === 'asset' ? '资产' : '负债' }}</dd></div>
               <div><dt>币种</dt><dd>{{ account.currency }}</dd></div>
               <div v-if="account.cardNumber"><dt>卡号</dt><dd>{{ maskCardNumber(account.cardNumber) }}</dd></div>
-              <div><dt>期初余额</dt><dd>{{ formatLedgerMoney(account.openingBalanceMinor, account.currency) }}</dd></div>
+              <div><dt>期初余额</dt><dd><LedgerAnimatedMoney :minor="account.openingBalanceMinor" :currency="account.currency" /></dd></div>
               <div><dt>开户日期</dt><dd>{{ account.openingDate }}</dd></div>
               <div><dt>创建时间</dt><dd>{{ formatTimestamp(account.createdAt) }}</dd></div>
               <div><dt>最后更新</dt><dd>{{ formatTimestamp(account.updatedAt) }}</dd></div>
@@ -774,6 +776,10 @@ const netMovement = computed(() => {
 .ledger-recent-row strong { color: var(--text-h); font-size: .8rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .ledger-recent-row strong.is-income { color: var(--docus-positive, #15803d); }
 .ledger-recent-row strong.is-expense { color: var(--ledger-expense, #dc3f4d); }
+.ledger-recent-table-head > :nth-child(5),
+.ledger-recent-table-head > :nth-child(6),
+.ledger-recent-row > :nth-child(5),
+.ledger-recent-row > :nth-child(6) { justify-self: end; text-align: right; }
 .ledger-transaction-badge { justify-self: start; padding: 3px 8px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--accent); font-size: .68rem; white-space: nowrap; }
 .ledger-transaction-badge.is-income { background: color-mix(in srgb, #2da76e 13%, transparent); color: #168451; }
 .ledger-transaction-badge.is-expense { background: color-mix(in srgb, #d94a58 13%, transparent); color: #c43443; }

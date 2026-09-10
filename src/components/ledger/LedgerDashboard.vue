@@ -639,7 +639,7 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
           <div class="ledger-dashboard-account-groups">
             <section class="ledger-dashboard-account-group" data-testid="ledger-dashboard-assets" aria-labelledby="ledger-dashboard-assets-title">
               <h3 id="ledger-dashboard-assets-title">
-                <span><i class="is-asset" aria-hidden="true" />资产账户 <small>({{ assetAccounts.length }})</small></span>
+                <span><i class="is-asset" aria-hidden="true" />资产账户 <small>(<NNumberAnimation :from="0" :to="assetAccounts.length" :duration="2000" />)</small></span>
                 <strong><LedgerAnimatedMoney :minor="overview.assetTotalMinor" :currency="overview.currency" /></strong>
               </h3>
               <div v-if="assetAccounts.length" class="ledger-dashboard-account-list-viewport" data-testid="ledger-dashboard-assets-viewport" @scroll="showScrollbarWhileScrolling">
@@ -664,7 +664,7 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
             </section>
             <section class="ledger-dashboard-account-group" data-testid="ledger-dashboard-liabilities" aria-labelledby="ledger-dashboard-liabilities-title">
               <h3 id="ledger-dashboard-liabilities-title">
-                <span><i class="is-liability" aria-hidden="true" />负债账户 <small>({{ liabilityAccounts.length }})</small></span>
+                <span><i class="is-liability" aria-hidden="true" />负债账户 <small>(<NNumberAnimation :from="0" :to="liabilityAccounts.length" :duration="2000" />)</small></span>
                 <strong><LedgerAnimatedMoney :minor="overview.liabilityTotalMinor" :currency="overview.currency" /></strong>
               </h3>
               <div v-if="liabilityAccounts.length" class="ledger-dashboard-account-list-viewport" data-testid="ledger-dashboard-liabilities-viewport" @scroll="showScrollbarWhileScrolling">
