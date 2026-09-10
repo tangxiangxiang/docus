@@ -86,6 +86,7 @@ export interface LedgerCategoryDto {
   readonly kind: LedgerCategoryKind
   readonly name: string
   readonly normalizedName: string
+  readonly icon?: LedgerAccountIcon
   readonly archivedAt: number | null
   readonly version: number
   readonly createdAt: number
@@ -216,6 +217,7 @@ export interface LedgerAccountCreateRequest {
 export interface LedgerCategoryCreateRequest {
   readonly kind: LedgerCategoryKind
   readonly name: string
+  readonly icon?: LedgerAccountIcon
 }
 
 export interface LedgerAdjustmentEndpointRequest {

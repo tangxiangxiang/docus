@@ -29,9 +29,9 @@ function select(icon: AccountIcon): void {
 </script>
 
 <template>
-  <NPopover v-model:show="show" trigger="click" placement="bottom-end" :show-arrow="false" raw>
+  <NPopover v-model:show="show" trigger="manual" placement="bottom-end" :show-arrow="false" raw>
     <template #trigger>
-      <span class="ledger-icon-picker-trigger" :class="{ 'is-disabled': disabled }" role="button" :tabindex="disabled ? -1 : 0" :aria-disabled="disabled ? 'true' : undefined" aria-label="选择账户图标" @keydown.enter.prevent="!disabled && (show = true)" @keydown.space.prevent="!disabled && (show = true)">
+      <span class="ledger-icon-picker-trigger" :class="{ 'is-disabled': disabled }" role="button" :tabindex="disabled ? -1 : 0" :aria-disabled="disabled ? 'true' : undefined" aria-label="选择账户图标" @click.stop="!disabled && (show = true)" @keydown.enter.prevent="!disabled && (show = true)" @keydown.space.prevent="!disabled && (show = true)">
         <LedgerAccountIcon :icon="modelValue" :size="20" />
       </span>
     </template>

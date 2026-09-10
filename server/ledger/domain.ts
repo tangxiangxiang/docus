@@ -79,6 +79,7 @@ export interface LedgerCategoryRow {
   readonly kind?: unknown
   readonly name?: unknown
   readonly normalized_name?: unknown
+  readonly icon?: unknown
   readonly archived_at?: unknown
   readonly version?: unknown
   readonly created_at?: unknown
@@ -139,6 +140,7 @@ export interface LedgerCategory {
   readonly kind: LedgerCategoryKind
   readonly name: string
   readonly normalizedName: string
+  readonly icon?: LedgerAccountIcon
   readonly archivedAt: number | null
   readonly version: number
   readonly createdAt: number
@@ -483,6 +485,7 @@ export function ledgerCategoryFromRow(row: unknown): LedgerCategory {
     kind: enumValue(record, 'category', 'kind', LEDGER_CATEGORY_KINDS),
     name,
     normalizedName,
+    ...(record.icon && record.icon !== 'wallet' ? { icon: record.icon as LedgerAccountIcon } : {}),
     archivedAt: nullableUtcMilliseconds(record, 'category', 'archived_at'),
     version: positiveVersion(record, 'category', 'version'),
     createdAt: utcMilliseconds(record, 'category', 'created_at'),

@@ -1,6 +1,7 @@
 import { authFetch } from '../../lib/auth-session'
 import type {
   LedgerAccountCreateRequest,
+  LedgerAccountIcon,
   LedgerAccountDto,
   LedgerAccountNature,
   LedgerAccountTransactionsDto,
@@ -36,7 +37,7 @@ export type LedgerAccountPatchInput = {
   readonly cardNumber?: string
   readonly type?: LedgerAccountType
   readonly nature?: LedgerAccountNature
-  readonly icon?: import('../../../shared/ledgerProtocol').LedgerAccountIcon
+  readonly icon?: LedgerAccountIcon
   readonly openingBalanceMinor?: number
   readonly openingDate?: string
 }
@@ -45,6 +46,7 @@ export type LedgerCategoryPatchInput = {
   readonly expectedVersion: number
   readonly kind?: LedgerCategoryKind
   readonly name?: string
+  readonly icon?: LedgerAccountIcon
 }
 
 export type LedgerTransactionPatchInput = {
@@ -116,7 +118,11 @@ function accountResponse(value: unknown): LedgerAccountDto {
 }
 
 function categoryResponse(value: unknown): LedgerCategoryDto {
-  if (!isRecord(value) || typeof value.id !== 'string' || typeof value.name !== 'string') {
+  if (!isRecord(value) || typeof value.id !== 'string' || typeof value.name !== 'string'
+    || (value.icon !== undefined
+      && (typeof value.icon !== 'string'
+        || (!['wallet', 'credit_card', 'cash', 'building_bank', 'briefcase'].includes(value.icon)
+          && !/^custom_[a-z0-9_]+$/.test(value.icon))))) {
     throw malformed('Category response')
   }
   return value as unknown as LedgerCategoryDto

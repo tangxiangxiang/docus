@@ -392,11 +392,23 @@ function assertLedgerAccountReplayBody(value: unknown): asserts value is LedgerA
 }
 
 function assertLedgerCategoryReplayBody(value: unknown): asserts value is LedgerCategoryDto {
-  const object = replayExactObject(value, LEDGER_CATEGORY_REPLAY_KEYS, 'category response')
+  const object = replayExactObject(
+    value,
+    Object.prototype.hasOwnProperty.call(value, 'icon')
+      ? [...LEDGER_CATEGORY_REPLAY_KEYS, 'icon']
+      : LEDGER_CATEGORY_REPLAY_KEYS,
+    'category response',
+  )
   assertReplayString(object.id, 'category response.id')
   assertReplayEnum(object.kind, ['income', 'expense'], 'category response.kind')
   assertReplayString(object.name, 'category response.name')
   assertReplayString(object.normalizedName, 'category response.normalizedName')
+  if (Object.prototype.hasOwnProperty.call(object, 'icon')) {
+    if (!(['wallet', 'credit_card', 'cash', 'building_bank', 'briefcase'].includes(object.icon as string)
+      || /^custom_[a-z0-9_]+$/.test(object.icon as string))) {
+      throw new TypeError('Ledger replay response rejected: category response.icon has an unsupported value')
+    }
+  }
   assertReplayNullableSafeInteger(object.archivedAt, 'category response.archivedAt')
   assertReplayPositiveSafeInteger(object.version, 'category response.version')
   assertReplaySafeInteger(object.createdAt, 'category response.createdAt')

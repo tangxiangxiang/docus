@@ -17,7 +17,10 @@ const options: ReadonlyArray<{ value: AccountIcon; label: string }> = [
 ]
 const enabled = (value: AccountIcon) => preferences.availableIcons.value.includes(value)
 const hasMultipleIcons = computed(() => preferences.availableIcons.value.length > 1)
-const usedIcons = computed(() => new Set(ledgerStore.accounts.value.map((account) => account.icon ?? 'wallet')))
+const usedIcons = computed(() => new Set([
+  ...ledgerStore.accounts.value.map((account) => account.icon ?? 'wallet'),
+  ...ledgerStore.categories.value.map((category) => category.icon ?? 'wallet'),
+]))
 const canDelete = (icon: AccountIcon) => hasMultipleIcons.value && !icon.startsWith('custom_builtin_') && !usedIcons.value.has(icon)
 const builtinLabels = Object.fromEntries(options.map(({ value, label }) => [value, label]))
 const hiddenBuiltins = new Set<AccountIcon>(['wallet', 'credit_card', 'cash', 'building_bank', 'briefcase'])

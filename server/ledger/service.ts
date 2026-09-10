@@ -251,6 +251,7 @@ function toCategoryDto(category: LedgerCategory): LedgerCategoryDto {
     kind: category.kind,
     name: category.name,
     normalizedName: category.normalizedName,
+    ...(category.icon && category.icon !== 'wallet' ? { icon: category.icon } : {}),
     archivedAt: category.archivedAt,
     version: category.version,
     createdAt: category.createdAt,
@@ -1220,6 +1221,7 @@ export function createLedgerService(
           kind: request.kind,
           name: request.name,
           normalizedName,
+          ...(request.icon && request.icon !== 'wallet' ? { icon: request.icon } : {}),
           archivedAt: null,
           version: 1,
           createdAt: timestamp,
@@ -1270,6 +1272,7 @@ export function createLedgerService(
         kind,
         name,
         normalizedName,
+        ...(patch.icon === undefined ? {} : patch.icon === 'wallet' ? { icon: undefined } : { icon: patch.icon }),
         version: nextVersion(category.version),
         updatedAt: generatedTimestamp(now),
       }

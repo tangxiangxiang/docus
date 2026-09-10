@@ -75,6 +75,12 @@ function safeDate(value: unknown): value is string {
   return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
 }
 
+function safeLedgerIcon(value: unknown): boolean {
+  return typeof value === 'string'
+    && (['wallet', 'credit_card', 'cash', 'building_bank', 'briefcase'].includes(value)
+      || /^custom_[a-z0-9_]+$/.test(value))
+}
+
 function isSafeSettingsPayload(value: unknown): value is LedgerSettingsCreateRequest {
   return isRecord(value)
     && hasExactKeys(value, ['baseCurrency', 'timezone'])
@@ -102,9 +108,10 @@ function isSafeAccountPayload(value: unknown): value is LedgerAccountCreateReque
 
 function isSafeCategoryPayload(value: unknown): value is LedgerCategoryCreateRequest {
   return isRecord(value)
-    && hasExactKeys(value, ['kind', 'name'])
+    && (hasExactKeys(value, ['kind', 'name']) || hasExactKeys(value, ['kind', 'name', 'icon']))
     && (value.kind === 'income' || value.kind === 'expense')
     && nonEmptyString(value.name)
+    && (value.icon === undefined || safeLedgerIcon(value.icon))
 }
 
 function isSafeTransactionPayload(value: unknown): value is LedgerTransactionCreateRequest {

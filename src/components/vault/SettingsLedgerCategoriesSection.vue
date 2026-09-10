@@ -3,11 +3,9 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { NButton, NInput, NPopover, NSelect, type SelectOption } from 'naive-ui'
 import type { LedgerAccountIcon } from '../../../shared/ledgerProtocol'
 import { ledgerErrorMessage } from '../../features/ledger/ledgerErrors'
+import { DEFAULT_CATEGORY_ICON, migrateLegacyCategoryIcons } from '../../features/ledger/categoryIconMigration'
 import { useLedgerStore } from '../../features/ledger/ledgerStore'
 import LedgerAccountIconPicker from '../ledger/LedgerAccountIconPicker.vue'
-
-const CATEGORY_ICON_STORAGE_KEY = 'docus.ledger.category-icons'
-const DEFAULT_CATEGORY_ICON: LedgerAccountIcon = 'wallet'
 
 const store = useLedgerStore()
 const kind = ref<'income' | 'expense'>('expense')
@@ -17,7 +15,7 @@ const operationError = ref('')
 const saving = ref(false)
 const creating = ref(false)
 const newIcon = ref<LedgerAccountIcon>(DEFAULT_CATEGORY_ICON)
-const categoryIcons = ref<Record<string, LedgerAccountIcon>>({})
+const iconSavingId = ref<string | null>(null)
 const managing = ref(false)
 const editingId = ref<string | null>(null)
 const editingName = ref('')
@@ -29,30 +27,30 @@ const kindOptions: SelectOption[] = [
 ]
 const categories = computed(() => store.activeCategories.value)
 
+async function bootstrapAndMigrate(): Promise<void> {
+  await store.bootstrap()
+  await migrateLegacyCategoryIcons(store.categories.value, async (id, patch) => store.patchCategory(id, patch))
+}
+
 onMounted(() => {
-  void store.bootstrap()
-  try {
-    categoryIcons.value = JSON.parse(localStorage.getItem(CATEGORY_ICON_STORAGE_KEY) ?? '{}') as Record<string, LedgerAccountIcon>
-  } catch {
-    categoryIcons.value = {}
-  }
+  void bootstrapAndMigrate()
 })
 
 onBeforeUnmount(() => {
   cancelHold()
 })
 
-function persistIcons(): void {
-  localStorage.setItem(CATEGORY_ICON_STORAGE_KEY, JSON.stringify(categoryIcons.value))
-}
-
-function iconFor(id: string): LedgerAccountIcon {
-  return categoryIcons.value[id] ?? DEFAULT_CATEGORY_ICON
-}
-
-function updateIcon(id: string, icon: LedgerAccountIcon): void {
-  categoryIcons.value = { ...categoryIcons.value, [id]: icon }
-  persistIcons()
+async function updateIcon(category: { id: string; icon?: LedgerAccountIcon; version: number }, icon: LedgerAccountIcon): Promise<void> {
+  if (iconSavingId.value !== null || icon === (category.icon ?? DEFAULT_CATEGORY_ICON)) return
+  iconSavingId.value = category.id
+  operationError.value = ''
+  try {
+    await store.patchCategory(category.id, { expectedVersion: category.version, icon })
+  } catch (cause) {
+    operationError.value = ledgerErrorMessage(cause, '分类图标没有更新，请刷新后重试。')
+  } finally {
+    iconSavingId.value = null
+  }
 }
 
 function startHold(): void {
@@ -134,10 +132,8 @@ async function create(): Promise<void> {
   saving.value = true
   createError.value = ''
   try {
-    const created = await store.createCategory({ kind: kind.value, name: trimmed })
-    updateIcon(created.id, newIcon.value)
-    creating.value = false
-    resetCreateForm()
+    await store.createCategory({ kind: kind.value, name: trimmed, icon: newIcon.value })
+    setCreating(false)
   } catch (cause) {
     createError.value = ledgerErrorMessage(cause, '分类没有创建，请换一个名称后重试。')
   } finally {
@@ -154,9 +150,9 @@ async function create(): Promise<void> {
         <p>管理记账时使用的分类；已有交易不会受到影响。</p>
       </div>
       <div class="settings-section-actions">
-        <NPopover :show="creating" trigger="click" placement="bottom-end" :show-arrow="false" raw @update:show="setCreating">
+        <NPopover v-model:show="creating" trigger="manual" placement="bottom-end" :show-arrow="false" raw :on-clickoutside="() => setCreating(false)">
           <template #trigger>
-            <NButton type="primary" size="small">＋ 添加分类</NButton>
+            <NButton type="primary" size="small" @click="setCreating(!creating)">＋ 添加分类</NButton>
           </template>
           <form class="settings-ledger-category-create" aria-label="添加交易分类" @submit.prevent="create" @pointerdown.stop>
             <header class="settings-ledger-category-create-header">
@@ -205,7 +201,7 @@ async function create(): Promise<void> {
             @contextmenu.prevent="managing = true"
           >
             <span class="settings-ledger-category-glyph" aria-label="修改分类图标" @pointerdown.stop @pointerup.stop @click.stop @contextmenu.stop>
-              <LedgerAccountIconPicker :model-value="iconFor(category.id)" @update:model-value="updateIcon(category.id, $event)" />
+              <LedgerAccountIconPicker :model-value="category.icon ?? DEFAULT_CATEGORY_ICON" :disabled="iconSavingId !== null" @update:model-value="updateIcon(category, $event)" />
             </span>
             <input
               v-if="managing && editingId === category.id"

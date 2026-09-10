@@ -254,10 +254,11 @@ export function parseAccountCreateRequest(value: unknown): LedgerAccountCreateRe
 
 export function parseCategoryCreateRequest(value: unknown): LedgerCategoryCreateRequest {
   const record = asRecord(value)
-  assertExactKeys(record, ['kind', 'name'], ['kind', 'name'])
+  assertExactKeys(record, ['kind', 'name', 'icon'], ['kind', 'name'])
   return {
     kind: parseCategoryKind(record),
     name: parseName(record),
+    ...(hasOwn(record, 'icon') ? { icon: parseAccountIcon(record) } : {}),
   }
 }
 
@@ -441,18 +442,20 @@ export interface LedgerCategoryPatchRequest {
   readonly expectedVersion: number
   readonly kind?: LedgerCategoryKind
   readonly name?: string
+  readonly icon?: LedgerAccountIcon
 }
 
 export function parseCategoryPatchRequest(value: unknown): LedgerCategoryPatchRequest {
   const record = asRecord(value)
-  assertExactKeys(record, ['expectedVersion', 'kind', 'name'], ['expectedVersion'])
-  if (!hasOwn(record, 'kind') && !hasOwn(record, 'name')) {
+  assertExactKeys(record, ['expectedVersion', 'kind', 'name', 'icon'], ['expectedVersion'])
+  if (!hasOwn(record, 'kind') && !hasOwn(record, 'name') && !hasOwn(record, 'icon')) {
     throw ledgerValidationError('category PATCH must contain at least one mutable field')
   }
   return {
     expectedVersion: parseExpectedVersion(record),
     ...(hasOwn(record, 'kind') ? { kind: parseCategoryKind(record) } : {}),
     ...(hasOwn(record, 'name') ? { name: parseName(record) } : {}),
+    ...(hasOwn(record, 'icon') ? { icon: parseAccountIcon(record) } : {}),
   }
 }
 

@@ -106,14 +106,14 @@ const HAS_ACCOUNT_HISTORY = `
 `
 
 const SELECT_CATEGORY = `
-  SELECT id, kind, name, normalized_name, archived_at, version,
+  SELECT id, kind, name, normalized_name, icon, archived_at, version,
          created_at, updated_at
   FROM ledger_categories
   WHERE id = @id
 `
 
 const SELECT_CATEGORY_BY_IDENTITY = `
-  SELECT id, kind, name, normalized_name, archived_at, version,
+  SELECT id, kind, name, normalized_name, icon, archived_at, version,
          created_at, updated_at
   FROM ledger_categories
   WHERE kind = @kind
@@ -121,14 +121,14 @@ const SELECT_CATEGORY_BY_IDENTITY = `
 `
 
 const SELECT_CATEGORIES = `
-  SELECT id, kind, name, normalized_name, archived_at, version,
+  SELECT id, kind, name, normalized_name, icon, archived_at, version,
          created_at, updated_at
   FROM ledger_categories
   ORDER BY kind ASC, normalized_name ASC, id ASC
 `
 
 const SELECT_ACTIVE_CATEGORIES = `
-  SELECT id, kind, name, normalized_name, archived_at, version,
+  SELECT id, kind, name, normalized_name, icon, archived_at, version,
          created_at, updated_at
   FROM ledger_categories
   WHERE archived_at IS NULL
@@ -137,9 +137,9 @@ const SELECT_ACTIVE_CATEGORIES = `
 
 const INSERT_CATEGORY = `
   INSERT INTO ledger_categories (
-    id, kind, name, normalized_name, archived_at, version, created_at, updated_at
+    id, kind, name, normalized_name, icon, archived_at, version, created_at, updated_at
   ) VALUES (
-    @id, @kind, @name, @normalizedName, @archivedAt, @version, @createdAt, @updatedAt
+    @id, @kind, @name, @normalizedName, @icon, @archivedAt, @version, @createdAt, @updatedAt
   )
 `
 
@@ -148,6 +148,7 @@ const UPDATE_CATEGORY = `
   SET kind = @kind,
       name = @name,
       normalized_name = @normalizedName,
+      icon = @icon,
       archived_at = @archivedAt,
       version = @version,
       updated_at = @updatedAt
@@ -437,6 +438,7 @@ interface CategoryParams {
   readonly kind: LedgerCategory['kind']
   readonly name: string
   readonly normalizedName: string
+  readonly icon: LedgerCategory['icon']
   readonly archivedAt: number | null
   readonly version: number
   readonly createdAt: number
@@ -535,6 +537,7 @@ function categoryParams(category: LedgerCategory): CategoryParams {
     kind: category.kind,
     name: category.name,
     normalizedName: category.normalizedName,
+    icon: category.icon ?? 'wallet',
     archivedAt: category.archivedAt,
     version: category.version,
     createdAt: category.createdAt,
