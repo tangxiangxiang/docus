@@ -359,7 +359,7 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
   {
     key: 'transaction',
     title: '交易',
-    width: 230,
+    width: 210,
     render: (transaction) => h('span', { class: 'ledger-table-primary' }, [
       h('strong', { title: transactionTitle(transaction) }, transactionTitle(transaction)),
     ]),
@@ -388,7 +388,7 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
   {
     key: 'note',
     title: '备注',
-    width: 220,
+    width: 200,
     render: (transaction) => {
       const detail = [transaction.note, transaction.location].filter(Boolean).join(' · ')
       return h('span', { class: 'ledger-transaction-note', title: detail || undefined }, detail || '—')
@@ -397,7 +397,7 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
   {
     key: 'time',
     title: '时间',
-    width: 135,
+    width: 175,
     render: (transaction) => h('span', {
       class: 'ledger-transaction-date',
       title: formatLedgerDateTime(transaction.occurredAt, store.settings.value?.timezone ?? 'UTC'),
@@ -559,6 +559,7 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
         :row-key="(transaction) => transaction.id"
         :row-props="transactionRowProps"
         :loading="loading || paginationLoading"
+        :max-height="250"
         size="small"
         :bordered="false"
         :bottom-bordered="false"
@@ -977,7 +978,12 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
 }
 .ledger-transaction-table :deep(.n-data-table) { width: 100%; }
 .ledger-transaction-table :deep(.n-data-table-wrapper) { min-width: 1000px; }
-.ledger-transaction-table :deep(.n-data-table-table) { display: table; width: 100%; table-layout: fixed; }
+.ledger-transaction-table :deep(.n-data-table-table) {
+  display: table;
+  width: 100%;
+  margin: 0;
+  table-layout: fixed;
+}
 .ledger-transaction-table :deep(.n-data-table-th),
 .ledger-transaction-table :deep(.n-data-table-td) {
   border-right: 0;
@@ -1095,7 +1101,7 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
 .ledger-transaction-amount.is-expense { color: var(--ledger-expense); }
 .ledger-transaction-pagination {
   justify-content: space-between;
-  margin-top: 0;
+  margin-top: auto;
   padding: 12px 22px;
   border-top: 1px solid var(--ledger-divider);
   background: color-mix(in srgb, var(--bg) 14%, transparent);
@@ -1164,13 +1170,18 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
     flex: 1 1 auto;
   }
   .ledger-transaction-history .ledger-transaction-table {
-    overflow: auto;
+    flex: 0 0 288px;
+    height: 288px;
+    overflow: visible;
   }
   .ledger-transaction-history .ledger-transaction-table :deep(.n-data-table),
   .ledger-transaction-history .ledger-transaction-table :deep(.n-data-table-wrapper) {
     min-height: 0;
   }
   .ledger-transaction-pagination {
+    box-sizing: border-box;
+    flex-basis: 53px;
+    height: 53px;
     position: relative;
     z-index: 1;
   }

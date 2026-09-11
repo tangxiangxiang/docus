@@ -6,6 +6,7 @@ import NavBar from './components/NavBar.vue'
 import ToastHost from './components/ToastHost.vue'
 import ConfirmHost from './components/ConfirmHost.vue'
 import PromptHost from './components/PromptHost.vue'
+import SettingsModal from './components/vault/SettingsModal.vue'
 import { VaultViewModeKey, type VaultViewMode } from './composables/vault/viewMode'
 import { useAuth } from './composables/useAuth'
 import { shouldShowNormalChrome } from './lib/auth-chrome'
@@ -28,10 +29,12 @@ const toast = useToast()
 const diaryAccess = useDiaryAccessSession()
 const { activeScope, selectScope } = useScopeFilter()
 const settingsRequestTick = ref(0)
+const ledgerSettingsOpen = ref(false)
 const diaryCalendarVisible = ref(false)
 
 function requestSettings(): void {
   settingsRequestTick.value += 1
+  if (route.path === '/ledger' || route.path.startsWith('/ledger/')) ledgerSettingsOpen.value = true
 }
 
 provide(AppShellContextKey, { settingsRequestTick, diaryCalendarVisible })
@@ -277,6 +280,11 @@ provide(VaultViewModeKey, { mode: viewMode, set: setViewMode, toggle: toggleView
     @open-settings="requestSettings"
     @logout="onLogout"
     @lock-diary="lockDiary"
+  />
+  <SettingsModal
+    v-if="isLedgerRoute"
+    :open="ledgerSettingsOpen"
+    @close="ledgerSettingsOpen = false"
   />
   <section
     v-if="!showRoutedContent"
