@@ -350,11 +350,18 @@ export interface LedgerTransactionQueryOptions {
   readonly search?: string
   readonly includeDeleted?: boolean
   readonly limit: number
+  readonly offset?: number
   readonly cursor?: {
     readonly occurredAt: number
     readonly createdAt: number
     readonly id: string
   }
+}
+
+export interface LedgerTransactionQuerySummary {
+  readonly total: number
+  readonly incomeMinor: number
+  readonly expenseMinor: number
 }
 
 export interface LedgerTransactionRangeOptions {
@@ -391,6 +398,7 @@ export interface LedgerRepository {
   listActiveTransactionsInRange(options: LedgerTransactionRangeOptions): LedgerTransaction[]
   listRecentActiveTransactionsBefore(to: number, limit: number): LedgerTransaction[]
   queryTransactions(options: LedgerTransactionQueryOptions): LedgerTransaction[]
+  summarizeTransactions(options: LedgerTransactionQueryOptions): LedgerTransactionQuerySummary
 
   getIdempotencyRecord(operationScope: string, idempotencyKey: string): LedgerIdempotencyRecord | null
   insertIdempotencyRecord(record: LedgerIdempotencyRecord): void
@@ -693,6 +701,77 @@ function idempotencyParams(record: LedgerIdempotencyRecord): IdempotencyParams {
   }
 }
 
+function transactionQueryFilter(
+  options: LedgerTransactionQueryOptions,
+  includeCursor: boolean,
+): { clauses: string[]; params: Record<string, string | number> } {
+  const clauses: string[] = []
+  const params: Record<string, string | number> = {}
+
+  if (options.includeDeleted !== true) clauses.push('deleted_at IS NULL')
+
+  if (options.type !== undefined && options.type !== 'all') {
+    clauses.push('type = @type')
+    params.type = options.type
+  }
+
+  if (options.accountId !== undefined) {
+    clauses.push(`(
+      account_id = @accountId
+      OR from_account_id = @accountId
+      OR to_account_id = @accountId
+    )`)
+    params.accountId = options.accountId
+  }
+
+  if (options.categoryId !== undefined) {
+    clauses.push('category_id = @categoryId')
+    params.categoryId = options.categoryId
+  }
+
+  if (options.from !== undefined) {
+    clauses.push('occurred_at >= @from')
+    params.from = options.from
+  }
+  if (options.to !== undefined) {
+    clauses.push('occurred_at < @to')
+    params.to = options.to
+  }
+
+  if (options.search !== undefined && options.search.length > 0) {
+    const escaped = options.search
+      .replaceAll('\\', '\\\\')
+      .replaceAll('%', '\\%')
+      .replaceAll('_', '\\_')
+    params.searchPattern = `%${escaped}%`
+    clauses.push(`(
+      location LIKE @searchPattern ESCAPE '\\' COLLATE NOCASE
+      OR payee LIKE @searchPattern ESCAPE '\\' COLLATE NOCASE
+      OR note LIKE @searchPattern ESCAPE '\\' COLLATE NOCASE
+    )`)
+  }
+
+  if (includeCursor && options.cursor !== undefined) {
+    clauses.push(`(
+      occurred_at < @cursorOccurredAt
+      OR (
+        occurred_at = @cursorOccurredAt
+        AND created_at < @cursorCreatedAt
+      )
+      OR (
+        occurred_at = @cursorOccurredAt
+        AND created_at = @cursorCreatedAt
+        AND id < @cursorId
+      )
+    )`)
+    params.cursorOccurredAt = options.cursor.occurredAt
+    params.cursorCreatedAt = options.cursor.createdAt
+    params.cursorId = options.cursor.id
+  }
+
+  return { clauses, params }
+}
+
 export function createLedgerRepository(db: DatabaseT): LedgerRepository {
   const statements = {
     getSettings: db.prepare(SELECT_SETTINGS),
@@ -884,71 +963,9 @@ export function createLedgerRepository(db: DatabaseT): LedgerRepository {
     },
 
     queryTransactions(options: LedgerTransactionQueryOptions): LedgerTransaction[] {
-      const clauses: string[] = []
-      const params: Record<string, string | number> = {
-        limit: options.limit + 1,
-      }
-
-      if (options.includeDeleted !== true) clauses.push('deleted_at IS NULL')
-
-      if (options.type !== undefined && options.type !== 'all') {
-        clauses.push('type = @type')
-        params.type = options.type
-      }
-
-      if (options.accountId !== undefined) {
-        clauses.push(`(
-          account_id = @accountId
-          OR from_account_id = @accountId
-          OR to_account_id = @accountId
-        )`)
-        params.accountId = options.accountId
-      }
-
-      if (options.categoryId !== undefined) {
-        clauses.push('category_id = @categoryId')
-        params.categoryId = options.categoryId
-      }
-
-      if (options.from !== undefined) {
-        clauses.push('occurred_at >= @from')
-        params.from = options.from
-      }
-      if (options.to !== undefined) {
-        clauses.push('occurred_at < @to')
-        params.to = options.to
-      }
-
-      if (options.search !== undefined && options.search.length > 0) {
-        const escaped = options.search
-          .replaceAll('\\', '\\\\')
-          .replaceAll('%', '\\%')
-          .replaceAll('_', '\\_')
-        params.searchPattern = `%${escaped}%`
-        clauses.push(`(
-          location LIKE @searchPattern ESCAPE '\\' COLLATE NOCASE
-          OR payee LIKE @searchPattern ESCAPE '\\' COLLATE NOCASE
-          OR note LIKE @searchPattern ESCAPE '\\' COLLATE NOCASE
-        )`)
-      }
-
-      if (options.cursor !== undefined) {
-        clauses.push(`(
-          occurred_at < @cursorOccurredAt
-          OR (
-            occurred_at = @cursorOccurredAt
-            AND created_at < @cursorCreatedAt
-          )
-          OR (
-            occurred_at = @cursorOccurredAt
-            AND created_at = @cursorCreatedAt
-            AND id < @cursorId
-          )
-        )`)
-        params.cursorOccurredAt = options.cursor.occurredAt
-        params.cursorCreatedAt = options.cursor.createdAt
-        params.cursorId = options.cursor.id
-      }
+      const { clauses, params } = transactionQueryFilter(options, true)
+      params.limit = options.limit + 1
+      params.offset = options.offset ?? 0
 
       const sql = `
         SELECT id, type, amount_minor, account_id, from_account_id, to_account_id,
@@ -958,9 +975,33 @@ export function createLedgerRepository(db: DatabaseT): LedgerRepository {
         FROM ledger_transactions
         ${clauses.length === 0 ? '' : `WHERE ${clauses.join('\n          AND ')}`}
         ORDER BY occurred_at DESC, created_at DESC, id DESC
-        LIMIT @limit
+        LIMIT @limit OFFSET @offset
       `
       return db.prepare(sql).all(params).map(ledgerTransactionFromRow)
+    },
+
+    summarizeTransactions(options: LedgerTransactionQueryOptions): LedgerTransactionQuerySummary {
+      const { clauses, params } = transactionQueryFilter(options, false)
+      const row = db.prepare(`
+        SELECT
+          COUNT(*) AS total,
+          COALESCE(SUM(CASE WHEN type = 'income' THEN amount_minor ELSE 0 END), 0) AS income_minor,
+          COALESCE(SUM(CASE WHEN type = 'expense' THEN amount_minor ELSE 0 END), 0) AS expense_minor
+        FROM ledger_transactions
+        ${clauses.length === 0 ? '' : `WHERE ${clauses.join('\n          AND ')}`}
+      `).get(params) as { total?: unknown; income_minor?: unknown; expense_minor?: unknown } | undefined
+
+      const total = row?.total
+      const incomeMinor = row?.income_minor
+      const expenseMinor = row?.expense_minor
+      if (!Number.isSafeInteger(total) || !Number.isSafeInteger(incomeMinor) || !Number.isSafeInteger(expenseMinor)) {
+        throw new Error('Ledger transaction summary contains unsafe numeric values')
+      }
+      return {
+        total: Number(total),
+        incomeMinor: Number(incomeMinor),
+        expenseMinor: Number(expenseMinor),
+      }
     },
 
     getIdempotencyRecord(operationScope: string, idempotencyKey: string): LedgerIdempotencyRecord | null {

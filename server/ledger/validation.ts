@@ -644,17 +644,35 @@ function parseQueryCursor(record: UnknownRecord): string | undefined {
   return value
 }
 
+function parseQueryOffset(record: UnknownRecord): number | undefined {
+  if (!hasOwn(record, 'offset')) return undefined
+  const value = record.offset
+  const numeric = typeof value === 'string' && /^\d+$/.test(value)
+    ? Number(value)
+    : value
+  if (!Number.isSafeInteger(numeric) || Number(numeric) < 0) {
+    throw ledgerValidationError('offset must be a non-negative safe integer', { field: 'offset' })
+  }
+  return Number(numeric)
+}
+
 /** Parse the complete, shared transaction-list query contract. */
 export function parseTransactionQuery(value: UnknownRecord): LedgerTransactionQuery {
   assertExactKeys(value, [
     'type', 'accountId', 'categoryId', 'from', 'to', 'search',
-    'includeDeleted', 'limit', 'cursor',
+    'includeDeleted', 'limit', 'cursor', 'offset',
   ], [])
 
   const from = parseUtcQueryValue(value.from, 'from')
   const to = parseUtcQueryValue(value.to, 'to')
   if (from !== undefined && to !== undefined && from >= to) {
     throw ledgerValidationError('from must be earlier than to', { field: 'from' })
+  }
+
+  const cursor = parseQueryCursor(value)
+  const offset = parseQueryOffset(value)
+  if (cursor !== undefined && offset !== undefined) {
+    throw ledgerValidationError('cursor and offset cannot be used together', { field: 'offset' })
   }
 
   return {
@@ -666,7 +684,8 @@ export function parseTransactionQuery(value: UnknownRecord): LedgerTransactionQu
     search: parseQuerySearch(value),
     includeDeleted: parseBooleanQuery(value.includeDeleted, 'includeDeleted', false),
     limit: parseLimit(value.limit),
-    cursor: parseQueryCursor(value),
+    cursor,
+    offset,
   }
 }
 

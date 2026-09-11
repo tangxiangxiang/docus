@@ -781,7 +781,12 @@ describe('Ledger query and projection API', () => {
     expect(firstPage.headers.get('cache-control')).toBe('no-store')
     const firstBody = await json(firstPage)
     expect(firstBody.transactions).toHaveLength(2)
-    expect(firstBody.page.nextCursor).toEqual(expect.any(String))
+    expect(firstBody.page).toMatchObject({
+      nextCursor: expect.any(String),
+      total: 4,
+      incomeMinor: 100,
+      expenseMinor: 10,
+    })
     const secondPage = await authenticated(
       `/api/ledger/transactions?limit=2&cursor=${encodeURIComponent(firstBody.page.nextCursor)}`,
     )
@@ -791,6 +796,10 @@ describe('Ledger query and projection API', () => {
       ...firstBody.transactions.map((row: any) => row.id),
       ...secondBody.transactions.map((row: any) => row.id),
     ]).size).toBe(4)
+    const offsetBody = await json(await authenticated('/api/ledger/transactions?limit=2&offset=2'))
+    expect(offsetBody.transactions.map((row: any) => row.id))
+      .toEqual(secondBody.transactions.map((row: any) => row.id))
+    expect(offsetBody.page.total).toBe(4)
 
     const accountPage = await authenticated(`/api/ledger/accounts/${card.id}/transactions?limit=1`)
     expect(accountPage.status).toBe(200)

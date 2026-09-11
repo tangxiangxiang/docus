@@ -63,6 +63,7 @@ export function createDocusNaiveThemeOverrides(theme: DocusTheme): GlobalThemeOv
       fontSize: 'var(--docus-font-size-md)',
     },
     Calendar: { common: compositeColors },
+    DataTable: { common: compositeColors },
     DatePicker: { common: compositeColors },
     Descriptions: { common: compositeColors },
     List: { common: compositeColors },

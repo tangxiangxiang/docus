@@ -284,7 +284,7 @@ describe('Ledger live transaction history workspace', () => {
       from: instantFromLedgerDate('2026-09-01', 'Asia/Shanghai', 'start'),
       to: instantFromLedgerDate('2026-09-05', 'Asia/Shanghai', 'end'),
       search: '午餐',
-      limit: 25,
+      limit: 5,
     })
   })
 
@@ -295,31 +295,38 @@ describe('Ledger live transaction history workspace', () => {
     expect(api.listLedgerTransactions).toHaveBeenLastCalledWith({
       type: 'all',
       accountId: 'old-bank',
-      limit: 25,
+      limit: 5,
     })
   })
 
-  it('appends cursor pages without replacing the existing history', async () => {
+  it('requests the selected server-side page with the correct offset', async () => {
     const firstPage: LedgerTransactionPageDto = {
-      transactions: Array.from({ length: 25 }, (_, index) => ({ ...expense, id: index === 0 ? expense.id : `tx-expense-${index}` })),
-      page: { nextCursor: 'cursor-1' },
+      transactions: Array.from({ length: 5 }, (_, index) => ({ ...expense, id: index === 0 ? expense.id : `tx-expense-${index}` })),
+      page: { nextCursor: 'cursor-1', total: 6, incomeMinor: income.amountMinor, expenseMinor: expense.amountMinor * 5 },
     }
     const secondPage: LedgerTransactionPageDto = {
       transactions: [income],
-      page: { nextCursor: null },
+      page: { nextCursor: null, total: 6, incomeMinor: income.amountMinor, expenseMinor: expense.amountMinor * 5 },
     }
     api.listLedgerTransactions.mockReset()
-    api.listLedgerTransactions.mockResolvedValueOnce(firstPage).mockResolvedValueOnce(secondPage)
+    api.listLedgerTransactions
+      .mockResolvedValueOnce(firstPage)
+      .mockResolvedValueOnce(secondPage)
+      .mockResolvedValueOnce(firstPage)
     const wrapper = await mountView()
 
     await wrapper.findComponent(NPagination).vm.$emit('update:page', 2)
     await flushPromises()
 
-    expect(api.listLedgerTransactions).toHaveBeenLastCalledWith({ type: 'all', limit: 25, cursor: 'cursor-1' })
+    expect(api.listLedgerTransactions).toHaveBeenLastCalledWith({ type: 'all', limit: 5, offset: 5 })
     expect(wrapper.get('[data-testid="ledger-transaction-list"]').text()).toContain('工资')
+    expect(wrapper.text()).toContain('共 6 条')
     expect(wrapper.findComponent(NPagination).props('page')).toBe(2)
+    expect(wrapper.findComponent(NPagination).props('itemCount')).toBe(6)
+    expect(wrapper.findComponent(NPagination).props('showSizePicker')).toBe(true)
     await wrapper.findComponent(NPagination).vm.$emit('update:page', 1)
     await flushPromises()
+    expect(api.listLedgerTransactions).toHaveBeenLastCalledWith({ type: 'all', limit: 5 })
     expect(wrapper.get('[data-testid="ledger-transaction-list"]').text()).toContain('午餐')
   })
 

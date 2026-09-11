@@ -387,6 +387,7 @@ export function listLedgerTransactions(query: LedgerTransactionQuery = {}): Prom
       includeDeleted: query.includeDeleted,
       limit: query.limit,
       cursor: query.cursor,
+      offset: query.offset,
     })}`,
     {},
     transactionPageResponse,

@@ -181,7 +181,7 @@ describe('Ledger stateless request validation', () => {
       search: '  coffee  ',
       includeDeleted: 'true',
       limit: '2',
-      cursor,
+      offset: '10',
     })).toMatchObject({
       type: 'all',
       accountId: 'account-1',
@@ -191,8 +191,11 @@ describe('Ledger stateless request validation', () => {
       search: 'coffee',
       includeDeleted: true,
       limit: 2,
-      cursor,
+      offset: 10,
     })
+    expect(() => parseTransactionQuery({ limit: '2', cursor, offset: '10' })).toThrow()
+    expect(() => parseTransactionQuery({ offset: '-1' })).toThrow()
+    expect(parseTransactionQuery({ limit: '2', cursor })).toMatchObject({ cursor })
     expect(parseLedgerTransactionCursor(cursor)).toEqual({
       occurredAt,
       createdAt: occurredAt - 1,

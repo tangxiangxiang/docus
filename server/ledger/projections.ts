@@ -323,6 +323,7 @@ function normalizeTransactionQuery(query: LedgerTransactionQuery): LedgerTransac
     search: query.search,
     includeDeleted: query.includeDeleted ?? false,
     limit,
+    offset: query.offset,
     cursor: query.cursor === undefined
       ? undefined
       : parseLedgerTransactionCursor(query.cursor),
@@ -357,6 +358,7 @@ export function createLedgerProjections(
   function transactionPage(query: LedgerTransactionQuery): LedgerTransactionPageDto {
     const options = normalizeTransactionQuery(query)
     const rows = repository.queryTransactions(options)
+    const summary = repository.summarizeTransactions(options)
     const hasNextPage = rows.length > options.limit
     const returnedRows = hasNextPage ? rows.slice(0, options.limit) : rows
     const last = returnedRows[returnedRows.length - 1]
@@ -366,6 +368,7 @@ export function createLedgerProjections(
         nextCursor: hasNextPage && last !== undefined
           ? encodeCursor(last)
           : null,
+        ...summary,
       },
     }
   }

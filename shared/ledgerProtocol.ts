@@ -256,6 +256,12 @@ export interface LedgerAdjustmentEndpointRequest {
 
 export interface LedgerPageInfo {
   readonly nextCursor: string | null
+  /** Total matching rows before pagination. Present on the global transaction list. */
+  readonly total?: number
+  /** Matching income total before pagination. Present on the global transaction list. */
+  readonly incomeMinor?: number
+  /** Matching expense total before pagination. Present on the global transaction list. */
+  readonly expenseMinor?: number
 }
 
 /** The decoded keyset position used by the Ledger transaction query. */
@@ -275,6 +281,7 @@ export interface LedgerTransactionQuery {
   readonly includeDeleted?: boolean
   readonly limit?: number
   readonly cursor?: string
+  readonly offset?: number
 }
 
 export interface LedgerTransactionPageDto {

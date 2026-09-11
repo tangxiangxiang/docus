@@ -196,6 +196,11 @@ describe('Ledger transaction query projections', () => {
     expect(all.transactions.map((row) => row.type)).toEqual([
       'adjustment', 'transfer', 'expense', 'income',
     ])
+    expect(all.page).toMatchObject({
+      total: 4,
+      incomeMinor: 100,
+      expenseMinor: 25,
+    })
 
     expect(fixture.projections.listTransactions(query({ type: 'income' })).transactions)
       .toEqual([income])
@@ -287,6 +292,10 @@ describe('Ledger transaction query projections', () => {
     }
     expect(pageIds).toEqual(full.transactions.map((row) => row.id))
     expect(new Set(pageIds).size).toBe(pageIds.length)
+
+    const offsetPage = fixture.projections.listTransactions(query({ limit: '1', offset: '1' }))
+    expect(offsetPage.transactions.map((row) => row.id)).toEqual(['cursor-b'])
+    expect(offsetPage.page).toMatchObject({ total: 3, incomeMinor: 0, expenseMinor: 6 })
 
     expectLedgerCode(
       () => fixture.projections.listTransactions(query({ cursor: 'not-a-cursor' })),
