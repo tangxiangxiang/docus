@@ -228,10 +228,9 @@ async function remove(): Promise<void> {
           <NAlert v-if="transaction.type === 'adjustment'" class="ledger-form-info" type="info" :show-icon="false">余额调整为只读记录，不能通过普通交易编辑或删除。</NAlert>
           <NAlert v-if="actionError" class="ledger-form-error" type="error" :show-icon="false" role="alert">{{ actionError }}</NAlert>
           <div class="ledger-form-actions">
-            <NButton v-if="canEdit" class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" :disabled="Boolean(restoringId)" @click="editDirty = false; editing = true">编辑交易</NButton>
-            <NButton v-if="canDelete" class="ledger-danger-button" attr-type="button" size="medium" :bordered="false" :disabled="Boolean(restoringId)" @click="remove">删除记录</NButton>
-            <NButton v-else-if="canEdit && archivedAccounts.length" class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" disabled>恢复账户后可删除</NButton>
-            <NButton class="ledger-primary-button" attr-type="button" type="primary" size="medium" :bordered="false" @click="requestClose">完成</NButton>
+            <NButton v-if="canEdit" class="ledger-secondary-button" attr-type="button" size="small" :bordered="false" :disabled="Boolean(restoringId)" @click="editDirty = false; editing = true">编辑交易</NButton>
+            <NButton v-if="canDelete" class="ledger-danger-button" attr-type="button" size="small" :bordered="false" :disabled="Boolean(restoringId)" @click="remove">删除记录</NButton>
+            <NButton v-else-if="canEdit && archivedAccounts.length" class="ledger-secondary-button ledger-wide-action" attr-type="button" size="small" :bordered="false" disabled>恢复账户后可删除</NButton>
           </div>
         </template>
       </div>
@@ -287,10 +286,11 @@ async function remove(): Promise<void> {
 .ledger-form-info :deep(.n-alert-body) { color: var(--text-muted); }
 .ledger-form-error { margin: 0; color: #b42318; font-size: .81rem; }
 .ledger-form-error :deep(.n-alert-body) { color: #b42318; }
-.ledger-form-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 9px; padding-top: 2px; }
+.ledger-form-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; padding-top: 2px; }
 .ledger-primary-button,
 .ledger-secondary-button,
-.ledger-danger-button { min-height: 39px; padding: 7px 14px; border-radius: 7px; font: inherit; font-size: .83rem; font-weight: 650; cursor: pointer; }
+.ledger-danger-button { display: inline-flex; width: 88px; min-width: 88px; height: 34px; min-height: 34px; align-items: center; justify-content: center; padding: 5px 10px; box-sizing: border-box; border-radius: 8px; font: inherit; font-size: .78rem; font-weight: 650; cursor: pointer; }
+.ledger-wide-action { width: auto; min-width: 132px; }
 .ledger-primary-button { border: 1px solid var(--accent); background: var(--accent); color: #fff; }
 .ledger-primary-button:hover { background: var(--accent-hover); }
 .ledger-secondary-button { border: 1px solid color-mix(in srgb, var(--border) 86%, transparent); background: color-mix(in srgb, var(--bg) 34%, transparent); color: var(--text-h); }
@@ -302,6 +302,6 @@ async function remove(): Promise<void> {
 .ledger-danger-button:disabled { cursor: wait; opacity: .65; }
 @media (max-width: 600px) {
   .ledger-detail-sheet-card { align-self: flex-end; width: 100%; max-height: 100%; margin: auto 0 0; border-radius: 16px 16px 0 0; }
-  .ledger-form-actions > * { flex: 1 1 135px; }
+  .ledger-form-actions > * { flex: 1 1 110px; }
 }
 </style>
