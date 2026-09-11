@@ -263,7 +263,11 @@ function transactionMeta(transaction: LedgerTransactionDto): string {
   if (transaction.type === 'income' || transaction.type === 'expense') {
     return `${categoryLabel(transaction.categoryId)} · ${accountLabel(transaction.accountId)}`
   }
-  if (transaction.type === 'transfer') return '账户之间转账'
+  if (transaction.type === 'transfer') {
+    return transaction.transferKind === 'repayment'
+      ? '还款'
+      : transaction.transferKind === 'withdrawal' ? '提现' : '账户之间转账'
+  }
   return accountLabel(transaction.accountId)
 }
 

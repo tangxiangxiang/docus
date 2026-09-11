@@ -106,29 +106,36 @@ const HAS_ACCOUNT_HISTORY = `
 `
 
 const SELECT_CATEGORY = `
-  SELECT id, kind, name, normalized_name, icon, archived_at, version,
+  SELECT id, kind, name, normalized_name, system_key, icon, archived_at, version,
          created_at, updated_at
   FROM ledger_categories
   WHERE id = @id
 `
 
 const SELECT_CATEGORY_BY_IDENTITY = `
-  SELECT id, kind, name, normalized_name, icon, archived_at, version,
+  SELECT id, kind, name, normalized_name, system_key, icon, archived_at, version,
          created_at, updated_at
   FROM ledger_categories
   WHERE kind = @kind
     AND normalized_name = @normalizedName
 `
 
+const SELECT_CATEGORY_BY_SYSTEM_KEY = `
+  SELECT id, kind, name, normalized_name, system_key, icon, archived_at, version,
+         created_at, updated_at
+  FROM ledger_categories
+  WHERE system_key = @systemKey
+`
+
 const SELECT_CATEGORIES = `
-  SELECT id, kind, name, normalized_name, icon, archived_at, version,
+  SELECT id, kind, name, normalized_name, system_key, icon, archived_at, version,
          created_at, updated_at
   FROM ledger_categories
   ORDER BY kind ASC, normalized_name ASC, id ASC
 `
 
 const SELECT_ACTIVE_CATEGORIES = `
-  SELECT id, kind, name, normalized_name, icon, archived_at, version,
+  SELECT id, kind, name, normalized_name, system_key, icon, archived_at, version,
          created_at, updated_at
   FROM ledger_categories
   WHERE archived_at IS NULL
@@ -137,9 +144,9 @@ const SELECT_ACTIVE_CATEGORIES = `
 
 const INSERT_CATEGORY = `
   INSERT INTO ledger_categories (
-    id, kind, name, normalized_name, icon, archived_at, version, created_at, updated_at
+    id, kind, name, normalized_name, system_key, icon, archived_at, version, created_at, updated_at
   ) VALUES (
-    @id, @kind, @name, @normalizedName, @icon, @archivedAt, @version, @createdAt, @updatedAt
+    @id, @kind, @name, @normalizedName, @systemKey, @icon, @archivedAt, @version, @createdAt, @updatedAt
   )
 `
 
@@ -148,6 +155,7 @@ const UPDATE_CATEGORY = `
   SET kind = @kind,
       name = @name,
       normalized_name = @normalizedName,
+      system_key = @systemKey,
       icon = @icon,
       archived_at = @archivedAt,
       version = @version,
@@ -166,7 +174,7 @@ const HAS_CATEGORY_HISTORY = `
 `
 
 const SELECT_TRANSACTION = `
-  SELECT id, type, amount_minor, account_id, from_account_id, to_account_id,
+  SELECT id, type, transfer_kind, group_id, transfer_fee_mode, amount_minor, account_id, from_account_id, to_account_id,
          category_id, occurred_at, location, payee, note,
          adjustment_calculated_balance_minor, adjustment_target_balance_minor,
          deleted_at, version, created_at, updated_at
@@ -176,12 +184,12 @@ const SELECT_TRANSACTION = `
 
 const INSERT_TRANSACTION = `
   INSERT INTO ledger_transactions (
-    id, type, amount_minor, account_id, from_account_id, to_account_id,
+    id, type, transfer_kind, group_id, transfer_fee_mode, amount_minor, account_id, from_account_id, to_account_id,
     category_id, occurred_at, location, payee, note,
     adjustment_calculated_balance_minor, adjustment_target_balance_minor,
     deleted_at, version, created_at, updated_at
   ) VALUES (
-    @id, @type, @amountMinor, @accountId, @fromAccountId, @toAccountId,
+    @id, @type, @transferKind, @groupId, @transferFeeMode, @amountMinor, @accountId, @fromAccountId, @toAccountId,
     @categoryId, @occurredAt, @location, @payee, @note,
     @adjustmentCalculatedBalanceMinor, @adjustmentTargetBalanceMinor,
     @deletedAt, @version, @createdAt, @updatedAt
@@ -191,6 +199,9 @@ const INSERT_TRANSACTION = `
 const UPDATE_TRANSACTION = `
   UPDATE ledger_transactions
   SET type = @type,
+      transfer_kind = @transferKind,
+      group_id = @groupId,
+      transfer_fee_mode = @transferFeeMode,
       amount_minor = @amountMinor,
       account_id = @accountId,
       from_account_id = @fromAccountId,
@@ -219,7 +230,7 @@ const SOFT_DELETE_TRANSACTION = `
 `
 
 const SELECT_ACTIVE_TRANSACTIONS_FOR_ACCOUNT = `
-  SELECT id, type, amount_minor, account_id, from_account_id, to_account_id,
+  SELECT id, type, transfer_kind, group_id, transfer_fee_mode, amount_minor, account_id, from_account_id, to_account_id,
          category_id, occurred_at, location, payee, note,
          adjustment_calculated_balance_minor, adjustment_target_balance_minor,
          deleted_at, version, created_at, updated_at
@@ -234,7 +245,7 @@ const SELECT_ACTIVE_TRANSACTIONS_FOR_ACCOUNT = `
 `
 
 const SELECT_ALL_ACTIVE_TRANSACTIONS = `
-  SELECT id, type, amount_minor, account_id, from_account_id, to_account_id,
+  SELECT id, type, transfer_kind, group_id, transfer_fee_mode, amount_minor, account_id, from_account_id, to_account_id,
          category_id, occurred_at, location, payee, note,
          adjustment_calculated_balance_minor, adjustment_target_balance_minor,
          deleted_at, version, created_at, updated_at
@@ -244,7 +255,7 @@ const SELECT_ALL_ACTIVE_TRANSACTIONS = `
 `
 
 const SELECT_ACTIVE_TRANSACTIONS_IN_RANGE = `
-  SELECT id, type, amount_minor, account_id, from_account_id, to_account_id,
+  SELECT id, type, transfer_kind, group_id, transfer_fee_mode, amount_minor, account_id, from_account_id, to_account_id,
          category_id, occurred_at, location, payee, note,
          adjustment_calculated_balance_minor, adjustment_target_balance_minor,
          deleted_at, version, created_at, updated_at
@@ -256,7 +267,7 @@ const SELECT_ACTIVE_TRANSACTIONS_IN_RANGE = `
 `
 
 const SELECT_ACTIVE_TRANSACTIONS_BEFORE = `
-  SELECT id, type, amount_minor, account_id, from_account_id, to_account_id,
+  SELECT id, type, transfer_kind, group_id, transfer_fee_mode, amount_minor, account_id, from_account_id, to_account_id,
          category_id, occurred_at, location, payee, note,
          adjustment_calculated_balance_minor, adjustment_target_balance_minor,
          deleted_at, version, created_at, updated_at
@@ -267,13 +278,14 @@ const SELECT_ACTIVE_TRANSACTIONS_BEFORE = `
 `
 
 const SELECT_RECENT_ACTIVE_TRANSACTIONS_BEFORE = `
-  SELECT id, type, amount_minor, account_id, from_account_id, to_account_id,
+  SELECT id, type, transfer_kind, group_id, transfer_fee_mode, amount_minor, account_id, from_account_id, to_account_id,
          category_id, occurred_at, location, payee, note,
          adjustment_calculated_balance_minor, adjustment_target_balance_minor,
          deleted_at, version, created_at, updated_at
   FROM ledger_transactions
   WHERE deleted_at IS NULL
     AND occurred_at < @to
+    AND NOT (group_id IS NOT NULL AND type = 'expense')
   ORDER BY occurred_at DESC, created_at DESC, id DESC
   LIMIT @limit
 `
@@ -285,6 +297,17 @@ const SELECT_IDEMPOTENCY_RECORD = `
   FROM ledger_idempotency
   WHERE operation_scope = @operationScope
     AND idempotency_key = @idempotencyKey
+`
+
+const SELECT_TRANSACTIONS_BY_GROUP = `
+  SELECT id, type, transfer_kind, group_id, transfer_fee_mode, amount_minor, account_id, from_account_id, to_account_id,
+         category_id, occurred_at, location, payee, note,
+         adjustment_calculated_balance_minor, adjustment_target_balance_minor,
+         deleted_at, version, created_at, updated_at
+  FROM ledger_transactions
+  WHERE group_id = @groupId
+    AND (@includeDeleted = 1 OR deleted_at IS NULL)
+  ORDER BY occurred_at DESC, created_at DESC, id DESC
 `
 
 const INSERT_IDEMPOTENCY_RECORD = `
@@ -345,6 +368,7 @@ export interface LedgerTransactionQueryOptions {
   readonly type?: 'all' | 'income' | 'expense' | 'transfer'
   readonly accountId?: string
   readonly categoryId?: string
+  readonly groupId?: string
   readonly from?: number
   readonly to?: number
   readonly search?: string
@@ -383,6 +407,7 @@ export interface LedgerRepository {
 
   getCategory(id: string): LedgerCategory | null
   findCategoryByIdentity(kind: LedgerCategory['kind'], normalizedName: string): LedgerCategory | null
+  findCategoryBySystemKey(systemKey: NonNullable<LedgerCategory['systemKey']>): LedgerCategory | null
   listCategories(options?: { readonly includeArchived?: boolean }): LedgerCategory[]
   insertCategory(category: LedgerCategory): void
   updateCategory(input: LedgerCategoryUpdateInput): number
@@ -395,6 +420,7 @@ export interface LedgerRepository {
   softDeleteTransaction(input: LedgerTransactionSoftDeleteInput): number
   listActiveTransactionsForAccount(accountId: string): LedgerTransaction[]
   listActiveTransactions(): LedgerTransaction[]
+  listTransactionsByGroupId(groupId: string, includeDeleted?: boolean): LedgerTransaction[]
   listActiveTransactionsInRange(options: LedgerTransactionRangeOptions): LedgerTransaction[]
   listRecentActiveTransactionsBefore(to: number, limit: number): LedgerTransaction[]
   queryTransactions(options: LedgerTransactionQueryOptions): LedgerTransaction[]
@@ -447,6 +473,7 @@ interface CategoryParams {
   readonly kind: LedgerCategory['kind']
   readonly name: string
   readonly normalizedName: string
+  readonly systemKey: LedgerCategory['systemKey'] | null
   readonly icon: LedgerCategory['icon']
   readonly archivedAt: number | null
   readonly version: number
@@ -461,6 +488,9 @@ interface CategoryUpdateParams extends CategoryParams {
 interface TransactionParams {
   readonly id: string
   readonly type: LedgerTransaction['type']
+  readonly transferKind: string | null
+  readonly groupId: string | null
+  readonly transferFeeMode: string | null
   readonly amountMinor: number
   readonly accountId: string | null
   readonly fromAccountId: string | null
@@ -547,6 +577,7 @@ function categoryParams(category: LedgerCategory): CategoryParams {
     kind: category.kind,
     name: category.name,
     normalizedName: category.normalizedName,
+    systemKey: category.systemKey ?? null,
     icon: category.icon ?? 'wallet',
     archivedAt: category.archivedAt,
     version: category.version,
@@ -559,6 +590,9 @@ function transactionParams(transaction: LedgerTransaction): TransactionParams {
   const common = {
     id: transaction.id,
     type: transaction.type,
+    transferKind: null,
+    groupId: transaction.groupId ?? null,
+    transferFeeMode: null,
     amountMinor: transaction.amountMinor,
     accountId: null,
     fromAccountId: null,
@@ -588,6 +622,8 @@ function transactionParams(transaction: LedgerTransaction): TransactionParams {
     case 'transfer':
       return {
         ...common,
+        transferKind: transaction.transferKind,
+        transferFeeMode: transaction.feeMode ?? null,
         fromAccountId: transaction.fromAccountId,
         toAccountId: transaction.toAccountId,
       }
@@ -704,6 +740,7 @@ function idempotencyParams(record: LedgerIdempotencyRecord): IdempotencyParams {
 function transactionQueryFilter(
   options: LedgerTransactionQueryOptions,
   includeCursor: boolean,
+  hideGroupedCharges = false,
 ): { clauses: string[]; params: Record<string, string | number> } {
   const clauses: string[] = []
   const params: Record<string, string | number> = {}
@@ -727,6 +764,15 @@ function transactionQueryFilter(
   if (options.categoryId !== undefined) {
     clauses.push('category_id = @categoryId')
     params.categoryId = options.categoryId
+  }
+
+  if (options.groupId !== undefined) {
+    clauses.push('group_id = @groupId')
+    params.groupId = options.groupId
+  }
+
+  if (hideGroupedCharges) {
+    clauses.push("NOT (group_id IS NOT NULL AND type = 'expense')")
   }
 
   if (options.from !== undefined) {
@@ -790,6 +836,7 @@ export function createLedgerRepository(db: DatabaseT): LedgerRepository {
     findCategoryByIdentity: db.prepare<{ readonly kind: LedgerCategory['kind']; readonly normalizedName: string }>(
       SELECT_CATEGORY_BY_IDENTITY,
     ),
+    findCategoryBySystemKey: db.prepare<{ readonly systemKey: NonNullable<LedgerCategory['systemKey']> }>(SELECT_CATEGORY_BY_SYSTEM_KEY),
     listCategories: db.prepare(SELECT_CATEGORIES),
     listActiveCategories: db.prepare(SELECT_ACTIVE_CATEGORIES),
     insertCategory: db.prepare<CategoryParams>(INSERT_CATEGORY),
@@ -798,6 +845,7 @@ export function createLedgerRepository(db: DatabaseT): LedgerRepository {
     hasCategoryHistory: db.prepare<{ readonly categoryId: string }>(HAS_CATEGORY_HISTORY),
 
     getTransaction: db.prepare(SELECT_TRANSACTION),
+    listTransactionsByGroupId: db.prepare<{ readonly groupId: string; readonly includeDeleted: number }>(SELECT_TRANSACTIONS_BY_GROUP),
     insertTransaction: db.prepare<TransactionParams>(INSERT_TRANSACTION),
     updateTransaction: db.prepare<TransactionUpdateParams>(UPDATE_TRANSACTION),
     softDeleteTransaction: db.prepare<TransactionSoftDeleteParams>(SOFT_DELETE_TRANSACTION),
@@ -876,6 +924,11 @@ export function createLedgerRepository(db: DatabaseT): LedgerRepository {
       return row === undefined ? null : ledgerCategoryFromRow(row)
     },
 
+    findCategoryBySystemKey(systemKey: NonNullable<LedgerCategory['systemKey']>): LedgerCategory | null {
+      const row = statements.findCategoryBySystemKey.get({ systemKey })
+      return row === undefined ? null : ledgerCategoryFromRow(row)
+    },
+
     listCategories(options = {}): LedgerCategory[] {
       const rows = options.includeArchived === false
         ? statements.listActiveCategories.all()
@@ -930,6 +983,12 @@ export function createLedgerRepository(db: DatabaseT): LedgerRepository {
       return statements.listActiveTransactions.all().map(ledgerTransactionFromRow)
     },
 
+    listTransactionsByGroupId(groupId: string, includeDeleted = false): LedgerTransaction[] {
+      return statements.listTransactionsByGroupId
+        .all({ groupId, includeDeleted: includeDeleted ? 1 : 0 })
+        .map(ledgerTransactionFromRow)
+    },
+
     listActiveTransactionsInRange(options: LedgerTransactionRangeOptions): LedgerTransaction[] {
       if (!Number.isSafeInteger(options.to)) {
         throw ledgerValidationError('transaction range to must be a safe integer', { field: 'to' })
@@ -963,12 +1022,18 @@ export function createLedgerRepository(db: DatabaseT): LedgerRepository {
     },
 
     queryTransactions(options: LedgerTransactionQueryOptions): LedgerTransaction[] {
-      const { clauses, params } = transactionQueryFilter(options, true)
+      const { clauses, params } = transactionQueryFilter(
+        options,
+        true,
+        options.groupId === undefined
+          && (options.type === undefined || options.type === 'all')
+          && options.categoryId === undefined,
+      )
       params.limit = options.limit + 1
       params.offset = options.offset ?? 0
 
       const sql = `
-        SELECT id, type, amount_minor, account_id, from_account_id, to_account_id,
+        SELECT id, type, transfer_kind, group_id, transfer_fee_mode, amount_minor, account_id, from_account_id, to_account_id,
                category_id, occurred_at, location, payee, note,
                adjustment_calculated_balance_minor, adjustment_target_balance_minor,
                deleted_at, version, created_at, updated_at
@@ -981,10 +1046,15 @@ export function createLedgerRepository(db: DatabaseT): LedgerRepository {
     },
 
     summarizeTransactions(options: LedgerTransactionQueryOptions): LedgerTransactionQuerySummary {
+      const hideGroupedCharges = options.groupId === undefined
+        && (options.type === undefined || options.type === 'all')
+        && options.categoryId === undefined
       const { clauses, params } = transactionQueryFilter(options, false)
       const row = db.prepare(`
         SELECT
-          COUNT(*) AS total,
+          ${hideGroupedCharges
+            ? "COALESCE(SUM(CASE WHEN NOT (group_id IS NOT NULL AND type = 'expense') THEN 1 ELSE 0 END), 0)"
+            : 'COUNT(*)'} AS total,
           COALESCE(SUM(CASE WHEN type = 'income' THEN amount_minor ELSE 0 END), 0) AS income_minor,
           COALESCE(SUM(CASE WHEN type = 'expense' THEN amount_minor ELSE 0 END), 0) AS expense_minor
         FROM ledger_transactions

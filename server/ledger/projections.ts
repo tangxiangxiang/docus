@@ -25,6 +25,7 @@ import type {
   LedgerTransactionDto,
   LedgerTransactionPageDto,
   LedgerTransactionQuery,
+  LedgerTransferBundleSummary,
   LedgerTrendPoint,
 } from '../../shared/ledgerProtocol.js'
 import {
@@ -105,6 +106,7 @@ function projectionInvariant(message: string): never {
 function transactionDto(transaction: LedgerTransaction): LedgerTransactionDto {
   const base = {
     id: transaction.id,
+    ...(transaction.groupId ? { groupId: transaction.groupId } : {}),
     amountMinor: transaction.amountMinor,
     occurredAt: transaction.occurredAt,
     location: transaction.location,
@@ -136,6 +138,8 @@ function transactionDto(transaction: LedgerTransaction): LedgerTransactionDto {
       return {
         ...base,
         type: 'transfer',
+        transferKind: transaction.transferKind,
+        ...(transaction.feeMode ? { feeMode: transaction.feeMode } : {}),
         fromAccountId: transaction.fromAccountId,
         toAccountId: transaction.toAccountId,
         payee: transaction.payee,
@@ -318,6 +322,7 @@ function normalizeTransactionQuery(query: LedgerTransactionQuery): LedgerTransac
     type: query.type ?? 'all',
     accountId: query.accountId,
     categoryId: query.categoryId,
+    groupId: query.groupId,
     from: query.from,
     to: query.to,
     search: query.search,
@@ -363,7 +368,7 @@ export function createLedgerProjections(
     const returnedRows = hasNextPage ? rows.slice(0, options.limit) : rows
     const last = returnedRows[returnedRows.length - 1]
     return {
-      transactions: returnedRows.map(transactionDto),
+      transactions: returnedRows.map(transactionDtoWithBundle),
       page: {
         nextCursor: hasNextPage && last !== undefined
           ? encodeCursor(last)
@@ -371,6 +376,23 @@ export function createLedgerProjections(
         ...summary,
       },
     }
+  }
+
+  function transactionDtoWithBundle(transaction: LedgerTransaction): LedgerTransactionDto {
+    const dto = transactionDto(transaction)
+    if (transaction.type !== 'transfer' || transaction.groupId === undefined) return dto
+    const chargeMinor = checkedSumMinor(
+      repository
+        .listTransactionsByGroupId(transaction.groupId)
+        .filter((item) => item.type === 'expense')
+        .map((item) => item.amountMinor),
+    )
+    if (chargeMinor <= 0 || dto.type !== 'transfer') return dto
+    const summary: LedgerTransferBundleSummary = {
+      chargeMinor,
+      totalMinor: checkedAddMinor(transaction.amountMinor, chargeMinor),
+    }
+    return { ...dto, bundle: summary }
   }
 
   function encodeCursor(transaction: LedgerTransaction): string {
@@ -499,7 +521,7 @@ export function createLedgerProjections(
       trend: trendForRanges(trendRanges, periodTransactions),
       recentTransactions: repository
         .listRecentActiveTransactionsBefore(fixedPeriods.today.endMs, RECENT_TRANSACTION_LIMIT)
-        .map(transactionDto),
+        .map(transactionDtoWithBundle),
     }
   }
 

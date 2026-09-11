@@ -14,6 +14,8 @@ import {
 import { Tag, X } from '@vicons/tabler'
 import type {
   LedgerCategoryDto,
+  LedgerTransferFeeMode,
+  LedgerTransferKind,
   LedgerTransactionDto,
 } from '../../../shared/ledgerProtocol'
 import { useConfirm } from '../../composables/useConfirm'
@@ -47,6 +49,9 @@ const accountId = ref('')
 const categoryId = ref('')
 const fromAccountId = ref('')
 const toAccountId = ref('')
+const transferKind = ref<LedgerTransferKind>('general')
+const transferFeeAmount = ref('')
+const transferFeeMode = ref<LedgerTransferFeeMode>('extra')
 const occurredAt = ref('')
 const location = ref('')
 const payee = ref('')
@@ -64,7 +69,11 @@ const activeAccounts = computed(() => store.activeAccounts.value)
 const activeCategories = computed(() => store.activeCategories.value)
 const applicableCategories = computed(() => activeCategories.value.filter((category) => category.kind === type.value))
 const accountOptions = computed(() => groupedAccountOptions(true))
-const transferAccountOptions = computed(() => groupedAccountOptions(false))
+const transferFromAccountOptions = computed(() => groupedAccountOptions(false, transferKind.value === 'general' ? undefined : ['asset']))
+const transferToAccountOptions = computed(() => groupedAccountOptions(
+  false,
+  transferKind.value === 'repayment' ? ['liability'] : transferKind.value === 'withdrawal' ? ['asset'] : undefined,
+))
 const categoryOptions = computed<SelectOption[]>(() => applicableCategories.value.map((category) => ({
   value: category.id,
   label: categoryLabel(category),
@@ -78,8 +87,9 @@ const recoveryBusy = computed(() => store.mutationState.value === 'SUBMITTING')
 const canSubmit = computed(() => activeAccounts.value.length > 0 && !saving.value)
 const formTitle = computed(() => type.value === 'expense' ? '记一笔支出' : type.value === 'income' ? '记一笔收入' : '记一笔转账')
 
-function groupedAccountOptions(showBalance: boolean): SelectGroupOption[] {
+function groupedAccountOptions(showBalance: boolean, allowedNatures?: readonly ('asset' | 'liability')[]): SelectGroupOption[] {
   return (['asset', 'liability'] as const).flatMap((nature) => {
+    if (allowedNatures && !allowedNatures.includes(nature)) return []
     const children: SelectOption[] = activeAccounts.value
       .filter((account) => account.nature === nature)
       .sort((left, right) => right.currentBalanceMinor - left.currentBalanceMinor
@@ -135,7 +145,7 @@ function customCategoryIconSource(icon: string | undefined): string | undefined 
 }
 
 function renderCategoryLabel(option: SelectOption) {
-  const category = applicableCategories.value.find((item) => item.id === option.value)
+  const category = activeCategories.value.find((item) => item.id === option.value)
   if (!category) {
     return h('span', { class: 'ledger-category-select-option' }, [
       h('span', { class: 'ledger-category-select-icon', 'aria-hidden': 'true' }, [
@@ -170,6 +180,9 @@ function resetForm(): void {
   categoryId.value = ''
   fromAccountId.value = ''
   toAccountId.value = ''
+  transferKind.value = 'general'
+  transferFeeAmount.value = ''
+  transferFeeMode.value = 'extra'
   occurredAt.value = defaultOccurredAt()
   location.value = ''
   payee.value = ''
@@ -193,7 +206,7 @@ watch(() => props.open, async (open) => {
   }
 })
 
-watch([amount, accountId, categoryId, fromAccountId, toAccountId, occurredAt, location, payee, note, type], () => {
+watch([amount, accountId, categoryId, fromAccountId, toAccountId, transferKind, transferFeeAmount, transferFeeMode, occurredAt, location, payee, note, type], () => {
   if (props.open && !resetting) dirty.value = true
 })
 
@@ -207,8 +220,24 @@ watch(type, (nextType, previousType) => {
   payee.value = ''
   fromAccountId.value = ''
   toAccountId.value = ''
+  transferKind.value = 'general'
+  transferFeeAmount.value = ''
+  transferFeeMode.value = 'extra'
   if (nextType !== 'transfer' && activeAccounts.value.length === 1) {
     accountId.value = activeAccounts.value[0]!.id
+  }
+})
+
+watch(transferKind, () => {
+  if (resetting || type.value !== 'transfer') return
+  const from = activeAccounts.value.find((account) => account.id === fromAccountId.value)
+  const to = activeAccounts.value.find((account) => account.id === toAccountId.value)
+  if (transferKind.value !== 'general' && from?.nature !== 'asset') fromAccountId.value = ''
+  if (transferKind.value === 'repayment' && to?.nature !== 'liability') toAccountId.value = ''
+  if (transferKind.value === 'withdrawal' && to?.nature !== 'asset') toAccountId.value = ''
+  if (transferKind.value === 'general') {
+    transferFeeAmount.value = ''
+    transferFeeMode.value = 'extra'
   }
 })
 
@@ -295,7 +324,7 @@ function validationFailure(message: string): null {
   return null
 }
 
-function validate(): { amountMinor: number; occurredAtMs: number } | null {
+function validate(): { amountMinor: number; occurredAtMs: number; feeMinor: number } | null {
   submitted.value = true
   formError.value = ''
   if (!settings.value) {
@@ -322,12 +351,34 @@ function validate(): { amountMinor: number; occurredAtMs: number } | null {
   } catch {
     return validationFailure('请选择有效的发生时间。')
   }
+  let feeMinor = 0
   if (type.value === 'transfer') {
     if (!fromAccountId.value || !toAccountId.value) {
       return validationFailure('请选择转出账户和转入账户。')
     }
     if (fromAccountId.value === toAccountId.value) {
       return validationFailure('转出账户和转入账户必须不同。')
+    }
+    const from = activeAccounts.value.find((account) => account.id === fromAccountId.value)
+    const to = activeAccounts.value.find((account) => account.id === toAccountId.value)
+    if (transferKind.value === 'repayment' && (from?.nature !== 'asset' || to?.nature !== 'liability')) {
+      return validationFailure('还款必须从资产账户转入负债账户。')
+    }
+    if (transferKind.value === 'withdrawal' && (from?.nature !== 'asset' || to?.nature !== 'asset')) {
+      return validationFailure('提现必须在两个资产账户之间进行。')
+    }
+    if (transferKind.value !== 'general') {
+      if (transferFeeAmount.value.trim()) {
+        try {
+          feeMinor = parseLedgerMoney(transferFeeAmount.value, settings.value.baseCurrency)
+        } catch {
+          return validationFailure(`请输入有效的${settings.value.baseCurrency}费用金额。`)
+        }
+        if (feeMinor < 0) return validationFailure('利息或手续费不能为负数。')
+      }
+      if (transferKind.value === 'withdrawal' && transferFeeMode.value === 'deducted' && feeMinor >= amountMinor) {
+        return validationFailure('从提现金额中扣除时，手续费必须小于提现金额。')
+      }
     }
   } else {
     if (!accountId.value) {
@@ -337,7 +388,7 @@ function validate(): { amountMinor: number; occurredAtMs: number } | null {
       return validationFailure('请选择分类，或先新建一个分类。')
     }
   }
-  return { amountMinor, occurredAtMs }
+  return { amountMinor, occurredAtMs, feeMinor }
 }
 
 async function submit(): Promise<void> {
@@ -370,7 +421,12 @@ async function submit(): Promise<void> {
           }
         : {
             type: 'transfer' as const,
+            transferKind: transferKind.value,
             amountMinor: parsed.amountMinor,
+            ...(parsed.feeMinor > 0 ? {
+              feeMinor: parsed.feeMinor,
+              ...(transferKind.value === 'withdrawal' ? { feeMode: transferFeeMode.value } : {}),
+            } : {}),
             fromAccountId: fromAccountId.value,
             toAccountId: toAccountId.value,
             occurredAt: parsed.occurredAtMs,
@@ -473,6 +529,9 @@ async function retryPending(): Promise<void> {
               v-model:category-id="categoryId"
               v-model:from-account-id="fromAccountId"
               v-model:to-account-id="toAccountId"
+              v-model:transfer-kind="transferKind"
+              v-model:transfer-fee-amount="transferFeeAmount"
+              v-model:transfer-fee-mode="transferFeeMode"
               v-model:occurred-at="occurredAt"
               v-model:location="location"
               v-model:payee="payee"
@@ -482,11 +541,13 @@ async function retryPending(): Promise<void> {
               :currency="settings?.baseCurrency ?? 'CNY'"
               :saving="saving"
               :account-options="accountOptions"
-              :transfer-account-options="transferAccountOptions"
+              :transfer-from-account-options="transferFromAccountOptions"
+              :transfer-to-account-options="transferToAccountOptions"
               :category-options="categoryOptions"
               :render-account-label="renderAccountLabel"
               :render-category-label="renderCategoryLabel"
               :allow-amount-input="allowAmountInput"
+              :show-payee="type !== 'transfer'"
             />
 
             <p v-if="!activeAccounts.length" class="ledger-form-error" role="alert">请先创建一个可用账户，再记账。</p>

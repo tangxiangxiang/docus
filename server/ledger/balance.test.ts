@@ -24,6 +24,7 @@ import { MAX_SAFE_MINOR } from './money.js'
 
 const COMMON_ROW = {
   id: 'transaction-1',
+  transfer_kind: null,
   amount_minor: 100,
   occurred_at: 2_000,
   payee: '',
@@ -52,6 +53,7 @@ function transferRow(overrides: Record<string, unknown> = {}): LedgerTransaction
   return {
     ...COMMON_ROW,
     type: 'transfer',
+    transfer_kind: 'general',
     account_id: null,
     from_account_id: 'account-1',
     to_account_id: 'account-2',
@@ -154,6 +156,7 @@ function transfer(
   return {
     id,
     type: 'transfer',
+    transferKind: 'general',
     amountMinor,
     fromAccountId,
     toAccountId,
@@ -230,6 +233,7 @@ describe('Ledger domain row conversion', () => {
     expect(ledgerTransactionFromRow(transferRow())).toEqual({
       id: 'transaction-1',
       type: 'transfer',
+      transferKind: 'general',
       amountMinor: 100,
       fromAccountId: 'account-1',
       toAccountId: 'account-2',

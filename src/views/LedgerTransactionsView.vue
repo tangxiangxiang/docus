@@ -184,10 +184,10 @@ function selectDatePreset(value: string | number | null): void {
   void applyFilters()
 }
 
-function typeLabel(type: string): string {
+function typeLabel(type: string, transferKind?: string): string {
   if (type === 'income') return '收入'
   if (type === 'expense') return '支出'
-  if (type === 'transfer') return '转账'
+  if (type === 'transfer') return transferKind === 'repayment' ? '还款' : transferKind === 'withdrawal' ? '提现' : '转账'
   return '余额调整'
 }
 
@@ -370,7 +370,7 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
     width: 100,
     render: (transaction) => h('span', { class: ['ledger-transaction-type', `is-${transaction.type}`] }, [
       h(NIcon, { size: 14, 'aria-hidden': 'true' }, { default: () => h(transactionTypeIcon(transaction.type)) }),
-      ` ${typeLabel(transaction.type)}`,
+      ` ${typeLabel(transaction.type, transaction.type === 'transfer' ? transaction.transferKind : undefined)}`,
     ]),
   },
   {
@@ -409,7 +409,10 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
     width: 145,
     align: 'right',
     render: (transaction) => {
-      const amountMinor = transaction.type === 'expense' ? -transaction.amountMinor : transaction.amountMinor
+      const transferAmountMinor = transaction.type === 'transfer'
+        ? transaction.bundle?.totalMinor ?? transaction.amountMinor
+        : transaction.amountMinor
+      const amountMinor = transaction.type === 'expense' ? -transaction.amountMinor : transferAmountMinor
       return h('strong', { class: ['ledger-transaction-amount', `is-${transaction.type}`] }, [
         h(LedgerAnimatedMoney, {
           minor: amountMinor,

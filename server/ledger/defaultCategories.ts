@@ -4,8 +4,8 @@ import type { LedgerCategory } from './domain.js'
 import type { LedgerRepository } from './repository.js'
 
 /** The exact ordered v1 catalog created with the first Ledger Settings row. */
-export const DEFAULT_LEDGER_CATEGORIES_V1: readonly { kind: LedgerCategoryKind; name: string; icon: string }[] = LEDGER_BUILTIN_CATEGORY_ICONS
-  .map(({ kind, name, id: icon }) => ({ kind, name, icon }))
+export const DEFAULT_LEDGER_CATEGORIES_V1: readonly { kind: LedgerCategoryKind; name: string; icon: string; systemKey?: LedgerCategory['systemKey'] }[] = LEDGER_BUILTIN_CATEGORY_ICONS
+  .map(({ kind, name, id: icon, systemKey }) => ({ kind, name, icon, ...(systemKey ? { systemKey } : {}) }))
 
 export interface LedgerCategorySeedDependencies {
   readonly now: () => number
@@ -30,6 +30,7 @@ export function seedDefaultLedgerCategories(
       kind: entry.kind,
       name: entry.name,
       normalizedName,
+      ...(entry.systemKey ? { systemKey: entry.systemKey } : {}),
       icon: entry.icon as LedgerCategory['icon'],
       archivedAt: null,
       version: 1,

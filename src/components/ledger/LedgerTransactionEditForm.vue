@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { NButton, NForm, type SelectOption } from 'naive-ui'
-import type { LedgerTransactionDto } from '../../../shared/ledgerProtocol'
+import type {
+  LedgerTransactionDto,
+  LedgerTransferFeeMode,
+  LedgerTransferKind,
+} from '../../../shared/ledgerProtocol'
 import { ledgerErrorMessage } from '../../features/ledger/ledgerErrors'
 import { ledgerDecimalFromMinor, parseLedgerMoney } from '../../features/ledger/money'
 import { useLedgerStore } from '../../features/ledger/ledgerStore'
@@ -11,6 +15,7 @@ import LedgerTransactionFormFields from './LedgerTransactionFormFields.vue'
 const props = withDefaults(defineProps<{
   transaction: LedgerTransactionDto
   cancelable?: boolean
+  groupTransactions?: readonly LedgerTransactionDto[]
 }>(), { cancelable: true })
 
 const emit = defineEmits<{
@@ -25,6 +30,9 @@ const accountId = ref('')
 const categoryId = ref('')
 const fromAccountId = ref('')
 const toAccountId = ref('')
+const transferKind = ref<LedgerTransferKind>('general')
+const transferFeeAmount = ref('')
+const transferFeeMode = ref<LedgerTransferFeeMode>('extra')
 const occurredAt = ref('')
 const location = ref('')
 const payee = ref('')
@@ -37,6 +45,9 @@ type FormSnapshot = {
   categoryId: string
   fromAccountId: string
   toAccountId: string
+  transferKind: LedgerTransferKind
+  transferFeeAmount: string
+  transferFeeMode: LedgerTransferFeeMode
   occurredAt: string
   location: string
   payee: string
@@ -45,6 +56,10 @@ type FormSnapshot = {
 const initialSnapshot = ref<FormSnapshot | null>(null)
 
 const transaction = computed(() => props.transaction)
+const groupedExpense = computed(() => {
+  const expense = props.groupTransactions?.find((item) => item.type === 'expense' && item.deletedAt === null)
+  return expense?.type === 'expense' ? expense : null
+})
 const formType = computed<'income' | 'expense' | 'transfer'>(() => transaction.value.type === 'adjustment' ? 'expense' : transaction.value.type)
 const associatedAccounts = computed(() => {
   const value = transaction.value
@@ -68,10 +83,21 @@ const accountOptions = computed<SelectOption[]>(() => store.activeAccounts.value
   value: account.id,
   label: account.name,
 })))
+const transferFromAccountOptions = computed<SelectOption[]>(() => accountOptionsForTransferSide('from'))
+const transferToAccountOptions = computed<SelectOption[]>(() => accountOptionsForTransferSide('to'))
 const categoryOptions = computed<SelectOption[]>(() => categories.value.map((category) => ({
   value: category.id,
   label: `${category.name}${category.archivedAt !== null ? '（已归档）' : ''}`,
 })))
+function accountOptionsForTransferSide(side: 'from' | 'to'): SelectOption[] {
+  return store.activeAccounts.value
+    .filter((account) => {
+      if (transferKind.value === 'general') return true
+      if (side === 'from') return account.nature === 'asset'
+      return transferKind.value === 'repayment' ? account.nature === 'liability' : account.nature === 'asset'
+    })
+    .map((account) => ({ value: account.id, label: account.name }))
+}
 
 function associatedAccountIds(): string[] {
   const value = transaction.value
@@ -85,7 +111,16 @@ async function refreshAssociatedAccounts(): Promise<void> {
 
 function reset(): void {
   const value = transaction.value
-  amount.value = value.type === 'adjustment' ? '' : ledgerDecimalFromMinor(value.amountMinor, store.settings.value?.baseCurrency ?? 'CNY')
+  const fee = value.type === 'transfer' ? groupedExpense.value : null
+  const requestedAmountMinor = value.type === 'transfer'
+    && value.transferKind === 'withdrawal'
+    && value.feeMode === 'deducted'
+    && fee
+    ? value.amountMinor + fee.amountMinor
+    : value.type === 'adjustment' ? null : value.amountMinor
+  amount.value = requestedAmountMinor === null
+    ? ''
+    : ledgerDecimalFromMinor(requestedAmountMinor, store.settings.value?.baseCurrency ?? 'CNY')
   occurredAt.value = store.settings.value?.timezone
     ? localDateTimeInputFromInstant(value.occurredAt, store.settings.value.timezone)
     : ''
@@ -96,14 +131,33 @@ function reset(): void {
   categoryId.value = value.type === 'income' || value.type === 'expense' ? value.categoryId : ''
   fromAccountId.value = value.type === 'transfer' ? value.fromAccountId : ''
   toAccountId.value = value.type === 'transfer' ? value.toAccountId : ''
+  transferKind.value = value.type === 'transfer' ? value.transferKind : 'general'
+  transferFeeAmount.value = fee
+    ? ledgerDecimalFromMinor(fee.amountMinor, store.settings.value?.baseCurrency ?? 'CNY')
+    : ''
+  transferFeeMode.value = value.type === 'transfer' ? value.feeMode ?? 'extra' : 'extra'
   error.value = ''
   initialSnapshot.value = snapshot()
 }
 
 watch(() => props.transaction, reset, { immediate: true })
-watch([amount, accountId, categoryId, fromAccountId, toAccountId, occurredAt, location, payee, note], () => {
+watch(() => props.groupTransactions, reset)
+watch([amount, accountId, categoryId, fromAccountId, toAccountId, transferKind, transferFeeAmount, transferFeeMode, occurredAt, location, payee, note], () => {
   if (!initialSnapshot.value) return
   emit('dirty', JSON.stringify(snapshot()) !== JSON.stringify(initialSnapshot.value))
+})
+
+watch(transferKind, () => {
+  if (transaction.value.type !== 'transfer') return
+  if (transferKind.value === 'general') {
+    transferFeeAmount.value = ''
+    transferFeeMode.value = 'extra'
+  }
+  const from = store.activeAccounts.value.find((account) => account.id === fromAccountId.value)
+  const to = store.activeAccounts.value.find((account) => account.id === toAccountId.value)
+  if (transferKind.value !== 'general' && from?.nature !== 'asset') fromAccountId.value = ''
+  if (transferKind.value === 'repayment' && to?.nature !== 'liability') toAccountId.value = ''
+  if (transferKind.value === 'withdrawal' && to?.nature !== 'asset') toAccountId.value = ''
 })
 
 function snapshot(): FormSnapshot {
@@ -113,6 +167,9 @@ function snapshot(): FormSnapshot {
     categoryId: categoryId.value,
     fromAccountId: fromAccountId.value,
     toAccountId: toAccountId.value,
+    transferKind: transferKind.value,
+    transferFeeAmount: transferFeeAmount.value,
+    transferFeeMode: transferFeeMode.value,
     occurredAt: occurredAt.value,
     location: location.value,
     payee: payee.value,
@@ -120,7 +177,12 @@ function snapshot(): FormSnapshot {
   }
 }
 
-function validateFinancialFields(): { amountMinor: number; occurredAtMs: number } | null {
+function validateFinancialFields(): {
+  amountMinor: number
+  occurredAtMs: number
+  feeMinor: number
+  feeMode?: LedgerTransferFeeMode
+} | null {
   const settings = store.settings.value
   if (!settings) {
     error.value = 'Ledger 设置尚未加载完成。'
@@ -148,6 +210,7 @@ function validateFinancialFields(): { amountMinor: number; occurredAtMs: number 
     error.value = '请选择有效的发生时间。'
     return null
   }
+  let feeMinor = 0
   if (transaction.value.type === 'transfer') {
     if (!fromAccountId.value || !toAccountId.value) {
       error.value = '请选择转出账户和转入账户。'
@@ -157,11 +220,49 @@ function validateFinancialFields(): { amountMinor: number; occurredAtMs: number 
       error.value = '转出账户和转入账户必须不同。'
       return null
     }
+    const from = store.accounts.value.find((account) => account.id === fromAccountId.value)
+    const to = store.accounts.value.find((account) => account.id === toAccountId.value)
+    if (transferKind.value === 'repayment' && (from?.nature !== 'asset' || to?.nature !== 'liability')) {
+      error.value = '还款必须从资产账户转入负债账户。'
+      return null
+    }
+    if (transferKind.value === 'withdrawal' && (from?.nature !== 'asset' || to?.nature !== 'asset')) {
+      error.value = '提现必须在两个资产账户之间进行。'
+      return null
+    }
+    if (transferKind.value !== 'general') {
+      try {
+        feeMinor = transferFeeAmount.value.trim()
+          ? parseLedgerMoney(transferFeeAmount.value, settings.baseCurrency)
+          : 0
+      } catch {
+        error.value = `请输入有效的${settings.baseCurrency}利息或手续费。`
+        return null
+      }
+      if (feeMinor < 0) {
+        error.value = '利息或手续费不能为负数。'
+        return null
+      }
+      if (feeMinor > 0 && transferKind.value === 'withdrawal'
+        && transferFeeMode.value === 'deducted' && feeMinor >= amountMinor) {
+        error.value = '从提现金额中扣除时，手续费必须小于提现金额。'
+        return null
+      }
+    }
   } else if (!accountId.value || !categoryId.value) {
     error.value = '请选择账户和分类。'
     return null
   }
-  return { amountMinor, occurredAtMs }
+  return {
+    amountMinor,
+    occurredAtMs,
+    feeMinor,
+    ...(transaction.value.type === 'transfer'
+      && transferKind.value === 'withdrawal'
+      && feeMinor > 0
+      ? { feeMode: transferFeeMode.value }
+      : {}),
+  }
 }
 
 function categoryPatchField(): { categoryId?: string } {
@@ -225,7 +326,12 @@ async function submit(): Promise<void> {
             }
           : {
               expectedVersion: transaction.value.version,
+              transferKind: transferKind.value,
               amountMinor: financial.amountMinor,
+              feeMinor: financial.feeMinor,
+              ...(financial.feeMinor > 0 && transferKind.value === 'withdrawal'
+                ? { feeMode: financial.feeMode }
+                : {}),
               fromAccountId: fromAccountId.value,
               toAccountId: toAccountId.value,
               occurredAt: financial.occurredAtMs,
@@ -255,6 +361,7 @@ async function submit(): Promise<void> {
       v-model:category-id="categoryId"
       v-model:from-account-id="fromAccountId"
       v-model:to-account-id="toAccountId"
+      v-model:transfer-kind="transferKind"
       v-model:occurred-at="occurredAt"
       v-model:location="location"
       v-model:payee="payee"
@@ -265,7 +372,10 @@ async function submit(): Promise<void> {
       :saving="saving"
       :financial-fields-editable="financialFieldsEditable"
       :account-options="accountOptions"
-      :transfer-account-options="accountOptions"
+      :transfer-from-account-options="transferFromAccountOptions"
+      :transfer-to-account-options="transferToAccountOptions"
+      v-model:transfer-fee-amount="transferFeeAmount"
+      v-model:transfer-fee-mode="transferFeeMode"
       :category-options="categoryOptions"
       :readonly-amount="transaction.type === 'adjustment' ? '由余额调整维护' : ledgerDecimalFromMinor(transaction.amountMinor, store.settings.value?.baseCurrency ?? 'CNY')"
       :readonly-occurred-at="occurredAt || '—'"

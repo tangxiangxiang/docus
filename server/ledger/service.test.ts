@@ -26,7 +26,7 @@ import {
 const databases: LedgerTestDatabase[] = []
 const TEST_NOW = Date.parse('2026-01-01T00:00:00.000Z')
 
-const EXPECTED_DEFAULT_LEDGER_CATEGORIES_V1 = LEDGER_BUILTIN_CATEGORY_ICONS.map(({ kind, name, id: icon }) => ({ kind, name, icon }))
+const EXPECTED_DEFAULT_LEDGER_CATEGORIES_V1 = LEDGER_BUILTIN_CATEGORY_ICONS.map(({ kind, name, id: icon, systemKey }) => ({ kind, name, icon, ...(systemKey ? { systemKey } : {}) }))
 
 function freshService(): {
   database: LedgerTestDatabase
@@ -135,6 +135,9 @@ function transactionFromResult(result: ReturnType<LedgerService['createTransacti
     accountId?: string
     fromAccountId?: string
     toAccountId?: string
+    groupId?: string
+    transferKind?: string
+    feeMode?: string
   }
 }
 
@@ -176,7 +179,7 @@ describe('Ledger Settings and default Category service', () => {
       archivedAt: 1_700_000_000_100,
       version: 7,
     })
-    expect(service.listCategories(undefined, true)).toHaveLength(18)
+    expect(service.listCategories(undefined, true)).toHaveLength(20)
   })
 
   it('replays the original Settings snapshot and rejects a new identity after initialization', () => {
@@ -222,7 +225,7 @@ describe('Ledger Settings and default Category service', () => {
     })
     expect(retryService.createSettings(settingsRequest(), 'atomic-settings').responseStatus).toBe(201)
     expect(repository.getSettings()).not.toBeNull()
-    expect(repository.listCategories({ includeArchived: true })).toHaveLength(18)
+    expect(repository.listCategories({ includeArchived: true })).toHaveLength(20)
     expect(database.db.prepare('SELECT COUNT(*) AS count FROM ledger_idempotency').get()).toEqual({ count: 1 })
   })
 
@@ -463,6 +466,158 @@ describe('Ledger Transaction and Adjustment service lifecycle', () => {
     const after = (fromNature === 'asset' ? fromAfter : -fromAfter)
       + (toNature === 'asset' ? toAfter : -toAfter)
     expect(after).toBe(before)
+  })
+
+  it('enforces Transfer kind Account natures on create and patch', () => {
+    const { service } = freshService()
+    initialize(service)
+    const bank = createAccount(service, 'transfer-kind-bank')
+    const wallet = createAccount(service, 'transfer-kind-wallet', { type: 'wallet' })
+    const card = createAccount(service, 'transfer-kind-card', {
+      type: 'credit_card',
+      nature: 'liability',
+    })
+
+    const repayment = transactionFromResult(service.createTransaction(transactionRequest({
+      type: 'transfer',
+      transferKind: 'repayment',
+      amountMinor: 10,
+      fromAccountId: bank.id,
+      toAccountId: card.id,
+    }), 'valid-repayment'))
+    expect(repayment).toMatchObject({ type: 'transfer', transferKind: 'repayment' })
+
+    const withdrawal = transactionFromResult(service.createTransaction(transactionRequest({
+      type: 'transfer',
+      transferKind: 'withdrawal',
+      amountMinor: 10,
+      fromAccountId: bank.id,
+      toAccountId: wallet.id,
+    }), 'valid-withdrawal'))
+    expect(withdrawal).toMatchObject({ type: 'transfer', transferKind: 'withdrawal' })
+
+    expectLedgerError(() => service.createTransaction(transactionRequest({
+      type: 'transfer',
+      transferKind: 'repayment',
+      amountMinor: 10,
+      fromAccountId: bank.id,
+      toAccountId: wallet.id,
+    }), 'invalid-repayment'), 'ledger-validation-failed')
+
+    expectLedgerError(() => service.patchTransaction(withdrawal.id, {
+      expectedVersion: withdrawal.version,
+      transferKind: 'repayment',
+    }), 'ledger-validation-failed')
+  })
+
+  it('keeps transfer charges as a grouped expense and edits or deletes the bundle atomically', () => {
+    const { repository, service } = freshService()
+    initialize(service)
+    const bank = createAccount(service, 'bundle-bank', { openingBalanceMinor: 10_000 })
+    const wallet = createAccount(service, 'bundle-wallet', { type: 'wallet', openingBalanceMinor: 10_000 })
+    const loan = createAccount(service, 'bundle-loan', {
+      type: 'loan',
+      nature: 'liability',
+    })
+    const interestCategory = service.listCategories('expense', false).find((category) => category.systemKey === 'interest')!
+
+    const repayment = transactionFromResult(service.createTransaction(transactionRequest({
+      type: 'transfer',
+      transferKind: 'repayment',
+      amountMinor: 5_000,
+      feeMinor: 300,
+      fromAccountId: bank.id,
+      toAccountId: loan.id,
+    }), 'repayment-bundle'))
+    expect(repayment).toMatchObject({
+      type: 'transfer',
+      transferKind: 'repayment',
+      amountMinor: 5_000,
+      groupId: expect.any(String),
+    })
+    const groupId = repayment.groupId!
+    expect(repository.listTransactionsByGroupId(groupId).map((item) => item.type).sort()).toEqual(['expense', 'transfer'])
+    expect(repository.listTransactionsByGroupId(groupId).find((item) => item.type === 'expense')).toMatchObject({
+      amountMinor: 300,
+      accountId: bank.id,
+      categoryId: interestCategory.id,
+    })
+    expect(service.getAccount(bank.id).currentBalanceMinor).toBe(4_700)
+    expect(service.getAccount(loan.id).currentBalanceMinor).toBe(-5_000)
+
+    const patched = service.patchTransaction(repayment.id, {
+      expectedVersion: repayment.version,
+      amountMinor: 5_500,
+      feeMinor: 400,
+      note: 'updated repayment',
+    })
+    expect(patched).toMatchObject({ amountMinor: 5_500, groupId, version: 2 })
+    expect(repository.listTransactionsByGroupId(groupId).find((item) => item.type === 'expense')).toMatchObject({
+      amountMinor: 400,
+      categoryId: interestCategory.id,
+      note: 'updated repayment',
+    })
+    expect(service.getAccount(bank.id).currentBalanceMinor).toBe(4_100)
+    expect(service.getAccount(loan.id).currentBalanceMinor).toBe(-5_500)
+
+    const cleared = service.patchTransaction(repayment.id, {
+      expectedVersion: patched.version,
+      feeMinor: 0,
+    })
+    expect(cleared.groupId).toBeUndefined()
+    expect(repository.listTransactionsByGroupId(groupId, true).find((item) => item.type === 'expense')).toMatchObject({
+      deletedAt: expect.any(Number),
+    })
+    expect(service.getAccount(bank.id).currentBalanceMinor).toBe(4_500)
+
+    const withdrawal = transactionFromResult(service.createTransaction(transactionRequest({
+      type: 'transfer',
+      transferKind: 'withdrawal',
+      amountMinor: 2_000,
+      feeMinor: 50,
+      fromAccountId: wallet.id,
+      toAccountId: bank.id,
+    }), 'withdrawal-bundle'))
+    const withdrawalFee = repository.listTransactionsByGroupId(withdrawal.groupId!).find((item) => item.type === 'expense')!
+    service.deleteTransaction(withdrawalFee.id, { expectedVersion: withdrawalFee.version })
+    expect(repository.getTransaction(withdrawal.id)?.deletedAt).not.toBeNull()
+    expect(repository.getTransaction(withdrawalFee.id)?.deletedAt).not.toBeNull()
+    expect(service.getAccount(wallet.id).currentBalanceMinor).toBe(10_000)
+    expect(service.getAccount(bank.id).currentBalanceMinor).toBe(4_500)
+  })
+
+  it('applies withdrawal fees as either an extra debit or a deducted receipt', () => {
+    const { repository, service } = freshService()
+    initialize(service)
+    const source = createAccount(service, 'withdrawal-source', { type: 'wallet', openingBalanceMinor: 10_000 })
+    const destination = createAccount(service, 'withdrawal-destination', { openingBalanceMinor: 0 })
+
+    const extra = transactionFromResult(service.createTransaction(transactionRequest({
+      type: 'transfer',
+      transferKind: 'withdrawal',
+      amountMinor: 2_000,
+      feeMinor: 50,
+      feeMode: 'extra',
+      fromAccountId: source.id,
+      toAccountId: destination.id,
+    }), 'withdrawal-extra'))
+    expect(extra).toMatchObject({ amountMinor: 2_000, feeMode: 'extra' })
+    expect(service.getAccount(source.id).currentBalanceMinor).toBe(7_950)
+    expect(service.getAccount(destination.id).currentBalanceMinor).toBe(2_000)
+
+    const deducted = transactionFromResult(service.createTransaction(transactionRequest({
+      type: 'transfer',
+      transferKind: 'withdrawal',
+      amountMinor: 1_000,
+      feeMinor: 25,
+      feeMode: 'deducted',
+      fromAccountId: source.id,
+      toAccountId: destination.id,
+    }), 'withdrawal-deducted'))
+    expect(deducted).toMatchObject({ amountMinor: 975, feeMode: 'deducted' })
+    expect(service.getAccount(source.id).currentBalanceMinor).toBe(6_950)
+    expect(service.getAccount(destination.id).currentBalanceMinor).toBe(2_975)
+    expect(repository.listTransactionsByGroupId(deducted.groupId!).find((item) => item.type === 'expense')).toMatchObject({ amountMinor: 25 })
   })
 
   it('rejects generic Adjustment creation and validates current-state references and time boundaries', () => {

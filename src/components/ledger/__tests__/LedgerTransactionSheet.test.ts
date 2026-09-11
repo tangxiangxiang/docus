@@ -217,20 +217,19 @@ describe('Ledger transaction creation sheet', () => {
     const transferSheet = getSheet()
     await transferSheet.findAll('[role="tab"]').find((button) => button.text() === '转账')!.trigger('click')
     expect(transferSheet.find('[aria-label="分类"]').exists()).toBe(false)
-    expect(transferSheet.find('input[name="payee"]').exists()).toBe(true)
+    expect(transferSheet.find('input[name="payee"]').exists()).toBe(false)
     expect(naiveSelectValue(transferSheet, '转出账户')).toBe('')
     expect(naiveSelectValue(transferSheet, '转入账户')).toBe('')
     await transferSheet.get('input[name="amount"]').setValue('5')
     await setNaiveSelect(transferSheet, '转出账户', 'bank-1')
     await setNaiveSelect(transferSheet, '转入账户', 'wallet-1')
     await setLedgerDateTime(transferSheet, '2026-09-05T12:30')
-    await transferSheet.get('input[name="payee"]').setValue('银行卡还款')
     api.createLedgerTransaction.mockResolvedValue({ id: 'tx-2', type: 'transfer' } as unknown as LedgerTransactionDto)
     await transferSheet.get('form').trigger('submit')
     await flushPromises()
 
     expect(api.createLedgerTransaction).toHaveBeenLastCalledWith(expect.objectContaining({
-      type: 'transfer', amountMinor: 500, fromAccountId: 'bank-1', toAccountId: 'wallet-1', payee: '银行卡还款',
+      type: 'transfer', transferKind: 'general', amountMinor: 500, fromAccountId: 'bank-1', toAccountId: 'wallet-1', payee: '',
     }), expect.any(String))
   })
 

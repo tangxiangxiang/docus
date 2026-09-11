@@ -45,7 +45,13 @@ export interface LedgerAccountIconConfig {
   readonly customIconNames: Readonly<Record<string, string>>
 }
 export type LedgerCategoryKind = 'income' | 'expense'
-export const LEDGER_BUILTIN_CATEGORY_ICONS = [
+export type LedgerCategorySystemKey = 'interest' | 'fee'
+export const LEDGER_BUILTIN_CATEGORY_ICONS: readonly {
+  readonly kind: LedgerCategoryKind
+  readonly name: string
+  readonly id: LedgerAccountIcon
+  readonly systemKey?: LedgerCategorySystemKey
+}[] = [
   { kind: 'expense', name: '餐饮', id: 'custom_builtin_category_expense_food' },
   { kind: 'expense', name: '交通', id: 'custom_builtin_category_expense_transport' },
   { kind: 'expense', name: '购物', id: 'custom_builtin_category_expense_shopping' },
@@ -56,6 +62,8 @@ export const LEDGER_BUILTIN_CATEGORY_ICONS = [
   { kind: 'expense', name: '教育', id: 'custom_builtin_category_expense_education' },
   { kind: 'expense', name: '旅行', id: 'custom_builtin_category_expense_travel' },
   { kind: 'expense', name: '人情', id: 'custom_builtin_category_expense_gift' },
+  { kind: 'expense', name: '利息', id: 'custom_builtin_category_expense_interest', systemKey: 'interest' },
+  { kind: 'expense', name: '手续费', id: 'custom_builtin_category_expense_fee', systemKey: 'fee' },
   { kind: 'expense', name: '其他', id: 'custom_builtin_category_expense_other' },
   { kind: 'income', name: '工资', id: 'custom_builtin_category_income_salary' },
   { kind: 'income', name: '奖金', id: 'custom_builtin_category_income_bonus' },
@@ -67,6 +75,8 @@ export const LEDGER_BUILTIN_CATEGORY_ICONS = [
 ] as const
 export type LedgerTransactionType = 'income' | 'expense' | 'transfer' | 'adjustment'
 export type LedgerTransactionFilterType = 'income' | 'expense' | 'transfer'
+export type LedgerTransferKind = 'general' | 'repayment' | 'withdrawal'
+export type LedgerTransferFeeMode = 'extra' | 'deducted'
 export type LedgerPeriodName = 'today' | 'week' | 'month' | 'year'
 export type LedgerOverviewScope = LedgerPeriodName | 'all'
 
@@ -106,6 +116,9 @@ export interface LedgerCategoryDto {
   readonly kind: LedgerCategoryKind
   readonly name: string
   readonly normalizedName: string
+  /** Protected system category identity used by composite transactions. */
+  readonly systemKey?: LedgerCategorySystemKey
+  readonly protected?: boolean
   readonly icon?: LedgerAccountIcon
   readonly archivedAt: number | null
   readonly version: number
@@ -115,6 +128,8 @@ export interface LedgerCategoryDto {
 
 interface LedgerTransactionDtoBase {
   readonly id: string
+  /** Links atomic rows that belong to one product-level operation. */
+  readonly groupId?: string
   readonly amountMinor: number
   readonly occurredAt: number
   readonly location?: string
@@ -123,6 +138,11 @@ interface LedgerTransactionDtoBase {
   readonly version: number
   readonly createdAt: number
   readonly updatedAt: number
+}
+
+export interface LedgerTransferBundleSummary {
+  readonly chargeMinor: number
+  readonly totalMinor: number
 }
 
 export interface LedgerIncomeTransactionDto extends LedgerTransactionDtoBase {
@@ -141,6 +161,10 @@ export interface LedgerExpenseTransactionDto extends LedgerTransactionDtoBase {
 
 export interface LedgerTransferTransactionDto extends LedgerTransactionDtoBase {
   readonly type: 'transfer'
+  readonly transferKind: LedgerTransferKind
+  readonly feeMode?: LedgerTransferFeeMode
+  /** Present on read projections when a companion expense is attached. */
+  readonly bundle?: LedgerTransferBundleSummary
   readonly fromAccountId: string
   readonly toAccountId: string
   readonly payee: string
@@ -199,7 +223,14 @@ export interface LedgerExpenseCreateRequest {
 
 export interface LedgerTransferCreateRequest {
   readonly type: 'transfer'
+  readonly transferKind?: LedgerTransferKind
+  /** Principal, or requested withdrawal amount before a fee is applied. */
   readonly amountMinor: number
+  /** Optional companion expense. It is never included in amountMinor. */
+  readonly feeMinor?: number
+  readonly feeCategoryId?: string
+  /** Only applies to withdrawal fees; defaults to extra during migration. */
+  readonly feeMode?: LedgerTransferFeeMode
   readonly fromAccountId: string
   readonly toAccountId: string
   readonly occurredAt: number
@@ -275,6 +306,7 @@ export interface LedgerTransactionQuery {
   readonly type?: LedgerTransactionFilterType | 'all'
   readonly accountId?: string
   readonly categoryId?: string
+  readonly groupId?: string
   readonly from?: number
   readonly to?: number
   readonly search?: string

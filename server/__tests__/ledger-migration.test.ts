@@ -89,18 +89,19 @@ function insertTransfer(
 ): void {
   const values = {
     amountMinor: 100,
+    transferKind: 'general',
     categoryId: null,
     payee: '',
     ...overrides,
   }
   db.prepare(`
     INSERT INTO ledger_transactions (
-      id, type, amount_minor, account_id, from_account_id, to_account_id,
+      id, type, transfer_kind, amount_minor, account_id, from_account_id, to_account_id,
       category_id, occurred_at, payee, note,
       adjustment_calculated_balance_minor, adjustment_target_balance_minor,
       deleted_at, version, created_at, updated_at
-    ) VALUES (?, 'transfer', ?, NULL, ?, ?, ?, 2_000, ?, '', NULL, NULL, NULL, 1, 2_000, 2_000)
-  `).run(id, values.amountMinor, fromAccountId, toAccountId, values.categoryId, values.payee)
+    ) VALUES (?, 'transfer', ?, ?, NULL, ?, ?, ?, 2_000, ?, '', NULL, NULL, NULL, 1, 2_000, 2_000)
+  `).run(id, values.transferKind, values.amountMinor, fromAccountId, toAccountId, values.categoryId, values.payee)
 }
 
 function insertAdjustment(
@@ -137,7 +138,7 @@ describe('Ledger 0013 foundation migration', () => {
     const db = freshDb()
     applyMigrations(db)
 
-    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(19)
+    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(22)
     const tables = (db.prepare(
       "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
     ).all() as Array<{ name: string }>).map((row) => row.name)
@@ -151,6 +152,7 @@ describe('Ledger 0013 foundation migration', () => {
     expect(db.prepare('SELECT COUNT(*) AS count FROM ledger_settings').get()).toEqual({ count: 0 })
     expect(db.prepare('SELECT COUNT(*) AS count FROM ledger_categories').get()).toEqual({ count: 0 })
     expect((db.prepare("PRAGMA table_info('ledger_transactions')").all() as Array<{ name: string }>).map((column) => column.name)).toContain('location')
+    expect((db.prepare("PRAGMA table_info('ledger_transactions')").all() as Array<{ name: string }>).map((column) => column.name)).toContain('transfer_kind')
     expect(tables.some((name) => /ledger_(monthly|balance|summary|cache)/.test(name))).toBe(false)
   })
 
@@ -167,7 +169,7 @@ describe('Ledger 0013 foundation migration', () => {
     ).get() as { count: number }).count
     applyMigrations(db)
 
-    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(19)
+    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(22)
     expect((db.prepare(
       "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table'",
     ).get() as { count: number }).count).toBe(firstTableCount)
@@ -255,6 +257,12 @@ describe('Ledger 0013 foundation migration', () => {
     })).toThrow()
     expect(() => insertTransfer(db, 'bad-transfer-amount', 'account-a', 'account-b', {
       amountMinor: 0,
+    })).toThrow()
+    expect(() => insertTransfer(db, 'bad-transfer-kind-missing', 'account-a', 'account-b', {
+      transferKind: null,
+    })).toThrow()
+    expect(() => insertTransfer(db, 'bad-transfer-kind-unknown', 'account-a', 'account-b', {
+      transferKind: 'cash-out',
     })).toThrow()
     expect(() => insertAdjustment(db, 'bad-zero-adjustment', 'account-a', 100, 100, {
       amountMinor: 0,

@@ -110,6 +110,10 @@ describe('Ledger stateless request validation', () => {
       type: 'transfer', amountMinor: 1, fromAccountId: 'a', toAccountId: 'b', occurredAt,
     })).toEqual({ type: 'transfer', amountMinor: 1, fromAccountId: 'a', toAccountId: 'b', occurredAt, location: '', payee: '', note: '' })
     expect(parseTransactionCreateRequest({
+      type: 'transfer', transferKind: 'repayment', amountMinor: 1,
+      fromAccountId: 'a', toAccountId: 'b', occurredAt,
+    })).toMatchObject({ type: 'transfer', transferKind: 'repayment' })
+    expect(parseTransactionCreateRequest({
       type: 'adjustment', accountId: 'a', targetBalanceMinor: 10,
       expectedCalculatedBalanceMinor: 5, occurredAt,
     })).toMatchObject({
@@ -144,6 +148,20 @@ describe('Ledger stateless request validation', () => {
     expect(parseTransactionPatchRequest({ expectedVersion: 1, type: 'expense', amountMinor: 1 })).toEqual({
       expectedVersion: 1, type: 'expense', amountMinor: 1,
     })
+    expect(parseTransactionPatchRequest({
+      expectedVersion: 1,
+      type: 'transfer',
+      feeMinor: 25,
+      feeCategoryId: 'fee-category',
+      feeMode: 'deducted',
+    })).toEqual({
+      expectedVersion: 1,
+      type: 'transfer',
+      feeMinor: 25,
+      feeCategoryId: 'fee-category',
+      feeMode: 'deducted',
+    })
+    expect(() => parseTransactionPatchRequest({ expectedVersion: 1, feeMinor: -1 })).toThrow()
     expect(parseExpectedVersionCommand({ expectedVersion: 3 })).toBe(3)
     expect(() => parseSettingsPatchRequest({ expectedVersion: 1 })).toThrow()
     expect(() => parseAccountPatchRequest({ expectedVersion: 1, currency: 'USD' })).toThrow()

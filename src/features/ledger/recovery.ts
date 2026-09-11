@@ -131,12 +131,20 @@ function isSafeTransactionPayload(value: unknown): value is LedgerTransactionCre
   }
 
   if (value.type === 'transfer') {
-    return (hasExactKeys(value, ['type', 'amountMinor', 'fromAccountId', 'toAccountId', 'occurredAt', 'location', 'payee', 'note'])
-      || hasExactKeys(value, ['type', 'amountMinor', 'fromAccountId', 'toAccountId', 'occurredAt', 'payee', 'note'])
-      || hasExactKeys(value, ['type', 'amountMinor', 'fromAccountId', 'toAccountId', 'occurredAt', 'note']))
+    const allowedKeys = new Set([
+      'type', 'transferKind', 'amountMinor', 'feeMinor', 'feeCategoryId', 'feeMode',
+      'fromAccountId', 'toAccountId', 'occurredAt', 'location', 'payee', 'note',
+    ])
+    const requiredKeys = ['type', 'amountMinor', 'fromAccountId', 'toAccountId', 'occurredAt', 'note']
+    return requiredKeys.every((key) => Object.prototype.hasOwnProperty.call(value, key))
+      && Object.keys(value).every((key) => allowedKeys.has(key))
       && nonEmptyString(value.fromAccountId)
       && nonEmptyString(value.toAccountId)
       && value.fromAccountId !== value.toAccountId
+      && (value.transferKind === undefined || value.transferKind === 'general' || value.transferKind === 'repayment' || value.transferKind === 'withdrawal')
+      && (value.feeMinor === undefined || safeInteger(value.feeMinor) && value.feeMinor >= 0)
+      && (value.feeCategoryId === undefined || nonEmptyString(value.feeCategoryId))
+      && (value.feeMode === undefined || value.feeMode === 'extra' || value.feeMode === 'deducted')
       && (value.location === undefined || typeof value.location === 'string')
       && (value.payee === undefined || typeof value.payee === 'string')
       && typeof value.note === 'string'

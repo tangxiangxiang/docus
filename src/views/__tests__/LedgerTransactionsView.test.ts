@@ -139,6 +139,7 @@ const income: LedgerTransactionDto = {
 const transfer: LedgerTransactionDto = {
   id: 'tx-transfer',
   type: 'transfer',
+  transferKind: 'general',
   amountMinor: 5_000,
   fromAccountId: activeAccount.id,
   toAccountId: archivedAccount.id,

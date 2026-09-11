@@ -20,6 +20,8 @@ import type {
   LedgerTransactionFilterType,
   LedgerTransactionQuery,
   LedgerTransactionType,
+  LedgerTransferFeeMode,
+  LedgerTransferKind,
   LedgerTransferCreateRequest,
 } from '../../shared/ledgerProtocol.js'
 import {
@@ -168,6 +170,10 @@ export const LEDGER_CATEGORY_KINDS: readonly LedgerCategoryKind[] = ['income', '
 export const LEDGER_TRANSACTION_TYPES: readonly LedgerTransactionType[] = [
   'income', 'expense', 'transfer', 'adjustment',
 ]
+export const LEDGER_TRANSFER_KINDS: readonly LedgerTransferKind[] = [
+  'general', 'repayment', 'withdrawal',
+]
+export const LEDGER_TRANSFER_FEE_MODES: readonly LedgerTransferFeeMode[] = ['extra', 'deducted']
 
 export function parseAccountType(record: UnknownRecord, key = 'type'): LedgerAccountType {
   return parseEnum(record, key, LEDGER_ACCOUNT_TYPES)
@@ -189,6 +195,14 @@ export function parseCategoryKind(record: UnknownRecord, key = 'kind'): LedgerCa
 
 export function parseTransactionType(record: UnknownRecord, key = 'type'): LedgerTransactionType {
   return parseEnum(record, key, LEDGER_TRANSACTION_TYPES)
+}
+
+export function parseTransferKind(record: UnknownRecord, key = 'transferKind'): LedgerTransferKind {
+  return parseEnum(record, key, LEDGER_TRANSFER_KINDS)
+}
+
+export function parseTransferFeeMode(record: UnknownRecord, key = 'feeMode'): LedgerTransferFeeMode {
+  return parseEnum(record, key, LEDGER_TRANSFER_FEE_MODES)
 }
 
 function parseCurrency(record: UnknownRecord, key = 'currency'): string {
@@ -275,6 +289,15 @@ function parseAmountMinor(record: UnknownRecord): number {
   return parsePositiveInteger(record, 'amountMinor')
 }
 
+function parseOptionalFeeMinor(record: UnknownRecord): number | undefined {
+  if (!hasOwn(record, 'feeMinor')) return undefined
+  const feeMinor = parseSafeInteger(record, 'feeMinor')
+  if (feeMinor < 0) {
+    throw ledgerValidationError('feeMinor must not be negative', { field: 'feeMinor' })
+  }
+  return feeMinor
+}
+
 function parseAdjustmentBalance(record: UnknownRecord, key: string): number {
   return parseSafeInteger(record, key)
 }
@@ -306,14 +329,19 @@ function parseIncomeOrExpenseCreate(
 function parseTransferCreate(value: unknown): LedgerTransferCreateRequest {
   const record = asRecord(value)
   assertExactKeys(record, [
-    'type', 'amountMinor', 'fromAccountId', 'toAccountId', 'occurredAt', 'location', 'payee', 'note',
+    'type', 'transferKind', 'amountMinor', 'feeMinor', 'feeCategoryId', 'feeMode',
+    'fromAccountId', 'toAccountId', 'occurredAt', 'location', 'payee', 'note',
   ], ['type', 'amountMinor', 'fromAccountId', 'toAccountId', 'occurredAt'])
   if (parseTransactionType(record) !== 'transfer') {
     throw ledgerValidationError('transaction type discriminator does not match the parser', { field: 'type' })
   }
   return {
     type: 'transfer',
+    ...(hasOwn(record, 'transferKind') ? { transferKind: parseTransferKind(record) } : {}),
     amountMinor: parseAmountMinor(record),
+    ...(hasOwn(record, 'feeMinor') ? { feeMinor: parseOptionalFeeMinor(record) } : {}),
+    ...(hasOwn(record, 'feeCategoryId') ? { feeCategoryId: requireNonEmptyId(record, 'feeCategoryId') } : {}),
+    ...(hasOwn(record, 'feeMode') ? { feeMode: parseTransferFeeMode(record) } : {}),
     fromAccountId: requireNonEmptyId(record, 'fromAccountId'),
     toAccountId: requireNonEmptyId(record, 'toAccountId'),
     occurredAt: parseOccurredAt(record),
@@ -470,7 +498,11 @@ export function parseCategoryPatchRequest(value: unknown): LedgerCategoryPatchRe
 export interface LedgerTransactionPatchRequest {
   readonly expectedVersion: number
   readonly type?: LedgerTransactionType
+  readonly transferKind?: LedgerTransferKind
   readonly amountMinor?: number
+  readonly feeMinor?: number
+  readonly feeCategoryId?: string
+  readonly feeMode?: LedgerTransferFeeMode
   readonly accountId?: string
   readonly fromAccountId?: string
   readonly toAccountId?: string
@@ -486,7 +518,7 @@ export interface LedgerTransactionPatchRequest {
 export function parseTransactionPatchRequest(value: unknown): LedgerTransactionPatchRequest {
   const record = asRecord(value)
   const mutableKeys = [
-    'type', 'amountMinor', 'accountId', 'fromAccountId', 'toAccountId', 'categoryId',
+    'type', 'transferKind', 'amountMinor', 'feeMinor', 'feeCategoryId', 'feeMode', 'accountId', 'fromAccountId', 'toAccountId', 'categoryId',
     'occurredAt', 'location', 'payee', 'note', 'adjustmentCalculatedBalanceMinor',
     'adjustmentTargetBalanceMinor',
   ] as const
@@ -497,7 +529,11 @@ export function parseTransactionPatchRequest(value: unknown): LedgerTransactionP
   return {
     expectedVersion: parseExpectedVersion(record),
     ...(hasOwn(record, 'type') ? { type: parseTransactionType(record) } : {}),
+    ...(hasOwn(record, 'transferKind') ? { transferKind: parseTransferKind(record) } : {}),
     ...(hasOwn(record, 'amountMinor') ? { amountMinor: parseAmountMinor(record) } : {}),
+    ...(hasOwn(record, 'feeMinor') ? { feeMinor: parseOptionalFeeMinor(record) } : {}),
+    ...(hasOwn(record, 'feeCategoryId') ? { feeCategoryId: requireNonEmptyId(record, 'feeCategoryId') } : {}),
+    ...(hasOwn(record, 'feeMode') ? { feeMode: parseTransferFeeMode(record) } : {}),
     ...(hasOwn(record, 'accountId') ? { accountId: requireNonEmptyId(record, 'accountId') } : {}),
     ...(hasOwn(record, 'fromAccountId') ? { fromAccountId: requireNonEmptyId(record, 'fromAccountId') } : {}),
     ...(hasOwn(record, 'toAccountId') ? { toAccountId: requireNonEmptyId(record, 'toAccountId') } : {}),
@@ -660,7 +696,7 @@ function parseQueryOffset(record: UnknownRecord): number | undefined {
 export function parseTransactionQuery(value: UnknownRecord): LedgerTransactionQuery {
   assertExactKeys(value, [
     'type', 'accountId', 'categoryId', 'from', 'to', 'search',
-    'includeDeleted', 'limit', 'cursor', 'offset',
+    'groupId', 'includeDeleted', 'limit', 'cursor', 'offset',
   ], [])
 
   const from = parseUtcQueryValue(value.from, 'from')
@@ -679,6 +715,7 @@ export function parseTransactionQuery(value: UnknownRecord): LedgerTransactionQu
     type: parseTransactionTypeFilter(value.type),
     accountId: parseQueryId(value, 'accountId'),
     categoryId: parseQueryId(value, 'categoryId'),
+    groupId: parseQueryId(value, 'groupId'),
     from,
     to,
     search: parseQuerySearch(value),

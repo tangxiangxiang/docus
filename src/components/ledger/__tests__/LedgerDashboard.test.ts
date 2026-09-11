@@ -117,6 +117,7 @@ const transferActiveToArchived: LedgerTransactionDto = {
   ...expense,
   id: 'tx-transfer-active-archived',
   type: 'transfer',
+  transferKind: 'general',
   amountMinor: 10_000,
   fromAccountId: account.id,
   toAccountId: archivedAccount.id,

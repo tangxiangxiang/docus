@@ -203,7 +203,7 @@ describe('Ledger persistent idempotency replay', () => {
     const projectionsB = createLedgerProjections(repositoryB, { now: () => reopenNow })
 
     expect((reopened.prepare('SELECT version FROM schema_version').get() as { version: number }).version)
-      .toBe(18)
+      .toBe(22)
     expect(serviceB.getSettings()).toMatchObject({
       baseCurrency: 'CNY',
       currencyExponent: 2,
@@ -250,7 +250,7 @@ describe('Ledger persistent idempotency replay', () => {
     expect(counts).toEqual({
       settings_count: 1,
       account_count: 1,
-      category_count: 19,
+      category_count: 21,
       transaction_count: 1,
       idempotency_count: 4,
     })

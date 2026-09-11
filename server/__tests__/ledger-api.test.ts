@@ -115,7 +115,7 @@ describe('Ledger API owner boundary and Settings', () => {
     expect(await json(categories)).toMatchObject({ code: 'ledger-not-found' })
   })
 
-  it('initializes Settings with exactly 18 categories and replays the original snapshot', async () => {
+  it('initializes Settings with exactly 20 categories and replays the original snapshot', async () => {
     const first = await authenticated('/api/ledger/settings', {
       method: 'POST',
       body: { baseCurrency: 'CNY', timezone: 'Asia/Shanghai' },
@@ -129,7 +129,7 @@ describe('Ledger API owner boundary and Settings', () => {
 
     const categories = await authenticated('/api/ledger/categories')
     expect(categories.status).toBe(200)
-    expect(await json(categories)).toHaveLength(18)
+    expect(await json(categories)).toHaveLength(20)
 
     const replay = await authenticated('/api/ledger/settings', {
       method: 'POST',

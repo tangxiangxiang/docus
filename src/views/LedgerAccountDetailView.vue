@@ -153,10 +153,10 @@ function transactionTitle(transaction: LedgerTransactionDto): string {
   return '余额调整'
 }
 
-function transactionTypeLabel(type: LedgerTransactionDto['type']): string {
-  if (type === 'income') return '收入'
-  if (type === 'expense') return '支出'
-  if (type === 'transfer') return '转账'
+function transactionTypeLabel(transaction: LedgerTransactionDto): string {
+  if (transaction.type === 'income') return '收入'
+  if (transaction.type === 'expense') return '支出'
+  if (transaction.type === 'transfer') return transaction.transferKind === 'repayment' ? '还款' : transaction.transferKind === 'withdrawal' ? '提现' : '转账'
   return '调整'
 }
 
@@ -202,7 +202,7 @@ function transactionCategory(transaction: LedgerTransactionDto): string {
   if (transaction.type === 'income' || transaction.type === 'expense') {
     return store.categories.value.find((category) => category.id === transaction.categoryId)?.name ?? '未分类'
   }
-  if (transaction.type === 'transfer') return '账户转账'
+  if (transaction.type === 'transfer') return transaction.transferKind === 'repayment' ? '还款' : transaction.transferKind === 'withdrawal' ? '提现' : '账户转账'
   return '余额调整'
 }
 
@@ -462,7 +462,7 @@ const netMovement = computed(() => {
               <div class="ledger-recent-table-head"><span>日期</span><span>类型</span><span>分类</span><span>摘要</span><span>金额</span><span>余额</span></div>
               <div v-for="transaction in recentTransactions" :key="transaction.id" class="ledger-recent-row">
                 <time>{{ formatTimestamp(transaction.occurredAt) }}</time>
-                <span class="ledger-transaction-badge" :class="`is-${transaction.type}`">{{ transactionTypeLabel(transaction.type) }}</span>
+                <span class="ledger-transaction-badge" :class="`is-${transaction.type}`">{{ transactionTypeLabel(transaction) }}</span>
                 <span class="ledger-transaction-category">{{ transactionCategory(transaction) }}</span>
                 <span class="ledger-transaction-summary">{{ transactionTitle(transaction) }}</span>
                 <strong :class="`is-${transaction.type}`">

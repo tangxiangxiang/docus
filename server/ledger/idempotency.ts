@@ -210,6 +210,7 @@ const LEDGER_CATEGORY_REPLAY_KEYS = [
 
 const LEDGER_TRANSACTION_BASE_REPLAY_KEYS = [
   'id',
+  'groupId',
   'type',
   'amountMinor',
   'occurredAt',
@@ -237,6 +238,8 @@ const LEDGER_EXPENSE_REPLAY_KEYS = [
 
 const LEDGER_TRANSFER_REPLAY_KEYS = [
   ...LEDGER_TRANSACTION_BASE_REPLAY_KEYS,
+  'transferKind',
+  'feeMode',
   'fromAccountId',
   'toAccountId',
   'payee',
@@ -253,9 +256,12 @@ function transactionReplayKeys(
   object: Record<string, unknown>,
   keys: readonly string[],
 ): readonly string[] {
-  return Object.prototype.hasOwnProperty.call(object, 'location')
-    ? keys
-    : keys.filter((key) => key !== 'location')
+  return keys.filter((key) => {
+    if (key === 'location' || key === 'groupId' || key === 'feeMode') {
+      return Object.prototype.hasOwnProperty.call(object, key)
+    }
+    return true
+  })
 }
 
 const LEDGER_ADJUSTMENT_MUTATION_REPLAY_KEYS = [
@@ -410,17 +416,26 @@ function assertLedgerAccountReplayBody(value: unknown): asserts value is LedgerA
 }
 
 function assertLedgerCategoryReplayBody(value: unknown): asserts value is LedgerCategoryDto {
+  const optionalKeys = [
+    ...(Object.prototype.hasOwnProperty.call(value, 'icon') ? ['icon'] : []),
+    ...(Object.prototype.hasOwnProperty.call(value, 'systemKey') ? ['systemKey'] : []),
+    ...(Object.prototype.hasOwnProperty.call(value, 'protected') ? ['protected'] : []),
+  ]
   const object = replayExactObject(
     value,
-    Object.prototype.hasOwnProperty.call(value, 'icon')
-      ? [...LEDGER_CATEGORY_REPLAY_KEYS, 'icon']
-      : LEDGER_CATEGORY_REPLAY_KEYS,
+    [...LEDGER_CATEGORY_REPLAY_KEYS, ...optionalKeys],
     'category response',
   )
   assertReplayString(object.id, 'category response.id')
   assertReplayEnum(object.kind, ['income', 'expense'], 'category response.kind')
   assertReplayString(object.name, 'category response.name')
   assertReplayString(object.normalizedName, 'category response.normalizedName')
+  if (Object.prototype.hasOwnProperty.call(object, 'systemKey')) {
+    assertReplayEnum(object.systemKey, ['interest', 'fee'], 'category response.systemKey')
+  }
+  if (Object.prototype.hasOwnProperty.call(object, 'protected') && typeof object.protected !== 'boolean') {
+    throw new TypeError('Ledger replay response rejected: category response.protected must be boolean')
+  }
   if (Object.prototype.hasOwnProperty.call(object, 'icon')) {
     if (!(['wallet', 'credit_card', 'cash', 'building_bank', 'briefcase'].includes(object.icon as string)
       || /^custom_[a-z0-9_]+$/.test(object.icon as string))) {
@@ -435,6 +450,9 @@ function assertLedgerCategoryReplayBody(value: unknown): asserts value is Ledger
 
 function assertLedgerTransactionBaseReplayBody(object: ReplayObject, label: string): void {
   assertReplayString(object.id, `${label}.id`)
+  if (Object.prototype.hasOwnProperty.call(object, 'groupId')) {
+    assertReplayString(object.groupId, `${label}.groupId`)
+  }
   assertReplaySafeInteger(object.amountMinor, `${label}.amountMinor`)
   assertReplaySafeInteger(object.occurredAt, `${label}.occurredAt`)
   if (Object.prototype.hasOwnProperty.call(object, 'location')) {
@@ -467,6 +485,9 @@ function assertLedgerTransactionReplayBody(value: unknown): asserts value is Led
       assertReplayString(object.payee, 'expense response.payee')
       return
     case 'transfer':
+      if (!Object.prototype.hasOwnProperty.call(object, 'transferKind')) {
+        object.transferKind = 'general'
+      }
       replayExactObject(
         object,
         transactionReplayKeys(object, Object.prototype.hasOwnProperty.call(object, 'payee')
@@ -475,6 +496,10 @@ function assertLedgerTransactionReplayBody(value: unknown): asserts value is Led
         'transfer response',
       )
       assertReplayEnum(object.type, ['transfer'], 'transfer response.type')
+      assertReplayEnum(object.transferKind, ['general', 'repayment', 'withdrawal'], 'transfer response.transferKind')
+      if (Object.prototype.hasOwnProperty.call(object, 'feeMode')) {
+        assertReplayEnum(object.feeMode, ['extra', 'deducted'], 'transfer response.feeMode')
+      }
       assertLedgerTransactionBaseReplayBody(object, 'transfer response')
       assertReplayString(object.fromAccountId, 'transfer response.fromAccountId')
       assertReplayString(object.toAccountId, 'transfer response.toAccountId')

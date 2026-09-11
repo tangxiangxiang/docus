@@ -618,6 +618,43 @@ describe('Ledger Overview and trend projections', () => {
     expect(afterTransfer.cashflow).toEqual({ incomeMinor: 0, expenseMinor: 20, balanceMinor: -20 })
   })
 
+  it('projects a grouped transfer as one row while retaining the charge in expense totals', () => {
+    const fixture = freshFixture()
+    const bank = account(fixture, 'grouped-bank', { openingBalanceMinor: 10_000 })
+    const loan = account(fixture, 'grouped-loan', {
+      type: 'loan',
+      nature: 'liability',
+    })
+    const feeCategory = fixture.service.listCategories('expense', false).find((item) => item.systemKey === 'interest')!
+    const repayment = transaction(fixture, 'grouped-repayment', {
+      type: 'transfer',
+      transferKind: 'repayment',
+      amountMinor: 5_000,
+      feeMinor: 300,
+      fromAccountId: bank.id,
+      toAccountId: loan.id,
+    })
+
+    const page = fixture.projections.listTransactions(query())
+    expect(page.transactions).toHaveLength(1)
+    expect(page.transactions[0]).toMatchObject({
+      id: repayment.id,
+      type: 'transfer',
+      amountMinor: 5_000,
+      groupId: repayment.groupId,
+      bundle: { chargeMinor: 300, totalMinor: 5_300 },
+    })
+    expect(page.page).toMatchObject({ total: 1, incomeMinor: 0, expenseMinor: 300 })
+
+    const grouped = fixture.projections.listTransactions(query({ groupId: repayment.groupId }))
+    expect(grouped.transactions.map((row) => row.type).sort()).toEqual(['expense', 'transfer'])
+    expect(grouped.page.total).toBe(2)
+
+    const feeRows = fixture.projections.listTransactions(query({ categoryId: feeCategory.id }))
+    expect(feeRows.transactions).toHaveLength(1)
+    expect(feeRows.transactions[0]).toMatchObject({ type: 'expense', amountMinor: 300, groupId: repayment.groupId })
+  })
+
   it('returns fixed recent five active records and calendar-month trend points', () => {
     const fixture = freshFixture()
     const asset = account(fixture, 'recent-account')

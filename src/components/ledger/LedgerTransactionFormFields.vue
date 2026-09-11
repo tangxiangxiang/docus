@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { ref, type VNodeChild } from 'vue'
-import { NFormItem, NInput, NSelect, type InputInst, type SelectGroupOption, type SelectOption } from 'naive-ui'
+import { computed, ref, type VNodeChild } from 'vue'
+import { NFormItem, NInput, NRadioButton, NRadioGroup, NSelect, type InputInst, type SelectGroupOption, type SelectOption } from 'naive-ui'
+import type { LedgerTransferFeeMode, LedgerTransferKind } from '../../../shared/ledgerProtocol'
+import { formatLedgerMoney, parseLedgerMoney } from '../../features/ledger/money'
 import { ledgerSelectNodeProps } from '../../features/ledger/naiveControls'
 import LedgerDateTimePicker from './LedgerDateTimePicker.vue'
 
@@ -16,6 +18,8 @@ const props = withDefaults(defineProps<{
   financialFieldsEditable?: boolean
   accountOptions: Array<SelectOption | SelectGroupOption>
   transferAccountOptions?: Array<SelectOption | SelectGroupOption>
+  transferFromAccountOptions?: Array<SelectOption | SelectGroupOption>
+  transferToAccountOptions?: Array<SelectOption | SelectGroupOption>
   categoryOptions: SelectOption[]
   renderAccountLabel?: AccountOptionRenderer
   renderCategoryLabel?: CategoryOptionRenderer
@@ -26,6 +30,8 @@ const props = withDefaults(defineProps<{
 }>(), {
   financialFieldsEditable: true,
   transferAccountOptions: () => [],
+  transferFromAccountOptions: undefined,
+  transferToAccountOptions: undefined,
   readonlyAmount: '—',
   readonlyOccurredAt: '—',
   showPayee: true,
@@ -36,6 +42,9 @@ const accountId = defineModel<string>('accountId', { required: true })
 const categoryId = defineModel<string>('categoryId', { required: true })
 const fromAccountId = defineModel<string>('fromAccountId', { required: true })
 const toAccountId = defineModel<string>('toAccountId', { required: true })
+const transferKind = defineModel<LedgerTransferKind>('transferKind', { default: 'general' })
+const transferFeeAmount = defineModel<string>('transferFeeAmount', { default: '' })
+const transferFeeMode = defineModel<LedgerTransferFeeMode>('transferFeeMode', { default: 'extra' })
 const occurredAt = defineModel<string>('occurredAt', { required: true })
 const location = defineModel<string>('location', { required: true })
 const payee = defineModel<string>('payee', { required: true })
@@ -43,6 +52,38 @@ const note = defineModel<string>('note', { required: true })
 
 const amountInput = ref<InputInst | null>(null)
 const idPrefix = props.mode === 'create' ? 'ledger-transaction' : 'ledger-edit-transaction'
+
+const parsedTransferAmount = computed(() => {
+  try {
+    return parseLedgerMoney(amount.value, props.currency)
+  } catch {
+    return null
+  }
+})
+const parsedTransferFee = computed(() => {
+  if (!transferFeeAmount.value.trim()) return 0
+  try {
+    return parseLedgerMoney(transferFeeAmount.value, props.currency)
+  } catch {
+    return null
+  }
+})
+const transferSummary = computed(() => {
+  if (props.type !== 'transfer' || transferKind.value === 'general'
+    || parsedTransferAmount.value === null || parsedTransferFee.value === null) return null
+  const transferAmount = transferKind.value === 'withdrawal' && transferFeeMode.value === 'deducted'
+    ? parsedTransferAmount.value - parsedTransferFee.value
+    : parsedTransferAmount.value
+  return {
+    transferAmount,
+    fee: parsedTransferFee.value,
+    total: transferAmount + parsedTransferFee.value,
+  }
+})
+
+function moneyLabel(value: number): string {
+  return formatLedgerMoney(value, props.currency)
+}
 
 defineExpose({
   focusAmount: () => amountInput.value?.focus(),
@@ -52,23 +93,64 @@ defineExpose({
 <template>
   <div class="ledger-transaction-form-fields" :data-mode="mode">
     <template v-if="financialFieldsEditable">
-      <NFormItem class="ledger-form-field ledger-amount-field" label="金额" :show-feedback="false" required>
-        <div class="ledger-money-input">
-          <span>{{ currency }}</span>
-          <NInput
-            ref="amountInput"
-            v-model:value="amount"
-            class="ledger-money-control"
-            type="text"
-            size="small"
-            :allow-input="allowAmountInput"
-            :bordered="false"
-            :input-props="{ id: `${idPrefix}-amount`, name: 'amount', inputmode: 'decimal', autocomplete: 'off', required: true }"
-            placeholder="0.00"
-            :disabled="saving"
-          />
-        </div>
-      </NFormItem>
+      <div :class="type === 'transfer' && transferKind !== 'general' ? 'ledger-transfer-amount-grid' : undefined">
+        <NFormItem
+          class="ledger-form-field ledger-amount-field"
+          :label="type === 'transfer' && transferKind === 'repayment' ? '还款本金' : type === 'transfer' && transferKind === 'withdrawal' ? '提现金额' : '金额'"
+          :show-feedback="false"
+          required
+        >
+          <div class="ledger-money-input">
+            <span>{{ currency }}</span>
+            <NInput
+              ref="amountInput"
+              v-model:value="amount"
+              class="ledger-money-control"
+              type="text"
+              size="small"
+              :allow-input="allowAmountInput"
+              :bordered="false"
+              :input-props="{ id: `${idPrefix}-amount`, name: 'amount', inputmode: 'decimal', autocomplete: 'off', required: true }"
+              placeholder="0.00"
+              :disabled="saving"
+            />
+          </div>
+        </NFormItem>
+
+        <NFormItem v-if="type === 'transfer' && transferKind !== 'general'" class="ledger-form-field" :label="transferKind === 'repayment' ? '利息（可选）' : '手续费（可选）'" :show-feedback="false">
+          <div class="ledger-money-input">
+            <span>{{ currency }}</span>
+            <NInput
+              v-model:value="transferFeeAmount"
+              class="ledger-money-control"
+              type="text"
+              size="small"
+              :allow-input="allowAmountInput"
+              :bordered="false"
+              :input-props="{ id: `${idPrefix}-fee-amount`, name: 'feeAmount', inputmode: 'decimal', autocomplete: 'off' }"
+              placeholder="0.00"
+              :disabled="saving"
+            />
+          </div>
+        </NFormItem>
+      </div>
+
+      <div v-if="transferKind === 'withdrawal' && transferSummary" class="ledger-transfer-fee-mode">
+        <span class="ledger-transfer-summary-label">手续费方式</span>
+        <NRadioGroup v-model:value="transferFeeMode" size="small" :disabled="saving" aria-label="手续费方式">
+          <NRadioButton value="extra">额外扣除</NRadioButton>
+          <NRadioButton value="deducted">从提现金额中扣除</NRadioButton>
+        </NRadioGroup>
+      </div>
+
+      <div v-if="transferSummary" class="ledger-transfer-summary" aria-label="转账金额明细">
+        <span>{{ transferKind === 'repayment' ? '总扣款' : transferFeeMode === 'deducted' ? '实际扣款' : '实际扣款' }}</span>
+        <strong>{{ moneyLabel(transferSummary.total) }}</strong>
+        <template v-if="transferKind === 'withdrawal'">
+          <span>到账金额</span>
+          <strong>{{ moneyLabel(transferSummary.transferAmount) }}</strong>
+        </template>
+      </div>
 
       <div v-if="type !== 'transfer'" class="ledger-form-grid">
         <NFormItem class="ledger-form-field" label="账户" :show-feedback="false" required>
@@ -107,12 +189,19 @@ defineExpose({
       </div>
 
       <div v-else class="ledger-form-grid">
+        <NFormItem class="ledger-form-field ledger-transfer-kind-field" label="转账类型" :show-feedback="false">
+          <NRadioGroup v-model:value="transferKind" class="ledger-transfer-kinds" size="small" :disabled="saving" aria-label="转账类型">
+            <NRadioButton value="general">普通转账</NRadioButton>
+            <NRadioButton value="repayment">还款</NRadioButton>
+            <NRadioButton value="withdrawal">提现</NRadioButton>
+          </NRadioGroup>
+        </NFormItem>
         <NFormItem class="ledger-form-field" label="转出账户" :show-feedback="false" required>
           <NSelect
             v-model:value="fromAccountId"
             class="ledger-form-control"
             size="medium"
-            :options="transferAccountOptions"
+            :options="transferFromAccountOptions ?? transferAccountOptions"
             :render-label="renderAccountLabel"
             :node-props="ledgerSelectNodeProps"
             :input-props="{ id: `${idPrefix}-from-account`, name: 'fromAccountId', required: true }"
@@ -128,7 +217,7 @@ defineExpose({
             v-model:value="toAccountId"
             class="ledger-form-control"
             size="medium"
-            :options="transferAccountOptions"
+            :options="transferToAccountOptions ?? transferAccountOptions"
             :render-label="renderAccountLabel"
             :node-props="ledgerSelectNodeProps"
             :input-props="{ id: `${idPrefix}-to-account`, name: 'toAccountId', required: true }"
@@ -212,6 +301,16 @@ defineExpose({
 .ledger-form-field :deep(.ledger-date-time-picker .n-date-picker),
 .ledger-form-field :deep(.ledger-date-time-picker .n-time-picker) { min-width: 0; flex: 1 1 0; }
 .ledger-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.ledger-transfer-amount-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
+.ledger-transfer-amount-grid .ledger-amount-field { margin-top: 0; }
+.ledger-transfer-kind-field { grid-column: 1 / -1; }
+.ledger-transfer-kinds { display: flex; width: 100%; }
+.ledger-transfer-kinds :deep(.n-radio-button) { display: flex; min-width: 0; flex: 1 1 0; justify-content: center; }
+.ledger-transfer-kinds :deep(.n-radio-button__label) { width: 100%; text-align: center; }
+.ledger-transfer-fee-mode { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--border) 66%, transparent); border-radius: 8px; background: color-mix(in srgb, var(--bg-soft) 54%, transparent); }
+.ledger-transfer-summary { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; padding: 9px 10px; border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--accent) 5%, transparent); color: var(--text-muted); font-size: .78rem; }
+.ledger-transfer-summary strong { color: var(--text-h); font-variant-numeric: tabular-nums; text-align: right; }
+.ledger-transfer-summary-label { color: var(--text-muted); font-size: .78rem; font-weight: 650; }
 .ledger-money-input { display: flex; align-items: center; width: 100%; min-height: 34px; box-sizing: border-box; gap: 8px; padding: 2px 10px; border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--bg) 78%, transparent); box-shadow: 0 3px 12px color-mix(in srgb, var(--accent) 5%, transparent); }
 .ledger-money-input:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent); }
 .ledger-money-input > span { color: var(--accent); font-size: .78rem; font-weight: 750; }
@@ -234,6 +333,8 @@ defineExpose({
 .ledger-transaction-form-fields :deep(.ledger-account-select-balance) { flex: 0 0 auto; margin-left: auto; color: var(--text-muted); font-variant-numeric: tabular-nums; text-align: right; }
 .ledger-transaction-form-fields :deep(.ledger-account-select-group) { color: var(--text-muted); font-size: .72rem; font-weight: 700; letter-spacing: .02em; }
 @media (max-width: 600px) {
-  .ledger-form-grid { grid-template-columns: 1fr; }
+  .ledger-form-grid,
+  .ledger-transfer-amount-grid { grid-template-columns: 1fr; }
+  .ledger-transfer-fee-mode { align-items: flex-start; flex-direction: column; }
 }
 </style>

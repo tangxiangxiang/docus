@@ -18,8 +18,10 @@ import type {
   LedgerAccountIconConfig,
   LedgerAccountType,
   LedgerCategoryKind,
+  LedgerTransferFeeMode,
+  LedgerTransferKind,
 } from '../../shared/ledgerProtocol.js'
-import { LEDGER_BUILTIN_ACCOUNT_ICON_NAMES, LEDGER_DEFAULT_ACCOUNT_ICONS } from '../../shared/ledgerProtocol.js'
+import { LEDGER_BUILTIN_ACCOUNT_ICON_NAMES, LEDGER_DEFAULT_ACCOUNT_ICONS, type LedgerCategorySystemKey } from '../../shared/ledgerProtocol.js'
 import {
   assertPositiveMinor,
   assertSafeMinor,
@@ -36,6 +38,7 @@ import {
   LEDGER_ACCOUNT_TYPES,
   LEDGER_CATEGORY_KINDS,
   LEDGER_TRANSACTION_TYPES,
+  LEDGER_TRANSFER_KINDS,
 } from './validation.js'
 
 type UnknownRow = Record<string, unknown>
@@ -79,6 +82,7 @@ export interface LedgerCategoryRow {
   readonly kind?: unknown
   readonly name?: unknown
   readonly normalized_name?: unknown
+  readonly system_key?: unknown
   readonly icon?: unknown
   readonly archived_at?: unknown
   readonly version?: unknown
@@ -91,6 +95,9 @@ export interface LedgerCategoryRow {
 export interface LedgerTransactionRow {
   readonly id?: unknown
   readonly type?: unknown
+  readonly transfer_kind?: unknown
+  readonly group_id?: unknown
+  readonly transfer_fee_mode?: unknown
   readonly amount_minor?: unknown
   readonly account_id?: unknown
   readonly from_account_id?: unknown
@@ -141,6 +148,7 @@ export interface LedgerCategory {
   readonly kind: LedgerCategoryKind
   readonly name: string
   readonly normalizedName: string
+  readonly systemKey?: LedgerCategorySystemKey
   readonly icon?: LedgerAccountIcon
   readonly archivedAt: number | null
   readonly version: number
@@ -150,6 +158,7 @@ export interface LedgerCategory {
 
 export interface LedgerTransactionBase {
   readonly id: string
+  readonly groupId?: string
   readonly amountMinor: number
   readonly occurredAt: number
   readonly location?: string
@@ -176,6 +185,8 @@ export interface ExpenseTransaction extends LedgerTransactionBase {
 
 export interface TransferTransaction extends LedgerTransactionBase {
   readonly type: 'transfer'
+  readonly transferKind: LedgerTransferKind
+  readonly feeMode?: LedgerTransferFeeMode
   readonly fromAccountId: string
   readonly toAccountId: string
   readonly payee: string
@@ -342,6 +353,20 @@ function enumValue<T extends string>(
   return value as T
 }
 
+function nullableEnumValue<T extends string>(
+  row: UnknownRow,
+  entity: string,
+  field: string,
+  allowed: readonly T[],
+): T | null {
+  const value = valueAt(row, entity, field)
+  if (value === null) return null
+  if (typeof value !== 'string' || !allowed.includes(value as T)) {
+    return invalidRow(entity, field, 'unsupported discriminator value')
+  }
+  return value as T
+}
+
 function persistedCurrency(row: UnknownRow, entity: string, field: string): string {
   const value = requiredString(row, entity, field)
   let normalized: string
@@ -381,8 +406,12 @@ function persistedName(row: UnknownRow, entity: string, field: string): string {
 
 function readTransactionBase(row: UnknownRow): LedgerTransactionBase & { readonly payee: string } {
   const entity = 'transaction'
+  const groupId = hasOwn(row, 'group_id')
+    ? nullableId(row, entity, 'group_id')
+    : null
   return {
     id: requiredId(row, entity, 'id'),
+    ...(groupId === null ? {} : { groupId }),
     amountMinor: safeMinor(row, entity, 'amount_minor'),
     occurredAt: utcMilliseconds(row, entity, 'occurred_at'),
     location: row.location === undefined ? '' : requiredString(row, entity, 'location'),
@@ -477,18 +506,24 @@ export function ledgerCategoryFromRow(row: unknown): LedgerCategory {
   const record = asRow(row, 'category')
   const name = persistedName(record, 'category', 'name')
   const normalizedName = requiredString(record, 'category', 'normalized_name')
+  const systemKey = hasOwn(record, 'system_key')
+    ? nullableEnumValue(record, 'category', 'system_key', ['interest', 'fee'] as const)
+    : null
   if (
     normalizedName.length === 0
     || normalizedName !== normalizeLedgerCategoryName(name)
   ) {
     invalidRow('category', 'normalized_name', 'normalized name does not match the display name')
   }
+  const kind = enumValue(record, 'category', 'kind', LEDGER_CATEGORY_KINDS)
+  if (systemKey !== null && kind !== 'expense') invalidRow('category', 'system_key', 'must be null for income')
 
   return {
     id: requiredId(record, 'category', 'id'),
-    kind: enumValue(record, 'category', 'kind', LEDGER_CATEGORY_KINDS),
+    kind,
     name,
     normalizedName,
+    ...(systemKey === null ? {} : { systemKey }),
     ...(record.icon && record.icon !== 'wallet' ? { icon: record.icon as LedgerAccountIcon } : {}),
     archivedAt: nullableUtcMilliseconds(record, 'category', 'archived_at'),
     version: positiveVersion(record, 'category', 'version'),
@@ -500,6 +535,10 @@ export function ledgerCategoryFromRow(row: unknown): LedgerCategory {
 export function ledgerTransactionFromRow(row: unknown): LedgerTransaction {
   const record = asRow(row, 'transaction')
   const type = enumValue(record, 'transaction', 'type', LEDGER_TRANSACTION_TYPES)
+  const transferKind = nullableEnumValue(record, 'transaction', 'transfer_kind', LEDGER_TRANSFER_KINDS)
+  const feeMode = hasOwn(record, 'transfer_fee_mode')
+    ? nullableEnumValue(record, 'transaction', 'transfer_fee_mode', ['extra', 'deducted'] as const)
+    : null
   const base = readTransactionBase(record)
   const { payee, ...withoutPayee } = base
   const accountId = nullableId(record, 'transaction', 'account_id')
@@ -519,6 +558,8 @@ export function ledgerTransactionFromRow(row: unknown): LedgerTransaction {
 
   switch (type) {
     case 'income':
+      if (transferKind !== null) invalidRow('transaction', 'transfer_kind', 'must be null for income')
+      if (feeMode !== null) invalidRow('transaction', 'transfer_fee_mode', 'must be null for income')
       assertPositiveMinor(base.amountMinor, 'amount_minor')
       if (fromAccountId !== null) invalidRow('transaction', 'from_account_id', 'must be null for income')
       if (toAccountId !== null) invalidRow('transaction', 'to_account_id', 'must be null for income')
@@ -533,6 +574,8 @@ export function ledgerTransactionFromRow(row: unknown): LedgerTransaction {
       }
 
     case 'expense':
+      if (transferKind !== null) invalidRow('transaction', 'transfer_kind', 'must be null for expense')
+      if (feeMode !== null) invalidRow('transaction', 'transfer_fee_mode', 'must be null for expense')
       assertPositiveMinor(base.amountMinor, 'amount_minor')
       if (fromAccountId !== null) invalidRow('transaction', 'from_account_id', 'must be null for expense')
       if (toAccountId !== null) invalidRow('transaction', 'to_account_id', 'must be null for expense')
@@ -547,6 +590,10 @@ export function ledgerTransactionFromRow(row: unknown): LedgerTransaction {
       }
 
     case 'transfer':
+      if (transferKind === null) invalidRow('transaction', 'transfer_kind', 'is required for transfer')
+      if (feeMode !== null && (transferKind !== 'withdrawal' || base.groupId === undefined)) {
+        invalidRow('transaction', 'transfer_fee_mode', 'requires a grouped withdrawal transfer')
+      }
       assertPositiveMinor(base.amountMinor, 'amount_minor')
       if (accountId !== null) invalidRow('transaction', 'account_id', 'must be null for transfer')
       if (categoryId !== null) invalidRow('transaction', 'category_id', 'must be null for transfer')
@@ -560,12 +607,16 @@ export function ledgerTransactionFromRow(row: unknown): LedgerTransaction {
       return {
         ...withoutPayee,
         type: 'transfer',
+        transferKind,
+        ...(feeMode === null ? {} : { feeMode }),
         fromAccountId: transferFrom,
         toAccountId: transferTo,
         payee,
       }
 
     case 'adjustment':
+      if (transferKind !== null) invalidRow('transaction', 'transfer_kind', 'must be null for adjustment')
+      if (feeMode !== null) invalidRow('transaction', 'transfer_fee_mode', 'must be null for adjustment')
       if (base.amountMinor === 0) invalidRow('transaction', 'amount_minor', 'adjustment delta must be non-zero')
       if (fromAccountId !== null) invalidRow('transaction', 'from_account_id', 'must be null for adjustment')
       if (toAccountId !== null) invalidRow('transaction', 'to_account_id', 'must be null for adjustment')

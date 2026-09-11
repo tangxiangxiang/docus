@@ -20,6 +20,8 @@ import type {
   LedgerTransactionDto,
   LedgerTransactionPageDto,
   LedgerTransactionQuery,
+  LedgerTransferKind,
+  LedgerTransferFeeMode,
   LedgerTransferCreateRequest,
 } from '../../../shared/ledgerProtocol'
 import { LedgerApiError, type LedgerErrorDetails } from './ledgerErrors'
@@ -52,7 +54,11 @@ export type LedgerCategoryPatchInput = {
 export type LedgerTransactionPatchInput = {
   readonly expectedVersion: number
   readonly type?: 'income' | 'expense' | 'transfer' | 'adjustment'
+  readonly transferKind?: LedgerTransferKind
   readonly amountMinor?: number
+  readonly feeMinor?: number
+  readonly feeCategoryId?: string
+  readonly feeMode?: LedgerTransferFeeMode
   readonly accountId?: string
   readonly fromAccountId?: string
   readonly toAccountId?: string
@@ -120,6 +126,8 @@ function accountResponse(value: unknown): LedgerAccountDto {
 
 function categoryResponse(value: unknown): LedgerCategoryDto {
   if (!isRecord(value) || typeof value.id !== 'string' || typeof value.name !== 'string'
+    || (value.systemKey !== undefined && value.systemKey !== 'interest' && value.systemKey !== 'fee')
+    || (value.protected !== undefined && typeof value.protected !== 'boolean')
     || (value.icon !== undefined
       && (typeof value.icon !== 'string'
         || (!['wallet', 'credit_card', 'cash', 'building_bank', 'briefcase'].includes(value.icon)
@@ -381,6 +389,7 @@ export function listLedgerTransactions(query: LedgerTransactionQuery = {}): Prom
       type: query.type,
       accountId: query.accountId,
       categoryId: query.categoryId,
+      groupId: query.groupId,
       from: query.from,
       to: query.to,
       search: query.search,
@@ -403,6 +412,7 @@ export function getLedgerAccountTransactions(
       type: query.type,
       accountId: undefined,
       categoryId: query.categoryId,
+      groupId: query.groupId,
       from: query.from,
       to: query.to,
       search: query.search,

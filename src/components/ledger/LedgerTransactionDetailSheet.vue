@@ -26,6 +26,8 @@ const toast = useToast()
 const { confirm } = useConfirm()
 const detailFocusTarget = ref<HTMLElement | null>(null)
 const currentTransaction = ref<LedgerTransactionDto | null>(null)
+const groupTransactions = ref<readonly LedgerTransactionDto[]>([])
+let groupRequestSerial = 0
 const editing = ref(false)
 const editDirty = ref(false)
 const actionError = ref('')
@@ -44,6 +46,12 @@ const archivedAccounts = computed(() => associatedAccounts.value.filter((account
 const ordinaryTransaction = computed(() => transaction.value !== null && transaction.value.type !== 'adjustment')
 const deleted = computed(() => transaction.value?.deletedAt !== null)
 const canEdit = computed(() => ordinaryTransaction.value && !deleted.value)
+const groupedExpense = computed(() => groupTransactions.value.find((item) => item.type === 'expense') ?? null)
+const groupedTotalMinor = computed(() => {
+  const value = transaction.value
+  if (!value || value.type !== 'transfer' || !groupedExpense.value) return null
+  return value.amountMinor + groupedExpense.value.amountMinor
+})
 const canDelete = computed(() => canEdit.value && archivedAccounts.value.length === 0)
 
 function accountName(id: string): string {
@@ -54,10 +62,10 @@ function categoryName(id: string): string {
   return store.categories.value.find((category) => category.id === id)?.name ?? '未知分类'
 }
 
-function typeLabel(type: string): string {
-  if (type === 'income') return '收入'
-  if (type === 'expense') return '支出'
-  if (type === 'transfer') return '转账'
+function typeLabel(value: LedgerTransactionDto): string {
+  if (value.type === 'income') return '收入'
+  if (value.type === 'expense') return '支出'
+  if (value.type === 'transfer') return value.transferKind === 'repayment' ? '还款' : value.transferKind === 'withdrawal' ? '提现' : '转账'
   return '余额调整'
 }
 
@@ -65,8 +73,23 @@ function amountLabel(value: LedgerTransactionDto): string {
   const currency = store.settings.value?.baseCurrency ?? 'CNY'
   if (value.type === 'income') return `+${formatLedgerMoney(value.amountMinor, currency)}`
   if (value.type === 'expense') return `-${formatLedgerMoney(value.amountMinor, currency)}`
-  if (value.type === 'transfer') return formatLedgerMoney(value.amountMinor, currency)
+  if (value.type === 'transfer') {
+    return formatLedgerMoney(groupedTotalMinor.value ?? value.amountMinor, currency)
+  }
   return formatLedgerMoney(value.amountMinor, currency)
+}
+
+async function loadGroup(value: LedgerTransactionDto | null): Promise<void> {
+  const serial = ++groupRequestSerial
+  groupTransactions.value = []
+  if (!value?.groupId) return
+  try {
+    const group = await store.getTransactionGroup(value.groupId)
+    if (serial === groupRequestSerial) groupTransactions.value = group
+  } catch {
+    // The primary transaction remains fully usable if the optional companion
+    // read fails; the next open will retry it.
+  }
 }
 
 watch(() => props.transaction, (value) => {
@@ -74,6 +97,7 @@ watch(() => props.transaction, (value) => {
   editing.value = false
   editDirty.value = false
   actionError.value = ''
+  void loadGroup(value)
 }, { immediate: true })
 
 watch(() => props.open, async (open) => {
@@ -81,6 +105,7 @@ watch(() => props.open, async (open) => {
     editing.value = false
     editDirty.value = false
     actionError.value = ''
+    await loadGroup(transaction.value)
     await nextTick()
     detailFocusTarget.value?.focus()
   }
@@ -130,11 +155,12 @@ async function restoreAccount(id: string): Promise<void> {
   }
 }
 
-function onSaved(updated: LedgerTransactionDto): void {
+async function onSaved(updated: LedgerTransactionDto): Promise<void> {
   currentTransaction.value = updated
   editing.value = false
   editDirty.value = false
   emit('updated', updated)
+  await loadGroup(updated)
   toast.success('交易已更新')
 }
 
@@ -183,7 +209,7 @@ async function remove(): Promise<void> {
       <template #header>
           <div>
             <p class="ledger-eyebrow">交易详情</p>
-            <h2 id="ledger-transaction-detail-title">{{ typeLabel(transaction.type) }}</h2>
+            <h2 id="ledger-transaction-detail-title">{{ typeLabel(transaction) }}</h2>
           </div>
       </template>
       <template #header-extra>
@@ -191,7 +217,7 @@ async function remove(): Promise<void> {
       </template>
 
       <div ref="detailFocusTarget" class="ledger-detail-content" tabindex="-1">
-        <LedgerTransactionEditForm v-if="editing && canEdit" :transaction="transaction" @saved="onSaved" @dirty="editDirty = $event" @cancel="requestEditCancel" />
+        <LedgerTransactionEditForm v-if="editing && canEdit" :transaction="transaction" :group-transactions="groupTransactions" @saved="onSaved" @dirty="editDirty = $event" @cancel="requestEditCancel" />
         <template v-else>
           <NCard class="ledger-transaction-hero" :bordered="false" size="small">
             <NStatistic label="金额" :value="amountLabel(transaction)" :class="`is-${transaction.type}`" />
@@ -206,6 +232,10 @@ async function remove(): Promise<void> {
               <div class="ledger-detail-row"><span>交易对象</span><strong>{{ transaction.payee || '未填写' }}</strong></div>
             </template>
             <template v-else-if="transaction.type === 'transfer'">
+              <div class="ledger-detail-row"><span>转账类型</span><strong>{{ typeLabel(transaction) }}</strong></div>
+              <div v-if="groupedExpense" class="ledger-detail-row"><span>{{ transaction.transferKind === 'repayment' ? '还款本金' : '到账金额' }}</span><strong>{{ formatLedgerMoney(transaction.amountMinor, store.settings.value?.baseCurrency ?? 'CNY') }}</strong></div>
+              <div v-if="groupedExpense" class="ledger-detail-row"><span>{{ transaction.transferKind === 'repayment' ? '利息' : '手续费' }}</span><strong>{{ formatLedgerMoney(groupedExpense.amountMinor, store.settings.value?.baseCurrency ?? 'CNY') }}<em> · {{ categoryName(groupedExpense.categoryId) }}</em></strong></div>
+              <div v-if="groupedExpense" class="ledger-detail-row"><span>{{ transaction.transferKind === 'repayment' ? '总扣款' : '实际扣款' }}</span><strong>{{ formatLedgerMoney(groupedTotalMinor ?? transaction.amountMinor, store.settings.value?.baseCurrency ?? 'CNY') }}</strong></div>
               <div class="ledger-detail-row"><span>转出账户</span><strong>{{ accountName(transaction.fromAccountId) }}</strong></div>
               <div class="ledger-detail-row"><span>转入账户</span><strong>{{ accountName(transaction.toAccountId) }}</strong></div>
             </template>
@@ -226,6 +256,7 @@ async function remove(): Promise<void> {
           </NAlert>
 
           <NAlert v-if="transaction.type === 'adjustment'" class="ledger-form-info" type="info" :show-icon="false">余额调整为只读记录，不能通过普通交易编辑或删除。</NAlert>
+          <NAlert v-if="transaction.type === 'transfer' && transaction.groupId" class="ledger-form-info" type="info" :show-icon="false">利息或手续费已作为独立支出绑定到这笔{{ transaction.transferKind === 'repayment' ? '还款' : '提现' }}，编辑会同步更新，删除时会一并删除。</NAlert>
           <NAlert v-if="actionError" class="ledger-form-error" type="error" :show-icon="false" role="alert">{{ actionError }}</NAlert>
           <div class="ledger-form-actions">
             <NButton v-if="canEdit" class="ledger-secondary-button" attr-type="button" size="small" :bordered="false" :disabled="Boolean(restoringId)" @click="editDirty = false; editing = true">编辑交易</NButton>

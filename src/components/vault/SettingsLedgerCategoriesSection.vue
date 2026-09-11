@@ -249,7 +249,7 @@ async function onFileSelected(event: Event): Promise<void> {
               v-for="category in group.categories"
               :key="category.id"
               class="settings-ledger-category-option"
-              :class="{ managing }"
+              :class="{ managing, 'is-system': category.protected }"
               role="listitem"
               @pointerdown="startHold"
               @pointerup="cancelHold"
@@ -273,9 +273,9 @@ async function onFileSelected(event: Event): Promise<void> {
                 @keydown.esc.prevent="cancelRename"
                 @blur="finishRename(category)"
               >
-              <span v-else class="settings-ledger-category-label" @dblclick.stop="startRename(category.id, category.name)">{{ category.name }}</span>
+              <span v-else class="settings-ledger-category-label" :title="category.protected ? '系统分类不可重命名或归档' : undefined" @dblclick.stop="!category.protected && startRename(category.id, category.name)">{{ category.name }}</span>
               <button
-                v-if="managing"
+                v-if="managing && !category.protected"
                 type="button"
                 class="settings-ledger-category-delete"
                 :disabled="archiveId === category.id"
@@ -308,6 +308,7 @@ async function onFileSelected(event: Event): Promise<void> {
 .settings-ledger-category-option.managing { animation: settings-ledger-category-wiggle 180ms ease-in-out infinite alternate; }
 .settings-ledger-category-option.managing:nth-child(2n) { animation-delay: -90ms; animation-direction: alternate-reverse; }
 .settings-ledger-category-option.managing:nth-child(3n) { animation-delay: -45ms; animation-duration: 200ms; }
+.settings-ledger-category-option.is-system { border-color: color-mix(in srgb, var(--accent) 24%, var(--border)); }
 .settings-ledger-category-name-input { width: 8em; min-width: 0; padding: 0; border: 0; outline: 0; background: transparent; color: inherit; font: inherit; }
 .settings-ledger-category-delete { position: absolute; top: 0; right: 0; display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; padding: 0; border: 2px solid var(--surface); border-radius: 50%; background: #ef4444; color: #fff; box-shadow: 0 1px 3px rgb(0 0 0 / 18%); font-size: 11px; font-weight: 700; line-height: 1; cursor: pointer; transform: translate(38%, -38%); }
 .settings-ledger-category-delete:disabled { cursor: wait; opacity: .5; }

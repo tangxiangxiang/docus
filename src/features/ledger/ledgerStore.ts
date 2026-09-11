@@ -802,6 +802,7 @@ export interface LedgerStore {
   readonly loadMoreTransactions: () => Promise<void>
   readonly getAccount: (id: string) => Promise<LedgerAccountDto>
   readonly getTransaction: (id: string) => Promise<LedgerTransactionDto>
+  readonly getTransactionGroup: (groupId: string) => Promise<readonly LedgerTransactionDto[]>
   readonly getAccountTransactions: (id: string, query?: LedgerTransactionQuery) => Promise<LedgerAccountTransactionsDto>
   readonly createSettings: (body: LedgerSettingsCreateRequest) => Promise<LedgerSettingsDto>
   readonly patchSettings: (body: { expectedVersion: number; baseCurrency?: string; timezone?: string }) => Promise<LedgerSettingsDto>
@@ -871,6 +872,7 @@ const store: LedgerStore = {
     return result
   },
   getTransaction,
+  getTransactionGroup: async (groupId) => (await listLedgerTransactions({ groupId, includeDeleted: true, limit: 10 })).transactions,
   getAccountTransactions: async (id, query = {}) => {
     const result = await getLedgerAccountTransactions(id, query)
     state.accountTransactions = result
