@@ -502,7 +502,7 @@ async function retryPending(): Promise<void> {
 </template>
 
 <style scoped>
-.ledger-sheet-card { align-self: flex-end; width: min(100%, 640px); max-height: min(92vh, 820px); margin: auto auto 20px; overflow: auto; box-sizing: border-box; border: 1px solid color-mix(in srgb, var(--border) 78%, transparent); border-radius: 18px 18px 12px 12px; background: color-mix(in srgb, var(--bg-soft) 82%, transparent); box-shadow: 0 24px 70px color-mix(in srgb, #0f172a 25%, transparent); backdrop-filter: blur(18px); color: var(--text); }
+.ledger-sheet-card { align-self: center; width: min(100%, 640px); max-height: min(92vh, 820px); margin: auto; overflow: auto; box-sizing: border-box; border: 1px solid color-mix(in srgb, var(--border) 78%, transparent); border-radius: 18px 18px 12px 12px; background: color-mix(in srgb, var(--bg-soft) 82%, transparent); box-shadow: 0 24px 70px color-mix(in srgb, #0f172a 25%, transparent); backdrop-filter: blur(18px); color: var(--text); }
 .ledger-sheet-card :deep(.n-card__content) { display: grid; gap: 14px; }
 .ledger-sheet-card :deep(.n-card__header) { align-items: flex-start; gap: 16px; padding-bottom: 2px; }
 .ledger-sheet-card h2 { margin: 0; color: var(--text-h); font-size: 1.35rem; line-height: 1.25; }
