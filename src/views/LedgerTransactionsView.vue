@@ -9,6 +9,7 @@ import {
   NForm,
   NIcon,
   NInput,
+  NNumberAnimation,
   NPagination,
   NSelect,
   NSpin,
@@ -29,11 +30,11 @@ import LedgerTransactionDetailSheet from '../components/ledger/LedgerTransaction
 import LedgerPendingCreateGate from '../components/ledger/LedgerPendingCreateGate.vue'
 import LedgerTransactionSheet from '../components/ledger/LedgerTransactionSheet.vue'
 import { ledgerErrorMessage } from '../features/ledger/ledgerErrors'
-import { formatLedgerMoney } from '../features/ledger/money'
 import { instantFromLedgerDate, formatLedgerDateTime } from '../features/ledger/time'
 import { useLedgerStore } from '../features/ledger/ledgerStore'
 import { ledgerSelectNodeProps } from '../features/ledger/naiveControls'
 import LedgerDatePicker from '../components/ledger/LedgerDatePicker.vue'
+import LedgerAnimatedMoney from '../components/ledger/LedgerAnimatedMoney.vue'
 
 const store = useLedgerStore()
 const route = useRoute()
@@ -123,6 +124,8 @@ function initializeFiltersFromRoute(): void {
 }
 
 onMounted(async () => {
+  document.body.classList.add('ledger-transactions-mode')
+  document.documentElement.classList.add('ledger-transactions-mode')
   initializeFiltersFromRoute()
   await store.bootstrap()
   if (store.settings.value) await loadTransactions()
@@ -222,20 +225,12 @@ function scheduleSearch(): void {
   debouncedSearch()
 }
 
-function transactionAmount(transaction: LedgerTransactionDto): string {
-  const currency = store.settings.value?.baseCurrency ?? 'CNY'
-  if (transaction.type === 'income') return `+${formatLedgerMoney(transaction.amountMinor, currency)}`
-  if (transaction.type === 'expense') return `-${formatLedgerMoney(transaction.amountMinor, currency)}`
-  return formatLedgerMoney(transaction.amountMinor, currency)
-}
-
 function formatTransactionTableTime(instantMs: number): string {
   const timezone = store.settings.value?.timezone ?? 'UTC'
   const local = Temporal.Instant.fromEpochMilliseconds(instantMs).toZonedDateTimeISO(timezone)
-  const currentYear = Number(store.overview.value?.context.todayDate.slice(0, 4)) || local.year
   const date = `${String(local.month).padStart(2, '0')}/${String(local.day).padStart(2, '0')}`
   const time = `${String(local.hour).padStart(2, '0')}:${String(local.minute).padStart(2, '0')}`
-  return local.year === currentYear ? `${date} ${time}` : `${local.year}/${date} ${time}`
+  return `${local.year}/${date} ${time}`
 }
 
 function buildQuery(pageNumber = tablePage.value): LedgerTransactionQuery {
@@ -321,6 +316,8 @@ async function changePageSize(value: string | number | null): Promise<void> {
 }
 
 onBeforeUnmount(() => {
+  document.body.classList.remove('ledger-transactions-mode')
+  document.documentElement.classList.remove('ledger-transactions-mode')
   const debounce = debouncedSearch as { cancel?: () => void }
   debounce.cancel?.()
 })
@@ -411,7 +408,16 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
     title: '金额',
     width: 145,
     align: 'right',
-    render: (transaction) => h('strong', { class: ['ledger-transaction-amount', `is-${transaction.type}`] }, transactionAmount(transaction)),
+    render: (transaction) => {
+      const amountMinor = transaction.type === 'expense' ? -transaction.amountMinor : transaction.amountMinor
+      return h('strong', { class: ['ledger-transaction-amount', `is-${transaction.type}`] }, [
+        h(LedgerAnimatedMoney, {
+          minor: amountMinor,
+          currency: store.settings.value?.baseCurrency ?? 'CNY',
+          signed: transaction.type !== 'transfer',
+        }),
+      ])
+    },
   },
 ]
 </script>
@@ -425,6 +431,15 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
         <p>查看所有收入、支出和账户间转账。</p>
       </div>
       <div class="ledger-transactions-header-actions">
+        <div
+          class="ledger-header-date-range"
+          :class="{ 'is-visible': filterDatePreset === 'custom' }"
+          :aria-hidden="filterDatePreset === 'custom' ? 'false' : 'true'"
+        >
+          <LedgerDatePicker v-model="filterFrom" label="从日期" test-id="ledger-filter-from" size="small" clearable placeholder="开始日期" @update:model-value="refreshAfterFilterChange" />
+          <span aria-hidden="true">至</span>
+          <LedgerDatePicker v-model="filterTo" label="到日期" test-id="ledger-filter-to" size="small" clearable placeholder="结束日期" @update:model-value="refreshAfterFilterChange" />
+        </div>
         <RouterLink class="ledger-secondary-button" :to="{ name: 'ledger' }" data-testid="ledger-transactions-overview-button">返回总览</RouterLink>
         <NButton class="ledger-primary-button" attr-type="button" type="primary" size="small" :bordered="false" :disabled="loading || store.hasUnresolvedCreate.value || !store.activeAccounts.value.length" data-testid="ledger-transactions-record-button" @click="transactionSheetOpen = true">＋ 记一笔</NButton>
       </div>
@@ -466,11 +481,6 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
                   aria-label="日期"
                   @update:value="selectDatePreset"
                 />
-                <div v-if="filterDatePreset === 'custom'" class="ledger-filter-date-range">
-                  <LedgerDatePicker v-model="filterFrom" label="从日期" test-id="ledger-filter-from" size="small" clearable placeholder="开始日期" @update:model-value="refreshAfterFilterChange" />
-                  <span aria-hidden="true">至</span>
-                  <LedgerDatePicker v-model="filterTo" label="到日期" test-id="ledger-filter-to" size="small" clearable placeholder="结束日期" @update:model-value="refreshAfterFilterChange" />
-                </div>
               </div>
             </div>
           </div>
@@ -525,12 +535,11 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
           >
             <template #prefix><NIcon :size="18" aria-hidden="true"><Search /></NIcon></template>
           </NInput>
-          <NButton v-if="hasFilters" class="ledger-link-button" attr-type="button" size="small" text :bordered="false" @click="clearFilters">清除筛选</NButton>
         </div>
         <div class="ledger-history-summary" aria-label="交易汇总">
-          <span>收入 <strong class="is-income">{{ formatLedgerMoney(resultSummary.incomeMinor, store.settings.value?.baseCurrency ?? 'CNY') }}</strong></span>
+          <span>收入 <strong class="is-income"><LedgerAnimatedMoney :minor="resultSummary.incomeMinor" :currency="store.settings.value?.baseCurrency ?? 'CNY'" /></strong></span>
           <i aria-hidden="true" />
-          <span>支出 <strong class="is-expense">{{ formatLedgerMoney(resultSummary.expenseMinor, store.settings.value?.baseCurrency ?? 'CNY') }}</strong></span>
+          <span>支出 <strong class="is-expense"><LedgerAnimatedMoney :minor="resultSummary.expenseMinor" :currency="store.settings.value?.baseCurrency ?? 'CNY'" /></strong></span>
         </div>
       </div>
 
@@ -565,7 +574,7 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
         </template>
       </NEmpty>
       <div v-if="transactions.length" class="ledger-transaction-pagination">
-        <div class="ledger-pagination-meta">共 {{ transactionTotal }} 条</div>
+        <div class="ledger-pagination-meta">共 <span class="ledger-animated-count"><NNumberAnimation :key="transactionTotal" :from="transactionTotal" :to="transactionTotal" :duration="0" /></span> 条</div>
         <div class="ledger-pagination-controls">
           <NPagination
             :page="tablePage"
@@ -590,7 +599,7 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
 </template>
 
 <style scoped>
-.ledger-page { min-height: calc(100vh - 52px); background: var(--bg); }
+.ledger-page { min-height: calc(100vh - var(--navbar-h, 52px)); box-sizing: border-box; background: var(--bg); }
 .ledger-transactions-page { width: min(100%, 1120px); margin: 0 auto; padding: 34px 28px 64px; box-sizing: border-box; }
 .ledger-transactions-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 22px; margin-bottom: 22px; }
 .ledger-transactions-header-actions { display: flex; align-items: center; gap: 10px; }
@@ -723,31 +732,74 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
   --ledger-expense: var(--docus-negative, var(--text-h));
   --ledger-transfer: var(--docus-accent, var(--accent));
   width: min(100%, 1240px);
-  padding: 30px 28px 64px;
+  margin: 0 auto;
+  padding: 42px 28px 46px;
+  box-sizing: border-box;
 }
 
 .ledger-transactions-header {
-  align-items: flex-end;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
   gap: 28px;
-  margin-bottom: 24px;
+  margin-bottom: 28px;
 }
 
 .ledger-transactions-header h1 {
-  font-size: clamp(2rem, 3vw, 2.45rem);
+  margin: 0;
+  color: var(--text-h);
+  font-size: clamp(1.85rem, 3vw, 2.35rem);
   font-weight: 720;
-  letter-spacing: -.04em;
+  letter-spacing: -.035em;
+  line-height: 1.16;
 }
 
-.ledger-transactions-header p:not(.ledger-eyebrow) { margin-top: 9px; font-size: .86rem; }
-.ledger-transactions-header-actions { gap: 11px; }
+.ledger-transactions-header p:not(.ledger-eyebrow) {
+  margin: 8px 0 0;
+  color: var(--text-muted);
+  font-size: .78rem;
+}
+
+.ledger-transactions-header-actions {
+  display: flex;
+  align-items: center;
+  justify-self: end;
+  flex-wrap: nowrap;
+  gap: 10px;
+}
+
+.ledger-header-date-range {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  width: 320px;
+  align-items: center;
+  gap: 8px;
+  visibility: hidden;
+  opacity: 0;
+  transform: translateY(2px);
+  pointer-events: none;
+  transition: opacity .18s ease, transform .18s ease, visibility .18s ease;
+}
+.ledger-header-date-range.is-visible {
+  visibility: visible;
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+.ledger-header-date-range > span { color: var(--text-muted); font-size: .76rem; }
+.ledger-header-date-range :deep(.ledger-date-picker),
+.ledger-header-date-range :deep(.ledger-date-picker .n-date-picker),
+.ledger-header-date-range :deep(.n-input) { width: 100%; min-width: 0; }
+.ledger-header-date-range :deep(.n-input) { height: 32px; border-radius: 8px; }
+
 .ledger-transactions-header-actions .ledger-primary-button,
 .ledger-transactions-header-actions .ledger-secondary-button {
-  height: 28px;
-  min-height: 28px;
+  height: 32px;
+  min-height: 32px;
   box-sizing: border-box;
-  padding: 0 10px;
-  font-size: .75rem;
-  line-height: 1;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: .78rem;
 }
 
 .ledger-filters,
@@ -774,8 +826,8 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
   grid-template-columns: minmax(0, 1fr);
   gap: 0;
 }
-.ledger-search-row { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.ledger-search-input { flex: 1; min-width: 0; }
+.ledger-search-row { display: flex; align-items: center; gap: 12px; width: 390px; min-width: 0; }
+.ledger-search-input { flex: 1 1 auto; min-width: 0; }
 .ledger-search-input :deep(.n-input) {
   border: 1px solid var(--ledger-border);
   border-radius: 9px;
@@ -878,19 +930,6 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
 .ledger-filter-select-card :deep(.n-base-selection__arrow) { color: var(--text-muted); }
 .ledger-filter-category-select :deep(.n-base-selection) { min-height: 25px; }
 .ledger-filter-category-select :deep(.n-base-selection-input__content) { font-size: .8rem; }
-.ledger-filter-date-range { display: flex; min-width: 0; align-items: center; gap: 4px; }
-.ledger-filter-date-range > span { flex: 0 0 auto; color: var(--text-muted); font-size: .72rem; }
-.ledger-filter-date-range :deep(.ledger-date-picker),
-.ledger-filter-date-range :deep(.ledger-date-picker .n-date-picker),
-.ledger-filter-date-range :deep(.n-input) { min-width: 0; width: 100%; }
-.ledger-filter-date-range :deep(.n-input) {
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-}
-.ledger-filter-date-range :deep(.n-input__input-el) { color: var(--text-h); font-size: .77rem; }
-.ledger-filter-date-range :deep(.n-input__suffix) { display: none; }
-
 .ledger-transaction-history {
   overflow: hidden;
   padding: 0;
@@ -903,9 +942,10 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
 }
 .ledger-history-tools {
   display: grid;
-  grid-template-columns: minmax(280px, 390px) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(280px, 390px) 390px 320px;
   align-items: center;
   gap: 18px;
+  justify-content: space-between;
   margin: 0 24px;
   padding: 12px 0;
   border-bottom: 1px solid var(--ledger-divider);
@@ -920,11 +960,16 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
 .ledger-history-tools .ledger-search-row { grid-column: 2; grid-row: 1; }
 .ledger-history-heading h2 { font-size: 1.08rem; font-weight: 720; }
 .ledger-history-heading p { margin-top: 5px; font-size: .73rem; }
-.ledger-history-summary { display: flex; align-items: baseline; gap: 9px; color: var(--text-muted); font-size: .76rem; white-space: nowrap; }
+.ledger-history-summary { display: flex; align-items: baseline; justify-content: flex-end; gap: 9px; width: 320px; color: var(--text-muted); font-size: .76rem; white-space: nowrap; }
 .ledger-history-summary strong { color: var(--text-h); font-size: .84rem; font-variant-numeric: tabular-nums; }
 .ledger-history-summary strong.is-income { color: var(--ledger-income); }
 .ledger-history-summary strong.is-expense { color: var(--ledger-expense); }
 .ledger-history-summary i { width: 1px; height: 13px; background: var(--ledger-divider); }
+.ledger-animated-count { display: inline-block; animation: ledger-number-pop .42s ease-out both; }
+@keyframes ledger-number-pop {
+  from { opacity: .45; transform: translateY(2px) scale(.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
 .ledger-transaction-history :deep(.n-card__content) { overflow-x: auto; }
 .ledger-transaction-table {
   width: 100%;
@@ -1055,7 +1100,7 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
   border-top: 1px solid var(--ledger-divider);
   background: color-mix(in srgb, var(--bg) 14%, transparent);
 }
-.ledger-pagination-meta { color: var(--text-muted); font-size: .84rem; font-weight: 550; }
+.ledger-pagination-meta { color: var(--text-muted); font-size: .74rem; }
 .ledger-pagination-controls { display: flex; align-items: center; gap: 12px; }
 .ledger-pagination-controls :deep(.n-pagination) { align-items: center; }
 .ledger-pagination-controls :deep(.n-pagination .n-select) { width: 82px; }
@@ -1074,10 +1119,72 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
   .ledger-history-tools .ledger-type-switch { grid-column: 1; grid-row: 1; }
   .ledger-history-tools .ledger-history-summary { grid-column: 2; grid-row: 1; }
   .ledger-history-tools .ledger-search-row { grid-column: 1 / -1; grid-row: 2; }
+  .ledger-history-tools .ledger-search-row { width: 100%; }
+  .ledger-history-summary { width: auto; }
+}
+
+@media (min-width: 651px) {
+  .ledger-transactions-page {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - var(--navbar-h, 52px));
+    min-height: 0;
+    overflow: hidden;
+  }
+  .ledger-transactions-page > * { flex-shrink: 0; }
+  .ledger-transaction-history {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    height: 0;
+    min-height: 0;
+    box-sizing: border-box;
+  }
+  .ledger-transaction-history :deep(.n-card__content),
+  .ledger-transaction-history :deep(.n-card-content) {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    height: 0;
+    min-height: 0;
+    overflow: hidden;
+    overscroll-behavior: contain;
+  }
+  .ledger-transaction-history .ledger-history-heading,
+  .ledger-transaction-history .ledger-history-tools,
+  .ledger-transaction-history .ledger-inline-error,
+  .ledger-transaction-history .ledger-transaction-pagination {
+    flex: 0 0 auto;
+  }
+  .ledger-transaction-history .ledger-transaction-table,
+  .ledger-transaction-history .ledger-table-skeleton,
+  .ledger-transaction-history .ledger-transactions-empty,
+  .ledger-transaction-history .ledger-transactions-inline-loading {
+    min-height: 0;
+    flex: 1 1 auto;
+  }
+  .ledger-transaction-history .ledger-transaction-table {
+    overflow: auto;
+  }
+  .ledger-transaction-history .ledger-transaction-table :deep(.n-data-table),
+  .ledger-transaction-history .ledger-transaction-table :deep(.n-data-table-wrapper) {
+    min-height: 0;
+  }
+  .ledger-transaction-pagination {
+    position: relative;
+    z-index: 1;
+  }
 }
 
 @media (max-width: 720px) {
   .ledger-transactions-page { padding: 24px 16px 48px; }
+  .ledger-transactions-header { grid-template-columns: 1fr; align-items: start; }
+  .ledger-transactions-header-actions { display: grid; width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); justify-self: stretch; }
+  .ledger-transactions-header-actions > * { flex: none; }
+  .ledger-header-date-range { display: none; width: 100%; grid-column: 1 / -1; }
+  .ledger-header-date-range.is-visible { display: grid; }
+  .ledger-transactions-header-actions .ledger-primary-button,
+  .ledger-transactions-header-actions .ledger-secondary-button { width: 100%; }
   .ledger-filters { padding: 8px 16px; }
   .ledger-filter-select-grid { width: 100%; margin-left: 0; grid-template-columns: 1fr; }
   .ledger-filter-select-card { min-height: 42px; }

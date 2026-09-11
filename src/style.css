@@ -173,6 +173,15 @@ body.ledger-accounts-mode #app {
   overflow: hidden;
 }
 
+@media (min-width: 651px) {
+  html.ledger-transactions-mode,
+  body.ledger-transactions-mode,
+  body.ledger-transactions-mode #app {
+    height: 100%;
+    overflow: hidden;
+  }
+}
+
 h1, h2, h3, h4 {
   font-family: var(--sans);
   font-weight: 600;

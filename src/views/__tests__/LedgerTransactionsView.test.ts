@@ -255,7 +255,7 @@ describe('Ledger live transaction history workspace', () => {
     expect(wrapper.text()).toContain('工资')
     expect(wrapper.text()).toContain('余额调整')
     expect(wrapper.findAll('thead th').map((header) => header.text())).toEqual(['交易', '类型', '分类', '账户', '备注', '时间', '金额'])
-    expect(wrapper.get('[data-testid="ledger-transaction-row-tx-expense"]').text()).toContain('09/05 12:30')
+    expect(wrapper.get('[data-testid="ledger-transaction-row-tx-expense"]').text()).toContain('2026/09/05 12:30')
     expect(wrapper.get('[data-testid="ledger-transaction-row-tx-expense"]').text()).toContain('-¥38.00')
     expect(wrapper.get('[data-testid="ledger-transaction-row-tx-transfer"]').text()).toContain('¥50.00')
     expect(wrapper.get('[data-testid="ledger-transaction-row-tx-transfer"]').text()).not.toContain('-¥50.00')
