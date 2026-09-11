@@ -381,33 +381,42 @@ async function submit(): Promise<void> {
 </template>
 
 <style scoped>
-.ledger-transaction-edit-form { display: grid; gap: 16px; width: min(100%, 620px); padding: 26px; box-sizing: border-box; border: 1px solid var(--border); border-radius: 14px; background: var(--bg); }
+.ledger-transaction-edit-form { display: grid; gap: 14px; width: 100%; padding: 4px 10px 8px; box-sizing: border-box; border: 1px solid color-mix(in srgb, var(--border) 48%, transparent); border-radius: 12px; background: color-mix(in srgb, var(--bg) 24%, transparent); }
+.ledger-transaction-edit-form > div:first-child { padding: 10px 4px 12px; border-bottom: 1px solid color-mix(in srgb, var(--border) 42%, transparent); }
 .ledger-eyebrow { margin: 0 0 6px; color: var(--accent); font-size: .72rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
-.ledger-transaction-edit-form h2 { margin: 0; color: var(--text-h); font-size: 1.3rem; }
+.ledger-transaction-edit-form h2 { margin: 0; color: var(--text-h); font-size: 1.2rem; letter-spacing: -.015em; }
 .ledger-form-info { margin: 8px 0 0; color: var(--text-muted); font-size: .8rem; line-height: 1.5; }
 .ledger-form-field { display: grid; gap: 6px; }
-.ledger-form-field :deep(.n-form-item-label) { color: var(--text-h); font-size: .81rem; font-weight: 650; }
+.ledger-form-field :deep(.n-form-item-label) { color: var(--text-h); font-size: .78rem; font-weight: 650; }
 .ledger-form-control { width: 100%; }
 .ledger-form-field :deep(.ledger-form-control .n-input),
 .ledger-form-field :deep(.ledger-form-control .n-base-selection),
 .ledger-form-field :deep(.ledger-date-time-picker) { width: 100%; }
+.ledger-form-field :deep(.n-input),
+.ledger-form-field :deep(.n-base-selection) { border-radius: 9px; }
+.ledger-form-field :deep(.n-input),
+.ledger-form-field :deep(.n-base-selection) { background: color-mix(in srgb, var(--bg-soft) 54%, transparent); }
+.ledger-form-field :deep(.n-input--focus),
+.ledger-form-field :deep(.n-base-selection--focus) { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 14%, transparent); }
+.ledger-form-field :deep(.n-input__input-el) { min-height: 38px; }
+.ledger-form-field :deep(.n-input--textarea) { min-height: 82px; }
 .ledger-form-field :deep(.ledger-date-time-picker .n-date-picker),
 .ledger-form-field :deep(.ledger-date-time-picker .n-time-picker) { min-width: 0; flex: 1 1 0; }
 .ledger-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .ledger-readonly-fields { display: flex; flex-wrap: wrap; gap: 8px; color: var(--text-muted); font-size: .78rem; }
 .ledger-readonly-fields span { padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-soft); }
 .ledger-form-error { margin: 0; color: #b42318; font-size: .81rem; }
-.ledger-form-actions { display: flex; justify-content: flex-end; gap: 9px; }
+.ledger-form-actions { display: flex; justify-content: flex-end; gap: 9px; padding: 12px 4px 0; border-top: 1px solid color-mix(in srgb, var(--border) 42%, transparent); }
 .ledger-primary-button,
 .ledger-secondary-button { min-height: 39px; padding: 7px 14px; border-radius: 7px; font: inherit; font-size: .83rem; font-weight: 650; cursor: pointer; }
 .ledger-primary-button { border: 1px solid var(--accent); background: var(--accent); color: #fff; }
 .ledger-primary-button:hover:not(:disabled) { background: var(--accent-hover); }
-.ledger-secondary-button { border: 1px solid var(--border); background: var(--bg); color: var(--text-h); }
+.ledger-secondary-button { border: 1px solid color-mix(in srgb, var(--border) 86%, transparent); background: color-mix(in srgb, var(--bg) 34%, transparent); color: var(--text-h); }
 .ledger-secondary-button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .ledger-primary-button:disabled,
 .ledger-secondary-button:disabled { cursor: wait; opacity: .65; }
 @media (max-width: 620px) {
-  .ledger-transaction-edit-form { padding: 22px 17px; }
+  .ledger-transaction-edit-form { padding: 4px 6px 8px; }
   .ledger-form-grid { grid-template-columns: 1fr; }
   .ledger-form-actions > * { flex: 1 1 140px; }
 }
