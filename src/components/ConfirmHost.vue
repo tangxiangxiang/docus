@@ -37,8 +37,11 @@ function syncQueue(): void {
 
 function settle(id: number, value: boolean): boolean {
   if (!queue.value.some((request) => request.id === id)) return false
-  answer(id, value)
+  // Hide the current modal before advancing the queue. This keeps the
+  // visible transition deterministic when the confirm is opened above
+  // another modal (for example, the ledger transaction sheet).
   closeDisplayed(id)
+  answer(id, value)
   return true
 }
 
@@ -81,14 +84,14 @@ function handleVisibilityChange(value: boolean): void {
   settle(displayed.value.id, false)
 }
 
-function handlePositiveClick(): false {
-  if (displayed.value) settle(displayed.value.id, true)
-  return false
+function handlePositiveClick(): true {
+  if (displayed.value) answer(displayed.value.id, true)
+  return true
 }
 
-function handleNegativeClick(): false {
-  if (displayed.value) settle(displayed.value.id, false)
-  return false
+function handleNegativeClick(): true {
+  if (displayed.value) answer(displayed.value.id, false)
+  return true
 }
 
 function handleAfterEnter(): void {

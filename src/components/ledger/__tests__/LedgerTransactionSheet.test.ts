@@ -10,6 +10,7 @@ import type {
   LedgerTransactionDto,
 } from '../../../../shared/ledgerProtocol'
 import { LedgerApiError } from '../../../features/ledger/ledgerErrors'
+import { useConfirm } from '../../../composables/useConfirm'
 import { resetLedgerStoreForTesting } from '../../../features/ledger/ledgerStore'
 import LedgerView from '../../../views/LedgerView.vue'
 import LedgerDateTimePicker from '../LedgerDateTimePicker.vue'
@@ -113,9 +114,7 @@ async function setLedgerDateTime(sheet: InstanceType<typeof DOMWrapper>, value: 
 }
 
 function ledgerDateTimeValue(sheet: InstanceType<typeof DOMWrapper>): string {
-  const date = (sheet.get('[data-testid="ledger-transaction-occurred-at-date"] input').element as HTMLInputElement).value
-  const time = (sheet.get('[data-testid="ledger-transaction-occurred-at-time"] input').element as HTMLInputElement).value
-  return `${date}T${time}`
+  return (sheet.get('[data-testid="ledger-transaction-occurred-at"] input').element as HTMLInputElement).value.replace(' ', 'T')
 }
 
 describe('Ledger transaction creation sheet', () => {
@@ -176,6 +175,21 @@ describe('Ledger transaction creation sheet', () => {
     await sheet.get('form').trigger('submit')
     expect(sheet.text()).toContain('请选择账户')
     expect(api.createLedgerTransaction).not.toHaveBeenCalled()
+  })
+
+  it('closes after confirming that a dirty draft should be discarded', async () => {
+    await openSheet()
+    const sheet = getSheet()
+    await setNaiveSelect(sheet, '账户', 'bank-1')
+    await sheet.get('[aria-label="关闭记账窗口"]').trigger('click')
+    await flushPromises()
+
+    const { queue, answer } = useConfirm()
+    expect(queue.value).toHaveLength(1)
+    answer(queue.value[0]!.id, true)
+    await flushPromises()
+
+    expect(document.body.querySelector('.ledger-sheet')).toBeNull()
   })
 
   it('switches to income and transfer with their applicable fields', async () => {

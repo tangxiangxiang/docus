@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, h, nextTick, ref, watch } from 'vue'
 import {
   NButton,
   NCard,
@@ -12,9 +12,10 @@ import {
   NTab,
   NTabs,
   type InputInst,
+  type SelectGroupOption,
   type SelectOption,
 } from 'naive-ui'
-import { X } from '@vicons/tabler'
+import { Tag, X } from '@vicons/tabler'
 import type {
   LedgerCategoryDto,
   LedgerTransactionDto,
@@ -22,11 +23,13 @@ import type {
 import { useConfirm } from '../../composables/useConfirm'
 import { useToast } from '../../composables/useToast'
 import { ledgerErrorMessage } from '../../features/ledger/ledgerErrors'
-import { formatLedgerMoney, parseLedgerMoney } from '../../features/ledger/money'
+import { DEFAULT_CATEGORY_ICON } from '../../features/ledger/categoryIconMigration'
+import { currencyExponentFor, formatLedgerMoney, parseLedgerMoney } from '../../features/ledger/money'
 import { ledgerSelectNodeProps } from '../../features/ledger/naiveControls'
 import { useLedgerStore } from '../../features/ledger/ledgerStore'
 import { instantFromLocalDateTime, localDateTimeInputFromInstant } from '../../features/ledger/time'
 import LedgerDateTimePicker from './LedgerDateTimePicker.vue'
+import LedgerAccountIcon from './LedgerAccountIcon.vue'
 import LedgerPendingCreateRecovery from './LedgerPendingCreateRecovery.vue'
 
 const props = defineProps<{ open: boolean }>()
@@ -56,23 +59,20 @@ const formError = ref('')
 const saving = ref(false)
 const submitted = ref(false)
 const dirty = ref(false)
+const closeRequestPending = ref(false)
+const closing = ref(false)
 let resetting = false
 
 const settings = computed(() => store.settings.value)
 const activeAccounts = computed(() => store.activeAccounts.value)
 const activeCategories = computed(() => store.activeCategories.value)
 const applicableCategories = computed(() => activeCategories.value.filter((category) => category.kind === type.value))
-const accountOptions = computed<SelectOption[]>(() => activeAccounts.value.map((account) => ({
-  value: account.id,
-  label: `${account.name} · ${formatLedgerMoney(account.currentBalanceMinor, account.currency)}`,
-})))
-const transferAccountOptions = computed<SelectOption[]>(() => activeAccounts.value.map((account) => ({
-  value: account.id,
-  label: account.name,
-})))
+const accountOptions = computed(() => groupedAccountOptions(true))
+const transferAccountOptions = computed(() => groupedAccountOptions(false))
 const categoryOptions = computed<SelectOption[]>(() => applicableCategories.value.map((category) => ({
   value: category.id,
   label: categoryLabel(category),
+  categoryIcon: category.icon,
 })))
 const pendingTransaction = computed(() => {
   const pending = store.pendingCreate.value
@@ -82,6 +82,83 @@ const recoveryBusy = computed(() => store.mutationState.value === 'SUBMITTING')
 const canSubmit = computed(() => activeAccounts.value.length > 0 && !saving.value)
 const formTitle = computed(() => type.value === 'expense' ? '记一笔支出' : type.value === 'income' ? '记一笔收入' : '记一笔转账')
 
+function groupedAccountOptions(showBalance: boolean): SelectGroupOption[] {
+  return (['asset', 'liability'] as const).flatMap((nature) => {
+    const children: SelectOption[] = activeAccounts.value
+      .filter((account) => account.nature === nature)
+      .sort((left, right) => right.currentBalanceMinor - left.currentBalanceMinor
+        || left.name.localeCompare(right.name, 'zh-CN'))
+      .map((account) => {
+        const balanceLabel = showBalance
+          ? formatLedgerMoney(account.currentBalanceMinor, account.currency)
+          : ''
+        return {
+          value: account.id,
+          label: balanceLabel ? `${account.name} · ${balanceLabel}` : account.name,
+          accountName: account.name,
+          balanceLabel,
+        }
+      })
+    return children.length
+      ? [{ type: 'group' as const, key: nature, label: nature === 'asset' ? '资产账户' : '负债账户', children }]
+      : []
+  })
+}
+
+function renderAccountContent(option: SelectOption | SelectGroupOption) {
+  if (option.type === 'group') {
+    return h('span', { class: 'ledger-account-select-group' }, String(option.label ?? ''))
+  }
+  const account = activeAccounts.value.find((item) => item.id === option.value)
+  const accountName = String(option.accountName ?? account?.name ?? '')
+  const balanceLabel = String(option.balanceLabel ?? '')
+  return h('span', { class: 'ledger-account-select-option' }, [
+    h('span', { class: 'ledger-account-select-icon', 'aria-hidden': 'true' }, [
+      h(LedgerAccountIcon, { icon: account?.icon, size: 18 }),
+    ]),
+    h('span', { class: 'ledger-account-select-label' }, accountName),
+    balanceLabel ? h('span', { class: 'ledger-account-select-balance' }, balanceLabel) : null,
+  ])
+}
+
+function renderAccountLabel(option: SelectOption | SelectGroupOption) {
+  return renderAccountContent(option)
+}
+
+function customCategoryIconSource(icon: string | undefined): string | undefined {
+  if (!icon?.startsWith('custom_category_')) return undefined
+  try {
+    const icons = JSON.parse(localStorage.getItem('docus.ledger.category-custom-icons') ?? '{}') as Record<string, unknown>
+    const source = icons[icon]
+    return typeof source === 'string'
+      ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(source)}`
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function renderCategoryLabel(option: SelectOption) {
+  const category = applicableCategories.value.find((item) => item.id === option.value)
+  if (!category) {
+    return h('span', { class: 'ledger-category-select-option' }, [
+      h('span', { class: 'ledger-category-select-icon', 'aria-hidden': 'true' }, [
+        h(NIcon, { size: 18 }, { default: () => h(Tag) }),
+      ]),
+    ])
+  }
+  const icon = category?.icon ?? DEFAULT_CATEGORY_ICON
+  const customSource = customCategoryIconSource(icon)
+  return h('span', { class: 'ledger-category-select-option' }, [
+    h('span', { class: 'ledger-category-select-icon', 'aria-hidden': 'true' }, [
+      customSource
+        ? h('img', { src: customSource, alt: '', width: 18, height: 18 })
+        : h(LedgerAccountIcon, { icon, size: 18 }),
+    ]),
+    h('span', { class: 'ledger-account-select-label' }, String(option.label ?? category?.name ?? '')),
+  ])
+}
+
 function defaultOccurredAt(): string {
   return settings.value?.timezone
     ? localDateTimeInputFromInstant(Date.now(), settings.value.timezone)
@@ -90,6 +167,7 @@ function defaultOccurredAt(): string {
 
 function resetForm(): void {
   resetting = true
+  closing.value = false
   type.value = 'expense'
   amount.value = ''
   accountId.value = activeAccounts.value.length === 1 ? activeAccounts.value[0]!.id : ''
@@ -170,12 +248,19 @@ function onTypeTabKeydown(event: KeyboardEvent, selectedType: EntryType): void {
 }
 
 async function requestClose(): Promise<void> {
-  if (saving.value) return
-  if (dirty.value) {
-    const leave = await confirm('放弃这笔尚未保存的记录？', '已填写的内容将不会保存。')
-    if (!leave) return
+  if (saving.value || closeRequestPending.value) return
+  closeRequestPending.value = true
+  try {
+    if (dirty.value) {
+      const leave = await confirm('放弃这笔尚未保存的记录？', '已填写的内容将不会保存。')
+      if (!leave) return
+    }
+    dirty.value = false
+    closing.value = true
+    emit('close')
+  } finally {
+    closeRequestPending.value = false
   }
-  emit('close')
 }
 
 function handleVisibilityChange(value: boolean): void {
@@ -188,6 +273,23 @@ function focusInitialInput(): void {
 
 function categoryLabel(category: LedgerCategoryDto): string {
   return category.name
+}
+
+function allowAmountInput(value: string): boolean {
+  const currency = settings.value?.baseCurrency
+  if (!currency || value === '') return true
+  const exponent = currencyExponentFor(currency)
+  const pattern = exponent === 0
+    ? /^\d*$/
+    : new RegExp(`^\\d*(?:\\.\\d{0,${exponent}})?$`)
+  if (!pattern.test(value)) return false
+  if (value === '.' || value.endsWith('.')) return true
+  try {
+    parseLedgerMoney(value, currency)
+    return true
+  } catch {
+    return false
+  }
 }
 
 function validate(): { amountMinor: number; occurredAtMs: number } | null {
@@ -306,14 +408,12 @@ async function retryPending(): Promise<void> {
 
 <template>
   <NModal
-    v-if="props.open"
-    :show="props.open"
+    v-if="props.open && !closing"
+    :show="props.open && !closing"
     :mask-closable="false"
     :close-on-esc="false"
     :auto-focus="false"
     :trap-focus="true"
-    :on-esc="requestClose"
-    :on-mask-click="requestClose"
     :on-update-show="handleVisibilityChange"
     :on-after-enter="focusInitialInput"
   >
@@ -378,7 +478,8 @@ async function retryPending(): Promise<void> {
                   v-model:value="amount"
                   class="ledger-money-control"
                   type="text"
-                  size="medium"
+                  size="small"
+                  :allow-input="allowAmountInput"
                   :bordered="false"
                   :input-props="{ id: 'ledger-transaction-amount', name: 'amount', inputmode: 'decimal', autocomplete: 'off' }"
                 placeholder="0.00"
@@ -395,6 +496,7 @@ async function retryPending(): Promise<void> {
                     class="ledger-form-control"
                     size="medium"
                     :options="accountOptions"
+                    :render-label="renderAccountLabel"
                     :node-props="ledgerSelectNodeProps"
                     :input-props="{ id: 'ledger-transaction-account', name: 'accountId', required: true }"
                     aria-label="账户"
@@ -411,6 +513,7 @@ async function retryPending(): Promise<void> {
                     class="ledger-form-control"
                     size="medium"
                     :options="categoryOptions"
+                    :render-label="renderCategoryLabel"
                     :node-props="ledgerSelectNodeProps"
                     :input-props="{ id: 'ledger-transaction-category', name: 'categoryId', required: true }"
                     aria-label="分类"
@@ -431,6 +534,7 @@ async function retryPending(): Promise<void> {
                   class="ledger-form-control"
                   size="medium"
                   :options="transferAccountOptions"
+                  :render-label="renderAccountLabel"
                   :node-props="ledgerSelectNodeProps"
                   :input-props="{ id: 'ledger-transaction-from-account', name: 'fromAccountId', required: true }"
                   aria-label="转出账户"
@@ -446,6 +550,7 @@ async function retryPending(): Promise<void> {
                   class="ledger-form-control"
                   size="medium"
                   :options="transferAccountOptions"
+                  :render-label="renderAccountLabel"
                   :node-props="ledgerSelectNodeProps"
                   :input-props="{ id: 'ledger-transaction-to-account', name: 'toAccountId', required: true }"
                   aria-label="转入账户"
@@ -520,6 +625,22 @@ async function retryPending(): Promise<void> {
 .ledger-amount-field { margin-top: 12px; }
 .ledger-form-field :deep(.n-form-item-label) { color: var(--text-h); font-size: .8rem; font-weight: 700; letter-spacing: .01em; }
 .ledger-form-control { width: 100%; }
+.ledger-sheet-card :deep(.ledger-account-select-option) { display: inline-flex; width: 100%; min-width: 0; align-items: center; gap: 8px; }
+.ledger-sheet-card :deep(.ledger-category-select-option) { display: inline-flex; width: 100%; min-width: 0; align-items: center; gap: 8px; }
+.ledger-sheet-card :deep(.n-base-select-option__content),
+.ledger-sheet-card :deep(.n-base-selection-label__render-label),
+.ledger-sheet-card :deep(.n-base-selection-input__content),
+.ledger-sheet-card :deep(.n-base-selection-overlay__wrapper) { width: 100%; min-width: 0; }
+.ledger-sheet-card :deep(.n-base-selection-label__render-label),
+.ledger-sheet-card :deep(.n-base-selection-overlay__wrapper) { display: flex; height: 100%; align-items: center; }
+.ledger-sheet-card :deep(.n-base-selection-input),
+.ledger-sheet-card :deep(.n-base-selection-input__content) { display: flex; height: 100%; align-items: center; }
+.ledger-sheet-card :deep(.ledger-account-select-icon) { display: inline-grid; width: 20px; height: 20px; flex: 0 0 20px; place-items: center; color: var(--accent); line-height: 0; }
+.ledger-sheet-card :deep(.ledger-category-select-icon) { display: inline-grid; width: 20px; height: 20px; flex: 0 0 20px; place-items: center; color: var(--accent); line-height: 0; }
+.ledger-sheet-card :deep(.ledger-category-select-icon img) { display: block; width: 18px; height: 18px; object-fit: contain; }
+.ledger-sheet-card :deep(.ledger-account-select-label) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ledger-sheet-card :deep(.ledger-account-select-balance) { flex: 0 0 auto; margin-left: auto; color: var(--text-muted); font-variant-numeric: tabular-nums; text-align: right; }
+.ledger-sheet-card :deep(.ledger-account-select-group) { color: var(--text-muted); font-size: .72rem; font-weight: 700; letter-spacing: .02em; }
 .ledger-form-field :deep(.n-form-item-blank) { min-width: 0; }
 .ledger-form-field :deep(.ledger-form-control .n-input),
 .ledger-form-field :deep(.ledger-form-control .n-base-selection),
@@ -527,11 +648,11 @@ async function retryPending(): Promise<void> {
 .ledger-form-field :deep(.ledger-date-time-picker .n-input-group) { width: 100%; }
 .ledger-form-field :deep(.ledger-date-time-picker .n-date-picker),
 .ledger-form-field :deep(.ledger-date-time-picker .n-time-picker) { min-width: 0; flex: 1 1 0; }
-.ledger-money-input { display: flex; align-items: center; width: 100%; box-sizing: border-box; gap: 10px; min-height: 50px; padding: 3px 12px; border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border)); border-radius: 10px; background: color-mix(in srgb, var(--bg) 78%, transparent); box-shadow: 0 3px 12px color-mix(in srgb, var(--accent) 5%, transparent); }
+.ledger-money-input { display: flex; align-items: center; width: 100%; box-sizing: border-box; gap: 8px; min-height: 34px; padding: 2px 10px; border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--bg) 78%, transparent); box-shadow: 0 3px 12px color-mix(in srgb, var(--accent) 5%, transparent); }
 .ledger-money-input:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent); }
-.ledger-money-input span { color: var(--accent); font-size: .86rem; font-weight: 750; }
+.ledger-money-input span { color: var(--accent); font-size: .78rem; font-weight: 750; }
 .ledger-money-control { flex: 1; min-width: 0; }
-.ledger-money-control { font-size: 1.18rem; font-weight: 650; }
+.ledger-money-control { font-size: .95rem; font-weight: 650; }
 .ledger-field-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .ledger-link-button { padding: 0; border: 0; background: transparent; color: var(--accent); font: inherit; font-size: .76rem; cursor: pointer; }
 .ledger-link-button:hover:not(:disabled) { text-decoration: underline; }
