@@ -1355,7 +1355,7 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
   justify-content: space-between;
   gap: 14px;
   margin: 0 0 5px;
-  padding: 0 18px 8px 10px;
+  padding: 0 4px 8px 10px;
   color: var(--text-muted);
   font-size: .75rem;
   font-weight: 550;
@@ -1394,6 +1394,7 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
   font-size: .76rem;
   font-variant-numeric: tabular-nums;
   font-weight: 650;
+  text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1481,6 +1482,7 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
 .ledger-account-amount {
   flex: 0 0 auto;
   font-weight: 650;
+  text-align: right;
 }
 
 .ledger-dashboard-two-column {
