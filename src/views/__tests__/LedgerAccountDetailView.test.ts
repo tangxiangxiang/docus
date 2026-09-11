@@ -2,7 +2,7 @@
 import { DOMWrapper, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { LedgerAccountDto, LedgerOverviewDto, LedgerSettingsDto } from '../../../shared/ledgerProtocol'
+import type { LedgerAccountDto, LedgerOverviewDto, LedgerSettingsDto, LedgerTransactionDto } from '../../../shared/ledgerProtocol'
 import { resetLedgerStoreForTesting } from '../../features/ledger/ledgerStore'
 import LedgerAccountDetailView from '../LedgerAccountDetailView.vue'
 
@@ -242,6 +242,70 @@ describe('Ledger account detail lifecycle', () => {
     expect(movement.text()).toContain('¥120.00')
     expect(wrapper.get('.ledger-section-heading a').attributes('href')).toBe('/ledger/transactions?accountId=bank-1')
     expect(api.getLedgerAccountTransactions).toHaveBeenCalledWith('bank-1', { limit: 5 })
+  })
+
+  it('uses the bundled total for an outgoing transfer amount and running balance', async () => {
+    const original = account({ currentBalanceMinor: 470_000 })
+    const repayment: LedgerTransactionDto = {
+      id: 'repayment-1',
+      type: 'transfer',
+      transferKind: 'repayment',
+      amountMinor: 500_000,
+      bundle: { chargeMinor: 30_000, totalMinor: 530_000 },
+      groupId: 'repayment-group',
+      fromAccountId: 'bank-1',
+      toAccountId: 'loan-1',
+      payee: '',
+      note: '',
+      occurredAt: 3,
+      deletedAt: null,
+      version: 1,
+      createdAt: 3,
+      updatedAt: 3,
+    }
+    setup(original, [repayment])
+    const nextRouter = createTestRouter()
+    await nextRouter.push('/ledger/accounts/bank-1')
+    await nextRouter.isReady()
+    const wrapper = mount(LedgerAccountDetailView, { global: { plugins: [nextRouter] } })
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    const row = wrapper.get('.ledger-recent-row')
+    expect(row.text()).toContain('-¥5,300.00')
+    expect(row.text()).toContain('¥4,700.00')
+  })
+
+  it('uses only the transfer amount for an incoming account when a fee is bundled', async () => {
+    const original = account({ id: 'bank-2', currentBalanceMinor: 200_000 })
+    const withdrawal: LedgerTransactionDto = {
+      id: 'withdrawal-1',
+      type: 'transfer',
+      transferKind: 'withdrawal',
+      amountMinor: 200_000,
+      bundle: { chargeMinor: 5_000, totalMinor: 205_000 },
+      groupId: 'withdrawal-group',
+      fromAccountId: 'wallet-1',
+      toAccountId: 'bank-2',
+      payee: '',
+      note: '',
+      occurredAt: 3,
+      deletedAt: null,
+      version: 1,
+      createdAt: 3,
+      updatedAt: 3,
+    }
+    setup(original, [withdrawal])
+    const nextRouter = createTestRouter()
+    await nextRouter.push('/ledger/accounts/bank-2')
+    await nextRouter.isReady()
+    const wrapper = mount(LedgerAccountDetailView, { global: { plugins: [nextRouter] } })
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    const row = wrapper.get('.ledger-recent-row')
+    expect(row.text()).toContain('+¥2,000.00')
+    expect(row.text()).toContain('¥2,000.00')
   })
 
   it('uses liability movement language instead of cashflow language', async () => {

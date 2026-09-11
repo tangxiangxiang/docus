@@ -1025,9 +1025,7 @@ export function createLedgerRepository(db: DatabaseT): LedgerRepository {
       const { clauses, params } = transactionQueryFilter(
         options,
         true,
-        options.groupId === undefined
-          && (options.type === undefined || options.type === 'all')
-          && options.categoryId === undefined,
+        options.groupId === undefined,
       )
       params.limit = options.limit + 1
       params.offset = options.offset ?? 0
@@ -1047,8 +1045,6 @@ export function createLedgerRepository(db: DatabaseT): LedgerRepository {
 
     summarizeTransactions(options: LedgerTransactionQueryOptions): LedgerTransactionQuerySummary {
       const hideGroupedCharges = options.groupId === undefined
-        && (options.type === undefined || options.type === 'all')
-        && options.categoryId === undefined
       const { clauses, params } = transactionQueryFilter(options, false)
       const row = db.prepare(`
         SELECT

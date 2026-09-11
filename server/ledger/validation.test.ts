@@ -124,6 +124,10 @@ describe('Ledger stateless request validation', () => {
       type: 'transfer', amountMinor: 1, fromAccountId: 'a', toAccountId: 'b', occurredAt, categoryId: 'c',
     })).toThrow()
     expect(() => parseTransactionCreateRequest({
+      type: 'transfer', amountMinor: 1, fromAccountId: 'a', toAccountId: 'b', occurredAt,
+      feeMinor: 1, feeCategoryId: 'fee-category',
+    })).toThrow()
+    expect(() => parseTransactionCreateRequest({
       type: 'income', amountMinor: 1, accountId: 'a', categoryId: 'i', occurredAt, fromAccountId: 'b',
     })).toThrow()
     expect(() => parseTransactionCreateRequest({
@@ -152,15 +156,19 @@ describe('Ledger stateless request validation', () => {
       expectedVersion: 1,
       type: 'transfer',
       feeMinor: 25,
-      feeCategoryId: 'fee-category',
       feeMode: 'deducted',
     })).toEqual({
       expectedVersion: 1,
       type: 'transfer',
       feeMinor: 25,
-      feeCategoryId: 'fee-category',
       feeMode: 'deducted',
     })
+    expect(() => parseTransactionPatchRequest({
+      expectedVersion: 1,
+      type: 'transfer',
+      feeMinor: 25,
+      feeCategoryId: 'fee-category',
+    })).toThrow()
     expect(() => parseTransactionPatchRequest({ expectedVersion: 1, feeMinor: -1 })).toThrow()
     expect(parseExpectedVersionCommand({ expectedVersion: 3 })).toBe(3)
     expect(() => parseSettingsPatchRequest({ expectedVersion: 1 })).toThrow()

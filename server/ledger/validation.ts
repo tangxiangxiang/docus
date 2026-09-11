@@ -329,7 +329,7 @@ function parseIncomeOrExpenseCreate(
 function parseTransferCreate(value: unknown): LedgerTransferCreateRequest {
   const record = asRecord(value)
   assertExactKeys(record, [
-    'type', 'transferKind', 'amountMinor', 'feeMinor', 'feeCategoryId', 'feeMode',
+    'type', 'transferKind', 'amountMinor', 'feeMinor', 'feeMode',
     'fromAccountId', 'toAccountId', 'occurredAt', 'location', 'payee', 'note',
   ], ['type', 'amountMinor', 'fromAccountId', 'toAccountId', 'occurredAt'])
   if (parseTransactionType(record) !== 'transfer') {
@@ -340,7 +340,6 @@ function parseTransferCreate(value: unknown): LedgerTransferCreateRequest {
     ...(hasOwn(record, 'transferKind') ? { transferKind: parseTransferKind(record) } : {}),
     amountMinor: parseAmountMinor(record),
     ...(hasOwn(record, 'feeMinor') ? { feeMinor: parseOptionalFeeMinor(record) } : {}),
-    ...(hasOwn(record, 'feeCategoryId') ? { feeCategoryId: requireNonEmptyId(record, 'feeCategoryId') } : {}),
     ...(hasOwn(record, 'feeMode') ? { feeMode: parseTransferFeeMode(record) } : {}),
     fromAccountId: requireNonEmptyId(record, 'fromAccountId'),
     toAccountId: requireNonEmptyId(record, 'toAccountId'),
@@ -501,7 +500,6 @@ export interface LedgerTransactionPatchRequest {
   readonly transferKind?: LedgerTransferKind
   readonly amountMinor?: number
   readonly feeMinor?: number
-  readonly feeCategoryId?: string
   readonly feeMode?: LedgerTransferFeeMode
   readonly accountId?: string
   readonly fromAccountId?: string
@@ -518,7 +516,7 @@ export interface LedgerTransactionPatchRequest {
 export function parseTransactionPatchRequest(value: unknown): LedgerTransactionPatchRequest {
   const record = asRecord(value)
   const mutableKeys = [
-    'type', 'transferKind', 'amountMinor', 'feeMinor', 'feeCategoryId', 'feeMode', 'accountId', 'fromAccountId', 'toAccountId', 'categoryId',
+    'type', 'transferKind', 'amountMinor', 'feeMinor', 'feeMode', 'accountId', 'fromAccountId', 'toAccountId', 'categoryId',
     'occurredAt', 'location', 'payee', 'note', 'adjustmentCalculatedBalanceMinor',
     'adjustmentTargetBalanceMinor',
   ] as const
@@ -532,7 +530,6 @@ export function parseTransactionPatchRequest(value: unknown): LedgerTransactionP
     ...(hasOwn(record, 'transferKind') ? { transferKind: parseTransferKind(record) } : {}),
     ...(hasOwn(record, 'amountMinor') ? { amountMinor: parseAmountMinor(record) } : {}),
     ...(hasOwn(record, 'feeMinor') ? { feeMinor: parseOptionalFeeMinor(record) } : {}),
-    ...(hasOwn(record, 'feeCategoryId') ? { feeCategoryId: requireNonEmptyId(record, 'feeCategoryId') } : {}),
     ...(hasOwn(record, 'feeMode') ? { feeMode: parseTransferFeeMode(record) } : {}),
     ...(hasOwn(record, 'accountId') ? { accountId: requireNonEmptyId(record, 'accountId') } : {}),
     ...(hasOwn(record, 'fromAccountId') ? { fromAccountId: requireNonEmptyId(record, 'fromAccountId') } : {}),

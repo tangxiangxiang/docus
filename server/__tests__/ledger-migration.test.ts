@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import Database from 'better-sqlite3'
 import { applyMigrations } from '../db.js'
+import { DEFAULT_LEDGER_CATEGORIES_V1 } from '../ledger/defaultCategories.js'
 
 const databases: Database.Database[] = []
 
@@ -138,7 +139,7 @@ describe('Ledger 0013 foundation migration', () => {
     const db = freshDb()
     applyMigrations(db)
 
-    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(22)
+    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(23)
     const tables = (db.prepare(
       "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
     ).all() as Array<{ name: string }>).map((row) => row.name)
@@ -169,7 +170,7 @@ describe('Ledger 0013 foundation migration', () => {
     ).get() as { count: number }).count
     applyMigrations(db)
 
-    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(22)
+    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(23)
     expect((db.prepare(
       "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table'",
     ).get() as { count: number }).count).toBe(firstTableCount)
@@ -298,5 +299,42 @@ describe('Ledger 0013 foundation migration', () => {
     db.prepare('UPDATE ledger_transactions SET deleted_at = ? WHERE id = ?').run(3_000, 'history-row')
     expect(() => db.prepare('DELETE FROM ledger_accounts WHERE id = ?').run('account-history')).toThrow()
     expect(() => db.prepare('DELETE FROM ledger_categories WHERE id = ?').run('category-history')).toThrow()
+  })
+
+  it('repairs migrated system category icons to the fresh-seed canonical values', () => {
+    const db = freshDb()
+    applyMigrations(db)
+    const systemCategories = DEFAULT_LEDGER_CATEGORIES_V1.filter((category) => category.systemKey !== undefined)
+    const insert = db.prepare(`
+      INSERT INTO ledger_categories (
+        id, kind, name, normalized_name, system_key, icon, archived_at, version, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, 'wallet', NULL, 1, 1, 1)
+    `)
+    for (const category of systemCategories) {
+      insert.run(`legacy-${category.systemKey}`, category.kind, category.name, category.name, category.systemKey)
+    }
+
+    db.prepare('UPDATE schema_version SET version = 22').run()
+    applyMigrations(db)
+
+    const actual = db.prepare(`
+      SELECT system_key, icon
+      FROM ledger_categories
+      WHERE system_key IN ('interest', 'fee')
+      ORDER BY system_key
+    `).all()
+    const expected = systemCategories
+      .map((category) => ({ system_key: category.systemKey, icon: category.icon }))
+      .sort((left, right) => left.system_key!.localeCompare(right.system_key!))
+    expect(actual).toEqual(expected)
+    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(23)
+
+    applyMigrations(db)
+    expect(db.prepare(`
+      SELECT system_key, icon
+      FROM ledger_categories
+      WHERE system_key IN ('interest', 'fee')
+      ORDER BY system_key
+    `).all()).toEqual(expected)
   })
 })

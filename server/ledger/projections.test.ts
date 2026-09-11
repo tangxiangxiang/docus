@@ -651,8 +651,34 @@ describe('Ledger Overview and trend projections', () => {
     expect(grouped.page.total).toBe(2)
 
     const feeRows = fixture.projections.listTransactions(query({ categoryId: feeCategory.id }))
-    expect(feeRows.transactions).toHaveLength(1)
-    expect(feeRows.transactions[0]).toMatchObject({ type: 'expense', amountMinor: 300, groupId: repayment.groupId })
+    expect(feeRows.transactions).toHaveLength(0)
+    expect(feeRows.page.total).toBe(0)
+
+    const expenseRows = fixture.projections.listTransactions(query({ type: 'expense' }))
+    expect(expenseRows.transactions).toHaveLength(0)
+    expect(expenseRows.page.total).toBe(0)
+
+    const accountRows = fixture.projections.listTransactions(query({ accountId: bank.id }))
+    expect(accountRows.transactions.map((row) => row.id)).toEqual([repayment.id])
+    expect(accountRows.page.total).toBe(1)
+
+    const withdrawal = transaction(fixture, 'grouped-withdrawal', {
+      // Keep the withdrawal on the same fixture while giving it a valid asset destination.
+      // The grouped query must still expose both accounting rows.
+      type: 'transfer',
+      transferKind: 'withdrawal',
+      amountMinor: 2_000,
+      feeMinor: 50,
+      fromAccountId: bank.id,
+      toAccountId: account(fixture, 'grouped-wallet', { type: 'wallet' }).id,
+    })
+    const withdrawalGroup = fixture.projections.listTransactions(query({ groupId: withdrawal.groupId }))
+    expect(withdrawalGroup.transactions.map((row) => row.type).sort()).toEqual(['expense', 'transfer'])
+    expect(withdrawalGroup.page.total).toBe(2)
+    const withdrawalFeeCategory = fixture.service.listCategories('expense', false).find((item) => item.systemKey === 'fee')!
+    const withdrawalFeeRows = fixture.projections.listTransactions(query({ categoryId: withdrawalFeeCategory.id }))
+    expect(withdrawalFeeRows.transactions).toHaveLength(0)
+    expect(withdrawalFeeRows.page.total).toBe(0)
   })
 
   it('returns fixed recent five active records and calendar-month trend points', () => {

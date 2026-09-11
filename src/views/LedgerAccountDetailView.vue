@@ -160,11 +160,25 @@ function transactionTypeLabel(transaction: LedgerTransactionDto): string {
   return '调整'
 }
 
+function transactionAmountForDisplayedAccount(transaction: LedgerTransactionDto, currentAccountId: string): number {
+  if (transaction.type !== 'transfer' || transaction.fromAccountId !== currentAccountId) {
+    return transaction.amountMinor
+  }
+  const totalMinor = transaction.bundle?.totalMinor
+  return typeof totalMinor === 'number' && Number.isSafeInteger(totalMinor)
+    ? totalMinor
+    : transaction.amountMinor
+}
+
 function transactionAmountMinor(transaction: LedgerTransactionDto): number | null {
-  if (!Number.isSafeInteger(transaction.amountMinor)) return null
-  if (transaction.type === 'income') return transaction.amountMinor
-  if (transaction.type === 'expense' || (transaction.type === 'transfer' && transaction.fromAccountId === accountId.value)) return -transaction.amountMinor
-  return transaction.amountMinor
+  const amount = transactionAmountForDisplayedAccount(transaction, accountId.value)
+  if (!Number.isSafeInteger(amount)) return null
+  if (transaction.type === 'income') return amount
+  if (transaction.type === 'expense') return -amount
+  if (transaction.type === 'transfer' && transaction.fromAccountId === accountId.value) {
+    return -amount
+  }
+  return amount
 }
 
 function formatTimestamp(timestamp: number): string {
@@ -181,12 +195,14 @@ function maskCardNumber(cardNumber: string | undefined): string {
 function accountEffect(transaction: LedgerTransactionDto): number {
   const current = account.value
   if (!current || transaction.deletedAt !== null) return 0
-  const amount = transaction.amountMinor
+  const amount = transactionAmountForDisplayedAccount(transaction, current.id)
   const positive = current.nature === 'asset'
   if (transaction.type === 'income') return transaction.accountId === current.id ? (positive ? amount : -amount) : 0
   if (transaction.type === 'expense') return transaction.accountId === current.id ? (positive ? -amount : amount) : 0
   if (transaction.type === 'transfer') {
-    if (transaction.fromAccountId === current.id) return positive ? -amount : amount
+    if (transaction.fromAccountId === current.id) {
+      return positive ? -amount : amount
+    }
     if (transaction.toAccountId === current.id) return positive ? amount : -amount
     return 0
   }

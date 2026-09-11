@@ -228,7 +228,6 @@ export interface LedgerTransferCreateRequest {
   readonly amountMinor: number
   /** Optional companion expense. It is never included in amountMinor. */
   readonly feeMinor?: number
-  readonly feeCategoryId?: string
   /** Only applies to withdrawal fees; defaults to extra during migration. */
   readonly feeMode?: LedgerTransferFeeMode
   readonly fromAccountId: string

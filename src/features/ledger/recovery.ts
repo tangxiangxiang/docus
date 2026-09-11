@@ -132,7 +132,7 @@ function isSafeTransactionPayload(value: unknown): value is LedgerTransactionCre
 
   if (value.type === 'transfer') {
     const allowedKeys = new Set([
-      'type', 'transferKind', 'amountMinor', 'feeMinor', 'feeCategoryId', 'feeMode',
+      'type', 'transferKind', 'amountMinor', 'feeMinor', 'feeMode',
       'fromAccountId', 'toAccountId', 'occurredAt', 'location', 'payee', 'note',
     ])
     const requiredKeys = ['type', 'amountMinor', 'fromAccountId', 'toAccountId', 'occurredAt', 'note']
@@ -143,7 +143,6 @@ function isSafeTransactionPayload(value: unknown): value is LedgerTransactionCre
       && value.fromAccountId !== value.toAccountId
       && (value.transferKind === undefined || value.transferKind === 'general' || value.transferKind === 'repayment' || value.transferKind === 'withdrawal')
       && (value.feeMinor === undefined || safeInteger(value.feeMinor) && value.feeMinor >= 0)
-      && (value.feeCategoryId === undefined || nonEmptyString(value.feeCategoryId))
       && (value.feeMode === undefined || value.feeMode === 'extra' || value.feeMode === 'deducted')
       && (value.location === undefined || typeof value.location === 'string')
       && (value.payee === undefined || typeof value.payee === 'string')

@@ -579,7 +579,8 @@ describe('Ledger Transaction and Adjustment service lifecycle', () => {
       toAccountId: bank.id,
     }), 'withdrawal-bundle'))
     const withdrawalFee = repository.listTransactionsByGroupId(withdrawal.groupId!).find((item) => item.type === 'expense')!
-    service.deleteTransaction(withdrawalFee.id, { expectedVersion: withdrawalFee.version })
+    expectLedgerError(() => service.getTransaction(withdrawalFee.id), 'ledger-not-found')
+    service.deleteTransaction(withdrawal.id, { expectedVersion: withdrawal.version })
     expect(repository.getTransaction(withdrawal.id)?.deletedAt).not.toBeNull()
     expect(repository.getTransaction(withdrawalFee.id)?.deletedAt).not.toBeNull()
     expect(service.getAccount(wallet.id).currentBalanceMinor).toBe(10_000)

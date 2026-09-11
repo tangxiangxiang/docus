@@ -506,11 +506,11 @@ export function createLedgerService(
     patch: LedgerTransactionPatchRequest,
   ): void {
     const inapplicable = transaction.type === 'income' || transaction.type === 'expense'
-      ? ['transferKind', 'fromAccountId', 'toAccountId', 'feeMinor', 'feeCategoryId', 'feeMode', 'adjustmentCalculatedBalanceMinor', 'adjustmentTargetBalanceMinor']
+      ? ['transferKind', 'fromAccountId', 'toAccountId', 'feeMinor', 'feeMode', 'adjustmentCalculatedBalanceMinor', 'adjustmentTargetBalanceMinor']
       : transaction.type === 'transfer'
         ? ['accountId', 'categoryId', 'adjustmentCalculatedBalanceMinor', 'adjustmentTargetBalanceMinor']
         : ['transferKind', 'amountMinor', 'accountId', 'fromAccountId', 'toAccountId', 'categoryId', 'occurredAt', 'payee',
-          'feeMinor', 'feeCategoryId', 'feeMode', 'adjustmentCalculatedBalanceMinor', 'adjustmentTargetBalanceMinor']
+          'feeMinor', 'feeMode', 'adjustmentCalculatedBalanceMinor', 'adjustmentTargetBalanceMinor']
 
     for (const field of inapplicable) {
       if (hasOwn(patch, field)) {
@@ -852,10 +852,20 @@ export function createLedgerService(
     })
   }
 
+  function requireUserTransaction(id: string): LedgerTransaction {
+    const transaction = repository.getTransaction(id)
+    if (
+      transaction === null
+      || (transaction.type === 'expense' && transaction.groupId !== undefined)
+    ) {
+      notFound('Ledger Transaction')
+    }
+    return transaction
+  }
+
   function getTransaction(id: string): LedgerTransactionDto {
     requireSettings()
-    const transaction = repository.getTransaction(id)
-    if (transaction === null) notFound('Ledger Transaction')
+    const transaction = requireUserTransaction(id)
     return toTransactionDto(transaction)
   }
 
@@ -958,8 +968,8 @@ export function createLedgerService(
 
             const feeMinor = request.feeMinor ?? 0
             assertNonNegativeSafeInteger(feeMinor, 'feeMinor')
-            if (feeMinor === 0 && (request.feeCategoryId !== undefined || request.feeMode !== undefined)) {
-              throw ledgerValidationError('feeCategoryId and feeMode require a positive feeMinor', {
+            if (feeMinor === 0 && request.feeMode !== undefined) {
+              throw ledgerValidationError('feeMode requires a positive feeMinor', {
                 field: 'feeMinor',
               })
             }
@@ -1042,8 +1052,7 @@ export function createLedgerService(
   function patchTransaction(id: string, value: unknown): LedgerTransactionDto {
     return runLedgerWrite(db, () => {
       const settings = requireSettings()
-      const transaction = repository.getTransaction(id)
-      if (transaction === null) notFound('Ledger Transaction')
+      const transaction = requireUserTransaction(id)
 
       const rawRecord = asMutationRecord(value)
       if (transaction.deletedAt !== null) transactionDeleted()
@@ -1167,7 +1176,6 @@ export function createLedgerService(
           }
           const existingFee = activeGroupExpenses[0]
           const hasFeePatch = hasOwn(patch, 'feeMinor')
-            || hasOwn(patch, 'feeCategoryId')
             || hasOwn(patch, 'feeMode')
           if (hasOwn(patch, 'feeMinor')) {
             assertNonNegativeSafeInteger(patch.feeMinor, 'feeMinor')
@@ -1188,9 +1196,9 @@ export function createLedgerService(
             : existingFee?.amountMinor ?? 0
           if (
             feeMinor === 0
-            && (hasOwn(patch, 'feeCategoryId') || hasOwn(patch, 'feeMode'))
+            && hasOwn(patch, 'feeMode')
           ) {
-            throw ledgerValidationError('feeCategoryId and feeMode require a positive feeMinor', {
+            throw ledgerValidationError('feeMode requires a positive feeMinor', {
               field: 'feeMinor',
             })
           }
@@ -1338,8 +1346,7 @@ export function createLedgerService(
   function deleteTransaction(id: string, value: unknown): LedgerTransactionDto {
     return runLedgerWrite(db, () => {
       requireSettings()
-      const transaction = repository.getTransaction(id)
-      if (transaction === null) notFound('Ledger Transaction')
+      const transaction = requireUserTransaction(id)
 
       if (transaction.deletedAt !== null) {
         parseExpectedVersionCommand(value)

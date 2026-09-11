@@ -57,7 +57,6 @@ export type LedgerTransactionPatchInput = {
   readonly transferKind?: LedgerTransferKind
   readonly amountMinor?: number
   readonly feeMinor?: number
-  readonly feeCategoryId?: string
   readonly feeMode?: LedgerTransferFeeMode
   readonly accountId?: string
   readonly fromAccountId?: string
