@@ -264,6 +264,7 @@ function toTransactionDto(transaction: LedgerTransaction): LedgerTransactionDto 
     id: transaction.id,
     amountMinor: transaction.amountMinor,
     occurredAt: transaction.occurredAt,
+    location: transaction.location,
     note: transaction.note,
     deletedAt: transaction.deletedAt,
     version: transaction.version,
@@ -440,8 +441,8 @@ export function createLedgerService(
     if (rawRecord === null) archivedAccount()
 
     const allowed = transaction.type === 'income' || transaction.type === 'expense'
-      ? new Set(['expectedVersion', 'note', 'payee'])
-      : new Set(['expectedVersion', 'note'])
+      ? new Set(['expectedVersion', 'location', 'note', 'payee'])
+      : new Set(['expectedVersion', 'location', 'note'])
     if (Object.keys(rawRecord).some((key) => !allowed.has(key))) archivedAccount()
   }
 
@@ -851,6 +852,7 @@ export function createLedgerService(
               accountId: account.id,
               categoryId: category.id,
               occurredAt: request.occurredAt,
+              location: request.location ?? '',
               payee: request.payee,
               note: request.note,
               deletedAt: null,
@@ -881,6 +883,7 @@ export function createLedgerService(
               accountId: account.id,
               categoryId: category.id,
               occurredAt: request.occurredAt,
+              location: request.location ?? '',
               payee: request.payee,
               note: request.note,
               deletedAt: null,
@@ -918,6 +921,7 @@ export function createLedgerService(
               fromAccountId: fromAccount.id,
               toAccountId: toAccount.id,
               occurredAt: request.occurredAt,
+              location: request.location ?? '',
               payee: request.payee,
               note: request.note,
               deletedAt: null,
@@ -984,6 +988,7 @@ export function createLedgerService(
             accountId: account.id,
             categoryId: category.id,
             occurredAt,
+            location: patch.location ?? transaction.location,
             payee: patch.payee ?? transaction.payee,
             note: patch.note ?? transaction.note,
             version: nextVersion(transaction.version),
@@ -1016,6 +1021,7 @@ export function createLedgerService(
             accountId: account.id,
             categoryId: category.id,
             occurredAt,
+            location: patch.location ?? transaction.location,
             payee: patch.payee ?? transaction.payee,
             note: patch.note ?? transaction.note,
             version: nextVersion(transaction.version),
@@ -1049,6 +1055,7 @@ export function createLedgerService(
             fromAccountId: fromAccount.id,
             toAccountId: toAccount.id,
             occurredAt,
+            location: patch.location ?? transaction.location,
             payee: patch.payee ?? transaction.payee,
             note: patch.note ?? transaction.note,
             version: nextVersion(transaction.version),
@@ -1068,6 +1075,7 @@ export function createLedgerService(
 
           const updated: AdjustmentTransaction = {
             ...transaction,
+            location: patch.location ?? transaction.location,
             note: patch.note ?? transaction.note,
             version: nextVersion(transaction.version),
             updatedAt: timestamp,
@@ -1169,6 +1177,7 @@ export function createLedgerService(
           adjustmentCalculatedBalanceMinor: actualCalculatedBalance,
           adjustmentTargetBalanceMinor: request.targetBalanceMinor,
           occurredAt: request.occurredAt,
+          location: '',
           note: request.note,
           deletedAt: null,
           version: 1,

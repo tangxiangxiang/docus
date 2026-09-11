@@ -167,7 +167,7 @@ const HAS_CATEGORY_HISTORY = `
 
 const SELECT_TRANSACTION = `
   SELECT id, type, amount_minor, account_id, from_account_id, to_account_id,
-         category_id, occurred_at, payee, note,
+         category_id, occurred_at, location, payee, note,
          adjustment_calculated_balance_minor, adjustment_target_balance_minor,
          deleted_at, version, created_at, updated_at
   FROM ledger_transactions
@@ -177,12 +177,12 @@ const SELECT_TRANSACTION = `
 const INSERT_TRANSACTION = `
   INSERT INTO ledger_transactions (
     id, type, amount_minor, account_id, from_account_id, to_account_id,
-    category_id, occurred_at, payee, note,
+    category_id, occurred_at, location, payee, note,
     adjustment_calculated_balance_minor, adjustment_target_balance_minor,
     deleted_at, version, created_at, updated_at
   ) VALUES (
     @id, @type, @amountMinor, @accountId, @fromAccountId, @toAccountId,
-    @categoryId, @occurredAt, @payee, @note,
+    @categoryId, @occurredAt, @location, @payee, @note,
     @adjustmentCalculatedBalanceMinor, @adjustmentTargetBalanceMinor,
     @deletedAt, @version, @createdAt, @updatedAt
   )
@@ -197,6 +197,7 @@ const UPDATE_TRANSACTION = `
       to_account_id = @toAccountId,
       category_id = @categoryId,
       occurred_at = @occurredAt,
+      location = @location,
       payee = @payee,
       note = @note,
       adjustment_calculated_balance_minor = @adjustmentCalculatedBalanceMinor,
@@ -219,7 +220,7 @@ const SOFT_DELETE_TRANSACTION = `
 
 const SELECT_ACTIVE_TRANSACTIONS_FOR_ACCOUNT = `
   SELECT id, type, amount_minor, account_id, from_account_id, to_account_id,
-         category_id, occurred_at, payee, note,
+         category_id, occurred_at, location, payee, note,
          adjustment_calculated_balance_minor, adjustment_target_balance_minor,
          deleted_at, version, created_at, updated_at
   FROM ledger_transactions
@@ -234,7 +235,7 @@ const SELECT_ACTIVE_TRANSACTIONS_FOR_ACCOUNT = `
 
 const SELECT_ALL_ACTIVE_TRANSACTIONS = `
   SELECT id, type, amount_minor, account_id, from_account_id, to_account_id,
-         category_id, occurred_at, payee, note,
+         category_id, occurred_at, location, payee, note,
          adjustment_calculated_balance_minor, adjustment_target_balance_minor,
          deleted_at, version, created_at, updated_at
   FROM ledger_transactions
@@ -244,7 +245,7 @@ const SELECT_ALL_ACTIVE_TRANSACTIONS = `
 
 const SELECT_ACTIVE_TRANSACTIONS_IN_RANGE = `
   SELECT id, type, amount_minor, account_id, from_account_id, to_account_id,
-         category_id, occurred_at, payee, note,
+         category_id, occurred_at, location, payee, note,
          adjustment_calculated_balance_minor, adjustment_target_balance_minor,
          deleted_at, version, created_at, updated_at
   FROM ledger_transactions
@@ -256,7 +257,7 @@ const SELECT_ACTIVE_TRANSACTIONS_IN_RANGE = `
 
 const SELECT_ACTIVE_TRANSACTIONS_BEFORE = `
   SELECT id, type, amount_minor, account_id, from_account_id, to_account_id,
-         category_id, occurred_at, payee, note,
+         category_id, occurred_at, location, payee, note,
          adjustment_calculated_balance_minor, adjustment_target_balance_minor,
          deleted_at, version, created_at, updated_at
   FROM ledger_transactions
@@ -267,7 +268,7 @@ const SELECT_ACTIVE_TRANSACTIONS_BEFORE = `
 
 const SELECT_RECENT_ACTIVE_TRANSACTIONS_BEFORE = `
   SELECT id, type, amount_minor, account_id, from_account_id, to_account_id,
-         category_id, occurred_at, payee, note,
+         category_id, occurred_at, location, payee, note,
          adjustment_calculated_balance_minor, adjustment_target_balance_minor,
          deleted_at, version, created_at, updated_at
   FROM ledger_transactions
@@ -458,6 +459,7 @@ interface TransactionParams {
   readonly toAccountId: string | null
   readonly categoryId: string | null
   readonly occurredAt: number
+  readonly location: string
   readonly payee: string
   readonly note: string
   readonly adjustmentCalculatedBalanceMinor: number | null
@@ -555,6 +557,7 @@ function transactionParams(transaction: LedgerTransaction): TransactionParams {
     toAccountId: null,
     categoryId: null,
     occurredAt: transaction.occurredAt,
+    location: transaction.location ?? '',
     payee: '',
     note: transaction.note,
     adjustmentCalculatedBalanceMinor: null,
@@ -923,7 +926,8 @@ export function createLedgerRepository(db: DatabaseT): LedgerRepository {
           .replaceAll('_', '\\_')
         params.searchPattern = `%${escaped}%`
         clauses.push(`(
-          payee LIKE @searchPattern ESCAPE '\\' COLLATE NOCASE
+          location LIKE @searchPattern ESCAPE '\\' COLLATE NOCASE
+          OR payee LIKE @searchPattern ESCAPE '\\' COLLATE NOCASE
           OR note LIKE @searchPattern ESCAPE '\\' COLLATE NOCASE
         )`)
       }
@@ -948,7 +952,7 @@ export function createLedgerRepository(db: DatabaseT): LedgerRepository {
 
       const sql = `
         SELECT id, type, amount_minor, account_id, from_account_id, to_account_id,
-               category_id, occurred_at, payee, note,
+               category_id, occurred_at, location, payee, note,
                adjustment_calculated_balance_minor, adjustment_target_balance_minor,
                deleted_at, version, created_at, updated_at
         FROM ledger_transactions

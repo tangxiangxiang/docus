@@ -32,6 +32,7 @@ import { LedgerError, ledgerValidationError } from './errors.js'
 
 export const LEDGER_NAME_MAX_LENGTH = 120
 export const LEDGER_PAYEE_MAX_LENGTH = 200
+export const LEDGER_LOCATION_MAX_LENGTH = 200
 export const LEDGER_NOTE_MAX_LENGTH = 2_000
 export const LEDGER_IDEMPOTENCY_KEY_MAX_LENGTH = 200
 export const LEDGER_LIST_LIMIT_DEFAULT = 50
@@ -124,6 +125,10 @@ function parsePayee(record: UnknownRecord): string {
     0,
     LEDGER_PAYEE_MAX_LENGTH,
   )
+}
+
+function parseLocation(record: UnknownRecord): string {
+  return validateLength(optionalString(record, 'location', ''), 'location', 0, LEDGER_LOCATION_MAX_LENGTH)
 }
 
 function parseSafeInteger(record: UnknownRecord, key: string): number {
@@ -280,7 +285,7 @@ function parseIncomeOrExpenseCreate(
 ): LedgerIncomeCreateRequest | LedgerExpenseCreateRequest {
   const record = asRecord(value)
   assertExactKeys(record, [
-    'type', 'amountMinor', 'accountId', 'categoryId', 'occurredAt', 'payee', 'note',
+    'type', 'amountMinor', 'accountId', 'categoryId', 'occurredAt', 'location', 'payee', 'note',
   ], ['type', 'amountMinor', 'accountId', 'categoryId', 'occurredAt'])
   if (parseTransactionType(record) !== type) {
     throw ledgerValidationError('transaction type discriminator does not match the parser', { field: 'type' })
@@ -291,6 +296,7 @@ function parseIncomeOrExpenseCreate(
     accountId: requireNonEmptyId(record, 'accountId'),
     categoryId: requireNonEmptyId(record, 'categoryId'),
     occurredAt: parseOccurredAt(record),
+    location: parseLocation(record),
     payee: parsePayee(record),
     note: parseNote(record),
   }
@@ -300,7 +306,7 @@ function parseIncomeOrExpenseCreate(
 function parseTransferCreate(value: unknown): LedgerTransferCreateRequest {
   const record = asRecord(value)
   assertExactKeys(record, [
-    'type', 'amountMinor', 'fromAccountId', 'toAccountId', 'occurredAt', 'payee', 'note',
+    'type', 'amountMinor', 'fromAccountId', 'toAccountId', 'occurredAt', 'location', 'payee', 'note',
   ], ['type', 'amountMinor', 'fromAccountId', 'toAccountId', 'occurredAt'])
   if (parseTransactionType(record) !== 'transfer') {
     throw ledgerValidationError('transaction type discriminator does not match the parser', { field: 'type' })
@@ -311,6 +317,7 @@ function parseTransferCreate(value: unknown): LedgerTransferCreateRequest {
     fromAccountId: requireNonEmptyId(record, 'fromAccountId'),
     toAccountId: requireNonEmptyId(record, 'toAccountId'),
     occurredAt: parseOccurredAt(record),
+    location: parseLocation(record),
     payee: parsePayee(record),
     note: parseNote(record),
   }
@@ -469,6 +476,7 @@ export interface LedgerTransactionPatchRequest {
   readonly toAccountId?: string
   readonly categoryId?: string
   readonly occurredAt?: number
+  readonly location?: string
   readonly payee?: string
   readonly note?: string
   readonly adjustmentCalculatedBalanceMinor?: number
@@ -479,7 +487,7 @@ export function parseTransactionPatchRequest(value: unknown): LedgerTransactionP
   const record = asRecord(value)
   const mutableKeys = [
     'type', 'amountMinor', 'accountId', 'fromAccountId', 'toAccountId', 'categoryId',
-    'occurredAt', 'payee', 'note', 'adjustmentCalculatedBalanceMinor',
+    'occurredAt', 'location', 'payee', 'note', 'adjustmentCalculatedBalanceMinor',
     'adjustmentTargetBalanceMinor',
   ] as const
   assertExactKeys(record, ['expectedVersion', ...mutableKeys], ['expectedVersion'])
@@ -495,6 +503,7 @@ export function parseTransactionPatchRequest(value: unknown): LedgerTransactionP
     ...(hasOwn(record, 'toAccountId') ? { toAccountId: requireNonEmptyId(record, 'toAccountId') } : {}),
     ...(hasOwn(record, 'categoryId') ? { categoryId: requireNonEmptyId(record, 'categoryId') } : {}),
     ...(hasOwn(record, 'occurredAt') ? { occurredAt: parseOccurredAt(record) } : {}),
+    ...(hasOwn(record, 'location') ? { location: parseLocation(record) } : {}),
     ...(hasOwn(record, 'payee') ? { payee: parsePayee(record) } : {}),
     ...(hasOwn(record, 'note') ? { note: parseNote(record) } : {}),
     ...(hasOwn(record, 'adjustmentCalculatedBalanceMinor')

@@ -107,6 +107,7 @@ function transactionDto(transaction: LedgerTransaction): LedgerTransactionDto {
     id: transaction.id,
     amountMinor: transaction.amountMinor,
     occurredAt: transaction.occurredAt,
+    location: transaction.location,
     note: transaction.note,
     deletedAt: transaction.deletedAt,
     version: transaction.version,

@@ -27,6 +27,7 @@ const categoryId = ref('')
 const fromAccountId = ref('')
 const toAccountId = ref('')
 const occurredAt = ref('')
+const location = ref('')
 const payee = ref('')
 const note = ref('')
 const error = ref('')
@@ -38,6 +39,7 @@ type FormSnapshot = {
   fromAccountId: string
   toAccountId: string
   occurredAt: string
+  location: string
   payee: string
   note: string
 }
@@ -87,6 +89,7 @@ function reset(): void {
   occurredAt.value = store.settings.value?.timezone
     ? localDateTimeInputFromInstant(value.occurredAt, store.settings.value.timezone)
     : ''
+  location.value = value.location ?? ''
   payee.value = value.type === 'income' || value.type === 'expense' ? value.payee : ''
   note.value = value.note
   accountId.value = value.type === 'income' || value.type === 'expense' ? value.accountId : ''
@@ -98,7 +101,7 @@ function reset(): void {
 }
 
 watch(() => props.transaction, reset, { immediate: true })
-watch([amount, accountId, categoryId, fromAccountId, toAccountId, occurredAt, payee, note], () => {
+watch([amount, accountId, categoryId, fromAccountId, toAccountId, occurredAt, location, payee, note], () => {
   if (!initialSnapshot.value) return
   emit('dirty', JSON.stringify(snapshot()) !== JSON.stringify(initialSnapshot.value))
 })
@@ -111,6 +114,7 @@ function snapshot(): FormSnapshot {
     fromAccountId: fromAccountId.value,
     toAccountId: toAccountId.value,
     occurredAt: occurredAt.value,
+    location: location.value,
     payee: payee.value,
     note: note.value,
   }
@@ -204,6 +208,7 @@ async function submit(): Promise<void> {
             accountId: accountId.value,
             ...categoryPatchField(),
             occurredAt: financial.occurredAtMs,
+            location: location.value.trim(),
             payee: payee.value.trim(),
             note: note.value.trim(),
           }
@@ -214,6 +219,7 @@ async function submit(): Promise<void> {
               accountId: accountId.value,
               ...categoryPatchField(),
               occurredAt: financial.occurredAtMs,
+              location: location.value.trim(),
               payee: payee.value.trim(),
               note: note.value.trim(),
             }
@@ -223,11 +229,12 @@ async function submit(): Promise<void> {
               fromAccountId: fromAccountId.value,
               toAccountId: toAccountId.value,
               occurredAt: financial.occurredAtMs,
+              location: location.value.trim(),
               note: note.value.trim(),
             }
       : transaction.value.type === 'income' || transaction.value.type === 'expense'
-        ? { expectedVersion: transaction.value.version, payee: payee.value.trim(), note: note.value.trim() }
-        : { expectedVersion: transaction.value.version, note: note.value.trim() }
+        ? { expectedVersion: transaction.value.version, location: location.value.trim(), payee: payee.value.trim(), note: note.value.trim() }
+        : { expectedVersion: transaction.value.version, location: location.value.trim(), note: note.value.trim() }
     const updated = await store.patchTransaction(transaction.value.id, body)
     emit('saved', updated)
   } catch (cause) {
@@ -320,20 +327,29 @@ async function submit(): Promise<void> {
         </NFormItem>
       </div>
 
-      <NFormItem class="ledger-form-field" label="发生时间" :show-feedback="false" required>
-        <LedgerDateTimePicker
-          v-model="occurredAt"
-          label="发生时间"
-          test-id="ledger-edit-transaction-occurred-at"
-          :disabled="saving"
-        />
-      </NFormItem>
+      <div class="ledger-form-grid">
+        <NFormItem class="ledger-form-field" label="发生时间" :show-feedback="false" required>
+          <LedgerDateTimePicker
+            v-model="occurredAt"
+            label="发生时间"
+            test-id="ledger-edit-transaction-occurred-at"
+            :disabled="saving"
+          />
+        </NFormItem>
+        <NFormItem class="ledger-form-field" label="交易地点（可选）" :show-feedback="false">
+          <NInput v-model:value="location" class="ledger-form-control" type="text" size="medium" maxlength="200" :disabled="saving" />
+        </NFormItem>
+      </div>
     </template>
 
     <div v-else class="ledger-readonly-fields" aria-label="交易财务字段只读">
       <span>金额：{{ transaction.type === 'adjustment' ? '由余额调整维护' : ledgerDecimalFromMinor(transaction.amountMinor, store.settings.value?.baseCurrency ?? 'CNY') }}</span>
       <span>发生时间：{{ occurredAt || '—' }}</span>
     </div>
+
+    <NFormItem v-if="!financialFieldsEditable" class="ledger-form-field" label="交易地点（可选）" :show-feedback="false">
+      <NInput v-model:value="location" class="ledger-form-control" type="text" size="medium" maxlength="200" :disabled="saving" />
+    </NFormItem>
 
     <NFormItem v-if="transaction.type === 'income' || transaction.type === 'expense'" class="ledger-form-field" label="交易对象（可选）" :show-feedback="false">
       <NInput

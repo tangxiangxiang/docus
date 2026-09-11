@@ -199,6 +199,7 @@ async function remove(): Promise<void> {
           </NCard>
 
           <NDescriptions class="ledger-detail-list" :column="1" label-placement="left" size="small">
+            <NDescriptionsItem label="交易地点">{{ transaction.location || '未填写' }}</NDescriptionsItem>
             <template v-if="transaction.type === 'income' || transaction.type === 'expense'">
               <NDescriptionsItem label="账户">{{ accountName(transaction.accountId) }}<em v-if="associatedAccounts.some((account) => account.archivedAt !== null)">（已归档）</em></NDescriptionsItem>
               <NDescriptionsItem label="分类">{{ categoryName(transaction.categoryId) }}</NDescriptionsItem>

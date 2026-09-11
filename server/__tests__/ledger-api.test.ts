@@ -469,6 +469,7 @@ describe('Ledger Transaction and Adjustment API', () => {
       accountId: account.id,
       categoryId: expenseCategory.id,
       occurredAt: Date.now(),
+      location: '上海市静安区',
       payee: 'Market',
       note: 'Initial purchase',
     }
@@ -491,16 +492,17 @@ describe('Ledger Transaction and Adjustment API', () => {
     expect(await replay.text()).toBe(firstText)
 
     const created = JSON.parse(firstText)
+    expect(created.location).toBe('上海市静安区')
     const point = await authenticated(`/api/ledger/transactions/${created.id}`)
     expect(point.status).toBe(200)
     expect(await json(point)).toEqual(created)
 
     const patched = await authenticated(`/api/ledger/transactions/${created.id}`, {
       method: 'PATCH',
-      body: { expectedVersion: 1, amountMinor: 300, note: 'Updated purchase' },
+      body: { expectedVersion: 1, amountMinor: 300, location: '上海市徐汇区', note: 'Updated purchase' },
     })
     expect(patched.status).toBe(200)
-    expect(await json(patched)).toMatchObject({ amountMinor: 300, note: 'Updated purchase', version: 2 })
+    expect(await json(patched)).toMatchObject({ amountMinor: 300, location: '上海市徐汇区', note: 'Updated purchase', version: 2 })
 
     const typeChange = await authenticated(`/api/ledger/transactions/${created.id}`, {
       method: 'PATCH',

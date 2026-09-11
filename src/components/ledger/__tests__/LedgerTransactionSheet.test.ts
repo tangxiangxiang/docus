@@ -11,6 +11,7 @@ import type {
 } from '../../../../shared/ledgerProtocol'
 import { LedgerApiError } from '../../../features/ledger/ledgerErrors'
 import { useConfirm } from '../../../composables/useConfirm'
+import { useToast } from '../../../composables/useToast'
 import { resetLedgerStoreForTesting } from '../../../features/ledger/ledgerStore'
 import LedgerView from '../../../views/LedgerView.vue'
 import LedgerDateTimePicker from '../LedgerDateTimePicker.vue'
@@ -143,6 +144,7 @@ describe('Ledger transaction creation sheet', () => {
     await setNaiveSelect(sheet, '账户', 'bank-1')
     await setNaiveSelect(sheet, '分类', 'food')
     await setLedgerDateTime(sheet, '2026-09-05T12:30')
+    await sheet.get('input[name="location"]').setValue('上海市静安区')
     api.createLedgerTransaction.mockResolvedValue(savedTransaction)
     await sheet.get('form').trigger('submit')
     await flushPromises()
@@ -152,6 +154,7 @@ describe('Ledger transaction creation sheet', () => {
       amountMinor: 3800,
       accountId: 'bank-1',
       categoryId: 'food',
+      location: '上海市静安区',
       payee: '',
       note: '',
       occurredAt: expect.any(Number),
@@ -173,7 +176,8 @@ describe('Ledger transaction creation sheet', () => {
     await setNaiveSelect(sheet, '分类', 'food')
     await setLedgerDateTime(sheet, '2026-09-05T12:30')
     await sheet.get('form').trigger('submit')
-    expect(sheet.text()).toContain('请选择账户')
+    expect(useToast().toasts.value.at(-1)?.message).toBe('请选择账户。')
+    expect(sheet.text()).not.toContain('请选择账户。')
     expect(api.createLedgerTransaction).not.toHaveBeenCalled()
   })
 
@@ -300,7 +304,8 @@ describe('Ledger transaction creation sheet', () => {
     await setLedgerDateTime(sheet, '2026-09-05T12:30')
     await sheet.get('form').trigger('submit')
 
-    expect(sheet.text()).toContain('转出账户和转入账户必须不同')
+    expect(useToast().toasts.value.at(-1)?.message).toBe('转出账户和转入账户必须不同。')
+    expect(sheet.text()).not.toContain('转出账户和转入账户必须不同。')
     expect(api.createLedgerTransaction).not.toHaveBeenCalled()
   })
 })

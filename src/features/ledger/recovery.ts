@@ -121,19 +121,23 @@ function isSafeTransactionPayload(value: unknown): value is LedgerTransactionCre
   }
 
   if (value.type === 'income' || value.type === 'expense') {
-    return hasExactKeys(value, ['type', 'amountMinor', 'accountId', 'categoryId', 'occurredAt', 'payee', 'note'])
+    return (hasExactKeys(value, ['type', 'amountMinor', 'accountId', 'categoryId', 'occurredAt', 'location', 'payee', 'note'])
+      || hasExactKeys(value, ['type', 'amountMinor', 'accountId', 'categoryId', 'occurredAt', 'payee', 'note']))
       && nonEmptyString(value.accountId)
       && nonEmptyString(value.categoryId)
+      && (value.location === undefined || typeof value.location === 'string')
       && typeof value.payee === 'string'
       && typeof value.note === 'string'
   }
 
   if (value.type === 'transfer') {
-    return (hasExactKeys(value, ['type', 'amountMinor', 'fromAccountId', 'toAccountId', 'occurredAt', 'payee', 'note'])
+    return (hasExactKeys(value, ['type', 'amountMinor', 'fromAccountId', 'toAccountId', 'occurredAt', 'location', 'payee', 'note'])
+      || hasExactKeys(value, ['type', 'amountMinor', 'fromAccountId', 'toAccountId', 'occurredAt', 'payee', 'note'])
       || hasExactKeys(value, ['type', 'amountMinor', 'fromAccountId', 'toAccountId', 'occurredAt', 'note']))
       && nonEmptyString(value.fromAccountId)
       && nonEmptyString(value.toAccountId)
       && value.fromAccountId !== value.toAccountId
+      && (value.location === undefined || typeof value.location === 'string')
       && (value.payee === undefined || typeof value.payee === 'string')
       && typeof value.note === 'string'
   }

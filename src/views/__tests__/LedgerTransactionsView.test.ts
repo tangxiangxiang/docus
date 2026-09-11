@@ -2,6 +2,7 @@
 import { DOMWrapper, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
+import { NPagination } from 'naive-ui'
 import type {
   LedgerAccountDto,
   LedgerCategoryDto,
@@ -241,9 +242,10 @@ describe('Ledger live transaction history workspace', () => {
     setup()
   })
 
-  afterEach(() => {
+  afterEach(async () => {
     for (const wrapper of wrappers.splice(0)) wrapper.unmount()
     document.body.querySelectorAll('.ledger-detail-sheet').forEach((element) => element.remove())
+    await flushPromises()
   })
 
   it('renders real transactions and exposes archived accounts/categories in history filters', async () => {
@@ -252,6 +254,11 @@ describe('Ledger live transaction history workspace', () => {
     expect(wrapper.find('[data-testid="ledger-transaction-list"]').text()).toContain('午餐')
     expect(wrapper.text()).toContain('工资')
     expect(wrapper.text()).toContain('余额调整')
+    expect(wrapper.findAll('thead th').map((header) => header.text())).toEqual(['交易', '类型', '分类', '账户', '备注', '时间', '金额'])
+    expect(wrapper.get('[data-testid="ledger-transaction-row-tx-expense"]').text()).toContain('09/05 12:30')
+    expect(wrapper.get('[data-testid="ledger-transaction-row-tx-expense"]').text()).toContain('-¥38.00')
+    expect(wrapper.get('[data-testid="ledger-transaction-row-tx-transfer"]').text()).toContain('¥50.00')
+    expect(wrapper.get('[data-testid="ledger-transaction-row-tx-transfer"]').text()).not.toContain('-¥50.00')
     expect(getNaiveSelect(wrapper, '账户').props('options')).toEqual(expect.arrayContaining([{ value: 'old-bank', label: '旧账户（已归档）' }]))
     expect(getNaiveSelect(wrapper, '分类').props('options')).toEqual(expect.arrayContaining([{ value: 'old-food', label: '旧餐饮（已归档）' }]))
     expect(wrapper.text()).not.toContain('billsMockData')
@@ -260,11 +267,13 @@ describe('Ledger live transaction history workspace', () => {
   it('sends supported type, entity, and Ledger-timezone date filters to the API', async () => {
     const wrapper = await mountView()
 
-    await setNaiveSelect(wrapper, '类型', 'expense')
+    await wrapper.get('[data-ledger-filter-type="expense"]').trigger('click')
     await setNaiveSelect(wrapper, '账户', 'old-bank')
     await setNaiveSelect(wrapper, '分类', 'old-food')
+    await setNaiveSelect(wrapper, '日期', 'custom')
     await setLedgerDate(wrapper, 'ledger-filter-from', '2026-09-01')
     await setLedgerDate(wrapper, 'ledger-filter-to', '2026-09-05')
+    await wrapper.get('input[name="search"]').setValue('午餐')
     await wrapper.get('[data-testid="ledger-filters-form"]').trigger('submit')
     await flushPromises()
 
@@ -274,6 +283,7 @@ describe('Ledger live transaction history workspace', () => {
       categoryId: 'old-food',
       from: instantFromLedgerDate('2026-09-01', 'Asia/Shanghai', 'start'),
       to: instantFromLedgerDate('2026-09-05', 'Asia/Shanghai', 'end'),
+      search: '午餐',
       limit: 25,
     })
   })
@@ -291,7 +301,7 @@ describe('Ledger live transaction history workspace', () => {
 
   it('appends cursor pages without replacing the existing history', async () => {
     const firstPage: LedgerTransactionPageDto = {
-      transactions: [expense],
+      transactions: Array.from({ length: 25 }, (_, index) => ({ ...expense, id: index === 0 ? expense.id : `tx-expense-${index}` })),
       page: { nextCursor: 'cursor-1' },
     }
     const secondPage: LedgerTransactionPageDto = {
@@ -302,24 +312,26 @@ describe('Ledger live transaction history workspace', () => {
     api.listLedgerTransactions.mockResolvedValueOnce(firstPage).mockResolvedValueOnce(secondPage)
     const wrapper = await mountView()
 
-    await wrapper.get('[data-testid="ledger-load-more"]').trigger('click')
+    await wrapper.findComponent(NPagination).vm.$emit('update:page', 2)
     await flushPromises()
 
     expect(api.listLedgerTransactions).toHaveBeenLastCalledWith({ type: 'all', limit: 25, cursor: 'cursor-1' })
-    expect(wrapper.get('[data-testid="ledger-transaction-list"]').text()).toContain('午餐')
     expect(wrapper.get('[data-testid="ledger-transaction-list"]').text()).toContain('工资')
-    expect(wrapper.find('[data-testid="ledger-load-more"]').exists()).toBe(false)
+    expect(wrapper.findComponent(NPagination).props('page')).toBe(2)
+    await wrapper.findComponent(NPagination).vm.$emit('update:page', 1)
+    await flushPromises()
+    expect(wrapper.get('[data-testid="ledger-transaction-list"]').text()).toContain('午餐')
   })
 
   it('shows a purposeful empty state for a filtered result', async () => {
     api.listLedgerTransactions.mockResolvedValue(emptyPage)
     const wrapper = await mountView()
 
-    await setNaiveSelect(wrapper, '类型', 'income')
+    await wrapper.get('[data-ledger-filter-type="income"]').trigger('click')
     await wrapper.get('[data-testid="ledger-filters-form"]').trigger('submit')
     await flushPromises()
 
-    expect(wrapper.get('[data-testid="ledger-transactions-empty"]').text()).toContain('没有符合筛选条件的交易')
+    expect(wrapper.get('[data-testid="ledger-transactions-empty"]').text()).toContain('没有符合当前筛选条件的交易')
     expect(wrapper.get('[data-testid="ledger-transactions-empty"]').text()).toContain('清除筛选')
   })
 
@@ -354,6 +366,7 @@ describe('Ledger live transaction history workspace', () => {
       categoryId: 'food',
       occurredAt: expense.occurredAt,
       payee: '午餐',
+      location: '',
       note: '已核对',
     })
   })
@@ -391,7 +404,7 @@ describe('Ledger live transaction history workspace', () => {
     const wrapper = await mountView()
     const storePage: LedgerTransactionPageDto = { transactions: [archivedExpense], page: { nextCursor: null } }
     api.listLedgerTransactions.mockResolvedValue(storePage)
-    await setNaiveSelect(wrapper, '类型', 'expense')
+    await wrapper.get('[data-ledger-filter-type="expense"]').trigger('click')
     await wrapper.get('[data-testid="ledger-filters-form"]').trigger('submit')
     await flushPromises()
     await wrapper.get('[data-testid="ledger-transaction-row-tx-archived-account"]').trigger('click')
@@ -408,6 +421,7 @@ describe('Ledger live transaction history workspace', () => {
 
     expect(api.patchLedgerTransaction).toHaveBeenCalledWith('tx-archived-account', {
       expectedVersion: 3,
+      location: '',
       payee: '归档前商户',
       note: '补充备注',
     })

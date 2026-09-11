@@ -137,7 +137,7 @@ describe('Ledger 0013 foundation migration', () => {
     const db = freshDb()
     applyMigrations(db)
 
-    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(18)
+    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(19)
     const tables = (db.prepare(
       "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
     ).all() as Array<{ name: string }>).map((row) => row.name)
@@ -150,6 +150,7 @@ describe('Ledger 0013 foundation migration', () => {
     ]))
     expect(db.prepare('SELECT COUNT(*) AS count FROM ledger_settings').get()).toEqual({ count: 0 })
     expect(db.prepare('SELECT COUNT(*) AS count FROM ledger_categories').get()).toEqual({ count: 0 })
+    expect((db.prepare("PRAGMA table_info('ledger_transactions')").all() as Array<{ name: string }>).map((column) => column.name)).toContain('location')
     expect(tables.some((name) => /ledger_(monthly|balance|summary|cache)/.test(name))).toBe(false)
   })
 
@@ -166,7 +167,7 @@ describe('Ledger 0013 foundation migration', () => {
     ).get() as { count: number }).count
     applyMigrations(db)
 
-    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(18)
+    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(19)
     expect((db.prepare(
       "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table'",
     ).get() as { count: number }).count).toBe(firstTableCount)

@@ -2264,6 +2264,14 @@ main.container.auth-page-shell {
   -webkit-backdrop-filter: saturate(120%) blur(6px);
   backdrop-filter: saturate(120%) blur(6px);
 }
+
+/* Keep the transaction sheet's modal mask glassy without changing the
+   appearance of unrelated Naive UI dialogs. */
+body:has(.ledger-sheet-card) .n-modal-mask {
+  background: color-mix(in srgb, var(--bg) 24%, rgba(15, 23, 42, 0.38));
+  -webkit-backdrop-filter: saturate(125%) blur(8px);
+  backdrop-filter: saturate(125%) blur(8px);
+}
 .settings-modal {
   --settings-surface: color-mix(in srgb, var(--bg-soft) 78%, transparent);
   --settings-sidebar: color-mix(in srgb, var(--bg-soft) 64%, transparent);

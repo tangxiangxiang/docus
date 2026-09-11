@@ -117,6 +117,7 @@ interface LedgerTransactionDtoBase {
   readonly id: string
   readonly amountMinor: number
   readonly occurredAt: number
+  readonly location?: string
   readonly note: string
   readonly deletedAt: number | null
   readonly version: number
@@ -180,6 +181,7 @@ export interface LedgerIncomeCreateRequest {
   readonly accountId: string
   readonly categoryId: string
   readonly occurredAt: number
+  readonly location?: string
   readonly payee: string
   readonly note: string
 }
@@ -190,6 +192,7 @@ export interface LedgerExpenseCreateRequest {
   readonly accountId: string
   readonly categoryId: string
   readonly occurredAt: number
+  readonly location?: string
   readonly payee: string
   readonly note: string
 }
@@ -200,6 +203,7 @@ export interface LedgerTransferCreateRequest {
   readonly fromAccountId: string
   readonly toAccountId: string
   readonly occurredAt: number
+  readonly location?: string
   readonly payee: string
   readonly note: string
 }
@@ -210,6 +214,7 @@ export interface LedgerAdjustmentCreateRequest {
   readonly targetBalanceMinor: number
   readonly expectedCalculatedBalanceMinor: number
   readonly occurredAt: number
+  readonly location?: string
   readonly note: string
 }
 

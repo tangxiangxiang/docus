@@ -97,6 +97,7 @@ export interface LedgerTransactionRow {
   readonly to_account_id?: unknown
   readonly category_id?: unknown
   readonly occurred_at?: unknown
+  readonly location?: unknown
   readonly payee?: unknown
   readonly note?: unknown
   readonly adjustment_calculated_balance_minor?: unknown
@@ -151,6 +152,7 @@ export interface LedgerTransactionBase {
   readonly id: string
   readonly amountMinor: number
   readonly occurredAt: number
+  readonly location?: string
   readonly note: string
   readonly deletedAt: number | null
   readonly version: number
@@ -383,6 +385,7 @@ function readTransactionBase(row: UnknownRow): LedgerTransactionBase & { readonl
     id: requiredId(row, entity, 'id'),
     amountMinor: safeMinor(row, entity, 'amount_minor'),
     occurredAt: utcMilliseconds(row, entity, 'occurred_at'),
+    location: row.location === undefined ? '' : requiredString(row, entity, 'location'),
     payee: requiredString(row, entity, 'payee'),
     note: requiredString(row, entity, 'note'),
     deletedAt: nullableUtcMilliseconds(row, entity, 'deleted_at'),

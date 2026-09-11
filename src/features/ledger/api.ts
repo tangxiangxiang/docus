@@ -58,6 +58,7 @@ export type LedgerTransactionPatchInput = {
   readonly toAccountId?: string
   readonly categoryId?: string
   readonly occurredAt?: number
+  readonly location?: string
   readonly payee?: string
   readonly note?: string
   readonly adjustmentCalculatedBalanceMinor?: number

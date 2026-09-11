@@ -53,6 +53,7 @@ const categoryId = ref('')
 const fromAccountId = ref('')
 const toAccountId = ref('')
 const occurredAt = ref('')
+const location = ref('')
 const payee = ref('')
 const note = ref('')
 const formError = ref('')
@@ -175,6 +176,7 @@ function resetForm(): void {
   fromAccountId.value = ''
   toAccountId.value = ''
   occurredAt.value = defaultOccurredAt()
+  location.value = ''
   payee.value = ''
   note.value = ''
   formError.value = ''
@@ -196,7 +198,7 @@ watch(() => props.open, async (open) => {
   }
 })
 
-watch([amount, accountId, categoryId, fromAccountId, toAccountId, occurredAt, payee, note, type], () => {
+watch([amount, accountId, categoryId, fromAccountId, toAccountId, occurredAt, location, payee, note, type], () => {
   if (props.open && !resetting) dirty.value = true
 })
 
@@ -292,56 +294,52 @@ function allowAmountInput(value: string): boolean {
   }
 }
 
+function validationFailure(message: string): null {
+  formError.value = ''
+  toast.error(message)
+  return null
+}
+
 function validate(): { amountMinor: number; occurredAtMs: number } | null {
   submitted.value = true
   formError.value = ''
   if (!settings.value) {
-    formError.value = 'Ledger 设置尚未加载完成。'
-    return null
+    return validationFailure('Ledger 设置尚未加载完成。')
   }
   if (!amount.value.trim()) {
-    formError.value = '请输入金额。'
-    return null
+    return validationFailure('请输入金额。')
   }
   let amountMinor: number
   try {
     amountMinor = parseLedgerMoney(amount.value, settings.value.baseCurrency)
   } catch {
-    formError.value = `请输入有效的${settings.value.baseCurrency}金额。`
-    return null
+    return validationFailure(`请输入有效的${settings.value.baseCurrency}金额。`)
   }
   if (amountMinor <= 0) {
-    formError.value = '金额必须大于 0。'
-    return null
+    return validationFailure('金额必须大于 0。')
   }
   if (!occurredAt.value) {
-    formError.value = '请选择发生时间。'
-    return null
+    return validationFailure('请选择发生时间。')
   }
   let occurredAtMs: number
   try {
     occurredAtMs = instantFromLocalDateTime(occurredAt.value, settings.value.timezone)
   } catch {
-    formError.value = '请选择有效的发生时间。'
-    return null
+    return validationFailure('请选择有效的发生时间。')
   }
   if (type.value === 'transfer') {
     if (!fromAccountId.value || !toAccountId.value) {
-      formError.value = '请选择转出账户和转入账户。'
-      return null
+      return validationFailure('请选择转出账户和转入账户。')
     }
     if (fromAccountId.value === toAccountId.value) {
-      formError.value = '转出账户和转入账户必须不同。'
-      return null
+      return validationFailure('转出账户和转入账户必须不同。')
     }
   } else {
     if (!accountId.value) {
-      formError.value = '请选择账户。'
-      return null
+      return validationFailure('请选择账户。')
     }
     if (!categoryId.value) {
-      formError.value = '请选择分类，或先新建一个分类。'
-      return null
+      return validationFailure('请选择分类，或先新建一个分类。')
     }
   }
   return { amountMinor, occurredAtMs }
@@ -360,6 +358,7 @@ async function submit(): Promise<void> {
           accountId: accountId.value,
           categoryId: categoryId.value,
           occurredAt: parsed.occurredAtMs,
+          location: location.value.trim(),
           payee: payee.value.trim(),
           note: note.value.trim(),
         }
@@ -370,6 +369,7 @@ async function submit(): Promise<void> {
             accountId: accountId.value,
             categoryId: categoryId.value,
             occurredAt: parsed.occurredAtMs,
+            location: location.value.trim(),
             payee: payee.value.trim(),
             note: note.value.trim(),
           }
@@ -379,6 +379,7 @@ async function submit(): Promise<void> {
             fromAccountId: fromAccountId.value,
             toAccountId: toAccountId.value,
             occurredAt: parsed.occurredAtMs,
+            location: location.value.trim(),
             payee: payee.value.trim(),
             note: note.value.trim(),
           }
@@ -563,14 +564,27 @@ async function retryPending(): Promise<void> {
               </div>
             </template>
 
-            <NFormItem class="ledger-form-field" label="发生时间" :show-feedback="false" required>
-              <LedgerDateTimePicker
-                v-model="occurredAt"
-                label="发生时间"
-                test-id="ledger-transaction-occurred-at"
-                :disabled="saving"
-              />
-            </NFormItem>
+            <div class="ledger-form-grid">
+              <NFormItem class="ledger-form-field" label="发生时间" :show-feedback="false" required>
+                <LedgerDateTimePicker
+                  v-model="occurredAt"
+                  label="发生时间"
+                  test-id="ledger-transaction-occurred-at"
+                  :disabled="saving"
+                />
+              </NFormItem>
+              <NFormItem class="ledger-form-field" label="交易地点（可选）" :show-feedback="false">
+                <NInput
+                  v-model:value="location"
+                  class="ledger-form-control"
+                  type="text"
+                  size="medium"
+                  maxlength="200"
+                  :input-props="{ id: 'ledger-transaction-location', name: 'location', autocomplete: 'off' }"
+                  :disabled="saving"
+                />
+              </NFormItem>
+            </div>
 
             <NFormItem class="ledger-form-field" label="交易对象（可选）" :show-feedback="false">
               <NInput
@@ -607,7 +621,7 @@ async function retryPending(): Promise<void> {
 </template>
 
 <style scoped>
-.ledger-sheet-card { align-self: center; width: min(100%, 640px); max-height: min(92vh, 820px); margin: auto; overflow: auto; box-sizing: border-box; border: 1px solid color-mix(in srgb, var(--border) 78%, transparent); border-radius: 18px 18px 12px 12px; background: color-mix(in srgb, var(--bg-soft) 82%, transparent); box-shadow: 0 24px 70px color-mix(in srgb, #0f172a 25%, transparent); backdrop-filter: blur(18px); color: var(--text); }
+.ledger-sheet-card { align-self: center; width: min(100%, 640px); max-height: min(92vh, 820px); margin: auto; overflow: auto; box-sizing: border-box; border: 1px solid color-mix(in srgb, var(--border) 68%, transparent); border-radius: 18px 18px 12px 12px; background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 5%, transparent), transparent 48%), color-mix(in srgb, var(--bg-soft) 68%, transparent); box-shadow: 0 24px 70px color-mix(in srgb, #0f172a 30%, transparent), inset 0 1px 0 color-mix(in srgb, #fff 32%, transparent); -webkit-backdrop-filter: saturate(145%) blur(22px); backdrop-filter: saturate(145%) blur(22px); color: var(--text); }
 .ledger-sheet-card :deep(.n-card__content) { display: grid; gap: 14px; }
 .ledger-sheet-card :deep(.n-card__header) { align-items: flex-start; gap: 16px; padding-bottom: 2px; }
 .ledger-sheet-card h2 { margin: 0; color: var(--text-h); font-size: 1.35rem; line-height: 1.25; }
