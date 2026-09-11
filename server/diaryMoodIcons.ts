@@ -24,8 +24,6 @@ export class DiaryMoodIconConfigError extends Error {
   }
 }
 
-type DiaryMoodIconConfigWithoutVersion = Omit<DiaryMoodIconConfig, 'version'>
-
 function defaultConfig(version = 1): DiaryMoodIconConfig {
   return {
     version,
