@@ -2281,6 +2281,12 @@ body:has(.ledger-sheet-card) .n-modal-mask {
   -webkit-backdrop-filter: saturate(125%) blur(8px);
   backdrop-filter: saturate(125%) blur(8px);
 }
+
+body:has(.ledger-detail-sheet-card) .n-modal-mask {
+  background: color-mix(in srgb, var(--bg) 30%, rgba(15, 23, 42, 0.42));
+  -webkit-backdrop-filter: saturate(130%) blur(10px);
+  backdrop-filter: saturate(130%) blur(10px);
+}
 .settings-modal {
   --settings-surface: color-mix(in srgb, var(--bg-soft) 78%, transparent);
   --settings-sidebar: color-mix(in srgb, var(--bg-soft) 64%, transparent);

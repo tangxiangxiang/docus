@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { NAlert, NButton, NCard, NDescriptions, NDescriptionsItem, NIcon, NModal, NStatistic } from 'naive-ui'
+import { NAlert, NButton, NCard, NIcon, NModal, NStatistic } from 'naive-ui'
 import { X } from '@vicons/tabler'
 import type { LedgerTransactionDto } from '../../../shared/ledgerProtocol'
 import { useConfirm } from '../../composables/useConfirm'
@@ -198,23 +198,23 @@ async function remove(): Promise<void> {
             <small>{{ formatLedgerDateTime(transaction.occurredAt, store.settings.value?.timezone ?? 'UTC') }}</small>
           </NCard>
 
-          <NDescriptions class="ledger-detail-list" :column="1" label-placement="left" size="small">
-            <NDescriptionsItem label="交易地点">{{ transaction.location || '未填写' }}</NDescriptionsItem>
+          <div class="ledger-detail-list">
+            <div class="ledger-detail-row"><span>交易地点</span><strong>{{ transaction.location || '未填写' }}</strong></div>
             <template v-if="transaction.type === 'income' || transaction.type === 'expense'">
-              <NDescriptionsItem label="账户">{{ accountName(transaction.accountId) }}<em v-if="associatedAccounts.some((account) => account.archivedAt !== null)">（已归档）</em></NDescriptionsItem>
-              <NDescriptionsItem label="分类">{{ categoryName(transaction.categoryId) }}</NDescriptionsItem>
-              <NDescriptionsItem label="交易对象">{{ transaction.payee || '未填写' }}</NDescriptionsItem>
+              <div class="ledger-detail-row"><span>账户</span><strong>{{ accountName(transaction.accountId) }}<em v-if="associatedAccounts.some((account) => account.archivedAt !== null)">（已归档）</em></strong></div>
+              <div class="ledger-detail-row"><span>分类</span><strong>{{ categoryName(transaction.categoryId) }}</strong></div>
+              <div class="ledger-detail-row"><span>交易对象</span><strong>{{ transaction.payee || '未填写' }}</strong></div>
             </template>
             <template v-else-if="transaction.type === 'transfer'">
-              <NDescriptionsItem label="转出账户">{{ accountName(transaction.fromAccountId) }}</NDescriptionsItem>
-              <NDescriptionsItem label="转入账户">{{ accountName(transaction.toAccountId) }}</NDescriptionsItem>
+              <div class="ledger-detail-row"><span>转出账户</span><strong>{{ accountName(transaction.fromAccountId) }}</strong></div>
+              <div class="ledger-detail-row"><span>转入账户</span><strong>{{ accountName(transaction.toAccountId) }}</strong></div>
             </template>
             <template v-else>
-              <NDescriptionsItem label="账户">{{ accountName(transaction.accountId) }}</NDescriptionsItem>
-              <NDescriptionsItem label="状态">余额调整由账户调整流程维护</NDescriptionsItem>
+              <div class="ledger-detail-row"><span>账户</span><strong>{{ accountName(transaction.accountId) }}</strong></div>
+              <div class="ledger-detail-row"><span>状态</span><strong>余额调整由账户调整流程维护</strong></div>
             </template>
-            <NDescriptionsItem label="备注">{{ transaction.note || '未填写' }}</NDescriptionsItem>
-          </NDescriptions>
+            <div class="ledger-detail-row"><span>备注</span><strong>{{ transaction.note || '未填写' }}</strong></div>
+          </div>
 
           <NAlert v-if="archivedAccounts.length" class="ledger-archived-warning" type="warning" :show-icon="false" role="alert">
             <template #header>关联账户已归档</template>
@@ -240,27 +240,45 @@ async function remove(): Promise<void> {
 </template>
 
 <style scoped>
-.ledger-detail-sheet-card { align-self: flex-end; width: min(100%, 620px); max-height: min(92vh, 820px); margin: auto auto 20px; overflow: auto; box-sizing: border-box; border-radius: 16px 16px 10px 10px; color: var(--text); }
-.ledger-detail-sheet-card :deep(.n-card__content) { display: grid; gap: 18px; }
-.ledger-detail-sheet-card :deep(.n-card__header) { align-items: flex-start; gap: 16px; }
+.ledger-detail-sheet-card {
+  align-self: center;
+  width: min(100%, 620px);
+  max-height: min(92vh, 820px);
+  margin: auto;
+  overflow: auto;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  border-radius: 18px 18px 12px 12px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 7%, transparent), transparent 46%),
+    color-mix(in srgb, var(--bg-soft) 78%, transparent);
+  box-shadow: 0 24px 70px color-mix(in srgb, #0f172a 30%, transparent), inset 0 1px 0 color-mix(in srgb, #fff 28%, transparent);
+  -webkit-backdrop-filter: saturate(150%) blur(24px);
+  backdrop-filter: saturate(150%) blur(24px);
+  color: var(--text);
+}
+.ledger-detail-sheet-card :deep(.n-card__content) { display: grid; gap: 16px; }
+.ledger-detail-sheet-card :deep(.n-card__header) { align-items: flex-start; gap: 16px; padding-bottom: 2px; }
 .ledger-eyebrow { margin: 0 0 5px; color: var(--accent); font-size: .72rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
-.ledger-detail-sheet-card h2 { margin: 0; color: var(--text-h); font-size: 1.35rem; line-height: 1.25; }
-.ledger-close-button { width: 32px; height: 32px; padding: 0; border: 1px solid var(--border); border-radius: 7px; background: transparent; color: var(--text-muted); font-size: 1.3rem; line-height: 1; cursor: pointer; }
+.ledger-detail-sheet-card h2 { margin: 0; color: var(--text-h); font-size: 1.45rem; letter-spacing: -.02em; line-height: 1.25; }
+.ledger-close-button { width: 36px; height: 36px; padding: 0; border: 1px solid color-mix(in srgb, var(--border) 86%, transparent); border-radius: 9px; background: color-mix(in srgb, var(--bg) 42%, transparent); color: var(--text-muted); font-size: 1.3rem; line-height: 1; cursor: pointer; transition: border-color .18s ease, background-color .18s ease, color .18s ease; }
 .ledger-close-button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .ledger-close-button:disabled { cursor: wait; opacity: .65; }
-.ledger-detail-content { display: grid; gap: 18px; outline: none; }
-.ledger-transaction-hero { border-radius: 9px; background: var(--bg-soft); }
-.ledger-transaction-hero :deep(.n-card__content) { display: grid; gap: 6px; padding: 16px; }
+.ledger-detail-content { display: grid; gap: 16px; outline: none; }
+.ledger-transaction-hero { border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--border)); border-radius: 12px; background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 10%, transparent), transparent 68%), color-mix(in srgb, var(--bg-soft) 58%, transparent); }
+.ledger-transaction-hero :deep(.n-card__content) { display: grid; gap: 6px; padding: 18px; }
 .ledger-transaction-hero :deep(.n-statistic-label) { color: var(--text-muted); font-size: .76rem; }
-.ledger-transaction-hero :deep(.n-statistic-value) { color: var(--text-h); font-size: 1.5rem; }
+.ledger-transaction-hero :deep(.n-statistic-value) { color: var(--text-h); font-size: 1.8rem; font-variant-numeric: tabular-nums; letter-spacing: -.025em; }
 .ledger-transaction-hero :deep(.n-statistic.is-income .n-statistic-value) { color: #18794e; }
 .ledger-transaction-hero :deep(.n-statistic.is-expense .n-statistic-value) { color: #b42318; }
 .ledger-transaction-hero small { color: var(--text-muted); font-size: .75rem; }
-.ledger-detail-list { margin: 0; }
-.ledger-detail-list :deep(.n-descriptions-table-content) { color: var(--text-h); font-size: .82rem; white-space: pre-wrap; }
-.ledger-detail-list :deep(.n-descriptions-table-header) { color: var(--text-muted); font-size: .82rem; }
+.ledger-detail-list { display: grid; margin: 0; padding: 5px 14px; border: 1px solid color-mix(in srgb, var(--border) 48%, transparent); border-radius: 11px; background: color-mix(in srgb, var(--bg) 18%, transparent); }
+.ledger-detail-row { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 16px; align-items: baseline; padding: 10px 0; }
+.ledger-detail-row:not(:last-child) { border-bottom: 1px solid color-mix(in srgb, var(--border) 34%, transparent); }
+.ledger-detail-row > span { color: var(--text-muted); font-size: .76rem; }
+.ledger-detail-row > strong { min-width: 0; color: var(--text-h); font-size: .82rem; font-weight: 550; line-height: 1.45; overflow-wrap: anywhere; white-space: pre-wrap; }
 .ledger-detail-list em { color: var(--text-muted); font-style: normal; }
-.ledger-archived-warning { border: 1px solid color-mix(in srgb, #b7791f 35%, var(--border)); border-radius: 9px; background: color-mix(in srgb, #f6ad55 8%, var(--bg)); }
+.ledger-archived-warning { border: 1px solid color-mix(in srgb, #b7791f 35%, var(--border)); border-radius: 11px; background: color-mix(in srgb, #f6ad55 8%, transparent); }
 .ledger-archived-warning :deep(.n-alert-body) { display: grid; gap: 9px; padding: 13px; }
 .ledger-archived-warning :deep(.n-alert__title) { color: var(--text-h); font-size: .85rem; }
 .ledger-archived-warning p { margin: 0; color: var(--text-muted); font-size: .77rem; line-height: 1.45; }
@@ -269,13 +287,13 @@ async function remove(): Promise<void> {
 .ledger-form-info :deep(.n-alert-body) { color: var(--text-muted); }
 .ledger-form-error { margin: 0; color: #b42318; font-size: .81rem; }
 .ledger-form-error :deep(.n-alert-body) { color: #b42318; }
-.ledger-form-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 9px; }
+.ledger-form-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 9px; padding-top: 2px; }
 .ledger-primary-button,
 .ledger-secondary-button,
 .ledger-danger-button { min-height: 39px; padding: 7px 14px; border-radius: 7px; font: inherit; font-size: .83rem; font-weight: 650; cursor: pointer; }
 .ledger-primary-button { border: 1px solid var(--accent); background: var(--accent); color: #fff; }
 .ledger-primary-button:hover { background: var(--accent-hover); }
-.ledger-secondary-button { border: 1px solid var(--border); background: var(--bg); color: var(--text-h); }
+.ledger-secondary-button { border: 1px solid color-mix(in srgb, var(--border) 86%, transparent); background: color-mix(in srgb, var(--bg) 34%, transparent); color: var(--text-h); }
 .ledger-secondary-button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .ledger-danger-button { border: 1px solid color-mix(in srgb, #b42318 55%, var(--border)); background: transparent; color: #b42318; }
 .ledger-danger-button:hover:not(:disabled) { background: color-mix(in srgb, #b42318 8%, transparent); }
