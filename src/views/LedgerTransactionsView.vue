@@ -418,10 +418,7 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
     width: 145,
     align: 'right',
     render: (transaction) => {
-      const transferAmountMinor = transaction.type === 'transfer'
-        ? transaction.bundle?.totalMinor ?? transaction.amountMinor
-        : transaction.amountMinor
-      const amountMinor = transaction.type === 'expense' ? -transaction.amountMinor : transferAmountMinor
+      const amountMinor = transaction.type === 'expense' ? -transaction.amountMinor : transaction.amountMinor
       return h('strong', { class: ['ledger-transaction-amount', `is-${transaction.type}`] }, [
         h(LedgerAnimatedMoney, {
           minor: amountMinor,

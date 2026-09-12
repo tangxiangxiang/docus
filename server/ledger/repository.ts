@@ -1037,7 +1037,6 @@ export function createLedgerRepository(db: DatabaseT): LedgerRepository {
       const { clauses, params } = transactionQueryFilter(
         options,
         true,
-        options.groupId === undefined,
       )
       params.limit = options.limit + 1
       params.offset = options.offset ?? 0
@@ -1056,13 +1055,10 @@ export function createLedgerRepository(db: DatabaseT): LedgerRepository {
     },
 
     summarizeTransactions(options: LedgerTransactionQueryOptions): LedgerTransactionQuerySummary {
-      const hideGroupedCharges = options.groupId === undefined
       const { clauses, params } = transactionQueryFilter(options, false)
       const row = db.prepare(`
         SELECT
-          ${hideGroupedCharges
-            ? "COALESCE(SUM(CASE WHEN NOT (group_id IS NOT NULL AND type = 'expense') THEN 1 ELSE 0 END), 0)"
-            : 'COUNT(*)'} AS total,
+          COUNT(*) AS total,
           COALESCE(SUM(CASE WHEN type = 'income' THEN amount_minor ELSE 0 END), 0) AS income_minor,
           COALESCE(SUM(CASE WHEN type = 'expense' THEN amount_minor ELSE 0 END), 0) AS expense_minor
         FROM ledger_transactions

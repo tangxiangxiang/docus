@@ -642,31 +642,44 @@ describe('Ledger Overview and trend projections', () => {
     })
 
     const page = fixture.projections.listTransactions(query())
-    expect(page.transactions).toHaveLength(1)
-    expect(page.transactions[0]).toMatchObject({
+    expect(page.transactions).toHaveLength(2)
+    expect(page.transactions.find((row) => row.id === repayment.id)).toMatchObject({
       id: repayment.id,
       type: 'transfer',
       amountMinor: 5_000,
       groupId: repayment.groupId,
       bundle: { chargeMinor: 300, totalMinor: 5_300 },
     })
-    expect(page.page).toMatchObject({ total: 1, incomeMinor: 0, expenseMinor: 300 })
+    expect(page.page).toMatchObject({ total: 2, incomeMinor: 0, expenseMinor: 300 })
 
     const grouped = fixture.projections.listTransactions(query({ groupId: repayment.groupId }))
     expect(grouped.transactions.map((row) => row.type).sort()).toEqual(['expense', 'transfer'])
     expect(grouped.page.total).toBe(2)
 
     const feeRows = fixture.projections.listTransactions(query({ categoryId: feeCategory.id }))
-    expect(feeRows.transactions).toHaveLength(0)
-    expect(feeRows.page.total).toBe(0)
+    expect(feeRows.transactions).toHaveLength(1)
+    expect(feeRows.transactions[0]).toMatchObject({
+      type: 'expense',
+      amountMinor: 300,
+      categoryId: feeCategory.id,
+      groupId: repayment.groupId,
+    })
+    expect(feeRows.page.total).toBe(1)
 
     const expenseRows = fixture.projections.listTransactions(query({ type: 'expense' }))
-    expect(expenseRows.transactions).toHaveLength(0)
-    expect(expenseRows.page.total).toBe(0)
+    expect(expenseRows.transactions).toHaveLength(1)
+    expect(expenseRows.transactions[0]).toMatchObject({
+      type: 'expense',
+      amountMinor: 300,
+      categoryId: feeCategory.id,
+      groupId: repayment.groupId,
+    })
+    expect(expenseRows.page.total).toBe(1)
 
     const accountRows = fixture.projections.listTransactions(query({ accountId: bank.id }))
-    expect(accountRows.transactions.map((row) => row.id)).toEqual([repayment.id])
-    expect(accountRows.page.total).toBe(1)
+    expect(accountRows.transactions.map((row) => row.id)).toEqual(expect.arrayContaining([repayment.id]))
+    expect(accountRows.transactions).toHaveLength(2)
+    expect(accountRows.page.total).toBe(2)
 
     const withdrawal = transaction(fixture, 'grouped-withdrawal', {
       // Keep the withdrawal on the same fixture while giving it a valid asset destination.
@@ -683,8 +696,14 @@ describe('Ledger Overview and trend projections', () => {
     expect(withdrawalGroup.page.total).toBe(2)
     const withdrawalFeeCategory = fixture.service.listCategories('expense', false).find((item) => item.systemKey === 'fee')!
     const withdrawalFeeRows = fixture.projections.listTransactions(query({ categoryId: withdrawalFeeCategory.id }))
-    expect(withdrawalFeeRows.transactions).toHaveLength(0)
-    expect(withdrawalFeeRows.page.total).toBe(0)
+    expect(withdrawalFeeRows.transactions).toHaveLength(1)
+    expect(withdrawalFeeRows.transactions[0]).toMatchObject({
+      type: 'expense',
+      amountMinor: 50,
+      categoryId: withdrawalFeeCategory.id,
+      groupId: withdrawal.groupId,
+    })
+    expect(withdrawalFeeRows.page.total).toBe(1)
   })
 
   it('returns fixed recent five active records and calendar-month trend points', () => {

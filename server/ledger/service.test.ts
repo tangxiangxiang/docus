@@ -563,6 +563,7 @@ describe('Ledger Transaction and Adjustment service lifecycle', () => {
       amountMinor: 300,
       accountId: bank.id,
       categoryId: interestCategory.id,
+      payee: 'Test account',
     })
     expect(service.getAccount(bank.id).currentBalanceMinor).toBe(4_700)
     expect(service.getAccount(loan.id).currentBalanceMinor).toBe(-5_000)
@@ -577,6 +578,7 @@ describe('Ledger Transaction and Adjustment service lifecycle', () => {
     expect(repository.listTransactionsByGroupId(groupId).find((item) => item.type === 'expense')).toMatchObject({
       amountMinor: 400,
       categoryId: interestCategory.id,
+      payee: 'Test account',
       note: 'updated repayment',
     })
     expect(service.getAccount(bank.id).currentBalanceMinor).toBe(4_100)
