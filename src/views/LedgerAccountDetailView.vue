@@ -59,6 +59,7 @@ const trendOptions: Array<{ value: 7 | 30 | 90 | 365; label: string }> = [
   { value: 365, label: '近1年' },
 ]
 const balanceTrendPlot = ref<HTMLElement | null>(null)
+const balanceTrendReveal = ref<HTMLElement | null>(null)
 const balanceTrendChart = shallowRef<ECharts | null>(null)
 let balanceTrendResizeObserver: ResizeObserver | null = null
 let loadSequence = 0
@@ -323,16 +324,15 @@ function applyBalanceChartOption(): void {
 
 function playBalanceChartAnimation(): void {
   const chart = balanceTrendChart.value
-  const element = balanceTrendPlot.value
+  const reveal = balanceTrendReveal.value
   const pointCount = balanceTrend.value.length
-  if (chart === null || element === null || pointCount === 0) return
-  balanceChartRevealAnimation?.cancel()
+  if (chart === null || reveal === null || pointCount === 0) return
   chart.setOption(buildBalanceChartOption(), { notMerge: true })
-  if (typeof element.animate !== 'function') return
-  balanceChartRevealAnimation = element.animate(
+  balanceChartRevealAnimation?.cancel()
+  balanceChartRevealAnimation = reveal.animate(
     [
-      { clipPath: 'inset(0 100% 0 0)' },
-      { clipPath: 'inset(0 0 0 0)' },
+      { width: '0%' },
+      { width: '100%' },
     ],
     { duration: 1400, easing: 'linear' },
   )
@@ -343,19 +343,25 @@ function playBalanceChartAnimation(): void {
 
 function createBalanceChart(): void {
   const element = balanceTrendPlot.value
-  if (element === null || element.clientWidth === 0) return
+  const reveal = balanceTrendReveal.value
+  const chartWidth = reveal?.parentElement?.clientWidth ?? 0
+  if (element === null || reveal === null || chartWidth === 0) return
+  element.style.width = `${chartWidth}px`
   if (balanceTrendChart.value?.getDom() === element) return
   if (balanceTrendChart.value !== null) destroyBalanceChart()
   balanceTrendChart.value = init(element)
   if (typeof ResizeObserver === 'function') {
-    balanceTrendResizeObserver = new ResizeObserver(() => balanceTrendChart.value?.resize())
-    balanceTrendResizeObserver.observe(element)
+    balanceTrendResizeObserver = new ResizeObserver(handleBalanceChartResize)
+    balanceTrendResizeObserver.observe(reveal.parentElement ?? reveal)
   } else {
     window.addEventListener('resize', handleBalanceChartResize)
   }
 }
 
 function handleBalanceChartResize(): void {
+  const element = balanceTrendPlot.value
+  const chartWidth = balanceTrendReveal.value?.parentElement?.clientWidth ?? 0
+  if (element !== null && chartWidth > 0) element.style.width = `${chartWidth}px`
   balanceTrendChart.value?.resize()
 }
 
@@ -468,7 +474,9 @@ const netMovement = computed(() => {
               />
             </div>
             <div class="ledger-trend-chart" role="img" aria-label="账户余额变化趋势图">
-              <div ref="balanceTrendPlot" class="ledger-balance-trend-plot" data-testid="ledger-balance-trend-chart" aria-hidden="true" />
+              <div ref="balanceTrendReveal" class="ledger-balance-trend-reveal">
+                <div ref="balanceTrendPlot" class="ledger-balance-trend-plot" data-testid="ledger-balance-trend-chart" aria-hidden="true" />
+              </div>
             </div>
           </section>
 
@@ -784,6 +792,7 @@ const netMovement = computed(() => {
 .ledger-balance-trend:hover .ledger-trend-range,
 .ledger-balance-trend:focus-within .ledger-trend-range { visibility: visible; opacity: 1; }
 .ledger-trend-chart { min-height: 205px; padding-left: 0; }
+.ledger-balance-trend-reveal { width: 100%; height: 205px; overflow: hidden; }
 .ledger-balance-trend-plot { width: 100%; height: 205px; }
 .ledger-recent-transactions { overflow: hidden; padding: 18px 20px 14px; }
 .ledger-recent-table { overflow-x: auto; }
