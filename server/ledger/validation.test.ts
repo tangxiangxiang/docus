@@ -5,6 +5,7 @@ import {
   LEDGER_LIST_LIMIT_DEFAULT,
   LEDGER_LIST_LIMIT_MAX,
   parseAccountCreateRequest,
+  parseAccountBalanceTrendRange,
   parseAccountPatchRequest,
   parseAdjustmentEndpointRequest,
   parseCategoryCreateRequest,
@@ -230,6 +231,8 @@ describe('Ledger stateless request validation', () => {
     expect(parseTransactionQuery({ search: '   ' }).search).toBeUndefined()
     expect(parseTrendMonths(undefined)).toBe(6)
     expect(parseTrendMonths('3')).toBe(3)
+    expect(parseAccountBalanceTrendRange(undefined)).toBe(30)
+    expect(parseAccountBalanceTrendRange('365')).toBe(365)
 
     expect(() => parseTransactionQuery({ from: String(occurredAt), to: String(occurredAt) })).toThrow()
     expect(() => parseTransactionQuery({ cursor: 'not-base64url' })).toThrow()
@@ -248,5 +251,7 @@ describe('Ledger stateless request validation', () => {
     }), 'utf8').toString('base64url'))).toThrow()
     expect(() => parseTrendMonths('0')).toThrow()
     expect(() => parseTrendMonths('-1')).toThrow()
+    expect(() => parseAccountBalanceTrendRange('14')).toThrow()
+    expect(() => parseAccountBalanceTrendRange('0')).toThrow()
   })
 })

@@ -10,7 +10,7 @@
 - src/features/ledger/：API client、store、金额/时间适配、错误和新建恢复。
 - src/components/ledger/：初始化、账户、交易表单、交易详情、图标和选择器渲染。
 - src/views/LedgerView.vue、LedgerTransactionsView.vue、LedgerAccountsView.vue、LedgerAccountDetailView.vue：四个页面级入口。
-- server/migrations/0013_* 至 0027_*：Ledger SQLite schema 演进。
+- server/migrations/0013_* 至 0028_*：Ledger SQLite schema 演进。
 
 ## 2. Domain Model
 
@@ -113,11 +113,11 @@ POST settings、accounts、categories 和 transactions 通过 operation scope、
 
 页面 canonical routes 是 /ledger、/ledger/transactions、/ledger/accounts 和 /ledger/accounts/:id。旧 /bills、/bills/transactions 只在 router 层重定向到相应 Ledger 页面。
 
-API 以 /api/ledger 为前缀，包含 settings、accounts、categories、transactions、overview 和 trend；账户还提供 /:id/transactions、/:id/adjust、archive 和 restore。Ledger route 统一使用 no-store，并继承服务端 owner-auth 边界。
+API 以 /api/ledger 为前缀，包含 settings、accounts、categories、transactions、overview 和 trend；账户还提供 /:id/transactions、/:id/balance-trend、/:id/adjust、archive 和 restore。账户详情的最近流水余额和余额趋势由服务端 projection 提供，Ledger route 统一使用 no-store，并继承服务端 owner-auth 边界。
 
 ## 14. Schema Evolution
 
-当前仓库 Ledger schema version 为 27，迁移顺序如下：
+当前仓库 Ledger schema version 为 28，迁移顺序如下：
 
 ~~~text
 0013_ledger_foundation
@@ -135,6 +135,7 @@ API 以 /api/ledger 为前缀，包含 settings、accounts、categories、transa
 0025_ledger_recycle_bin_semantics
 0026_ledger_account_icon_recycle_bin
 0027_ledger_default_category_catalog
+0028_ledger_transfer_payee
 ~~~
 
 后续 schema 变更必须新增迁移，不应回写已执行文件；领域字段仍需同步 shared protocol、repository、service、projection 和测试。

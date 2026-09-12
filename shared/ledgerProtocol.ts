@@ -392,9 +392,30 @@ export interface LedgerMovementSummary {
   readonly balanceDecreaseMinor: number
 }
 
+export type LedgerAccountBalanceTrendRange = 7 | 30 | 90 | 365
+
+export interface LedgerAccountBalanceTrendPoint {
+  /** Ledger-local calendar date represented by this point. */
+  readonly date: string
+  readonly timestamp: number
+  readonly balanceMinor: number
+}
+
+export interface LedgerAccountBalanceTrendDto {
+  readonly range: LedgerAccountBalanceTrendRange
+  readonly points: readonly LedgerAccountBalanceTrendPoint[]
+}
+
+export interface LedgerAccountTransactionBalance {
+  readonly transactionId: string
+  readonly balanceMinor: number
+}
+
 export interface LedgerAccountTransactionsDto {
   readonly account: LedgerAccountDto
   readonly movement: LedgerMovementSummary
   readonly transactions: readonly LedgerTransactionDto[]
+  /** Running balances for the returned page, calculated by the server. */
+  readonly transactionBalances: readonly LedgerAccountTransactionBalance[]
   readonly page: LedgerPageInfo
 }

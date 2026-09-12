@@ -1,5 +1,7 @@
 import { authFetch } from '../../lib/auth-session'
 import type {
+  LedgerAccountBalanceTrendDto,
+  LedgerAccountBalanceTrendRange,
   LedgerAccountCreateRequest,
   LedgerAccountIcon,
   LedgerAccountDto,
@@ -148,6 +150,44 @@ function transactionPageResponse(value: unknown): LedgerTransactionPageDto {
     throw malformed('Transaction list response')
   }
   return value as unknown as LedgerTransactionPageDto
+}
+
+function accountTransactionsResponse(value: unknown): LedgerAccountTransactionsDto {
+  if (!isRecord(value)
+    || !Array.isArray(value.transactions)
+    || !Array.isArray(value.transactionBalances)
+    || !isRecord(value.page)) {
+    throw malformed('Account transaction response')
+  }
+  for (const entry of value.transactionBalances) {
+    if (!isRecord(entry)
+      || typeof entry.transactionId !== 'string'
+      || typeof entry.balanceMinor !== 'number'
+      || !Number.isSafeInteger(entry.balanceMinor)) {
+      throw malformed('Account transaction response')
+    }
+  }
+  return value as unknown as LedgerAccountTransactionsDto
+}
+
+function accountBalanceTrendResponse(value: unknown): LedgerAccountBalanceTrendDto {
+  if (!isRecord(value)
+    || (value.range !== 7 && value.range !== 30 && value.range !== 90 && value.range !== 365)
+    || !Array.isArray(value.points)) {
+    throw malformed('Account balance trend response')
+  }
+  for (const point of value.points) {
+    if (!isRecord(point)
+      || typeof point.date !== 'string'
+      || !/^\d{4}-\d{2}-\d{2}$/.test(point.date)
+      || typeof point.timestamp !== 'number'
+      || !Number.isSafeInteger(point.timestamp)
+      || typeof point.balanceMinor !== 'number'
+      || !Number.isSafeInteger(point.balanceMinor)) {
+      throw malformed('Account balance trend response')
+    }
+  }
+  return value as unknown as LedgerAccountBalanceTrendDto
 }
 
 function isOverviewScope(value: unknown): value is LedgerOverviewScope {
@@ -420,7 +460,18 @@ export function getLedgerAccountTransactions(
       cursor: query.cursor,
     })}`,
     {},
-    objectResponse<LedgerAccountTransactionsDto>('Account transaction response'),
+    accountTransactionsResponse,
+  )
+}
+
+export function getLedgerAccountBalanceTrend(
+  id: string,
+  range: LedgerAccountBalanceTrendRange = 30,
+): Promise<LedgerAccountBalanceTrendDto> {
+  return request(
+    `/api/ledger/accounts/${encodeURIComponent(id)}/balance-trend${queryString({ range })}`,
+    {},
+    accountBalanceTrendResponse,
   )
 }
 

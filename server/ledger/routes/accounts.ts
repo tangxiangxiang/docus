@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import {
   parseAccountCreateRequest,
+  parseAccountBalanceTrendRange,
   parseAdjustmentEndpointRequest,
   parseBooleanQuery,
   parseIdempotencyKey,
@@ -55,6 +56,13 @@ export function createAccountRoutes(
       idempotencyKey,
     ))
   }))
+
+  routes.get('/:id/balance-trend', (c) => withLedgerErrors(c, () => c.json(
+    getProjections().getAccountBalanceTrend(
+      c.req.param('id'),
+      parseAccountBalanceTrendRange(c.req.query('range')),
+    ),
+  )))
 
   routes.get('/:id/transactions', (c) => withLedgerErrors(c, () => c.json(
     getProjections().getAccountTransactions(

@@ -1,5 +1,7 @@
 import { computed, reactive, ref, type ComputedRef } from 'vue'
 import type {
+  LedgerAccountBalanceTrendDto,
+  LedgerAccountBalanceTrendRange,
   LedgerAccountCreateRequest,
   LedgerAccountDto,
   LedgerAccountTransactionsDto,
@@ -28,6 +30,7 @@ import {
   deleteLedgerCategory,
   deleteLedgerTransaction,
   getLedgerAccount,
+  getLedgerAccountBalanceTrend,
   getLedgerAccountTransactions,
   getLedgerOverview,
   getLedgerSettings,
@@ -804,6 +807,7 @@ export interface LedgerStore {
   readonly getTransaction: (id: string) => Promise<LedgerTransactionDto>
   readonly getTransactionGroup: (groupId: string) => Promise<readonly LedgerTransactionDto[]>
   readonly getAccountTransactions: (id: string, query?: LedgerTransactionQuery) => Promise<LedgerAccountTransactionsDto>
+  readonly getAccountBalanceTrend: (id: string, range?: LedgerAccountBalanceTrendRange) => Promise<LedgerAccountBalanceTrendDto>
   readonly createSettings: (body: LedgerSettingsCreateRequest) => Promise<LedgerSettingsDto>
   readonly patchSettings: (body: { expectedVersion: number; baseCurrency?: string; timezone?: string }) => Promise<LedgerSettingsDto>
   readonly createAccount: (body: LedgerAccountCreateRequest) => Promise<LedgerAccountDto>
@@ -878,6 +882,7 @@ const store: LedgerStore = {
     state.accountTransactions = result
     return result
   },
+  getAccountBalanceTrend: (id, range = 30) => getLedgerAccountBalanceTrend(id, range),
   createSettings: (body) => beginCreate('settings', body, (key) => createLedgerSettings(body, key)),
   patchSettings: async (body) => {
     const result = await patchLedgerSettings(body)

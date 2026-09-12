@@ -808,8 +808,24 @@ describe('Ledger query and projection API', () => {
       account: { id: card.id, currentBalanceMinor: -15 },
       movement: { balanceIncreaseMinor: 0, balanceDecreaseMinor: 20 },
       transactions: [expect.objectContaining({ id: adjustment.adjustment.id })],
+      transactionBalances: [{ transactionId: adjustment.adjustment.id, balanceMinor: -15 }],
       page: { nextCursor: expect.any(String) },
     })
+
+    const accountTrend = await authenticated(`/api/ledger/accounts/${bank.id}/balance-trend?range=7`)
+    expect(accountTrend.status).toBe(200)
+    const accountTrendBody = await json(accountTrend)
+    expect(accountTrendBody).toMatchObject({
+      range: 7,
+      points: expect.arrayContaining([
+        expect.objectContaining({ date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) }),
+      ]),
+    })
+    expect(accountTrendBody.points).toHaveLength(7)
+
+    const invalidAccountTrend = await authenticated(`/api/ledger/accounts/${bank.id}/balance-trend?range=8`)
+    expect(invalidAccountTrend.status).toBe(400)
+    expect(await json(invalidAccountTrend)).toMatchObject({ code: 'ledger-validation-failed' })
 
     const accountFilter = await authenticated(`/api/ledger/transactions?accountId=${encodeURIComponent(card.id)}`)
     expect((await json(accountFilter)).transactions.map((row: any) => row.id)).toEqual([

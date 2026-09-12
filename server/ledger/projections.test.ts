@@ -305,6 +305,42 @@ describe('Ledger transaction query projections', () => {
 })
 
 describe('Ledger Account Detail projections', () => {
+  it('projects Ledger-local balance trend points and page running balances', () => {
+    const now = Date.parse('2024-03-11T12:00:00.000Z')
+    const fixture = freshFixture('America/Los_Angeles', now)
+    const asset = account(fixture, 'trend-asset', {
+      openingBalanceMinor: 1_000,
+      openingDate: '2024-01-01',
+    })
+    const expenseCategory = firstCategory(fixture, 'expense')
+    const incomeCategory = firstCategory(fixture, 'income')
+    const expense = transaction(fixture, 'trend-expense', {
+      type: 'expense', amountMinor: 100, accountId: asset.id, categoryId: expenseCategory.id,
+      occurredAt: Date.parse('2024-03-09T16:00:00.000Z'),
+    })
+    const income = transaction(fixture, 'trend-income', {
+      type: 'income', amountMinor: 250, accountId: asset.id, categoryId: incomeCategory.id,
+      occurredAt: Date.parse('2024-03-10T19:00:00.000Z'),
+    })
+
+    const detail = fixture.projections.getAccountTransactions(asset.id, query({ limit: '1' }))
+    expect(detail.transactions.map((row) => row.id)).toEqual([income.id])
+    expect(detail.transactionBalances).toEqual([{ transactionId: income.id, balanceMinor: 1_150 }])
+
+    expect(fixture.projections.getAccountBalanceTrend(asset.id, 7)).toEqual({
+      range: 7,
+      points: [
+        { date: '2024-03-05', timestamp: Date.parse('2024-03-05T08:00:00.000Z'), balanceMinor: 1_000 },
+        { date: '2024-03-06', timestamp: Date.parse('2024-03-06T08:00:00.000Z'), balanceMinor: 1_000 },
+        { date: '2024-03-07', timestamp: Date.parse('2024-03-07T08:00:00.000Z'), balanceMinor: 1_000 },
+        { date: '2024-03-08', timestamp: Date.parse('2024-03-08T08:00:00.000Z'), balanceMinor: 1_000 },
+        { date: '2024-03-09', timestamp: Date.parse('2024-03-09T08:00:00.000Z'), balanceMinor: 1_000 },
+        { date: '2024-03-10', timestamp: Date.parse('2024-03-10T08:00:00.000Z'), balanceMinor: 900 },
+        { date: '2024-03-11', timestamp: now, balanceMinor: 1_150 },
+      ],
+    })
+  })
+
   it('computes complete current-month movement independently of page limit', () => {
     const fixture = freshFixture()
     const asset = account(fixture, 'movement-asset')

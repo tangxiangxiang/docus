@@ -4,6 +4,7 @@ import {
 } from '../../shared/ledgerCurrency.js'
 import type {
   LedgerAccountCreateRequest,
+  LedgerAccountBalanceTrendRange,
   LedgerAccountIcon,
   LedgerAccountIconConfig,
   LedgerAccountNature,
@@ -174,6 +175,7 @@ export const LEDGER_TRANSFER_KINDS: readonly LedgerTransferKind[] = [
   'general', 'repayment', 'withdrawal',
 ]
 export const LEDGER_TRANSFER_FEE_MODES: readonly LedgerTransferFeeMode[] = ['extra', 'deducted']
+export const LEDGER_ACCOUNT_BALANCE_TREND_RANGES: readonly LedgerAccountBalanceTrendRange[] = [7, 30, 90, 365]
 
 export function parseAccountType(record: UnknownRecord, key = 'type'): LedgerAccountType {
   return parseEnum(record, key, LEDGER_ACCOUNT_TYPES)
@@ -203,6 +205,17 @@ export function parseTransferKind(record: UnknownRecord, key = 'transferKind'): 
 
 export function parseTransferFeeMode(record: UnknownRecord, key = 'feeMode'): LedgerTransferFeeMode {
   return parseEnum(record, key, LEDGER_TRANSFER_FEE_MODES)
+}
+
+export function parseAccountBalanceTrendRange(value: unknown): LedgerAccountBalanceTrendRange {
+  if (value === undefined) return 30
+  const numeric = typeof value === 'string' && /^[1-9]\d*$/.test(value)
+    ? Number(value)
+    : NaN
+  if (!LEDGER_ACCOUNT_BALANCE_TREND_RANGES.includes(numeric as LedgerAccountBalanceTrendRange)) {
+    throw ledgerValidationError('range must be one of 7, 30, 90, or 365 days', { field: 'range' })
+  }
+  return numeric as LedgerAccountBalanceTrendRange
 }
 
 function parseCurrency(record: UnknownRecord, key = 'currency'): string {

@@ -2,7 +2,13 @@
 import { DOMWrapper, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { LedgerAccountDto, LedgerOverviewDto, LedgerSettingsDto, LedgerTransactionDto } from '../../../shared/ledgerProtocol'
+import type {
+  LedgerAccountDto,
+  LedgerAccountTransactionBalance,
+  LedgerOverviewDto,
+  LedgerSettingsDto,
+  LedgerTransactionDto,
+} from '../../../shared/ledgerProtocol'
 import { resetLedgerStoreForTesting } from '../../features/ledger/ledgerStore'
 import LedgerAccountDetailView from '../LedgerAccountDetailView.vue'
 
@@ -13,6 +19,7 @@ const api = vi.hoisted(() => ({
   getLedgerOverview: vi.fn(),
   listLedgerTransactions: vi.fn(),
   getLedgerAccount: vi.fn(),
+  getLedgerAccountBalanceTrend: vi.fn(),
   getLedgerAccountTransactions: vi.fn(),
   patchLedgerAccount: vi.fn(),
   archiveLedgerAccount: vi.fn(),
@@ -82,15 +89,21 @@ function createTestRouter() {
   })
 }
 
-function setup(nextAccount: LedgerAccountDto, history: unknown[] = []): void {
+function setup(
+  nextAccount: LedgerAccountDto,
+  history: unknown[] = [],
+  transactionBalances: readonly LedgerAccountTransactionBalance[] = [],
+): void {
   api.getLedgerSettings.mockResolvedValue(settings)
   api.getLedgerAccount.mockResolvedValue(nextAccount)
   api.getLedgerAccountTransactions.mockResolvedValue({
     account: nextAccount,
     movement: { balanceIncreaseMinor: 0, balanceDecreaseMinor: 0 },
     transactions: history,
+    transactionBalances,
     page: { nextCursor: null },
   })
+  api.getLedgerAccountBalanceTrend.mockResolvedValue({ range: 30, points: [] })
   api.listLedgerAccounts.mockResolvedValue([nextAccount])
   api.listLedgerCategories.mockResolvedValue([])
   api.getLedgerOverview.mockResolvedValue(overview())
@@ -278,7 +291,10 @@ describe('Ledger account detail lifecycle', () => {
       createdAt: 4,
       updatedAt: 4,
     }
-    setup(original, [interest, repayment])
+    setup(original, [interest, repayment], [
+      { transactionId: 'interest-1', balanceMinor: 470_000 },
+      { transactionId: 'repayment-1', balanceMinor: 500_000 },
+    ])
     const nextRouter = createTestRouter()
     await nextRouter.push('/ledger/accounts/bank-1')
     await nextRouter.isReady()
@@ -292,6 +308,56 @@ describe('Ledger account detail lifecycle', () => {
     expect(rows[0]!.text()).toContain('¥4,700.00')
     expect(rows[1]!.text()).toContain('-¥5,000.00')
     expect(rows[1]!.text()).toContain('¥5,000.00')
+  })
+
+  it('anchors the latest recent balance to the current balance and walks older rows backward', async () => {
+    const original = account({ openingBalanceMinor: 100_000, currentBalanceMinor: 106_000 })
+    const latest: LedgerTransactionDto = {
+      id: 'recent-latest',
+      type: 'expense',
+      amountMinor: 2_000,
+      accountId: 'bank-1',
+      categoryId: 'category-1',
+      payee: '最新支出',
+      note: '',
+      occurredAt: 3,
+      deletedAt: null,
+      version: 1,
+      createdAt: 3,
+      updatedAt: 3,
+    }
+    const middle: LedgerTransactionDto = {
+      ...latest,
+      id: 'recent-middle',
+      payee: '较早支出',
+      occurredAt: 2,
+      createdAt: 2,
+      updatedAt: 2,
+    }
+    const oldest: LedgerTransactionDto = {
+      ...latest,
+      id: 'recent-oldest',
+      type: 'income',
+      amountMinor: 10_000,
+      payee: '较早收入',
+      occurredAt: 1,
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    setup(original, [latest, middle, oldest], [
+      { transactionId: latest.id, balanceMinor: 106_000 },
+      { transactionId: middle.id, balanceMinor: 108_000 },
+      { transactionId: oldest.id, balanceMinor: 110_000 },
+    ])
+    const nextRouter = createTestRouter()
+    await nextRouter.push('/ledger/accounts/bank-1')
+    await nextRouter.isReady()
+    const wrapper = mount(LedgerAccountDetailView, { global: { plugins: [nextRouter] } })
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    const balances = wrapper.findAll('.ledger-recent-row').map((row) => row.find('.ledger-transaction-balance').text())
+    expect(balances).toEqual(['¥1,060.00', '¥1,080.00', '¥1,100.00'])
   })
 
   it('uses only the transfer amount for an incoming account when a fee is bundled', async () => {
@@ -313,7 +379,7 @@ describe('Ledger account detail lifecycle', () => {
       createdAt: 3,
       updatedAt: 3,
     }
-    setup(original, [withdrawal])
+    setup(original, [withdrawal], [{ transactionId: withdrawal.id, balanceMinor: 200_000 }])
     const nextRouter = createTestRouter()
     await nextRouter.push('/ledger/accounts/bank-2')
     await nextRouter.isReady()

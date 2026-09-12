@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { authFetch } from '../../../lib/auth-session'
 import {
   createLedgerTransaction,
+  getLedgerAccountBalanceTrend,
+  getLedgerAccountTransactions,
   getLedgerOverview,
   getLedgerSettings,
   listLedgerTransactions,
@@ -76,6 +78,53 @@ describe('Ledger frontend API boundary', () => {
     expect(mockedAuthFetch.mock.calls.at(-1)?.[0]).toContain('type=expense')
     expect(mockedAuthFetch.mock.calls.at(-1)?.[0]).toContain('accountId=account+1')
     expect(mockedAuthFetch.mock.calls.at(-1)?.[0]).toContain('offset=20')
+  })
+
+  it('requests and validates the account balance trend projection', async () => {
+    mockedAuthFetch.mockResolvedValue(response({
+      range: 7,
+      points: [{ date: '2026-09-06', timestamp: 1_700_000_000_000, balanceMinor: 12_300 }],
+    }))
+
+    await expect(getLedgerAccountBalanceTrend('account 1', 7)).resolves.toMatchObject({ range: 7 })
+    expect(mockedAuthFetch).toHaveBeenCalledWith(
+      '/api/ledger/accounts/account%201/balance-trend?range=7',
+      {},
+    )
+
+    mockedAuthFetch.mockResolvedValue(response({ range: 7, points: [{ date: 'not-a-date' }] }))
+    await expect(getLedgerAccountBalanceTrend('account-1', 7)).rejects.toMatchObject({
+      code: 'ledger-malformed-response',
+    })
+  })
+
+  it('validates server-projected running balances for Account Detail', async () => {
+    mockedAuthFetch.mockResolvedValue(response({
+      account: {},
+      movement: {},
+      transactions: [],
+      transactionBalances: [{ transactionId: 'tx-1', balanceMinor: 12_300 }],
+      page: { nextCursor: null },
+    }))
+
+    await expect(getLedgerAccountTransactions('account 1', { limit: 5 })).resolves.toMatchObject({
+      transactionBalances: [{ transactionId: 'tx-1', balanceMinor: 12_300 }],
+    })
+    expect(mockedAuthFetch).toHaveBeenCalledWith(
+      '/api/ledger/accounts/account%201/transactions?limit=5',
+      {},
+    )
+
+    mockedAuthFetch.mockResolvedValue(response({
+      account: {},
+      movement: {},
+      transactions: [],
+      transactionBalances: [{ transactionId: 'tx-1', balanceMinor: 12.3 }],
+      page: { nextCursor: null },
+    }))
+    await expect(getLedgerAccountTransactions('account-1')).rejects.toMatchObject({
+      code: 'ledger-malformed-response',
+    })
   })
 
   it('normalizes auth, 503, and malformed responses without treating 503 as uncertain', async () => {

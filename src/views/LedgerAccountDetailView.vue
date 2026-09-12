@@ -21,7 +21,13 @@ import { ledgerErrorMessage } from '../features/ledger/ledgerErrors'
 import { formatLedgerMoney } from '../features/ledger/money'
 import { formatLedgerDateTime } from '../features/ledger/time'
 import { useLedgerStore } from '../features/ledger/ledgerStore'
-import type { LedgerAccountDto, LedgerMovementSummary, LedgerTransactionDto } from '../../shared/ledgerProtocol'
+import type {
+  LedgerAccountBalanceTrendPoint,
+  LedgerAccountDto,
+  LedgerAccountTransactionBalance,
+  LedgerMovementSummary,
+  LedgerTransactionDto,
+} from '../../shared/ledgerProtocol'
 
 use([LineChart, GridComponent, TooltipComponent, CanvasRenderer])
 
@@ -39,7 +45,8 @@ const { confirm } = useConfirm()
 const account = ref<LedgerAccountDto | null>(null)
 const hasHistory = ref(false)
 const recentTransactions = ref<readonly LedgerTransactionDto[]>([])
-const allTransactions = ref<readonly LedgerTransactionDto[]>([])
+const recentTransactionBalances = ref<readonly LedgerAccountTransactionBalance[]>([])
+const balanceTrendPoints = ref<readonly LedgerAccountBalanceTrendPoint[]>([])
 const movement = ref<LedgerMovementSummary | null>(null)
 const loading = ref(false)
 const editing = ref(false)
@@ -55,6 +62,7 @@ const balanceTrendPlot = ref<HTMLElement | null>(null)
 const balanceTrendChart = shallowRef<ECharts | null>(null)
 let balanceTrendResizeObserver: ResizeObserver | null = null
 let loadSequence = 0
+let balanceTrendSequence = 0
 
 const accountId = computed(() => String(route.params.id ?? ''))
 const returnFromOverview = computed(() => route.query.from === 'overview')
@@ -81,7 +89,8 @@ async function load(): Promise<void> {
     account.value = nextAccount
     hasHistory.value = history.transactions.length > 0
     recentTransactions.value = history.transactions
-    allTransactions.value = history.allTransactions
+    recentTransactionBalances.value = history.transactionBalances
+    balanceTrendPoints.value = history.balanceTrend
     movement.value = history.movement
   } catch (cause) {
     if (sequence !== loadSequence) return
@@ -94,18 +103,20 @@ async function load(): Promise<void> {
 
 async function loadAccountHistory(id: string): Promise<{
   readonly transactions: readonly LedgerTransactionDto[]
-  readonly allTransactions: readonly LedgerTransactionDto[]
+  readonly transactionBalances: readonly LedgerAccountTransactionBalance[]
+  readonly balanceTrend: readonly LedgerAccountBalanceTrendPoint[]
   readonly movement: LedgerMovementSummary
 }> {
-  const page = await store.getAccountTransactions(id, { limit: 5 })
-  const transactions = [...page.transactions]
-  let cursor = page.page.nextCursor
-  while (cursor) {
-    const nextPage = await store.getAccountTransactions(id, { limit: 200, cursor })
-    transactions.push(...nextPage.transactions)
-    cursor = nextPage.page.nextCursor
+  const [page, trend] = await Promise.all([
+    store.getAccountTransactions(id, { limit: 5 }),
+    store.getAccountBalanceTrend(id, trendRange.value),
+  ])
+  return {
+    transactions: page.transactions,
+    transactionBalances: page.transactionBalances ?? [],
+    balanceTrend: trend.points,
+    movement: page.movement,
   }
-  return { transactions: page.transactions, allTransactions: transactions, movement: page.movement }
 }
 
 watch(accountId, () => { void load() }, { immediate: true })
@@ -182,28 +193,6 @@ function maskCardNumber(cardNumber: string | undefined): string {
   return `${value.slice(0, 4)}${'*'.repeat(value.length - 8)}${value.slice(-4)}`
 }
 
-function accountEffect(transaction: LedgerTransactionDto): number {
-  const current = account.value
-  if (!current || transaction.deletedAt !== null) return 0
-  const amount = transaction.amountMinor
-  const positive = current.nature === 'asset'
-  if (transaction.type === 'income') return transaction.accountId === current.id ? (positive ? amount : -amount) : 0
-  if (transaction.type === 'expense') return transaction.accountId === current.id ? (positive ? -amount : amount) : 0
-  if (transaction.type === 'transfer') {
-    if (transaction.fromAccountId === current.id) {
-      return positive ? -amount : amount
-    }
-    if (transaction.toAccountId === current.id) return positive ? amount : -amount
-    return 0
-  }
-  return transaction.accountId === current.id ? amount : 0
-}
-
-function shortDate(timestamp: number): string {
-  if (!Number.isFinite(timestamp) || timestamp <= 0) return '—'
-  return new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(timestamp))
-}
-
 function transactionCategory(transaction: LedgerTransactionDto): string {
   if (transaction.type === 'income' || transaction.type === 'expense') {
     return store.categories.value.find((category) => category.id === transaction.categoryId)?.name ?? '未分类'
@@ -212,46 +201,31 @@ function transactionCategory(transaction: LedgerTransactionDto): string {
   return '余额调整'
 }
 
-const transactionBalances = computed(() => {
-  const balances = new Map<string, number>()
-  const sorted = [...allTransactions.value]
-    .filter((transaction) => transaction.deletedAt === null)
-    .sort((left, right) => left.occurredAt - right.occurredAt || left.createdAt - right.createdAt)
-  let balance = account.value?.openingBalanceMinor ?? 0
-  for (const transaction of sorted) {
-    balance += accountEffect(transaction)
-    balances.set(transaction.id, balance)
-  }
-  return balances
-})
+const transactionBalanceMap = computed(() => new Map(
+  recentTransactionBalances.value.map((entry) => [entry.transactionId, entry.balanceMinor]),
+))
 
-const balanceTrend = computed(() => {
-  const current = account.value
-  if (!current) return [] as Array<{ timestamp: number; label: string; balanceMinor: number }>
-  const end = Date.now()
-  const start = end - trendRange.value * 24 * 60 * 60 * 1000
-  const sorted = [...allTransactions.value]
-    .filter((transaction) => transaction.deletedAt === null)
-    .sort((left, right) => left.occurredAt - right.occurredAt || left.createdAt - right.createdAt)
-  let balance = current.openingBalanceMinor
-  let cursor = 0
-  while (cursor < sorted.length && sorted[cursor]!.occurredAt <= start) {
-    balance += accountEffect(sorted[cursor]!)
-    cursor += 1
+const balanceTrend = computed(() => balanceTrendPoints.value.map((point) => ({
+  ...point,
+  label: point.date,
+})))
+
+async function reloadBalanceTrend(range: 7 | 30 | 90 | 365): Promise<void> {
+  const id = accountId.value
+  if (!id || !account.value) return
+  const sequence = ++balanceTrendSequence
+  try {
+    const trend = await store.getAccountBalanceTrend(id, range)
+    if (sequence !== balanceTrendSequence || id !== accountId.value || range !== trendRange.value) return
+    balanceTrendPoints.value = trend.points
+  } catch (cause) {
+    if (sequence !== balanceTrendSequence || id !== accountId.value || range !== trendRange.value) return
+    balanceTrendPoints.value = []
+    actionError.value = ledgerErrorMessage(cause, '余额趋势暂时无法加载。')
   }
-  const pointCount = trendRange.value <= 30 ? trendRange.value : 12
-  const points: Array<{ timestamp: number; label: string; balanceMinor: number }> = []
-  for (let index = 0; index < pointCount; index += 1) {
-    const timestamp = start + ((end - start) * index) / Math.max(pointCount - 1, 1)
-    while (cursor < sorted.length && sorted[cursor]!.occurredAt <= timestamp) {
-      balance += accountEffect(sorted[cursor]!)
-      cursor += 1
-    }
-    points.push({ timestamp, label: shortDate(timestamp), balanceMinor: balance })
-  }
-  if (points.length > 0) points[points.length - 1]!.balanceMinor = current.currentBalanceMinor
-  return points
-})
+}
+
+watch(trendRange, (range) => { void reloadBalanceTrend(range) })
 
 function balanceChartToken(name: string, fallback: string): string {
   const element = balanceTrendPlot.value
@@ -475,7 +449,7 @@ const netMovement = computed(() => {
                   <LedgerAnimatedMoney v-if="transactionAmountMinor(transaction) !== null" :minor="transactionAmountMinor(transaction)!" :currency="account.currency" signed />
                   <span v-else>—</span>
                 </strong>
-                <span class="ledger-transaction-balance"><LedgerAnimatedMoney :minor="transactionBalances.get(transaction.id) ?? account.currentBalanceMinor" :currency="account.currency" /></span>
+                <span class="ledger-transaction-balance"><LedgerAnimatedMoney :minor="transactionBalanceMap.get(transaction.id) ?? account.currentBalanceMinor" :currency="account.currency" /></span>
               </div>
             </div>
             <p v-else class="ledger-empty-copy">暂无交易记录</p>

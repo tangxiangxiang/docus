@@ -139,7 +139,7 @@ describe('Ledger 0013 foundation migration', () => {
     const db = freshDb()
     applyMigrations(db)
 
-    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(27)
+    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(28)
     const tables = (db.prepare(
       "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
     ).all() as Array<{ name: string }>).map((row) => row.name)
@@ -172,7 +172,7 @@ describe('Ledger 0013 foundation migration', () => {
     ).get() as { count: number }).count
     applyMigrations(db)
 
-    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(27)
+    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(28)
     expect((db.prepare(
       "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table'",
     ).get() as { count: number }).count).toBe(firstTableCount)
@@ -203,6 +203,22 @@ describe('Ledger 0013 foundation migration', () => {
       FROM ledger_categories
       WHERE id = 'legacy-unused-category'
     `).get()).toEqual({ archivedAt: 3_000, version: 1 })
+  })
+
+  it('removes the legacy transfer payee restriction while preserving existing rows', () => {
+    const db = freshDb()
+    applyMigrations(db, 27)
+    insertAccount(db, 'payee-from')
+    insertAccount(db, 'payee-to')
+    insertTransfer(db, 'legacy-transfer', 'payee-from', 'payee-to')
+
+    applyMigrations(db)
+
+    expect(db.prepare('SELECT payee FROM ledger_transactions WHERE id = ?').get('legacy-transfer')).toEqual({ payee: '' })
+    expect(() => insertTransfer(db, 'transfer-with-payee', 'payee-from', 'payee-to', {
+      payee: '招商银行还款',
+    })).not.toThrow()
+    expect(db.prepare('SELECT payee FROM ledger_transactions WHERE id = ?').get('transfer-with-payee')).toEqual({ payee: '招商银行还款' })
   })
 
   it('keeps Account names non-unique and Category identity unique without parent/current-balance columns', () => {

@@ -435,6 +435,14 @@ export function createLedgerService(
     return category
   }
 
+  function companionPayee(
+    transferKind: LedgerTransferKind,
+    toAccountName: string,
+    transferPayee: string,
+  ): string {
+    return transferKind === 'repayment' ? toAccountName : transferPayee
+  }
+
   function assertTransferKindAccounts(
     kind: LedgerTransferKind,
     fromAccount: LedgerAccount,
@@ -1274,7 +1282,7 @@ export function createLedgerService(
                   categoryId: feeCategory.id,
                   occurredAt,
                   location: updated.location,
-                  payee: transferKind === 'repayment' ? toAccount.name : existingFee.payee,
+                  payee: companionPayee(transferKind, toAccount.name, updated.payee),
                   note: updated.note,
                   version: nextVersion(existingFee.version),
                   updatedAt: timestamp,
@@ -1288,7 +1296,7 @@ export function createLedgerService(
                   categoryId: feeCategory.id,
                   occurredAt,
                   location: updated.location,
-                  payee: transferKind === 'repayment' ? toAccount.name : updated.payee,
+                  payee: companionPayee(transferKind, toAccount.name, updated.payee),
                   note: updated.note,
                   deletedAt: null,
                   version: 1,

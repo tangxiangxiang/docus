@@ -11,6 +11,10 @@ import {
 } from '../../shared/ledgerCurrency.js'
 import type {
   LedgerAccountDto,
+  LedgerAccountBalanceTrendDto,
+  LedgerAccountBalanceTrendRange,
+  LedgerAccountBalanceTrendPoint,
+  LedgerAccountTransactionBalance,
   LedgerAccountSummary,
   LedgerAccountTransactionsDto,
   LedgerCategoryKind,
@@ -49,6 +53,7 @@ import {
 } from './money.js'
 import {
   calendarMonthRangesForLocalDate,
+  calendarDayPointsForInstant,
   ledgerLocalDateForInstant,
   monthRange,
   parseLedgerLocalDate,
@@ -83,6 +88,10 @@ export interface LedgerProjections {
     accountId: string,
     query: LedgerTransactionQuery,
   ): LedgerAccountTransactionsDto
+  getAccountBalanceTrend(
+    accountId: string,
+    range: LedgerAccountBalanceTrendRange,
+  ): LedgerAccountBalanceTrendDto
   getOverview(input: LedgerOverviewInput): LedgerOverviewDto
   getTrend(months: number, anchorDate?: string): readonly LedgerTrendPoint[]
 }
@@ -279,6 +288,66 @@ function movementForAccount(
   return { balanceIncreaseMinor, balanceDecreaseMinor }
 }
 
+function transactionBalancesForPage(
+  account: LedgerAccount,
+  transactions: readonly LedgerTransaction[],
+  pageTransactions: readonly LedgerTransactionDto[],
+): readonly LedgerAccountTransactionBalance[] {
+  const pageIds = new Set(pageTransactions.map((transaction) => transaction.id))
+  const balances = new Map<string, number>()
+  const sorted = [...transactions].sort(
+    (left, right) => left.occurredAt - right.occurredAt
+      || left.createdAt - right.createdAt
+      || left.id.localeCompare(right.id),
+  )
+  let balance = account.openingBalanceMinor
+  for (const transaction of sorted) {
+    balance = checkedAddMinor(balance, transactionEffectForAccount(transaction, account))
+    if (pageIds.has(transaction.id)) balances.set(transaction.id, balance)
+  }
+
+  return pageTransactions.flatMap((transaction): LedgerAccountTransactionBalance[] => {
+    const balanceMinor = balances.get(transaction.id)
+    return balanceMinor === undefined ? [] : [{ transactionId: transaction.id, balanceMinor }]
+  })
+}
+
+function accountBalanceTrend(
+  account: LedgerAccount,
+  transactions: readonly LedgerTransaction[],
+  currentBalanceMinor: number,
+  range: LedgerAccountBalanceTrendRange,
+  nowMs: number,
+  timezone: string,
+): LedgerAccountBalanceTrendDto {
+  const pointCount = range <= 30 ? range : 12
+  const calendarPoints = calendarDayPointsForInstant(range, pointCount, nowMs, timezone)
+  const sorted = [...transactions].sort(
+    (left, right) => left.occurredAt - right.occurredAt
+      || left.createdAt - right.createdAt
+      || left.id.localeCompare(right.id),
+  )
+  let balance = account.openingBalanceMinor
+  let cursor = 0
+  const points: LedgerAccountBalanceTrendPoint[] = []
+
+  for (let index = 0; index < calendarPoints.length; index += 1) {
+    const calendarPoint = calendarPoints[index]!
+    const timestamp = index === calendarPoints.length - 1 ? nowMs : calendarPoint.startMs
+    while (cursor < sorted.length && sorted[cursor]!.occurredAt <= timestamp) {
+      balance = checkedAddMinor(balance, transactionEffectForAccount(sorted[cursor]!, account))
+      cursor += 1
+    }
+    points.push({
+      date: calendarPoint.date,
+      timestamp,
+      balanceMinor: index === calendarPoints.length - 1 ? currentBalanceMinor : balance,
+    })
+  }
+
+  return { range, points }
+}
+
 function periodSummary(
   period: LedgerPeriodName,
   range: { readonly startMs: number; readonly endMs: number },
@@ -428,8 +497,29 @@ export function createLedgerProjections(
         state.transactions,
         monthRange(nowMs, settings.timezone),
       ),
+      transactionBalances: transactionBalancesForPage(account, state.transactions, page.transactions),
       ...page,
     }
+  }
+
+  function getAccountBalanceTrend(
+    accountId: string,
+    range: LedgerAccountBalanceTrendRange,
+  ): LedgerAccountBalanceTrendDto {
+    const settings = requireSettings()
+    const account = repository.getAccount(accountId)
+    if (account === null) notFound('Ledger Account')
+
+    const nowMs = captureNow()
+    const state = accountState(account)
+    return accountBalanceTrend(
+      account,
+      state.transactions,
+      state.currentBalanceMinor,
+      range,
+      nowMs,
+      settings.timezone,
+    )
   }
 
   function getOverview(input: LedgerOverviewInput): LedgerOverviewDto {
@@ -544,6 +634,7 @@ export function createLedgerProjections(
   return {
     listTransactions,
     getAccountTransactions,
+    getAccountBalanceTrend,
     getOverview,
     getTrend,
   }

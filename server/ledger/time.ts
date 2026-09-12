@@ -17,6 +17,11 @@ export interface LedgerCalendarMonthRange extends LedgerTimeRange {
   readonly month: string
 }
 
+export interface LedgerCalendarDayPoint {
+  readonly date: string
+  readonly startMs: number
+}
+
 function validationError(field: string, message: string): LedgerError {
   return new LedgerError('ledger-validation-failed', 400, message, { field })
 }
@@ -137,6 +142,46 @@ export function localDateRange(localDate: string, timezone: string): LedgerTimeR
   const startMs = startOfLocalDate(date, zone)
   const endMs = startOfLocalDate(date.add({ days: 1 }), zone)
   return { startMs, endMs }
+}
+
+/**
+ * Return evenly spaced Ledger-local calendar dates for an account trend.
+ *
+ * The dates are resolved with Temporal so daylight-saving transitions do not
+ * turn a calendar day into a fixed 24-hour offset. Callers can use the final
+ * point's current instant when they need the line to end at the live balance.
+ */
+export function calendarDayPointsForInstant(
+  days: number,
+  pointCount: number,
+  instantMs: number,
+  timezone: string,
+): readonly LedgerCalendarDayPoint[] {
+  if (!Number.isSafeInteger(days) || days < 1) {
+    throw validationError('days', 'days must be a positive safe integer')
+  }
+  if (!Number.isSafeInteger(pointCount) || pointCount < 1) {
+    throw validationError('pointCount', 'pointCount must be a positive safe integer')
+  }
+
+  const zone = assertIanaTimeZoneId(timezone)
+  const date = plainDateForInstant(instantMs, zone)
+  try {
+    const firstDate = date.subtract({ days: days - 1 })
+    return Array.from({ length: pointCount }, (_, index) => {
+      const offset = pointCount === 1
+        ? days - 1
+        : Math.round((days - 1) * index / (pointCount - 1))
+      const pointDate = firstDate.add({ days: offset })
+      return {
+        date: pointDate.toString(),
+        startMs: startOfLocalDate(pointDate, zone, 'trend.startAt'),
+      }
+    })
+  } catch (error) {
+    if (error instanceof LedgerError) throw error
+    throw validationError('days', 'days cannot be represented by the Ledger calendar range')
+  }
 }
 
 function periodRangeForPlainDate(

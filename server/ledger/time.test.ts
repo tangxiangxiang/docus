@@ -6,6 +6,7 @@ import {
   assertIanaTimeZoneId,
   assertOpeningDate,
   assertUtcMilliseconds,
+  calendarDayPointsForInstant,
   calendarMonthRanges,
   calendarMonthRangesForLocalDate,
   ledgerLocalDateForInstant,
@@ -77,6 +78,19 @@ describe('Ledger named timezone and UTC primitives', () => {
 })
 
 describe('Ledger DST-safe local calendar periods', () => {
+  it('builds account trend points from Ledger-local dates across DST', () => {
+    const points = calendarDayPointsForInstant(
+      3,
+      3,
+      Date.parse('2024-03-11T12:00:00.000Z'),
+      'America/Los_Angeles',
+    )
+    expect(points.map((point) => point.date)).toEqual(['2024-03-09', '2024-03-10', '2024-03-11'])
+    expect(iso(points[0]!.startMs)).toBe('2024-03-09T08:00:00.000Z')
+    expect(iso(points[1]!.startMs)).toBe('2024-03-10T08:00:00.000Z')
+    expect(iso(points[2]!.startMs)).toBe('2024-03-11T07:00:00.000Z')
+  })
+
   it('uses Monday as the week boundary and half-open ranges', () => {
     const instant = Date.parse('2026-09-02T04:00:00.000Z')
     const today = todayRange(instant, 'Asia/Shanghai')

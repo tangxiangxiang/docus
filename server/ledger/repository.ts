@@ -638,6 +638,7 @@ function transactionParams(transaction: LedgerTransaction): TransactionParams {
         transferFeeMode: transaction.feeMode ?? null,
         fromAccountId: transaction.fromAccountId,
         toAccountId: transaction.toAccountId,
+        payee: transaction.payee,
       }
     case 'adjustment':
       return {
