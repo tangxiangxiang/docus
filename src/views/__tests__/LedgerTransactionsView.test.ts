@@ -350,6 +350,7 @@ describe('Ledger live transaction history workspace', () => {
     await flushPromises()
 
     expect(wrapper.get('[data-testid="ledger-transactions-empty"]').text()).toContain('没有符合当前筛选条件的交易')
+    expect(wrapper.find('.ledger-empty-icon').exists()).toBe(true)
     expect(wrapper.get('[data-testid="ledger-transactions-empty"]').text()).toContain('清除筛选')
   })
 

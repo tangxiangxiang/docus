@@ -575,10 +575,15 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
         :bottom-bordered="false"
         :single-line="false"
       />
-      <NEmpty v-else class="ledger-transactions-empty" data-testid="ledger-transactions-empty" :show-icon="false" :description="hasFilters ? '没有符合当前筛选条件的交易' : '暂无交易记录'">
+      <NEmpty v-else class="ledger-transactions-empty" data-testid="ledger-transactions-empty" size="medium" :description="hasFilters ? '没有符合当前筛选条件的交易' : '暂无交易记录'">
+        <template #icon>
+          <span class="ledger-empty-icon" aria-hidden="true">
+            <NIcon :size="24"><component :is="hasFilters ? Search : Wallet" /></NIcon>
+          </span>
+        </template>
         <template #extra>
           <div class="ledger-empty-extra">
-            <p>{{ hasFilters ? '可以清除筛选，或换一个日期和账户。' : '保存第一笔收入、支出或转账后，它会显示在这里。' }}</p>
+            <p>{{ hasFilters ? '可以清除筛选，或尝试其他日期、账户和分类。' : '保存第一笔收入、支出或转账后，它会显示在这里。' }}</p>
             <NButton v-if="hasFilters" class="ledger-secondary-button" attr-type="button" size="small" :bordered="false" @click="clearFilters">清除筛选</NButton>
             <NButton v-else class="ledger-primary-button" attr-type="button" type="primary" size="small" :bordered="false" :disabled="!store.activeAccounts.value.length" @click="transactionSheetOpen = true">记下第一笔</NButton>
           </div>
@@ -691,10 +696,31 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
 .ledger-transaction-amount { text-align: right; color: var(--text-h); font-size: .83rem; }
 .ledger-transaction-amount.is-income { color: #18794e; }
 .ledger-transaction-amount.is-expense { color: #b42318; }
-.ledger-transactions-empty { display: grid; min-height: 240px; place-items: center start; align-content: center; gap: 8px; color: var(--text-muted); text-align: left; }
-.ledger-transactions-empty :deep(.n-empty__description) { color: var(--text-h); font-size: 1rem; }
-.ledger-transactions-empty :deep(.n-empty__extra) { display: grid; gap: 8px; color: var(--text-muted); font-size: .8rem; text-align: left; }
-.ledger-empty-extra { display: grid; justify-items: start; gap: 8px; text-align: left; }
+.ledger-transactions-empty {
+  display: grid;
+  min-height: 240px;
+  place-items: center;
+  align-content: center;
+  gap: 12px;
+  padding: 42px 24px;
+  box-sizing: border-box;
+  color: var(--text-muted);
+  text-align: center;
+}
+.ledger-empty-icon {
+  display: grid;
+  width: 56px;
+  height: 56px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--ledger-border));
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--ledger-surface-strong));
+  box-shadow: inset 0 1px 0 var(--ledger-highlight);
+  color: var(--accent);
+}
+.ledger-transactions-empty :deep(.n-empty__description) { color: var(--text-h); font-size: 1rem; font-weight: 650; }
+.ledger-transactions-empty :deep(.n-empty__extra) { display: grid; gap: 14px; max-width: 360px; color: var(--text-muted); font-size: .8rem; line-height: 1.6; text-align: center; }
+.ledger-empty-extra { display: grid; justify-items: center; gap: 14px; text-align: center; }
 .ledger-transactions-empty p { margin: 0; }
 .ledger-no-active-account-notice { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 18px; padding: 12px 13px; border: 1px solid color-mix(in srgb, #b7791f 30%, var(--border)); border-radius: 8px; background: color-mix(in srgb, #f6ad55 7%, var(--bg-soft)); }
 .ledger-no-active-account-notice strong { color: var(--text-h); font-size: .8rem; }
