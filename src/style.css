@@ -191,6 +191,9 @@ body.ledger-accounts-mode #app {
   min-width: 0;
   flex: 1 1 auto;
 }
+.n-base-selection-input__content .ledger-account-select-balance {
+  display: none;
+}
 .ledger-account-select-icon,
 .ledger-category-select-icon {
   display: inline-flex;

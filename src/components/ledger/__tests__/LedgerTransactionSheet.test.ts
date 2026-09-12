@@ -200,7 +200,7 @@ describe('Ledger transaction creation sheet', () => {
     expect(accountOption.find('.ledger-account-select-label').text()).toBe('招商银行')
     expect(accountOption.find('.ledger-account-select-balance').text()).toBe('¥10,000.00')
     expect(selectedAccount.find('.ledger-account-select-label').text()).toBe('招商银行')
-    expect(selectedAccount.find('.ledger-account-select-balance').exists()).toBe(false)
+    expect(selectedAccount.find('.ledger-account-select-balance').text()).toBe('¥10,000.00')
     expect(categoryOption.find('.ledger-category-select-option').exists()).toBe(true)
     expect(categoryOption.find('.ledger-category-select-icon').exists()).toBe(true)
     expect(categoryOption.find('.ledger-category-select-label').text()).toBe('餐饮')
@@ -209,7 +209,7 @@ describe('Ledger transaction creation sheet', () => {
     await setNaiveSelect(sheet, '账户', 'bank-1')
     await setNaiveSelect(sheet, '分类', 'food')
     expect(sheet.find('.ledger-account-select-label').text()).toContain('招商银行')
-    expect(sheet.find('.ledger-account-select-balance').exists()).toBe(false)
+    expect(sheet.find('.n-base-selection-input__content .ledger-account-select-balance').exists()).toBe(true)
     expect(sheet.find('.ledger-category-select-label').text()).toContain('餐饮')
   })
 

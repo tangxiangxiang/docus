@@ -111,13 +111,13 @@ function groupedAccountOptions(showBalance: boolean, allowedNatures?: readonly (
   })
 }
 
-function renderAccountContent(option: SelectOption | SelectGroupOption, selected = false) {
+function renderAccountContent(option: SelectOption | SelectGroupOption) {
   if (option.type === 'group') {
     return h('span', { class: 'ledger-account-select-group' }, String(option.label ?? ''))
   }
   const account = activeAccounts.value.find((item) => item.id === option.value)
   const accountName = String(option.accountName ?? account?.name ?? '')
-  const balanceLabel = selected ? '' : String(option.balanceLabel ?? '')
+  const balanceLabel = String(option.balanceLabel ?? '')
   return h('span', { class: 'ledger-account-select-option' }, [
     h('span', { class: 'ledger-account-select-icon', 'aria-hidden': 'true' }, [
       h(LedgerAccountIcon, { icon: account?.icon, size: 18 }),
@@ -127,8 +127,8 @@ function renderAccountContent(option: SelectOption | SelectGroupOption, selected
   ])
 }
 
-function renderAccountLabel(option: SelectOption | SelectGroupOption, selected = false) {
-  return renderAccountContent(option, selected)
+function renderAccountLabel(option: SelectOption | SelectGroupOption) {
+  return renderAccountContent(option)
 }
 
 function customCategoryIconSource(icon: string | undefined): string | undefined {

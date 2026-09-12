@@ -16,7 +16,7 @@ import {
   type DataTableColumns,
   type SelectOption,
 } from 'naive-ui'
-import { ArrowDown, ArrowRight, ArrowUp, Calendar, Search, Tag, Wallet } from '@vicons/tabler'
+import { ArrowDown, ArrowRight, ArrowUp, ArrowsVertical, Calendar, Search, Tag, Wallet } from '@vicons/tabler'
 import { useDebounceFn } from '@vueuse/core'
 import { Temporal } from '@js-temporal/polyfill'
 import { useRoute } from 'vue-router'
@@ -520,7 +520,7 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
             @click="selectFilterType(option.value as LedgerTransactionFilterType | 'all')"
           >
             <NIcon v-if="option.value !== 'all'" :size="15" aria-hidden="true"><component :is="transactionTypeIcon(String(option.value))" /></NIcon>
-            <span v-else class="ledger-type-option-dot" aria-hidden="true"><NIcon :size="15"><Wallet /></NIcon></span>
+            <NIcon v-else :size="15" aria-hidden="true"><ArrowsVertical /></NIcon>
             {{ filterTypeLabel(String(option.value)) }}
           </button>
         </div>
@@ -880,7 +880,6 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
   color: #fff;
   box-shadow: none;
 }
-.ledger-type-option-dot { display: inline-flex; align-items: center; }
 .ledger-filter-divider { display: none; }
 .ledger-filter-select-grid {
   display: grid;
