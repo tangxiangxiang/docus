@@ -189,6 +189,17 @@ describe('SettingsLedgerCategoriesSection', () => {
     expect(useToast().toasts.value.at(-1)?.message).toBe('分类已恢复')
   })
 
+  it('keeps the archived category section visible when there are no archived categories', async () => {
+    const wrapper = mountSection()
+    const section = wrapper.get('[data-testid="settings-ledger-archived-categories"]')
+
+    expect((section.element as HTMLDetailsElement).open).toBe(false)
+    expect(section.text()).toContain('已归档分类')
+
+    await section.get('summary').trigger('click')
+    expect(section.text()).toContain('暂无已归档分类')
+  })
+
   it('permanently deletes an archived category after confirmation', async () => {
     const archived = { ...category('old-food', 'pingguo'), archivedAt: 2 }
     ledger.archivedCategories.value = [archived]

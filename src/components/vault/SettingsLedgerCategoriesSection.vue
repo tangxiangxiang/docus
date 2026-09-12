@@ -373,7 +373,6 @@ async function onFileSelected(event: Event): Promise<void> {
         </div>
       </div>
       <details
-        v-if="archivedCategories.length"
         class="settings-card settings-ledger-archived-card"
         data-testid="settings-ledger-archived-categories"
       >
@@ -385,46 +384,49 @@ async function onFileSelected(event: Event): Promise<void> {
           <span class="settings-ledger-archived-chevron" aria-hidden="true">⌄</span>
         </summary>
         <div class="settings-ledger-archived-content">
-          <div v-for="group in archivedCategoryGroups" :key="group.kind" class="settings-ledger-archived-group">
-            <h5>{{ group.title }}</h5>
-            <div class="settings-ledger-archived-options" role="list">
-              <div
-                v-for="category in group.categories"
-                :key="category.id"
-                class="settings-ledger-archived-option"
-                :data-category-id="category.id"
-                :data-testid="`settings-ledger-archived-category-${category.id}`"
-                role="listitem"
-              >
-                <span class="settings-ledger-category-glyph" aria-hidden="true">
-                  <img v-if="category.icon?.startsWith('custom_category_') && categoryIconSource(category.icon)" :src="categoryIconSource(category.icon)" alt="">
-                  <LedgerIcon v-else :icon="category.icon ?? DEFAULT_CATEGORY_ICON" :size="20" />
-                </span>
-                <span class="settings-ledger-category-label" :title="category.name">{{ category.name }}</span>
-                <span class="settings-ledger-archived-actions">
-                  <NButton
-                    class="settings-ledger-category-action"
-                    attr-type="button"
-                    size="small"
-                    :bordered="false"
-                    :disabled="categoryActionId !== null"
-                    :aria-label="`恢复分类：${category.name}`"
-                    @click="restoreArchivedCategory(category)"
-                  >{{ categoryActionId === category.id ? '处理中…' : '恢复' }}</NButton>
-                  <NButton
-                    class="settings-ledger-category-action settings-ledger-category-action-danger"
-                    attr-type="button"
-                    type="error"
-                    secondary
-                    size="small"
-                    :disabled="categoryActionId !== null"
-                    :aria-label="`永久删除分类：${category.name}`"
-                    @click="deleteArchivedCategory(category)"
-                  >{{ categoryActionId === category.id ? '处理中…' : '永久删除' }}</NButton>
-                </span>
+          <template v-if="archivedCategoryGroups.length">
+            <div v-for="group in archivedCategoryGroups" :key="group.kind" class="settings-ledger-archived-group">
+              <h5>{{ group.title }}</h5>
+              <div class="settings-ledger-archived-options" role="list">
+                <div
+                  v-for="category in group.categories"
+                  :key="category.id"
+                  class="settings-ledger-archived-option"
+                  :data-category-id="category.id"
+                  :data-testid="`settings-ledger-archived-category-${category.id}`"
+                  role="listitem"
+                >
+                  <span class="settings-ledger-category-glyph" aria-hidden="true">
+                    <img v-if="category.icon?.startsWith('custom_category_') && categoryIconSource(category.icon)" :src="categoryIconSource(category.icon)" alt="">
+                    <LedgerIcon v-else :icon="category.icon ?? DEFAULT_CATEGORY_ICON" :size="20" />
+                  </span>
+                  <span class="settings-ledger-category-label" :title="category.name">{{ category.name }}</span>
+                  <span class="settings-ledger-archived-actions">
+                    <NButton
+                      class="settings-ledger-category-action"
+                      attr-type="button"
+                      size="small"
+                      :bordered="false"
+                      :disabled="categoryActionId !== null"
+                      :aria-label="`恢复分类：${category.name}`"
+                      @click="restoreArchivedCategory(category)"
+                    >{{ categoryActionId === category.id ? '处理中…' : '恢复' }}</NButton>
+                    <NButton
+                      class="settings-ledger-category-action settings-ledger-category-action-danger"
+                      attr-type="button"
+                      type="error"
+                      secondary
+                      size="small"
+                      :disabled="categoryActionId !== null"
+                      :aria-label="`永久删除分类：${category.name}`"
+                      @click="deleteArchivedCategory(category)"
+                    >{{ categoryActionId === category.id ? '处理中…' : '永久删除' }}</NButton>
+                  </span>
+                </div>
               </div>
             </div>
-          </div>
+          </template>
+          <p v-else class="settings-ledger-archived-empty">暂无已归档分类</p>
         </div>
       </details>
     </div>
@@ -433,11 +435,15 @@ async function onFileSelected(event: Event): Promise<void> {
 
 <style scoped>
 .settings-section { display: flex; flex-direction: column; height: 100%; min-height: 0; }
-.settings-section-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
-.settings-ledger-category-groups { display: grid; gap: 12px; padding-bottom: 4px; }
-.settings-ledger-category-card { display: flex; flex-direction: column; min-height: 0; box-sizing: border-box; }
+.settings-section-body { display: flex; flex: 1 1 auto; min-height: 0; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; box-sizing: border-box; }
+.settings-ledger-category-groups { display: grid; height: calc(100% - 84px); min-height: 360px; flex: 0 0 calc(100% - 84px); grid-template-rows: repeat(2, minmax(0, 1fr)); gap: 12px; overflow: hidden; }
+.settings-ledger-category-card { display: flex; min-height: 0; flex-direction: column; box-sizing: border-box; overflow: hidden; }
 .settings-ledger-category-file-input { display: none; }
-.settings-ledger-category-options { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); align-content: start; gap: 10px; min-height: 88px; box-sizing: border-box; padding: 8px 10px 12px 2px; }
+.settings-ledger-category-options { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); min-height: 0; flex: 1 1 auto; align-content: start; gap: 10px; box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 8px 10px 12px 2px; }
+.settings-ledger-category-options::-webkit-scrollbar { width: 8px; }
+.settings-ledger-category-options::-webkit-scrollbar-track { background: transparent; }
+.settings-ledger-category-options::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 999px; background: color-mix(in srgb, var(--settings-muted, var(--text-muted)) 42%, transparent); background-clip: padding-box; }
+.settings-ledger-category-options::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--settings-muted, var(--text-muted)) 62%, transparent); background-clip: padding-box; }
 .settings-ledger-category-option { position: relative; display: inline-flex; width: 100%; min-width: 0; min-height: 40px; box-sizing: border-box; align-items: center; justify-content: flex-start; gap: 7px; padding: 6px 12px; overflow: visible; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: var(--text-muted); cursor: pointer; font: inherit; text-align: left; transform-origin: 50% 55%; }
 .settings-ledger-category-glyph { display: grid; width: 22px; height: 22px; flex: 0 0 22px; place-items: center; }
 .settings-ledger-category-glyph > img { width: 20px; height: 20px; object-fit: contain; }
@@ -453,17 +459,20 @@ async function onFileSelected(event: Event): Promise<void> {
 .settings-ledger-category-delete:disabled { cursor: wait; opacity: .5; }
 .settings-ledger-category-empty { color: var(--text-muted); font-size: .75rem; }
 .settings-ledger-category-error { margin: 0 0 8px; color: #dc4c4c; font-size: .75rem; }
-.settings-ledger-archived-card { padding: 0; overflow: hidden; }
+.settings-ledger-archived-card { flex: 0 0 auto; margin-top: 12px; padding: 0; overflow: hidden; background: var(--bg-soft); }
+.settings-ledger-archived-card[open] { display: flex; flex-direction: column; }
 .settings-ledger-archived-summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 20px; cursor: pointer; list-style: none; }
 .settings-ledger-archived-summary::-webkit-details-marker { display: none; }
-.settings-ledger-archived-summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.settings-ledger-archived-summary:focus { outline: none; }
+.settings-ledger-archived-summary:focus-visible { border-radius: 10px; box-shadow: inset 0 0 0 2px var(--accent); }
 .settings-ledger-archived-summary-copy { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
 .settings-ledger-archived-summary .settings-card-title { display: flex; align-items: center; gap: 7px; margin: 0; }
 .settings-ledger-archived-count { display: inline-flex; min-width: 20px; height: 20px; align-items: center; justify-content: center; box-sizing: border-box; padding: 0 6px; border-radius: 10px; background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--accent); font-size: .72rem; font-weight: 650; }
 .settings-ledger-archived-hint { color: var(--settings-muted, var(--text-muted)); font-size: .78rem; line-height: 1.35; }
 .settings-ledger-archived-chevron { flex: 0 0 auto; color: var(--settings-muted, var(--text-muted)); font-size: 1.1rem; line-height: 1; transition: transform .15s ease; }
 .settings-ledger-archived-card[open] .settings-ledger-archived-chevron { transform: rotate(180deg); }
-.settings-ledger-archived-content { padding: 0 20px 16px; border-top: 1px solid var(--settings-border); }
+.settings-ledger-archived-content { max-height: 240px; min-height: 0; padding: 0 20px 16px; overflow-y: auto; overscroll-behavior: contain; border-top: 1px solid var(--settings-border); background: var(--bg-soft); }
+.settings-ledger-archived-empty { margin: 0; padding: 14px 0 2px; color: var(--settings-muted, var(--text-muted)); font-size: .78rem; }
 .settings-ledger-archived-group + .settings-ledger-archived-group { margin-top: 14px; }
 .settings-ledger-archived-group h5 { margin: 14px 0 6px; color: var(--settings-muted, var(--text-muted)); font-size: .75rem; font-weight: 600; }
 .settings-ledger-archived-options { display: grid; gap: 0; }
