@@ -31,6 +31,7 @@ export function seedDefaultLedgerCategories(
       name: entry.name,
       normalizedName,
       ...(entry.systemKey ? { systemKey: entry.systemKey } : {}),
+      isDefault: true,
       icon: entry.icon as LedgerCategory['icon'],
       archivedAt: null,
       version: 1,

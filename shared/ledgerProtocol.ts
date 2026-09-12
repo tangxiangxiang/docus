@@ -116,7 +116,7 @@ export interface LedgerCategoryDto {
   readonly kind: LedgerCategoryKind
   readonly name: string
   readonly normalizedName: string
-  /** Protected system category identity used by composite transactions. */
+  /** True when the category is a built-in default protected from lifecycle changes. */
   readonly systemKey?: LedgerCategorySystemKey
   readonly protected?: boolean
   readonly icon?: LedgerAccountIcon

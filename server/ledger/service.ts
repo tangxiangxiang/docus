@@ -258,7 +258,8 @@ function toCategoryDto(category: LedgerCategory): LedgerCategoryDto {
     kind: category.kind,
     name: category.name,
     normalizedName: category.normalizedName,
-    ...(category.systemKey ? { systemKey: category.systemKey, protected: true } : {}),
+    ...(category.systemKey ? { systemKey: category.systemKey } : {}),
+    ...(category.isDefault || category.systemKey ? { protected: true } : {}),
     ...(category.icon && category.icon !== 'wallet' ? { icon: category.icon } : {}),
     archivedAt: category.archivedAt,
     version: category.version,
@@ -1501,6 +1502,7 @@ export function createLedgerService(
           name: request.name,
           normalizedName,
           ...(request.icon && request.icon !== 'wallet' ? { icon: request.icon } : {}),
+          isDefault: false,
           archivedAt: null,
           version: 1,
           createdAt: timestamp,
@@ -1533,10 +1535,10 @@ export function createLedgerService(
       const patch = parseCategoryPatchRequest(value)
       assertExpectedVersion(category.version, patch.expectedVersion)
 
-      if (category.systemKey && (hasOwn(patch, 'name') || hasOwn(patch, 'kind'))) {
-        throw ledgerValidationError('System categories cannot be renamed or moved to another kind', {
-          field: 'systemKey',
-          systemKey: category.systemKey,
+      if ((category.isDefault || category.systemKey) && (hasOwn(patch, 'name') || hasOwn(patch, 'kind'))) {
+        throw ledgerValidationError('Default categories cannot be renamed or moved to another kind', {
+          field: category.systemKey ? 'systemKey' : 'isDefault',
+          ...(category.systemKey ? { systemKey: category.systemKey } : {}),
         })
       }
 
@@ -1574,10 +1576,10 @@ export function createLedgerService(
       requireSettings()
       const category = repository.getCategory(id)
       if (category === null) notFound('Ledger Category')
-      if (category.systemKey) {
-        throw ledgerValidationError('System categories cannot be deleted', {
-          field: 'systemKey',
-          systemKey: category.systemKey,
+      if (category.isDefault || category.systemKey) {
+        throw ledgerValidationError('Default categories cannot be deleted', {
+          field: category.systemKey ? 'systemKey' : 'isDefault',
+          ...(category.systemKey ? { systemKey: category.systemKey } : {}),
         })
       }
       const expectedVersion = parseExpectedVersionCommand(value)
@@ -1599,10 +1601,10 @@ export function createLedgerService(
       requireSettings()
       const category = repository.getCategory(id)
       if (category === null) notFound('Ledger Category')
-      if (category.systemKey) {
-        throw ledgerValidationError('System categories cannot be archived', {
-          field: 'systemKey',
-          systemKey: category.systemKey,
+      if (category.isDefault || category.systemKey) {
+        throw ledgerValidationError('Default categories cannot be archived', {
+          field: category.systemKey ? 'systemKey' : 'isDefault',
+          ...(category.systemKey ? { systemKey: category.systemKey } : {}),
         })
       }
       if (category.archivedAt !== null) archivedCategory()

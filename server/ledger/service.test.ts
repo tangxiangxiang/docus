@@ -153,6 +153,7 @@ describe('Ledger Settings and default Category service', () => {
     expect(new Set(categories.map((category) => `${category.kind}:${category.name}`))).toEqual(
       new Set(DEFAULT_LEDGER_CATEGORIES_V1.map((category) => `${category.kind}:${category.name}`)),
     )
+    expect(categories.every((category) => category.protected)).toBe(true)
     expect(service.getSettings()).toMatchObject({
       baseCurrency: 'CNY',
       currencyExponent: 2,
@@ -180,6 +181,27 @@ describe('Ledger Settings and default Category service', () => {
       version: 7,
     })
     expect(service.listCategories(undefined, true)).toHaveLength(20)
+  })
+
+  it('protects every built-in category from lifecycle changes', () => {
+    const { service } = freshService()
+    initialize(service)
+
+    for (const category of service.listCategories(undefined, true)) {
+      expect(category.protected).toBe(true)
+      expectLedgerError(
+        () => service.patchCategory(category.id, { expectedVersion: category.version, name: `${category.name} 修改` }),
+        'ledger-validation-failed',
+      )
+      expectLedgerError(
+        () => service.archiveCategory(category.id, { expectedVersion: category.version }),
+        'ledger-validation-failed',
+      )
+      expectLedgerError(
+        () => service.deleteCategory(category.id, { expectedVersion: category.version }),
+        'ledger-validation-failed',
+      )
+    }
   })
 
   it('replays the original Settings snapshot and rejects a new identity after initialization', () => {

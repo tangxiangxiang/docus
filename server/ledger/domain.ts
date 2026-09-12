@@ -84,6 +84,7 @@ export interface LedgerCategoryRow {
   readonly normalized_name?: unknown
   readonly system_key?: unknown
   readonly icon?: unknown
+  readonly is_default?: unknown
   readonly archived_at?: unknown
   readonly version?: unknown
   readonly created_at?: unknown
@@ -149,6 +150,8 @@ export interface LedgerCategory {
   readonly name: string
   readonly normalizedName: string
   readonly systemKey?: LedgerCategorySystemKey
+  /** Built-in categories cannot be renamed, archived, or deleted. */
+  readonly isDefault?: boolean
   readonly icon?: LedgerAccountIcon
   readonly archivedAt: number | null
   readonly version: number
@@ -509,6 +512,10 @@ export function ledgerCategoryFromRow(row: unknown): LedgerCategory {
   const systemKey = hasOwn(record, 'system_key')
     ? nullableEnumValue(record, 'category', 'system_key', ['interest', 'fee'] as const)
     : null
+  const isDefault = hasOwn(record, 'is_default')
+    ? safeInteger(record, 'category', 'is_default')
+    : 0
+  if (isDefault !== 0 && isDefault !== 1) invalidRow('category', 'is_default', 'must be 0 or 1')
   if (
     normalizedName.length === 0
     || normalizedName !== normalizeLedgerCategoryName(name)
@@ -524,6 +531,7 @@ export function ledgerCategoryFromRow(row: unknown): LedgerCategory {
     name,
     normalizedName,
     ...(systemKey === null ? {} : { systemKey }),
+    ...(isDefault === 1 ? { isDefault: true } : {}),
     ...(record.icon && record.icon !== 'wallet' ? { icon: record.icon as LedgerAccountIcon } : {}),
     archivedAt: nullableUtcMilliseconds(record, 'category', 'archived_at'),
     version: positiveVersion(record, 'category', 'version'),

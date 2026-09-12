@@ -42,9 +42,10 @@ function ensureDataDir() {
  *
  * The schema_version table is created on the very first call (before
  * any migration runs), so subsequent migrations can record their
- * version.
+ * version. Tests may pass a maximum version to inspect an intermediate
+ * schema.
  */
-export function applyMigrations(db: DatabaseT) {
+export function applyMigrations(db: DatabaseT, maxVersion = Number.POSITIVE_INFINITY) {
   db.exec(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)`)
   const row = db.prepare('SELECT version FROM schema_version LIMIT 1').get() as
     | { version: number }
@@ -57,7 +58,7 @@ export function applyMigrations(db: DatabaseT) {
 
   for (const file of files) {
     const version = parseInt(file.match(/^(\d+)/)![1], 10)
-    if (version <= current) continue
+    if (version <= current || version > maxVersion) continue
     const sql = readFileSync(path.join(MIGRATIONS_DIR, file), 'utf8')
     db.transaction(() => {
       db.exec(sql)

@@ -357,7 +357,7 @@ async function onFileSelected(event: Event): Promise<void> {
                 @keydown.esc.prevent="cancelRename"
                 @blur="finishRename(category)"
               >
-              <span v-else class="settings-ledger-category-label" :title="category.protected ? '系统分类不可重命名或归档' : undefined" @dblclick.stop="!category.protected && startRename(category.id, category.name)">{{ category.name }}</span>
+              <span v-else class="settings-ledger-category-label" :title="category.protected ? '默认分类不可重命名或归档' : undefined" @dblclick.stop="!category.protected && startRename(category.id, category.name)">{{ category.name }}</span>
               <button
                 v-if="managing && !category.protected"
                 type="button"

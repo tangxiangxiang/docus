@@ -106,14 +106,14 @@ const HAS_ACCOUNT_HISTORY = `
 `
 
 const SELECT_CATEGORY = `
-  SELECT id, kind, name, normalized_name, system_key, icon, archived_at, version,
+  SELECT id, kind, name, normalized_name, system_key, icon, is_default, archived_at, version,
          created_at, updated_at
   FROM ledger_categories
   WHERE id = @id
 `
 
 const SELECT_CATEGORY_BY_IDENTITY = `
-  SELECT id, kind, name, normalized_name, system_key, icon, archived_at, version,
+  SELECT id, kind, name, normalized_name, system_key, icon, is_default, archived_at, version,
          created_at, updated_at
   FROM ledger_categories
   WHERE kind = @kind
@@ -121,21 +121,21 @@ const SELECT_CATEGORY_BY_IDENTITY = `
 `
 
 const SELECT_CATEGORY_BY_SYSTEM_KEY = `
-  SELECT id, kind, name, normalized_name, system_key, icon, archived_at, version,
+  SELECT id, kind, name, normalized_name, system_key, icon, is_default, archived_at, version,
          created_at, updated_at
   FROM ledger_categories
   WHERE system_key = @systemKey
 `
 
 const SELECT_CATEGORIES = `
-  SELECT id, kind, name, normalized_name, system_key, icon, archived_at, version,
+  SELECT id, kind, name, normalized_name, system_key, icon, is_default, archived_at, version,
          created_at, updated_at
   FROM ledger_categories
   ORDER BY kind ASC, normalized_name ASC, id ASC
 `
 
 const SELECT_ACTIVE_CATEGORIES = `
-  SELECT id, kind, name, normalized_name, system_key, icon, archived_at, version,
+  SELECT id, kind, name, normalized_name, system_key, icon, is_default, archived_at, version,
          created_at, updated_at
   FROM ledger_categories
   WHERE archived_at IS NULL
@@ -144,9 +144,9 @@ const SELECT_ACTIVE_CATEGORIES = `
 
 const INSERT_CATEGORY = `
   INSERT INTO ledger_categories (
-    id, kind, name, normalized_name, system_key, icon, archived_at, version, created_at, updated_at
+    id, kind, name, normalized_name, system_key, icon, is_default, archived_at, version, created_at, updated_at
   ) VALUES (
-    @id, @kind, @name, @normalizedName, @systemKey, @icon, @archivedAt, @version, @createdAt, @updatedAt
+    @id, @kind, @name, @normalizedName, @systemKey, @icon, @isDefault, @archivedAt, @version, @createdAt, @updatedAt
   )
 `
 
@@ -157,6 +157,7 @@ const UPDATE_CATEGORY = `
       normalized_name = @normalizedName,
       system_key = @systemKey,
       icon = @icon,
+      is_default = @isDefault,
       archived_at = @archivedAt,
       version = @version,
       updated_at = @updatedAt
@@ -475,6 +476,7 @@ interface CategoryParams {
   readonly normalizedName: string
   readonly systemKey: LedgerCategory['systemKey'] | null
   readonly icon: LedgerCategory['icon']
+  readonly isDefault: number
   readonly archivedAt: number | null
   readonly version: number
   readonly createdAt: number
@@ -579,6 +581,7 @@ function categoryParams(category: LedgerCategory): CategoryParams {
     normalizedName: category.normalizedName,
     systemKey: category.systemKey ?? null,
     icon: category.icon ?? 'wallet',
+    isDefault: category.isDefault ? 1 : 0,
     archivedAt: category.archivedAt,
     version: category.version,
     createdAt: category.createdAt,
