@@ -31,7 +31,7 @@ import LedgerTransactionDetailSheet from '../components/ledger/LedgerTransaction
 import LedgerPendingCreateGate from '../components/ledger/LedgerPendingCreateGate.vue'
 import LedgerTransactionSheet from '../components/ledger/LedgerTransactionSheet.vue'
 import { ledgerErrorMessage } from '../features/ledger/ledgerErrors'
-import { instantFromLedgerDate, formatLedgerDateTime } from '../features/ledger/time'
+import { formatLedgerDateTime, formatLedgerTransactionDateTime, instantFromLedgerDate } from '../features/ledger/time'
 import { useLedgerStore } from '../features/ledger/ledgerStore'
 import { ledgerSelectNodeProps } from '../features/ledger/naiveControls'
 import LedgerDatePicker from '../components/ledger/LedgerDatePicker.vue'
@@ -233,11 +233,7 @@ function scheduleSearch(): void {
 }
 
 function formatTransactionTableTime(instantMs: number): string {
-  const timezone = store.settings.value?.timezone ?? 'UTC'
-  const local = Temporal.Instant.fromEpochMilliseconds(instantMs).toZonedDateTimeISO(timezone)
-  const date = `${String(local.month).padStart(2, '0')}/${String(local.day).padStart(2, '0')}`
-  const time = `${String(local.hour).padStart(2, '0')}:${String(local.minute).padStart(2, '0')}`
-  return `${local.year}/${date} ${time}`
+  return formatLedgerTransactionDateTime(instantMs, store.settings.value?.timezone ?? 'UTC')
 }
 
 function buildQuery(pageNumber = tablePage.value): LedgerTransactionQuery {

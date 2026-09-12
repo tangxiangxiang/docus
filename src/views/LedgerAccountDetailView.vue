@@ -19,7 +19,7 @@ import LedgerPendingCreateGate from '../components/ledger/LedgerPendingCreateGat
 import { ledgerAccountTypeOptionsForNature } from '../features/ledger/accountPresentation'
 import { ledgerErrorMessage } from '../features/ledger/ledgerErrors'
 import { formatLedgerMoney } from '../features/ledger/money'
-import { formatLedgerDateTime } from '../features/ledger/time'
+import { formatLedgerDateTime, formatLedgerTransactionDateTime } from '../features/ledger/time'
 import { useLedgerStore } from '../features/ledger/ledgerStore'
 import type {
   LedgerAccountBalanceTrendPoint,
@@ -185,6 +185,11 @@ function transactionAmountMinor(transaction: LedgerTransactionDto): number | nul
 function formatTimestamp(timestamp: number): string {
   if (!Number.isFinite(timestamp) || timestamp <= 0) return '—'
   return formatLedgerDateTime(timestamp, store.settings.value?.timezone ?? 'UTC')
+}
+
+function formatTransactionTimestamp(timestamp: number): string {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return '—'
+  return formatLedgerTransactionDateTime(timestamp, store.settings.value?.timezone ?? 'UTC')
 }
 
 function maskCardNumber(cardNumber: string | undefined): string {
@@ -441,7 +446,7 @@ const netMovement = computed(() => {
             <div v-if="recentTransactions.length" class="ledger-recent-table">
               <div class="ledger-recent-table-head"><span>日期</span><span>类型</span><span>分类</span><span>摘要</span><span>金额</span><span>余额</span></div>
               <div v-for="transaction in recentTransactions" :key="transaction.id" class="ledger-recent-row">
-                <time>{{ formatTimestamp(transaction.occurredAt) }}</time>
+                <time>{{ formatTransactionTimestamp(transaction.occurredAt) }}</time>
                 <span class="ledger-transaction-badge" :class="`is-${transaction.type}`">{{ transactionTypeLabel(transaction) }}</span>
                 <span class="ledger-transaction-category">{{ transactionCategory(transaction) }}</span>
                 <span class="ledger-transaction-summary">{{ transactionTitle(transaction) }}</span>
@@ -758,6 +763,8 @@ const netMovement = computed(() => {
 .ledger-recent-table-head > :nth-child(6),
 .ledger-recent-row > :nth-child(5),
 .ledger-recent-row > :nth-child(6) { justify-self: end; text-align: right; }
+.ledger-recent-table-head > :nth-child(2),
+.ledger-recent-row > :nth-child(2) { justify-self: center; text-align: center; }
 .ledger-transaction-badge { justify-self: start; padding: 3px 8px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--accent); font-size: .68rem; white-space: nowrap; }
 .ledger-transaction-badge.is-income { background: color-mix(in srgb, #2da76e 13%, transparent); color: #168451; }
 .ledger-transaction-badge.is-expense { background: color-mix(in srgb, #d94a58 13%, transparent); color: #c43443; }

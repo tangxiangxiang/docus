@@ -48,6 +48,14 @@ export function formatLedgerDateTime(
   }).format(new Date(instantMs))
 }
 
+/** Format a transaction timestamp for compact Ledger tables. */
+export function formatLedgerTransactionDateTime(instantMs: number, timezone: string): string {
+  const local = Temporal.Instant.fromEpochMilliseconds(instantMs).toZonedDateTimeISO(timezone)
+  const date = `${String(local.year).padStart(4, '0')}/${pad(local.month)}/${pad(local.day)}`
+  const time = `${pad(local.hour)}:${pad(local.minute)}`
+  return `${date} ${time}`
+}
+
 function formatLedgerCalendarDate(
   instantMs: number,
   timezone: string,

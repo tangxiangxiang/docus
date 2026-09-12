@@ -4,6 +4,7 @@ import {
   formatLedgerDateTime,
   formatLedgerPeriodLabel,
   formatLedgerPeriodPickerLabel,
+  formatLedgerTransactionDateTime,
   instantFromLedgerDate,
   instantFromLocalDateTime,
   localDateTimeInputFromInstant,
@@ -21,6 +22,11 @@ describe('Ledger timezone presentation boundary', () => {
   it('formats using the explicit Ledger timezone rather than the browser default', () => {
     const instant = instantFromLocalDateTime('2026-08-20T00:30', 'Asia/Shanghai')
     expect(formatLedgerDateTime(instant, 'Asia/Shanghai')).toContain('2026')
+  })
+
+  it('formats transaction timestamps with zero-padded numeric date and time', () => {
+    const instant = instantFromLocalDateTime('2026-09-13T00:11', 'Asia/Shanghai')
+    expect(formatLedgerTransactionDateTime(instant, 'Asia/Shanghai')).toBe('2026/09/13 00:11')
   })
 
   it('formats today at calendar-date granularity', () => {
