@@ -260,8 +260,18 @@ describe('Ledger live transaction history workspace', () => {
     expect(wrapper.get('[data-testid="ledger-transaction-row-tx-expense"]').text()).toContain('-¥38.00')
     expect(wrapper.get('[data-testid="ledger-transaction-row-tx-transfer"]').text()).toContain('¥50.00')
     expect(wrapper.get('[data-testid="ledger-transaction-row-tx-transfer"]').text()).not.toContain('-¥50.00')
-    expect(getNaiveSelect(wrapper, '账户').props('options')).toEqual(expect.arrayContaining([{ value: 'old-bank', label: '旧账户（已归档）' }]))
+    expect(getNaiveSelect(wrapper, '账户').props('options')).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'group',
+        label: '资产账户',
+        children: expect.arrayContaining([
+          expect.objectContaining({ value: 'old-bank', accountName: '旧账户（已归档）' }),
+        ]),
+      }),
+    ]))
     expect(getNaiveSelect(wrapper, '分类').props('options')).toEqual(expect.arrayContaining([{ value: 'old-food', label: '旧餐饮（已归档）' }]))
+    expect(getNaiveSelect(wrapper, '账户').props('renderLabel')).toEqual(expect.any(Function))
+    expect(getNaiveSelect(wrapper, '分类').props('renderLabel')).toEqual(expect.any(Function))
     expect(wrapper.text()).not.toContain('billsMockData')
   })
 
@@ -349,7 +359,14 @@ describe('Ledger live transaction history workspace', () => {
 
     expect(wrapper.get('[data-testid="ledger-transactions-no-account"]').text()).toContain('当前没有可用于新增交易的账户')
     expect(wrapper.get('[data-testid="ledger-transaction-list"]').text()).toContain('午餐')
-    expect(getNaiveSelect(wrapper, '账户').props('options')).toEqual(expect.arrayContaining([{ value: 'old-bank', label: '旧账户（已归档）' }]))
+    expect(getNaiveSelect(wrapper, '账户').props('options')).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'group',
+        children: expect.arrayContaining([
+          expect.objectContaining({ value: 'old-bank', accountName: '旧账户（已归档）' }),
+        ]),
+      }),
+    ]))
     expect(getNaiveSelect(wrapper, '分类').props('options')).toEqual(expect.arrayContaining([{ value: 'old-food', label: '旧餐饮（已归档）' }]))
     expect(wrapper.get('[data-testid="ledger-transactions-record-button"]').attributes('disabled')).toBeDefined()
   })

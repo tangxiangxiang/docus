@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { NButton, NForm, type SelectOption } from 'naive-ui'
+import { NButton, NForm, type SelectGroupOption, type SelectOption } from 'naive-ui'
 import type {
   LedgerTransactionDto,
   LedgerTransferFeeMode,
@@ -11,6 +11,7 @@ import { ledgerDecimalFromMinor, parseLedgerMoney } from '../../features/ledger/
 import { useLedgerStore } from '../../features/ledger/ledgerStore'
 import { instantFromLocalDateTime, localDateTimeInputFromInstant } from '../../features/ledger/time'
 import LedgerTransactionFormFields from './LedgerTransactionFormFields.vue'
+import { ledgerAccountSelectOptions, renderLedgerAccountLabel, renderLedgerCategoryLabel } from './ledgerSelectRenderers'
 
 const props = withDefaults(defineProps<{
   transaction: LedgerTransactionDto
@@ -79,24 +80,33 @@ const categories = computed(() => {
   if (current && !active.some((category) => category.id === current.id)) return [current, ...active]
   return active
 })
-const accountOptions = computed<SelectOption[]>(() => store.activeAccounts.value.map((account) => ({
-  value: account.id,
-  label: account.name,
-})))
-const transferFromAccountOptions = computed<SelectOption[]>(() => accountOptionsForTransferSide('from'))
-const transferToAccountOptions = computed<SelectOption[]>(() => accountOptionsForTransferSide('to'))
+const accountOptions = computed<SelectGroupOption[]>(() => ledgerAccountSelectOptions(store.activeAccounts.value))
+const transferFromAccountOptions = computed<SelectGroupOption[]>(() => accountOptionsForTransferSide('from'))
+const transferToAccountOptions = computed<SelectGroupOption[]>(() => accountOptionsForTransferSide('to'))
 const categoryOptions = computed<SelectOption[]>(() => categories.value.map((category) => ({
   value: category.id,
   label: `${category.name}${category.archivedAt !== null ? '（已归档）' : ''}`,
 })))
-function accountOptionsForTransferSide(side: 'from' | 'to'): SelectOption[] {
-  return store.activeAccounts.value
-    .filter((account) => {
-      if (transferKind.value === 'general') return true
-      if (side === 'from') return account.nature === 'asset'
-      return transferKind.value === 'repayment' ? account.nature === 'liability' : account.nature === 'asset'
-    })
-    .map((account) => ({ value: account.id, label: account.name }))
+function accountOptionsForTransferSide(side: 'from' | 'to'): SelectGroupOption[] {
+  const allowedNatures = transferKind.value === 'general'
+    ? undefined
+    : side === 'from'
+      ? ['asset'] as const
+      : transferKind.value === 'repayment'
+        ? ['liability'] as const
+        : ['asset'] as const
+  return ledgerAccountSelectOptions(store.activeAccounts.value, {
+    showBalance: false,
+    allowedNatures,
+  })
+}
+
+function renderAccountLabel(option: SelectOption | SelectGroupOption) {
+  return renderLedgerAccountLabel(option, store.activeAccounts.value)
+}
+
+function renderCategoryLabel(option: SelectOption) {
+  return renderLedgerCategoryLabel(option, categories.value)
 }
 
 function associatedAccountIds(): string[] {
@@ -374,9 +384,11 @@ async function submit(): Promise<void> {
       :account-options="accountOptions"
       :transfer-from-account-options="transferFromAccountOptions"
       :transfer-to-account-options="transferToAccountOptions"
+      :render-account-label="renderAccountLabel"
       v-model:transfer-fee-amount="transferFeeAmount"
       v-model:transfer-fee-mode="transferFeeMode"
       :category-options="categoryOptions"
+      :render-category-label="renderCategoryLabel"
       :readonly-amount="transaction.type === 'adjustment' ? '由余额调整维护' : ledgerDecimalFromMinor(transaction.amountMinor, store.settings.value?.baseCurrency ?? 'CNY')"
       :readonly-occurred-at="occurredAt || '—'"
       :show-payee="transaction.type === 'income' || transaction.type === 'expense'"

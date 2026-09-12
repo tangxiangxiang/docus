@@ -14,6 +14,7 @@ import {
   NSelect,
   NSpin,
   type DataTableColumns,
+  type SelectGroupOption,
   type SelectOption,
 } from 'naive-ui'
 import { ArrowDown, ArrowRight, ArrowUp, ArrowsVertical, Calendar, Search, Tag, Wallet } from '@vicons/tabler'
@@ -35,6 +36,7 @@ import { useLedgerStore } from '../features/ledger/ledgerStore'
 import { ledgerSelectNodeProps } from '../features/ledger/naiveControls'
 import LedgerDatePicker from '../components/ledger/LedgerDatePicker.vue'
 import LedgerAnimatedMoney from '../components/ledger/LedgerAnimatedMoney.vue'
+import { ledgerAccountSelectOptions, renderLedgerAccountLabel, renderLedgerCategoryLabel } from '../components/ledger/ledgerSelectRenderers'
 
 const store = useLedgerStore()
 const route = useRoute()
@@ -75,12 +77,9 @@ const pageSizeOptions = [
   { value: 50, label: '50 / 页' },
   { value: 100, label: '100 / 页' },
 ]
-const accountOptions = computed<SelectOption[]>(() => [
+const accountOptions = computed<Array<SelectOption | SelectGroupOption>>(() => [
   { value: '', label: '全部账户' },
-  ...store.accounts.value.map((account) => ({
-    value: account.id,
-    label: `${account.name}${account.archivedAt !== null ? '（已归档）' : ''}`,
-  })),
+  ...ledgerAccountSelectOptions(store.accounts.value),
 ])
 const categoryOptions = computed<SelectOption[]>(() => [
   { value: '', label: '全部分类' },
@@ -141,6 +140,14 @@ function categoryName(id: string): string {
 
 function categoryLabel(category: LedgerCategoryDto): string {
   return `${category.name}${category.archivedAt !== null ? '（已归档）' : ''}`
+}
+
+function renderAccountLabel(option: SelectOption | SelectGroupOption) {
+  return renderLedgerAccountLabel(option, store.accounts.value)
+}
+
+function renderCategoryLabel(option: SelectOption) {
+  return renderLedgerCategoryLabel(option, store.categories.value)
 }
 
 function selectFilterType(type: LedgerTransactionFilterType | 'all'): void {
@@ -458,14 +465,14 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
               <span class="ledger-filter-icon" aria-hidden="true"><NIcon :size="18"><Wallet /></NIcon></span>
               <div class="ledger-filter-select-copy">
                 <span class="ledger-filter-label">账户</span>
-                <NSelect v-model:value="filterAccountId" class="ledger-filter-control" size="small" :options="accountOptions" :node-props="ledgerSelectNodeProps" :input-props="{ id: 'ledger-filter-account', name: 'accountId' }" role="combobox" aria-haspopup="listbox" aria-label="账户" @update:value="refreshAfterFilterChange" />
+                <NSelect v-model:value="filterAccountId" class="ledger-filter-control" size="small" :options="accountOptions" :render-label="renderAccountLabel" :node-props="ledgerSelectNodeProps" :input-props="{ id: 'ledger-filter-account', name: 'accountId' }" role="combobox" aria-haspopup="listbox" aria-label="账户" @update:value="refreshAfterFilterChange" />
               </div>
             </div>
             <div class="ledger-filter-select-card">
               <span class="ledger-filter-icon" aria-hidden="true"><NIcon :size="18"><Tag /></NIcon></span>
               <div class="ledger-filter-select-copy">
                 <span class="ledger-filter-label">分类</span>
-                <NSelect v-model:value="filterCategoryId" class="ledger-filter-control ledger-filter-category-select" size="small" :options="categoryOptions" :node-props="ledgerSelectNodeProps" :input-props="{ id: 'ledger-filter-category', name: 'categoryId' }" role="combobox" aria-haspopup="listbox" aria-label="分类" @update:value="refreshAfterFilterChange" />
+                <NSelect v-model:value="filterCategoryId" class="ledger-filter-control ledger-filter-category-select" size="small" :options="categoryOptions" :render-label="renderCategoryLabel" :node-props="ledgerSelectNodeProps" :input-props="{ id: 'ledger-filter-category', name: 'categoryId' }" role="combobox" aria-haspopup="listbox" aria-label="分类" @update:value="refreshAfterFilterChange" />
               </div>
             </div>
             <div class="ledger-filter-select-card ledger-filter-date-card">
@@ -925,6 +932,8 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
   box-shadow: none !important;
 }
 .ledger-filter-select-card :deep(.n-base-selection-label) { padding: 0; }
+.ledger-filter-select-card :deep(.n-base-selection-input__content .ledger-account-select-icon),
+.ledger-filter-select-card :deep(.n-base-selection-input__content .ledger-category-select-icon) { display: none; }
 .ledger-filter-select-card :deep(.n-base-selection-input__content) {
   color: var(--text-h);
   font-size: .8rem;

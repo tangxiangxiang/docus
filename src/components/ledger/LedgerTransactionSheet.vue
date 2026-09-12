@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, h, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import {
   NButton,
   NCard,
@@ -11,7 +11,7 @@ import {
   type SelectGroupOption,
   type SelectOption,
 } from 'naive-ui'
-import { Tag, X } from '@vicons/tabler'
+import { X } from '@vicons/tabler'
 import type {
   LedgerCategoryDto,
   LedgerTransferFeeMode,
@@ -21,13 +21,12 @@ import type {
 import { useConfirm } from '../../composables/useConfirm'
 import { useToast } from '../../composables/useToast'
 import { ledgerErrorMessage } from '../../features/ledger/ledgerErrors'
-import { DEFAULT_CATEGORY_ICON } from '../../features/ledger/categoryIconMigration'
-import { currencyExponentFor, formatLedgerMoney, parseLedgerMoney } from '../../features/ledger/money'
+import { currencyExponentFor, parseLedgerMoney } from '../../features/ledger/money'
 import { useLedgerStore } from '../../features/ledger/ledgerStore'
 import { instantFromLocalDateTime, localDateTimeInputFromInstant } from '../../features/ledger/time'
-import LedgerAccountIcon from './LedgerAccountIcon.vue'
 import LedgerPendingCreateRecovery from './LedgerPendingCreateRecovery.vue'
 import LedgerTransactionFormFields from './LedgerTransactionFormFields.vue'
+import { ledgerAccountSelectOptions, renderLedgerAccountLabel, renderLedgerCategoryLabel } from './ledgerSelectRenderers'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: []; saved: [transaction: LedgerTransactionDto] }>()
@@ -68,12 +67,15 @@ const settings = computed(() => store.settings.value)
 const activeAccounts = computed(() => store.activeAccounts.value)
 const activeCategories = computed(() => store.activeCategories.value)
 const applicableCategories = computed(() => activeCategories.value.filter((category) => category.kind === type.value))
-const accountOptions = computed(() => groupedAccountOptions(true))
-const transferFromAccountOptions = computed(() => groupedAccountOptions(false, transferKind.value === 'general' ? undefined : ['asset']))
-const transferToAccountOptions = computed(() => groupedAccountOptions(
-  false,
-  transferKind.value === 'repayment' ? ['liability'] : transferKind.value === 'withdrawal' ? ['asset'] : undefined,
-))
+const accountOptions = computed(() => ledgerAccountSelectOptions(activeAccounts.value))
+const transferFromAccountOptions = computed(() => ledgerAccountSelectOptions(activeAccounts.value, {
+  showBalance: false,
+  allowedNatures: transferKind.value === 'general' ? undefined : ['asset'],
+}))
+const transferToAccountOptions = computed(() => ledgerAccountSelectOptions(activeAccounts.value, {
+  showBalance: false,
+  allowedNatures: transferKind.value === 'repayment' ? ['liability'] : transferKind.value === 'withdrawal' ? ['asset'] : undefined,
+}))
 const categoryOptions = computed<SelectOption[]>(() => applicableCategories.value.map((category) => ({
   value: category.id,
   label: categoryLabel(category),
@@ -87,82 +89,12 @@ const recoveryBusy = computed(() => store.mutationState.value === 'SUBMITTING')
 const canSubmit = computed(() => activeAccounts.value.length > 0 && !saving.value)
 const formTitle = computed(() => type.value === 'expense' ? '记一笔支出' : type.value === 'income' ? '记一笔收入' : '记一笔转账')
 
-function groupedAccountOptions(showBalance: boolean, allowedNatures?: readonly ('asset' | 'liability')[]): SelectGroupOption[] {
-  return (['asset', 'liability'] as const).flatMap((nature) => {
-    if (allowedNatures && !allowedNatures.includes(nature)) return []
-    const children: SelectOption[] = activeAccounts.value
-      .filter((account) => account.nature === nature)
-      .sort((left, right) => right.currentBalanceMinor - left.currentBalanceMinor
-        || left.name.localeCompare(right.name, 'zh-CN'))
-      .map((account) => {
-        const balanceLabel = showBalance
-          ? formatLedgerMoney(account.currentBalanceMinor, account.currency)
-          : ''
-        return {
-          value: account.id,
-          label: balanceLabel ? `${account.name} · ${balanceLabel}` : account.name,
-          accountName: account.name,
-          balanceLabel,
-        }
-      })
-    return children.length
-      ? [{ type: 'group' as const, key: nature, label: nature === 'asset' ? '资产账户' : '负债账户', children }]
-      : []
-  })
-}
-
-function renderAccountContent(option: SelectOption | SelectGroupOption) {
-  if (option.type === 'group') {
-    return h('span', { class: 'ledger-account-select-group' }, String(option.label ?? ''))
-  }
-  const account = activeAccounts.value.find((item) => item.id === option.value)
-  const accountName = String(option.accountName ?? account?.name ?? '')
-  const balanceLabel = String(option.balanceLabel ?? '')
-  return h('span', { class: 'ledger-account-select-option' }, [
-    h('span', { class: 'ledger-account-select-icon', 'aria-hidden': 'true' }, [
-      h(LedgerAccountIcon, { icon: account?.icon, size: 18 }),
-    ]),
-    h('span', { class: 'ledger-account-select-label' }, accountName),
-    balanceLabel ? h('span', { class: 'ledger-account-select-balance' }, balanceLabel) : null,
-  ])
-}
-
 function renderAccountLabel(option: SelectOption | SelectGroupOption) {
-  return renderAccountContent(option)
-}
-
-function customCategoryIconSource(icon: string | undefined): string | undefined {
-  if (!icon?.startsWith('custom_category_')) return undefined
-  try {
-    const icons = JSON.parse(localStorage.getItem('docus.ledger.category-custom-icons') ?? '{}') as Record<string, unknown>
-    const source = icons[icon]
-    return typeof source === 'string'
-      ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(source)}`
-      : undefined
-  } catch {
-    return undefined
-  }
+  return renderLedgerAccountLabel(option, activeAccounts.value)
 }
 
 function renderCategoryLabel(option: SelectOption) {
-  const category = activeCategories.value.find((item) => item.id === option.value)
-  if (!category) {
-    return h('span', { class: 'ledger-category-select-option' }, [
-      h('span', { class: 'ledger-category-select-icon', 'aria-hidden': 'true' }, [
-        h(NIcon, { size: 18 }, { default: () => h(Tag) }),
-      ]),
-    ])
-  }
-  const icon = category?.icon ?? DEFAULT_CATEGORY_ICON
-  const customSource = customCategoryIconSource(icon)
-  return h('span', { class: 'ledger-category-select-option' }, [
-    h('span', { class: 'ledger-category-select-icon', 'aria-hidden': 'true' }, [
-      customSource
-        ? h('img', { src: customSource, alt: '', width: 18, height: 18 })
-        : h(LedgerAccountIcon, { icon, size: 18 }),
-    ]),
-    h('span', { class: 'ledger-category-select-label' }, String(option.label ?? category?.name ?? '')),
-  ])
+  return renderLedgerCategoryLabel(option, activeCategories.value)
 }
 
 function defaultOccurredAt(): string {
