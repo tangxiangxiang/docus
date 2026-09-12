@@ -1,8 +1,11 @@
 # Ledger L0 — Foundation Implementation Plan
 
+> [!IMPORTANT]
+> **Historical Planning Baseline / Implemented and evolved.** 本文记录当时的实施计划与评审状态，不是当前运行时说明，也不代表仍待实施。当前行为请参阅 [Ledger 用户指南](../user-guide/ledger.md)、[Ledger Architecture](../architecture/ledger.md) 和 [Ledger UI Language](ledger-ui-language.md)。
+
 ## 1. Status / baseline
 
-- **Implementation Plan status:** **Accepted / Ready for Implementation**
+- **Implementation Plan status:** **Historical Planning Baseline / Implemented and evolved**
 - **Plan date:** 2026-09-03
 - **Implementation baseline / audited `main` HEAD:** `693dccf46638094cd54a369770f782d820df22f9`
 - **Ledger v1 PRD:** `docs/design/ledger-v1-prd.md`

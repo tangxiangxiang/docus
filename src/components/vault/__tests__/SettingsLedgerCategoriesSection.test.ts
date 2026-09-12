@@ -3,6 +3,9 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { defineComponent, h } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { LedgerAccountIcon, LedgerCategoryDto } from '../../../../shared/ledgerProtocol'
+import { useConfirm } from '../../../composables/useConfirm'
+import { useToast } from '../../../composables/useToast'
+import { LedgerApiError } from '../../../features/ledger/ledgerErrors'
 import SettingsLedgerCategoriesSection from '../SettingsLedgerCategoriesSection.vue'
 
 const ledger = vi.hoisted(() => ({
@@ -12,6 +15,7 @@ const ledger = vi.hoisted(() => ({
   createCategory: vi.fn(),
   patchCategory: vi.fn(),
   archiveCategory: vi.fn(),
+  deleteCategory: vi.fn(),
 }))
 
 vi.mock('../../../features/ledger/ledgerStore', () => ({
@@ -60,7 +64,13 @@ beforeEach(() => {
   ledger.bootstrap.mockResolvedValue(undefined)
   ledger.patchCategory.mockResolvedValue(category('food', '通勤'))
   ledger.archiveCategory.mockResolvedValue({ ...category('food', '餐饮'), archivedAt: 2 })
+  ledger.deleteCategory.mockImplementation(async (id: string) => {
+    ledger.categories.value = ledger.categories.value.filter((item) => item.id !== id)
+    ledger.activeCategories.value = ledger.activeCategories.value.filter((item) => item.id !== id)
+    return { deleted: true, id }
+  })
   ledger.createCategory.mockResolvedValue(category('travel', '交通'))
+  useConfirm().queue.value = []
 })
 
 afterEach(() => {
@@ -84,7 +94,7 @@ describe('SettingsLedgerCategoriesSection', () => {
     expect(item.classes()).not.toContain('managing')
   })
 
-  it('renames and archives with the existing optimistic version', async () => {
+  it('renames and physically deletes a category without history', async () => {
     const wrapper = mountSection()
     const item = wrapper.get('[data-category-kind="expense"] .settings-ledger-category-option')
     await item.trigger('contextmenu')
@@ -97,9 +107,78 @@ describe('SettingsLedgerCategoriesSection', () => {
     await flushPromises()
     expect(ledger.patchCategory).toHaveBeenCalledWith('food', { expectedVersion: 3, name: '通勤' })
 
-    await item.get('[aria-label="归档分类：餐饮"]').trigger('click')
+    await item.get('.settings-ledger-category-delete').trigger('click')
+    const { queue, answer } = useConfirm()
+    expect(queue.value).toHaveLength(1)
+    answer(queue.value[0]!.id, true)
     await flushPromises()
+    expect(ledger.deleteCategory).toHaveBeenCalledWith('food', 3)
+    expect(ledger.archiveCategory).not.toHaveBeenCalled()
+    expect(ledger.categories.value.some((item) => item.id === 'food')).toBe(false)
+    expect(useToast().toasts.value.at(-1)?.message).toBe('分类已删除')
+  })
+
+  it('offers archiving when physical deletion is rejected for category history', async () => {
+    ledger.deleteCategory.mockRejectedValueOnce(new LedgerApiError(
+      'category has history',
+      409,
+      'ledger-category-has-history',
+    ))
+    const wrapper = mountSection()
+    const item = wrapper.get('[data-category-kind="expense"] .settings-ledger-category-option')
+    await item.trigger('contextmenu')
+    await item.get('[aria-label="删除分类：餐饮"]').trigger('click')
+
+    const { queue, answer } = useConfirm()
+    expect(queue.value).toHaveLength(1)
+    answer(queue.value[0]!.id, true)
+    await flushPromises()
+
+    expect(ledger.deleteCategory).toHaveBeenCalledWith('food', 3)
+    expect(queue.value).toHaveLength(1)
+    expect(queue.value[0]!.message).toContain('已有交易记录')
+    expect(queue.value[0]!.detail).toContain('历史记录仍会保留')
+    answer(queue.value[0]!.id, true)
+    await flushPromises()
+
     expect(ledger.archiveCategory).toHaveBeenCalledWith('food', 3)
+    expect(useToast().toasts.value.at(-1)?.message).toBe('分类已归档')
+  })
+
+  it('keeps a historical category unchanged when the archive fallback is cancelled', async () => {
+    ledger.deleteCategory.mockRejectedValueOnce(new LedgerApiError(
+      'category has history',
+      409,
+      'ledger-category-has-history',
+    ))
+    const wrapper = mountSection()
+    const item = wrapper.get('[data-category-kind="expense"] .settings-ledger-category-option')
+    await item.trigger('contextmenu')
+    await item.get('[aria-label="删除分类：餐饮"]').trigger('click')
+
+    const { queue, answer } = useConfirm()
+    answer(queue.value[0]!.id, true)
+    await flushPromises()
+    answer(queue.value[0]!.id, false)
+    await flushPromises()
+
+    expect(ledger.archiveCategory).not.toHaveBeenCalled()
+    expect(ledger.categories.value.some((candidate) => candidate.id === 'food')).toBe(true)
+  })
+
+  it('does not expose a delete action for protected system categories', async () => {
+    const protectedCategory = {
+      ...category('interest', '利息'),
+      systemKey: 'interest' as const,
+      protected: true,
+      icon: 'credit_card' as const,
+    }
+    ledger.activeCategories.value = [protectedCategory]
+    ledger.categories.value = [protectedCategory]
+    const wrapper = mountSection()
+    await wrapper.get('.settings-ledger-category-option').trigger('contextmenu')
+
+    expect(wrapper.find('.settings-ledger-category-delete').exists()).toBe(false)
   })
 
   it('does not start the hold gesture when the category icon is operated', async () => {

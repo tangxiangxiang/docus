@@ -1,8 +1,11 @@
 # L0 — Ledger Foundation PRD
 
+> [!IMPORTANT]
+> **Historical Planning Baseline / Implemented and evolved.** 本文保留 L0 领域与架构决策的历史记录；当前实现已继续演进。当前行为请参阅 [Ledger 用户指南](../user-guide/ledger.md) 和 [Ledger Architecture](../architecture/ledger.md)。
+
 ## 文档信息
 
-- **状态：** Architecture Review: Accepted；production implementation not yet authorized
+- **状态：** Historical Planning Baseline / Implemented and evolved；原 Architecture Review: Accepted
 - **日期：** 2026-09-02
 - **依赖：** [Docus Ledger v1 Product Requirements](ledger-v1-prd.md)
 - **Remediation baseline：** `554091bca76b71b05b4ae73f425b55477e515b79`
@@ -46,10 +49,10 @@ Balance
 
 ### 2.2 当前原型不能直接升级为生产模型
 
-- [src/features/bills/mockData.ts](../../src/features/bills/mockData.ts) 的注释明确说明数据是 client-side fixtures、无 persistence；BillsTransactionType 只有 income | expense。
+- `src/features/bills/mockData.ts` 的注释明确说明数据是 client-side fixtures、无 persistence；BillsTransactionType 只有 income | expense。
 - BillsAccount.balance 和交易 amount 是 JS number；这不满足精确金额的 SQLite/API 契约。
 - mock liability balance 以正数 debt 展示，当前聚合函数直接求和；代码没有信用卡消费/还款的自然余额效果。
-- [src/views/BillsTransactionsView.vue](../../src/views/BillsTransactionsView.vue) 的新增、支出、收入、日期操作仍 disabled，并提示后续开放。
+- `src/views/BillsTransactionsView.vue` 的新增、支出、收入、日期操作仍 disabled，并提示后续开放。
 - 当前路由仍是 /bills 和 /bills/transactions，不存在 Ledger API、Ledger migration 或真实 CRUD。
 
 因此 L0 不尝试“把 mock 类型加几个 union member”来冒充领域基础；mock 只作为 UI characterization fixture 保留。

@@ -2,13 +2,17 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { NButton, NDropdown, type DropdownOption } from 'naive-ui'
 import { LEDGER_BUILTIN_CATEGORY_ICONS, type LedgerAccountIcon } from '../../../shared/ledgerProtocol'
-import { ledgerErrorMessage } from '../../features/ledger/ledgerErrors'
+import { isLedgerApiError, ledgerErrorMessage } from '../../features/ledger/ledgerErrors'
 import { DEFAULT_CATEGORY_ICON, migrateLegacyCategoryIcons } from '../../features/ledger/categoryIconMigration'
 import { useLedgerStore } from '../../features/ledger/ledgerStore'
+import { useConfirm } from '../../composables/useConfirm'
+import { useToast } from '../../composables/useToast'
 import { useLedgerAccountIconPreferences } from '../../composables/useLedgerAccountIconPreferences'
 import LedgerAccountIconPicker from '../ledger/LedgerAccountIconPicker.vue'
 
 const store = useLedgerStore()
+const { confirm } = useConfirm()
+const toast = useToast()
 const accountIconPreferences = useLedgerAccountIconPreferences()
 const createError = ref('')
 const operationError = ref('')
@@ -19,7 +23,7 @@ const iconSavingId = ref<string | null>(null)
 const managing = ref(false)
 const editingId = ref<string | null>(null)
 const editingName = ref('')
-const archiveId = ref<string | null>(null)
+const categoryActionId = ref<string | null>(null)
 let holdTimer: ReturnType<typeof setTimeout> | null = null
 let lastUploadedSvg = ''
 const categoryCustomIcons = ref<Record<string, string>>({})
@@ -161,16 +165,46 @@ function stopManaging(): void {
   managing.value = false
 }
 
-async function archive(category: { id: string; version: number }): Promise<void> {
-  if (archiveId.value !== null) return
-  archiveId.value = category.id
+async function removeCategory(category: { id: string; name: string; version: number }): Promise<void> {
+  if (categoryActionId.value !== null) return
+  categoryActionId.value = category.id
   operationError.value = ''
   try {
-    await store.archiveCategory(category.id, category.version)
+    const confirmed = await confirm(
+      `删除分类「${category.name}」？`,
+      '没有交易历史的分类会被永久删除；如果已有历史记录，只能转为归档。',
+      { confirmLabel: '删除分类', cancelLabel: '取消', destructive: true },
+    )
+    if (!confirmed) return
+
+    try {
+      await store.deleteCategory(category.id, category.version)
+      toast.success('分类已删除')
+      return
+    } catch (cause) {
+      if (!isLedgerApiError(cause) || cause.code !== 'ledger-category-has-history') {
+        operationError.value = ledgerErrorMessage(cause, '分类没有删除，请稍后重试。')
+        return
+      }
+
+      const archiveConfirmed = await confirm(
+        `分类「${category.name}」已有交易记录，无法永久删除。`,
+        '可以将它归档。归档后不会用于新交易，但历史记录仍会保留。',
+        { confirmLabel: '归档分类', cancelLabel: '取消' },
+      )
+      if (!archiveConfirmed) return
+
+      try {
+        await store.archiveCategory(category.id, category.version)
+        toast.success('分类已归档')
+      } catch (archiveCause) {
+        operationError.value = ledgerErrorMessage(archiveCause, '分类没有归档，请稍后重试。')
+      }
+    }
   } catch (cause) {
-    operationError.value = ledgerErrorMessage(cause, '分类没有归档，请稍后重试。')
+    operationError.value = ledgerErrorMessage(cause, '分类操作没有完成，请稍后重试。')
   } finally {
-    archiveId.value = null
+    categoryActionId.value = null
   }
 }
 
@@ -278,10 +312,10 @@ async function onFileSelected(event: Event): Promise<void> {
                 v-if="managing && !category.protected"
                 type="button"
                 class="settings-ledger-category-delete"
-                :disabled="archiveId === category.id"
-                :aria-label="`归档分类：${category.name}`"
+                :disabled="categoryActionId === category.id"
+                :aria-label="`删除分类：${category.name}`"
                 @pointerdown.stop
-                @click.stop="archive(category)"
+                @click.stop="removeCategory(category)"
               >×</button>
             </div>
             <span v-if="!group.categories.length" class="settings-ledger-category-empty">{{ group.empty }}</span>

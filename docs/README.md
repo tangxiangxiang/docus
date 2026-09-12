@@ -11,6 +11,7 @@ Docus is a self-hosted Markdown knowledge base with a Vue interface, a Hono serv
 ## User Guide
 
 - [Overview](user-guide/overview.md)
+- [Ledger (Current)](user-guide/ledger.md)
 - [Vault and Archive Protocol](user-guide/vault.md)
 - [Editor and Draft Recovery](user-guide/editor.md)
 - [Markdown, Links, and Diagrams](user-guide/markdown.md)
@@ -30,6 +31,7 @@ Docus is a self-hosted Markdown knowledge base with a Vue interface, a Hono serv
 ## Architecture
 
 - [Architecture Overview](architecture/overview.md)
+- [Ledger Architecture (Current)](architecture/ledger.md)
 - [Storage](architecture/storage.md)
 - [Edit and Save](architecture/edit-and-save.md)
 - [Document Lifecycle](architecture/document-lifecycle.md)
@@ -48,6 +50,7 @@ Docus is a self-hosted Markdown knowledge base with a Vue interface, a Hono serv
 
 ## Design
 
+- [Ledger UI Language (Current)](design/ledger-ui-language.md)
 - [Shiki Syntax Highlighting Migration PRD](design/syntax-highlighting-shiki-migration-prd.md)
 - [Shiki Syntax Highlighting Migration Implementation Plan](design/syntax-highlighting-shiki-migration-implementation-plan.md)
 - [Shiki H0 Baseline & Contract Audit](design/syntax-highlighting-shiki-h0-audit.md)
@@ -71,11 +74,15 @@ Docus is a self-hosted Markdown knowledge base with a Vue interface, a Hono serv
 - [PDF Export V1 PRD](design/pdf-export-prd.md)
 - [PDF Export V1 Implementation Plan](design/pdf-export-implementation-plan.md)
 - [Diary Calendar PRD](design/diary-prd.md)
-- [Ledger v1 Product Requirements](design/ledger-v1-prd.md)
-- [Ledger Foundation PRD](design/ledger-l0-foundation-prd.md)
-- [Ledger L0 Foundation Implementation Plan](design/ledger-l0-foundation-implementation-plan.md)
-- [Ledger UI Integration PRD](design/ledger-ui-integration-prd.md)
-- [Ledger UI Integration Implementation Plan](design/ledger-ui-integration-implementation-plan.md)
+Ledger planning documents below are historical implementation lineage, not current runtime authority:
+
+- [Ledger v1 Product Requirements (Historical Planning)](design/ledger-v1-prd.md)
+- [Ledger Foundation PRD (Historical Planning)](design/ledger-l0-foundation-prd.md)
+- [Ledger L0 Foundation Implementation Plan (Historical Planning)](design/ledger-l0-foundation-implementation-plan.md)
+- [Ledger UI Integration PRD (Historical Planning)](design/ledger-ui-integration-prd.md)
+- [Ledger UI Integration Implementation Plan (Historical Planning)](design/ledger-ui-integration-implementation-plan.md)
+- [Ledger Historical Period Navigation PRD (Historical Planning)](design/ledger-period-navigation-prd.md)
+- [Ledger Historical Period Navigation Implementation Plan (Historical Planning)](design/ledger-period-navigation-implementation-plan.md)
 - [Logo](design/logo.md)
 - [Icon System](design/icon-system.md)
 - [Icon Usage](design/icon-usage.md)

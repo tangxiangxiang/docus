@@ -1,5 +1,8 @@
 # Ledger — Historical Period Navigation Implementation Plan
 
+> [!IMPORTANT]
+> **Historical Planning Baseline / Implemented and evolved.** 本文记录历史期间导航的计划基线与当时的实施门槛，不是当前实现 authority。当前行为请参阅 [Ledger 用户指南](../user-guide/ledger.md) 和 [Ledger Architecture](../architecture/ledger.md)。
+
 **日期：** 2026-09-05
 
 **模块：** Ledger

@@ -1,8 +1,11 @@
 # Docus Ledger v1 Product Requirements
 
+> [!IMPORTANT]
+> **Historical Planning Baseline / Implemented and evolved.** 本文保留 Ledger v1 的产品定位与设计决策，不是当前用户行为或 runtime authority。当前行为请参阅 [Ledger 用户指南](../user-guide/ledger.md) 和 [Ledger Architecture](../architecture/ledger.md)。
+
 ## 文档信息
 
-- **状态：** Product Review: Accepted；production implementation not yet authorized
+- **状态：** Historical Planning Baseline / Implemented and evolved；原 Product Review: Accepted
 - **日期：** 2026-09-02
 - **评审基线：** `554091bca76b71b05b4ae73f425b55477e515b79`（`main`）
 - **Remediation baseline：** `554091bca76b71b05b4ae73f425b55477e515b79`
@@ -35,10 +38,10 @@ Ledger 继续遵循 Docus 的产品边界：single-owner、self-hosted、private
 
 | 位置 | 当前事实 | v1 影响 |
 | --- | --- | --- |
-| [`src/views/BillsView.vue`](../../src/views/BillsView.vue) | Dashboard 由资产概要、分类占比、时间段、趋势和最近交易卡片组成 | 现有布局可作为 Overview 基线，但数据源必须替换为真实聚合 |
-| [`src/views/BillsTransactionsView.vue`](../../src/views/BillsTransactionsView.vue) | 只展示 mock 交易；新增、支出/收入筛选和日期筛选仍 disabled | Transactions 是 v1 的核心写入与查询页面 |
-| [`src/features/bills/mockData.ts`](../../src/features/bills/mockData.ts) | 明确声明 fixture 无持久化；交易类型只有 `income/expense`；金额是 JS `number` | 不能直接作为生产领域模型或金额存储协议 |
-| [`src/features/bills/aggregations.ts`](../../src/features/bills/aggregations.ts) | 聚合的是已渲染账户的 mock balance，并允许 fallback debt | 生产 Dashboard 必须从 SQLite 账户和交易记录推导，不保存统计快照 |
+| `src/views/BillsView.vue` | Dashboard 由资产概要、分类占比、时间段、趋势和最近交易卡片组成 | 现有布局可作为 Overview 基线，但数据源必须替换为真实聚合 |
+| `src/views/BillsTransactionsView.vue` | 只展示 mock 交易；新增、支出/收入筛选和日期筛选仍 disabled | Transactions 是 v1 的核心写入与查询页面 |
+| `src/features/bills/mockData.ts` | 明确声明 fixture 无持久化；交易类型只有 `income/expense`；金额是 JS `number` | 不能直接作为生产领域模型或金额存储协议 |
+| `src/features/bills/aggregations.ts` | 聚合的是已渲染账户的 mock balance，并允许 fallback debt | 生产 Dashboard 必须从 SQLite 账户和交易记录推导，不保存统计快照 |
 | [`src/router/index.ts`](../../src/router/index.ts) | 当前路由为 `/bills` 和 `/bills/transactions` | `Ledger` 是 canonical domain name；旧 Bills 路径在独立迁移任务前保留兼容策略 |
 | [`server/db.ts`](../../server/db.ts) 与 `server/migrations/` | 已有有序 SQLite migration、WAL、foreign keys 和测试数据库注入能力 | Ledger 可以沿用现有存储边界，不需要 Markdown 账单文件 |
 

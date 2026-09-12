@@ -158,6 +158,8 @@ export function ledgerErrorMessage(error: unknown, fallback = 'Ledger 操作暂�
       return '只有余额为 0 的账户才能归档。'
     case 'ledger-account-has-history':
       return '有历史记录的账户不能被永久删除。'
+    case 'ledger-category-has-history':
+      return '有历史记录的分类不能被永久删除。'
     case 'ledger-version-conflict':
       return '这项数据已被更新，请刷新后再试。'
     case 'ledger-balance-conflict':

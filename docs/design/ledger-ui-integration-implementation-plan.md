@@ -1,5 +1,8 @@
 # Ledger — UI Integration Implementation Plan
 
+> [!IMPORTANT]
+> **Historical Planning Baseline / Implemented and evolved.** 本文保留 UI 接入阶段的计划、评审和旧 baseline；它不描述当前生产 runtime。当前行为请参阅 [Ledger 用户指南](../user-guide/ledger.md)、[Ledger Architecture](../architecture/ledger.md) 和 [Ledger UI Language](ledger-ui-language.md)。
+
 ## 1. Status / review closure
 
 | 项目 | 审计结果 |

@@ -1,5 +1,8 @@
 # Ledger — UI Integration PRD
 
+> [!IMPORTANT]
+> **Historical Planning Baseline / Implemented and evolved.** 本文保留 UI 接入阶段的产品决策与 review 记录；当前代码已经超出该 baseline。当前行为请参阅 [Ledger 用户指南](../user-guide/ledger.md)、[Ledger Architecture](../architecture/ledger.md) 和 [Ledger UI Language](ledger-ui-language.md)。
+
 ## 1. Status / review closure
 
 | 项目 | 结论 |

@@ -2,6 +2,12 @@
 
 All notable changes to Docus are documented in this file.
 
+## Ledger current-state documentation sync — 2026-09-12
+
+- Documented the shipped Ledger workspace, account and account-detail lifecycle, category and icon management, and dashboard projections.
+- Documented the transaction table with income, expense, transfer, repayment, and withdrawal flows, including interest/fee handling and period navigation.
+- Added current user-guide, architecture, and UI-language authorities; retained earlier Ledger PRDs and implementation plans as historical planning lineage.
+
 ## Diary Calendar MVP — 2026-08-25
 
 - Added a Calendar-first `diary/` scope with one managed Markdown entry per local calendar date.
