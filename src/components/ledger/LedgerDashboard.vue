@@ -900,6 +900,7 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
   --ledger-row-hover: color-mix(in srgb, var(--accent) 5%, transparent);
   --ledger-income: color-mix(in srgb, #15945f 82%, var(--text-h));
   --ledger-expense: color-mix(in srgb, #dc3f4d 82%, var(--text-h));
+  --ledger-transfer: var(--docus-info, #005fb8);
   --ledger-balance: var(--docus-info);
   width: min(100%, 1240px);
   margin: 0 auto;
@@ -1636,6 +1637,11 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
 .ledger-recent-icon.is-expense {
   background: color-mix(in srgb, var(--ledger-expense) 11%, var(--bg));
   color: var(--ledger-expense);
+}
+
+.ledger-recent-icon.is-transfer {
+  background: color-mix(in srgb, var(--ledger-transfer) 11%, var(--bg));
+  color: var(--ledger-transfer);
 }
 
 .ledger-recent-info {

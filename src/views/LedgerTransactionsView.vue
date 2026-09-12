@@ -55,7 +55,7 @@ const filtersLoading = ref(false)
 const paginationLoading = ref(false)
 const filterError = ref('')
 const tablePage = ref(1)
-const tablePageSize = ref(5)
+const tablePageSize = ref(25)
 
 const typeOptions: SelectOption[] = [
   { value: 'all', label: '全部类型' },
@@ -365,7 +365,7 @@ function transactionRowProps(transaction: LedgerTransactionDto) {
 const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
   {
     key: 'transaction',
-    title: '交易',
+    title: '交易对象',
     width: 210,
     render: (transaction) => h('span', { class: 'ledger-table-primary' }, [
       h('strong', { title: transactionTitle(transaction) }, transactionTitle(transaction)),
@@ -375,6 +375,8 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
     key: 'type',
     title: '类型',
     width: 100,
+    align: 'center',
+    titleAlign: 'center',
     render: (transaction) => h('span', { class: ['ledger-transaction-type', `is-${transaction.type}`] }, [
       h(NIcon, { size: 14, 'aria-hidden': 'true' }, { default: () => h(transactionTypeIcon(transaction.type)) }),
       ` ${typeLabel(transaction.type, transaction.type === 'transfer' ? transaction.transferKind : undefined)}`,
@@ -767,7 +769,7 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
   --ledger-highlight: color-mix(in srgb, #fff 38%, transparent);
   --ledger-income: var(--docus-positive, var(--accent));
   --ledger-expense: var(--docus-negative, var(--text-h));
-  --ledger-transfer: var(--docus-accent, var(--accent));
+  --ledger-transfer: var(--docus-info, #005fb8);
   width: min(100%, 1240px);
   margin: 0 auto;
   padding: 42px 28px 46px;

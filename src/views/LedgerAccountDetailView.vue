@@ -797,6 +797,7 @@ const netMovement = computed(() => {
 .ledger-transaction-badge { justify-self: start; padding: 3px 8px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--accent); font-size: .68rem; white-space: nowrap; }
 .ledger-transaction-badge.is-income { background: color-mix(in srgb, #2da76e 13%, transparent); color: #168451; }
 .ledger-transaction-badge.is-expense { background: color-mix(in srgb, #d94a58 13%, transparent); color: #c43443; }
+.ledger-transaction-badge.is-transfer { background: color-mix(in srgb, var(--docus-info, #005fb8) 11%, transparent); color: var(--docus-info, #005fb8); }
 .ledger-transaction-category,
 .ledger-transaction-summary,
 .ledger-transaction-balance { overflow: hidden; color: var(--text-muted); text-overflow: ellipsis; white-space: nowrap; }

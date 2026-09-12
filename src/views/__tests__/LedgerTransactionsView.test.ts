@@ -255,7 +255,7 @@ describe('Ledger live transaction history workspace', () => {
     expect(wrapper.find('[data-testid="ledger-transaction-list"]').text()).toContain('午餐')
     expect(wrapper.text()).toContain('工资')
     expect(wrapper.text()).toContain('余额调整')
-    expect(wrapper.findAll('thead th').map((header) => header.text())).toEqual(['交易', '类型', '分类', '账户', '备注', '时间', '金额'])
+    expect(wrapper.findAll('thead th').map((header) => header.text())).toEqual(['交易对象', '类型', '分类', '账户', '备注', '时间', '金额'])
     expect(wrapper.get('[data-testid="ledger-transaction-row-tx-expense"]').text()).toContain('2026/09/05 12:30')
     expect(wrapper.get('[data-testid="ledger-transaction-row-tx-expense"]').text()).toContain('-¥38.00')
     expect(wrapper.get('[data-testid="ledger-transaction-row-tx-transfer"]').text()).toContain('¥50.00')
@@ -295,7 +295,7 @@ describe('Ledger live transaction history workspace', () => {
       from: instantFromLedgerDate('2026-09-01', 'Asia/Shanghai', 'start'),
       to: instantFromLedgerDate('2026-09-05', 'Asia/Shanghai', 'end'),
       search: '午餐',
-      limit: 5,
+      limit: 25,
     })
   })
 
@@ -306,18 +306,18 @@ describe('Ledger live transaction history workspace', () => {
     expect(api.listLedgerTransactions).toHaveBeenLastCalledWith({
       type: 'all',
       accountId: 'old-bank',
-      limit: 5,
+      limit: 25,
     })
   })
 
   it('requests the selected server-side page with the correct offset', async () => {
     const firstPage: LedgerTransactionPageDto = {
-      transactions: Array.from({ length: 5 }, (_, index) => ({ ...expense, id: index === 0 ? expense.id : `tx-expense-${index}` })),
-      page: { nextCursor: 'cursor-1', total: 6, incomeMinor: income.amountMinor, expenseMinor: expense.amountMinor * 5 },
+      transactions: Array.from({ length: 25 }, (_, index) => ({ ...expense, id: index === 0 ? expense.id : `tx-expense-${index}` })),
+      page: { nextCursor: 'cursor-1', total: 26, incomeMinor: income.amountMinor, expenseMinor: expense.amountMinor * 25 },
     }
     const secondPage: LedgerTransactionPageDto = {
       transactions: [income],
-      page: { nextCursor: null, total: 6, incomeMinor: income.amountMinor, expenseMinor: expense.amountMinor * 5 },
+      page: { nextCursor: null, total: 26, incomeMinor: income.amountMinor, expenseMinor: expense.amountMinor * 25 },
     }
     api.listLedgerTransactions.mockReset()
     api.listLedgerTransactions
@@ -329,15 +329,15 @@ describe('Ledger live transaction history workspace', () => {
     await wrapper.findComponent(NPagination).vm.$emit('update:page', 2)
     await flushPromises()
 
-    expect(api.listLedgerTransactions).toHaveBeenLastCalledWith({ type: 'all', limit: 5, offset: 5 })
+    expect(api.listLedgerTransactions).toHaveBeenLastCalledWith({ type: 'all', limit: 25, offset: 25 })
     expect(wrapper.get('[data-testid="ledger-transaction-list"]').text()).toContain('工资')
-    expect(wrapper.text()).toContain('共 6 条')
+    expect(wrapper.text()).toContain('共 26 条')
     expect(wrapper.findComponent(NPagination).props('page')).toBe(2)
-    expect(wrapper.findComponent(NPagination).props('itemCount')).toBe(6)
+    expect(wrapper.findComponent(NPagination).props('itemCount')).toBe(26)
     expect(wrapper.findComponent(NPagination).props('showSizePicker')).toBe(true)
     await wrapper.findComponent(NPagination).vm.$emit('update:page', 1)
     await flushPromises()
-    expect(api.listLedgerTransactions).toHaveBeenLastCalledWith({ type: 'all', limit: 5 })
+    expect(api.listLedgerTransactions).toHaveBeenLastCalledWith({ type: 'all', limit: 25 })
     expect(wrapper.get('[data-testid="ledger-transaction-list"]').text()).toContain('午餐')
   })
 
