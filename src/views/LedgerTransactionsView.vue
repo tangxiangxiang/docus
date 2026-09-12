@@ -1044,9 +1044,10 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
 .ledger-transaction-table :deep(.n-data-table-tr:last-child .n-data-table-td) { border-bottom: 0; }
 .ledger-transaction-table :deep(.n-data-table-tr:hover .n-data-table-td) { background: color-mix(in srgb, var(--accent) 4%, transparent); }
 .ledger-transaction-table :deep(.ledger-transaction-row:focus-visible .n-data-table-td) {
-  background: color-mix(in srgb, var(--accent) 6%, transparent);
-  box-shadow: inset 0 2px 0 color-mix(in srgb, var(--accent) 45%, transparent), inset 0 -2px 0 color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--accent) 20%, transparent), inset 0 -1px 0 color-mix(in srgb, var(--accent) 20%, transparent);
 }
+.ledger-transaction-table :deep(.ledger-transaction-row:focus-visible) { outline: 1px solid color-mix(in srgb, var(--accent) 28%, transparent); outline-offset: -1px; }
 .ledger-transaction-table :deep(.ledger-table-primary) { display: grid; gap: 3px; min-width: 0; }
 .ledger-transaction-table :deep(.ledger-table-primary strong) { overflow: hidden; color: var(--text-h); font-size: .82rem; text-overflow: ellipsis; white-space: nowrap; }
 .ledger-transaction-table :deep(.ledger-transaction-type) {

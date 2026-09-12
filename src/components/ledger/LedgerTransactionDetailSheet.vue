@@ -259,7 +259,7 @@ async function remove(): Promise<void> {
           <NAlert v-if="transaction.type === 'adjustment'" class="ledger-form-info" type="info" :show-icon="false">余额调整为只读记录，不能通过普通交易编辑或删除。</NAlert>
           <NAlert v-if="actionError" class="ledger-form-error" type="error" :show-icon="false" role="alert">{{ actionError }}</NAlert>
           <div class="ledger-form-actions">
-            <NButton v-if="canEdit" class="ledger-secondary-button" attr-type="button" size="small" :bordered="false" :disabled="Boolean(restoringId)" @click="editDirty = false; editing = true">编辑交易</NButton>
+            <NButton v-if="canEdit || groupedCompanion" class="ledger-secondary-button" attr-type="button" size="small" :bordered="false" :disabled="Boolean(restoringId) || groupedCompanion" :title="groupedCompanion ? '请从关联的还款记录中统一操作' : undefined" @click="editDirty = false; editing = true">编辑交易</NButton>
             <NButton v-if="canDelete" class="ledger-danger-button" attr-type="button" size="small" :bordered="false" :disabled="Boolean(restoringId)" @click="remove">删除记录</NButton>
             <NButton v-else-if="canEdit && archivedAccounts.length" class="ledger-secondary-button ledger-wide-action" attr-type="button" size="small" :bordered="false" disabled>恢复账户后可删除</NButton>
             <NButton v-else-if="groupedCompanion" class="ledger-danger-button" attr-type="button" size="small" :bordered="false" disabled title="请从关联的还款记录中统一操作">删除记录</NButton>
