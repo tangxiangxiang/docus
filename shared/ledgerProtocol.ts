@@ -397,6 +397,7 @@ export type LedgerAccountBalanceTrendRange = 7 | 30 | 90 | 365
 export interface LedgerAccountBalanceTrendPoint {
   /** Ledger-local calendar date represented by this point. */
   readonly date: string
+  /** Next local-day start for historical points; the captured instant for today. */
   readonly timestamp: number
   readonly balanceMinor: number
 }

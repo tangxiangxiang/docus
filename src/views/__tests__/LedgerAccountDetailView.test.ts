@@ -132,6 +132,7 @@ describe('Ledger account detail lifecycle', () => {
     wrappers.push(wrapper)
     await flushPromises()
 
+    expect(api.getLedgerAccount).not.toHaveBeenCalled()
     await wrapper.findAll('button').find((button) => button.text() === '编辑账户')!.trigger('click')
     expect(bodyWrapper().findAll('.n-base-selection').length).toBeGreaterThan(0)
     await bodyWrapper().get('input[name="name"]').setValue('招商银行主账户')

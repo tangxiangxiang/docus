@@ -63,6 +63,8 @@ const balanceTrendChart = shallowRef<ECharts | null>(null)
 let balanceTrendResizeObserver: ResizeObserver | null = null
 let loadSequence = 0
 let balanceTrendSequence = 0
+let balanceChartRenderSequence = 0
+let balanceChartRevealAnimation: Animation | null = null
 
 const accountId = computed(() => String(route.params.id ?? ''))
 const returnFromOverview = computed(() => route.query.from === 'overview')
@@ -81,12 +83,9 @@ async function load(): Promise<void> {
   actionError.value = ''
   editing.value = false
   try {
-    const [nextAccount, history] = await Promise.all([
-      store.getAccount(id),
-      loadAccountHistory(id),
-    ])
+    const history = await loadAccountHistory(id)
     if (sequence !== loadSequence) return
-    account.value = nextAccount
+    account.value = history.account
     hasHistory.value = history.transactions.length > 0
     recentTransactions.value = history.transactions
     recentTransactionBalances.value = history.transactionBalances
@@ -102,6 +101,7 @@ async function load(): Promise<void> {
 }
 
 async function loadAccountHistory(id: string): Promise<{
+  readonly account: LedgerAccountDto
   readonly transactions: readonly LedgerTransactionDto[]
   readonly transactionBalances: readonly LedgerAccountTransactionBalance[]
   readonly balanceTrend: readonly LedgerAccountBalanceTrendPoint[]
@@ -112,6 +112,7 @@ async function loadAccountHistory(id: string): Promise<{
     store.getAccountBalanceTrend(id, trendRange.value),
   ])
   return {
+    account: page.account,
     transactions: page.transactions,
     transactionBalances: page.transactionBalances ?? [],
     balanceTrend: trend.points,
@@ -260,7 +261,7 @@ function buildBalanceChartOption(): LedgerBalanceChartOption {
   const labelCount = points.length <= 7 ? points.length : 7
   const labelStep = labelCount > 1 ? lastPointIndex / (labelCount - 1) : 1
   return {
-    animationDuration: 240,
+    animation: false,
     grid: { top: 14, left: 0, right: 0, bottom: 28, containLabel: false },
     tooltip: {
       trigger: 'axis',
@@ -320,9 +321,31 @@ function applyBalanceChartOption(): void {
   balanceTrendChart.value?.setOption(buildBalanceChartOption(), { notMerge: true })
 }
 
+function playBalanceChartAnimation(): void {
+  const chart = balanceTrendChart.value
+  const element = balanceTrendPlot.value
+  const pointCount = balanceTrend.value.length
+  if (chart === null || element === null || pointCount === 0) return
+  balanceChartRevealAnimation?.cancel()
+  chart.setOption(buildBalanceChartOption(), { notMerge: true })
+  if (typeof element.animate !== 'function') return
+  balanceChartRevealAnimation = element.animate(
+    [
+      { clipPath: 'inset(0 100% 0 0)' },
+      { clipPath: 'inset(0 0 0 0)' },
+    ],
+    { duration: 1400, easing: 'linear' },
+  )
+  balanceChartRevealAnimation.addEventListener('finish', () => {
+    balanceChartRevealAnimation = null
+  }, { once: true })
+}
+
 function createBalanceChart(): void {
   const element = balanceTrendPlot.value
-  if (element === null || balanceTrendChart.value !== null || element.clientWidth === 0) return
+  if (element === null || element.clientWidth === 0) return
+  if (balanceTrendChart.value?.getDom() === element) return
+  if (balanceTrendChart.value !== null) destroyBalanceChart()
   balanceTrendChart.value = init(element)
   if (typeof ResizeObserver === 'function') {
     balanceTrendResizeObserver = new ResizeObserver(() => balanceTrendChart.value?.resize())
@@ -330,7 +353,6 @@ function createBalanceChart(): void {
   } else {
     window.addEventListener('resize', handleBalanceChartResize)
   }
-  applyBalanceChartOption()
 }
 
 function handleBalanceChartResize(): void {
@@ -338,6 +360,8 @@ function handleBalanceChartResize(): void {
 }
 
 function destroyBalanceChart(): void {
+  balanceChartRevealAnimation?.cancel()
+  balanceChartRevealAnimation = null
   balanceTrendResizeObserver?.disconnect()
   balanceTrendResizeObserver = null
   window.removeEventListener('resize', handleBalanceChartResize)
@@ -345,18 +369,25 @@ function destroyBalanceChart(): void {
   balanceTrendChart.value = null
 }
 
-async function syncBalanceChart(): Promise<void> {
+async function replayBalanceChart(): Promise<void> {
+  const sequence = ++balanceChartRenderSequence
+  destroyBalanceChart()
   await nextTick()
+  if (sequence !== balanceChartRenderSequence) return
   if (balanceTrend.value.length === 0) {
     destroyBalanceChart()
     return
   }
   createBalanceChart()
-  applyBalanceChartOption()
+  playBalanceChartAnimation()
 }
 
-watch([balanceTrend, () => theme.value], () => { void syncBalanceChart() }, { flush: 'post' })
-onBeforeUnmount(destroyBalanceChart)
+watch(balanceTrend, () => { void replayBalanceChart() }, { flush: 'post' })
+watch(() => theme.value, applyBalanceChartOption, { flush: 'post' })
+onBeforeUnmount(() => {
+  balanceChartRenderSequence += 1
+  destroyBalanceChart()
+})
 
 const netMovement = computed(() => {
   if (!movement.value) return 0
@@ -589,12 +620,17 @@ const netMovement = computed(() => {
 .ledger-detail-note p { margin: 0; color: var(--text-muted); font-size: .84rem; white-space: pre-wrap; }
 .ledger-state-panel { display: grid; min-height: 300px; align-content: center; gap: 10px; color: var(--text-muted); }
 .ledger-loading-state { place-items: center; text-align: center; }
-.ledger-result-state { place-items: center start; text-align: left; }
+.ledger-result-state {
+  min-height: calc(100vh - var(--navbar-h, 52px) - 88px);
+  place-items: center;
+  text-align: center;
+}
 .ledger-loading-state :deep(.n-spin-container) { display: grid; place-items: center; }
-.ledger-result-state :deep(.n-result) { display: grid; place-items: center start; width: min(100%, 620px); padding: 0; text-align: left; }
+.ledger-result-state :deep(.n-result) { display: grid; place-items: center; width: min(100%, 620px); padding: 0; text-align: center; }
 .ledger-result-state :deep(.n-result-header__title),
 .ledger-result-state :deep(.n-result-header__description),
-.ledger-result-state :deep(.n-result-footer) { text-align: left; }
+.ledger-result-state :deep(.n-result-footer) { text-align: center; }
+.ledger-result-state :deep(.n-result-footer .ledger-page-actions) { justify-content: center; }
 .ledger-state-panel h1,
 .ledger-state-panel p { margin: 0; }
 .ledger-state-panel h1 { color: var(--text-h); font-size: 1.35rem; }
@@ -658,7 +694,7 @@ const netMovement = computed(() => {
 .ledger-detail-header {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
+  align-items: end;
   gap: 28px;
   margin-bottom: 16px;
   padding: 8px 0 10px;
@@ -800,6 +836,7 @@ const netMovement = computed(() => {
 }
 @media (max-width: 680px) {
   .ledger-account-page { padding: 20px 16px 48px; }
+  .ledger-result-state { min-height: calc(100vh - var(--navbar-h, 52px) - 68px); }
   .ledger-detail-header .ledger-detail-account-icon { width: 68px; height: 68px; }
   .ledger-detail-header .ledger-account-identity-copy h1 { font-size: 1.5rem; }
   .ledger-detail-header-actions > * { flex: 1 1 120px; }

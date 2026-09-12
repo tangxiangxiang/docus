@@ -10,6 +10,10 @@ import {
   type LedgerTransaction,
 } from './domain.js'
 import { ledgerValidationError } from './errors.js'
+import {
+  assertSafeMinor,
+  checkedAddMinor,
+} from './money.js'
 
 const SELECT_SETTINGS = `
   SELECT singleton_id, base_currency, timezone, has_created_account,
@@ -250,6 +254,51 @@ const SELECT_ACTIVE_TRANSACTIONS_FOR_ACCOUNT = `
   ORDER BY occurred_at DESC, created_at DESC, id DESC
 `
 
+const SELECT_ACTIVE_TRANSACTIONS_FOR_ACCOUNT_IN_RANGE = `
+  SELECT id, type, transfer_kind, group_id, transfer_fee_mode, amount_minor, account_id, from_account_id, to_account_id,
+         category_id, occurred_at, location, payee, note,
+         adjustment_calculated_balance_minor, adjustment_target_balance_minor,
+         deleted_at, version, created_at, updated_at
+  FROM ledger_transactions
+  WHERE deleted_at IS NULL
+    AND (
+      account_id = @accountId
+      OR from_account_id = @accountId
+      OR to_account_id = @accountId
+    )
+    AND occurred_at >= @from
+    AND occurred_at < @to
+  ORDER BY occurred_at DESC, created_at DESC, id DESC
+`
+
+const ACCOUNT_TRANSACTION_EFFECT_SQL = `
+  CASE
+    WHEN type = 'adjustment' AND account_id = @accountId
+      THEN amount_minor
+    WHEN type = 'income' AND account_id = @accountId
+      THEN CASE WHEN @nature = 'asset' THEN amount_minor ELSE -amount_minor END
+    WHEN type = 'expense' AND account_id = @accountId
+      THEN CASE WHEN @nature = 'asset' THEN -amount_minor ELSE amount_minor END
+    WHEN type = 'transfer' AND from_account_id = @accountId
+      THEN CASE WHEN @nature = 'asset' THEN -amount_minor ELSE amount_minor END
+    WHEN type = 'transfer' AND to_account_id = @accountId
+      THEN CASE WHEN @nature = 'asset' THEN amount_minor ELSE -amount_minor END
+    ELSE 0
+  END
+`
+
+const SELECT_ACCOUNT_TRANSACTION_EFFECT_BEFORE = `
+  SELECT COALESCE(SUM(${ACCOUNT_TRANSACTION_EFFECT_SQL}), 0) AS effect_minor
+  FROM ledger_transactions
+  WHERE deleted_at IS NULL
+    AND (
+      account_id = @accountId
+      OR from_account_id = @accountId
+      OR to_account_id = @accountId
+    )
+    AND occurred_at < @before
+`
+
 const SELECT_ALL_ACTIVE_TRANSACTIONS = `
   SELECT id, type, transfer_kind, group_id, transfer_fee_mode, amount_minor, account_id, from_account_id, to_account_id,
          category_id, occurred_at, location, payee, note,
@@ -399,6 +448,8 @@ export interface LedgerTransactionRangeOptions {
   readonly to: number
 }
 
+export type LedgerAccountBalanceQueryAccount = Pick<LedgerAccount, 'id' | 'nature' | 'openingBalanceMinor'>
+
 export interface LedgerRepository {
   getSettings(): LedgerSettings | null
   insertSettings(settings: LedgerSettings): void
@@ -424,7 +475,12 @@ export interface LedgerRepository {
   insertTransaction(transaction: LedgerTransaction): void
   updateTransaction(input: LedgerTransactionUpdateInput): number
   softDeleteTransaction(input: LedgerTransactionSoftDeleteInput): number
+  getAccountBalanceBefore(account: LedgerAccountBalanceQueryAccount, before: number): number
   listActiveTransactionsForAccount(accountId: string): LedgerTransaction[]
+  listActiveTransactionsForAccountInRange(
+    accountId: string,
+    options: { readonly from: number; readonly to: number },
+  ): LedgerTransaction[]
   listActiveTransactions(): LedgerTransaction[]
   listTransactionsByGroupId(groupId: string, includeDeleted?: boolean): LedgerTransaction[]
   listActiveTransactionsInRange(options: LedgerTransactionRangeOptions): LedgerTransaction[]
@@ -473,6 +529,19 @@ interface AccountParams {
 
 interface AccountUpdateParams extends AccountParams {
   readonly expectedVersion: number
+}
+
+interface AccountBalanceParams {
+  readonly accountId: string
+  readonly nature: LedgerAccount['nature']
+}
+
+interface AccountBalanceBeforeParams extends AccountBalanceParams {
+  readonly before: number
+}
+
+interface AccountBalanceEffectRow {
+  readonly effect_minor: number
 }
 
 interface CategoryParams {
@@ -579,6 +648,25 @@ function accountParams(account: LedgerAccount): AccountParams {
     createdAt: account.createdAt,
     updatedAt: account.updatedAt,
   }
+}
+
+function accountBalanceParams(account: LedgerAccountBalanceQueryAccount): AccountBalanceParams {
+  assertSafeMinor(account.openingBalanceMinor, 'openingBalanceMinor')
+  return {
+    accountId: account.id,
+    nature: account.nature,
+  }
+}
+
+function accountBalanceFromEffect(
+  account: LedgerAccountBalanceQueryAccount,
+  row: AccountBalanceEffectRow | undefined,
+): number {
+  if (row === undefined) {
+    throw new Error(`Ledger balance aggregate returned no row for account ${account.id}`)
+  }
+  assertSafeMinor(row.effect_minor, 'accountBalanceEffectMinor')
+  return checkedAddMinor(account.openingBalanceMinor, row.effect_minor)
 }
 
 function categoryParams(category: LedgerCategory): CategoryParams {
@@ -862,9 +950,17 @@ export function createLedgerRepository(db: DatabaseT): LedgerRepository {
     insertTransaction: db.prepare<TransactionParams>(INSERT_TRANSACTION),
     updateTransaction: db.prepare<TransactionUpdateParams>(UPDATE_TRANSACTION),
     softDeleteTransaction: db.prepare<TransactionSoftDeleteParams>(SOFT_DELETE_TRANSACTION),
+    getAccountTransactionEffectBefore: db.prepare<AccountBalanceBeforeParams, AccountBalanceEffectRow>(
+      SELECT_ACCOUNT_TRANSACTION_EFFECT_BEFORE,
+    ),
     listActiveTransactionsForAccount: db.prepare<{ readonly accountId: string }>(
       SELECT_ACTIVE_TRANSACTIONS_FOR_ACCOUNT,
     ),
+    listActiveTransactionsForAccountInRange: db.prepare<{
+      readonly accountId: string
+      readonly from: number
+      readonly to: number
+    }>(SELECT_ACTIVE_TRANSACTIONS_FOR_ACCOUNT_IN_RANGE),
     listActiveTransactions: db.prepare(SELECT_ALL_ACTIVE_TRANSACTIONS),
     listActiveTransactionsInRange: db.prepare<{ readonly from: number; readonly to: number }>(
       SELECT_ACTIVE_TRANSACTIONS_IN_RANGE,
@@ -986,9 +1082,40 @@ export function createLedgerRepository(db: DatabaseT): LedgerRepository {
         .changes
     },
 
+    getAccountBalanceBefore(account: LedgerAccountBalanceQueryAccount, before: number): number {
+      if (!Number.isSafeInteger(before)) {
+        throw ledgerValidationError('account balance cutoff must be a safe integer', { field: 'before' })
+      }
+      return accountBalanceFromEffect(
+        account,
+        statements.getAccountTransactionEffectBefore.get({
+          ...accountBalanceParams(account),
+          before,
+        }),
+      )
+    },
+
     listActiveTransactionsForAccount(accountId: string): LedgerTransaction[] {
       return statements.listActiveTransactionsForAccount
         .all({ accountId })
+        .map(ledgerTransactionFromRow)
+    },
+
+    listActiveTransactionsForAccountInRange(
+      accountId: string,
+      options: { readonly from: number; readonly to: number },
+    ): LedgerTransaction[] {
+      if (!Number.isSafeInteger(options.to)) {
+        throw ledgerValidationError('transaction range to must be a safe integer', { field: 'to' })
+      }
+      if (!Number.isSafeInteger(options.from)) {
+        throw ledgerValidationError('transaction range from must be a safe integer', { field: 'from' })
+      }
+      if (options.from >= options.to) {
+        throw ledgerValidationError('transaction range from must be earlier than to', { field: 'from' })
+      }
+      return statements.listActiveTransactionsForAccountInRange
+        .all({ accountId, from: options.from, to: options.to })
         .map(ledgerTransactionFromRow)
     },
 

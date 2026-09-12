@@ -20,6 +20,7 @@ import type {
   LedgerCategoryKind,
   LedgerCategorySlice,
   LedgerCashflowSummary,
+  LedgerPageInfo,
   LedgerMovementSummary,
   LedgerOverviewContext,
   LedgerOverviewDto,
@@ -55,6 +56,7 @@ import {
   calendarMonthRangesForLocalDate,
   calendarDayPointsForInstant,
   ledgerLocalDateForInstant,
+  localDateRange,
   monthRange,
   parseLedgerLocalDate,
   periodRangesForLocalDate,
@@ -100,6 +102,11 @@ interface AccountProjectionState {
   readonly account: LedgerAccount
   readonly transactions: readonly LedgerTransaction[]
   readonly currentBalanceMinor: number
+}
+
+interface ProjectedTransactionPage {
+  readonly rows: readonly LedgerTransaction[]
+  readonly page: LedgerPageInfo
 }
 
 function notFound(entity: string): never {
@@ -190,6 +197,10 @@ function accountDto(
 
 function isWithinRange(value: number, range: { readonly startMs: number; readonly endMs: number }): boolean {
   return value >= range.startMs && value < range.endMs
+}
+
+function exclusiveInstant(instantMs: number): number {
+  return assertUtcMilliseconds(instantMs + 1, 'projection now exclusive')
 }
 
 function cashflowForTransactions(transactions: readonly LedgerTransaction[]): LedgerCashflowSummary {
@@ -288,60 +299,58 @@ function movementForAccount(
   return { balanceIncreaseMinor, balanceDecreaseMinor }
 }
 
-function transactionBalancesForPage(
+function transactionBalancesFromCurrentBalance(
   account: LedgerAccount,
-  transactions: readonly LedgerTransaction[],
-  pageTransactions: readonly LedgerTransactionDto[],
+  currentBalanceMinor: number,
+  pageTransactions: readonly LedgerTransaction[],
 ): readonly LedgerAccountTransactionBalance[] {
-  const pageIds = new Set(pageTransactions.map((transaction) => transaction.id))
-  const balances = new Map<string, number>()
-  const sorted = [...transactions].sort(
-    (left, right) => left.occurredAt - right.occurredAt
-      || left.createdAt - right.createdAt
-      || left.id.localeCompare(right.id),
-  )
-  let balance = account.openingBalanceMinor
-  for (const transaction of sorted) {
-    balance = checkedAddMinor(balance, transactionEffectForAccount(transaction, account))
-    if (pageIds.has(transaction.id)) balances.set(transaction.id, balance)
-  }
-
-  return pageTransactions.flatMap((transaction): LedgerAccountTransactionBalance[] => {
-    const balanceMinor = balances.get(transaction.id)
-    return balanceMinor === undefined ? [] : [{ transactionId: transaction.id, balanceMinor }]
+  let balance = currentBalanceMinor
+  return pageTransactions.map((transaction) => {
+    const balanceAfterMinor = balance
+    balance = checkedSubMinor(
+      balance,
+      transactionEffectForAccount(transaction, account),
+    )
+    return { transactionId: transaction.id, balanceMinor: balanceAfterMinor }
   })
 }
 
 function accountBalanceTrend(
   account: LedgerAccount,
+  prefixBalanceMinor: number,
   transactions: readonly LedgerTransaction[],
-  currentBalanceMinor: number,
   range: LedgerAccountBalanceTrendRange,
+  calendarPoints: readonly { readonly date: string; readonly startMs: number }[],
   nowMs: number,
   timezone: string,
 ): LedgerAccountBalanceTrendDto {
-  const pointCount = range <= 30 ? range : 12
-  const calendarPoints = calendarDayPointsForInstant(range, pointCount, nowMs, timezone)
   const sorted = [...transactions].sort(
     (left, right) => left.occurredAt - right.occurredAt
       || left.createdAt - right.createdAt
       || left.id.localeCompare(right.id),
   )
-  let balance = account.openingBalanceMinor
+  let balance = prefixBalanceMinor
   let cursor = 0
   const points: LedgerAccountBalanceTrendPoint[] = []
+  const nowExclusive = exclusiveInstant(nowMs)
 
   for (let index = 0; index < calendarPoints.length; index += 1) {
     const calendarPoint = calendarPoints[index]!
-    const timestamp = index === calendarPoints.length - 1 ? nowMs : calendarPoint.startMs
-    while (cursor < sorted.length && sorted[cursor]!.occurredAt <= timestamp) {
+    const isToday = index === calendarPoints.length - 1
+    const cutoff = isToday
+      ? nowExclusive
+      : localDateRange(calendarPoint.date, timezone).endMs
+    while (cursor < sorted.length && sorted[cursor]!.occurredAt < cutoff) {
       balance = checkedAddMinor(balance, transactionEffectForAccount(sorted[cursor]!, account))
       cursor += 1
     }
     points.push({
       date: calendarPoint.date,
-      timestamp,
-      balanceMinor: index === calendarPoints.length - 1 ? currentBalanceMinor : balance,
+      // Historical points are anchored at the next local day boundary. The
+      // half-open cutoff above makes this the end-of-day balance without
+      // manufacturing a 23:59:59.999 instant (which is not DST-safe).
+      timestamp: isToday ? nowMs : cutoff,
+      balanceMinor: balance,
     })
   }
 
@@ -429,20 +438,25 @@ export function createLedgerProjections(
     }
   }
 
-  function transactionPage(query: LedgerTransactionQuery): LedgerTransactionPageDto {
-    const options = normalizeTransactionQuery(query)
-    const rows = repository.queryTransactions(options)
-    const summary = repository.summarizeTransactions(options)
-    const hasNextPage = rows.length > options.limit
-    const returnedRows = hasNextPage ? rows.slice(0, options.limit) : rows
+  function transactionPage(
+    query: LedgerTransactionQuery,
+    pageOptions: { readonly includeSummary?: boolean } = {},
+  ): ProjectedTransactionPage {
+    const queryOptions = normalizeTransactionQuery(query)
+    const rows = repository.queryTransactions(queryOptions)
+    const summary = pageOptions.includeSummary === false
+      ? null
+      : repository.summarizeTransactions(queryOptions)
+    const hasNextPage = rows.length > queryOptions.limit
+    const returnedRows = hasNextPage ? rows.slice(0, queryOptions.limit) : rows
     const last = returnedRows[returnedRows.length - 1]
     return {
-      transactions: returnedRows.map(transactionDtoWithBundle),
+      rows: returnedRows,
       page: {
         nextCursor: hasNextPage && last !== undefined
           ? encodeCursor(last)
           : null,
-        ...summary,
+        ...(summary ?? {}),
       },
     }
   }
@@ -476,7 +490,11 @@ export function createLedgerProjections(
 
   function listTransactions(query: LedgerTransactionQuery): LedgerTransactionPageDto {
     requireSettings()
-    return transactionPage(query)
+    const page = transactionPage(query)
+    return {
+      transactions: page.rows.map(transactionDtoWithBundle),
+      page: page.page,
+    }
   }
 
   function getAccountTransactions(
@@ -488,17 +506,27 @@ export function createLedgerProjections(
     if (account === null) notFound('Ledger Account')
 
     const nowMs = captureNow()
-    const state = accountState(account)
-    const page = transactionPage({ ...query, accountId })
+    const currentBalanceMinor = repository.getAccountBalanceBefore(account, exclusiveInstant(nowMs))
+    const page = transactionPage({ ...query, accountId }, { includeSummary: false })
+    const movementRange = monthRange(nowMs, settings.timezone)
+    const movementTransactions = repository.listActiveTransactionsForAccountInRange(
+      account.id,
+      { from: movementRange.startMs, to: movementRange.endMs },
+    )
     return {
-      account: accountDto(account, state.currentBalanceMinor),
+      account: accountDto(account, currentBalanceMinor),
       movement: movementForAccount(
         account,
-        state.transactions,
-        monthRange(nowMs, settings.timezone),
+        movementTransactions,
+        movementRange,
       ),
-      transactionBalances: transactionBalancesForPage(account, state.transactions, page.transactions),
-      ...page,
+      transactionBalances: transactionBalancesFromCurrentBalance(
+        account,
+        currentBalanceMinor,
+        page.rows,
+      ),
+      transactions: page.rows.map(transactionDtoWithBundle),
+      page: page.page,
     }
   }
 
@@ -511,12 +539,27 @@ export function createLedgerProjections(
     if (account === null) notFound('Ledger Account')
 
     const nowMs = captureNow()
-    const state = accountState(account)
+    const nowExclusive = exclusiveInstant(nowMs)
+    const pointCount = range <= 30 ? range : 12
+    const calendarPoints = calendarDayPointsForInstant(
+      range,
+      pointCount,
+      nowMs,
+      settings.timezone,
+    )
+    const trendTransactions = repository.listActiveTransactionsForAccountInRange(
+      account.id,
+      {
+        from: calendarPoints[0]!.startMs,
+        to: nowExclusive,
+      },
+    )
     return accountBalanceTrend(
       account,
-      state.transactions,
-      state.currentBalanceMinor,
+      repository.getAccountBalanceBefore(account, calendarPoints[0]!.startMs),
+      trendTransactions,
       range,
+      calendarPoints,
       nowMs,
       settings.timezone,
     )

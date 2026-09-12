@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type {
   LedgerAccountDto,
   LedgerCategoryDto,
@@ -330,15 +330,169 @@ describe('Ledger Account Detail projections', () => {
     expect(fixture.projections.getAccountBalanceTrend(asset.id, 7)).toEqual({
       range: 7,
       points: [
-        { date: '2024-03-05', timestamp: Date.parse('2024-03-05T08:00:00.000Z'), balanceMinor: 1_000 },
-        { date: '2024-03-06', timestamp: Date.parse('2024-03-06T08:00:00.000Z'), balanceMinor: 1_000 },
-        { date: '2024-03-07', timestamp: Date.parse('2024-03-07T08:00:00.000Z'), balanceMinor: 1_000 },
-        { date: '2024-03-08', timestamp: Date.parse('2024-03-08T08:00:00.000Z'), balanceMinor: 1_000 },
-        { date: '2024-03-09', timestamp: Date.parse('2024-03-09T08:00:00.000Z'), balanceMinor: 1_000 },
-        { date: '2024-03-10', timestamp: Date.parse('2024-03-10T08:00:00.000Z'), balanceMinor: 900 },
+        { date: '2024-03-05', timestamp: Date.parse('2024-03-06T08:00:00.000Z'), balanceMinor: 1_000 },
+        { date: '2024-03-06', timestamp: Date.parse('2024-03-07T08:00:00.000Z'), balanceMinor: 1_000 },
+        { date: '2024-03-07', timestamp: Date.parse('2024-03-08T08:00:00.000Z'), balanceMinor: 1_000 },
+        { date: '2024-03-08', timestamp: Date.parse('2024-03-09T08:00:00.000Z'), balanceMinor: 1_000 },
+        { date: '2024-03-09', timestamp: Date.parse('2024-03-10T08:00:00.000Z'), balanceMinor: 900 },
+        { date: '2024-03-10', timestamp: Date.parse('2024-03-11T07:00:00.000Z'), balanceMinor: 1_150 },
         { date: '2024-03-11', timestamp: now, balanceMinor: 1_150 },
       ],
     })
+  })
+
+  it('uses Ledger-local day-end balances for historical trend points', () => {
+    const now = Date.parse('2026-09-12T12:00:00.000Z')
+    const fixture = freshFixture('Asia/Shanghai', now)
+    const asset = account(fixture, 'day-end-asset', {
+      openingBalanceMinor: 1_000,
+      openingDate: '2026-01-01',
+    })
+    const expenseCategory = firstCategory(fixture, 'expense')
+    const incomeCategory = firstCategory(fixture, 'income')
+
+    transaction(fixture, 'day-end-noon', {
+      type: 'expense', amountMinor: 100, accountId: asset.id, categoryId: expenseCategory.id,
+      occurredAt: Date.parse('2026-09-10T12:00:00.000+08:00'),
+    })
+    transaction(fixture, 'day-end-last-minute', {
+      type: 'expense', amountMinor: 50, accountId: asset.id, categoryId: expenseCategory.id,
+      occurredAt: Date.parse('2026-09-10T23:59:00.000+08:00'),
+    })
+    transaction(fixture, 'day-start-midnight', {
+      type: 'income', amountMinor: 25, accountId: asset.id, categoryId: incomeCategory.id,
+      occurredAt: Date.parse('2026-09-11T00:00:00.000+08:00'),
+    })
+
+    const trend = fixture.projections.getAccountBalanceTrend(asset.id, 7)
+    const balances = new Map(trend.points.map((point) => [point.date, point]))
+    expect(balances.get('2026-09-09')?.balanceMinor).toBe(1_000)
+    expect(balances.get('2026-09-10')?.balanceMinor).toBe(850)
+    expect(balances.get('2026-09-11')?.balanceMinor).toBe(875)
+    expect(balances.get('2026-09-12')?.balanceMinor).toBe(875)
+    expect(balances.get('2026-09-10')?.timestamp).toBe(
+      Date.parse('2026-09-11T00:00:00.000+08:00'),
+    )
+    expect(balances.get('2026-09-11')?.timestamp).toBe(
+      Date.parse('2026-09-12T00:00:00.000+08:00'),
+    )
+    const detail = fixture.projections.getAccountTransactions(asset.id, query({ limit: '5' }))
+    expect(balances.get('2026-09-12')?.balanceMinor).toBe(detail.account.currentBalanceMinor)
+  })
+
+  it('keeps trend dates and day-end balances correct across Los Angeles DST', () => {
+    const now = Date.parse('2026-03-10T18:00:00.000Z')
+    const fixture = freshFixture('America/Los_Angeles', now)
+    const asset = account(fixture, 'dst-trend-asset', {
+      openingBalanceMinor: 1_000,
+      openingDate: '2026-01-01',
+    })
+    const expenseCategory = firstCategory(fixture, 'expense')
+    const incomeCategory = firstCategory(fixture, 'income')
+
+    transaction(fixture, 'dst-expense', {
+      type: 'expense', amountMinor: 100, accountId: asset.id, categoryId: expenseCategory.id,
+      occurredAt: Date.parse('2026-03-08T12:00:00.000-08:00'),
+    })
+    transaction(fixture, 'dst-income', {
+      type: 'income', amountMinor: 50, accountId: asset.id, categoryId: incomeCategory.id,
+      occurredAt: Date.parse('2026-03-09T12:00:00.000-07:00'),
+    })
+
+    const trend = fixture.projections.getAccountBalanceTrend(asset.id, 7)
+    expect(trend.points.map((point) => point.date)).toEqual([
+      '2026-03-04', '2026-03-05', '2026-03-06', '2026-03-07',
+      '2026-03-08', '2026-03-09', '2026-03-10',
+    ])
+    const balances = new Map(trend.points.map((point) => [point.date, point]))
+    expect(balances.get('2026-03-08')?.balanceMinor).toBe(900)
+    expect(balances.get('2026-03-09')?.balanceMinor).toBe(950)
+    expect(balances.get('2026-03-10')?.balanceMinor).toBe(950)
+    expect(balances.get('2026-03-08')?.timestamp).toBe(
+      Date.parse('2026-03-09T00:00:00.000-07:00'),
+    )
+  })
+
+  it('uses bounded account queries instead of replaying full account history', () => {
+    const fixture = freshFixture()
+    const asset = account(fixture, 'bounded-account')
+    const fullHistorySpy = vi.spyOn(fixture.repository, 'listActiveTransactionsForAccount')
+    const rangeSpy = vi.spyOn(fixture.repository, 'listActiveTransactionsForAccountInRange')
+    const balanceBeforeSpy = vi.spyOn(fixture.repository, 'getAccountBalanceBefore')
+    const querySpy = vi.spyOn(fixture.repository, 'queryTransactions')
+    const summarySpy = vi.spyOn(fixture.repository, 'summarizeTransactions')
+
+    fixture.projections.getAccountTransactions(asset.id, query({ limit: '5' }))
+    fixture.projections.getAccountBalanceTrend(asset.id, 30)
+
+    expect(fullHistorySpy).not.toHaveBeenCalled()
+    expect(summarySpy).not.toHaveBeenCalled()
+    expect(querySpy).toHaveBeenCalledWith(expect.objectContaining({
+      accountId: asset.id,
+      limit: 5,
+    }))
+    expect(rangeSpy).toHaveBeenCalledTimes(2)
+    expect(balanceBeforeSpy).toHaveBeenCalledTimes(2)
+    expect(rangeSpy.mock.calls[1]?.[1]).toEqual(expect.objectContaining({
+      from: expect.any(Number),
+      to: expect.any(Number),
+    }))
+  })
+
+  it('reverse-projects recent balances for asset and liability accounts', () => {
+    const fixture = freshFixture()
+    const asset = account(fixture, 'recent-balance-asset', { openingBalanceMinor: 1_000 })
+    const card = account(fixture, 'recent-balance-card', {
+      name: 'Recent balance card', type: 'credit_card', nature: 'liability', openingBalanceMinor: 200,
+    })
+    const destination = account(fixture, 'recent-balance-destination', { name: 'Recent balance destination' })
+    const expenseCategory = firstCategory(fixture, 'expense')
+    const incomeCategory = firstCategory(fixture, 'income')
+
+    const assetIncome = transaction(fixture, 'recent-balance-asset-income', {
+      type: 'income', amountMinor: 100, accountId: asset.id, categoryId: incomeCategory.id,
+      occurredAt: TEST_NOW - 5_000,
+    })
+    const assetExpense = transaction(fixture, 'recent-balance-asset-expense', {
+      type: 'expense', amountMinor: 40, accountId: asset.id, categoryId: expenseCategory.id,
+      occurredAt: TEST_NOW - 4_000,
+    })
+    const assetTransfer = transaction(fixture, 'recent-balance-asset-transfer', {
+      type: 'transfer', amountMinor: 30, fromAccountId: asset.id, toAccountId: destination.id,
+      occurredAt: TEST_NOW - 3_000,
+    })
+    const assetAdjustment = adjustment(fixture, 'recent-balance-asset-adjustment', asset.id, 1_050, 1_030)
+    expect(assetAdjustment).not.toBeNull()
+
+    const cardExpense = transaction(fixture, 'recent-balance-card-expense', {
+      type: 'expense', amountMinor: 50, accountId: card.id, categoryId: expenseCategory.id,
+      occurredAt: TEST_NOW - 5_000,
+    })
+    const cardIncome = transaction(fixture, 'recent-balance-card-income', {
+      type: 'income', amountMinor: 20, accountId: card.id, categoryId: incomeCategory.id,
+      occurredAt: TEST_NOW - 4_000,
+    })
+    const cardTransfer = transaction(fixture, 'recent-balance-card-transfer', {
+      type: 'transfer', amountMinor: 30, fromAccountId: card.id, toAccountId: destination.id,
+      occurredAt: TEST_NOW - 3_000,
+    })
+
+    const assetDetail = fixture.projections.getAccountTransactions(asset.id, query({ limit: '5' }))
+    expect(assetDetail.account.currentBalanceMinor).toBe(1_050)
+    expect(new Map(assetDetail.transactionBalances.map((entry) => [entry.transactionId, entry.balanceMinor]))).toEqual(new Map([
+      [assetAdjustment!.id, 1_050],
+      [assetTransfer.id, 1_030],
+      [assetExpense.id, 1_060],
+      [assetIncome.id, 1_100],
+    ]))
+
+    const cardDetail = fixture.projections.getAccountTransactions(card.id, query({ limit: '5' }))
+    expect(cardDetail.account.currentBalanceMinor).toBe(260)
+    expect(new Map(cardDetail.transactionBalances.map((entry) => [entry.transactionId, entry.balanceMinor]))).toEqual(new Map([
+      [cardTransfer.id, 260],
+      [cardIncome.id, 230],
+      [cardExpense.id, 250],
+    ]))
   })
 
   it('computes complete current-month movement independently of page limit', () => {
@@ -716,6 +870,15 @@ describe('Ledger Overview and trend projections', () => {
     expect(accountRows.transactions.map((row) => row.id)).toEqual(expect.arrayContaining([repayment.id]))
     expect(accountRows.transactions).toHaveLength(2)
     expect(accountRows.page.total).toBe(2)
+
+    const bankDetail = fixture.projections.getAccountTransactions(bank.id, query({ limit: '5' }))
+    expect(bankDetail.account.currentBalanceMinor).toBe(4_700)
+    const bankDetailBalances = new Map(
+      bankDetail.transactionBalances.map((entry) => [entry.transactionId, entry.balanceMinor]),
+    )
+    const repaymentFee = bankDetail.transactions.find((row) => row.type === 'expense')
+    expect(bankDetailBalances.get(repayment.id)).toBe(5_000)
+    expect(repaymentFee === undefined ? undefined : bankDetailBalances.get(repaymentFee.id)).toBe(4_700)
 
     const withdrawal = transaction(fixture, 'grouped-withdrawal', {
       // Keep the withdrawal on the same fixture while giving it a valid asset destination.
