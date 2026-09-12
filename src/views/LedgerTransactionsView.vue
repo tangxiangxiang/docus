@@ -571,7 +571,7 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
         :row-key="(transaction) => transaction.id"
         :row-props="transactionRowProps"
         :loading="loading || paginationLoading"
-        :max-height="250"
+        :max-height="268"
         size="small"
         :bordered="false"
         :bottom-bordered="false"
@@ -772,7 +772,7 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
   --ledger-transfer: var(--docus-info, #005fb8);
   width: min(100%, 1240px);
   margin: 0 auto;
-  padding: 42px 28px 46px;
+  padding: 42px 28px 20px;
   box-sizing: border-box;
 }
 
@@ -1209,8 +1209,8 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
     flex: 1 1 auto;
   }
   .ledger-transaction-history .ledger-transaction-table {
-    flex: 0 0 288px;
-    height: 288px;
+    flex: 0 0 306px;
+    height: 306px;
     overflow: visible;
   }
   .ledger-transaction-history .ledger-transaction-table :deep(.n-data-table),
