@@ -309,7 +309,7 @@ function buildBalanceChartOption(): LedgerBalanceChartOption {
         smooth: 0.5,
         symbol: 'circle',
         symbolSize: 7,
-        showSymbol: points.length <= 31,
+        showSymbol: false,
         lineStyle: { color: accent, width: 2.5 },
         itemStyle: { color: surface, borderColor: accent, borderWidth: 2 },
         areaStyle: { color: accent, opacity: .12 },
