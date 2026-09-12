@@ -244,7 +244,7 @@ describe('Ledger account detail lifecycle', () => {
     expect(api.getLedgerAccountTransactions).toHaveBeenCalledWith('bank-1', { limit: 5 })
   })
 
-  it('uses the bundled total for an outgoing transfer amount and running balance', async () => {
+  it('counts a bundled charge only once when it is listed beside the outgoing transfer', async () => {
     const original = account({ currentBalanceMinor: 470_000 })
     const repayment: LedgerTransactionDto = {
       id: 'repayment-1',
@@ -263,7 +263,22 @@ describe('Ledger account detail lifecycle', () => {
       createdAt: 3,
       updatedAt: 3,
     }
-    setup(original, [repayment])
+    const interest: LedgerTransactionDto = {
+      id: 'interest-1',
+      type: 'expense',
+      amountMinor: 30_000,
+      groupId: 'repayment-group',
+      accountId: 'bank-1',
+      categoryId: 'interest',
+      payee: '分期账单',
+      note: '',
+      occurredAt: 3,
+      deletedAt: null,
+      version: 1,
+      createdAt: 4,
+      updatedAt: 4,
+    }
+    setup(original, [interest, repayment])
     const nextRouter = createTestRouter()
     await nextRouter.push('/ledger/accounts/bank-1')
     await nextRouter.isReady()
@@ -271,9 +286,12 @@ describe('Ledger account detail lifecycle', () => {
     wrappers.push(wrapper)
     await flushPromises()
 
-    const row = wrapper.get('.ledger-recent-row')
-    expect(row.text()).toContain('-¥5,300.00')
-    expect(row.text()).toContain('¥4,700.00')
+    const rows = wrapper.findAll('.ledger-recent-row')
+    expect(rows).toHaveLength(2)
+    expect(rows[0]!.text()).toContain('-¥300.00')
+    expect(rows[0]!.text()).toContain('¥4,700.00')
+    expect(rows[1]!.text()).toContain('-¥5,000.00')
+    expect(rows[1]!.text()).toContain('¥5,000.00')
   })
 
   it('uses only the transfer amount for an incoming account when a fee is bundled', async () => {

@@ -160,18 +160,8 @@ function transactionTypeLabel(transaction: LedgerTransactionDto): string {
   return '调整'
 }
 
-function transactionAmountForDisplayedAccount(transaction: LedgerTransactionDto, currentAccountId: string): number {
-  if (transaction.type !== 'transfer' || transaction.fromAccountId !== currentAccountId) {
-    return transaction.amountMinor
-  }
-  const totalMinor = transaction.bundle?.totalMinor
-  return typeof totalMinor === 'number' && Number.isSafeInteger(totalMinor)
-    ? totalMinor
-    : transaction.amountMinor
-}
-
 function transactionAmountMinor(transaction: LedgerTransactionDto): number | null {
-  const amount = transactionAmountForDisplayedAccount(transaction, accountId.value)
+  const amount = transaction.amountMinor
   if (!Number.isSafeInteger(amount)) return null
   if (transaction.type === 'income') return amount
   if (transaction.type === 'expense') return -amount
@@ -195,7 +185,7 @@ function maskCardNumber(cardNumber: string | undefined): string {
 function accountEffect(transaction: LedgerTransactionDto): number {
   const current = account.value
   if (!current || transaction.deletedAt !== null) return 0
-  const amount = transactionAmountForDisplayedAccount(transaction, current.id)
+  const amount = transaction.amountMinor
   const positive = current.nature === 'asset'
   if (transaction.type === 'income') return transaction.accountId === current.id ? (positive ? amount : -amount) : 0
   if (transaction.type === 'expense') return transaction.accountId === current.id ? (positive ? -amount : amount) : 0
