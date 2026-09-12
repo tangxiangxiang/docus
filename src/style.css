@@ -173,6 +173,62 @@ body.ledger-accounts-mode #app {
   overflow: hidden;
 }
 
+/* Ledger transaction select renderers are also used inside Naive UI's
+   teleported dropdown. Keep their presentation global and namespaced so the
+   option row stays stable in both the popup and the selected value. */
+.ledger-account-select-option,
+.ledger-category-select-option {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+}
+.ledger-account-select-icon,
+.ledger-category-select-icon {
+  display: inline-flex;
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  line-height: 0;
+}
+.ledger-account-select-icon img,
+.ledger-category-select-icon img {
+  display: block;
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+}
+.ledger-account-select-label,
+.ledger-category-select-label {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ledger-account-select-balance {
+  flex: 0 0 auto;
+  margin-left: auto;
+  min-width: 96px;
+  color: var(--text-muted);
+  font-size: .76rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+.ledger-account-select-group {
+  display: block;
+  padding: 2px 0;
+  color: var(--text-muted);
+  font-size: .72rem;
+  font-weight: 600;
+}
+
 @media (min-width: 651px) {
   html.ledger-transactions-mode,
   body.ledger-transactions-mode,

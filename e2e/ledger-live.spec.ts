@@ -168,7 +168,7 @@ test('real Ledger onboarding and expense survive dashboard refresh', async ({ pa
   await page.locator('#ledger-transaction-amount').fill('38')
   await selectOptionContaining(page, '账户', '招商银行')
   await selectOptionContaining(page, '分类', '餐饮')
-  await page.getByRole('button', { name: '保存交易' }).click()
+  await page.getByRole('button', { name: '保存' }).click()
 
   await expect(page.getByRole('dialog')).toBeHidden()
   await expect(page.getByTestId('ledger-recent-transactions')).toContainText('餐饮')
@@ -247,7 +247,7 @@ test('response loss recovers one real transaction with the original intent key',
   await page.locator('#ledger-transaction-amount').fill('12')
   await selectOptionContaining(page, '账户', account!.name)
   await selectOptionContaining(page, '分类', '餐饮')
-  await page.getByRole('button', { name: '保存交易' }).click()
+  await page.getByRole('button', { name: '保存' }).click()
 
   await expect(page.getByTestId('ledger-recovery')).toBeVisible()
   expect(droppedKey).not.toBe('')
@@ -306,7 +306,7 @@ test('an unreadable successful transaction response replays the same committed i
   await page.locator('#ledger-transaction-amount').fill('13')
   await selectOptionContaining(page, '账户', account!.name)
   await selectOptionContaining(page, '分类', '餐饮')
-  await page.getByRole('button', { name: '保存交易' }).click()
+  await page.getByRole('button', { name: '保存' }).click()
 
   await expect(page.getByTestId('ledger-recovery')).toBeVisible()
   expect(droppedKey).not.toBe('')

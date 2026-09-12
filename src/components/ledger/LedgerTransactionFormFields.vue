@@ -7,7 +7,7 @@ import { ledgerSelectNodeProps } from '../../features/ledger/naiveControls'
 import LedgerDateTimePicker from './LedgerDateTimePicker.vue'
 
 type TransactionFormType = 'income' | 'expense' | 'transfer'
-type AccountOptionRenderer = (option: SelectOption | SelectGroupOption) => VNodeChild
+type AccountOptionRenderer = (option: SelectOption | SelectGroupOption, selected?: boolean) => VNodeChild
 type CategoryOptionRenderer = (option: SelectOption) => VNodeChild
 
 const props = withDefaults(defineProps<{
@@ -317,8 +317,6 @@ defineExpose({
 .ledger-money-control { flex: 1; min-width: 0; font-size: .95rem; font-weight: 650; }
 .ledger-readonly-fields { display: flex; flex-wrap: wrap; gap: 8px; color: var(--text-muted); font-size: .78rem; }
 .ledger-readonly-fields span { padding: 6px 9px; border: 1px solid color-mix(in srgb, var(--border) 68%, transparent); border-radius: 7px; background: color-mix(in srgb, var(--bg-soft) 60%, transparent); }
-.ledger-transaction-form-fields :deep(.ledger-account-select-option),
-.ledger-transaction-form-fields :deep(.ledger-category-select-option) { display: inline-flex; width: 100%; min-width: 0; align-items: center; gap: 8px; }
 .ledger-transaction-form-fields :deep(.n-base-selection-label__render-label),
 .ledger-transaction-form-fields :deep(.n-base-selection-input__content),
 .ledger-transaction-form-fields :deep(.n-base-selection-overlay__wrapper) { width: 100%; min-width: 0; }
@@ -326,12 +324,6 @@ defineExpose({
 .ledger-transaction-form-fields :deep(.n-base-selection-overlay__wrapper),
 .ledger-transaction-form-fields :deep(.n-base-selection-input),
 .ledger-transaction-form-fields :deep(.n-base-selection-input__content) { display: flex; height: 100%; align-items: center; }
-.ledger-transaction-form-fields :deep(.ledger-account-select-icon),
-.ledger-transaction-form-fields :deep(.ledger-category-select-icon) { display: inline-grid; width: 20px; height: 20px; flex: 0 0 20px; place-items: center; color: var(--accent); line-height: 0; }
-.ledger-transaction-form-fields :deep(.ledger-category-select-icon img) { display: block; width: 18px; height: 18px; object-fit: contain; }
-.ledger-transaction-form-fields :deep(.ledger-account-select-label) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ledger-transaction-form-fields :deep(.ledger-account-select-balance) { flex: 0 0 auto; margin-left: auto; color: var(--text-muted); font-variant-numeric: tabular-nums; text-align: right; }
-.ledger-transaction-form-fields :deep(.ledger-account-select-group) { color: var(--text-muted); font-size: .72rem; font-weight: 700; letter-spacing: .02em; }
 @media (max-width: 600px) {
   .ledger-form-grid,
   .ledger-transfer-amount-grid { grid-template-columns: 1fr; }

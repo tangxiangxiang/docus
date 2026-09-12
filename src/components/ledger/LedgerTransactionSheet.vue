@@ -111,13 +111,13 @@ function groupedAccountOptions(showBalance: boolean, allowedNatures?: readonly (
   })
 }
 
-function renderAccountContent(option: SelectOption | SelectGroupOption) {
+function renderAccountContent(option: SelectOption | SelectGroupOption, selected = false) {
   if (option.type === 'group') {
     return h('span', { class: 'ledger-account-select-group' }, String(option.label ?? ''))
   }
   const account = activeAccounts.value.find((item) => item.id === option.value)
   const accountName = String(option.accountName ?? account?.name ?? '')
-  const balanceLabel = String(option.balanceLabel ?? '')
+  const balanceLabel = selected ? '' : String(option.balanceLabel ?? '')
   return h('span', { class: 'ledger-account-select-option' }, [
     h('span', { class: 'ledger-account-select-icon', 'aria-hidden': 'true' }, [
       h(LedgerAccountIcon, { icon: account?.icon, size: 18 }),
@@ -127,8 +127,8 @@ function renderAccountContent(option: SelectOption | SelectGroupOption) {
   ])
 }
 
-function renderAccountLabel(option: SelectOption | SelectGroupOption) {
-  return renderAccountContent(option)
+function renderAccountLabel(option: SelectOption | SelectGroupOption, selected = false) {
+  return renderAccountContent(option, selected)
 }
 
 function customCategoryIconSource(icon: string | undefined): string | undefined {
@@ -161,7 +161,7 @@ function renderCategoryLabel(option: SelectOption) {
         ? h('img', { src: customSource, alt: '', width: 18, height: 18 })
         : h(LedgerAccountIcon, { icon, size: 18 }),
     ]),
-    h('span', { class: 'ledger-account-select-label' }, String(option.label ?? category?.name ?? '')),
+    h('span', { class: 'ledger-category-select-label' }, String(option.label ?? category?.name ?? '')),
   ])
 }
 
@@ -587,7 +587,7 @@ async function retryPending(): Promise<void> {
 .ledger-quick-create-row :deep(.ledger-form-control) { flex: 1; min-width: 0; }
 .ledger-form-actions { display: flex; justify-content: flex-end; gap: 9px; margin: 2px -4px -4px; padding: 4px 4px 0; border-top: 1px solid color-mix(in srgb, var(--border) 72%, transparent); }
 .ledger-primary-button,
-.ledger-secondary-button { min-height: 34px; padding: 5px 12px; border-radius: 7px; font: inherit; font-size: .82rem; font-weight: 650; cursor: pointer; }
+.ledger-secondary-button { min-height: 32px; padding: 6px 12px; border-radius: 7px; font: inherit; font-size: .78rem; font-weight: 650; cursor: pointer; }
 .ledger-primary-button { border: 1px solid var(--accent); background: var(--accent); color: #fff; }
 .ledger-primary-button:hover:not(:disabled) { background: var(--accent-hover); }
 .ledger-secondary-button { border: 1px solid var(--border); background: var(--bg); color: var(--text-h); }

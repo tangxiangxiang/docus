@@ -805,7 +805,7 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
           </NList>
           <NEmpty v-else class="ledger-inline-empty" data-testid="ledger-recent-empty" size="small" :show-icon="false" :description="historicalMode ? '截至该日期还没有交易记录。' : '还没有交易记录。'">
             <template v-if="!historicalMode" #extra>
-              <NButton class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" @click="emit('record')">记下第一笔</NButton>
+              <NButton class="ledger-secondary-button" attr-type="button" size="small" :bordered="false" @click="emit('record')">记下第一笔</NButton>
             </template>
           </NEmpty>
         </NCard>

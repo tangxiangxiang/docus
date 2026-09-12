@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { NButton, NIcon, NPopover } from 'naive-ui'
+import { NIcon, NPopover } from 'naive-ui'
 import { X } from '@vicons/tabler'
 import type { LedgerAccountIcon as AccountIcon } from '../../../shared/ledgerProtocol'
 import { useLedgerAccountIconPreferences } from '../../composables/useLedgerAccountIconPreferences'
@@ -38,9 +38,9 @@ function select(icon: AccountIcon): void {
     <section class="ledger-icon-picker" role="group" aria-label="选择账户图标">
       <header class="ledger-icon-picker-header">
         <strong>选择账户图标</strong>
-        <NButton class="ledger-icon-picker-close" attr-type="button" size="small" quaternary :bordered="false" aria-label="关闭" @click="show = false">
+        <button class="ledger-icon-picker-close" type="button" aria-label="关闭" title="关闭" @click="show = false">
           <NIcon :size="18" aria-hidden="true"><X /></NIcon>
-        </NButton>
+        </button>
       </header>
       <div class="ledger-icon-picker-grid" role="radiogroup" aria-label="账户图标">
         <button v-for="option in options" :key="option.value" type="button" class="ledger-icon-picker-option" :class="{ 'is-selected': modelValue === option.value }" role="radio" :aria-checked="modelValue === option.value" @click="select(option.value)">
@@ -60,7 +60,9 @@ function select(icon: AccountIcon): void {
 .ledger-icon-picker { width: min(320px, calc(100vw - 24px)); box-sizing: border-box; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface, var(--bg)); color: var(--text-h); box-shadow: 0 8px 28px rgb(24 34 56 / 14%); }
 .ledger-icon-picker-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
 .ledger-icon-picker-header strong { font-size: .85rem; font-weight: 650; }
-.ledger-icon-picker-close { width: 28px; height: 28px; color: var(--text-muted); }
+.ledger-icon-picker-close { display: inline-flex; width: 28px; height: 28px; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--text-muted); cursor: pointer; }
+.ledger-icon-picker-close:hover { background: var(--bg-soft); color: var(--text-h); }
+.ledger-icon-picker-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ledger-icon-picker-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; max-height: 330px; overflow-y: auto; }
 .ledger-icon-picker-option { display: flex; min-width: 0; min-height: 62px; flex-direction: column; align-items: center; justify-content: center; gap: 5px; padding: 6px 3px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--text-muted); cursor: pointer; font: inherit; text-align: center; }
 .ledger-icon-picker-option:hover { background: var(--bg-soft); color: var(--text-h); }

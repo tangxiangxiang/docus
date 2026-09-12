@@ -251,7 +251,7 @@ async function remove(): Promise<void> {
             <p>历史记录仍可查看。恢复账户后，才能修改交易的财务字段或删除这笔记录。</p>
             <div v-for="account in archivedAccounts" :key="account.id" class="ledger-restore-row">
               <span>{{ account.name }}（已归档）</span>
-              <NButton class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" :disabled="Boolean(restoringId)" @click="restoreAccount(account.id)">{{ restoringId === account.id ? '正在恢复…' : '恢复账户' }}</NButton>
+              <NButton class="ledger-secondary-button" attr-type="button" size="small" :bordered="false" :disabled="Boolean(restoringId)" @click="restoreAccount(account.id)">{{ restoringId === account.id ? '正在恢复…' : '恢复账户' }}</NButton>
             </div>
           </NAlert>
 
@@ -320,7 +320,7 @@ async function remove(): Promise<void> {
 .ledger-form-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; padding-top: 2px; }
 .ledger-primary-button,
 .ledger-secondary-button,
-.ledger-danger-button { display: inline-flex; width: 88px; min-width: 88px; height: 34px; min-height: 34px; align-items: center; justify-content: center; padding: 5px 10px; box-sizing: border-box; border-radius: 8px; font: inherit; font-size: .78rem; font-weight: 650; cursor: pointer; }
+.ledger-danger-button { display: inline-flex; width: 88px; min-width: 88px; height: 32px; min-height: 32px; align-items: center; justify-content: center; padding: 6px 12px; box-sizing: border-box; border-radius: 8px; font: inherit; font-size: .78rem; font-weight: 650; cursor: pointer; }
 .ledger-wide-action { width: auto; min-width: 132px; }
 .ledger-primary-button { border: 1px solid var(--accent); background: var(--accent); color: #fff; }
 .ledger-primary-button:hover { background: var(--accent-hover); }

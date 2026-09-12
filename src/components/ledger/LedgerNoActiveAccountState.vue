@@ -40,13 +40,13 @@ async function restore(account: LedgerAccountDto): Promise<void> {
           <span>已归档 · {{ account.currency }}</span>
         </div>
         <template #suffix>
-          <NButton class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" :disabled="Boolean(restoringId)" @click="restore(account)">
+          <NButton class="ledger-secondary-button" attr-type="button" size="small" :bordered="false" :disabled="Boolean(restoringId)" @click="restore(account)">
             {{ restoringId === account.id ? '正在恢复…' : '恢复账户' }}
           </NButton>
         </template>
       </NListItem>
     </NList>
-    <NButton class="ledger-primary-button" attr-type="button" type="primary" size="medium" :bordered="false" :disabled="Boolean(restoringId)" @click="emit('create')">创建新账户</NButton>
+    <NButton class="ledger-primary-button" attr-type="button" type="primary" size="small" :bordered="false" :disabled="Boolean(restoringId)" @click="emit('create')">创建新账户</NButton>
   </NCard>
 </template>
 
@@ -67,7 +67,7 @@ async function restore(account: LedgerAccountDto): Promise<void> {
 .ledger-archived-row strong { color: var(--text-h); font-size: .88rem; }
 .ledger-archived-row span { color: var(--text-muted); font-size: .76rem; }
 .ledger-primary-button,
-.ledger-secondary-button { min-height: 38px; padding: 7px 13px; border-radius: 7px; font: inherit; font-weight: 650; cursor: pointer; }
+.ledger-secondary-button { min-height: 32px; padding: 6px 12px; border-radius: 7px; font: inherit; font-size: .78rem; font-weight: 650; cursor: pointer; }
 .ledger-primary-button { border: 1px solid var(--accent); background: var(--accent); color: #fff; }
 .ledger-primary-button:hover:not(:disabled) { background: var(--accent-hover); }
 .ledger-secondary-button { border: 1px solid var(--border); background: var(--bg); color: var(--text-h); }

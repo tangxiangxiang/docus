@@ -384,8 +384,8 @@ async function submit(): Promise<void> {
 
     <p v-if="error" class="ledger-form-error" role="alert">{{ error }}</p>
     <div class="ledger-form-actions">
-      <NButton v-if="props.cancelable" class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" :disabled="saving" @click="emit('cancel')">取消</NButton>
-      <NButton class="ledger-primary-button" attr-type="submit" type="primary" size="medium" :bordered="false" :disabled="saving">{{ saving ? '正在保存…' : '保存交易' }}</NButton>
+      <NButton v-if="props.cancelable" class="ledger-secondary-button" attr-type="button" size="small" :bordered="false" :disabled="saving" @click="emit('cancel')">取消</NButton>
+      <NButton class="ledger-primary-button" attr-type="submit" type="primary" size="small" :bordered="false" :disabled="saving">{{ saving ? '正在保存…' : '保存' }}</NButton>
     </div>
   </NForm>
 </template>
@@ -396,7 +396,7 @@ async function submit(): Promise<void> {
 .ledger-form-error { margin: 0; color: #b42318; font-size: .81rem; }
 .ledger-form-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: -8px; padding: 12px 0 0; border-top: 1px solid color-mix(in srgb, var(--border) 42%, transparent); }
 .ledger-primary-button,
-.ledger-secondary-button { min-height: 39px; padding: 7px 14px; border-radius: 7px; font: inherit; font-size: .83rem; font-weight: 650; cursor: pointer; }
+.ledger-secondary-button { min-height: 32px; padding: 6px 12px; border-radius: 7px; font: inherit; font-size: .78rem; font-weight: 650; cursor: pointer; }
 .ledger-primary-button { border: 1px solid var(--accent); background: var(--accent); color: #fff; }
 .ledger-primary-button:hover:not(:disabled) { background: var(--accent-hover); }
 .ledger-secondary-button { border: 1px solid color-mix(in srgb, var(--border) 86%, transparent); background: color-mix(in srgb, var(--bg) 34%, transparent); color: var(--text-h); }

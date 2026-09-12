@@ -103,7 +103,7 @@ function onAccountSaved(): void {
     <div v-else-if="loading" class="ledger-state-panel ledger-loading-state" data-testid="ledger-accounts-loading" role="status"><NSpin size="medium" description="正在加载账户…" /></div>
     <section v-else-if="store.workspaceState.value === 'RECOVERABLE_ERROR'" class="ledger-state-panel ledger-result-state" data-testid="ledger-accounts-error" role="alert">
       <NResult status="error" title="账户暂时无法加载" :description="ledgerWorkspaceReadErrorMessage(store.workspaceError.value)">
-        <template #footer><NButton class="ledger-primary-button" attr-type="button" type="primary" size="medium" :bordered="false" @click="store.bootstrap">重新加载</NButton></template>
+        <template #footer><NButton class="ledger-primary-button" attr-type="button" type="primary" size="small" :bordered="false" @click="store.bootstrap">重新加载</NButton></template>
       </NResult>
     </section>
     <NEmpty v-else-if="!store.settings.value" class="ledger-state-panel ledger-empty-state" data-testid="ledger-accounts-needs-settings" :show-icon="false" description="请先设置 Ledger">
@@ -169,7 +169,7 @@ function onAccountSaved(): void {
             </NListItem>
           </NList>
           <NEmpty v-else class="ledger-inline-empty" data-testid="ledger-active-account-empty" :show-icon="false" :description="store.activeAccounts.value.length ? '没有符合条件的账户。' : '还没有可用账户。'">
-            <template #extra><NButton class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" @click="createOpen = true">创建账户</NButton></template>
+            <template #extra><NButton class="ledger-secondary-button" attr-type="button" size="small" :bordered="false" @click="createOpen = true">创建账户</NButton></template>
           </NEmpty>
         </NCard>
 
@@ -195,7 +195,7 @@ function onAccountSaved(): void {
                 </RouterLink>
                 <div class="ledger-row-actions">
                   <strong class="ledger-account-balance"><LedgerAnimatedMoney :minor="account.currentBalanceMinor" :currency="account.currency" /></strong>
-                  <NButton class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" :disabled="Boolean(restoreId)" @click="restore(account.id, account.version)">
+                  <NButton class="ledger-secondary-button" attr-type="button" size="small" :bordered="false" :disabled="Boolean(restoreId)" @click="restore(account.id, account.version)">
                     {{ restoreId === account.id ? '正在恢复…' : '恢复' }}
                   </NButton>
                 </div>
@@ -228,15 +228,13 @@ function onAccountSaved(): void {
 .ledger-page-actions,
 .ledger-row-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
 .ledger-primary-button,
-.ledger-secondary-button { display: inline-flex; min-height: 38px; align-items: center; justify-content: center; box-sizing: border-box; padding: 7px 13px; border-radius: 7px; font: inherit; font-size: .84rem; font-weight: 650; text-decoration: none; cursor: pointer; }
+.ledger-secondary-button { display: inline-flex; min-height: 32px; align-items: center; justify-content: center; box-sizing: border-box; padding: 6px 12px; border-radius: 7px; font: inherit; font-size: .78rem; font-weight: 650; text-decoration: none; cursor: pointer; }
 .ledger-primary-button { border: 1px solid var(--accent); background: var(--accent); color: #fff; }
 .ledger-primary-button:hover:not(:disabled) { background: var(--accent-hover); }
 .ledger-secondary-button { border: 1px solid var(--border); background: var(--bg); color: var(--text-h); }
 .ledger-secondary-button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .ledger-primary-button:disabled,
 .ledger-secondary-button:disabled { cursor: wait; opacity: .65; }
-.ledger-page-actions .ledger-primary-button,
-.ledger-page-actions .ledger-secondary-button { min-height: 32px; padding: 6px 12px; font-size: .78rem; }
 .ledger-state-panel { display: grid; min-height: 260px; align-content: center; gap: 9px; color: var(--text-muted); }
 .ledger-loading-state { place-items: center; text-align: center; }
 .ledger-result-state,

@@ -572,8 +572,8 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
         <template #extra>
           <div class="ledger-empty-extra">
             <p>{{ hasFilters ? '可以清除筛选，或换一个日期和账户。' : '保存第一笔收入、支出或转账后，它会显示在这里。' }}</p>
-            <NButton v-if="hasFilters" class="ledger-secondary-button" attr-type="button" size="medium" :bordered="false" @click="clearFilters">清除筛选</NButton>
-            <NButton v-else class="ledger-primary-button" attr-type="button" type="primary" size="medium" :bordered="false" :disabled="!store.activeAccounts.value.length" @click="transactionSheetOpen = true">记下第一笔</NButton>
+            <NButton v-if="hasFilters" class="ledger-secondary-button" attr-type="button" size="small" :bordered="false" @click="clearFilters">清除筛选</NButton>
+            <NButton v-else class="ledger-primary-button" attr-type="button" type="primary" size="small" :bordered="false" :disabled="!store.activeAccounts.value.length" @click="transactionSheetOpen = true">记下第一笔</NButton>
           </div>
         </template>
       </NEmpty>
@@ -611,7 +611,7 @@ const transactionColumns: DataTableColumns<LedgerTransactionDto> = [
 .ledger-transactions-header h1 { margin: 0; color: var(--text-h); font-size: 2rem; line-height: 1.2; }
 .ledger-transactions-header p:not(.ledger-eyebrow) { margin: 8px 0 0; color: var(--text-muted); font-size: .84rem; }
 .ledger-primary-button,
-.ledger-secondary-button { display: inline-flex; min-height: 39px; align-items: center; justify-content: center; box-sizing: border-box; padding: 7px 14px; border-radius: 7px; font: inherit; font-size: .83rem; font-weight: 650; text-decoration: none; cursor: pointer; }
+.ledger-secondary-button { display: inline-flex; min-height: 32px; align-items: center; justify-content: center; box-sizing: border-box; padding: 6px 12px; border-radius: 7px; font: inherit; font-size: .78rem; font-weight: 650; text-decoration: none; cursor: pointer; }
 .ledger-primary-button { border: 1px solid var(--accent); background: var(--accent); color: #fff; }
 .ledger-primary-button:hover:not(:disabled) { background: var(--accent-hover); }
 .ledger-secondary-button { border: 1px solid var(--border); background: var(--bg); color: var(--text-h); }

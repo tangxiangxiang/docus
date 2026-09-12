@@ -404,7 +404,7 @@ const netMovement = computed(() => {
       <NResult status="error" title="账户详情无法加载" :description="actionError">
         <template #footer>
           <div class="ledger-page-actions">
-            <NButton class="ledger-primary-button" attr-type="button" type="primary" size="medium" :bordered="false" @click="load">重新加载</NButton>
+            <NButton class="ledger-primary-button" attr-type="button" type="primary" size="small" :bordered="false" @click="load">重新加载</NButton>
             <RouterLink class="ledger-secondary-button" :to="{ name: 'ledger-accounts' }">返回账户</RouterLink>
           </div>
         </template>
@@ -423,13 +423,13 @@ const netMovement = computed(() => {
 
         <div class="ledger-page-actions ledger-detail-header-actions">
           <RouterLink class="ledger-secondary-button" :to="breadcrumbRootRoute">返回总览</RouterLink>
-          <NButton class="ledger-primary-button" attr-type="button" type="primary" :bordered="false" @click="editing = true">编辑账户</NButton>
+          <NButton class="ledger-primary-button" attr-type="button" type="primary" size="small" :bordered="false" @click="editing = true">编辑账户</NButton>
           <NTooltip v-if="account.archivedAt === null && account.currentBalanceMinor !== 0" placement="bottom">
-            <template #trigger><span class="ledger-action-trigger"><NButton class="ledger-secondary-button ledger-danger-button" attr-type="button" :bordered="false" disabled>归档账户</NButton></span></template>
+            <template #trigger><span class="ledger-action-trigger"><NButton class="ledger-secondary-button ledger-danger-button" attr-type="button" size="small" :bordered="false" disabled>归档账户</NButton></span></template>
             当前余额需调整为 0 后才能归档账户。
           </NTooltip>
-          <NButton v-else-if="account.archivedAt === null" class="ledger-secondary-button ledger-danger-button" attr-type="button" :bordered="false" @click="archive">归档账户</NButton>
-          <NButton v-else class="ledger-secondary-button" attr-type="button" :bordered="false" @click="restore">恢复账户</NButton>
+          <NButton v-else-if="account.archivedAt === null" class="ledger-secondary-button ledger-danger-button" attr-type="button" size="small" :bordered="false" @click="archive">归档账户</NButton>
+          <NButton v-else class="ledger-secondary-button" attr-type="button" size="small" :bordered="false" @click="restore">恢复账户</NButton>
         </div>
       </header>
 
@@ -552,8 +552,6 @@ const netMovement = computed(() => {
 .ledger-account-identity .ledger-account-status { display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; color: var(--text-muted); font-size: .76rem; }
 .ledger-account-status i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .ledger-page-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
-.ledger-detail-header .ledger-page-actions .ledger-secondary-button,
-.ledger-detail-header .ledger-page-actions .ledger-primary-button { min-height: 32px; padding: 6px 12px; font-size: .78rem; }
 .ledger-detail-header .ledger-page-actions { gap: 9px; }
 .ledger-account-edit-modal-card {
   width: min(620px, calc(100vw - 32px));
@@ -573,7 +571,7 @@ const netMovement = computed(() => {
 .ledger-account-edit-modal-card :deep(.n-card__content) { padding: 28px; }
 .ledger-account-edit-modal-card :deep(.ledger-account-edit-form) { width: 100%; padding: 0; border: 0; background: transparent; }
 .ledger-primary-button,
-.ledger-secondary-button { display: inline-flex; min-height: 38px; align-items: center; justify-content: center; box-sizing: border-box; padding: 7px 13px; border-radius: 7px; font: inherit; font-size: .84rem; font-weight: 650; text-decoration: none; cursor: pointer; }
+.ledger-secondary-button { display: inline-flex; min-height: 32px; align-items: center; justify-content: center; box-sizing: border-box; padding: 6px 12px; border-radius: 7px; font: inherit; font-size: .78rem; font-weight: 650; text-decoration: none; cursor: pointer; }
 .ledger-primary-button { border: 1px solid var(--accent); background: var(--accent); color: #fff; }
 .ledger-primary-button:hover:not(:disabled) { background: var(--accent-hover); }
 .ledger-secondary-button { border: 1px solid var(--border); background: var(--bg); color: var(--text-h); }
@@ -739,7 +737,7 @@ const netMovement = computed(() => {
 .ledger-account-hero-balance > p em { margin-left: 4px; font-style: normal; font-weight: 650; }
 .ledger-page-actions { display: flex; align-items: center; justify-content: flex-start; flex-wrap: wrap; gap: 9px; }
 .ledger-primary-button,
-.ledger-secondary-button { display: inline-flex; min-height: 36px; align-items: center; justify-content: center; box-sizing: border-box; padding: 7px 14px; border-radius: 8px; font: inherit; font-size: .78rem; font-weight: 650; line-height: 1; text-decoration: none; cursor: pointer; }
+.ledger-secondary-button { display: inline-flex; min-height: 32px; align-items: center; justify-content: center; box-sizing: border-box; padding: 6px 12px; border-radius: 8px; font: inherit; font-size: .78rem; font-weight: 650; line-height: 1; text-decoration: none; cursor: pointer; }
 .ledger-primary-button { border: 1px solid var(--accent); background: var(--accent); color: #fff; }
 .ledger-primary-button:hover:not(:disabled) { background: var(--accent-hover); }
 .ledger-secondary-button { border: 1px solid var(--border); background: color-mix(in srgb, var(--bg) 76%, transparent); color: var(--text-h); }

@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { DOMWrapper, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
-import { nextTick } from 'vue'
+import { nextTick, type VNodeChild } from 'vue'
+import type { SelectOption } from 'naive-ui'
 import type {
   LedgerAccountDto,
   LedgerCategoryDto,
@@ -15,6 +16,7 @@ import { useToast } from '../../../composables/useToast'
 import { resetLedgerStoreForTesting } from '../../../features/ledger/ledgerStore'
 import LedgerView from '../../../views/LedgerView.vue'
 import LedgerDateTimePicker from '../LedgerDateTimePicker.vue'
+import LedgerTransactionFormFields from '../LedgerTransactionFormFields.vue'
 import { getNaiveSelect, naiveSelectValue, setNaiveSelect } from './selectTestUtils'
 
 const api = vi.hoisted(() => ({
@@ -118,6 +120,8 @@ function ledgerDateTimeValue(sheet: InstanceType<typeof DOMWrapper>): string {
   return (sheet.get('[data-testid="ledger-transaction-occurred-at"] input').element as HTMLInputElement).value.replace(' ', 'T')
 }
 
+type OptionRenderer = (option: SelectOption, selected?: boolean) => VNodeChild
+
 describe('Ledger transaction creation sheet', () => {
   beforeEach(() => {
     sessionStorage.clear()
@@ -160,6 +164,53 @@ describe('Ledger transaction creation sheet', () => {
       occurredAt: expect.any(Number),
     }), expect.any(String))
     expect(document.body.querySelector('.ledger-sheet')).toBeNull()
+  })
+
+  it('keeps account and category renderers as stable option rows', async () => {
+    await openSheet()
+    const sheet = getSheet()
+    const fields = sheet.findComponent(LedgerTransactionFormFields)
+    const renderAccountLabel = fields.props('renderAccountLabel') as OptionRenderer | undefined
+    const renderCategoryLabel = fields.props('renderCategoryLabel') as OptionRenderer | undefined
+    if (!renderAccountLabel || !renderCategoryLabel) throw new Error('Ledger option renderers are not provided')
+
+    const accountOption = mount({
+      render: () => renderAccountLabel({
+        value: 'bank-1',
+        label: '招商银行 · ¥10,000.00',
+        accountName: '招商银行',
+        balanceLabel: '¥10,000.00',
+      } as SelectOption, false),
+    })
+    const selectedAccount = mount({
+      render: () => renderAccountLabel({
+        value: 'bank-1',
+        label: '招商银行 · ¥10,000.00',
+        accountName: '招商银行',
+        balanceLabel: '¥10,000.00',
+      } as SelectOption, true),
+    })
+    const categoryOption = mount({
+      render: () => renderCategoryLabel({ value: 'food', label: '餐饮' }),
+    })
+    wrappers.push(accountOption, selectedAccount, categoryOption)
+
+    expect(accountOption.find('.ledger-account-select-option').exists()).toBe(true)
+    expect(accountOption.find('.ledger-account-select-icon').exists()).toBe(true)
+    expect(accountOption.find('.ledger-account-select-label').text()).toBe('招商银行')
+    expect(accountOption.find('.ledger-account-select-balance').text()).toBe('¥10,000.00')
+    expect(selectedAccount.find('.ledger-account-select-label').text()).toBe('招商银行')
+    expect(selectedAccount.find('.ledger-account-select-balance').exists()).toBe(false)
+    expect(categoryOption.find('.ledger-category-select-option').exists()).toBe(true)
+    expect(categoryOption.find('.ledger-category-select-icon').exists()).toBe(true)
+    expect(categoryOption.find('.ledger-category-select-label').text()).toBe('餐饮')
+    expect(categoryOption.find('.ledger-account-select-label').exists()).toBe(false)
+
+    await setNaiveSelect(sheet, '账户', 'bank-1')
+    await setNaiveSelect(sheet, '分类', 'food')
+    expect(sheet.find('.ledger-account-select-label').text()).toContain('招商银行')
+    expect(sheet.find('.ledger-account-select-balance').exists()).toBe(false)
+    expect(sheet.find('.ledger-category-select-label').text()).toContain('餐饮')
   })
 
   it('preselects the only active account', async () => {

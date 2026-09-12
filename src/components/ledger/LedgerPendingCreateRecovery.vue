@@ -33,7 +33,7 @@ function operationLabel(operation: LedgerPendingCreateIntent['operation']): stri
       class="ledger-primary-button"
       attr-type="button"
       type="primary"
-      size="medium"
+      size="small"
       :bordered="false"
       :disabled="busy"
       :aria-busy="busy ? 'true' : undefined"
@@ -62,13 +62,14 @@ function operationLabel(operation: LedgerPendingCreateIntent['operation']): stri
 .ledger-form-error { color: #b42318; font-size: .82rem; }
 .ledger-form-error :deep(.n-alert-body) { color: #b42318; }
 .ledger-primary-button {
-  min-height: 38px;
-  padding: 8px 15px;
+  min-height: 32px;
+  padding: 6px 12px;
   border: 1px solid var(--accent);
   border-radius: 7px;
   background: var(--accent);
   color: #fff;
   font: inherit;
+  font-size: .78rem;
   font-weight: 650;
   cursor: pointer;
 }

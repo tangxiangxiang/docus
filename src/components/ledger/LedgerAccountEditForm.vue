@@ -133,7 +133,6 @@ async function submit(): Promise<void> {
     <div>
       <h2 id="ledger-account-edit-title">编辑账户</h2>
       <p class="ledger-form-info">{{ props.account.currency }} · {{ store.settings.value?.timezone ?? 'UTC' }}</p>
-      <p v-if="props.hasHistory" class="ledger-form-history">账户已有历史记录，账户性质、类型、期初余额和日期不可修改。</p>
     </div>
 
     <NFormItem class="ledger-form-field" label="卡号" :show-feedback="false" required>

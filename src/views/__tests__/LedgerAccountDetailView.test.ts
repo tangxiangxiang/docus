@@ -188,7 +188,7 @@ describe('Ledger account detail lifecycle', () => {
 
     await wrapper.findAll('button').find((button) => button.text() === '编辑账户')!.trigger('click')
     expect(bodyWrapper().findAllComponents({ name: 'NSelect' }).length).toBe(0)
-    expect(bodyWrapper().text()).toContain('账户已有历史记录')
+    expect(bodyWrapper().text()).not.toContain('账户已有历史记录')
     await bodyWrapper().get('input[name="name"]').setValue('历史账户')
     api.patchLedgerAccount.mockResolvedValue(account({ name: '历史账户', version: 4 }))
     await bodyWrapper().get('[data-testid="ledger-account-edit-form"]').trigger('submit')

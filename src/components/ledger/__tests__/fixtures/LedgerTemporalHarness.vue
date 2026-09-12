@@ -34,7 +34,7 @@ function validate(): void {
     <p data-testid="ledger-temporal-date-only-model">{{ dateOnly }}</p>
     <LedgerDateTimePicker v-model="occurredAt" label="发生时间" test-id="ledger-temporal" />
     <p data-testid="ledger-temporal-model">{{ occurredAt }}</p>
-    <NButton data-testid="ledger-temporal-validate" attr-type="button" @click="validate">验证 Ledger 时间</NButton>
+    <NButton data-testid="ledger-temporal-validate" attr-type="button" size="small" @click="validate">验证 Ledger 时间</NButton>
     <NAlert v-if="error" data-testid="ledger-temporal-error" type="error" :show-icon="false">{{ error }}</NAlert>
     <p data-testid="ledger-temporal-instant">{{ instant === null ? '' : instant }}</p>
     <p data-testid="ledger-temporal-roundtrip">{{ roundTrip }}</p>

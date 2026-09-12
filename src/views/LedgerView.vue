@@ -160,7 +160,7 @@ function closeTransactionSheet(): void {
 
     <section v-else-if="store.workspaceState.value === 'RECOVERABLE_ERROR'" class="ledger-error-state" data-testid="ledger-bootstrap-error" role="alert" aria-label="Ledger 暂时无法打开">
       <NResult status="error" title="Ledger 暂时无法打开" :description="ledgerWorkspaceReadErrorMessage(store.workspaceError.value)">
-        <template #footer><NButton class="ledger-primary-button" attr-type="button" type="primary" size="medium" :bordered="false" @click="retry">重新加载</NButton></template>
+        <template #footer><NButton class="ledger-primary-button" attr-type="button" type="primary" size="small" :bordered="false" @click="retry">重新加载</NButton></template>
       </NResult>
     </section>
 
@@ -208,6 +208,6 @@ function closeTransactionSheet(): void {
 .ledger-error-state p,
 .ledger-ready-placeholder p { margin: 0; }
 .ledger-eyebrow { margin: 0; color: var(--accent); font-size: .75rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
-.ledger-primary-button { min-height: 38px; padding: 7px 14px; border: 1px solid var(--accent); border-radius: 7px; background: var(--accent); color: #fff; font: inherit; font-weight: 650; cursor: pointer; }
+.ledger-primary-button { min-height: 32px; padding: 6px 12px; border: 1px solid var(--accent); border-radius: 7px; background: var(--accent); color: #fff; font: inherit; font-size: .78rem; font-weight: 650; cursor: pointer; }
 .ledger-primary-button:hover { background: var(--accent-hover); }
 </style>
