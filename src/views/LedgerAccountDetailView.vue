@@ -646,7 +646,7 @@ const netMovement = computed(() => {
   --ledger-glass-tint: color-mix(in srgb, var(--accent) 3%, transparent);
   --ledger-glass-highlight: color-mix(in srgb, var(--text-h) 9%, transparent);
   --ledger-glass-shadow: color-mix(in srgb, var(--text-h) 8%, transparent);
-  width: min(100%, 1580px);
+  width: min(100%, 1240px);
   padding: 24px 28px 64px;
 }
 .ledger-account-detail { min-width: 0; }
