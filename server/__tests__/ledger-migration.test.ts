@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import Database from 'better-sqlite3'
 import { applyMigrations } from '../db.js'
-import { DEFAULT_LEDGER_CATEGORIES_V1 } from '../ledger/defaultCategories.js'
+import { DEFAULT_LEDGER_CATEGORIES_V2 } from '../ledger/defaultCategories.js'
 
 const databases: Database.Database[] = []
 
@@ -135,11 +135,11 @@ afterEach(() => {
 })
 
 describe('Ledger 0013 foundation migration', () => {
-  it('creates the five schema-only Ledger tables and records version 13', () => {
+  it('creates the five schema-only Ledger tables and records the latest version', () => {
     const db = freshDb()
     applyMigrations(db)
 
-    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(26)
+    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(27)
     const tables = (db.prepare(
       "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
     ).all() as Array<{ name: string }>).map((row) => row.name)
@@ -155,6 +155,7 @@ describe('Ledger 0013 foundation migration', () => {
     expect((db.prepare("PRAGMA table_info('ledger_transactions')").all() as Array<{ name: string }>).map((column) => column.name)).toContain('location')
     expect((db.prepare("PRAGMA table_info('ledger_transactions')").all() as Array<{ name: string }>).map((column) => column.name)).toContain('transfer_kind')
     expect((db.prepare("PRAGMA table_info('ledger_categories')").all() as Array<{ name: string }>).map((column) => column.name)).toContain('is_default')
+    expect((db.prepare("PRAGMA table_info('ledger_categories')").all() as Array<{ name: string }>).map((column) => column.name)).toContain('sort_order')
     expect(tables.some((name) => /ledger_(monthly|balance|summary|cache)/.test(name))).toBe(false)
   })
 
@@ -171,7 +172,7 @@ describe('Ledger 0013 foundation migration', () => {
     ).get() as { count: number }).count
     applyMigrations(db)
 
-    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(26)
+    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(27)
     expect((db.prepare(
       "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table'",
     ).get() as { count: number }).count).toBe(firstTableCount)
@@ -332,7 +333,7 @@ describe('Ledger 0013 foundation migration', () => {
   it('repairs migrated system category icons to the fresh-seed canonical values', () => {
     const db = freshDb()
     applyMigrations(db, 23)
-    const systemCategories = DEFAULT_LEDGER_CATEGORIES_V1.filter((category) => category.systemKey !== undefined)
+    const systemCategories = DEFAULT_LEDGER_CATEGORIES_V2.filter((category) => category.systemKey !== undefined)
     const insert = db.prepare(`
       INSERT INTO ledger_categories (
         id, kind, name, normalized_name, system_key, icon, archived_at, version, created_at, updated_at
@@ -364,5 +365,60 @@ describe('Ledger 0013 foundation migration', () => {
       WHERE system_key IN ('interest', 'fee')
       ORDER BY system_key
     `).all()).toEqual(expected)
+  })
+
+  it('migrates the default category catalog while preserving renamed identities', () => {
+    const db = freshDb()
+    applyMigrations(db, 26)
+    db.prepare(`
+      INSERT INTO ledger_settings (singleton_id, base_currency, timezone, created_at, updated_at)
+      VALUES (1, 'CNY', 'Asia/Shanghai', 1, 1)
+    `).run()
+
+    const insert = db.prepare(`
+      INSERT INTO ledger_categories (
+        id, kind, name, normalized_name, system_key, icon, is_default,
+        archived_at, version, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, 'wallet', 1, NULL, 3, 1, 1)
+    `)
+    for (const category of DEFAULT_LEDGER_CATEGORIES_V2) {
+      if (category.name === '通讯' || category.name === '订阅' || category.name === '保险') continue
+      const legacyName = category.name === '红包 / 礼金'
+        ? '红包'
+        : category.name === '人情往来' ? '人情' : category.name
+      insert.run(
+        `legacy-${category.kind}-${category.sortOrder}`,
+        category.kind,
+        legacyName,
+        legacyName,
+        category.systemKey ?? null,
+      )
+    }
+
+    applyMigrations(db)
+
+    expect(db.prepare(`
+      SELECT id, name, normalized_name AS normalizedName, icon, is_default AS isDefault, sort_order AS sortOrder
+      FROM ledger_categories
+      WHERE id IN ('legacy-income-5', 'legacy-expense-12')
+      ORDER BY kind
+    `).all()).toEqual([
+      { id: 'legacy-expense-12', name: '人情往来', normalizedName: '人情往来', icon: 'custom_builtin_category_expense_gift', isDefault: 1, sortOrder: 12 },
+      { id: 'legacy-income-5', name: '红包 / 礼金', normalizedName: '红包 / 礼金', icon: 'custom_builtin_category_income_red_packet', isDefault: 1, sortOrder: 5 },
+    ])
+
+    const catalog = db.prepare(`
+      SELECT kind, name, icon, sort_order AS sortOrder, is_default AS isDefault
+      FROM ledger_categories
+      WHERE is_default = 1
+      ORDER BY kind, sort_order
+    `).all()
+    expect(catalog).toHaveLength(DEFAULT_LEDGER_CATEGORIES_V2.length)
+    expect(catalog).toEqual(DEFAULT_LEDGER_CATEGORIES_V2
+      .map(({ kind, name, icon, sortOrder }) => ({ kind, name, icon, sortOrder, isDefault: 1 }))
+      .sort((left, right) => left.kind.localeCompare(right.kind) || left.sortOrder - right.sortOrder))
+
+    applyMigrations(db)
+    expect((db.prepare('SELECT COUNT(*) AS count FROM ledger_categories').get() as { count: number }).count).toBe(DEFAULT_LEDGER_CATEGORIES_V2.length)
   })
 })

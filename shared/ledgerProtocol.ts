@@ -52,28 +52,32 @@ export const LEDGER_BUILTIN_CATEGORY_ICONS: readonly {
   readonly kind: LedgerCategoryKind
   readonly name: string
   readonly id: LedgerAccountIcon
+  readonly sortOrder: number
   readonly systemKey?: LedgerCategorySystemKey
 }[] = [
-  { kind: 'expense', name: '餐饮', id: 'custom_builtin_category_expense_food' },
-  { kind: 'expense', name: '交通', id: 'custom_builtin_category_expense_transport' },
-  { kind: 'expense', name: '购物', id: 'custom_builtin_category_expense_shopping' },
-  { kind: 'expense', name: '住房', id: 'custom_builtin_category_expense_home' },
-  { kind: 'expense', name: '日用', id: 'custom_builtin_category_expense_daily' },
-  { kind: 'expense', name: '娱乐', id: 'custom_builtin_category_expense_entertainment' },
-  { kind: 'expense', name: '医疗', id: 'custom_builtin_category_expense_medical' },
-  { kind: 'expense', name: '教育', id: 'custom_builtin_category_expense_education' },
-  { kind: 'expense', name: '旅行', id: 'custom_builtin_category_expense_travel' },
-  { kind: 'expense', name: '人情', id: 'custom_builtin_category_expense_gift' },
-  { kind: 'expense', name: '利息', id: 'custom_builtin_category_expense_interest', systemKey: 'interest' },
-  { kind: 'expense', name: '手续费', id: 'custom_builtin_category_expense_fee', systemKey: 'fee' },
-  { kind: 'expense', name: '其他', id: 'custom_builtin_category_expense_other' },
-  { kind: 'income', name: '工资', id: 'custom_builtin_category_income_salary' },
-  { kind: 'income', name: '奖金', id: 'custom_builtin_category_income_bonus' },
-  { kind: 'income', name: '投资收益', id: 'custom_builtin_category_income_investment' },
-  { kind: 'income', name: '兼职', id: 'custom_builtin_category_income_part_time' },
-  { kind: 'income', name: '退款', id: 'custom_builtin_category_income_refund' },
-  { kind: 'income', name: '红包', id: 'custom_builtin_category_income_red_packet' },
-  { kind: 'income', name: '其他', id: 'custom_builtin_category_income_other' },
+  { kind: 'income', name: '工资', id: 'custom_builtin_category_income_salary', sortOrder: 1 },
+  { kind: 'income', name: '奖金', id: 'custom_builtin_category_income_bonus', sortOrder: 2 },
+  { kind: 'income', name: '兼职', id: 'custom_builtin_category_income_part_time', sortOrder: 3 },
+  { kind: 'income', name: '投资收益', id: 'custom_builtin_category_income_investment', sortOrder: 4 },
+  { kind: 'income', name: '红包 / 礼金', id: 'custom_builtin_category_income_red_packet', sortOrder: 5 },
+  { kind: 'income', name: '退款', id: 'custom_builtin_category_income_refund', sortOrder: 6 },
+  { kind: 'income', name: '其他', id: 'custom_builtin_category_income_other', sortOrder: 7 },
+  { kind: 'expense', name: '餐饮', id: 'custom_builtin_category_expense_food', sortOrder: 1 },
+  { kind: 'expense', name: '交通', id: 'custom_builtin_category_expense_transport', sortOrder: 2 },
+  { kind: 'expense', name: '购物', id: 'custom_builtin_category_expense_shopping', sortOrder: 3 },
+  { kind: 'expense', name: '日用', id: 'custom_builtin_category_expense_daily', sortOrder: 4 },
+  { kind: 'expense', name: '住房', id: 'custom_builtin_category_expense_home', sortOrder: 5 },
+  { kind: 'expense', name: '通讯', id: 'custom_builtin_category_expense_communication', sortOrder: 6 },
+  { kind: 'expense', name: '订阅', id: 'custom_builtin_category_expense_subscription', sortOrder: 7 },
+  { kind: 'expense', name: '娱乐', id: 'custom_builtin_category_expense_entertainment', sortOrder: 8 },
+  { kind: 'expense', name: '医疗', id: 'custom_builtin_category_expense_medical', sortOrder: 9 },
+  { kind: 'expense', name: '教育', id: 'custom_builtin_category_expense_education', sortOrder: 10 },
+  { kind: 'expense', name: '旅行', id: 'custom_builtin_category_expense_travel', sortOrder: 11 },
+  { kind: 'expense', name: '人情往来', id: 'custom_builtin_category_expense_gift', sortOrder: 12 },
+  { kind: 'expense', name: '保险', id: 'custom_builtin_category_expense_insurance', sortOrder: 13 },
+  { kind: 'expense', name: '利息', id: 'custom_builtin_category_expense_interest', sortOrder: 14, systemKey: 'interest' },
+  { kind: 'expense', name: '手续费', id: 'custom_builtin_category_expense_fee', sortOrder: 15, systemKey: 'fee' },
+  { kind: 'expense', name: '其他', id: 'custom_builtin_category_expense_other', sortOrder: 16 },
 ] as const
 export type LedgerTransactionType = 'income' | 'expense' | 'transfer' | 'adjustment'
 export type LedgerTransactionFilterType = 'income' | 'expense' | 'transfer'

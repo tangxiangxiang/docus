@@ -8,6 +8,7 @@ import {
   type AuthenticatedTestContext,
 } from './helpers/auth.js'
 import { calendarMonthRanges } from '../ledger/time.js'
+import { DEFAULT_LEDGER_CATEGORIES_V2 } from '../ledger/defaultCategories.js'
 
 const db = new Database(':memory:')
 let auth: AuthenticatedTestContext
@@ -115,7 +116,7 @@ describe('Ledger API owner boundary and Settings', () => {
     expect(await json(categories)).toMatchObject({ code: 'ledger-not-found' })
   })
 
-  it('initializes Settings with exactly 20 categories and replays the original snapshot', async () => {
+  it('initializes Settings with the default category catalog and replays the original snapshot', async () => {
     const first = await authenticated('/api/ledger/settings', {
       method: 'POST',
       body: { baseCurrency: 'CNY', timezone: 'Asia/Shanghai' },
@@ -129,7 +130,7 @@ describe('Ledger API owner boundary and Settings', () => {
 
     const categories = await authenticated('/api/ledger/categories')
     expect(categories.status).toBe(200)
-    expect(await json(categories)).toHaveLength(20)
+    expect(await json(categories)).toHaveLength(DEFAULT_LEDGER_CATEGORIES_V2.length)
 
     const replay = await authenticated('/api/ledger/settings', {
       method: 'POST',

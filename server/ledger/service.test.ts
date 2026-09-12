@@ -8,7 +8,7 @@ import type {
   LedgerTransactionCreateRequest,
 } from '../../shared/ledgerProtocol.js'
 import { LEDGER_BUILTIN_CATEGORY_ICONS } from '../../shared/ledgerProtocol.js'
-import { DEFAULT_LEDGER_CATEGORIES_V1 } from './defaultCategories.js'
+import { DEFAULT_LEDGER_CATEGORIES_V2 } from './defaultCategories.js'
 import { LedgerError } from './errors.js'
 import { createLedgerRepository, type LedgerRepository } from './repository.js'
 import { createLedgerService, type LedgerService } from './service.js'
@@ -26,7 +26,7 @@ import {
 const databases: LedgerTestDatabase[] = []
 const TEST_NOW = Date.parse('2026-01-01T00:00:00.000Z')
 
-const EXPECTED_DEFAULT_LEDGER_CATEGORIES_V1 = LEDGER_BUILTIN_CATEGORY_ICONS.map(({ kind, name, id: icon, systemKey }) => ({ kind, name, icon, ...(systemKey ? { systemKey } : {}) }))
+const EXPECTED_DEFAULT_LEDGER_CATEGORIES_V2 = LEDGER_BUILTIN_CATEGORY_ICONS.map(({ kind, name, id: icon, sortOrder, systemKey }) => ({ kind, name, icon, sortOrder, ...(systemKey ? { systemKey } : {}) }))
 
 function freshService(): {
   database: LedgerTestDatabase
@@ -142,16 +142,16 @@ function transactionFromResult(result: ReturnType<LedgerService['createTransacti
 }
 
 describe('Ledger Settings and default Category service', () => {
-  it('initializes Settings and seeds the exact ordered v1 catalog once', () => {
+  it('initializes Settings and seeds the exact ordered v2 catalog once', () => {
     const { service } = freshService()
 
     initialize(service)
 
-    expect(DEFAULT_LEDGER_CATEGORIES_V1).toEqual(EXPECTED_DEFAULT_LEDGER_CATEGORIES_V1)
+    expect(DEFAULT_LEDGER_CATEGORIES_V2).toEqual(EXPECTED_DEFAULT_LEDGER_CATEGORIES_V2)
     const categories = service.listCategories(undefined, true)
-    expect(categories).toHaveLength(DEFAULT_LEDGER_CATEGORIES_V1.length)
+    expect(categories).toHaveLength(DEFAULT_LEDGER_CATEGORIES_V2.length)
     expect(new Set(categories.map((category) => `${category.kind}:${category.name}`))).toEqual(
-      new Set(DEFAULT_LEDGER_CATEGORIES_V1.map((category) => `${category.kind}:${category.name}`)),
+      new Set(DEFAULT_LEDGER_CATEGORIES_V2.map((category) => `${category.kind}:${category.name}`)),
     )
     expect(categories.every((category) => category.protected)).toBe(true)
     expect(service.getSettings()).toMatchObject({
@@ -180,7 +180,7 @@ describe('Ledger Settings and default Category service', () => {
       archivedAt: 1_700_000_000_100,
       version: 7,
     })
-    expect(service.listCategories(undefined, true)).toHaveLength(20)
+    expect(service.listCategories(undefined, true)).toHaveLength(DEFAULT_LEDGER_CATEGORIES_V2.length)
   })
 
   it('protects every built-in category from lifecycle changes', () => {
@@ -247,7 +247,7 @@ describe('Ledger Settings and default Category service', () => {
     })
     expect(retryService.createSettings(settingsRequest(), 'atomic-settings').responseStatus).toBe(201)
     expect(repository.getSettings()).not.toBeNull()
-    expect(repository.listCategories({ includeArchived: true })).toHaveLength(20)
+    expect(repository.listCategories({ includeArchived: true })).toHaveLength(DEFAULT_LEDGER_CATEGORIES_V2.length)
     expect(database.db.prepare('SELECT COUNT(*) AS count FROM ledger_idempotency').get()).toEqual({ count: 1 })
   })
 

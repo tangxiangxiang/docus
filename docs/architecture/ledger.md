@@ -10,7 +10,7 @@
 - src/features/ledger/：API client、store、金额/时间适配、错误和新建恢复。
 - src/components/ledger/：初始化、账户、交易表单、交易详情、图标和选择器渲染。
 - src/views/LedgerView.vue、LedgerTransactionsView.vue、LedgerAccountsView.vue、LedgerAccountDetailView.vue：四个页面级入口。
-- server/migrations/0013_* 至 0023_*：Ledger SQLite schema 演进。
+- server/migrations/0013_* 至 0027_*：Ledger SQLite schema 演进。
 
 ## 2. Domain Model
 
@@ -117,7 +117,7 @@ API 以 /api/ledger 为前缀，包含 settings、accounts、categories、transa
 
 ## 14. Schema Evolution
 
-当前仓库 Ledger schema version 为 23，迁移顺序如下：
+当前仓库 Ledger schema version 为 27，迁移顺序如下：
 
 ~~~text
 0013_ledger_foundation
@@ -131,6 +131,10 @@ API 以 /api/ledger 为前缀，包含 settings、accounts、categories、transa
 0021_ledger_transaction_groups
 0022_ledger_system_categories
 0023_ledger_system_category_icons
+0024_ledger_default_categories
+0025_ledger_recycle_bin_semantics
+0026_ledger_account_icon_recycle_bin
+0027_ledger_default_category_catalog
 ~~~
 
 后续 schema 变更必须新增迁移，不应回写已执行文件；领域字段仍需同步 shared protocol、repository、service、projection 和测试。

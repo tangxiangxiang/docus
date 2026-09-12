@@ -86,6 +86,7 @@ export interface LedgerCategoryRow {
   readonly system_key?: unknown
   readonly icon?: unknown
   readonly is_default?: unknown
+  readonly sort_order?: unknown
   readonly archived_at?: unknown
   readonly version?: unknown
   readonly created_at?: unknown
@@ -154,6 +155,7 @@ export interface LedgerCategory {
   /** Built-in categories cannot be renamed, archived, or deleted. */
   readonly isDefault?: boolean
   readonly icon?: LedgerAccountIcon
+  readonly sortOrder?: number
   readonly archivedAt: number | null
   readonly version: number
   readonly createdAt: number
@@ -519,6 +521,10 @@ export function ledgerCategoryFromRow(row: unknown): LedgerCategory {
     ? safeInteger(record, 'category', 'is_default')
     : 0
   if (isDefault !== 0 && isDefault !== 1) invalidRow('category', 'is_default', 'must be 0 or 1')
+  const sortOrder = hasOwn(record, 'sort_order')
+    ? safeInteger(record, 'category', 'sort_order')
+    : undefined
+  if (sortOrder !== undefined && sortOrder < 0) invalidRow('category', 'sort_order', 'must be non-negative')
   if (
     normalizedName.length === 0
     || normalizedName !== normalizeLedgerCategoryName(name)
@@ -536,6 +542,7 @@ export function ledgerCategoryFromRow(row: unknown): LedgerCategory {
     ...(systemKey === null ? {} : { systemKey }),
     ...(isDefault === 1 ? { isDefault: true } : {}),
     ...(record.icon && record.icon !== 'wallet' ? { icon: record.icon as LedgerAccountIcon } : {}),
+    ...(sortOrder === undefined ? {} : { sortOrder }),
     archivedAt: nullableUtcMilliseconds(record, 'category', 'archived_at'),
     version: positiveVersion(record, 'category', 'version'),
     createdAt: utcMilliseconds(record, 'category', 'created_at'),

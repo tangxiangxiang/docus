@@ -73,6 +73,7 @@ function category(
     kind,
     name,
     normalizedName: name.toLowerCase(),
+    sortOrder: 1000,
     archivedAt: null,
     version: 1,
     createdAt: 1_000,
@@ -92,6 +93,7 @@ function settings(overrides: Partial<LedgerSettings> = {}): LedgerSettings {
     accountIcons: {
       defaultIcon: 'wallet',
       availableIcons: LEDGER_DEFAULT_ACCOUNT_ICONS,
+      archivedIcons: [],
       customIcons: {},
       customIconNames: LEDGER_BUILTIN_ACCOUNT_ICON_NAMES,
     },

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { NIcon } from 'naive-ui'
-import { Book, Briefcase, BuildingBank, Car, Cash, CashBanknote, ChartLine, CirclePlus, CreditCard, DeviceGamepad, Dots, FirstAidKit, Gift, Home, Luggage, ReceiptRefund, ShoppingCart, ToiletPaper, ToolsKitchen2, Trophy, Wallet } from '@vicons/tabler'
+import { Book, Briefcase, BuildingBank, Car, Cash, CashBanknote, ChartLine, CirclePlus, CreditCard, DeviceGamepad, DeviceMobile, Dots, FirstAidKit, Gift, Home, Luggage, Receipt, ReceiptRefund, ShieldCheck, ShoppingCart, ToiletPaper, ToolsKitchen2, Trophy, Wallet } from '@vicons/tabler'
 import type { LedgerAccountIcon as AccountIcon } from '../../../shared/ledgerProtocol'
 import { LEDGER_BUILTIN_ACCOUNT_ICONS } from '../../../shared/ledgerProtocol'
 import { useLedgerAccountIconPreferences } from '../../composables/useLedgerAccountIconPreferences'
@@ -14,11 +14,14 @@ const builtinCategoryIcons: Readonly<Record<string, typeof Wallet>> = {
   custom_builtin_category_expense_shopping: ShoppingCart,
   custom_builtin_category_expense_home: Home,
   custom_builtin_category_expense_daily: ToiletPaper,
+  custom_builtin_category_expense_communication: DeviceMobile,
+  custom_builtin_category_expense_subscription: Receipt,
   custom_builtin_category_expense_entertainment: DeviceGamepad,
   custom_builtin_category_expense_medical: FirstAidKit,
   custom_builtin_category_expense_education: Book,
   custom_builtin_category_expense_travel: Luggage,
   custom_builtin_category_expense_gift: Gift,
+  custom_builtin_category_expense_insurance: ShieldCheck,
   custom_builtin_category_expense_other: Dots,
   custom_builtin_category_income_salary: CashBanknote,
   custom_builtin_category_income_bonus: Trophy,
