@@ -139,7 +139,7 @@ describe('Ledger 0013 foundation migration', () => {
     const db = freshDb()
     applyMigrations(db)
 
-    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(24)
+    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(25)
     const tables = (db.prepare(
       "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
     ).all() as Array<{ name: string }>).map((row) => row.name)
@@ -171,10 +171,37 @@ describe('Ledger 0013 foundation migration', () => {
     ).get() as { count: number }).count
     applyMigrations(db)
 
-    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(24)
+    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(25)
     expect((db.prepare(
       "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table'",
     ).get() as { count: number }).count).toBe(firstTableCount)
+  })
+
+  it('restores legacy archived categories that already have transaction history', () => {
+    const db = freshDb()
+    applyMigrations(db, 24)
+    insertAccount(db, 'legacy-category-account')
+    insertCategory(db, 'legacy-used-category')
+    insertCategory(db, 'legacy-unused-category')
+    db.prepare(`
+      UPDATE ledger_categories
+      SET archived_at = 3_000
+      WHERE id IN ('legacy-used-category', 'legacy-unused-category')
+    `).run()
+    insertIncome(db, 'legacy-category-transaction', 'legacy-category-account', 'legacy-used-category')
+
+    applyMigrations(db)
+
+    expect(db.prepare(`
+      SELECT archived_at AS archivedAt, version, updated_at AS updatedAt
+      FROM ledger_categories
+      WHERE id = 'legacy-used-category'
+    `).get()).toEqual({ archivedAt: null, version: 2, updatedAt: 3_000 })
+    expect(db.prepare(`
+      SELECT archived_at AS archivedAt, version
+      FROM ledger_categories
+      WHERE id = 'legacy-unused-category'
+    `).get()).toEqual({ archivedAt: 3_000, version: 1 })
   })
 
   it('keeps Account names non-unique and Category identity unique without parent/current-balance columns', () => {

@@ -153,7 +153,7 @@ export function ledgerErrorMessage(error: unknown, fallback = 'Ledger 操作暂�
     case 'ledger-archived-account':
       return '相关账户已归档，请先恢复账户。'
     case 'ledger-archived-category':
-      return '相关分类已归档，请改用其他分类。'
+      return '相关分类已在回收站，请先恢复分类或改用其他分类。'
     case 'ledger-account-nonzero-balance':
       return '只有余额为 0 的账户才能归档。'
     case 'ledger-account-has-history':

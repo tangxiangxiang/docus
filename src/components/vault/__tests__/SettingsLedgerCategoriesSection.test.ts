@@ -50,6 +50,21 @@ function mountSection(): VueWrapper {
     global: {
       stubs: {
         LedgerAccountIconPicker: IconPickerStub,
+        Modal: defineComponent({
+          props: { show: Boolean },
+          setup(props, { slots }) {
+            return () => props.show ? h('div', { class: 'n-modal-stub' }, slots.default?.()) : null
+          },
+        }),
+        Card: defineComponent({
+          setup(_, { slots }) {
+            return () => h('div', { class: 'n-card-stub' }, [
+              slots.header?.(),
+              slots['header-extra']?.(),
+              slots.default?.(),
+            ])
+          },
+        }),
       },
     },
   })
@@ -99,7 +114,7 @@ describe('SettingsLedgerCategoriesSection', () => {
     expect(item.classes()).not.toContain('managing')
   })
 
-  it('renames and physically deletes a category without history', async () => {
+  it('renames and moves an unused category to the recycle bin', async () => {
     const wrapper = mountSection()
     const item = wrapper.get('[data-category-kind="expense"] .settings-ledger-category-option')
     await item.trigger('contextmenu')
@@ -117,14 +132,13 @@ describe('SettingsLedgerCategoriesSection', () => {
     expect(queue.value).toHaveLength(1)
     answer(queue.value[0]!.id, true)
     await flushPromises()
-    expect(ledger.deleteCategory).toHaveBeenCalledWith('food', 3)
-    expect(ledger.archiveCategory).not.toHaveBeenCalled()
-    expect(ledger.categories.value.some((item) => item.id === 'food')).toBe(false)
-    expect(useToast().toasts.value.at(-1)?.message).toBe('分类已删除')
+    expect(ledger.archiveCategory).toHaveBeenCalledWith('food', 3)
+    expect(ledger.deleteCategory).not.toHaveBeenCalled()
+    expect(useToast().toasts.value.at(-1)?.message).toBe('分类已移入回收站')
   })
 
-  it('offers archiving when physical deletion is rejected for category history', async () => {
-    ledger.deleteCategory.mockRejectedValueOnce(new LedgerApiError(
+  it('rejects moving a category with history to the recycle bin', async () => {
+    ledger.archiveCategory.mockRejectedValueOnce(new LedgerApiError(
       'category has history',
       409,
       'ledger-category-has-history',
@@ -136,51 +150,23 @@ describe('SettingsLedgerCategoriesSection', () => {
 
     const { queue, answer } = useConfirm()
     expect(queue.value).toHaveLength(1)
-    answer(queue.value[0]!.id, true)
-    await flushPromises()
-
-    expect(ledger.deleteCategory).toHaveBeenCalledWith('food', 3)
-    expect(queue.value).toHaveLength(1)
-    expect(queue.value[0]!.message).toContain('已有交易记录')
-    expect(queue.value[0]!.detail).toContain('历史记录仍会保留')
     answer(queue.value[0]!.id, true)
     await flushPromises()
 
     expect(ledger.archiveCategory).toHaveBeenCalledWith('food', 3)
-    expect(useToast().toasts.value.at(-1)?.message).toBe('分类已归档')
+    expect(ledger.deleteCategory).not.toHaveBeenCalled()
+    expect(wrapper.get('[role="alert"]').text()).toContain('已有交易记录，不能删除')
   })
 
-  it('keeps a historical category unchanged when the archive fallback is cancelled', async () => {
-    ledger.deleteCategory.mockRejectedValueOnce(new LedgerApiError(
-      'category has history',
-      409,
-      'ledger-category-has-history',
-    ))
-    const wrapper = mountSection()
-    const item = wrapper.get('[data-category-kind="expense"] .settings-ledger-category-option')
-    await item.trigger('contextmenu')
-    await item.get('[aria-label="删除分类：餐饮"]').trigger('click')
-
-    const { queue, answer } = useConfirm()
-    answer(queue.value[0]!.id, true)
-    await flushPromises()
-    answer(queue.value[0]!.id, false)
-    await flushPromises()
-
-    expect(ledger.archiveCategory).not.toHaveBeenCalled()
-    expect(ledger.categories.value.some((candidate) => candidate.id === 'food')).toBe(true)
-  })
-
-  it('keeps archived categories in a collapsed management section and restores them', async () => {
+  it('opens archived categories in a modal and restores them', async () => {
     const archived = { ...category('old-food', 'pingguo'), archivedAt: 2 }
     ledger.archivedCategories.value = [archived]
     ledger.categories.value = [...ledger.activeCategories.value, archived]
     const wrapper = mountSection()
+    await wrapper.get('[data-testid="settings-ledger-archived-open"]').trigger('click')
     const section = wrapper.get('[data-testid="settings-ledger-archived-categories"]')
 
-    expect((section.element as HTMLDetailsElement).open).toBe(false)
-    await section.get('summary').trigger('click')
-    expect((section.element as HTMLDetailsElement).open).toBe(true)
+    expect(section.text()).toContain('回收站')
 
     await wrapper.get('[aria-label="恢复分类：pingguo"]').trigger('click')
     await flushPromises()
@@ -189,15 +175,13 @@ describe('SettingsLedgerCategoriesSection', () => {
     expect(useToast().toasts.value.at(-1)?.message).toBe('分类已恢复')
   })
 
-  it('keeps the archived category section visible when there are no archived categories', async () => {
+  it('shows an empty state when the archived categories modal is opened', async () => {
     const wrapper = mountSection()
-    const section = wrapper.get('[data-testid="settings-ledger-archived-categories"]')
+    expect(wrapper.find('[data-testid="settings-ledger-archived-categories"]').exists()).toBe(false)
 
-    expect((section.element as HTMLDetailsElement).open).toBe(false)
-    expect(section.text()).toContain('已归档分类')
-
-    await section.get('summary').trigger('click')
-    expect(section.text()).toContain('暂无已归档分类')
+    await wrapper.get('[data-testid="settings-ledger-archived-open"]').trigger('click')
+    const openedSection = wrapper.get('[data-testid="settings-ledger-archived-categories"]')
+    expect(openedSection.text()).toContain('回收站为空')
   })
 
   it('permanently deletes an archived category after confirmation', async () => {
@@ -206,6 +190,7 @@ describe('SettingsLedgerCategoriesSection', () => {
     ledger.categories.value = [...ledger.activeCategories.value, archived]
     const wrapper = mountSection()
 
+    await wrapper.get('[data-testid="settings-ledger-archived-open"]').trigger('click')
     await wrapper.get('[aria-label="永久删除分类：pingguo"]').trigger('click')
     const { queue, answer } = useConfirm()
     expect(queue.value).toHaveLength(1)
@@ -228,13 +213,14 @@ describe('SettingsLedgerCategoriesSection', () => {
     ))
     const wrapper = mountSection()
 
+    await wrapper.get('[data-testid="settings-ledger-archived-open"]').trigger('click')
     await wrapper.get('[aria-label="永久删除分类：pingguo"]').trigger('click')
     const { queue, answer } = useConfirm()
     answer(queue.value[0]!.id, true)
     await flushPromises()
 
     expect(ledger.archiveCategory).not.toHaveBeenCalled()
-    expect(wrapper.get('[role="alert"]').text()).toContain('只能保持归档')
+    expect(wrapper.get('[role="alert"]').text()).toContain('有历史记录，不能永久删除')
   })
 
   it('does not expose a delete action for protected system categories', async () => {

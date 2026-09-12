@@ -1602,7 +1602,7 @@ export function createLedgerService(
       const category = repository.getCategory(id)
       if (category === null) notFound('Ledger Category')
       if (category.isDefault || category.systemKey) {
-        throw ledgerValidationError('Default categories cannot be archived', {
+        throw ledgerValidationError('Default categories cannot be moved to the recycle bin', {
           field: category.systemKey ? 'systemKey' : 'isDefault',
           ...(category.systemKey ? { systemKey: category.systemKey } : {}),
         })
@@ -1610,6 +1610,13 @@ export function createLedgerService(
       if (category.archivedAt !== null) archivedCategory()
       const expectedVersion = parseExpectedVersionCommand(value)
       assertExpectedVersion(category.version, expectedVersion)
+      if (repository.hasCategoryHistory(id)) {
+        throw new LedgerError(
+          'ledger-category-has-history',
+          409,
+          'Ledger Category cannot be moved to the recycle bin after transaction history exists',
+        )
+      }
 
       const timestamp = generatedTimestamp(now)
       const updated: LedgerCategory = {

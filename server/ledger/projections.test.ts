@@ -557,8 +557,14 @@ describe('Ledger Overview and trend projections', () => {
       type: 'expense', amountMinor: 12, accountId: asset.id, categoryId: archivedCategory.id,
       occurredAt: TEST_NOW - 1_000,
     })
-    const archived = fixture.service.archiveCategory(archivedCategory.id, { expectedVersion: 1 })
-    expect(archived.archivedAt).not.toBeNull()
+    // Simulate a legacy archived row so projections continue to cover
+    // historical data even though the service now rejects archiving a used
+    // category.
+    fixture.database.db.prepare(`
+      UPDATE ledger_categories
+      SET archived_at = ?, version = 2, updated_at = ?
+      WHERE id = ?
+    `).run(TEST_NOW, TEST_NOW, archivedCategory.id)
 
     const overview = fixture.projections.getOverview({ scope: 'all', anchorDate: undefined })
     expect(overview.categoryBreakdown.expense).toEqual(expect.arrayContaining([

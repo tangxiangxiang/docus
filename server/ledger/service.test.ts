@@ -1177,6 +1177,33 @@ describe('Ledger Category service lifecycle', () => {
     )
   })
 
+  it('does not move a category with history to the recycle bin', () => {
+    const { repository, service } = freshService()
+    initialize(service)
+    const account = createAccount(service, 'recycle-bin-history-account')
+    const category = createCategory(service, 'recycle-bin-history-category', { name: 'Used category' })
+    repository.insertTransaction({
+      id: 'recycle-bin-history-transaction',
+      type: 'expense',
+      amountMinor: 1,
+      accountId: account.id,
+      categoryId: category.id,
+      occurredAt: 1_700_000_001_000,
+      payee: '',
+      note: '',
+      deletedAt: null,
+      version: 1,
+      createdAt: 1_700_000_001_000,
+      updatedAt: 1_700_000_001_000,
+    })
+
+    expectLedgerError(
+      () => service.archiveCategory(category.id, { expectedVersion: category.version }),
+      'ledger-category-has-history',
+    )
+    expect(repository.getCategory(category.id)?.archivedAt).toBeNull()
+  })
+
   it('replays the original Category snapshot after later lifecycle changes', () => {
     const { service } = freshService()
     initialize(service)

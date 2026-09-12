@@ -101,7 +101,7 @@ transaction query 支持 type、accountId、categoryId、groupId、from、to、s
 
 - Settings 首次创建时同时生成默认 Category；第一个账户创建后 hasCreatedAccount 单调变为 true，base currency 和 timezone 锁定。
 - Account 创建校验 type/nature 配对和 currency；有历史后 type、nature、opening balance、opening date 不可改。无历史账户可物理删除；归档要求自然余额为 0，之后可以 restore。
-- Category 可创建、改名、换图标、归档、恢复或在无历史时物理删除；系统分类不允许改名、归档、删除。当前设置 UI 暴露创建、改名、换图标、归档，以及已归档分类的恢复和永久删除入口；永久删除仍由服务端历史记录校验兜底。
+- Category 可创建、改名、换图标、移入回收站、恢复或永久删除；已有交易记录的分类不能移入回收站或永久删除，所有内置默认分类受保护。当前设置 UI 将无历史分类的删除操作放入回收站，并在回收站提供恢复和永久删除入口；服务端负责最终历史记录校验。旧版本误归档且已有历史的分类会在迁移时恢复。
 - Income、Expense、Transfer 可创建和 PATCH；Adjustment 只能通过 account adjust endpoint 产生。Transaction 删除是 terminal soft delete；带 groupId 的操作按 group 原子删除。
 - PATCH、archive、restore、delete 使用 expectedVersion 做乐观并发控制。
 
