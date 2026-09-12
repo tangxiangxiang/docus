@@ -73,6 +73,7 @@ import { DiaryAccessContextKey } from '../composables/diary/diaryAccessContext'
 import { AppShellContextKey } from '../composables/appShellContext'
 import { localCivilToday } from '../components/diary/diaryCalendarAdapter'
 import { classifyDiaryPath, diaryLogicalPathForDate, type DiaryDate } from '../../shared/diaryProtocol'
+import { scopeRootsFor } from '../../shared/scopeProtocol'
 import type { DiaryMoodId as MoodId } from '../../shared/diaryMood'
 import { handleDiaryHomeKeydown } from './diaryHomeKeyboard'
 import FileTree from '../components/vault/FileTree.vue'
@@ -228,6 +229,13 @@ const auth = useAuth()
 const diaryAccess = useDiaryAccessSession()
 const diaryAccessContext = inject(DiaryAccessContextKey, null)
 const { activeScope, selectScope } = useScopeFilter()
+
+const searchablePosts = computed(() => {
+  const roots = scopeRootsFor(activeScope.value)
+  return posts.value.filter((post) => roots.some((root) => (
+    post.path === root || post.path.startsWith(`${root}/`)
+  )))
+})
 
 async function authorizeDiaryDocumentPath(path: string): Promise<boolean> {
   if (classifyDiaryPath(path) !== 'managed') return true
@@ -2758,7 +2766,7 @@ watch(isReadMode, async (reading) => {
 
     <CommandPalette
       ref="paletteRef"
-      :posts="posts"
+      :posts="searchablePosts"
       :active-path="activePath"
       @select="openPost"
       @new="onCommandPaletteNew"

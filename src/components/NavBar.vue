@@ -270,7 +270,7 @@ onBeforeUnmount(() => {
       <div class="nav-spacer" />
       <div class="nav-actions">
         <NButton
-          v-if="props.isVault"
+          v-if="props.isVault && !isLedger"
           class="nav-search"
           attr-type="button"
           size="small"

@@ -302,6 +302,7 @@ describe('NavBar — scope chips', () => {
 
     expect(wrapper.find('.navbar').classes()).toContain('is-vault')
     expect(wrapper.findAll('.scope-chip')[2].attributes('aria-pressed')).toBe('true')
+    expect(wrapper.find('.nav-search').exists()).toBe(false)
     expect(wrapper.find('[data-testid="view-toggle"]').exists()).toBe(false)
     expect(wrapper.find('.right-rail-toggle').exists()).toBe(false)
     expect(wrapper.find('[data-testid="account-button"]').exists()).toBe(true)

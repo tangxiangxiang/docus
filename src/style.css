@@ -680,14 +680,18 @@ body.brand-constellation-active * {
   gap: 6px;            /* search and theme toggle sit close together as a unit */
 }
 .nav-search,
-.theme-toggle {
+.theme-toggle,
+.nav-actions .account-menu-root .ab-btn-account {
   width: 28px;
   height: 28px;
+  min-width: 28px;
+  box-sizing: border-box;
   background: transparent;
   border: 1px solid transparent;
   color: var(--text-muted);
   border-radius: 6px;
   padding: 0;
+  line-height: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -700,10 +704,27 @@ body.brand-constellation-active * {
   border-color: var(--border);
   background: var(--bg-soft);
 }
-.nav-actions :where(.nav-search, .theme-toggle, .left-panel-toggle, .right-rail-toggle, .view-toggle) svg {
+.nav-actions :where(.nav-search, .theme-toggle, .account-menu-root .ab-btn-account, .left-panel-toggle, .right-rail-toggle, .view-toggle) .n-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  line-height: 1;
+}
+.nav-actions :where(.nav-search, .theme-toggle, .account-menu-root .ab-btn-account, .left-panel-toggle, .right-rail-toggle, .view-toggle) svg {
   display: block;
   width: 18px;
   height: 18px;
+}
+.nav-actions .account-menu-root .ab-btn-account .ab-btn-icon { transform: translateY(0.5px); }
+.nav-actions :where(.nav-search, .theme-toggle, .account-menu-root .ab-btn-account) .n-button__content {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  line-height: 1;
 }
 
 /* Scope navigation chips (note / diary / ledger).
@@ -1200,10 +1221,7 @@ main.container.auth-page-shell {
   flex: 0 0 28px;
 }
 .nav-actions .account-menu-root .ab-btn-account {
-  width: 28px;
-  height: 28px;
   border-left: 1px solid transparent;
-  border-radius: 6px;
   color: var(--text-muted);
 }
 .nav-actions .account-menu-root .ab-btn-account:hover {
@@ -3456,6 +3474,9 @@ body:has(.ledger-detail-sheet-card) .n-modal-mask {
   font-size: 0.85rem; text-align: left;
 }
 .tab-context-menu button {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
   min-height: 32px;
   width: 100%;
   overflow-wrap: anywhere;
