@@ -185,6 +185,12 @@ body.ledger-accounts-mode #app {
   gap: 8px;
   box-sizing: border-box;
 }
+.n-base-select-option__content:has(> .ledger-account-select-option),
+.n-base-select-option__content:has(> .ledger-category-select-option) {
+  width: 100%;
+  min-width: 0;
+  flex: 1 1 auto;
+}
 .ledger-account-select-icon,
 .ledger-category-select-icon {
   display: inline-flex;
