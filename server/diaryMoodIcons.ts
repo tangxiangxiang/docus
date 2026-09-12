@@ -28,6 +28,7 @@ function defaultConfig(version = 1): DiaryMoodIconConfig {
   return {
     version,
     availableIcons: [...DIARY_DEFAULT_MOOD_ICONS],
+    archivedIcons: [],
     customIcons: {},
     customIconNames: {},
   }
@@ -75,8 +76,10 @@ function normalizeConfig(value: Record<string, unknown>, version: number): Diary
   const customIconsValue = value.customIcons
   const customNamesValue = value.customIconNames
   const availableValue = value.availableIcons
+  const archivedValue = value.archivedIcons
 
   if (!Array.isArray(availableValue)) invalid('availableIcons must be an array')
+  if (archivedValue !== undefined && !Array.isArray(archivedValue)) invalid('archivedIcons must be an array')
   if (!isPlainRecord(customIconsValue)) invalid('customIcons must be an object')
   if (!isPlainRecord(customNamesValue)) invalid('customIconNames must be an object')
 
@@ -90,12 +93,22 @@ function normalizeConfig(value: Record<string, unknown>, version: number): Diary
     customIcons[id] = svg
   }
 
+  const requestedArchived = new Set<string>()
+  for (const id of archivedValue ?? []) {
+    if (!isDiaryCustomMoodId(id) || !Object.hasOwn(customIcons, id)) invalid('archivedIcons contains an invalid custom mood icon id')
+    requestedArchived.add(id)
+  }
+
   const available = new Set<DiaryMoodId>(DIARY_DEFAULT_MOOD_ICONS)
   for (const id of availableValue) {
     if (!validMoodId(id)) invalid('availableIcons contains an invalid mood icon id')
     if (isMoodId(id) || Object.hasOwn(customIcons, id)) available.add(id)
   }
-  for (const id of Object.keys(customIcons)) available.add(id as DiaryMoodId)
+  for (const id of Object.keys(customIcons)) {
+    if (!requestedArchived.has(id)) available.add(id as DiaryMoodId)
+  }
+
+  const archivedIcons = [...requestedArchived] as DiaryMoodId[]
 
   const customIconNames: Record<string, string> = {}
   for (const [id, name] of Object.entries(customNamesValue)) {
@@ -109,6 +122,7 @@ function normalizeConfig(value: Record<string, unknown>, version: number): Diary
   return {
     version,
     availableIcons: [...available],
+    archivedIcons,
     customIcons,
     customIconNames,
   }

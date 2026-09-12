@@ -428,10 +428,13 @@ function parseAccountIconConfig(value: unknown): LedgerAccountIconConfig {
     throw ledgerValidationError('accountIcons has an invalid shape')
   }
   const availableIcons = config.availableIcons.filter((icon): icon is string => typeof icon === 'string')
+  const archivedIcons = Array.isArray(config.archivedIcons)
+    ? config.archivedIcons.filter((icon): icon is string => typeof icon === 'string')
+    : []
   if (!availableIcons.length || !availableIcons.includes(config.defaultIcon)) throw ledgerValidationError('accountIcons must contain a valid default icon')
   const customIcons = Object.fromEntries(Object.entries(config.customIcons).filter(([, svg]) => typeof svg === 'string'))
   const customIconNames = Object.fromEntries(Object.entries(config.customIconNames).filter(([, name]) => typeof name === 'string'))
-  return { defaultIcon: config.defaultIcon as LedgerAccountIcon, availableIcons: availableIcons as LedgerAccountIcon[], customIcons, customIconNames }
+  return { defaultIcon: config.defaultIcon as LedgerAccountIcon, availableIcons: availableIcons as LedgerAccountIcon[], archivedIcons: archivedIcons as LedgerAccountIcon[], customIcons, customIconNames }
 }
 
 export interface LedgerAccountPatchRequest {

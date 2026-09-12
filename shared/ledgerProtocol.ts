@@ -41,6 +41,8 @@ export const LEDGER_BUILTIN_ACCOUNT_ICON_NAMES: Readonly<Record<string, string>>
 export interface LedgerAccountIconConfig {
   readonly defaultIcon: LedgerAccountIcon
   readonly availableIcons: readonly LedgerAccountIcon[]
+  /** User icons removed from the picker but retained for restore/permanent deletion. */
+  readonly archivedIcons?: readonly LedgerAccountIcon[]
   readonly customIcons: Readonly<Record<string, string>>
   readonly customIconNames: Readonly<Record<string, string>>
 }

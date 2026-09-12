@@ -53,6 +53,8 @@ export type DiaryMoodId = MoodId | DiaryCustomMoodId
 export interface DiaryMoodIconConfig {
   readonly version: number
   readonly availableIcons: readonly DiaryMoodId[]
+  /** User icons removed from the picker but retained for restore/permanent deletion. */
+  readonly archivedIcons?: readonly DiaryMoodId[]
   readonly customIcons: Readonly<Record<string, string>>
   readonly customIconNames: Readonly<Record<string, string>>
 }

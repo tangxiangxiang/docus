@@ -14,7 +14,8 @@ import { ledgerValidationError } from './errors.js'
 const SELECT_SETTINGS = `
   SELECT singleton_id, base_currency, timezone, has_created_account,
          version, created_at, updated_at, account_icon_default,
-         account_icon_available_json, account_icon_custom_json, account_icon_names_json
+         account_icon_available_json, account_icon_archived_json,
+         account_icon_custom_json, account_icon_names_json
   FROM ledger_settings
   WHERE singleton_id = 1
 `
@@ -23,10 +24,12 @@ const INSERT_SETTINGS = `
   INSERT INTO ledger_settings (
     singleton_id, base_currency, timezone, has_created_account,
     version, created_at, updated_at, account_icon_default,
-    account_icon_available_json, account_icon_custom_json, account_icon_names_json
+    account_icon_available_json, account_icon_archived_json,
+    account_icon_custom_json, account_icon_names_json
   ) VALUES (1, @baseCurrency, @timezone, @hasCreatedAccount,
             @version, @createdAt, @updatedAt, @accountIconDefault,
-            @accountIconAvailableJson, @accountIconCustomJson, @accountIconNamesJson)
+            @accountIconAvailableJson, @accountIconArchivedJson,
+            @accountIconCustomJson, @accountIconNamesJson)
 `
 
 const UPDATE_SETTINGS = `
@@ -38,6 +41,7 @@ const UPDATE_SETTINGS = `
       updated_at = @updatedAt,
       account_icon_default = @accountIconDefault,
       account_icon_available_json = @accountIconAvailableJson,
+      account_icon_archived_json = @accountIconArchivedJson,
       account_icon_custom_json = @accountIconCustomJson,
       account_icon_names_json = @accountIconNamesJson
   WHERE singleton_id = 1
@@ -440,6 +444,7 @@ interface SettingsParams {
   readonly updatedAt: number
   readonly accountIconDefault: string
   readonly accountIconAvailableJson: string
+  readonly accountIconArchivedJson: string
   readonly accountIconCustomJson: string
   readonly accountIconNamesJson: string
 }
@@ -549,6 +554,7 @@ function settingsParams(settings: LedgerSettings): SettingsParams {
     updatedAt: settings.updatedAt,
     accountIconDefault: settings.accountIcons.defaultIcon,
     accountIconAvailableJson: JSON.stringify(settings.accountIcons.availableIcons),
+    accountIconArchivedJson: JSON.stringify(settings.accountIcons.archivedIcons ?? []),
     accountIconCustomJson: JSON.stringify(settings.accountIcons.customIcons),
     accountIconNamesJson: JSON.stringify(settings.accountIcons.customIconNames),
   }

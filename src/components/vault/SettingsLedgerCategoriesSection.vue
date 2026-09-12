@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import { NButton, NCard, NDropdown, NModal, type DropdownOption } from 'naive-ui'
 import { LEDGER_BUILTIN_CATEGORY_ICONS, type LedgerAccountIcon, type LedgerCategoryDto } from '../../../shared/ledgerProtocol'
 import { isLedgerApiError, ledgerErrorMessage } from '../../features/ledger/ledgerErrors'
@@ -8,6 +8,7 @@ import { useLedgerStore } from '../../features/ledger/ledgerStore'
 import { useConfirm } from '../../composables/useConfirm'
 import { useToast } from '../../composables/useToast'
 import { useLedgerAccountIconPreferences } from '../../composables/useLedgerAccountIconPreferences'
+import { useSettingsIconManagement } from '../../composables/useSettingsIconManagement'
 import LedgerIcon from '../ledger/LedgerAccountIcon.vue'
 import LedgerAccountIconPicker from '../ledger/LedgerAccountIconPicker.vue'
 
@@ -21,11 +22,8 @@ const saving = ref(false)
 const uploadInput = ref<HTMLInputElement | null>(null)
 const uploadKind = ref<'income' | 'expense'>('expense')
 const iconSavingId = ref<string | null>(null)
-const managing = ref(false)
-const editingId = ref<string | null>(null)
-const editingName = ref('')
 const categoryActionId = ref<string | null>(null)
-let holdTimer: ReturnType<typeof setTimeout> | null = null
+const { managing, editingId, editingName, startHold, cancelHold, enterManaging, startRename, cancelRename, stopManaging } = useSettingsIconManagement<string>()
 let lastUploadedSvg = ''
 const categoryCustomIcons = ref<Record<string, string>>({})
 const showArchivedModal = ref(false)
@@ -114,10 +112,6 @@ onMounted(() => {
   void bootstrapAndMigrate()
 })
 
-onBeforeUnmount(() => {
-  cancelHold()
-})
-
 async function updateIcon(category: { id: string; icon?: LedgerAccountIcon; version: number }, icon: LedgerAccountIcon): Promise<void> {
   if (iconSavingId.value !== null || icon === (category.icon ?? DEFAULT_CATEGORY_ICON)) return
   iconSavingId.value = category.id
@@ -129,30 +123,6 @@ async function updateIcon(category: { id: string; icon?: LedgerAccountIcon; vers
   } finally {
     iconSavingId.value = null
   }
-}
-
-function startHold(): void {
-  cancelHold()
-  holdTimer = setTimeout(() => {
-    managing.value = true
-    holdTimer = null
-  }, 550)
-}
-
-function cancelHold(): void {
-  if (holdTimer !== null) clearTimeout(holdTimer)
-  holdTimer = null
-}
-
-function startRename(id: string, currentName: string): void {
-  if (!managing.value) return
-  editingId.value = id
-  editingName.value = currentName
-}
-
-function cancelRename(): void {
-  editingId.value = null
-  editingName.value = ''
 }
 
 async function finishRename(category: { id: string; name: string; kind: 'income' | 'expense'; version: number }): Promise<void> {
@@ -167,12 +137,6 @@ async function finishRename(category: { id: string; name: string; kind: 'income'
     }
   }
   cancelRename()
-}
-
-function stopManaging(): void {
-  cancelHold()
-  cancelRename()
-  managing.value = false
 }
 
 async function removeCategory(category: { id: string; name: string; version: number }): Promise<void> {
@@ -325,7 +289,8 @@ async function onFileSelected(event: Event): Promise<void> {
               @pointerup="cancelHold"
               @pointerleave="cancelHold"
               @pointercancel="cancelHold"
-              @contextmenu.prevent="managing = true"
+              @contextmenu.prevent="enterManaging"
+              @click="cancelHold"
             >
               <span class="settings-ledger-category-glyph" aria-label="修改分类图标" @pointerdown.stop @pointerup.stop @click.stop @contextmenu.stop>
               <img v-if="category.icon?.startsWith('custom_category_') && categoryIconSource(category.icon)" :src="categoryIconSource(category.icon)" alt="">
@@ -343,7 +308,7 @@ async function onFileSelected(event: Event): Promise<void> {
                 @keydown.esc.prevent="cancelRename"
                 @blur="finishRename(category)"
               >
-              <span v-else class="settings-ledger-category-label" :title="category.protected ? '默认分类不可重命名或移入回收站' : undefined" @dblclick.stop="!category.protected && startRename(category.id, category.name)">{{ category.name }}</span>
+              <span v-else class="settings-ledger-category-label" :title="category.protected ? '默认分类不可重命名或移入回收站' : undefined" @dblclick.stop="startRename(category.id, category.name, !category.protected)">{{ category.name }}</span>
               <button
                 v-if="managing && !category.protected"
                 type="button"

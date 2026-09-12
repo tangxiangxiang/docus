@@ -5,6 +5,7 @@ import { getLedgerSettings, patchLedgerSettings } from '../features/ledger/api'
 
 const defaultIcon = ref<LedgerAccountIcon>('wallet')
 const availableIcons = ref<LedgerAccountIcon[]>([...LEDGER_DEFAULT_ACCOUNT_ICONS])
+const archivedIcons = ref<LedgerAccountIcon[]>([])
 const customIcons = ref<Record<string, string>>({})
 const customIconNames = ref<Record<string, string>>({})
 const settingsVersion = ref<number | null>(null)
@@ -23,6 +24,7 @@ function hydrate(config?: LedgerAccountIconConfig, version?: number): void {
     icon.startsWith('custom_') && customNames[icon] === '测试'
   )))
   availableIcons.value = [...new Set([...missingDefaults, ...config.availableIcons.filter((icon) => !accidentalTestIcons.has(icon))])]
+  archivedIcons.value = [...new Set((config.archivedIcons ?? []).filter((icon) => !availableIcons.value.includes(icon) && !accidentalTestIcons.has(icon)))]
   customIcons.value = Object.fromEntries(Object.entries(config.customIcons).filter(([icon]) => !accidentalTestIcons.has(icon)))
   customIconNames.value = Object.fromEntries(Object.entries(customNames).filter(([icon]) => !accidentalTestIcons.has(icon)))
   if (version !== undefined) settingsVersion.value = version
@@ -40,7 +42,10 @@ async function loadSettings(): Promise<void> {
   // implementation. The exact label keeps this cleanup limited to that
   // mistaken entry and leaves all other user-defined account icons intact.
   if (accidentalTestIcons.length > 0) {
-    accidentalTestIcons.forEach(removeIcon)
+    accidentalTestIcons.forEach((icon) => {
+      removeIcon(icon)
+      deleteIcon(icon)
+    })
     await persist()
   }
 
@@ -55,6 +60,7 @@ async function loadSettings(): Promise<void> {
       hydrate({
         defaultIcon: settings.accountIcons?.defaultIcon ?? 'wallet',
         availableIcons: [...(settings.accountIcons?.availableIcons ?? availableIcons.value), ...legacyAvailable.filter((icon) => !settings.accountIcons?.availableIcons.includes(icon))],
+        archivedIcons: settings.accountIcons?.archivedIcons ?? [],
         customIcons: legacyCustom,
         customIconNames: legacyNames,
       }, settings.version)
@@ -83,7 +89,7 @@ async function persist(): Promise<void> {
   if (settingsVersion.value === null) return
   const settings = await patchLedgerSettings({
     expectedVersion: settingsVersion.value,
-    accountIcons: { defaultIcon: defaultIcon.value, availableIcons: availableIcons.value, customIcons: customIcons.value, customIconNames: customIconNames.value },
+    accountIcons: { defaultIcon: defaultIcon.value, availableIcons: availableIcons.value, archivedIcons: archivedIcons.value, customIcons: customIcons.value, customIconNames: customIconNames.value },
   })
   hydrate(settings.accountIcons, settings.version)
 }
@@ -93,16 +99,26 @@ function addIcon(icon: LedgerAccountIcon): void {
 }
 
 function removeIcon(icon: LedgerAccountIcon): void {
-  if (icon.startsWith('custom_builtin_')) return
+  if (!icon.startsWith('custom_') || icon.startsWith('custom_builtin_')) return
+  if (defaultIcon.value === icon) return
   if (availableIcons.value.length <= 1) return
   availableIcons.value = availableIcons.value.filter((item) => item !== icon)
-  if (icon.startsWith('custom_')) {
-    const { [icon]: _removed, ...remainingNames } = customIconNames.value
-    customIconNames.value = remainingNames
-    const { [icon]: _removedSvg, ...remainingIcons } = customIcons.value
-    customIcons.value = remainingIcons
-  }
-  if (defaultIcon.value === icon) defaultIcon.value = availableIcons.value[0] ?? 'wallet'
+  if (icon.startsWith('custom_')) archivedIcons.value = [...new Set([...archivedIcons.value, icon])]
+}
+
+function restoreIcon(icon: LedgerAccountIcon): void {
+  if (!archivedIcons.value.includes(icon)) return
+  archivedIcons.value = archivedIcons.value.filter((item) => item !== icon)
+  availableIcons.value = [...availableIcons.value, icon]
+}
+
+function deleteIcon(icon: LedgerAccountIcon): void {
+  if (!archivedIcons.value.includes(icon) || !icon.startsWith('custom_')) return
+  archivedIcons.value = archivedIcons.value.filter((item) => item !== icon)
+  const { [icon]: _removed, ...remainingNames } = customIconNames.value
+  customIconNames.value = remainingNames
+  const { [icon]: _removedSvg, ...remainingIcons } = customIcons.value
+  customIcons.value = remainingIcons
 }
 
 function addCustomIcon(svg: string, name = '自定义图标'): LedgerAccountIcon {
@@ -126,5 +142,5 @@ function getCustomIcon(icon: LedgerAccountIcon): string | undefined {
 
 export function useLedgerAccountIconPreferences() {
   void load().catch(() => undefined)
-  return { defaultIcon, availableIcons, customIcons, customIconNames, addIcon, removeIcon, addCustomIcon, renameCustomIcon, getCustomIcon, hydrate, load, persist }
+  return { defaultIcon, availableIcons, archivedIcons, customIcons, customIconNames, addIcon, removeIcon, restoreIcon, deleteIcon, addCustomIcon, renameCustomIcon, getCustomIcon, hydrate, load, persist }
 }

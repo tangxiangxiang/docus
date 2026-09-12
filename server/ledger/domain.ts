@@ -54,6 +54,7 @@ export interface LedgerSettingsRow {
   readonly updated_at?: unknown
   readonly account_icon_default?: unknown
   readonly account_icon_available_json?: unknown
+  readonly account_icon_archived_json?: unknown
   readonly account_icon_custom_json?: unknown
   readonly account_icon_names_json?: unknown
   readonly [column: string]: unknown
@@ -453,6 +454,7 @@ export function ledgerSettingsFromRow(row: unknown): LedgerSettings {
     } catch { return {} }
   }
   const storedAvailableIcons = jsonArray(record.account_icon_available_json, []) as LedgerAccountIcon[]
+  const storedArchivedIcons = jsonArray(record.account_icon_archived_json, []) as LedgerAccountIcon[]
   const storedIconNames = jsonRecord(record.account_icon_names_json)
   const storedNames = new Set(Object.values(storedIconNames))
   const missingDefaults = LEDGER_DEFAULT_ACCOUNT_ICONS.filter((icon) => {
@@ -463,6 +465,7 @@ export function ledgerSettingsFromRow(row: unknown): LedgerSettings {
   const accountIcons: LedgerAccountIconConfig = {
     defaultIcon: (typeof record.account_icon_default === 'string' ? record.account_icon_default : 'wallet') as LedgerAccountIcon,
     availableIcons,
+    archivedIcons: storedArchivedIcons.filter((icon) => !availableIcons.includes(icon)),
     customIcons: jsonRecord(record.account_icon_custom_json),
     customIconNames: { ...LEDGER_BUILTIN_ACCOUNT_ICON_NAMES, ...storedIconNames },
   }

@@ -10,6 +10,7 @@ import {
 import { getDiaryMoodIconConfig, patchDiaryMoodIconConfig } from '../../lib/api'
 
 const availableIcons = ref<DiaryMoodId[]>([...DIARY_DEFAULT_MOOD_ICONS])
+const archivedIcons = ref<DiaryMoodId[]>([])
 const customIcons = ref<Record<string, string>>({})
 const customIconNames = ref<Record<string, string>>({})
 const settingsVersion = ref<number | null>(null)
@@ -22,6 +23,7 @@ function hydrate(config: DiaryMoodIconConfig): void {
     ...DIARY_DEFAULT_MOOD_ICONS,
     ...config.availableIcons.filter((icon) => isMoodId(icon) || (isDiaryCustomMoodId(icon) && customIds.has(icon))),
   ])]
+  archivedIcons.value = [...new Set((config.archivedIcons ?? []).filter((icon) => !availableIcons.value.includes(icon) && isDiaryCustomMoodId(icon)))]
   customIcons.value = { ...config.customIcons }
   customIconNames.value = { ...config.customIconNames }
   settingsVersion.value = config.version
@@ -46,6 +48,7 @@ async function persist(): Promise<void> {
   const next = await patchDiaryMoodIconConfig({
     expectedVersion: settingsVersion.value,
     availableIcons: availableIcons.value,
+    archivedIcons: archivedIcons.value,
     customIcons: customIcons.value,
     customIconNames: customIconNames.value,
   })
@@ -63,6 +66,18 @@ function addCustomIcon(svg: string, name = '自定义表情'): DiaryMoodId {
 function removeIcon(icon: DiaryMoodId): void {
   if (!isDiaryCustomMoodId(icon)) return
   availableIcons.value = availableIcons.value.filter((item) => item !== icon)
+  archivedIcons.value = [...new Set([...archivedIcons.value, icon])]
+}
+
+function restoreIcon(icon: DiaryMoodId): void {
+  if (!archivedIcons.value.includes(icon)) return
+  archivedIcons.value = archivedIcons.value.filter((item) => item !== icon)
+  availableIcons.value = [...availableIcons.value, icon]
+}
+
+function deleteIcon(icon: DiaryMoodId): void {
+  if (!archivedIcons.value.includes(icon) || !isDiaryCustomMoodId(icon)) return
+  archivedIcons.value = archivedIcons.value.filter((item) => item !== icon)
   const { [icon]: _removedSvg, ...remainingIcons } = customIcons.value
   const { [icon]: _removedName, ...remainingNames } = customIconNames.value
   customIcons.value = remainingIcons
@@ -113,12 +128,15 @@ export function useDiaryMoodIconPreferences() {
   const availableCount = computed(() => availableIcons.value.length)
   return {
     availableIcons,
+    archivedIcons,
     availableCount,
     customIcons,
     customIconNames,
     loading,
     addCustomIcon,
     removeIcon,
+    restoreIcon,
+    deleteIcon,
     renameCustomIcon,
     getCustomIcon,
     isAvailable,
