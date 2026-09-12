@@ -10,11 +10,13 @@ import SettingsLedgerCategoriesSection from '../SettingsLedgerCategoriesSection.
 
 const ledger = vi.hoisted(() => ({
   activeCategories: { value: [] as LedgerCategoryDto[] },
+  archivedCategories: { value: [] as LedgerCategoryDto[] },
   categories: { value: [] as LedgerCategoryDto[] },
   bootstrap: vi.fn(),
   createCategory: vi.fn(),
   patchCategory: vi.fn(),
   archiveCategory: vi.fn(),
+  restoreCategory: vi.fn(),
   deleteCategory: vi.fn(),
 }))
 
@@ -60,13 +62,16 @@ beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
   ledger.activeCategories.value = [category('food', '餐饮'), category('salary', '工资', 'income')]
+  ledger.archivedCategories.value = []
   ledger.categories.value = ledger.activeCategories.value
   ledger.bootstrap.mockResolvedValue(undefined)
   ledger.patchCategory.mockResolvedValue(category('food', '通勤'))
   ledger.archiveCategory.mockResolvedValue({ ...category('food', '餐饮'), archivedAt: 2 })
+  ledger.restoreCategory.mockResolvedValue(category('food', '餐饮'))
   ledger.deleteCategory.mockImplementation(async (id: string) => {
     ledger.categories.value = ledger.categories.value.filter((item) => item.id !== id)
     ledger.activeCategories.value = ledger.activeCategories.value.filter((item) => item.id !== id)
+    ledger.archivedCategories.value = ledger.archivedCategories.value.filter((item) => item.id !== id)
     return { deleted: true, id }
   })
   ledger.createCategory.mockResolvedValue(category('travel', '交通'))
@@ -164,6 +169,61 @@ describe('SettingsLedgerCategoriesSection', () => {
 
     expect(ledger.archiveCategory).not.toHaveBeenCalled()
     expect(ledger.categories.value.some((candidate) => candidate.id === 'food')).toBe(true)
+  })
+
+  it('keeps archived categories in a collapsed management section and restores them', async () => {
+    const archived = { ...category('old-food', 'pingguo'), archivedAt: 2 }
+    ledger.archivedCategories.value = [archived]
+    ledger.categories.value = [...ledger.activeCategories.value, archived]
+    const wrapper = mountSection()
+    const section = wrapper.get('[data-testid="settings-ledger-archived-categories"]')
+
+    expect((section.element as HTMLDetailsElement).open).toBe(false)
+    await section.get('summary').trigger('click')
+    expect((section.element as HTMLDetailsElement).open).toBe(true)
+
+    await wrapper.get('[aria-label="恢复分类：pingguo"]').trigger('click')
+    await flushPromises()
+
+    expect(ledger.restoreCategory).toHaveBeenCalledWith('old-food', 3)
+    expect(useToast().toasts.value.at(-1)?.message).toBe('分类已恢复')
+  })
+
+  it('permanently deletes an archived category after confirmation', async () => {
+    const archived = { ...category('old-food', 'pingguo'), archivedAt: 2 }
+    ledger.archivedCategories.value = [archived]
+    ledger.categories.value = [...ledger.activeCategories.value, archived]
+    const wrapper = mountSection()
+
+    await wrapper.get('[aria-label="永久删除分类：pingguo"]').trigger('click')
+    const { queue, answer } = useConfirm()
+    expect(queue.value).toHaveLength(1)
+    expect(queue.value[0]!.message).toContain('永久删除分类')
+    answer(queue.value[0]!.id, true)
+    await flushPromises()
+
+    expect(ledger.deleteCategory).toHaveBeenCalledWith('old-food', 3)
+    expect(useToast().toasts.value.at(-1)?.message).toBe('分类已永久删除')
+  })
+
+  it('keeps an archived category when permanent deletion is rejected for history', async () => {
+    const archived = { ...category('old-food', 'pingguo'), archivedAt: 2 }
+    ledger.archivedCategories.value = [archived]
+    ledger.categories.value = [...ledger.activeCategories.value, archived]
+    ledger.deleteCategory.mockRejectedValueOnce(new LedgerApiError(
+      'category has history',
+      409,
+      'ledger-category-has-history',
+    ))
+    const wrapper = mountSection()
+
+    await wrapper.get('[aria-label="永久删除分类：pingguo"]').trigger('click')
+    const { queue, answer } = useConfirm()
+    answer(queue.value[0]!.id, true)
+    await flushPromises()
+
+    expect(ledger.archiveCategory).not.toHaveBeenCalled()
+    expect(wrapper.get('[role="alert"]').text()).toContain('只能保持归档')
   })
 
   it('does not expose a delete action for protected system categories', async () => {

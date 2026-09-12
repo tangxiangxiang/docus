@@ -2,6 +2,10 @@
 
 All notable changes to Docus are documented in this file.
 
+## Ledger archived category management — 2026-09-12
+
+- Added a collapsed settings section for restoring archived categories or permanently deleting categories without history; server-side history protection remains authoritative.
+
 ## Ledger current-state documentation sync — 2026-09-12
 
 - Documented the shipped Ledger workspace, account and account-detail lifecycle, category and icon management, and dashboard projections.

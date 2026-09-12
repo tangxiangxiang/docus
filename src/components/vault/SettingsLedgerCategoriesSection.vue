@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { NButton, NDropdown, type DropdownOption } from 'naive-ui'
-import { LEDGER_BUILTIN_CATEGORY_ICONS, type LedgerAccountIcon } from '../../../shared/ledgerProtocol'
+import { LEDGER_BUILTIN_CATEGORY_ICONS, type LedgerAccountIcon, type LedgerCategoryDto } from '../../../shared/ledgerProtocol'
 import { isLedgerApiError, ledgerErrorMessage } from '../../features/ledger/ledgerErrors'
 import { DEFAULT_CATEGORY_ICON, migrateLegacyCategoryIcons } from '../../features/ledger/categoryIconMigration'
 import { useLedgerStore } from '../../features/ledger/ledgerStore'
 import { useConfirm } from '../../composables/useConfirm'
 import { useToast } from '../../composables/useToast'
 import { useLedgerAccountIconPreferences } from '../../composables/useLedgerAccountIconPreferences'
+import LedgerIcon from '../ledger/LedgerAccountIcon.vue'
 import LedgerAccountIconPicker from '../ledger/LedgerAccountIconPicker.vue'
 
 const store = useLedgerStore()
@@ -29,6 +30,7 @@ let lastUploadedSvg = ''
 const categoryCustomIcons = ref<Record<string, string>>({})
 const CATEGORY_CUSTOM_ICON_STORAGE_KEY = 'docus.ledger.category-custom-icons'
 const categories = computed(() => store.activeCategories.value)
+const archivedCategories = computed(() => store.archivedCategories.value)
 
 try {
   const stored = JSON.parse(localStorage.getItem(CATEGORY_CUSTOM_ICON_STORAGE_KEY) ?? '{}') as unknown
@@ -45,6 +47,13 @@ const categoryGroups = computed(() => [
   ...group,
   categories: categories.value.filter((category) => category.kind === group.kind),
 })))
+const archivedCategoryGroups = computed(() => [
+  { kind: 'income' as const, title: '收入分类' },
+  { kind: 'expense' as const, title: '支出分类' },
+].map((group) => ({
+  ...group,
+  categories: archivedCategories.value.filter((category) => category.kind === group.kind),
+})).filter((group) => group.categories.length))
 const uploadOptions: DropdownOption[] = [
   { label: '收入图标', key: 'income' },
   { label: '支出图标', key: 'expense' },
@@ -208,6 +217,47 @@ async function removeCategory(category: { id: string; name: string; version: num
   }
 }
 
+async function restoreArchivedCategory(category: Pick<LedgerCategoryDto, 'id' | 'name' | 'version'>): Promise<void> {
+  if (categoryActionId.value !== null) return
+  categoryActionId.value = category.id
+  operationError.value = ''
+  try {
+    await store.restoreCategory(category.id, category.version)
+    toast.success('分类已恢复')
+  } catch (cause) {
+    operationError.value = ledgerErrorMessage(cause, '分类没有恢复，请稍后重试。')
+  } finally {
+    categoryActionId.value = null
+  }
+}
+
+async function deleteArchivedCategory(category: Pick<LedgerCategoryDto, 'id' | 'name' | 'version'>): Promise<void> {
+  if (categoryActionId.value !== null) return
+  categoryActionId.value = category.id
+  operationError.value = ''
+  try {
+    const confirmed = await confirm(
+      `永久删除分类「${category.name}」？`,
+      '只有没有交易历史的分类才能永久删除；有历史记录的分类只能保持归档。',
+      { confirmLabel: '永久删除', cancelLabel: '取消', destructive: true },
+    )
+    if (!confirmed) return
+
+    try {
+      await store.deleteCategory(category.id, category.version)
+      toast.success('分类已永久删除')
+    } catch (cause) {
+      operationError.value = isLedgerApiError(cause) && cause.code === 'ledger-category-has-history'
+        ? '该分类有历史记录，只能保持归档，不能永久删除。'
+        : ledgerErrorMessage(cause, '分类没有删除，请稍后重试。')
+    }
+  } catch (cause) {
+    operationError.value = ledgerErrorMessage(cause, '分类操作没有完成，请稍后重试。')
+  } finally {
+    categoryActionId.value = null
+  }
+}
+
 async function addSvgFile(nextKind: 'income' | 'expense', rawFile: File): Promise<void> {
   createError.value = ''
   const source = rawFile.name.toLowerCase().endsWith('.svg') && rawFile.size <= 256 * 1024
@@ -322,6 +372,61 @@ async function onFileSelected(event: Event): Promise<void> {
           </div>
         </div>
       </div>
+      <details
+        v-if="archivedCategories.length"
+        class="settings-card settings-ledger-archived-card"
+        data-testid="settings-ledger-archived-categories"
+      >
+        <summary class="settings-ledger-archived-summary">
+          <span class="settings-ledger-archived-summary-copy">
+            <span class="settings-card-title">已归档分类 <span class="settings-ledger-archived-count">{{ archivedCategories.length }}</span></span>
+            <span class="settings-ledger-archived-hint">历史记录仍保留；可恢复或永久删除。</span>
+          </span>
+          <span class="settings-ledger-archived-chevron" aria-hidden="true">⌄</span>
+        </summary>
+        <div class="settings-ledger-archived-content">
+          <div v-for="group in archivedCategoryGroups" :key="group.kind" class="settings-ledger-archived-group">
+            <h5>{{ group.title }}</h5>
+            <div class="settings-ledger-archived-options" role="list">
+              <div
+                v-for="category in group.categories"
+                :key="category.id"
+                class="settings-ledger-archived-option"
+                :data-category-id="category.id"
+                :data-testid="`settings-ledger-archived-category-${category.id}`"
+                role="listitem"
+              >
+                <span class="settings-ledger-category-glyph" aria-hidden="true">
+                  <img v-if="category.icon?.startsWith('custom_category_') && categoryIconSource(category.icon)" :src="categoryIconSource(category.icon)" alt="">
+                  <LedgerIcon v-else :icon="category.icon ?? DEFAULT_CATEGORY_ICON" :size="20" />
+                </span>
+                <span class="settings-ledger-category-label" :title="category.name">{{ category.name }}</span>
+                <span class="settings-ledger-archived-actions">
+                  <NButton
+                    class="settings-ledger-category-action"
+                    attr-type="button"
+                    size="small"
+                    :bordered="false"
+                    :disabled="categoryActionId !== null"
+                    :aria-label="`恢复分类：${category.name}`"
+                    @click="restoreArchivedCategory(category)"
+                  >{{ categoryActionId === category.id ? '处理中…' : '恢复' }}</NButton>
+                  <NButton
+                    class="settings-ledger-category-action settings-ledger-category-action-danger"
+                    attr-type="button"
+                    type="error"
+                    secondary
+                    size="small"
+                    :disabled="categoryActionId !== null"
+                    :aria-label="`永久删除分类：${category.name}`"
+                    @click="deleteArchivedCategory(category)"
+                  >{{ categoryActionId === category.id ? '处理中…' : '永久删除' }}</NButton>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </details>
     </div>
   </section>
 </template>
@@ -348,6 +453,26 @@ async function onFileSelected(event: Event): Promise<void> {
 .settings-ledger-category-delete:disabled { cursor: wait; opacity: .5; }
 .settings-ledger-category-empty { color: var(--text-muted); font-size: .75rem; }
 .settings-ledger-category-error { margin: 0 0 8px; color: #dc4c4c; font-size: .75rem; }
+.settings-ledger-archived-card { padding: 0; overflow: hidden; }
+.settings-ledger-archived-summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 20px; cursor: pointer; list-style: none; }
+.settings-ledger-archived-summary::-webkit-details-marker { display: none; }
+.settings-ledger-archived-summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.settings-ledger-archived-summary-copy { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.settings-ledger-archived-summary .settings-card-title { display: flex; align-items: center; gap: 7px; margin: 0; }
+.settings-ledger-archived-count { display: inline-flex; min-width: 20px; height: 20px; align-items: center; justify-content: center; box-sizing: border-box; padding: 0 6px; border-radius: 10px; background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--accent); font-size: .72rem; font-weight: 650; }
+.settings-ledger-archived-hint { color: var(--settings-muted, var(--text-muted)); font-size: .78rem; line-height: 1.35; }
+.settings-ledger-archived-chevron { flex: 0 0 auto; color: var(--settings-muted, var(--text-muted)); font-size: 1.1rem; line-height: 1; transition: transform .15s ease; }
+.settings-ledger-archived-card[open] .settings-ledger-archived-chevron { transform: rotate(180deg); }
+.settings-ledger-archived-content { padding: 0 20px 16px; border-top: 1px solid var(--settings-border); }
+.settings-ledger-archived-group + .settings-ledger-archived-group { margin-top: 14px; }
+.settings-ledger-archived-group h5 { margin: 14px 0 6px; color: var(--settings-muted, var(--text-muted)); font-size: .75rem; font-weight: 600; }
+.settings-ledger-archived-options { display: grid; gap: 0; }
+.settings-ledger-archived-option { display: flex; min-width: 0; min-height: 38px; align-items: center; gap: 8px; padding: 5px 0; border-top: 1px solid var(--settings-border); box-sizing: border-box; }
+.settings-ledger-archived-option:first-child { border-top: 0; }
+.settings-ledger-archived-option .settings-ledger-category-glyph { color: var(--settings-muted, var(--text-muted)); }
+.settings-ledger-archived-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; margin-left: auto; }
+.settings-ledger-category-action { min-width: 52px; }
+.settings-ledger-category-action-danger { min-width: 76px; }
 
 
 @media (max-width: 900px) {
@@ -356,6 +481,8 @@ async function onFileSelected(event: Event): Promise<void> {
 
 @media (max-width: 560px) {
   .settings-ledger-category-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .settings-ledger-archived-option { align-items: flex-start; flex-wrap: wrap; }
+  .settings-ledger-archived-actions { width: calc(100% - 30px); margin-left: 30px; }
 }
 
 @keyframes settings-ledger-category-wiggle {

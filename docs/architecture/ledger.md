@@ -101,7 +101,7 @@ transaction query 支持 type、accountId、categoryId、groupId、from、to、s
 
 - Settings 首次创建时同时生成默认 Category；第一个账户创建后 hasCreatedAccount 单调变为 true，base currency 和 timezone 锁定。
 - Account 创建校验 type/nature 配对和 currency；有历史后 type、nature、opening balance、opening date 不可改。无历史账户可物理删除；归档要求自然余额为 0，之后可以 restore。
-- Category 可创建、改名、换图标、归档、恢复或在无历史时物理删除；系统分类不允许改名、归档、删除。当前设置 UI 暴露创建、改名、换图标和归档等操作。
+- Category 可创建、改名、换图标、归档、恢复或在无历史时物理删除；系统分类不允许改名、归档、删除。当前设置 UI 暴露创建、改名、换图标、归档，以及已归档分类的恢复和永久删除入口；永久删除仍由服务端历史记录校验兜底。
 - Income、Expense、Transfer 可创建和 PATCH；Adjustment 只能通过 account adjust endpoint 产生。Transaction 删除是 terminal soft delete；带 groupId 的操作按 group 原子删除。
 - PATCH、archive、restore、delete 使用 expectedVersion 做乐观并发控制。
 
@@ -149,10 +149,8 @@ API 以 /api/ledger 为前缀，包含 settings、accounts、categories、transa
 ## 16. Known Boundaries
 
 - 共享 Transfer request 和表单仍带 payee 字段，但 repository 对 transfer 按 schema invariant 写入空 payee；当前文档不把 Transfer 交易对象描述为已持久化能力。
-- Category API 有 restore endpoint，但当前 SettingsLedgerCategoriesSection 未提供可见的分类恢复入口；本用户指南只描述已确认的归档操作。
 - /bills 是已确认的兼容路径，不是当前 Ledger product surface。
 
 ## 17. Tests
 
 服务端 Ledger 测试覆盖 migration/API/auth/concurrency，以及 balance.test.ts、validation.test.ts、service.test.ts、projections.test.ts、idempotency.test.ts、time.test.ts 和 money.test.ts。客户端测试覆盖 API、store/recovery、时间与金额、初始化、Dashboard/period navigation、transaction sheet、transactions view、accounts view 和 account detail；相关测试位于 src/**/__tests__/ 和 src/views/__tests__/。
-
