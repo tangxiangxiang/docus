@@ -305,6 +305,102 @@ describe('Ledger transaction query projections', () => {
 })
 
 describe('Ledger Account Detail projections', () => {
+  it('keeps offset and cursor page balances anchored to complete account history', () => {
+    const fixture = freshFixture()
+    const asset = account(fixture, 'paged-balance', { openingBalanceMinor: 1_000 })
+    const expenseCategory = firstCategory(fixture, 'expense')
+    const incomeCategory = firstCategory(fixture, 'income')
+    const oldest = transaction(fixture, 'paged-income', {
+      type: 'income', amountMinor: 200, accountId: asset.id, categoryId: incomeCategory.id,
+      occurredAt: TEST_NOW - 3_000,
+    })
+    const middle = transaction(fixture, 'paged-expense-middle', {
+      type: 'expense', amountMinor: 50, accountId: asset.id, categoryId: expenseCategory.id,
+      occurredAt: TEST_NOW - 2_000,
+    })
+    transaction(fixture, 'paged-expense-latest', {
+      type: 'expense', amountMinor: 100, accountId: asset.id, categoryId: expenseCategory.id,
+      occurredAt: TEST_NOW - 1_000,
+    })
+
+    const firstPage = fixture.projections.getAccountTransactions(asset.id, query({ limit: '1' }))
+    const cursorPage = fixture.projections.getAccountTransactions(asset.id, query({
+      limit: '1', cursor: firstPage.page.nextCursor!,
+    }))
+    const offsetPage = fixture.projections.getAccountTransactions(asset.id, query({ limit: '1', offset: '1' }))
+    const thirdPage = fixture.projections.getAccountTransactions(asset.id, query({ limit: '1', offset: '2' }))
+
+    expect(cursorPage.transactionBalances).toEqual([{ transactionId: middle.id, balanceMinor: 1_150 }])
+    expect(offsetPage.transactionBalances).toEqual([{ transactionId: middle.id, balanceMinor: 1_150 }])
+    expect(thirdPage.transactionBalances).toEqual([{ transactionId: oldest.id, balanceMinor: 1_200 }])
+  })
+
+  it('includes hidden transactions in every filtered row balance', () => {
+    const fixture = freshFixture()
+    const asset = account(fixture, 'filtered-balance', { openingBalanceMinor: 1_000 })
+    const food = category(fixture, 'food', { name: 'Food' })
+    const transport = category(fixture, 'transport', { name: 'Transport' })
+    const incomeCategory = firstCategory(fixture, 'income')
+    const olderExpense = transaction(fixture, 'filtered-older-expense', {
+      type: 'expense', amountMinor: 50, accountId: asset.id, categoryId: food.id,
+      occurredAt: TEST_NOW - 3_000, payee: 'Apple Store',
+    })
+    transaction(fixture, 'filtered-hidden-income', {
+      type: 'income', amountMinor: 200, accountId: asset.id, categoryId: incomeCategory.id,
+      occurredAt: TEST_NOW - 2_000, payee: 'Salary',
+    })
+    const latestExpense = transaction(fixture, 'filtered-latest-expense', {
+      type: 'expense', amountMinor: 20, accountId: asset.id, categoryId: transport.id,
+      occurredAt: TEST_NOW - 1_000, payee: 'Apple Store',
+    })
+
+    const expected = [
+      { transactionId: latestExpense.id, balanceMinor: 1_130 },
+      { transactionId: olderExpense.id, balanceMinor: 950 },
+    ]
+    expect(fixture.projections.getAccountTransactions(asset.id, query({ type: 'expense' })).transactionBalances)
+      .toEqual(expected)
+    expect(fixture.projections.getAccountTransactions(asset.id, query({ search: 'Apple' })).transactionBalances)
+      .toEqual(expected)
+    expect(fixture.projections.getAccountTransactions(asset.id, query({ categoryId: food.id })).transactionBalances)
+      .toEqual([expected[1]])
+    expect(fixture.projections.getAccountTransactions(asset.id, query({
+      type: 'expense', from: String(TEST_NOW - 4_000), to: String(TEST_NOW),
+    })).transactionBalances).toEqual(expected)
+  })
+
+  it('uses createdAt and id tie breakers for every returned balance', () => {
+    const fixture = freshFixture()
+    const asset = account(fixture, 'tie-balance', { openingBalanceMinor: 1_000 })
+    const expenseCategory = firstCategory(fixture, 'expense')
+    const incomeCategory = firstCategory(fixture, 'income')
+    const rows: LedgerTransaction[] = [
+      {
+        id: 'tie-a', type: 'income', amountMinor: 100, accountId: asset.id,
+        categoryId: incomeCategory.id, occurredAt: TEST_NOW, payee: '', note: '',
+        deletedAt: null, version: 1, createdAt: TEST_NOW, updatedAt: TEST_NOW,
+      },
+      {
+        id: 'tie-b', type: 'expense', amountMinor: 20, accountId: asset.id,
+        categoryId: expenseCategory.id, occurredAt: TEST_NOW, payee: '', note: '',
+        deletedAt: null, version: 1, createdAt: TEST_NOW, updatedAt: TEST_NOW,
+      },
+      {
+        id: 'tie-c', type: 'income', amountMinor: 50, accountId: asset.id,
+        categoryId: incomeCategory.id, occurredAt: TEST_NOW, payee: '', note: '',
+        deletedAt: null, version: 1, createdAt: TEST_NOW, updatedAt: TEST_NOW,
+      },
+    ]
+    rows.forEach((row) => insertValidTransaction(fixture.repository, row))
+
+    const detail = fixture.projections.getAccountTransactions(asset.id, query())
+    expect(detail.transactionBalances).toEqual([
+      { transactionId: 'tie-c', balanceMinor: 1_130 },
+      { transactionId: 'tie-b', balanceMinor: 1_080 },
+      { transactionId: 'tie-a', balanceMinor: 1_100 },
+    ])
+  })
+
   it('projects Ledger-local balance trend points and page running balances', () => {
     const now = Date.parse('2024-03-11T12:00:00.000Z')
     const fixture = freshFixture('America/Los_Angeles', now)
@@ -419,6 +515,7 @@ describe('Ledger Account Detail projections', () => {
     const fullHistorySpy = vi.spyOn(fixture.repository, 'listActiveTransactionsForAccount')
     const rangeSpy = vi.spyOn(fixture.repository, 'listActiveTransactionsForAccountInRange')
     const balanceBeforeSpy = vi.spyOn(fixture.repository, 'getAccountBalanceBefore')
+    const balancesAtPositionsSpy = vi.spyOn(fixture.repository, 'getAccountBalancesAtPositions')
     const querySpy = vi.spyOn(fixture.repository, 'queryTransactions')
     const summarySpy = vi.spyOn(fixture.repository, 'summarizeTransactions')
 
@@ -433,6 +530,7 @@ describe('Ledger Account Detail projections', () => {
     }))
     expect(rangeSpy).toHaveBeenCalledTimes(2)
     expect(balanceBeforeSpy).toHaveBeenCalledTimes(2)
+    expect(balancesAtPositionsSpy).toHaveBeenCalledTimes(1)
     expect(rangeSpy.mock.calls[1]?.[1]).toEqual(expect.objectContaining({
       from: expect.any(Number),
       to: expect.any(Number),

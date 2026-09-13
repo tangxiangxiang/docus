@@ -14,7 +14,6 @@ import type {
   LedgerAccountBalanceTrendDto,
   LedgerAccountBalanceTrendRange,
   LedgerAccountBalanceTrendPoint,
-  LedgerAccountTransactionBalance,
   LedgerAccountSummary,
   LedgerAccountTransactionsDto,
   LedgerCategoryKind,
@@ -299,30 +298,6 @@ function movementForAccount(
   return { balanceIncreaseMinor, balanceDecreaseMinor }
 }
 
-function transactionBalancesFromCurrentBalance(
-  account: LedgerAccount,
-  currentBalanceMinor: number,
-  pageTransactions: readonly LedgerTransaction[],
-): readonly LedgerAccountTransactionBalance[] {
-  let balance = currentBalanceMinor
-  return pageTransactions.map((transaction) => {
-    const balanceAfterMinor = balance
-    balance = checkedSubMinor(
-      balance,
-      transactionEffectForAccount(transaction, account),
-    )
-    return { transactionId: transaction.id, balanceMinor: balanceAfterMinor }
-  })
-}
-
-function transactionBalancesFromBoundary(
-  account: LedgerAccount,
-  boundaryBalanceMinor: number,
-  pageTransactions: readonly LedgerTransaction[],
-): readonly LedgerAccountTransactionBalance[] {
-  return transactionBalancesFromCurrentBalance(account, boundaryBalanceMinor, pageTransactions)
-}
-
 function accountBalanceTrend(
   account: LedgerAccount,
   prefixBalanceMinor: number,
@@ -516,6 +491,7 @@ export function createLedgerProjections(
     const nowMs = captureNow()
     const currentBalanceMinor = repository.getAccountBalanceBefore(account, exclusiveInstant(nowMs))
     const page = transactionPage({ ...query, accountId }, { includeSummary: false })
+    const balancesByTransactionId = repository.getAccountBalancesAtPositions(account, page.rows)
     const movementRange = monthRange(nowMs, settings.timezone)
     const movementTransactions = repository.listActiveTransactionsForAccountInRange(
       account.id,
@@ -528,13 +504,11 @@ export function createLedgerProjections(
         movementTransactions,
         movementRange,
       ),
-      transactionBalances: page.rows.length === 0
-        ? []
-        : transactionBalancesFromBoundary(
-          account,
-          repository.getAccountBalanceAtPosition(account, page.rows[0]!),
-          page.rows,
-        ),
+      transactionBalances: page.rows.map((transaction) => ({
+        transactionId: transaction.id,
+        balanceMinor: balancesByTransactionId.get(transaction.id)
+          ?? projectionInvariant(`missing balance for transaction ${transaction.id}`),
+      })),
       transactions: page.rows.map(transactionDtoWithBundle),
       page: page.page,
     }

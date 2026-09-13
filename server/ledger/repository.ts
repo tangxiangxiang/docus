@@ -315,6 +315,38 @@ const SELECT_ACCOUNT_TRANSACTION_EFFECT_AT_POSITION = `
     )
 `
 
+const SELECT_ACCOUNT_TRANSACTION_EFFECTS_AT_POSITIONS = `
+  WITH positions AS (
+    SELECT
+      json_extract(value, '$.id') AS transaction_id,
+      json_extract(value, '$.occurredAt') AS occurred_at,
+      json_extract(value, '$.createdAt') AS created_at
+    FROM json_each(@positionsJson)
+  )
+  SELECT
+    positions.transaction_id,
+    (
+      SELECT COALESCE(SUM(${ACCOUNT_TRANSACTION_EFFECT_SQL}), 0)
+      FROM ledger_transactions
+      WHERE deleted_at IS NULL
+        AND (
+          account_id = @accountId
+          OR from_account_id = @accountId
+          OR to_account_id = @accountId
+        )
+        AND (
+          occurred_at < positions.occurred_at
+          OR (occurred_at = positions.occurred_at AND created_at < positions.created_at)
+          OR (
+            occurred_at = positions.occurred_at
+            AND created_at = positions.created_at
+            AND id <= positions.transaction_id
+          )
+        )
+    ) AS effect_minor
+  FROM positions
+`
+
 const SELECT_ALL_ACTIVE_TRANSACTIONS = `
   SELECT id, type, transfer_kind, group_id, transfer_fee_mode, amount_minor, account_id, from_account_id, to_account_id,
          category_id, occurred_at, location, payee, note,
@@ -496,6 +528,10 @@ export interface LedgerRepository {
     account: LedgerAccountBalanceQueryAccount,
     position: { readonly occurredAt: number; readonly createdAt: number; readonly id: string },
   ): number
+  getAccountBalancesAtPositions(
+    account: LedgerAccountBalanceQueryAccount,
+    positions: readonly { readonly occurredAt: number; readonly createdAt: number; readonly id: string }[],
+  ): ReadonlyMap<string, number>
   listActiveTransactionsForAccount(accountId: string): LedgerTransaction[]
   listActiveTransactionsForAccountInRange(
     accountId: string,
@@ -564,6 +600,14 @@ interface AccountBalanceAtPositionParams extends AccountBalanceParams {
   readonly occurredAt: number
   readonly createdAt: number
   readonly id: string
+}
+
+interface AccountBalancesAtPositionsParams extends AccountBalanceParams {
+  readonly positionsJson: string
+}
+
+interface AccountBalanceAtPositionRow extends AccountBalanceEffectRow {
+  readonly transaction_id: string
 }
 
 interface AccountBalanceEffectRow {
@@ -982,6 +1026,9 @@ export function createLedgerRepository(db: DatabaseT): LedgerRepository {
     getAccountTransactionEffectAtPosition: db.prepare<AccountBalanceAtPositionParams, AccountBalanceEffectRow>(
       SELECT_ACCOUNT_TRANSACTION_EFFECT_AT_POSITION,
     ),
+    getAccountTransactionEffectsAtPositions: db.prepare<AccountBalancesAtPositionsParams, AccountBalanceAtPositionRow>(
+      SELECT_ACCOUNT_TRANSACTION_EFFECTS_AT_POSITIONS,
+    ),
     listActiveTransactionsForAccount: db.prepare<{ readonly accountId: string }>(
       SELECT_ACTIVE_TRANSACTIONS_FOR_ACCOUNT,
     ),
@@ -1138,6 +1185,25 @@ export function createLedgerRepository(db: DatabaseT): LedgerRepository {
           ...position,
         }),
       )
+    },
+
+    getAccountBalancesAtPositions(
+      account: LedgerAccountBalanceQueryAccount,
+      positions: readonly { readonly occurredAt: number; readonly createdAt: number; readonly id: string }[],
+    ): ReadonlyMap<string, number> {
+      for (const position of positions) {
+        if (!Number.isSafeInteger(position.occurredAt) || !Number.isSafeInteger(position.createdAt)) {
+          throw ledgerValidationError('account balance position must use safe integers', { field: 'positions' })
+        }
+      }
+      const rows = statements.getAccountTransactionEffectsAtPositions.all({
+        ...accountBalanceParams(account),
+        positionsJson: JSON.stringify(positions),
+      })
+      return new Map(rows.map((row) => [
+        row.transaction_id,
+        accountBalanceFromEffect(account, row),
+      ]))
     },
 
     listActiveTransactionsForAccount(accountId: string): LedgerTransaction[] {
