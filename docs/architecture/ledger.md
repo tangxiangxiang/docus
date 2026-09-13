@@ -31,7 +31,7 @@ Transfer 的 amountMinor 表示实际 transfer principal：`general` 和 `repaym
 
 ## 3. Natural Balance Model
 
-server/ledger/balance.ts 的 transactionEffectForAccount 是唯一余额效果 authority。不能用“转出账户减、转入账户加”概括所有账户：
+server/ledger/balance.ts 的 transactionEffectForAccount 是 TypeScript/domain 层的 natural-balance authority。repository 为账户位置余额查询维护等价的 SQL effect projection；两者必须保持相同的账务语义。不能用“转出账户减、转入账户加”概括所有账户：
 
 - 资产：收入和转入增加自然余额；支出和转出减少自然余额。
 - 负债：支出和转出增加债务自然余额；收入和转入减少债务自然余额。
@@ -87,7 +87,7 @@ Overview 投影提供当前资产、负债、净资产、收支、账户、分�
 
 ## 9. Companion Expense Visibility
 
-grouped companion Expense 是真实的 transaction row，在普通 transaction query 中也 intentionally visible。还款利息和提现手续费可以与 parent Transfer 同时出现在交易记录中，并可按 expense、系统分类、账户或 groupId 查询；按账户筛选时，相关 transfer 与 companion Expense 可以同时命中。
+grouped companion Expense 是真实的 transaction row，在普通 transaction query 和交易记录 read model 中也 intentionally visible。还款利息和提现手续费可以与 parent Transfer 同时出现在交易记录中，并可按 expense、系统分类、账户或 groupId 查询；按账户筛选时，相关 transfer 与 companion Expense 可以同时命中。某些 Overview projection 可以按产品语义折叠或隐藏 companion。
 
 read visibility 不等于 independent mutation ownership：companion Expense 不作为独立业务对象编辑或删除。用户修改或删除还款 / 提现 grouped operation 时，由 parent Transfer 原子维护整个 group；direct get、patch、delete companion 仍受保护。includeDeleted 可用于内部一致性检查。
 
@@ -156,7 +156,7 @@ API 以 /api/ledger 为前缀，包含 settings、accounts、categories、transa
 - Transfer principal 不属于 income 或 expense；repayment principal 不会污染支出。
 - interest 和 fee 是 Expense，且分别绑定受保护 system category。
 - grouped companion payee 是持久化的 transaction-time snapshot；projection 和 UI 不创造数据库中不存在的 companion business label。
-- companion Expense 对 read model 可见，但不拥有独立 mutation ownership。
+- companion Expense 对 transaction query / transaction list read model 可见；某些 Overview projection 可以按产品语义折叠或隐藏它，但它不拥有独立 mutation ownership。
 - composite group 的写入、修改和删除保持原子性。
 - search 使用持久化 transaction fields 和结构化账户关系。
 - 服务端拥有账户性质、transfer kind、货币、时间和生命周期校验。
