@@ -113,7 +113,7 @@ async function assertDesktopGeometry(sheet: import('@playwright/test').Locator, 
   expect(box.width).toBeLessThanOrEqual(622)
   expect(box.width).toBeLessThan(viewport.width)
   expect(box.y).toBeGreaterThan(0)
-  expect(viewport.height - (box.y + box.height)).toBeLessThanOrEqual(30)
+  expect(Math.abs((box.y + box.height / 2) - viewport.height / 2)).toBeLessThanOrEqual(3)
   expect(Math.abs((box.x + box.width / 2) - viewport.width / 2)).toBeLessThanOrEqual(3)
 }
 
@@ -140,7 +140,7 @@ async function openCreateSheet(page: import('@playwright/test').Page, request: A
   return dialog
 }
 
-test('Ledger create sheet keeps bottom-anchored desktop geometry and one labelled dialog', async ({ page, request }) => {
+test('Ledger create sheet keeps centered desktop geometry and one labelled dialog', async ({ page, request }) => {
   const viewport = { width: 1280, height: 800 }
   await page.setViewportSize(viewport)
   const dialog = await openCreateSheet(page, request)
@@ -166,7 +166,7 @@ test('Ledger create sheet keeps full-width bottom-anchored mobile geometry', asy
   await expect(dialog).toBeHidden()
 })
 
-test('Ledger detail sheet keeps bottom-anchored desktop geometry and one labelled dialog', async ({ page, request }) => {
+test('Ledger detail sheet keeps centered desktop geometry and one labelled dialog', async ({ page, request }) => {
   const viewport = { width: 1280, height: 800 }
   await page.setViewportSize(viewport)
   const transaction = await ensureLedgerFixture(request)
