@@ -307,13 +307,17 @@ describe('Ledger live dashboard', () => {
     const wrapper = mount(LedgerView)
     wrappers.push(wrapper)
     await flushPromises()
-    expect(wrapper.get('[data-testid="ledger-period-today"]').text()).toContain('-¥38.00')
+    await vi.waitFor(() => {
+      expect(wrapper.get('[data-testid="ledger-period-today"]').text()).toContain('-¥38.00')
+    }, { timeout: 2500 })
 
     api.getLedgerOverview.mockResolvedValueOnce(overviewFor('2026-09-05', 2_200, 0))
     await useLedgerStore().refreshOverview()
     await flushPromises()
 
-    expect(wrapper.get('[data-testid="ledger-period-today"]').text()).toContain('¥22.00')
+    await vi.waitFor(() => {
+      expect(wrapper.get('[data-testid="ledger-period-today"]').text()).toContain('¥22.00')
+    }, { timeout: 2500 })
     expect(wrapper.get('[data-testid="ledger-period-today"]').text()).not.toContain('-¥38.00')
   })
 
@@ -355,7 +359,9 @@ describe('Ledger live dashboard', () => {
     second.resolve(overviewFor('2025-01-01', 2_200, 0))
     await flushPromises()
     const periodCard = wrapper.get('[data-testid="ledger-period-today"]')
-    expect(periodCard.text()).toContain('¥22.00')
+    await vi.waitFor(() => {
+      expect(periodCard.text()).toContain('¥22.00')
+    }, { timeout: 2500 })
 
     first.resolve(overviewFor('2024-01-01', 1_100, 0))
     await flushPromises()
@@ -382,7 +388,9 @@ describe('Ledger live dashboard', () => {
     await flushPromises()
 
     const periodCard = wrapper.get('[data-testid="ledger-period-today"]')
-    expect(periodCard.text()).toContain('¥22.00')
+    await vi.waitFor(() => {
+      expect(periodCard.text()).toContain('¥22.00')
+    }, { timeout: 2500 })
     expect(periodCard.find('[data-testid="ledger-period-error-today"]').exists()).toBe(false)
   })
 
@@ -841,19 +849,23 @@ describe('Ledger live dashboard', () => {
     await flushPromises()
 
     const incomeRows = wrapper.get('[data-testid="ledger-category-breakdown"]').findAll('.ledger-breakdown-row')
+    await vi.waitFor(() => {
+      expect(incomeRows[0].get('.ledger-breakdown-amount').text()).toBe('¥5,000.00')
+      expect(incomeRows[1].get('.ledger-breakdown-amount').text()).toBe('¥100.00')
+    }, { timeout: 2500 })
     expect(incomeRows[0].get('.ledger-breakdown-name').text()).toBe('工资')
     expect(incomeRows[0].get('.ledger-breakdown-share').text()).toBe('98%')
-    expect(incomeRows[0].get('.ledger-breakdown-amount').text()).toBe('¥5,000.00')
     expect(incomeRows[0].get('.ledger-breakdown-amount').text()).not.toContain('98%')
     expect(incomeRows[1].get('.ledger-breakdown-name').text()).toBe('兼职')
     expect(incomeRows[1].get('.ledger-breakdown-share').text()).toBe('2%')
-    expect(incomeRows[1].get('.ledger-breakdown-amount').text()).toBe('¥100.00')
     expect(incomeRows[1].get('.ledger-breakdown-amount').text()).not.toContain('2%')
 
     const expenseRows = wrapper.get('[data-testid="ledger-category-breakdown"]').findAll('.ledger-breakdown-row')
     expect(expenseRows[2].get('.ledger-breakdown-name').text()).toBe('餐饮')
     expect(expenseRows[2].get('.ledger-breakdown-share').text()).toBe('100%')
-    expect(expenseRows[2].get('.ledger-breakdown-amount').text()).toBe('¥52.90')
+    await vi.waitFor(() => {
+      expect(expenseRows[2].get('.ledger-breakdown-amount').text()).toBe('¥52.90')
+    }, { timeout: 2500 })
     expect(expenseRows[2].get('.ledger-breakdown-amount').text()).not.toContain('100%')
   })
 
@@ -940,6 +952,14 @@ describe('Ledger live dashboard', () => {
     const rows = wrapper.get('[data-testid="ledger-category-breakdown"]').findAll('.ledger-breakdown-row')
     expect(rows).toHaveLength(3)
 
+    await vi.waitFor(() => {
+      expect(rows.map((row) => row.get('.ledger-breakdown-amount').text())).toEqual([
+        '¥5,000.00',
+        '¥100.00',
+        '¥52.90',
+      ])
+    }, { timeout: 2500 })
+
     // Sort order, name, share and amount all stay exactly where they were.
     expect(rows.map((row) => [
       row.get('.ledger-breakdown-name').text(),
@@ -949,12 +969,6 @@ describe('Ledger live dashboard', () => {
       ['兼职', '2%'],
       ['餐饮', '100%'],
     ])
-    expect(rows.map((row) => row.get('.ledger-breakdown-amount').text())).toEqual([
-      '¥5,000.00',
-      '¥100.00',
-      '¥52.90',
-    ])
-
     // The bar reads from the same share, and stays out of the accessibility
     // tree because the percentage is already spoken by the label.
     const fills = rows.map((row) => row.get('.ledger-breakdown-bar-fill'))

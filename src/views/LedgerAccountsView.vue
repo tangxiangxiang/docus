@@ -164,7 +164,7 @@ function onAccountSaved(): void {
                     <small>{{ account.nature === 'asset' ? '资产' : '负债' }} · {{ typeLabel(account.type) }}</small>
                   </span>
                 </span>
-                <strong class="ledger-account-balance"><LedgerAnimatedMoney :minor="account.currentBalanceMinor" :currency="account.currency" :animate-on-mount="false" :animate-on-change="false" /></strong>
+                <strong class="ledger-account-balance"><LedgerAnimatedMoney :minor="account.currentBalanceMinor" :currency="account.currency" /></strong>
               </RouterLink>
             </NListItem>
           </NList>
@@ -194,7 +194,7 @@ function onAccountSaved(): void {
                   </span>
                 </RouterLink>
                 <div class="ledger-row-actions">
-                  <strong class="ledger-account-balance"><LedgerAnimatedMoney :minor="account.currentBalanceMinor" :currency="account.currency" :animate-on-mount="false" :animate-on-change="false" /></strong>
+                  <strong class="ledger-account-balance"><LedgerAnimatedMoney :minor="account.currentBalanceMinor" :currency="account.currency" /></strong>
                   <NButton class="ledger-secondary-button" attr-type="button" size="small" :bordered="false" :disabled="Boolean(restoreId)" @click="restore(account.id, account.version)">
                     {{ restoreId === account.id ? '正在恢复…' : '恢复' }}
                   </NButton>

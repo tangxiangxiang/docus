@@ -651,7 +651,7 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
                           <small>资产 · {{ account.currency }}</small>
                         </span>
                       </span>
-                      <strong class="ledger-account-amount"><LedgerAnimatedMoney :minor="account.currentBalanceMinor" :currency="account.currency" :animate-on-mount="false" :animate-on-change="false" /></strong>
+                      <strong class="ledger-account-amount"><LedgerAnimatedMoney :minor="account.currentBalanceMinor" :currency="account.currency" /></strong>
                     </RouterLink>
                   </NListItem>
                 </NList>
@@ -676,7 +676,7 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
                           <small>负债 · {{ account.currency }}</small>
                         </span>
                       </span>
-                      <strong class="ledger-account-amount"><LedgerAnimatedMoney :minor="account.currentBalanceMinor" :currency="account.currency" :animate-on-mount="false" :animate-on-change="false" /></strong>
+                      <strong class="ledger-account-amount"><LedgerAnimatedMoney :minor="account.currentBalanceMinor" :currency="account.currency" /></strong>
                     </RouterLink>
                   </NListItem>
                 </NList>
@@ -739,7 +739,7 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
                         <span class="ledger-breakdown-name">{{ item.name }}</span>
                         <span class="ledger-breakdown-share">{{ categoryShare(selectedPeriods.income, item.amountMinor) }}</span>
                       </span>
-                      <strong class="ledger-breakdown-amount"><LedgerAnimatedMoney :minor="item.amountMinor" :currency="overview.currency" :animate-on-mount="false" :animate-on-change="false" /></strong>
+                      <strong class="ledger-breakdown-amount"><LedgerAnimatedMoney :minor="item.amountMinor" :currency="overview.currency" /></strong>
                       <span class="ledger-breakdown-bar" aria-hidden="true">
                         <span
                           class="ledger-breakdown-bar-fill is-income"
@@ -762,7 +762,7 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
                         <span class="ledger-breakdown-name">{{ item.name }}</span>
                         <span class="ledger-breakdown-share">{{ categoryShare(selectedPeriods.expense, item.amountMinor) }}</span>
                       </span>
-                      <strong class="ledger-breakdown-amount"><LedgerAnimatedMoney :minor="item.amountMinor" :currency="overview.currency" :animate-on-mount="false" :animate-on-change="false" /></strong>
+                      <strong class="ledger-breakdown-amount"><LedgerAnimatedMoney :minor="item.amountMinor" :currency="overview.currency" /></strong>
                       <span class="ledger-breakdown-bar" aria-hidden="true">
                         <span
                           class="ledger-breakdown-bar-fill is-expense"
@@ -829,9 +829,9 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
               </div>
             </div>
             <div v-if="periodSummary(period)" class="ledger-period-values">
-              <span>收入 <strong class="is-income"><LedgerAnimatedMoney :minor="periodSummary(period)!.incomeMinor" :currency="overview.currency" :animate-on-mount="false" :animate-on-change="false" /></strong></span>
-              <span>支出 <strong class="is-expense"><LedgerAnimatedMoney :minor="periodSummary(period)!.expenseMinor" :currency="overview.currency" :animate-on-mount="false" :animate-on-change="false" /></strong></span>
-              <span>收支结余 <strong><LedgerAnimatedMoney :minor="periodSummary(period)!.balanceMinor" :currency="overview.currency" :animate-on-mount="false" :animate-on-change="false" /></strong></span>
+              <span>收入 <strong class="is-income"><LedgerAnimatedMoney :minor="periodSummary(period)!.incomeMinor" :currency="overview.currency" /></strong></span>
+              <span>支出 <strong class="is-expense"><LedgerAnimatedMoney :minor="periodSummary(period)!.expenseMinor" :currency="overview.currency" /></strong></span>
+              <span>收支结余 <strong><LedgerAnimatedMoney :minor="periodSummary(period)!.balanceMinor" :currency="overview.currency" /></strong></span>
             </div>
             <div v-else-if="periodProjectionLoading(period)" class="ledger-period-local-state" :data-testid="`ledger-period-loading-${period}`" role="status" aria-live="polite">
               <NSpin size="small" />
