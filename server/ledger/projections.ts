@@ -315,6 +315,14 @@ function transactionBalancesFromCurrentBalance(
   })
 }
 
+function transactionBalancesFromBoundary(
+  account: LedgerAccount,
+  boundaryBalanceMinor: number,
+  pageTransactions: readonly LedgerTransaction[],
+): readonly LedgerAccountTransactionBalance[] {
+  return transactionBalancesFromCurrentBalance(account, boundaryBalanceMinor, pageTransactions)
+}
+
 function accountBalanceTrend(
   account: LedgerAccount,
   prefixBalanceMinor: number,
@@ -520,11 +528,13 @@ export function createLedgerProjections(
         movementTransactions,
         movementRange,
       ),
-      transactionBalances: transactionBalancesFromCurrentBalance(
-        account,
-        currentBalanceMinor,
-        page.rows,
-      ),
+      transactionBalances: page.rows.length === 0
+        ? []
+        : transactionBalancesFromBoundary(
+          account,
+          repository.getAccountBalanceAtPosition(account, page.rows[0]!),
+          page.rows,
+        ),
       transactions: page.rows.map(transactionDtoWithBundle),
       page: page.page,
     }

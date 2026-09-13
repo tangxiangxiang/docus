@@ -299,6 +299,22 @@ const SELECT_ACCOUNT_TRANSACTION_EFFECT_BEFORE = `
     AND occurred_at < @before
 `
 
+const SELECT_ACCOUNT_TRANSACTION_EFFECT_AT_POSITION = `
+  SELECT COALESCE(SUM(${ACCOUNT_TRANSACTION_EFFECT_SQL}), 0) AS effect_minor
+  FROM ledger_transactions
+  WHERE deleted_at IS NULL
+    AND (
+      account_id = @accountId
+      OR from_account_id = @accountId
+      OR to_account_id = @accountId
+    )
+    AND (
+      occurred_at < @occurredAt
+      OR (occurred_at = @occurredAt AND created_at < @createdAt)
+      OR (occurred_at = @occurredAt AND created_at = @createdAt AND id <= @id)
+    )
+`
+
 const SELECT_ALL_ACTIVE_TRANSACTIONS = `
   SELECT id, type, transfer_kind, group_id, transfer_fee_mode, amount_minor, account_id, from_account_id, to_account_id,
          category_id, occurred_at, location, payee, note,
@@ -476,6 +492,10 @@ export interface LedgerRepository {
   updateTransaction(input: LedgerTransactionUpdateInput): number
   softDeleteTransaction(input: LedgerTransactionSoftDeleteInput): number
   getAccountBalanceBefore(account: LedgerAccountBalanceQueryAccount, before: number): number
+  getAccountBalanceAtPosition(
+    account: LedgerAccountBalanceQueryAccount,
+    position: { readonly occurredAt: number; readonly createdAt: number; readonly id: string },
+  ): number
   listActiveTransactionsForAccount(accountId: string): LedgerTransaction[]
   listActiveTransactionsForAccountInRange(
     accountId: string,
@@ -538,6 +558,12 @@ interface AccountBalanceParams {
 
 interface AccountBalanceBeforeParams extends AccountBalanceParams {
   readonly before: number
+}
+
+interface AccountBalanceAtPositionParams extends AccountBalanceParams {
+  readonly occurredAt: number
+  readonly createdAt: number
+  readonly id: string
 }
 
 interface AccountBalanceEffectRow {
@@ -953,6 +979,9 @@ export function createLedgerRepository(db: DatabaseT): LedgerRepository {
     getAccountTransactionEffectBefore: db.prepare<AccountBalanceBeforeParams, AccountBalanceEffectRow>(
       SELECT_ACCOUNT_TRANSACTION_EFFECT_BEFORE,
     ),
+    getAccountTransactionEffectAtPosition: db.prepare<AccountBalanceAtPositionParams, AccountBalanceEffectRow>(
+      SELECT_ACCOUNT_TRANSACTION_EFFECT_AT_POSITION,
+    ),
     listActiveTransactionsForAccount: db.prepare<{ readonly accountId: string }>(
       SELECT_ACTIVE_TRANSACTIONS_FOR_ACCOUNT,
     ),
@@ -1091,6 +1120,22 @@ export function createLedgerRepository(db: DatabaseT): LedgerRepository {
         statements.getAccountTransactionEffectBefore.get({
           ...accountBalanceParams(account),
           before,
+        }),
+      )
+    },
+
+    getAccountBalanceAtPosition(
+      account: LedgerAccountBalanceQueryAccount,
+      position: { readonly occurredAt: number; readonly createdAt: number; readonly id: string },
+    ): number {
+      if (!Number.isSafeInteger(position.occurredAt) || !Number.isSafeInteger(position.createdAt)) {
+        throw ledgerValidationError('account balance position must use safe integers', { field: 'position' })
+      }
+      return accountBalanceFromEffect(
+        account,
+        statements.getAccountTransactionEffectAtPosition.get({
+          ...accountBalanceParams(account),
+          ...position,
         }),
       )
     },
