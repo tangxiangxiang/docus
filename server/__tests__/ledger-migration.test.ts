@@ -259,7 +259,7 @@ describe('Ledger 0013 foundation migration', () => {
         WHEN 'repayment-destination' THEN '花呗'
         WHEN 'preserved-repayment-destination' THEN '花呗账单'
       END
-      WHERE id IN ('withdrawal-source', 'withdrawal-destination', 'repayment-source', 'repayment-destination')
+      WHERE id IN ('withdrawal-source', 'withdrawal-destination', 'repayment-source', 'repayment-destination', 'preserved-repayment-destination')
     `).run()
     insertTransfer(db, 'legacy-withdrawal', 'withdrawal-source', 'withdrawal-destination', {
       transferKind: 'withdrawal',
@@ -339,6 +339,9 @@ describe('Ledger 0013 foundation migration', () => {
     expect(db.prepare('SELECT payee, version FROM ledger_transactions WHERE id = ?').get('renamed-repayment-interest')).toEqual({
       payee: '花呗还款利息',
       version: 9,
+    })
+    expect(db.prepare('SELECT name FROM ledger_accounts WHERE id = ?').get('preserved-repayment-destination')).toEqual({
+      name: '花呗账单',
     })
   })
 

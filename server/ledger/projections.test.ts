@@ -255,6 +255,20 @@ describe('Ledger transaction query projections', () => {
       .toHaveLength(1)
   })
 
+  it('searches transfers by source and destination account names', () => {
+    const fixture = freshFixture()
+    const source = account(fixture, 'transfer-search-source', { name: '微信零钱' })
+    const destination = account(fixture, 'transfer-search-destination', { name: '招商银行储蓄卡' })
+    const transfer = transaction(fixture, 'transfer-search', {
+      type: 'transfer', amountMinor: 100, fromAccountId: source.id, toAccountId: destination.id,
+    })
+
+    expect(fixture.projections.listTransactions(query({ search: '微信' })).transactions)
+      .toEqual([transfer])
+    expect(fixture.projections.listTransactions(query({ search: '招商' })).transactions)
+      .toEqual([transfer])
+  })
+
   it('keeps the three-field keyset order continuous across pages', () => {
     const fixture = freshFixture()
     const asset = account(fixture, 'cursor-account')

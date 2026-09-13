@@ -692,11 +692,28 @@ describe('Ledger Transaction and Adjustment service lifecycle', () => {
     })
     const patchedWithdrawalFee = repository.listTransactionsByGroupId(patchedWithdrawal.groupId!).find((item) => item.type === 'expense')!
     expect(patchedWithdrawalFee.payee).toBe('微信零钱提现手续费')
+
+    const replacementSource = createAccount(service, 'bundle-replacement-source', {
+      name: '支付宝余额',
+      type: 'wallet',
+      openingBalanceMinor: 10_000,
+    })
+    const movedWithdrawal = service.patchTransaction(patchedWithdrawal.id, {
+      expectedVersion: patchedWithdrawal.version,
+      fromAccountId: replacementSource.id,
+    })
+    const movedWithdrawalFee = repository.listTransactionsByGroupId(movedWithdrawal.groupId!).find((item) => item.type === 'expense')!
+    expect(movedWithdrawal).toMatchObject({ fromAccountId: replacementSource.id })
+    expect(movedWithdrawalFee).toMatchObject({
+      accountId: replacementSource.id,
+      payee: '支付宝余额提现手续费',
+    })
     expectLedgerError(() => service.getTransaction(withdrawalFee.id), 'ledger-not-found')
-    service.deleteTransaction(patchedWithdrawal.id, { expectedVersion: patchedWithdrawal.version })
+    service.deleteTransaction(movedWithdrawal.id, { expectedVersion: movedWithdrawal.version })
     expect(repository.getTransaction(withdrawal.id)?.deletedAt).not.toBeNull()
     expect(repository.getTransaction(withdrawalFee.id)?.deletedAt).not.toBeNull()
     expect(service.getAccount(wallet.id).currentBalanceMinor).toBe(10_000)
+    expect(service.getAccount(replacementSource.id).currentBalanceMinor).toBe(10_000)
     expect(service.getAccount(bank.id).currentBalanceMinor).toBe(4_500)
   })
 

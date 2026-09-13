@@ -1270,6 +1270,9 @@ export function createLedgerService(
             version: nextVersion(transaction.version),
             updatedAt: timestamp,
           }
+          const companionIdentityChanged = transferKind !== transaction.transferKind
+            || fromAccount.id !== transaction.fromAccountId
+            || toAccount.id !== transaction.toAccountId
           if (repository.updateTransaction({
             transaction: updated,
             expectedVersion: transaction.version,
@@ -1285,7 +1288,9 @@ export function createLedgerService(
                   categoryId: feeCategory.id,
                   occurredAt,
                   location: updated.location,
-                  payee: existingFee.payee,
+                  payee: companionIdentityChanged
+                    ? companionPayee(transferKind, fromAccount.name, toAccount.name, updated.payee)
+                    : existingFee.payee,
                   note: updated.note,
                   version: nextVersion(existingFee.version),
                   updatedAt: timestamp,
