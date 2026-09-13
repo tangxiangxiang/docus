@@ -432,7 +432,7 @@ describe('Ledger repository natural-balance parity', () => {
       transfer('mixed-in', external.id, source.id, 50, 4_000),
       transfer('mixed-withdrawal', source.id, destination.id, 98, 5_000, 5_000, 'withdrawal', 'mixed-withdrawal-group', 'deducted'),
       expense(fixture, 'mixed-fee', source.id, 2, 5_000, 5_001, null, 'mixed-withdrawal-group'),
-      adjustment('mixed-adjustment', source.id, 1_148, 1_178, 6_000),
+      adjustment('mixed-adjustment', source.id, 1_150, 1_180, 6_000),
     ]
     insertAll(fixture.repository, transactions)
 
