@@ -122,7 +122,7 @@ async function moveToMonth(page: Page, date: string): Promise<void> {
 
 async function clickDiaryDate(page: Page, date: string): Promise<void> {
   await moveToMonth(page, date)
-  // VCalendar can retain the outgoing month during its page transition. Use
+  // DiaryCalendar exposes the canonical civil date on its native button.
   const button = calendarDay(page.getByTestId('diary-calendar'), date)
   await expect(button).toBeVisible()
   await button.click()

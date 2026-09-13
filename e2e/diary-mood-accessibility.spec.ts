@@ -353,10 +353,9 @@ test('missing past date enters Mood-first picker by keyboard and Escape creates 
     await moveCalendarToMonth(page, date)
     const dateButton = calendarDay(page.getByTestId('diary-calendar'), date)
     await expect(dateButton).toBeVisible()
-    // VCalendar exposes the custom date button as the actual keyboard owner,
-    // but its generated day matrix does not include every out-of-month target
-    // in the browser's Tab order. Focus the owner explicitly, then use a real
-    // keyboard activation to characterize the Mood-first entry path.
+    // DiaryCalendar exposes the custom date button as the actual keyboard
+    // owner. Focus it explicitly, then use a real keyboard activation to
+    // characterize the Mood-first entry path.
     await dateButton.focus()
     await expect(dateButton).toBeFocused()
     await page.keyboard.press('Enter')

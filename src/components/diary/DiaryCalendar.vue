@@ -1,8 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { NButton } from 'naive-ui'
-import { Calendar } from 'v-calendar'
-import 'v-calendar/style.css'
+import { computed, nextTick, onBeforeUnmount, onMounted, onUpdated, ref } from 'vue'
+import { NButton, NCalendar } from 'naive-ui'
 import type { DiaryMoodId } from '../../../shared/diaryMood'
 import { useI18n } from '../../composables/useI18n'
 import { useTheme } from '../../composables/useTheme'
@@ -10,23 +8,22 @@ import { useDiaryMoodIconPreferences } from '../../composables/diary/useDiaryMoo
 import type { DiaryDate } from '../../../shared/diaryProtocol'
 import DiaryMoodPicker from './DiaryMoodPicker.vue'
 import {
-  diaryCalendarAttributes,
+  diaryCalendarMonthFromFields,
   diaryCalendarMonthFromLocalDate,
-  diaryCalendarMonthFromPage,
-  diaryDateFromCalendarDay,
-  hasDiaryCalendarAttribute,
+  diaryDateFromCalendarFields,
+  diaryDateFromNaiveCalendarValue,
   localCivilToday,
+  naiveCalendarValueForDiaryDate,
+  naiveCalendarValueForMonth,
   normalizeDiaryDays,
   type DiaryCalendarDay,
   type DiaryCalendarMonth,
 } from './diaryCalendarAdapter'
 
-type CalendarDayLike = {
+type NaiveCalendarDay = {
   year: number
   month: number
-  day: number
-  label?: string
-  ariaLabel?: string
+  date: number
 }
 
 const props = withDefaults(defineProps<{
@@ -49,6 +46,8 @@ const emit = defineEmits<{
 
 const lastMonthKey = ref<string | null>(null)
 const currentMonth = ref<DiaryCalendarMonth | null>(null)
+const calendarKey = ref(0)
+const selectedCalendarValue = ref<number | null>(null)
 const calendarRoot = ref<HTMLElement | null>(null)
 const moodPickerOpen = ref(false)
 const activeMoodDate = ref<DiaryDate | null>(null)
@@ -63,7 +62,6 @@ const moodPreferences = useDiaryMoodIconPreferences()
 const calendarLocale = computed(() => (locale.value === 'zh' ? 'zh-CN' : 'en-US'))
 const isDark = computed(() => theme.value === 'dark')
 const normalizedDays = computed(() => normalizeDiaryDays(props.days))
-const calendarAttributes = computed(() => diaryCalendarAttributes(normalizedDays.value))
 const daysByDate = computed(() => new Map(
   normalizedDays.value.map((day) => [day.date, day] as const),
 ))
@@ -71,34 +69,57 @@ const activeMoodDay = computed(() => (
   activeMoodDate.value ? daysByDate.value.get(activeMoodDate.value) ?? null : null
 ))
 const activeMood = computed<string | null>(() => activeMoodDay.value?.mood ?? null)
-const initialPage = computed(() => (
-  diaryCalendarMonthFromPage(props.initialMonth) ?? diaryCalendarMonthFromLocalDate()
+const initialMonth = computed(() => (
+  diaryCalendarMonthFromFields(props.initialMonth) ?? diaryCalendarMonthFromLocalDate()
 ))
+const calendarDefaultValue = computed(() => (
+  naiveCalendarValueForMonth(currentMonth.value ?? initialMonth.value) ?? Date.now()
+))
+// The 2.45.3 declaration exposes `value` as an optional number, while the
+// component also treats an explicit runtime null as "nothing selected".
+// Keep that null at runtime so a Mood-first click cannot become selected.
+const calendarValue = computed<number | undefined>(() => (
+  selectedCalendarValue.value as number | undefined
+))
+const todayDate = computed(() => localCivilToday())
+const weekdayLabels = computed(() => {
+  // Naive UI's en-US locale starts on Sunday and its zh-CN locale starts on
+  // Monday in 2.45.3. Keep this row aligned with the provider's date locale.
+  const firstDay = locale.value === 'zh' ? 1 : 0
+  const formatter = new Intl.DateTimeFormat(calendarLocale.value, { weekday: 'short' })
+  return Array.from({ length: 7 }, (_, index) => (
+    formatter.format(new Date(2024, 0, 7 + ((firstDay + index) % 7), 12))
+  ))
+})
 
-function diaryDayForCalendarDay(day: CalendarDayLike): DiaryCalendarDay | null {
-  const date = diaryDateFromCalendarDay(day)
+function diaryDateForCalendarDay(day: NaiveCalendarDay): DiaryDate | null {
+  return diaryDateFromCalendarFields(day)
+}
+
+function diaryDayForCalendarDay(day: NaiveCalendarDay): DiaryCalendarDay | null {
+  const date = diaryDateForCalendarDay(day)
   return date ? daysByDate.value.get(date) ?? null : null
 }
 
-function moodDefinitionForDay(day: CalendarDayLike) {
+function moodDefinitionForDay(day: NaiveCalendarDay) {
   const mood = diaryDayForCalendarDay(day)?.mood
   return moodPreferences.presentationFor(mood, locale.value)
 }
 
-function hasUnknownMoodForDay(day: CalendarDayLike): boolean {
+function hasUnknownMoodForDay(day: NaiveCalendarDay): boolean {
   const mood = diaryDayForCalendarDay(day)?.mood
   return typeof mood === 'string' && !moodPreferences.isAvailable(mood)
 }
 
-function moodLabelForDay(day: CalendarDayLike): string {
+function moodLabelForDay(day: NaiveCalendarDay): string {
   const mood = diaryDayForCalendarDay(day)?.mood
   const presentation = moodPreferences.presentationFor(mood, locale.value)
   if (presentation) return presentation.label
   return typeof mood === 'string' ? t('mood.unknown') : t('mood.not_set')
 }
 
-function moodButtonLabel(day: CalendarDayLike): string {
-  const date = diaryDateFromCalendarDay(day) ?? day.label ?? t('diary.calendar.day')
+function moodButtonLabel(day: NaiveCalendarDay): string {
+  const date = diaryDateForCalendarDay(day) ?? t('diary.calendar.day')
   return t('diary.calendar.mood_action', {
     date,
     mood: moodLabelForDay(day),
@@ -109,7 +130,7 @@ function isValidMetadataVersion(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 }
 
-function moodButtonDisabled(day: CalendarDayLike): boolean {
+function moodButtonDisabled(day: NaiveCalendarDay): boolean {
   if (props.loading || props.moodBusy) return true
   const data = diaryDayForCalendarDay(day)
   // Existing files without a CAS version are not safe to mutate from the
@@ -118,8 +139,16 @@ function moodButtonDisabled(day: CalendarDayLike): boolean {
   return Boolean(data?.hasDiary && !isValidMetadataVersion(data.metadataUpdatedAt))
 }
 
-function hasDiaryForDay(day: CalendarDayLike): boolean {
-  return diaryDayForCalendarDay(day)?.hasDiary === true
+function isTodayForDay(day: NaiveCalendarDay): boolean {
+  const date = diaryDateForCalendarDay(day)
+  return date !== null && date === todayDate.value
+}
+
+function isSelectedForDay(day: NaiveCalendarDay): boolean {
+  const date = diaryDateForCalendarDay(day)
+  return date !== null
+    && selectedCalendarValue.value !== null
+    && diaryDateFromNaiveCalendarValue(selectedCalendarValue.value) === date
 }
 
 function pickerElement(): HTMLElement | null {
@@ -215,9 +244,9 @@ function openMoodPickerForDate(date: DiaryDate, trigger: HTMLButtonElement): voi
   })
 }
 
-function openMoodPicker(day: CalendarDayLike, event: MouseEvent): void {
+function openMoodPicker(day: NaiveCalendarDay, event: MouseEvent): void {
   if (moodButtonDisabled(day)) return
-  const date = diaryDateFromCalendarDay(day)
+  const date = diaryDateForCalendarDay(day)
   const trigger = event.currentTarget
   if (!date || !(trigger instanceof HTMLButtonElement)) return
 
@@ -230,7 +259,7 @@ function emitMoodChange(mood: DiaryMoodId | null): void {
 
 function isCalendarContextTarget(target: EventTarget | null): boolean {
   return target instanceof Element
-    && Boolean(target.closest('[data-diary-day-content], .vc-prev, .vc-next, .vc-title'))
+    && Boolean(calendarRoot.value?.contains(target))
 }
 
 function onDocumentPointerDown(event: PointerEvent): void {
@@ -249,14 +278,15 @@ function onDocumentPointerDown(event: PointerEvent): void {
   if (!calendarRoot.value?.contains(target)) closeMoodPicker(false)
 }
 
-function onCalendarPagesUpdate(pages: unknown): void {
-  const page = Array.isArray(pages) ? pages[0] : null
-  const month = diaryCalendarMonthFromPage(page)
-  if (!month) return
+function monthKey(month: DiaryCalendarMonth): string {
+  return `${month.year}-${String(month.month).padStart(2, '0')}`
+}
 
-  const key = `${month.year}-${String(month.month).padStart(2, '0')}`
+function announceMonth(month: DiaryCalendarMonth): void {
+  const key = monthKey(month)
   if (lastMonthKey.value === key) return
-  // A page change is a new Calendar context. Do not let a body-teleported
+
+  // A panel change is a new Calendar context. Do not let a body-teleported
   // picker continue editing the date from the previous month.
   closeMoodPicker(false)
   currentMonth.value = month
@@ -264,8 +294,43 @@ function onCalendarPagesUpdate(pages: unknown): void {
   emit('month-change', month)
 }
 
-function onDayClick(day: CalendarDayLike): void {
-  const date = diaryDateFromCalendarDay(day)
+function onCalendarPanelChange(value: unknown): void {
+  const month = diaryCalendarMonthFromFields(value)
+  if (!month) return
+
+  announceMonth(month)
+}
+
+function selectDate(date: DiaryDate): void {
+  // Date navigation leaves the current Mood picker context. The parent may
+  // keep Calendar mounted while the native document surface takes over, so
+  // close without restoring focus to the soon-to-be-hidden trigger.
+  selectedCalendarValue.value = naiveCalendarValueForDiaryDate(date)
+  closeMoodPicker(false)
+  emit('date-selected', date)
+}
+
+function calendarMonthForDay(day: NaiveCalendarDay): DiaryCalendarMonth | null {
+  return diaryCalendarMonthFromFields(day)
+}
+
+function isCurrentCalendarMonth(month: DiaryCalendarMonth): boolean {
+  return currentMonth.value !== null && monthKey(currentMonth.value) === monthKey(month)
+}
+
+function dateButtonForDate(date: DiaryDate): HTMLButtonElement | null {
+  return calendarRoot.value?.querySelector<HTMLButtonElement>(
+    `[data-diary-day-content][data-date="${date}"]`,
+  ) ?? null
+}
+
+function needsMoodFirst(date: DiaryDate): boolean {
+  return daysByDate.value.get(date)?.hasDiary !== true
+    && Boolean(todayDate.value && date <= todayDate.value)
+}
+
+function onDayClick(day: NaiveCalendarDay, event: MouseEvent): void {
+  const date = diaryDateForCalendarDay(day)
   if (!date) return
 
   // A missing today/past Diary requires a Mood choice before the existing
@@ -273,29 +338,67 @@ function onDayClick(day: CalendarDayLike): void {
   // presentational and therefore cannot create a document. Missing future
   // dates continue through the existing command so its guard remains the
   // single authority for the browser-visible no-op.
-  const today = localCivilToday()
-  if (!hasDiaryForDay(day) && today && date <= today) {
-    const trigger = calendarRoot.value?.querySelector<HTMLButtonElement>(
-      `[data-diary-day-content][data-date="${date}"]`,
-    )
+  if (needsMoodFirst(date)) {
+    const trigger = event.currentTarget
+    if (trigger instanceof HTMLButtonElement) openMoodPickerForDate(date, trigger)
+    return
+  }
+
+  // The custom day button is the stable interaction owner. Recreate the
+  // small Naive Calendar instance when a direct click targets an adjacent
+  // month, because Naive's own cell click is intentionally stopped below.
+  const month = calendarMonthForDay(day)
+  if (month && !isCurrentCalendarMonth(month)) {
+    announceMonth(month)
+    calendarKey.value += 1
+  }
+  selectDate(date)
+}
+
+function onCalendarValueUpdate(value: number, time: NaiveCalendarDay): void {
+  const date = diaryDateFromNaiveCalendarValue(value) ?? diaryDateForCalendarDay(time)
+  if (!date) return
+
+  // A click on the outer Naive cell (for example, on its padding) does not
+  // pass through the custom button. Apply the same Mood-first rule there.
+  if (needsMoodFirst(date)) {
+    const trigger = dateButtonForDate(date)
     if (trigger) openMoodPickerForDate(date, trigger)
     return
   }
 
-  // Date navigation leaves the current Mood picker context. The parent may
-  // keep Calendar mounted while the native document surface takes over, so
-  // close without restoring focus to the soon-to-be-hidden trigger.
-  closeMoodPicker(false)
-  emit('date-selected', date)
+  selectDate(date)
 }
 
-function dayAriaLabel(day: CalendarDayLike, attributes: unknown): string {
-  const base = day.ariaLabel || day.label || diaryDateFromCalendarDay(day) || t('diary.calendar.day')
+function dayAriaLabel(day: NaiveCalendarDay): string {
+  const base = diaryDateForCalendarDay(day) || t('diary.calendar.day')
   const data = diaryDayForCalendarDay(day)
   const labels: string[] = []
-  if (hasDiaryCalendarAttribute(attributes) || data?.hasDiary) labels.push(t('diary.calendar.has_diary'))
-  if (data && typeof data.mood === 'string') labels.push(`${t('mood.label')}: ${moodLabelForDay(day)}`)
+  if (data?.hasDiary) labels.push(t('diary.calendar.has_diary'))
+  if (data?.hasDiary) labels.push(`${t('mood.label')}: ${moodLabelForDay(day)}`)
   return labels.length ? `${base}, ${labels.join(', ')}` : base
+}
+
+/**
+ * Naive UI owns the header buttons, while their accessible copy belongs to
+ * Diary. Mark the two icon buttons through their rendered SVG shape once, so
+ * event logic can use our data attributes instead of Naive's internal class
+ * names.
+ */
+function annotateCalendarNavigation(): void {
+  const buttons = [...(calendarRoot.value?.querySelectorAll<HTMLButtonElement>('button') ?? [])]
+    .filter((button) => button.querySelector('svg')
+      && !button.matches('[data-diary-day-content], [data-testid="diary-calendar-mood"]'))
+  const previous = buttons[0]
+  const next = buttons.at(-1)
+  if (!previous || !next || previous === next) return
+
+  previous.dataset.diaryCalendarNav = 'previous'
+  previous.dataset.testid = 'diary-calendar-previous'
+  previous.setAttribute('aria-label', t('diary.calendar.previous_month'))
+  next.dataset.diaryCalendarNav = 'next'
+  next.dataset.testid = 'diary-calendar-next'
+  next.setAttribute('aria-label', t('diary.calendar.next_month'))
 }
 
 function focusDate(date: DiaryDate): boolean {
@@ -311,6 +414,13 @@ onMounted(() => {
   document.addEventListener('pointerdown', onDocumentPointerDown, true)
   window.addEventListener('resize', scheduleMoodPickerPosition)
   window.addEventListener('scroll', scheduleMoodPickerPosition, true)
+  announceMonth(initialMonth.value)
+  annotateCalendarNavigation()
+  void nextTick(annotateCalendarNavigation)
+})
+
+onUpdated(() => {
+  annotateCalendarNavigation()
 })
 
 onBeforeUnmount(() => {
@@ -337,82 +447,87 @@ defineExpose({ focusDate, closeMoodPicker })
     :aria-busy="props.loading || undefined"
   >
     <div class="diary-calendar-host">
-      <Calendar
-        view="monthly"
-        trim-weeks
-        borderless
-        transparent
-        :initial-page="initialPage"
-        :attributes="calendarAttributes"
-        :locale="calendarLocale"
-            :masks="{ title: 'YYYY-MM' }"
-        :is-dark="isDark"
-        @dayclick="onDayClick"
-        @update:pages="onCalendarPagesUpdate"
+      <NCalendar
+        :key="calendarKey"
+        :default-value="calendarDefaultValue"
+        :value="calendarValue"
+        @panel-change="onCalendarPanelChange"
+        @update:value="onCalendarValueUpdate"
       >
-        <template #header-prev-button>
-          <span data-testid="diary-calendar-previous" class="diary-calendar-nav-content">
-            <span aria-hidden="true">‹</span>
-            <span class="diary-calendar-visually-hidden">{{ t('diary.calendar.previous_month') }}</span>
-          </span>
-        </template>
-        <template #header-next-button>
-          <span data-testid="diary-calendar-next" class="diary-calendar-nav-content">
-            <span aria-hidden="true">›</span>
-            <span class="diary-calendar-visually-hidden">{{ t('diary.calendar.next_month') }}</span>
-          </span>
-        </template>
-        <template #day-content="{ day, attributes, dayProps, dayEvents }">
-          <div class="diary-calendar-day-content">
-            <button
-              v-bind="dayProps"
-              v-on="dayEvents"
-              type="button"
-              data-diary-day-content
-              :class="{ 'has-mood': moodDefinitionForDay(day) || hasUnknownMoodForDay(day) }"
-              :data-date="diaryDateFromCalendarDay(day) ?? undefined"
-              :aria-label="dayAriaLabel(day, attributes)"
+        <template #header="{ year, month }">
+          <div class="diary-calendar-header-content">
+            <span
+              class="diary-calendar-month"
+              data-testid="diary-calendar-month"
+              :data-month="`${year}-${String(month).padStart(2, '0')}`"
             >
-              <span class="diary-calendar-day-number">{{ day.label }}</span>
-              <span v-if="hasDiaryCalendarAttribute(attributes)" class="diary-calendar-visually-hidden">
-                {{ t('diary.calendar.has_diary') }}
-              </span>
-              <span v-if="diaryDayForCalendarDay(day)?.mood !== undefined && diaryDayForCalendarDay(day)?.mood !== null" class="diary-calendar-visually-hidden">
-                {{ t('mood.label') }}: {{ moodLabelForDay(day) }}
-              </span>
-            </button>
-            <NButton
-              attr-type="button"
-              size="small"
-              quaternary
-              :bordered="false"
-              v-if="hasDiaryCalendarAttribute(attributes) || moodDefinitionForDay(day) || hasUnknownMoodForDay(day)"
-              class="diary-calendar-mood"
-              :class="{
-                'diary-calendar-mood-unknown': hasUnknownMoodForDay(day),
-                'diary-calendar-mood-empty': !moodDefinitionForDay(day) && !hasUnknownMoodForDay(day),
-              }"
-              data-testid="diary-calendar-mood"
-              :data-date="diaryDateFromCalendarDay(day) ?? undefined"
-              :aria-label="moodButtonLabel(day)"
-              :aria-expanded="moodPickerOpen && activeMoodDate === diaryDateFromCalendarDay(day) ? 'true' : 'false'"
-              :aria-controls="moodPickerOpen && activeMoodDate === diaryDateFromCalendarDay(day) ? 'diary-mood-picker' : undefined"
-              :disabled="moodButtonDisabled(day)"
-              @click.stop="openMoodPicker(day, $event)"
-              @keydown.stop
-            >
-              <img
-                v-if="moodDefinitionForDay(day)"
-                :src="moodDefinitionForDay(day)!.source"
-                alt=""
-                aria-hidden="true"
-              >
-              <span v-else-if="hasUnknownMoodForDay(day)" aria-hidden="true">?</span>
-              <span v-else class="diary-calendar-mood-empty-mark" aria-hidden="true">?</span>
-            </NButton>
+              {{ `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}` }}
+            </span>
+            <div class="diary-calendar-weekdays" role="row" :aria-label="t('diary.calendar.navigation')">
+              <span v-for="weekday in weekdayLabels" :key="weekday" role="columnheader">{{ weekday }}</span>
+            </div>
           </div>
         </template>
-      </Calendar>
+        <template #default="{ year, month, date }">
+          <template v-if="diaryDateFromCalendarFields({ year, month, date })">
+            <div class="diary-calendar-day-content">
+              <button
+                type="button"
+                role="button"
+                data-diary-day-content
+                :class="{
+                  'has-mood': moodDefinitionForDay({ year, month, date }) || hasUnknownMoodForDay({ year, month, date }),
+                  'is-selected': isSelectedForDay({ year, month, date }),
+                  'is-today': isTodayForDay({ year, month, date }),
+                }"
+                :data-date="diaryDateFromCalendarFields({ year, month, date }) ?? undefined"
+                :aria-label="dayAriaLabel({ year, month, date })"
+                :aria-current="isTodayForDay({ year, month, date }) ? 'date' : undefined"
+                :aria-pressed="isSelectedForDay({ year, month, date }) ? 'true' : 'false'"
+                aria-disabled="false"
+                @click.stop="onDayClick({ year, month, date }, $event)"
+              >
+                <span class="diary-calendar-day-number">{{ date }}</span>
+                <span v-if="diaryDayForCalendarDay({ year, month, date })?.hasDiary" class="diary-calendar-visually-hidden">
+                  {{ t('diary.calendar.has_diary') }}
+                </span>
+                <span v-if="diaryDayForCalendarDay({ year, month, date })?.hasDiary" class="diary-calendar-visually-hidden">
+                  {{ t('mood.label') }}: {{ moodLabelForDay({ year, month, date }) }}
+                </span>
+              </button>
+              <NButton
+                v-if="diaryDayForCalendarDay({ year, month, date })?.hasDiary || moodDefinitionForDay({ year, month, date }) || hasUnknownMoodForDay({ year, month, date })"
+                attr-type="button"
+                size="small"
+                quaternary
+                :bordered="false"
+                class="diary-calendar-mood"
+                :class="{
+                  'diary-calendar-mood-unknown': hasUnknownMoodForDay({ year, month, date }),
+                  'diary-calendar-mood-empty': !moodDefinitionForDay({ year, month, date }) && !hasUnknownMoodForDay({ year, month, date }),
+                }"
+                data-testid="diary-calendar-mood"
+                :data-date="diaryDateFromCalendarFields({ year, month, date }) ?? undefined"
+                :aria-label="moodButtonLabel({ year, month, date })"
+                :aria-expanded="moodPickerOpen && activeMoodDate === diaryDateFromCalendarFields({ year, month, date }) ? 'true' : 'false'"
+                :aria-controls="moodPickerOpen && activeMoodDate === diaryDateFromCalendarFields({ year, month, date }) ? 'diary-mood-picker' : undefined"
+                :disabled="moodButtonDisabled({ year, month, date })"
+                @click.stop="openMoodPicker({ year, month, date }, $event)"
+                @keydown.stop
+              >
+                <img
+                  v-if="moodDefinitionForDay({ year, month, date })"
+                  :src="moodDefinitionForDay({ year, month, date })!.source"
+                  alt=""
+                  aria-hidden="true"
+                >
+                <span v-else-if="hasUnknownMoodForDay({ year, month, date })" aria-hidden="true">?</span>
+                <span v-else class="diary-calendar-mood-empty-mark" aria-hidden="true">?</span>
+              </NButton>
+            </div>
+          </template>
+        </template>
+      </NCalendar>
 
       <div v-if="props.loading" class="diary-calendar-status" data-testid="diary-calendar-loading" role="status" aria-live="polite">
         {{ t('diary.calendar.loading') }}
@@ -468,7 +583,7 @@ defineExpose({ focusDate, closeMoodPicker })
 
 .diary-calendar-status {
   position: absolute;
-  top: 52px;
+  top: 84px;
   left: 16px;
   z-index: 2;
   color: var(--text-muted);
@@ -480,207 +595,249 @@ defineExpose({ focusDate, closeMoodPicker })
   color: var(--vs-danger, #d73a49);
 }
 
-.diary-calendar-host :deep(.vc-container),
-.diary-calendar-host :deep(.vc-pane-container),
-.diary-calendar-host :deep(.vc-pane-layout),
-.diary-calendar-host :deep(.vc-pane),
-.diary-calendar-host :deep(.vc-weeks) {
+/* Naive UI owns the calendar structure; these overrides keep the Diary
+   surface airy and translucent instead of restoring the default grid card. */
+.diary-calendar-host :deep(.n-calendar) {
   display: flex;
   flex: 1 1 auto;
   width: 100%;
-  height: 100%;
+  height: 100% !important;
   min-width: 0;
   min-height: 0;
-}
-
-.diary-calendar-host :deep(.vc-container) {
-  align-items: stretch;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
   background: transparent;
+  color: inherit;
 }
 
-.diary-calendar-host :deep(.vc-pane-container),
-.diary-calendar-host :deep(.vc-pane-layout),
-.diary-calendar-host :deep(.vc-pane),
-.diary-calendar-host :deep(.vc-weeks) {
-  flex-direction: column;
-}
-
-.diary-calendar-host :deep(.vc-header) {
-  grid-template-columns: [prev] auto [title] minmax(0, 1fr) [next] auto !important;
-  height: 44px;
-  margin-top: 0;
-  padding-left: 16px;
-  padding-right: 16px;
-}
-
-/* VCalendar renders its arrow header in an absolute wrapper above the pane
-   layout. Full-height flex sizing makes that stacking relationship explicit
-   so the official prev/next controls remain interactive. */
-.diary-calendar-host :deep(.vc-pane-header-wrapper) {
-  z-index: 2;
-}
-
-.diary-calendar-host :deep(.vc-pane-header-wrapper .vc-header) {
+.diary-calendar-host :deep(.n-calendar-header) {
   position: relative;
-  display: block;
-  height: 44px;
-  padding-left: 16px;
-  padding-right: 16px;
+  flex: 0 0 76px;
+  height: 76px;
+  box-sizing: border-box;
+  justify-content: center;
+  padding: 0 16px 8px;
 }
 
-.diary-calendar-host :deep(.vc-pane-header-wrapper .vc-prev),
-.diary-calendar-host :deep(.vc-pane-header-wrapper .vc-next) {
+.diary-calendar-host :deep(.n-calendar-header__title) {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  color: var(--vs-text-1, var(--text-h));
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diary-calendar-month {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  margin: 0 auto;
+  padding: 2px 4px;
+  border-radius: 6px;
+  background: transparent;
+  appearance: none;
+  color: var(--vs-text-1, var(--text-h));
+  text-align: center;
+}
+
+.diary-calendar[data-theme='dark'] .diary-calendar-month {
+  background: #334155;
+  color: #f1f5f9;
+}
+
+.diary-calendar-header-content {
+  display: block;
+  width: 100%;
+}
+
+.diary-calendar-weekdays {
   position: absolute;
-  top: 7px;
+  top: 48px;
+  right: 4px;
+  left: 4px;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  align-items: center;
+  color: var(--vs-text-3, var(--text-muted));
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  text-align: center;
+}
+
+.diary-calendar-host :deep(.n-calendar-header__extra) {
+  position: absolute;
+  inset: 0;
+  display: block;
+  pointer-events: none;
+}
+
+.diary-calendar-host :deep(.n-calendar-header__extra .n-button-group) {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.diary-calendar-host :deep(.n-calendar-header__extra .n-button) {
+  position: absolute;
+  top: 0;
   width: 44px;
-  height: 44px;
   min-width: 44px;
-  max-width: 44px;
+  height: 44px;
   min-height: 44px;
-  max-height: 44px;
-  box-sizing: border-box;
-  display: flex;
-  flex: 0 0 44px;
+  padding: 0;
   border: 0;
   border-radius: 8px;
   background: transparent;
-  transform: none;
+  color: var(--vs-text-2, var(--text-muted));
+  pointer-events: auto;
 }
 
-.diary-calendar-host :deep(.vc-pane-header-wrapper .vc-prev) {
-  left: 16px;
+.diary-calendar-host :deep(.n-calendar-header__extra .n-button:first-child) {
+  right: calc(50% + 48px);
 }
 
-.diary-calendar-host :deep(.vc-pane-header-wrapper .vc-next) {
-  right: 16px;
+.diary-calendar-host :deep(.n-calendar-header__extra .n-button:nth-child(2)) {
+  display: none;
 }
 
-.diary-calendar-host :deep(.vc-pane-header-wrapper .vc-prev:hover),
-.diary-calendar-host :deep(.vc-pane-header-wrapper .vc-next:hover) {
-  background: transparent;
+.diary-calendar-host :deep(.n-calendar-header__extra .n-button:last-child) {
+  left: calc(50% + 48px);
 }
 
-.diary-calendar-host :deep(.vc-pane-header-wrapper .vc-prev:focus),
-.diary-calendar-host :deep(.vc-pane-header-wrapper .vc-next:focus),
-.diary-calendar-host :deep(.vc-pane-header-wrapper .vc-prev:active),
-.diary-calendar-host :deep(.vc-pane-header-wrapper .vc-next:active) {
-  background: transparent;
+.diary-calendar-host :deep(.n-calendar-header__extra .n-button:hover),
+.diary-calendar-host :deep(.n-calendar-header__extra .n-button:active) {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--vs-text-1, var(--text-h));
+}
+
+.diary-calendar-host :deep(.n-calendar-header__extra .n-button:focus) {
   border: 0;
   outline: none;
   box-shadow: none;
 }
 
-.diary-calendar-host :deep(.vc-pane-header-wrapper .vc-prev:focus-visible),
-.diary-calendar-host :deep(.vc-pane-header-wrapper .vc-next:focus-visible) {
+.diary-calendar-host :deep(.n-calendar-header__extra .n-button:focus-visible) {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
-.diary-calendar-host :deep(.vc-title-wrapper) {
-  max-width: calc(100% - 96px);
-  justify-self: center;
-  min-width: 0;
-}
-
-.diary-calendar-host :deep(.vc-title) {
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--vc-header-title-color);
-  background: var(--vc-select-bg);
-  appearance: none;
-}
-
-.diary-calendar-host :deep(.vc-title:hover) {
-  background: var(--vc-select-hover-bg);
-  opacity: 1;
-}
-
-.diary-calendar-host :deep(.vc-pane > .vc-header) {
-  position: relative;
-  padding-right: 16px;
-}
-
-.diary-calendar-host :deep(.vc-weekdays) {
-  flex: 0 0 auto;
-}
-
-.diary-calendar-host :deep(.vc-week) {
-  flex: 1 1 0;
-  min-height: 44px;
-}
-
-.diary-calendar-host :deep(.vc-day) {
+.diary-calendar-host :deep(.n-calendar-dates) {
+  flex: 1 1 auto;
   min-height: 0;
-}
-
-.diary-calendar-host :deep(.vc-day-content) {
-  height: 100%;
-  min-height: 44px;
-  width: 100%;
-  box-sizing: border-box;
-  padding: 0;
   border: 0;
+  border-radius: 0;
+  gap: 1px;
   background: transparent;
-  color: inherit;
-  font: inherit;
 }
 
-.diary-calendar-host :deep(.vc-arrow) {
-  min-width: 40px;
-  min-height: 40px;
-}
-
-.diary-calendar-host :deep(.vc-day-content:hover),
-.diary-calendar-host :deep(.vc-day-content:focus),
-.diary-calendar-host :deep(.vc-day-content:active),
-.diary-calendar-host :deep(.vc-day-content[aria-selected='true']) {
+.diary-calendar-host :deep(.n-calendar-cell) {
+  min-width: 0;
+  min-height: 44px;
+  padding: 4px;
+  border: 0;
+  border-radius: 8px;
   background: transparent;
-  box-shadow: none;
+  overflow: visible;
 }
 
-.diary-calendar-host :deep(.vc-dot) {
+.diary-calendar-host :deep(.n-calendar-cell:hover),
+.diary-calendar-host :deep(.n-calendar-cell--selected) {
+  background: transparent;
+}
+
+.diary-calendar-host :deep(.n-calendar-cell__bar) {
+  display: none;
+}
+
+.diary-calendar-host :deep(.n-calendar-date) {
+  height: 0;
+  padding: 0;
+  visibility: hidden;
+}
+
+.diary-calendar-host :deep(.n-calendar-date__day) {
   display: none;
 }
 
 .diary-calendar-day-content {
-  position: relative;
-  width: 100%;
-  height: 100%;
+  position: absolute;
+  inset: 0;
+  z-index: 1;
   min-height: 44px;
+  pointer-events: none;
 }
 
 .diary-calendar-day-content > [data-diary-day-content] {
   position: absolute;
-  top: calc(50% - 18px);
+  top: max(0px, calc(50% - 36px));
   left: 50%;
-  width: 36px;
-  height: 36px;
+  display: flex;
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
   padding: 0;
-  transform: translate(-50%, -50%);
+  transform: translateX(-50%);
   border: 0;
   border-radius: 8px;
   background: transparent;
   box-shadow: none;
+  color: var(--vs-text-1, var(--text));
+  cursor: pointer;
+  font: inherit;
+  line-height: 1;
+  pointer-events: auto;
+}
+
+.diary-calendar-day-content > [data-diary-day-content]:hover {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 .diary-calendar-day-content > [data-diary-day-content]:focus {
   outline: none;
 }
 
+.diary-calendar-host :deep(.n-calendar-cell--other-month) [data-diary-day-content] {
+  color: var(--vs-text-3, var(--text-muted));
+  opacity: 0.7;
+}
+
+.diary-calendar-day-content > [data-diary-day-content].is-selected {
+  background: transparent;
+  box-shadow: none;
+  color: var(--accent);
+  font-weight: 650;
+}
+
+.diary-calendar-day-content > [data-diary-day-content].is-today .diary-calendar-day-number {
+  color: var(--accent);
+  font-weight: 650;
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
+}
+
+.diary-calendar-host :deep([data-diary-day-content]:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .diary-calendar-day-number {
-  display: inline-block;
   position: relative;
   z-index: 1;
+  display: inline-block;
 }
 
 .diary-calendar-mood {
   position: absolute;
+  top: calc(100% - 14px);
   left: 50%;
-  top: calc(50% + 18px);
   z-index: 2;
   display: inline-flex;
   width: 28px;
@@ -692,12 +849,13 @@ defineExpose({ focusDate, closeMoodPicker })
   border: 0;
   background: transparent;
   box-shadow: none;
-  color: var(--vs-text-2, #667085);
+  color: var(--vs-text-2, var(--text-muted));
   cursor: pointer;
   font: inherit;
   font-size: 0.75rem;
   font-weight: 700;
   line-height: 1;
+  pointer-events: auto;
 }
 
 .diary-calendar-mood img {
@@ -734,58 +892,6 @@ defineExpose({ focusDate, closeMoodPicker })
   outline: none;
 }
 
-/* VCalendar's day-content rule removes the browser outline. The custom
-   day button is the actual keyboard target, so restore the same visible
-   focus treatment used by the month controls without changing mouse focus. */
-.diary-calendar-host :deep([data-diary-day-content]:focus-visible) {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-.diary-calendar-nav-content {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-@media (min-width: 769px) {
-  .diary-calendar-host :deep(.vc-pane-header-wrapper) {
-    inset: 0;
-    height: 100%;
-  }
-
-  .diary-calendar-host :deep(.vc-pane-header-wrapper .vc-header) {
-    height: 100%;
-    padding: 0;
-  }
-
-  .diary-calendar-host :deep(.vc-pane-header-wrapper .vc-prev),
-  .diary-calendar-host :deep(.vc-pane-header-wrapper .vc-next) {
-    /* Keep month paging attached to the centered month title. */
-    top: 16px;
-    transform: translateY(-50%);
-  }
-
-  .diary-calendar-host :deep(.vc-pane-header-wrapper .vc-prev) {
-    left: auto;
-    right: calc(50% + 40px);
-  }
-
-  .diary-calendar-host :deep(.vc-pane-header-wrapper .vc-next) {
-    left: calc(50% + 40px);
-    right: auto;
-  }
-
-  .diary-calendar-host :deep(.vc-title-wrapper) {
-    position: absolute;
-    top: 0;
-    left: 50%;
-    transform: translateX(-50%);
-    width: max-content;
-    max-width: calc(100% - 128px);
-  }
-}
-
 .diary-calendar-visually-hidden {
   position: absolute;
   width: 1px;
@@ -799,38 +905,32 @@ defineExpose({ focusDate, closeMoodPicker })
 }
 
 @media (max-width: 420px) {
-  .diary-calendar-host :deep(.vc-header) {
+  .diary-calendar-host {
+    padding: 8px 0 clamp(12px, 3vh, 24px);
+  }
+
+  .diary-calendar-host :deep(.n-calendar-header) {
+    flex-basis: 76px;
+    height: 76px;
     padding-left: 4px;
     padding-right: 4px;
   }
 
-  .diary-calendar-host :deep(.vc-title-wrapper) {
-    max-width: calc(100% - 72px);
+  .diary-calendar-host :deep(.n-calendar-header__title) {
+    max-width: calc(100% - 80px);
   }
 
-  .diary-calendar-host :deep(.vc-pane > .vc-header) {
-    padding-right: 4px;
+  .diary-calendar-host :deep(.n-calendar-header__extra .n-button:first-child) {
+    right: calc(50% + 38px);
   }
 
-  .diary-calendar-host :deep(.vc-pane-header-wrapper .vc-prev) {
-    left: 4px;
+  .diary-calendar-host :deep(.n-calendar-header__extra .n-button:last-child) {
+    left: calc(50% + 38px);
   }
 
-  .diary-calendar-host :deep(.vc-pane-header-wrapper .vc-next) {
-    right: 4px;
-  }
-
-  .diary-calendar-host :deep(.vc-week) {
-    flex: 0 0 auto;
-    /* The date target and the optional Mood target share each day cell.
-       Keep enough row height for both hit areas so the Mood control cannot
-       enter the following week's date targets on narrow viewports. */
+  .diary-calendar-host :deep(.n-calendar-cell) {
     min-height: 72px;
-  }
-
-  .diary-calendar-host :deep(.vc-day-content) {
-    min-height: 44px;
-    height: 44px;
+    padding: 2px;
   }
 
   .diary-calendar-day-content {
@@ -838,7 +938,6 @@ defineExpose({ focusDate, closeMoodPicker })
   }
 
   .diary-calendar-mood {
-    top: calc(50% + 18px);
     width: 24px;
     height: 24px;
   }
@@ -848,12 +947,6 @@ defineExpose({ focusDate, closeMoodPicker })
     height: 18px;
   }
 
-  .diary-calendar-host :deep(.vc-weeks) {
-    padding-left: 0;
-    padding-right: 0;
-  }
-
-  .diary-calendar-surface-empty,
   .diary-calendar-status {
     left: 8px;
   }

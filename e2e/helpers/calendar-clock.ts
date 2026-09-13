@@ -23,18 +23,14 @@ export async function freezeCalendarClock(
 }
 
 /**
- * Return a date cell from the currently active VCalendar pane. During a page
- * transition VCalendar keeps the outgoing layout mounted; its `leave` class
- * is the component's semantic marker for that stale pane.
+ * Return a date button from the currently rendered Naive UI Calendar.
+ * DiaryCalendar exposes the canonical civil date so callers do not depend on
+ * the calendar library's internal cell structure.
  */
 export function calendarDay(calendar: Locator, date: string): Locator {
-  return calendar.locator(
-    `.vc-pane-layout:not([class*="leave"]) [data-diary-day-content][data-date="${date}"]`,
-  )
+  return calendar.locator(`[data-diary-day-content][data-date="${date}"]`)
 }
 
 export function calendarMoodButton(calendar: Locator, date: string): Locator {
-  return calendar.locator(
-    `.vc-pane-layout:not([class*="leave"]) [data-testid="diary-calendar-mood"][data-date="${date}"]`,
-  )
+  return calendar.locator(`[data-testid="diary-calendar-mood"][data-date="${date}"]`)
 }

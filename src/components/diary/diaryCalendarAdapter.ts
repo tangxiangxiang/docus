@@ -21,17 +21,17 @@ export interface DiaryCalendarMonth {
   month: number
 }
 
-export interface CalendarDayFields {
+/** Date fields exposed by Naive UI's Calendar default slot. */
+export interface CalendarDateFields {
   year: number
   month: number
-  day: number
+  date: number
 }
 
-export interface DiaryCalendarAttribute {
-  key: string
-  dates: string[]
-  dot: true
-  customData: DiaryCalendarDay
+/** Month fields emitted by Naive UI's Calendar panel-change callback. */
+export interface CalendarMonthFields {
+  year: number
+  month: number
 }
 
 function isInteger(value: unknown): value is number {
@@ -43,17 +43,17 @@ function pad(value: number): string {
 }
 
 /**
- * Convert VCalendar's local civil fields to the validated DiaryDate identity.
+ * Convert local civil fields to the validated DiaryDate identity.
  * No Date object or UTC serialization is involved in this conversion.
  */
-export function diaryDateFromCalendarDay(
-  day: Pick<CalendarDayFields, 'year' | 'month' | 'day'> | null | undefined,
+export function diaryDateFromCalendarFields(
+  value: Pick<CalendarDateFields, 'year' | 'month' | 'date'> | null | undefined,
 ): DiaryDate | null {
-  if (!day || !isInteger(day.year) || !isInteger(day.month) || !isInteger(day.day)) {
+  if (!value || !isInteger(value.year) || !isInteger(value.month) || !isInteger(value.date)) {
     return null
   }
 
-  return parseDiaryDate(`${String(day.year).padStart(4, '0')}-${pad(day.month)}-${pad(day.day)}`)
+  return parseDiaryDate(`${String(value.year).padStart(4, '0')}-${pad(value.month)}-${pad(value.date)}`)
 }
 
 /** Convert a browser-local Date to a date-only DiaryDate without UTC slicing. */
@@ -78,14 +78,14 @@ export function diaryCalendarMonthFromLocalDate(value = new Date()): DiaryCalend
   }
 }
 
-/** Validate a library-independent page/month payload. */
-export function diaryCalendarMonthFromPage(value: unknown): DiaryCalendarMonth | null {
+/** Validate a library-independent month payload. */
+export function diaryCalendarMonthFromFields(value: unknown): DiaryCalendarMonth | null {
   if (!value || typeof value !== 'object') return null
-  const page = value as { year?: unknown; month?: unknown }
-  if (!isInteger(page.year) || !isInteger(page.month)) return null
-  if (page.month < 1 || page.month > 12) return null
+  const fields = value as { year?: unknown; month?: unknown }
+  if (!isInteger(fields.year) || !isInteger(fields.month)) return null
+  if (fields.year < 0 || fields.year > 9999 || fields.month < 1 || fields.month > 12) return null
 
-  return { year: page.year, month: page.month }
+  return { year: fields.year, month: fields.month }
 }
 
 /** Convert a validated DiaryDate into a local Date only for Calendar navigation. */
@@ -102,9 +102,31 @@ export function localCalendarDateForDiaryDate(date: DiaryDate): Date {
   return value
 }
 
-/** Stable key used for one marker per Diary date. */
-export function diaryCalendarAttributeKey(date: DiaryDate): string {
-  return `diary-${date}`
+/** Convert a DiaryDate to Naive UI Calendar's numeric local value. */
+export function naiveCalendarValueForDiaryDate(date: DiaryDate): number {
+  return localCalendarDateForDiaryDate(date).getTime()
+}
+
+/** Convert a Diary month to Naive UI Calendar's numeric local value. */
+export function naiveCalendarValueForMonth(month: DiaryCalendarMonth): number | null {
+  const date = parseDiaryDate(
+    `${String(month.year).padStart(4, '0')}-${pad(month.month)}-01`,
+  )
+  return date ? naiveCalendarValueForDiaryDate(date) : null
+}
+
+/** Convert Naive UI Calendar's numeric local value to a DiaryDate. */
+export function diaryDateFromNaiveCalendarValue(value: unknown): DiaryDate | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null
+  return diaryDateFromLocalDate(new Date(value))
+}
+
+/** Convert Naive UI Calendar's numeric local value to its visible month. */
+export function diaryCalendarMonthFromNaiveCalendarValue(value: unknown): DiaryCalendarMonth | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  return diaryCalendarMonthFromLocalDate(date)
 }
 
 /**
@@ -152,39 +174,4 @@ export function normalizeDiaryDays(
   }
 
   return [...byDate.values()].sort((left, right) => left.date.localeCompare(right.date))
-}
-
-/** Map existing Diary dates to VCalendar's attribute-shaped presentation data. */
-export function diaryCalendarAttributes(
-  days: readonly DiaryCalendarDay[] | null | undefined,
-): DiaryCalendarAttribute[] {
-  return normalizeDiaryDays(days)
-    .filter((day) => day.hasDiary)
-    .map((day) => ({
-      key: diaryCalendarAttributeKey(day.date),
-      dates: [day.date],
-      dot: true as const,
-      customData: day,
-    }))
-}
-
-/** Safely read a Diary projection from a VCalendar attribute/customData value. */
-export function diaryDayFromCalendarAttribute(value: unknown): DiaryCalendarDay | null {
-  if (!value || typeof value !== 'object') return null
-  const customData = (value as { customData?: unknown }).customData
-  if (!customData || typeof customData !== 'object') return null
-
-  const candidate = customData as Partial<DiaryCalendarDay>
-  const date = parseDiaryDate(candidate.date)
-  if (!date || typeof candidate.hasDiary !== 'boolean') return null
-  const result: DiaryCalendarDay = { date, hasDiary: candidate.hasDiary }
-  if (typeof candidate.mood === 'string' || candidate.mood === null) result.mood = candidate.mood
-  if (Number.isSafeInteger(candidate.metadataUpdatedAt)) result.metadataUpdatedAt = candidate.metadataUpdatedAt
-  if (typeof candidate.documentId === 'string') result.documentId = candidate.documentId
-  return result
-}
-
-export function hasDiaryCalendarAttribute(attributes: unknown): boolean {
-  return Array.isArray(attributes)
-    && attributes.some((attribute) => diaryDayFromCalendarAttribute(attribute)?.hasDiary === true)
 }

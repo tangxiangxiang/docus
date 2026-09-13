@@ -79,7 +79,8 @@ function mountSurface(tree: TreeNode[] = treeWith('2026-08-24'), extraProps: Rec
 }
 
 function dayCell(wrapper: VueWrapper, value: string): DOMWrapper<Element> {
-  return wrapper.findAll('.vc-day').find((cell) => cell.find('[data-date="' + value + '"]').exists())!
+  const target = wrapper.get('[data-diary-day-content][data-date="' + value + '"]').element
+  return new DOMWrapper(target.closest('.n-calendar-cell')!)
 }
 
 describe('DiaryCalendarSurface', () => {
@@ -113,15 +114,15 @@ describe('DiaryCalendarSurface', () => {
     expect(wrapper.find('.diary-calendar-surface-header').exists()).toBe(false)
     expect(wrapper.find('.diary-calendar-toolbar').exists()).toBe(false)
     expect(wrapper.get('[data-testid="diary-calendar-surface"]').attributes('role')).toBe('region')
-    expect(dayCell(wrapper, '2026-08-24').findAll('.vc-dot')).toHaveLength(1)
-    expect(dayCell(wrapper, '2026-08-25').findAll('.vc-dot')).toHaveLength(1)
-    expect(dayCell(wrapper, '2026-08-26').findAll('.vc-dot')).toHaveLength(0)
+    expect(dayCell(wrapper, '2026-08-24').findAll('[data-testid="diary-calendar-mood"]')).toHaveLength(1)
+    expect(dayCell(wrapper, '2026-08-25').findAll('[data-testid="diary-calendar-mood"]')).toHaveLength(1)
+    expect(dayCell(wrapper, '2026-08-26').findAll('[data-testid="diary-calendar-mood"]')).toHaveLength(0)
   })
 
   it('keeps a full calendar for empty data and separates loading/error states', async () => {
     const empty = mountSurface(treeWith(), { loading: false })
     await flushPromises()
-    expect(empty.find('.vc-monthly').exists()).toBe(true)
+    expect(empty.find('.n-calendar').exists()).toBe(true)
     expect(empty.find('[data-testid="diary-calendar-surface-empty"]').exists()).toBe(false)
 
     const loading = mountSurface(treeWith(), { loading: true, error: 'Tree unavailable' })
@@ -129,7 +130,7 @@ describe('DiaryCalendarSurface', () => {
     expect(loading.get('[data-testid="diary-calendar-surface"]').attributes('aria-busy')).toBe('true')
     expect(loading.get('[data-testid="diary-calendar-loading"]').attributes('role')).toBe('status')
     expect(loading.get('[data-testid="diary-calendar-error"]').attributes('role')).toBe('alert')
-    expect(loading.find('.vc-monthly').exists()).toBe(true)
+    expect(loading.find('.n-calendar').exists()).toBe(true)
   })
 
   it('re-emits date and month intents without owning navigation side effects', async () => {
@@ -137,7 +138,7 @@ describe('DiaryCalendarSurface', () => {
     await flushPromises()
 
     await wrapper.get('[data-date="2026-08-24"]').trigger('click')
-    await wrapper.get('.vc-next').trigger('click')
+    await wrapper.get('[data-diary-calendar-nav="next"]').trigger('click')
     await flushPromises()
 
     expect(wrapper.emitted('date-selected')).toEqual([['2026-08-24']])
@@ -147,11 +148,11 @@ describe('DiaryCalendarSurface', () => {
   it('updates markers reactively from the latest tree props', async () => {
     const wrapper = mountSurface(treeWith())
     await flushPromises()
-    expect(wrapper.findAll('.vc-dot')).toHaveLength(0)
+    expect(wrapper.findAll('[data-testid="diary-calendar-mood"]')).toHaveLength(0)
 
     await wrapper.setProps({ tree: treeWith('2026-08-24') })
     await flushPromises()
-    expect(dayCell(wrapper, '2026-08-24').findAll('.vc-dot')).toHaveLength(1)
+    expect(dayCell(wrapper, '2026-08-24').findAll('[data-testid="diary-calendar-mood"]')).toHaveLength(1)
   })
 
   it('projects bulk mood summaries and forwards Calendar mood intents', async () => {

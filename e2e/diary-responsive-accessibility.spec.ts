@@ -243,17 +243,17 @@ async function calendarMetrics(page: Page): Promise<{
       .filter(visible)
       .map((element) => box(element))
       .filter((value): value is Box => value !== null)
-    const titleElement = document.querySelector<HTMLElement>('.vc-title')
+    const titleElement = document.querySelector<HTMLElement>('[data-testid="diary-calendar-month"]')
     return {
       viewportWidth: window.innerWidth,
       viewportHeight: window.innerHeight,
       scrollWidth: document.documentElement.scrollWidth,
       surface: box(document.querySelector('[data-testid="diary-calendar-surface"]')),
       host: box(document.querySelector('.diary-calendar-host')),
-      container: box(document.querySelector('.diary-calendar-host .vc-container')),
+      container: box(document.querySelector('.diary-calendar-host .n-calendar')),
       title: box(titleElement),
-      previous: box(document.querySelector('.vc-pane-header-wrapper .vc-prev')),
-      next: box(document.querySelector('.vc-pane-header-wrapper .vc-next')),
+      previous: box(document.querySelector('[data-diary-calendar-nav="previous"]')),
+      next: box(document.querySelector('[data-diary-calendar-nav="next"]')),
       dayCount: days.length,
       minDayWidth: days.length ? Math.min(...days.map((value) => value.width)) : 0,
       minDayHeight: days.length ? Math.min(...days.map((value) => value.height)) : 0,
@@ -319,8 +319,8 @@ test('Calendar Home semantics and layout pass the full responsive matrix', async
 
     const surface = page.getByTestId('diary-calendar-surface')
     const calendar = page.getByTestId('diary-calendar')
-    const previous = page.locator('.vc-pane-header-wrapper .vc-prev')
-    const next = page.locator('.vc-pane-header-wrapper .vc-next')
+    const previous = page.locator('[data-diary-calendar-nav="previous"]')
+    const next = page.locator('[data-diary-calendar-nav="next"]')
     const dateButton = calendarDay(page.getByTestId('diary-calendar'), date)
 
     await expect(surface).toHaveAttribute('role', 'region')
@@ -336,7 +336,7 @@ test('Calendar Home semantics and layout pass the full responsive matrix', async
     await expect(page.getByRole('button', { name: /Today|今天/i, exact: true })).toHaveCount(0)
 
     const nestedControlAudit = await page.evaluate(() => {
-      const cells = [...document.querySelectorAll<HTMLElement>('.vc-day')]
+      const cells = [...document.querySelectorAll<HTMLElement>('.n-calendar-cell')]
         .filter((cell) => getComputedStyle(cell).display !== 'none')
       return cells.map((cell) => {
         const content = cell.querySelector<HTMLElement>('.diary-calendar-day-content')
@@ -381,8 +381,8 @@ test('Calendar Home semantics and layout pass the full responsive matrix', async
       expect(metrics.host?.right, `${viewport.name} host right edge`).toBeLessThanOrEqual(viewport.width + 1)
       expect(metrics.container?.right, `${viewport.name} calendar right edge`).toBeLessThanOrEqual(viewport.width + 1)
       expect(metrics.host?.width, `${viewport.name} host fills surface`).toBeGreaterThanOrEqual((metrics.surface?.width ?? 0) * 0.95)
-      expect(metrics.container?.width, `${viewport.name} VCalendar fills host`).toBeGreaterThanOrEqual((metrics.host?.width ?? 0) * 0.95)
-      expect(metrics.container?.height, `${viewport.name} VCalendar fills host height`).toBeGreaterThanOrEqual((metrics.host?.height ?? 0) * 0.85)
+      expect(metrics.container?.width, `${viewport.name} Naive Calendar fills host`).toBeGreaterThanOrEqual((metrics.host?.width ?? 0) * 0.95)
+      expect(metrics.container?.height, `${viewport.name} Naive Calendar fills host height`).toBeGreaterThanOrEqual((metrics.host?.height ?? 0) * 0.85)
       expect(metrics.dayCount, `${viewport.name} date buttons`).toBeGreaterThan(0)
       expect(metrics.minDayWidth, `${viewport.name} day width`).toBeGreaterThanOrEqual(36)
       expect(metrics.minDayHeight, `${viewport.name} day height`).toBeGreaterThanOrEqual(44)
@@ -724,7 +724,7 @@ test('FileTree search keeps keyboard semantics and the user filter across Diary 
   expect(state.consoleErrors).toEqual([])
 })
 
-test('ten mixed Calendar focus cycles remain stable without VCalendar runtime errors', async ({ page, request }) => {
+test('ten mixed Calendar focus cycles remain stable without runtime errors', async ({ page, request }) => {
   test.setTimeout(60_000)
 
   const date = localCivilDate()
@@ -791,14 +791,14 @@ test.describe('English Calendar accessibility labels', () => {
       const calendar = page.getByTestId('diary-calendar')
       await expect(calendar).toHaveAttribute('data-locale', 'en-US')
       await expect(calendar).toHaveAccessibleName('Diary calendar')
-      await expect(page.locator('.vc-prev')).toHaveAccessibleName('Previous month')
-      await expect(page.locator('.vc-next')).toHaveAccessibleName('Next month')
+      await expect(page.locator('[data-diary-calendar-nav="previous"]')).toHaveAccessibleName('Previous month')
+      await expect(page.locator('[data-diary-calendar-nav="next"]')).toHaveAccessibleName('Next month')
       await expect(calendarDay(calendar, date)).toHaveAccessibleName(/Diary exists/)
 
       await expect(calendar).toHaveAttribute('data-theme', 'light')
       await page.getByRole('button', { name: /Theme: Light/ }).click()
       await expect(calendar).toHaveAttribute('data-theme', 'dark')
-      await expect(page.locator('.vc-container.vc-dark')).toBeVisible()
+      await expect(calendar).toHaveAttribute('data-theme', 'dark')
       await activateDiaryDate(page, date)
       await assertNativeRead(page, date)
       await assertNoDocumentOverflow(page)
@@ -822,8 +822,8 @@ test.describe('Chinese Calendar accessibility labels', () => {
       const calendar = page.getByTestId('diary-calendar')
       await expect(calendar).toHaveAttribute('data-locale', 'zh-CN')
       await expect(calendar).toHaveAccessibleName('日记日历')
-      await expect(page.locator('.vc-prev')).toHaveAccessibleName('上个月')
-      await expect(page.locator('.vc-next')).toHaveAccessibleName('下个月')
+      await expect(page.locator('[data-diary-calendar-nav="previous"]')).toHaveAccessibleName('上个月')
+      await expect(page.locator('[data-diary-calendar-nav="next"]')).toHaveAccessibleName('下个月')
       await expect(calendarDay(calendar, date)).toHaveAccessibleName(/有日记/)
 
       await activateDiaryDate(page, date)

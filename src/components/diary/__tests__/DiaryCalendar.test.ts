@@ -5,9 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DOMWrapper, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import DiaryCalendar from '../DiaryCalendar.vue'
 import {
-  diaryCalendarAttributes,
-  diaryDateFromCalendarDay,
+  diaryDateFromCalendarFields,
+  diaryCalendarMonthFromNaiveCalendarValue,
+  diaryDateFromNaiveCalendarValue,
   diaryDateFromLocalDate,
+  naiveCalendarValueForDiaryDate,
+  normalizeDiaryDays,
   localCalendarDateForDiaryDate,
   type DiaryCalendarDay,
 } from '../diaryCalendarAdapter'
@@ -65,7 +68,8 @@ function mountCalendar(
 }
 
 function dayCell(wrapper: VueWrapper, value: string): DOMWrapper<Element> {
-  return wrapper.findAll('.vc-day').find((cell) => cell.find(`[data-date="${value}"]`).exists())!
+  const target = wrapper.get(`[data-diary-day-content][data-date="${value}"]`).element
+  return new DOMWrapper(target.closest('.n-calendar-cell')!)
 }
 
 describe('DiaryCalendar presentation adapter', () => {
@@ -95,12 +99,16 @@ describe('DiaryCalendar presentation adapter', () => {
   })
 
   it('converts local Calendar fields to validated DiaryDate without UTC conversion', () => {
-    expect(diaryDateFromCalendarDay({ year: 2026, month: 8, day: 24 })).toBe('2026-08-24')
-    expect(diaryDateFromCalendarDay({ year: 2026, month: 2, day: 31 })).toBeNull()
-    expect(diaryDateFromCalendarDay({ year: 2026, month: 0, day: 24 })).toBeNull()
+    expect(diaryDateFromCalendarFields({ year: 2026, month: 8, date: 24 })).toBe('2026-08-24')
+    expect(diaryDateFromCalendarFields({ year: 2026, month: 2, date: 31 })).toBeNull()
+    expect(diaryDateFromCalendarFields({ year: 2026, month: 0, date: 24 })).toBeNull()
 
     const localDate = new Date(2026, 7, 24, 23, 59, 59)
     expect(diaryDateFromLocalDate(localDate)).toBe('2026-08-24')
+    const calendarValue = naiveCalendarValueForDiaryDate(date('2026-08-24'))
+    expect(diaryDateFromNaiveCalendarValue(calendarValue)).toBe('2026-08-24')
+    expect(diaryCalendarMonthFromNaiveCalendarValue(calendarValue)).toEqual({ year: 2026, month: 8 })
+    expect(diaryCalendarMonthFromNaiveCalendarValue(Number.NaN)).toBeNull()
   })
 
   it('preserves every supported Diary year through the local Date bridge', () => {
@@ -125,29 +133,25 @@ describe('DiaryCalendar presentation adapter', () => {
     }
   })
 
-  it('normalizes duplicate projection dates to one deterministic dot attribute', () => {
-    const attributes = diaryCalendarAttributes([
+  it('normalizes duplicate projection dates into one Diary map entry', () => {
+    const normalized = normalizeDiaryDays([
       day('2026-08-24', false),
       day('2026-08-24', true),
       day('2026-08-24', true),
       day('2026-08-25', false),
     ])
 
-    expect(attributes).toHaveLength(1)
-    expect(attributes[0]).toMatchObject({
-      key: 'diary-2026-08-24',
-      dates: ['2026-08-24'],
-      dot: true,
-    })
-    expect(attributes[0].customData).toEqual(day('2026-08-24', true))
+    expect(normalized).toHaveLength(2)
+    expect(normalized[0]).toEqual(day('2026-08-24', true))
+    expect(normalized[1]).toEqual(day('2026-08-25', false))
   })
 
   it('renders a fixed monthly Calendar and emits the initial library-independent month', async () => {
     const wrapper = mountCalendar()
     await flushPromises()
 
-    expect(wrapper.find('.vc-monthly').exists()).toBe(true)
-    expect(wrapper.get('.vc-title').text()).toContain('2026-08')
+    expect(wrapper.find('.n-calendar').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="diary-calendar-month"]').text()).toContain('2026-08')
     expect(wrapper.get('[data-testid="diary-calendar"]').attributes('data-month')).toBe('2026-08')
     expect(wrapper.emitted('month-change')).toEqual([[{ year: 2026, month: 8 }]])
   })
@@ -155,26 +159,66 @@ describe('DiaryCalendar presentation adapter', () => {
   it('renders only the month’s actual week rows so five-week months do not reserve a blank row', async () => {
     const fiveWeekMonth = mountCalendar([], { initialMonth: { year: 2026, month: 9 } })
     await flushPromises()
-    expect(fiveWeekMonth.findAll('.vc-pane-layout:not([class*="leave"]) .vc-week')).toHaveLength(5)
+    expect(fiveWeekMonth.findAll('.n-calendar-cell')).toHaveLength(35)
 
     const sixWeekMonth = mountCalendar([], { initialMonth: { year: 2026, month: 8 } })
     await flushPromises()
-    expect(sixWeekMonth.findAll('.vc-pane-layout:not([class*="leave"]) .vc-week')).toHaveLength(6)
+    expect(sixWeekMonth.findAll('.n-calendar-cell')).toHaveLength(42)
 
     fiveWeekMonth.unmount()
     sixWeekMonth.unmount()
   })
 
-  it('maps hasDiary to one dot and leaves empty dates as ordinary cells', async () => {
+  it('maps hasDiary to a Diary-owned mood action and leaves empty dates ordinary', async () => {
     const wrapper = mountCalendar([
       day('2026-08-24', true),
       day('2026-08-25', false),
     ])
     await flushPromises()
 
-    expect(dayCell(wrapper, '2026-08-24').findAll('.vc-dot')).toHaveLength(1)
-    expect(dayCell(wrapper, '2026-08-25').findAll('.vc-dot')).toHaveLength(0)
+    expect(dayCell(wrapper, '2026-08-24').findAll('[data-testid="diary-calendar-mood"]')).toHaveLength(1)
+    expect(dayCell(wrapper, '2026-08-25').findAll('[data-testid="diary-calendar-mood"]')).toHaveLength(0)
     expect(dayCell(wrapper, '2026-08-25').get('[data-diary-day-content]').attributes('aria-disabled')).toBe('false')
+  })
+
+  it('keeps Today and selected presentation independent from month navigation', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 7, 27, 12, 0, 0))
+    const wrapper = mountCalendar([
+      { ...day('2026-08-24', true), metadataUpdatedAt: 1 },
+      { ...day('2026-08-27', true), metadataUpdatedAt: 2 },
+    ])
+    await flushPromises()
+
+    const today = wrapper.get('[data-date="2026-08-27"]')
+    expect(today.classes()).toContain('is-today')
+    expect(today.attributes('aria-current')).toBe('date')
+    expect(today.attributes('aria-pressed')).toBe('false')
+
+    const selected = wrapper.get('[data-date="2026-08-24"]')
+    await selected.trigger('click')
+    await flushPromises()
+    expect(selected.classes()).toContain('is-selected')
+    expect(selected.attributes('aria-pressed')).toBe('true')
+    expect(today.classes()).toContain('is-today')
+    expect(today.attributes('aria-current')).toBe('date')
+    wrapper.unmount()
+  })
+
+  it('keeps Mood actions disabled without a safe CAS version or while busy', async () => {
+    const wrapper = mountCalendar([
+      { ...day('2026-08-24', true), mood: 'happy' },
+      { ...day('2026-08-25', true), mood: 'sad', metadataUpdatedAt: 4 },
+    ])
+    await flushPromises()
+
+    expect((dayCell(wrapper, '2026-08-24').get('[data-testid="diary-calendar-mood"]').element as HTMLButtonElement).disabled).toBe(true)
+    expect((dayCell(wrapper, '2026-08-25').get('[data-testid="diary-calendar-mood"]').element as HTMLButtonElement).disabled).toBe(false)
+
+    await wrapper.setProps({ moodBusy: true })
+    await flushPromises()
+    expect((dayCell(wrapper, '2026-08-25').get('[data-testid="diary-calendar-mood"]').element as HTMLButtonElement).disabled).toBe(true)
+    wrapper.unmount()
   })
 
   it('uses the Mood emoji itself as the sibling picker control without plus/edit affordances', async () => {
@@ -273,7 +317,7 @@ describe('DiaryCalendar presentation adapter', () => {
       metadataUpdatedAt: 1,
     }])
     await flushPromises()
-    const container = wrapper.get('.vc-container').element
+    const container = wrapper.get('.n-calendar').element
 
     expect(dayCell(wrapper, '2026-08-24').get('[data-testid="diary-calendar-mood"] img').attributes('src')).toBe('/emoji/开心.svg')
     await wrapper.setProps({ days: [{
@@ -283,32 +327,32 @@ describe('DiaryCalendar presentation adapter', () => {
     }] })
     await flushPromises()
     expect(dayCell(wrapper, '2026-08-24').get('[data-testid="diary-calendar-mood"] img').attributes('src')).toBe('/emoji/伤心.svg')
-    expect(wrapper.get('.vc-container').element).toBe(container)
+    expect(wrapper.get('.n-calendar').element).toBe(container)
   })
 
   it('renders a complete calendar with zero markers for an empty projection', async () => {
     const wrapper = mountCalendar([])
     await flushPromises()
 
-    expect(wrapper.find('.vc-monthly').exists()).toBe(true)
-    expect(wrapper.findAll('.vc-dot')).toHaveLength(0)
+    expect(wrapper.find('.n-calendar').exists()).toBe(true)
+    expect(wrapper.findAll('[data-testid="diary-calendar-mood"]')).toHaveLength(0)
     expect(wrapper.findAll('[data-date^="2026-08-"]').length).toBeGreaterThanOrEqual(28)
   })
 
-  it('updates dots reactively without remounting the Calendar', async () => {
+  it('updates Diary day actions reactively without remounting the Calendar', async () => {
     const wrapper = mountCalendar([day('2026-08-24', false)])
     await flushPromises()
-    const container = wrapper.get('.vc-container').element
+    const container = wrapper.get('.n-calendar').element
 
-    expect(dayCell(wrapper, '2026-08-24').findAll('.vc-dot')).toHaveLength(0)
+    expect(dayCell(wrapper, '2026-08-24').findAll('[data-testid="diary-calendar-mood"]')).toHaveLength(0)
     await wrapper.setProps({ days: [day('2026-08-24', true)] })
     await flushPromises()
-    expect(dayCell(wrapper, '2026-08-24').findAll('.vc-dot')).toHaveLength(1)
-    expect(wrapper.get('.vc-container').element).toBe(container)
+    expect(dayCell(wrapper, '2026-08-24').findAll('[data-testid="diary-calendar-mood"]')).toHaveLength(1)
+    expect(wrapper.get('.n-calendar').element).toBe(container)
 
     await wrapper.setProps({ days: [day('2026-08-24', false)] })
     await flushPromises()
-    expect(dayCell(wrapper, '2026-08-24').findAll('.vc-dot')).toHaveLength(0)
+    expect(dayCell(wrapper, '2026-08-24').findAll('[data-testid="diary-calendar-mood"]')).toHaveLength(0)
   })
 
   it('emits only a validated DiaryDate for day clicks', async () => {
@@ -380,16 +424,29 @@ describe('DiaryCalendar presentation adapter', () => {
     await flushPromises()
     wrapper.emitted('month-change')!.length = 0
 
-    await wrapper.get('.vc-next').trigger('click')
+    await wrapper.get('[data-diary-calendar-nav="next"]').trigger('click')
     await flushPromises()
     expect(wrapper.get('[data-testid="diary-calendar"]').attributes('data-month')).toBe('2026-09')
     expect(wrapper.emitted('month-change')?.at(-1)?.[0]).toEqual({ year: 2026, month: 9 })
     expect(wrapper.emitted('date-selected')).toBeUndefined()
 
-    await wrapper.get('.vc-prev').trigger('click')
+    await wrapper.get('[data-diary-calendar-nav="previous"]').trigger('click')
     await flushPromises()
     expect(wrapper.get('[data-testid="diary-calendar"]').attributes('data-month')).toBe('2026-08')
     expect(wrapper.emitted('month-change')?.at(-1)?.[0]).toEqual({ year: 2026, month: 8 })
+  })
+
+  it('does not emit month-change again when selecting within the visible month', async () => {
+    const wrapper = mountCalendar()
+    await flushPromises()
+    wrapper.emitted('month-change')!.length = 0
+
+    await wrapper.get('[data-date="2026-08-24"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.emitted('month-change')).toEqual([])
+    expect(wrapper.emitted('date-selected')).toEqual([['2026-08-24']])
+    wrapper.unmount()
   })
 
   it('closes the Teleport picker before date or month navigation changes Calendar context', async () => {
@@ -412,7 +469,7 @@ describe('DiaryCalendar presentation adapter', () => {
     await flushPromises()
     expect(document.body.querySelector('[data-testid="diary-mood-picker"]')).not.toBeNull()
 
-    await wrapper.get('.vc-next').trigger('click')
+    await wrapper.get('[data-diary-calendar-nav="next"]').trigger('click')
     await flushPromises()
     expect(document.body.querySelector('[data-testid="diary-mood-picker"]')).toBeNull()
     wrapper.unmount()
@@ -439,21 +496,21 @@ describe('DiaryCalendar presentation adapter', () => {
     const wrapper = mountCalendar([day('2026-08-24')], { loading: true, error: 'Projection unavailable' })
     await flushPromises()
 
-    expect(wrapper.get('.vc-prev').attributes('type')).toBe('button')
-    expect(wrapper.get('.vc-prev').text()).toContain('Previous month')
-    expect(wrapper.get('.vc-next').attributes('type')).toBe('button')
-    expect(wrapper.get('.vc-next').text()).toContain('Next month')
+    expect(wrapper.get('[data-diary-calendar-nav="previous"]').attributes('type')).toBe('button')
+    expect(wrapper.get('[data-diary-calendar-nav="previous"]').attributes('aria-label')).toBe('Previous month')
+    expect(wrapper.get('[data-diary-calendar-nav="next"]').attributes('type')).toBe('button')
+    expect(wrapper.get('[data-diary-calendar-nav="next"]').attributes('aria-label')).toBe('Next month')
     expect(wrapper.get('[data-testid="diary-calendar"]').attributes('aria-busy')).toBe('true')
     expect(wrapper.get('[data-testid="diary-calendar-loading"]').attributes('role')).toBe('status')
     expect(wrapper.get('[data-testid="diary-calendar-error"]').attributes('role')).toBe('alert')
     expect(wrapper.get('[data-testid="diary-calendar"]').attributes('data-locale')).toBe('en-US')
-    expect(wrapper.find('.vc-light').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="diary-calendar"]').attributes('data-theme')).toBe('light')
 
     useI18n().setLocale('zh')
     useTheme().set('dark')
     await flushPromises()
     expect(wrapper.get('[data-testid="diary-calendar"]').attributes('data-locale')).toBe('zh-CN')
-    expect(wrapper.find('.vc-dark').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="diary-calendar"]').attributes('data-theme')).toBe('dark')
   })
 
   it('does not import or invoke API, router, editor, persistence, or UTC seams', () => {
@@ -466,12 +523,12 @@ describe('DiaryCalendar presentation adapter', () => {
       'utf8',
     )
 
-    expect(componentSource).toContain("from 'v-calendar'")
-    expect(componentSource).toContain("'v-calendar/style.css'")
-    expect(componentSource).toContain('#day-content')
+    expect(componentSource).toContain("from 'naive-ui'")
+    expect(componentSource).toContain('<NCalendar')
+    expect(componentSource).toContain('daysByDate')
+    expect(componentSource).not.toContain('#day-content')
     expect(componentSource).not.toMatch(/fetch\(|authFetch|createPost|savePost|recoverPost|deletePost|useRouter|router\.|Editor|\/api\//)
     expect(componentSource).not.toContain('toISOString')
-    expect(adapterSource).not.toContain('v-calendar')
     expect(adapterSource).not.toContain('toISOString')
   })
 
@@ -482,8 +539,8 @@ describe('DiaryCalendar presentation adapter', () => {
     await flushPromises()
 
     await wrapper.get('[data-date="2026-08-24"]').trigger('click')
-    await wrapper.get('.vc-next').trigger('click')
-    await wrapper.get('.vc-prev').trigger('click')
+    await wrapper.get('[data-diary-calendar-nav="next"]').trigger('click')
+    await wrapper.get('[data-diary-calendar-nav="previous"]').trigger('click')
     await flushPromises()
 
     expect(fetchSpy).not.toHaveBeenCalled()
@@ -497,7 +554,7 @@ describe('DiaryCalendar presentation adapter', () => {
     const second = mountCalendar([day('2026-08-25')])
     await flushPromises()
     expect(second.find('[data-date="2026-08-25"]').exists()).toBe(true)
-    expect(second.findAll('.vc-dot')).toHaveLength(1)
+    expect(second.findAll('[data-testid="diary-calendar-mood"]')).toHaveLength(1)
     second.unmount()
   })
 })

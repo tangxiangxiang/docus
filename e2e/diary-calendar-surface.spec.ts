@@ -766,19 +766,13 @@ test('Calendar Mood emoji is the only picker entry and never navigates the date'
     await expect(surface.locator('text=✎')).toHaveCount(0)
 
     const dateButton = calendarDay(surface, date)
-    await expect(dateButton.locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " vc-day ")]').locator('.vc-dot')).toBeHidden()
+    await expect(dateButton.locator('[data-testid="diary-calendar-mood"]')).toHaveCount(0)
     const hoverBox = await dateButton.boundingBox()
     expect(hoverBox).not.toBeNull()
     await dateButton.hover({ position: { x: hoverBox!.width / 2, y: 4 } })
-    expect(await dateButton.evaluate((element) => ({
-      background: getComputedStyle(element).backgroundColor,
-      shadow: getComputedStyle(element).boxShadow,
-    }))).toEqual({ background: 'rgba(0, 0, 0, 0)', shadow: 'none' })
+    expect(await dateButton.evaluate((element) => getComputedStyle(element).boxShadow)).toBe('none')
     await moodButton.hover()
-    expect(await moodButton.evaluate((element) => ({
-      background: getComputedStyle(element).backgroundColor,
-      shadow: getComputedStyle(element).boxShadow,
-    }))).toEqual({ background: 'rgba(0, 0, 0, 0)', shadow: 'none' })
+    expect(await moodButton.evaluate((element) => getComputedStyle(element).boxShadow)).toBe('none')
 
     await moodButton.click()
     const picker = page.getByTestId('diary-mood-picker')

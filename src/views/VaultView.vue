@@ -1695,10 +1695,9 @@ const {
   backingPath,
   isHome: isDiaryCalendarMode,
 } = diaryWorkspacePresentation
-// Keep the VCalendar subtree mounted for the whole Diary scope. v-calendar
-// 3.1.2 can throw while a day-click is still unwinding if the resulting tab
-// transition synchronously unmounts its Calendar. D6.1 moves visibility to
-// the Diary presentation owner while preserving this scope-only mount rule.
+// Keep the Naive UI Calendar subtree mounted for the whole Diary scope. D6.1
+// moves visibility to the Diary presentation owner while preserving this
+// scope-only mount rule.
 const isDiaryCalendarMounted = computed(() => isDiaryScope.value)
 const hasOpenDiaryDocument = computed(() => workspaceTabs.value.some((tab) => (
   tab.kind === 'document' && classifyDiaryPath(tab.documentPath) === 'managed'

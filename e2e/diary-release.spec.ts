@@ -84,10 +84,10 @@ test('Diary Calendar remains usable across the D5 responsive matrix', async ({ p
       const calendar = document.querySelector<HTMLElement>('[data-testid="diary-calendar"]')
       const surface = document.querySelector<HTMLElement>('[data-testid="diary-calendar-surface"]')
       const host = document.querySelector<HTMLElement>('.diary-calendar-host')
-      const vcContainer = document.querySelector<HTMLElement>('.diary-calendar-host .vc-container')
-      const title = document.querySelector<HTMLElement>('.vc-title')
-      const previous = document.querySelector<HTMLElement>('.vc-prev')
-      const next = document.querySelector<HTMLElement>('.vc-next')
+      const container = document.querySelector<HTMLElement>('.diary-calendar-host .n-calendar')
+      const title = document.querySelector<HTMLElement>('[data-testid="diary-calendar-month"]')
+      const previous = document.querySelector<HTMLElement>('[data-diary-calendar-nav="previous"]')
+      const next = document.querySelector<HTMLElement>('[data-diary-calendar-nav="next"]')
       const rect = (element: HTMLElement | null) => {
         if (!element) return null
         const box = element.getBoundingClientRect()
@@ -110,7 +110,7 @@ test('Diary Calendar remains usable across the D5 responsive matrix', async ({ p
         surface: rect(surface),
         calendar: rect(calendar),
         host: rect(host),
-        vcContainer: rect(vcContainer),
+        container: rect(container),
         title: rect(title),
         previous: rect(previous),
         next: rect(next),
@@ -126,11 +126,11 @@ test('Diary Calendar remains usable across the D5 responsive matrix', async ({ p
     expect(metrics.host?.right, `${viewport.name} host overflow`).toBeLessThanOrEqual(metrics.viewport + 1)
     expect(metrics.host?.width, `${viewport.name} host fills surface width`)
       .toBeGreaterThanOrEqual((metrics.surface?.width ?? 0) * 0.95)
-    expect(metrics.vcContainer?.width, `${viewport.name} VCalendar fills host width`)
+    expect(metrics.container?.width, `${viewport.name} Naive Calendar fills host width`)
       .toBeGreaterThanOrEqual((metrics.host?.width ?? 0) * 0.95)
     expect(metrics.host?.height, `${viewport.name} host fills surface height`)
       .toBeGreaterThanOrEqual((metrics.surface?.height ?? 0) * 0.9)
-    expect(metrics.vcContainer?.height, `${viewport.name} VCalendar fills host height`)
+    expect(metrics.container?.height, `${viewport.name} Naive Calendar fills host height`)
       .toBeGreaterThanOrEqual((metrics.host?.height ?? 0) * 0.9)
     const titleOffset = (metrics.title?.right ?? 0) - (metrics.title?.width ?? 0) / 2
       - ((metrics.surface?.right ?? 0) - (metrics.surface?.width ?? 0) / 2)
@@ -146,7 +146,7 @@ test('Diary Calendar remains usable across the D5 responsive matrix', async ({ p
 
     await expect(page.locator('.diary-calendar-surface-header')).toHaveCount(0)
     await expect(page.locator('.diary-calendar-toolbar')).toHaveCount(0)
-    await expect(page.locator('.vc-title')).toBeVisible()
+    await expect(page.getByTestId('diary-calendar-month')).toBeVisible()
     await expect(page.getByTestId('view-toggle')).toHaveCount(0)
     await expect(page.locator('.right-rail-toggle')).toHaveCount(0)
     await expect(page.locator('.file-tree')).toBeHidden()
@@ -210,15 +210,26 @@ test('Diary Calendar distributes the available height across actual week rows', 
   }> {
     return page.evaluate(() => {
       const calendar = document.querySelector<HTMLElement>('[data-testid="diary-calendar"]')
-      const layout = calendar?.querySelector<HTMLElement>('.vc-pane-layout:not([class*="leave"])')
-      const rows = [...(layout?.querySelectorAll<HTMLElement>('.vc-week') ?? [])]
-      const rowHeights = rows.map((row) => row.getBoundingClientRect().height)
+      const dates = calendar?.querySelector<HTMLElement>('.n-calendar-dates')
+      const cells = [...(dates?.querySelectorAll<HTMLElement>('.n-calendar-cell') ?? [])]
+      const rows = Array.from({ length: Math.ceil(cells.length / 7) }, (_, rowIndex) => (
+        cells.slice(rowIndex * 7, rowIndex * 7 + 7)
+      ))
+      const rowHeights = rows.map((row) => {
+        const boxes = row.map((cell) => cell.getBoundingClientRect())
+        const top = Math.min(...boxes.map((box) => box.top))
+        const bottom = Math.max(...boxes.map((box) => box.bottom))
+        return bottom - top
+      })
       const lastRow = rows.at(-1)
+      const lastRowBottom = lastRow?.length
+        ? Math.max(...lastRow.map((cell) => cell.getBoundingClientRect().bottom))
+        : null
       return {
         month: calendar?.dataset.month ?? null,
         weekCount: rows.length,
         rowHeights,
-        bottomGap: lastRow ? window.innerHeight - lastRow.getBoundingClientRect().bottom : window.innerHeight,
+        bottomGap: lastRowBottom === null ? window.innerHeight : window.innerHeight - lastRowBottom,
       }
     })
   }
@@ -231,7 +242,7 @@ test('Diary Calendar distributes the available height across actual week rows', 
   expect(sixWeek.bottomGap).toBeLessThanOrEqual(80)
 
   await page.getByTestId('diary-calendar-next').click()
-  await expect(page.locator('.vc-pane-layout:not([class*="leave"]) .vc-title')).toHaveText('2026-09')
+  await expect(page.getByTestId('diary-calendar-month')).toHaveText('2026-09')
   const fiveWeek = await readWeekGeometry()
   expect(fiveWeek.month).toBe('2026-09')
   expect(fiveWeek.weekCount).toBe(5)
@@ -250,9 +261,9 @@ test('Diary Calendar distributes the available height across actual week rows', 
 test('Diary Calendar keeps the month title readable in dark theme', async ({ page }) => {
   await openDiaryScope(page)
   await page.getByRole('button', { name: /Theme: Light|主题：浅色/ }).click()
-  await expect(page.locator('.vc-container.vc-dark')).toBeVisible()
+  await expect(page.getByTestId('diary-calendar')).toHaveAttribute('data-theme', 'dark')
 
-  const title = page.locator('.vc-pane-layout:not([class*="leave"]) .vc-title')
+  const title = page.getByTestId('diary-calendar-month')
   const style = await title.evaluate((element) => {
     const computed = getComputedStyle(element)
     return {
@@ -276,9 +287,9 @@ test('Diary Calendar navigation exposes keyboard-only focus indicators', async (
   })
 
   await openDiaryScope(page)
-  const previous = page.locator('.vc-pane-header-wrapper .vc-prev')
-  const next = page.locator('.vc-pane-header-wrapper .vc-next')
-  const title = page.locator('.vc-title:visible').first()
+  const previous = page.locator('[data-diary-calendar-nav="previous"]')
+  const next = page.locator('[data-diary-calendar-nav="next"]')
+  const title = page.getByTestId('diary-calendar-month')
 
   async function focusPreviousWithKeyboard(): Promise<void> {
     await page.locator('.vault').focus()
@@ -327,7 +338,7 @@ test('Diary Calendar navigation exposes keyboard-only focus indicators', async (
   for (const theme of ['light', 'dark'] as const) {
     if (theme === 'dark') {
       await page.getByRole('button', { name: /Theme: Light|主题：浅色/ }).click()
-      await expect(page.locator('.vc-container.vc-dark')).toBeVisible()
+      await expect(page.getByTestId('diary-calendar')).toHaveAttribute('data-theme', 'dark')
     }
 
     for (const viewport of [
@@ -422,8 +433,8 @@ test('Diary Calendar keyboard flow does not strand focus in the hidden surface',
     await openDiaryScope(page)
     const calendar = page.getByTestId('diary-calendar')
     const surface = page.getByTestId('diary-calendar-surface')
-    const previous = page.locator('.vc-prev')
-    const next = page.locator('.vc-next')
+    const previous = page.locator('[data-diary-calendar-nav="previous"]')
+    const next = page.locator('[data-diary-calendar-nav="next"]')
     const dateButton = calendarDay(surface, date)
 
     await expect(page.getByTestId('diary-calendar')).toBeVisible()
@@ -480,7 +491,7 @@ test('direct managed delete clears its marker while folder delete remains fail-c
     await openDiaryScope(page)
     const dayButton = calendarDay(page.getByTestId('diary-calendar'), date)
     await expect(dayButton).toBeVisible()
-    await expect(dayButton.locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " vc-day ")]').locator('.vc-dot')).toHaveCount(1)
+    await expect(dayButton.locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " n-calendar-cell ")]').getByTestId('diary-calendar-mood')).toHaveCount(1)
     await expect(dayButton).toHaveAccessibleName(/Diary exists/i)
 
     const deleted = await request.delete(`/api/posts/${diaryPath(date)}`)
@@ -490,7 +501,7 @@ test('direct managed delete clears its marker while folder delete remains fail-c
     await openDiaryScope(page)
     const clearedDayButton = calendarDay(page.getByTestId('diary-calendar'), date)
     await expect(clearedDayButton).toBeVisible()
-    await expect(clearedDayButton.locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " vc-day ")]').locator('.vc-dot')).toHaveCount(0)
+    await expect(clearedDayButton.locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " n-calendar-cell ")]').getByTestId('diary-calendar-mood')).toHaveCount(0)
     await expect(clearedDayButton).not.toHaveAccessibleName(/Diary exists/i)
 
     await seedExistingDiary(request, date)
@@ -500,7 +511,7 @@ test('direct managed delete clears its marker while folder delete remains fail-c
     await page.reload()
     await openDiaryScope(page)
     const retainedDayButton = calendarDay(page.getByTestId('diary-calendar'), date)
-    await expect(retainedDayButton.locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " vc-day ")]').locator('.vc-dot')).toHaveCount(1)
+    await expect(retainedDayButton.locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " n-calendar-cell ")]').getByTestId('diary-calendar-mood')).toHaveCount(1)
     await expect(retainedDayButton).toHaveAccessibleName(/Diary exists/i)
   } finally {
     await deleteDiaryDate(request, date)

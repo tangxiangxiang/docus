@@ -324,22 +324,22 @@ async function readCalendarMetrics(page: Page, date: string): Promise<CalendarMe
       && left.bottom > right.top + 0.5
     )
     const root = document.querySelector<HTMLElement>('[data-testid="diary-calendar"]')
-    const activeLayout = root?.querySelector<HTMLElement>('.vc-pane-layout:not([class*="leave"])') ?? null
+    const activeLayout = root?.querySelector<HTMLElement>('.n-calendar-dates') ?? null
     const dateButton = activeLayout?.querySelector<HTMLElement>(`[data-diary-day-content][data-date="${targetDate}"]`) ?? null
     const moodButton = activeLayout?.querySelector<HTMLElement>(`[data-testid="diary-calendar-mood"][data-date="${targetDate}"]`) ?? null
     const dateBox = toBox(dateButton)
     const moodBox = toBox(moodButton)
-    const moodCell = moodButton?.closest('.vc-day')
+    const moodCell = moodButton?.closest('.n-calendar-cell')
     const neighborDateButtons = [...(activeLayout?.querySelectorAll<HTMLElement>('[data-diary-day-content]') ?? [])]
-      .filter((button) => button !== dateButton && button.closest('.vc-day') !== moodCell)
+      .filter((button) => button !== dateButton && button.closest('.n-calendar-cell') !== moodCell)
       .map((button) => toBox(button))
     return {
       surface: toBox(document.querySelector('[data-testid="diary-calendar-surface"]')),
       day: dateBox,
       mood: moodBox,
-      previous: toBox(root?.querySelector('.vc-pane-header-wrapper .vc-prev') ?? null),
-      next: toBox(root?.querySelector('.vc-pane-header-wrapper .vc-next') ?? null),
-      title: toBox(root?.querySelector('.vc-pane-header-wrapper .vc-title') ?? null),
+      previous: toBox(root?.querySelector('[data-diary-calendar-nav="previous"]') ?? null),
+      next: toBox(root?.querySelector('[data-diary-calendar-nav="next"]') ?? null),
+      title: toBox(root?.querySelector('[data-testid="diary-calendar-month"]') ?? null),
       dateMoodSeparated: dateButton !== null && moodButton !== null && dateBox.bottom <= moodBox.top + 1,
       moodOverlapsNeighbor: neighborDateButtons.some((button) => overlaps(moodBox, button)),
       dateBackground: dateButton ? getComputedStyle(dateButton).backgroundColor : '',
