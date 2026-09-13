@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { NNumberAnimation as NumberAnimation } from 'naive-ui'
 import { currencyExponentFor } from '../../features/ledger/money'
 
@@ -7,7 +7,9 @@ const props = withDefaults(defineProps<{
   minor: number
   currency: string
   signed?: boolean
-}>(), { signed: false })
+  animateOnMount?: boolean
+  animateOnChange?: boolean
+}>(), { signed: false, animateOnMount: true, animateOnChange: true })
 
 function parts(minor: number, currency: string) {
   const precision = currencyExponentFor(currency)
@@ -25,10 +27,10 @@ function parts(minor: number, currency: string) {
   }
 }
 
-// The initial value is already authoritative. Animate only subsequent
-// changes so the component never flashes the final amount and then jumps back
-// to zero after the first paint.
-const fromMinor = ref(props.minor)
+// Start the animation from the initial value directly. This keeps the first
+// rendered frame in sync with the animation instead of briefly painting the
+// final value and then resetting to zero from a delayed mounted hook.
+const fromMinor = ref(props.animateOnMount ? 0 : props.minor)
 const animationKey = ref(0)
 let resetTimer: ReturnType<typeof setTimeout> | undefined
 const currentParts = computed(() => parts(props.minor, props.currency))
@@ -40,11 +42,17 @@ void currentParts
 void fromParts
 
 watch(() => ({ minor: props.minor, currency: props.currency }), (next, previous) => {
-  if (next.currency !== previous.currency) fromMinor.value = next.minor
+  if (!props.animateOnChange || next.currency !== previous.currency) fromMinor.value = next.minor
   else fromMinor.value = previous.minor
   animationKey.value += 1
   if (resetTimer) clearTimeout(resetTimer)
-  resetTimer = setTimeout(() => { fromMinor.value = props.minor }, 700)
+  if (props.animateOnChange) {
+    resetTimer = setTimeout(() => { fromMinor.value = props.minor }, 700)
+  }
+})
+
+onBeforeUnmount(() => {
+  if (resetTimer) clearTimeout(resetTimer)
 })
 
 </script>

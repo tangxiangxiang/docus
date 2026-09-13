@@ -252,8 +252,10 @@ describe('Ledger account detail lifecycle', () => {
     const movement = wrapper.get('[data-testid="ledger-account-movement"]')
     expect(movement.text()).toContain('流入')
     expect(movement.text()).toContain('流出')
-    expect(movement.text()).toContain('¥500.00')
-    expect(movement.text()).toContain('¥120.00')
+    await vi.waitFor(() => {
+      expect(movement.text()).toContain('¥500.00')
+      expect(movement.text()).toContain('¥120.00')
+    }, { timeout: 2500 })
     expect(wrapper.get('.ledger-section-heading a').attributes('href')).toBe('/ledger/transactions?accountId=bank-1')
     expect(api.getLedgerAccountTransactions).toHaveBeenCalledWith('bank-1', { limit: 5 })
   })

@@ -270,9 +270,11 @@ describe('Ledger live dashboard', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-testid="ledger-dashboard"]').exists()).toBe(true)
-    expect(wrapper.get('[data-testid="ledger-total-assets"]').text()).toContain('9,962')
-    expect(wrapper.get('[data-testid="ledger-total-liabilities"]').text()).toContain('0')
-    expect(wrapper.get('[data-testid="ledger-net-worth"]').text()).toContain('9,962')
+    await vi.waitFor(() => {
+      expect(wrapper.get('[data-testid="ledger-total-assets"]').text()).toContain('9,962')
+      expect(wrapper.get('[data-testid="ledger-total-liabilities"]').text()).toContain('0')
+      expect(wrapper.get('[data-testid="ledger-net-worth"]').text()).toContain('9,962')
+    }, { timeout: 2500 })
     expect(wrapper.get('[data-testid="ledger-total-assets"]').text()).not.toContain('当前所有资产账户余额')
     expect(wrapper.get('[data-testid="ledger-total-liabilities"]').text()).not.toContain('当前所有负债账户余额')
     expect(wrapper.get('[data-testid="ledger-net-worth"]').text()).not.toContain('当前净资产')
@@ -573,8 +575,10 @@ describe('Ledger live dashboard', () => {
     expect(accountLinks).toHaveLength(1)
     expect(accountLinks[0].classes()).toContain('ledger-dashboard-account')
     expect(accountLinks[0].classes()).not.toContain('ledger-account-card')
-    expect(wrapper.get('#ledger-dashboard-assets-title').text()).toContain('¥9,962.00')
-    expect(wrapper.get('#ledger-dashboard-liabilities-title').text()).toContain('¥0.00')
+    await vi.waitFor(() => {
+      expect(wrapper.get('#ledger-dashboard-assets-title').text()).toContain('¥9,962.00')
+      expect(wrapper.get('#ledger-dashboard-liabilities-title').text()).toContain('¥0.00')
+    }, { timeout: 2500 })
 
     const periodItems = wrapper.get('[data-testid="ledger-period-summaries"]').findAll('.ledger-period-card')
     expect(periodItems).toHaveLength(4)
@@ -620,8 +624,12 @@ describe('Ledger live dashboard', () => {
     await flushPromises()
 
     expect(api.getLedgerOverview).toHaveBeenLastCalledWith({ scope: 'today', anchorDate: undefined })
-    expect(wrapper.get('[data-testid="ledger-total-assets"]').text()).toContain('9,962')
-    expect(wrapper.get('[data-testid="ledger-dashboard-cashflow"]').text()).toContain('38.00')
+    await vi.waitFor(() => {
+      expect(wrapper.get('[data-testid="ledger-total-assets"]').text()).toContain('9,962')
+    }, { timeout: 2500 })
+    await vi.waitFor(() => {
+      expect(wrapper.get('[data-testid="ledger-dashboard-cashflow"]').text()).toContain('38.00')
+    }, { timeout: 2500 })
   })
 
   it('refreshes category breakdown independently from the cashflow period', async () => {
@@ -680,7 +688,9 @@ describe('Ledger live dashboard', () => {
     expect(wrapper.get('.ledger-inline-error').text()).not.toContain('Ledger 暂时不可用')
     expect(wrapper.get('.ledger-inline-error').text()).toContain('重试')
     expect(wrapper.find('[data-testid="ledger-period-analysis-loading"]').exists()).toBe(false)
-    expect(wrapper.get('[data-testid="ledger-total-assets"]').text()).toContain('9,962')
+    await vi.waitFor(() => {
+      expect(wrapper.get('[data-testid="ledger-total-assets"]').text()).toContain('9,962')
+    }, { timeout: 2500 })
 
     const retry = deferred<LedgerOverviewDto>()
     api.getLedgerOverview.mockReturnValueOnce(retry.promise)
@@ -696,7 +706,9 @@ describe('Ledger live dashboard', () => {
     await flushPromises()
     expect(wrapper.find('[data-testid="ledger-period-analysis-loading"]').exists()).toBe(false)
     expect(wrapper.find('.ledger-inline-error').exists()).toBe(false)
-    expect(wrapper.get('[data-testid="ledger-dashboard-cashflow"]').text()).toContain('38.00')
+    await vi.waitFor(() => {
+      expect(wrapper.get('[data-testid="ledger-dashboard-cashflow"]').text()).toContain('38.00')
+    }, { timeout: 2500 })
   })
 
   it('does not show a period error when only the transaction read fails', async () => {
@@ -741,7 +753,9 @@ describe('Ledger live dashboard', () => {
     expect(wrapper.text()).not.toContain('Ledger 暂时不可用')
     expect(wrapper.text()).not.toContain('Ledger 暂时无法打开')
     expect(wrapper.find('[data-testid="ledger-period-analysis-loading"]').exists()).toBe(false)
-    expect(wrapper.get('[data-testid="ledger-total-assets"]').text()).toContain('9,962')
+    await vi.waitFor(() => {
+      expect(wrapper.get('[data-testid="ledger-total-assets"]').text()).toContain('9,962')
+    }, { timeout: 2500 })
     expect(wrapper.get('[data-testid="ledger-dashboard-accounts"]').text()).toContain('招商银行')
     expect(wrapper.find('[data-testid="ledger-bootstrap-error"]').exists()).toBe(false)
   })

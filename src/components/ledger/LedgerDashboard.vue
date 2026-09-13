@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { NAlert, NButton, NCard, NEmpty, NFlex, NIcon, NList, NListItem, NNumberAnimation, NSelect, NSpin, NStatistic, type SelectOption } from 'naive-ui'
 import { CreditCard, Scale, Wallet } from '@vicons/tabler'
 import type {
@@ -471,25 +471,23 @@ function retryTrend(): void {
 
 type MetricKey = 'assets' | 'liabilities' | 'netWorth'
 const metricAnimationFrom = reactive<Record<MetricKey, number | null>>({
-  assets: null,
-  liabilities: null,
-  netWorth: null,
+  assets: 0,
+  liabilities: 0,
+  netWorth: 0,
 })
 let metricAnimationResetTimer: ReturnType<typeof setTimeout> | undefined
-let metricInitialAnimationTimer: ReturnType<typeof setTimeout> | undefined
-void metricInitialAnimationTimer
 
 watch(overview, (next, previous) => {
   if (!next) return
   if (!previous) {
-    metricInitialAnimationTimer = setTimeout(() => {
-      metricAnimationFrom.assets = 0
-      metricAnimationFrom.liabilities = 0
-      metricAnimationFrom.netWorth = 0
-    }, 100)
     return
   }
-  if (next.currency !== previous.currency) return
+  if (next.currency !== previous.currency) {
+    metricAnimationFrom.assets = next.assetTotalMinor
+    metricAnimationFrom.liabilities = next.liabilityTotalMinor
+    metricAnimationFrom.netWorth = next.netWorthMinor
+    return
+  }
   metricAnimationFrom.assets = previous.assetTotalMinor
   metricAnimationFrom.liabilities = previous.liabilityTotalMinor
   metricAnimationFrom.netWorth = previous.netWorthMinor
@@ -501,14 +499,8 @@ watch(overview, (next, previous) => {
   }, 700)
 })
 
-onMounted(() => {
-  if (overview.value) {
-    metricInitialAnimationTimer = setTimeout(() => {
-      metricAnimationFrom.assets = 0
-      metricAnimationFrom.liabilities = 0
-      metricAnimationFrom.netWorth = 0
-    }, 100)
-  }
+onBeforeUnmount(() => {
+  if (metricAnimationResetTimer) clearTimeout(metricAnimationResetTimer)
 })
 
 function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { prefix: string; value: number; from: number; precision: number } {
@@ -619,15 +611,15 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
         <div v-else-if="selectedPeriodSummary" class="ledger-cashflow-grid" data-testid="ledger-dashboard-cashflow">
           <div>
             <span class="ledger-cashflow-mark is-income" aria-hidden="true">↑</span>
-            <span class="ledger-cashflow-copy"><span>收入</span><strong class="is-income"><LedgerAnimatedMoney :minor="selectedPeriodSummary.incomeMinor" :currency="overview.currency" /></strong></span>
+            <span class="ledger-cashflow-copy"><span>收入</span><strong class="is-income"><LedgerAnimatedMoney :minor="selectedPeriodSummary.incomeMinor" :currency="overview.currency" animate-on-mount /></strong></span>
           </div>
           <div>
             <span class="ledger-cashflow-mark is-expense" aria-hidden="true">↓</span>
-            <span class="ledger-cashflow-copy"><span>支出</span><strong class="is-expense"><LedgerAnimatedMoney :minor="selectedPeriodSummary.expenseMinor" :currency="overview.currency" /></strong></span>
+            <span class="ledger-cashflow-copy"><span>支出</span><strong class="is-expense"><LedgerAnimatedMoney :minor="selectedPeriodSummary.expenseMinor" :currency="overview.currency" animate-on-mount /></strong></span>
           </div>
           <div>
             <span class="ledger-cashflow-mark is-balance" aria-hidden="true">=</span>
-            <span class="ledger-cashflow-copy"><span>收支结余</span><strong class="is-balance"><LedgerAnimatedMoney :minor="selectedPeriodSummary.balanceMinor" :currency="overview.currency" /></strong></span>
+            <span class="ledger-cashflow-copy"><span>收支结余</span><strong class="is-balance"><LedgerAnimatedMoney :minor="selectedPeriodSummary.balanceMinor" :currency="overview.currency" animate-on-mount /></strong></span>
           </div>
         </div>
       </NCard>
@@ -644,7 +636,7 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
             <section class="ledger-dashboard-account-group" data-testid="ledger-dashboard-assets" aria-labelledby="ledger-dashboard-assets-title">
               <h3 id="ledger-dashboard-assets-title">
                 <span><i class="is-asset" aria-hidden="true" />资产账户 <small>(<NNumberAnimation :from="0" :to="assetAccounts.length" :duration="2000" />)</small></span>
-                <strong><LedgerAnimatedMoney :minor="overview.assetTotalMinor" :currency="overview.currency" /></strong>
+                <strong><LedgerAnimatedMoney :minor="overview.assetTotalMinor" :currency="overview.currency" animate-on-mount /></strong>
               </h3>
               <div v-if="assetAccounts.length" class="ledger-dashboard-account-list-viewport" data-testid="ledger-dashboard-assets-viewport" @scroll="showScrollbarWhileScrolling">
                 <NList class="ledger-dashboard-accounts" :show-divider="false" hoverable>
@@ -659,7 +651,7 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
                           <small>资产 · {{ account.currency }}</small>
                         </span>
                       </span>
-                      <strong class="ledger-account-amount"><LedgerAnimatedMoney :minor="account.currentBalanceMinor" :currency="account.currency" /></strong>
+                      <strong class="ledger-account-amount"><LedgerAnimatedMoney :minor="account.currentBalanceMinor" :currency="account.currency" :animate-on-mount="false" :animate-on-change="false" /></strong>
                     </RouterLink>
                   </NListItem>
                 </NList>
@@ -669,7 +661,7 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
             <section class="ledger-dashboard-account-group" data-testid="ledger-dashboard-liabilities" aria-labelledby="ledger-dashboard-liabilities-title">
               <h3 id="ledger-dashboard-liabilities-title">
                 <span><i class="is-liability" aria-hidden="true" />负债账户 <small>(<NNumberAnimation :from="0" :to="liabilityAccounts.length" :duration="2000" />)</small></span>
-                <strong><LedgerAnimatedMoney :minor="overview.liabilityTotalMinor" :currency="overview.currency" /></strong>
+                <strong><LedgerAnimatedMoney :minor="overview.liabilityTotalMinor" :currency="overview.currency" animate-on-mount /></strong>
               </h3>
               <div v-if="liabilityAccounts.length" class="ledger-dashboard-account-list-viewport" data-testid="ledger-dashboard-liabilities-viewport" @scroll="showScrollbarWhileScrolling">
                 <NList class="ledger-dashboard-accounts" :show-divider="false" hoverable>
@@ -684,7 +676,7 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
                           <small>负债 · {{ account.currency }}</small>
                         </span>
                       </span>
-                      <strong class="ledger-account-amount"><LedgerAnimatedMoney :minor="account.currentBalanceMinor" :currency="account.currency" /></strong>
+                      <strong class="ledger-account-amount"><LedgerAnimatedMoney :minor="account.currentBalanceMinor" :currency="account.currency" :animate-on-mount="false" :animate-on-change="false" /></strong>
                     </RouterLink>
                   </NListItem>
                 </NList>
@@ -747,7 +739,7 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
                         <span class="ledger-breakdown-name">{{ item.name }}</span>
                         <span class="ledger-breakdown-share">{{ categoryShare(selectedPeriods.income, item.amountMinor) }}</span>
                       </span>
-                      <strong class="ledger-breakdown-amount"><LedgerAnimatedMoney :minor="item.amountMinor" :currency="overview.currency" /></strong>
+                      <strong class="ledger-breakdown-amount"><LedgerAnimatedMoney :minor="item.amountMinor" :currency="overview.currency" :animate-on-mount="false" :animate-on-change="false" /></strong>
                       <span class="ledger-breakdown-bar" aria-hidden="true">
                         <span
                           class="ledger-breakdown-bar-fill is-income"
@@ -770,7 +762,7 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
                         <span class="ledger-breakdown-name">{{ item.name }}</span>
                         <span class="ledger-breakdown-share">{{ categoryShare(selectedPeriods.expense, item.amountMinor) }}</span>
                       </span>
-                      <strong class="ledger-breakdown-amount"><LedgerAnimatedMoney :minor="item.amountMinor" :currency="overview.currency" /></strong>
+                      <strong class="ledger-breakdown-amount"><LedgerAnimatedMoney :minor="item.amountMinor" :currency="overview.currency" :animate-on-mount="false" :animate-on-change="false" /></strong>
                       <span class="ledger-breakdown-bar" aria-hidden="true">
                         <span
                           class="ledger-breakdown-bar-fill is-expense"
@@ -837,9 +829,9 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
               </div>
             </div>
             <div v-if="periodSummary(period)" class="ledger-period-values">
-              <span>收入 <strong class="is-income"><LedgerAnimatedMoney :minor="periodSummary(period)!.incomeMinor" :currency="overview.currency" /></strong></span>
-              <span>支出 <strong class="is-expense"><LedgerAnimatedMoney :minor="periodSummary(period)!.expenseMinor" :currency="overview.currency" /></strong></span>
-              <span>收支结余 <strong><LedgerAnimatedMoney :minor="periodSummary(period)!.balanceMinor" :currency="overview.currency" /></strong></span>
+              <span>收入 <strong class="is-income"><LedgerAnimatedMoney :minor="periodSummary(period)!.incomeMinor" :currency="overview.currency" :animate-on-mount="false" :animate-on-change="false" /></strong></span>
+              <span>支出 <strong class="is-expense"><LedgerAnimatedMoney :minor="periodSummary(period)!.expenseMinor" :currency="overview.currency" :animate-on-mount="false" :animate-on-change="false" /></strong></span>
+              <span>收支结余 <strong><LedgerAnimatedMoney :minor="periodSummary(period)!.balanceMinor" :currency="overview.currency" :animate-on-mount="false" :animate-on-change="false" /></strong></span>
             </div>
             <div v-else-if="periodProjectionLoading(period)" class="ledger-period-local-state" :data-testid="`ledger-period-loading-${period}`" role="status" aria-live="polite">
               <NSpin size="small" />

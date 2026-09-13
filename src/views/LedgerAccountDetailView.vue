@@ -444,19 +444,19 @@ const netMovement = computed(() => {
       <section class="ledger-metric-grid" data-testid="ledger-account-movement" aria-label="账户本月概览">
         <div class="ledger-detail-card ledger-metric-item">
           <span class="ledger-metric-icon" aria-hidden="true"><NIcon><Wallet /></NIcon></span>
-          <div><span>当前余额</span><strong><LedgerAnimatedMoney :minor="account.currentBalanceMinor" :currency="account.currency" /></strong></div>
+          <div><span>当前余额</span><strong><LedgerAnimatedMoney :minor="account.currentBalanceMinor" :currency="account.currency" animate-on-mount /></strong></div>
         </div>
         <div class="ledger-detail-card ledger-metric-item">
           <span class="ledger-metric-icon" :class="account.nature === 'asset' ? 'is-income' : 'is-expense'" aria-hidden="true"><NIcon><ArrowUp /></NIcon></span>
-          <div><span>{{ account.nature === 'asset' ? '本月流入' : '新增负债' }}</span><strong :class="account.nature === 'asset' ? 'is-income' : 'is-expense'"><LedgerAnimatedMoney :minor="movement?.balanceIncreaseMinor ?? 0" :currency="account.currency" /></strong></div>
+          <div><span>{{ account.nature === 'asset' ? '本月流入' : '新增负债' }}</span><strong :class="account.nature === 'asset' ? 'is-income' : 'is-expense'"><LedgerAnimatedMoney :minor="movement?.balanceIncreaseMinor ?? 0" :currency="account.currency" animate-on-mount /></strong></div>
         </div>
         <div class="ledger-detail-card ledger-metric-item">
           <span class="ledger-metric-icon" :class="account.nature === 'asset' ? 'is-expense' : 'is-income'" aria-hidden="true"><NIcon><ArrowDown /></NIcon></span>
-          <div><span>{{ account.nature === 'asset' ? '本月流出' : '减少负债' }}</span><strong :class="account.nature === 'asset' ? 'is-expense' : 'is-income'"><LedgerAnimatedMoney :minor="movement?.balanceDecreaseMinor ?? 0" :currency="account.currency" /></strong></div>
+          <div><span>{{ account.nature === 'asset' ? '本月流出' : '减少负债' }}</span><strong :class="account.nature === 'asset' ? 'is-expense' : 'is-income'"><LedgerAnimatedMoney :minor="movement?.balanceDecreaseMinor ?? 0" :currency="account.currency" animate-on-mount /></strong></div>
         </div>
         <div class="ledger-detail-card ledger-metric-item">
           <span class="ledger-metric-icon is-net" aria-hidden="true"><NIcon><ChartBar /></NIcon></span>
-          <div><span>本月净变动</span><strong :class="account.nature === 'liability' ? (netMovement > 0 ? 'is-expense' : 'is-income') : (netMovement < 0 ? 'is-expense' : 'is-income')"><LedgerAnimatedMoney :minor="netMovement" :currency="account.currency" signed /></strong></div>
+          <div><span>本月净变动</span><strong :class="account.nature === 'liability' ? (netMovement > 0 ? 'is-expense' : 'is-income') : (netMovement < 0 ? 'is-expense' : 'is-income')"><LedgerAnimatedMoney :minor="netMovement" :currency="account.currency" signed animate-on-mount /></strong></div>
         </div>
       </section>
 
@@ -490,10 +490,10 @@ const netMovement = computed(() => {
                 <span class="ledger-transaction-category">{{ transactionCategory(transaction) }}</span>
                 <span class="ledger-transaction-summary">{{ transactionTitle(transaction) }}</span>
                 <strong :class="`is-${transaction.type}`">
-                  <LedgerAnimatedMoney v-if="transactionAmountMinor(transaction) !== null" :minor="transactionAmountMinor(transaction)!" :currency="account.currency" signed />
+                  <LedgerAnimatedMoney v-if="transactionAmountMinor(transaction) !== null" :minor="transactionAmountMinor(transaction)!" :currency="account.currency" signed :animate-on-mount="false" :animate-on-change="false" />
                   <span v-else>—</span>
                 </strong>
-                <span class="ledger-transaction-balance"><LedgerAnimatedMoney :minor="transactionBalanceMap.get(transaction.id) ?? account.currentBalanceMinor" :currency="account.currency" /></span>
+                <span class="ledger-transaction-balance"><LedgerAnimatedMoney :minor="transactionBalanceMap.get(transaction.id) ?? account.currentBalanceMinor" :currency="account.currency" :animate-on-mount="false" :animate-on-change="false" /></span>
               </div>
             </div>
             <p v-else class="ledger-empty-copy">暂无交易记录</p>
@@ -509,7 +509,7 @@ const netMovement = computed(() => {
               <div><dt>资产类别</dt><dd>{{ account.nature === 'asset' ? '资产' : '负债' }}</dd></div>
               <div><dt>币种</dt><dd>{{ account.currency }}</dd></div>
               <div v-if="account.cardNumber"><dt>卡号</dt><dd>{{ maskCardNumber(account.cardNumber) }}</dd></div>
-              <div><dt>期初余额</dt><dd><LedgerAnimatedMoney :minor="account.openingBalanceMinor" :currency="account.currency" /></dd></div>
+              <div><dt>期初余额</dt><dd><LedgerAnimatedMoney :minor="account.openingBalanceMinor" :currency="account.currency" :animate-on-mount="false" :animate-on-change="false" /></dd></div>
               <div><dt>开户日期</dt><dd>{{ account.openingDate }}</dd></div>
               <div><dt>创建时间</dt><dd>{{ formatTimestamp(account.createdAt) }}</dd></div>
               <div><dt>最后更新</dt><dd>{{ formatTimestamp(account.updatedAt) }}</dd></div>
