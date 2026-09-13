@@ -10,7 +10,7 @@
 - src/features/ledger/：API client、store、金额/时间适配、错误和新建恢复。
 - src/components/ledger/：初始化、账户、交易表单、交易详情、图标和选择器渲染。
 - src/views/LedgerView.vue、LedgerTransactionsView.vue、LedgerAccountsView.vue、LedgerAccountDetailView.vue：四个页面级入口。
-- server/migrations/0013_* 至 0028_*：Ledger SQLite schema 演进。
+- server/migrations/0013_* 至 0029_*：Ledger SQLite schema 演进。
 
 ## 2. Domain Model
 
@@ -27,7 +27,7 @@ System key:      interest | fee
 
 金额在跨运行时协议和数据库中都使用安全整数 minor units；显示层根据 currency exponent 转换为小数金额。Account 保存期初余额和期初日期，current balance 由有效交易投影得到。Category 的身份是 kind 加 trim/lowercase 后的 normalized name。
 
-Transfer 的 amountMinor 只表示本金或提现请求金额，不包含 feeMinor。feeMinor 是可选的附加 Expense 金额；它在写入时由 transfer kind 决定系统分类。
+Transfer 的 amountMinor 表示实际 transfer principal：`general` 和 `repayment` 直接表示转账 / 还款本金；withdrawal 在 `extra` 下表示提现请求金额，在 `deducted` 下表示扣除手续费后的到账金额。feeMinor 是独立的 companion Expense 金额；它在写入时由 transfer kind 决定系统分类。
 
 ## 3. Natural Balance Model
 
@@ -46,7 +46,7 @@ server/ledger/balance.ts 的 transactionEffectForAccount 是唯一余额效果 a
 - repayment：只允许 asset → liability。
 - withdrawal：只允许 asset → asset。
 
-账户必须不同、属于同一基础货币且处于可用状态。普通 transfer 不产生收支；服务器拒绝 general 携带 fee。repayment 不接受 feeMode，withdrawal 的 feeMode 默认是 extra。
+账户必须不同、属于同一基础货币且处于可用状态。普通 transfer 不产生收支；服务器拒绝 general 携带 fee。repayment 不接受 feeMode。新建 withdrawal 的当前表单默认使用 `deducted`；对已持久化的 legacy withdrawal，如果已有 fee 且缺少 feeMode，则按 `extra` 解释。已有 withdrawal 没有 fee 且缺少 feeMode 时，编辑表单在首次增加手续费时仍默认 `deducted`。
 
 ## 5. Composite Transactions
 
@@ -54,7 +54,7 @@ server/ledger/balance.ts 的 transactionEffectForAccount 是唯一余额效果 a
 
 ~~~text
 repayment  = transfer(principal) + optional expense(interest)
-withdrawal = transfer(received/requested amount) + optional expense(fee)
+withdrawal = transfer(requested amount, adjusted by feeMode) + optional expense(fee)
 ~~~
 
 利息、手续费从不直接加进 transfer.amountMinor。group 的编辑会校验并同步更新 companion row；group 的删除会把仍有效的相关 rows 一起 soft-delete。
@@ -77,7 +77,7 @@ withdrawal = transfer(received/requested amount) + optional expense(fee)
 | extra | 请求金额 | 请求金额 + 手续费 | 请求金额 | 手续费 |
 | deducted | 请求金额 - 手续费 | 请求金额 | 请求金额 - 手续费 | 手续费 |
 
-deducted 必须保证扣费后 transfer 金额仍为正数。读取时 bundle.totalMinor 为 transfer.amountMinor 加 chargeMinor：extra 下表示实际总扣款，deducted 下还原为请求金额。
+deducted 必须保证扣费后 transfer 金额仍为正数。读取时 bundle.totalMinor 为 transfer.amountMinor 加 chargeMinor：`extra` 下表示实际总扣款，`deducted` 下还原为提现请求金额。
 
 ## 8. Read Projection / Bundle
 
@@ -87,15 +87,21 @@ Overview 投影提供当前资产、负债、净资产、收支、账户、分�
 
 ## 9. Companion Expense Visibility
 
-普通全局 transaction query 隐藏带 groupId 的 Expense companion row，因此用户不会看到两行互相脱离的利息或手续费。显式按 groupId 查询时仍可取回完整 group，includeDeleted 可用于内部一致性检查。
+grouped companion Expense 是真实的 transaction row，在普通 transaction query 中也 intentionally visible。还款利息和提现手续费可以与 parent Transfer 同时出现在交易记录中，并可按 expense、系统分类、账户或 groupId 查询；按账户筛选时，相关 transfer 与 companion Expense 可以同时命中。
 
-行可见性不等于聚合可见性：cashflow、category breakdown、账户余额和账户 movement 都会统计 companion Expense。全局分页的 total 隐藏 companion row，但 expenseMinor 仍包含真实支出。
+read visibility 不等于 independent mutation ownership：companion Expense 不作为独立业务对象编辑或删除。用户修改或删除还款 / 提现 grouped operation 时，由 parent Transfer 原子维护整个 group；direct get、patch、delete companion 仍受保护。includeDeleted 可用于内部一致性检查。
+
+行可见性也不等于聚合规则：cashflow、category breakdown、账户余额和账户 movement 都会统计 companion Expense；分页和汇总对显式筛选条件保持一致。
+
+companion Expense 的 payee 是写入 `ledger_transactions.payee`、并在交易发生时固定下来的 snapshot：withdrawal fee 使用 `${fromAccount.name}提现手续费`，repayment interest 使用 `${toAccount.name}还款利息`。账户改名不会修改已有 snapshot。普通的 note、location、amount、feeMinor 或 feeMode 修改也保留现有 payee；只有 transferKind、fromAccountId 或 toAccountId 真正改变交易 identity 时，才根据新的交易事实重新生成 snapshot。
 
 ## 10. Transaction Query & Pagination
 
 transaction query 支持 type、accountId、categoryId、groupId、from、to、search、includeDeleted、limit、cursor 和 offset。cursor 是按 occurredAt、createdAt、id 排序的 keyset cursor；offset 供页码式读取使用，两者不能同时提供。服务端默认 limit 为 50，最大为 200。
 
-交易记录页当前使用服务端 offset 分页，UI 页大小为 5、25、50、100。repository 会多取一行判断 nextCursor；默认只返回未删除且非 companion Expense 的普通列表。
+交易记录页当前使用服务端 offset 分页，UI 页大小为 5、25、50、100。repository 会多取一行判断 nextCursor；默认返回未删除的 transaction rows，包括 grouped companion Expense。
+
+search 在 repository / SQL 层完成，至少匹配持久化的 `location`、`payee`、`note`，并通过关联账户匹配 `account.name`、`fromAccount.name` 和 `toAccount.name`。因此搜索“微信”可以命中“微信零钱 → 招商银行储蓄卡” transfer，也可以通过 persisted payee 命中“微信零钱提现手续费”；搜索“招商”可以命中该 transfer。
 
 ## 11. Lifecycle
 
@@ -117,7 +123,7 @@ API 以 /api/ledger 为前缀，包含 settings、accounts、categories、transa
 
 ## 14. Schema Evolution
 
-当前仓库 Ledger schema version 为 28，迁移顺序如下：
+当前仓库 Ledger schema version 为 29，迁移顺序如下：
 
 ~~~text
 0013_ledger_foundation
@@ -136,24 +142,29 @@ API 以 /api/ledger 为前缀，包含 settings、accounts、categories、transa
 0026_ledger_account_icon_recycle_bin
 0027_ledger_default_category_catalog
 0028_ledger_transfer_payee
+0029_ledger_companion_payees
 ~~~
+
+`0029_ledger_companion_payees` 回填历史 repayment / withdrawal companion Expense 的 payee。它只处理明确的 legacy representation（空 payee，以及 repayment 中只保存 destination name 的旧格式），不覆盖已经存在的历史 snapshot；只有实际被修改的 row 才递增 version。
 
 后续 schema 变更必须新增迁移，不应回写已执行文件；领域字段仍需同步 shared protocol、repository、service、projection 和测试。
 
 ## 15. Core Invariants
 
 - 所有金额计算使用 minor units 和 checked safe-integer arithmetic。
-- records 是 source of truth，余额与概览数字是可重建 projections。
+- transaction records 是 source of truth，余额与概览数字是可重建 projections。
 - Transfer principal 不属于 income 或 expense；repayment principal 不会污染支出。
 - interest 和 fee 是 Expense，且分别绑定受保护 system category。
-- companion Expense 不作为普通独立 UI 行出现，但必须参与财务聚合。
+- grouped companion payee 是持久化的 transaction-time snapshot；projection 和 UI 不创造数据库中不存在的 companion business label。
+- companion Expense 对 read model 可见，但不拥有独立 mutation ownership。
 - composite group 的写入、修改和删除保持原子性。
+- search 使用持久化 transaction fields 和结构化账户关系。
 - 服务端拥有账户性质、transfer kind、货币、时间和生命周期校验。
 - Entity mutation 遵循 expectedVersion；create 遵循幂等重放。
 
 ## 16. Known Boundaries
 
-- 共享 Transfer request 和表单仍带 payee 字段，但 repository 对 transfer 按 schema invariant 写入空 payee；当前文档不把 Transfer 交易对象描述为已持久化能力。
+- Transfer、repayment 和 withdrawal 的 payee 可以真实持久化到 transaction record。普通 transfer 的表格标题仍可由当前 from/to 账户关系展示，但这不等于数据库不保存 transfer payee。
 - /bills 是已确认的兼容路径，不是当前 Ledger product surface。
 
 ## 17. Tests
