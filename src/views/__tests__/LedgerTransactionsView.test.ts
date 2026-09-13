@@ -595,6 +595,33 @@ describe('Ledger live transaction history workspace', () => {
     }))
   })
 
+  it('defaults a withdrawal without a feeMode or existing fee to deducted when adding its first fee', async () => {
+    const legacyWithdrawal = { ...withdrawal, amountMinor: 10_000, feeMode: undefined }
+    setup({ transactions: [legacyWithdrawal], page: { nextCursor: null } }, [activeAccount, walletAccount])
+    api.listLedgerTransactions.mockImplementation((query: { groupId?: string }) => Promise.resolve(
+      query.groupId === legacyWithdrawal.groupId
+        ? { transactions: [legacyWithdrawal], page: { nextCursor: null } }
+        : { transactions: [legacyWithdrawal], page: { nextCursor: null } },
+    ))
+    const wrapper = await mountView()
+
+    await wrapper.get('[data-testid="ledger-transaction-row-tx-withdrawal"]').trigger('click')
+    await flushPromises()
+    await getDetail().findAll('button').find((button) => button.text() === '编辑交易')!.trigger('click')
+    const form = getDetail().get('[data-testid="ledger-transaction-edit-form"]')
+    await form.get('input[name="feeAmount"]').setValue('1')
+
+    expect(form.get('[aria-label="修改手续费方式：从提现金额中扣除"]').text()).toBe('从提现金额中扣除')
+    await form.trigger('submit')
+    await flushPromises()
+
+    expect(api.patchLedgerTransaction).toHaveBeenCalledWith(legacyWithdrawal.id, expect.objectContaining({
+      amountMinor: 10_000,
+      feeMinor: 100,
+      feeMode: 'deducted',
+    }))
+  })
+
   it('guards every detail close path when an edit is dirty', async () => {
     const wrapper = await mountView()
     await wrapper.find('[data-testid="ledger-transaction-row-tx-expense"]').trigger('click')
