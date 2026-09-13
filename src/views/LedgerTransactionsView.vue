@@ -198,15 +198,6 @@ function typeLabel(type: string, transferKind?: string): string {
 }
 
 function transactionTitle(transaction: LedgerTransactionDto): string {
-  if (transaction.type === 'expense' && transaction.groupId !== undefined) {
-    const transfer = transactions.value.find((item) => item.groupId === transaction.groupId && item.type === 'transfer')
-    if (transfer?.type === 'transfer' && transfer.transferKind === 'repayment') {
-      return `${accountName(transfer.toAccountId)}还款利息`
-    }
-    if (transfer?.type === 'transfer' && transfer.transferKind === 'withdrawal') {
-      return `${accountName(transfer.fromAccountId)}提现手续费`
-    }
-  }
   if (transaction.type === 'income' || transaction.type === 'expense') return transaction.payee || categoryName(transaction.categoryId)
   if (transaction.type === 'transfer') return `${accountName(transaction.fromAccountId)} → ${accountName(transaction.toAccountId)}`
   return '余额调整'

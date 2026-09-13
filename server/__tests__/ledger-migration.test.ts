@@ -91,18 +91,37 @@ function insertTransfer(
   const values = {
     amountMinor: 100,
     transferKind: 'general',
+    groupId: null,
     categoryId: null,
     payee: '',
     ...overrides,
   }
   db.prepare(`
     INSERT INTO ledger_transactions (
-      id, type, transfer_kind, amount_minor, account_id, from_account_id, to_account_id,
+      id, type, transfer_kind, group_id, amount_minor, account_id, from_account_id, to_account_id,
       category_id, occurred_at, payee, note,
       adjustment_calculated_balance_minor, adjustment_target_balance_minor,
       deleted_at, version, created_at, updated_at
-    ) VALUES (?, 'transfer', ?, ?, NULL, ?, ?, ?, 2_000, ?, '', NULL, NULL, NULL, 1, 2_000, 2_000)
-  `).run(id, values.transferKind, values.amountMinor, fromAccountId, toAccountId, values.categoryId, values.payee)
+    ) VALUES (?, 'transfer', ?, ?, ?, NULL, ?, ?, ?, 2_000, ?, '', NULL, NULL, NULL, 1, 2_000, 2_000)
+  `).run(id, values.transferKind, values.groupId, values.amountMinor, fromAccountId, toAccountId, values.categoryId, values.payee)
+}
+
+function insertGroupedExpense(
+  db: Database.Database,
+  id: string,
+  groupId: string,
+  accountId: string,
+  categoryId: string,
+  payee = '',
+): void {
+  db.prepare(`
+    INSERT INTO ledger_transactions (
+      id, type, group_id, amount_minor, account_id, from_account_id, to_account_id,
+      category_id, occurred_at, payee, note,
+      adjustment_calculated_balance_minor, adjustment_target_balance_minor,
+      deleted_at, version, created_at, updated_at
+    ) VALUES (?, 'expense', ?, 100, ?, NULL, NULL, ?, 2_000, ?, '', NULL, NULL, NULL, 1, 2_000, 2_000)
+  `).run(id, groupId, accountId, categoryId, payee)
 }
 
 function insertAdjustment(
@@ -139,7 +158,7 @@ describe('Ledger 0013 foundation migration', () => {
     const db = freshDb()
     applyMigrations(db)
 
-    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(28)
+    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(29)
     const tables = (db.prepare(
       "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
     ).all() as Array<{ name: string }>).map((row) => row.name)
@@ -172,7 +191,7 @@ describe('Ledger 0013 foundation migration', () => {
     ).get() as { count: number }).count
     applyMigrations(db)
 
-    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(28)
+    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(29)
     expect((db.prepare(
       "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table'",
     ).get() as { count: number }).count).toBe(firstTableCount)
@@ -219,6 +238,54 @@ describe('Ledger 0013 foundation migration', () => {
       payee: '招商银行还款',
     })).not.toThrow()
     expect(db.prepare('SELECT payee FROM ledger_transactions WHERE id = ?').get('transfer-with-payee')).toEqual({ payee: '招商银行还款' })
+  })
+
+  it('backfills persisted payees for legacy grouped repayment and withdrawal charges', () => {
+    const db = freshDb()
+    applyMigrations(db, 28)
+    insertAccount(db, 'withdrawal-source')
+    insertAccount(db, 'withdrawal-destination')
+    insertAccount(db, 'repayment-source')
+    insertAccount(db, 'repayment-destination', 'liability')
+    insertCategory(db, 'legacy-charge-category')
+    db.prepare(`
+      UPDATE ledger_accounts
+      SET name = CASE id
+        WHEN 'withdrawal-source' THEN '微信零钱'
+        WHEN 'withdrawal-destination' THEN '招商银行储蓄卡'
+        WHEN 'repayment-source' THEN '招商银行储蓄卡'
+        WHEN 'repayment-destination' THEN '花呗'
+      END
+      WHERE id IN ('withdrawal-source', 'withdrawal-destination', 'repayment-source', 'repayment-destination')
+    `).run()
+    insertTransfer(db, 'legacy-withdrawal', 'withdrawal-source', 'withdrawal-destination', {
+      transferKind: 'withdrawal',
+      groupId: 'legacy-withdrawal-group',
+    })
+    insertGroupedExpense(db, 'legacy-withdrawal-fee', 'legacy-withdrawal-group', 'withdrawal-source', 'legacy-charge-category')
+    insertTransfer(db, 'legacy-repayment', 'repayment-source', 'repayment-destination', {
+      transferKind: 'repayment',
+      groupId: 'legacy-repayment-group',
+    })
+    insertGroupedExpense(
+      db,
+      'legacy-repayment-interest',
+      'legacy-repayment-group',
+      'repayment-source',
+      'legacy-charge-category',
+      '花呗',
+    )
+
+    applyMigrations(db)
+
+    expect(db.prepare('SELECT payee, version FROM ledger_transactions WHERE id = ?').get('legacy-withdrawal-fee')).toEqual({
+      payee: '微信零钱提现手续费',
+      version: 2,
+    })
+    expect(db.prepare('SELECT payee, version FROM ledger_transactions WHERE id = ?').get('legacy-repayment-interest')).toEqual({
+      payee: '花呗还款利息',
+      version: 2,
+    })
   })
 
   it('keeps Account names non-unique and Category identity unique without parent/current-balance columns', () => {

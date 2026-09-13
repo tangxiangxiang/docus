@@ -446,19 +446,6 @@ export function createLedgerProjections(
 
   function transactionDtoWithBundle(transaction: LedgerTransaction): LedgerTransactionDto {
     const dto = transactionDto(transaction)
-    if (transaction.type === 'expense' && transaction.groupId !== undefined && dto.type === 'expense') {
-      const transfer = repository
-        .listTransactionsByGroupId(transaction.groupId)
-        .find((item): item is Extract<LedgerTransaction, { type: 'transfer' }> => item.type === 'transfer')
-      if (transfer?.transferKind === 'repayment') {
-        const destination = repository.getAccount(transfer.toAccountId)
-        if (destination !== null) return { ...dto, payee: `${destination.name}还款利息` }
-      }
-      if (transfer?.transferKind === 'withdrawal') {
-        const source = repository.getAccount(transfer.fromAccountId)
-        if (source !== null) return { ...dto, payee: `${source.name}提现手续费` }
-      }
-    }
     if (transaction.type !== 'transfer' || transaction.groupId === undefined) return dto
     const chargeMinor = checkedSumMinor(
       repository

@@ -243,6 +243,8 @@ describe('Ledger transaction query projections', () => {
       .toEqual([underscore])
     expect(fixture.projections.listTransactions(query({ search: 'c\\d' })).transactions)
       .toEqual([slash])
+    expect(fixture.projections.listTransactions(query({ search: 'Projection account' })).transactions)
+      .toEqual([slash, underscore, percent])
     expect(fixture.projections.listTransactions(query({ search: '   ' })).transactions)
       .toHaveLength(3)
 
@@ -929,10 +931,7 @@ describe('Ledger Overview and trend projections', () => {
       toAccountId: loan.id,
     })
     const legacyRepaymentFee = fixture.repository.listTransactionsByGroupId(repayment.groupId!).find((item) => item.type === 'expense')!
-    expect(fixture.repository.updateTransaction({
-      transaction: { ...legacyRepaymentFee, payee: loan.name },
-      expectedVersion: legacyRepaymentFee.version,
-    })).toBe(1)
+    expect(legacyRepaymentFee.payee).toBe(`${loan.name}还款利息`)
 
     const page = fixture.projections.listTransactions(query())
     expect(page.transactions).toHaveLength(2)
@@ -996,10 +995,7 @@ describe('Ledger Overview and trend projections', () => {
       toAccountId: withdrawalDestination.id,
     })
     const legacyWithdrawalFee = fixture.repository.listTransactionsByGroupId(withdrawal.groupId!).find((item) => item.type === 'expense')!
-    expect(fixture.repository.updateTransaction({
-      transaction: { ...legacyWithdrawalFee, payee: '' },
-      expectedVersion: legacyWithdrawalFee.version,
-    })).toBe(1)
+    expect(legacyWithdrawalFee.payee).toBe(`${bank.name}提现手续费`)
     const withdrawalGroup = fixture.projections.listTransactions(query({ groupId: withdrawal.groupId }))
     expect(withdrawalGroup.transactions.map((row) => row.type).sort()).toEqual(['expense', 'transfer'])
     expect(withdrawalGroup.page.total).toBe(2)
@@ -1014,6 +1010,8 @@ describe('Ledger Overview and trend projections', () => {
       payee: `${bank.name}提现手续费`,
     })
     expect(withdrawalFeeRows.page.total).toBe(1)
+    expect(fixture.projections.listTransactions(query({ search: '提现手续费' })).transactions.map((row) => row.id))
+      .toEqual([legacyWithdrawalFee.id])
   })
 
   it('returns fixed recent five active records and calendar-month trend points', () => {

@@ -179,7 +179,7 @@ const withdrawalFee: LedgerTransactionDto = {
   groupId: 'withdrawal-group',
   accountId: walletAccount.id,
   categoryId: 'fee',
-  payee: '',
+  payee: '微信零钱提现手续费',
 }
 
 const withdrawal: LedgerTransactionDto = {
@@ -205,7 +205,7 @@ const repaymentInterest: LedgerTransactionDto = {
   id: 'tx-repayment-interest',
   groupId: 'repayment-group',
   categoryId: 'interest',
-  payee: '花呗账单',
+  payee: '花呗还款利息',
 }
 
 const repayment: LedgerTransactionDto = {
@@ -463,7 +463,7 @@ describe('Ledger live transaction history workspace', () => {
     })
   })
 
-  it('shows the withdrawal source fee label as the payee for a legacy blank fee row', async () => {
+  it('shows the stored withdrawal fee payee in the table and detail sheet', async () => {
     setup(
       { transactions: [withdrawalFee, withdrawal], page: { nextCursor: null } },
       [activeAccount, walletAccount],
@@ -483,7 +483,7 @@ describe('Ledger live transaction history workspace', () => {
     expect(getDetail().text()).not.toContain('交易对象未填写')
   })
 
-  it('shows the repayment destination interest label as the payee for a legacy fee row', async () => {
+  it('shows the stored repayment interest payee in the table and detail sheet', async () => {
     setup(
       { transactions: [repaymentInterest, repayment], page: { nextCursor: null } },
       [activeAccount, liabilityAccount],

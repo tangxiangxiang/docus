@@ -965,6 +965,12 @@ function transactionQueryFilter(
       location LIKE @searchPattern ESCAPE '\\' COLLATE NOCASE
       OR payee LIKE @searchPattern ESCAPE '\\' COLLATE NOCASE
       OR note LIKE @searchPattern ESCAPE '\\' COLLATE NOCASE
+      OR EXISTS (
+        SELECT 1
+        FROM ledger_accounts
+        WHERE ledger_accounts.name LIKE @searchPattern ESCAPE '\\' COLLATE NOCASE
+          AND ledger_accounts.id IN (account_id, from_account_id, to_account_id)
+      )
     )`)
   }
 
