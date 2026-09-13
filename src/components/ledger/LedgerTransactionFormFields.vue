@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, ref, type VNodeChild } from 'vue'
-import { NFormItem, NInput, NRadioButton, NRadioGroup, NSelect, type InputInst, type SelectGroupOption, type SelectOption } from 'naive-ui'
+import { computed, ref, watch, type VNodeChild } from 'vue'
+import { NButton, NFormItem, NInput, NPopover, NRadioButton, NRadioGroup, NSelect, type InputInst, type SelectGroupOption, type SelectOption } from 'naive-ui'
 import type { LedgerTransferFeeMode, LedgerTransferKind } from '../../../shared/ledgerProtocol'
 import { formatLedgerMoney, parseLedgerMoney } from '../../features/ledger/money'
 import { ledgerSelectNodeProps } from '../../features/ledger/naiveControls'
@@ -44,45 +44,66 @@ const fromAccountId = defineModel<string>('fromAccountId', { required: true })
 const toAccountId = defineModel<string>('toAccountId', { required: true })
 const transferKind = defineModel<LedgerTransferKind>('transferKind', { default: 'general' })
 const transferFeeAmount = defineModel<string>('transferFeeAmount', { default: '' })
-const transferFeeMode = defineModel<LedgerTransferFeeMode>('transferFeeMode', { default: 'extra' })
+const transferFeeMode = defineModel<LedgerTransferFeeMode | null>('transferFeeMode', { default: 'deducted' })
 const occurredAt = defineModel<string>('occurredAt', { required: true })
 const location = defineModel<string>('location', { required: true })
 const payee = defineModel<string>('payee', { required: true })
 const note = defineModel<string>('note', { required: true })
 
 const amountInput = ref<InputInst | null>(null)
+const feeModePopoverOpen = ref(false)
 const idPrefix = props.mode === 'create' ? 'ledger-transaction' : 'ledger-edit-transaction'
 
-const parsedTransferAmount = computed(() => {
+const hasPositiveTransferFee = computed(() => {
+  if (props.type !== 'transfer' || transferKind.value !== 'withdrawal' || !transferFeeAmount.value.trim()) return false
   try {
-    return parseLedgerMoney(amount.value, props.currency)
+    return parseLedgerMoney(transferFeeAmount.value, props.currency) > 0
+  } catch {
+    return false
+  }
+})
+const transferFeeModeLabel = computed(() => transferFeeMode.value === 'deducted'
+  ? '从提现金额中扣除'
+  : transferFeeMode.value === 'extra'
+    ? '额外扣除'
+    : '扣费方式')
+const withdrawalReceivedAmount = computed(() => {
+  if (props.type !== 'transfer' || transferKind.value !== 'withdrawal') return null
+  try {
+    const amountMinor = parseLedgerMoney(amount.value, props.currency)
+    const feeMinor = transferFeeAmount.value.trim()
+      ? parseLedgerMoney(transferFeeAmount.value, props.currency)
+      : 0
+    if (amountMinor < 0 || feeMinor < 0 || (feeMinor > 0 && !transferFeeMode.value)) return null
+    const receivedMinor = transferFeeMode.value === 'deducted'
+      ? amountMinor - feeMinor
+      : amountMinor
+    return receivedMinor >= 0 ? formatLedgerMoney(receivedMinor, props.currency) : null
   } catch {
     return null
   }
 })
-const parsedTransferFee = computed(() => {
-  if (!transferFeeAmount.value.trim()) return 0
+const repaymentTotalAmount = computed(() => {
+  if (props.type !== 'transfer' || transferKind.value !== 'repayment') return null
   try {
-    return parseLedgerMoney(transferFeeAmount.value, props.currency)
+    const amountMinor = parseLedgerMoney(amount.value, props.currency)
+    const feeMinor = transferFeeAmount.value.trim()
+      ? parseLedgerMoney(transferFeeAmount.value, props.currency)
+      : 0
+    if (amountMinor < 0 || feeMinor < 0) return null
+    return formatLedgerMoney(amountMinor + feeMinor, props.currency)
   } catch {
     return null
-  }
-})
-const transferSummary = computed(() => {
-  if (props.type !== 'transfer' || transferKind.value === 'general'
-    || parsedTransferAmount.value === null || parsedTransferFee.value === null) return null
-  const transferAmount = transferKind.value === 'withdrawal' && transferFeeMode.value === 'deducted'
-    ? parsedTransferAmount.value - parsedTransferFee.value
-    : parsedTransferAmount.value
-  return {
-    transferAmount,
-    fee: parsedTransferFee.value,
-    total: transferAmount + parsedTransferFee.value,
   }
 })
 
-function moneyLabel(value: number): string {
-  return formatLedgerMoney(value, props.currency)
+watch(hasPositiveTransferFee, (visible) => {
+  if (!visible) feeModePopoverOpen.value = false
+})
+
+function selectTransferFeeMode(value: LedgerTransferFeeMode): void {
+  transferFeeMode.value = value
+  feeModePopoverOpen.value = false
 }
 
 defineExpose({
@@ -96,10 +117,16 @@ defineExpose({
       <div :class="type === 'transfer' && transferKind !== 'general' ? 'ledger-transfer-amount-grid' : undefined">
         <NFormItem
           class="ledger-form-field ledger-amount-field"
-          :label="type === 'transfer' && transferKind === 'repayment' ? '还款本金' : type === 'transfer' && transferKind === 'withdrawal' ? '提现金额' : '金额'"
           :show-feedback="false"
           required
         >
+          <template #label>
+            <div class="ledger-amount-label-row">
+              <span>{{ type === 'transfer' && transferKind === 'repayment' ? '还款本金' : type === 'transfer' && transferKind === 'withdrawal' ? '提现金额' : '金额' }}</span>
+              <span v-if="repaymentTotalAmount" class="ledger-received-amount">总扣款 {{ repaymentTotalAmount }}</span>
+              <span v-if="withdrawalReceivedAmount" class="ledger-received-amount">实际到账 {{ withdrawalReceivedAmount }}</span>
+            </div>
+          </template>
           <div class="ledger-money-input">
             <span>{{ currency }}</span>
             <NInput
@@ -117,7 +144,51 @@ defineExpose({
           </div>
         </NFormItem>
 
-        <NFormItem v-if="type === 'transfer' && transferKind !== 'general'" class="ledger-form-field" :label="transferKind === 'repayment' ? '利息（可选）' : '手续费（可选）'" :show-feedback="false">
+        <NFormItem v-if="type === 'transfer' && transferKind !== 'general'" class="ledger-form-field" :show-feedback="false">
+          <template #label>
+            <div class="ledger-fee-label-row">
+              <span>{{ transferKind === 'repayment' ? '利息（可选）' : '手续费（可选）' }}</span>
+              <NPopover
+                v-if="hasPositiveTransferFee"
+                v-model:show="feeModePopoverOpen"
+                trigger="click"
+                placement="bottom-end"
+                :width="180"
+                :content-style="{ padding: '4px' }"
+                :show-arrow="false"
+              >
+                <template #trigger>
+                  <NButton
+                    class="ledger-fee-mode-trigger"
+                    text
+                    size="tiny"
+                    :disabled="saving"
+                    :aria-label="transferFeeMode ? `修改手续费方式：${transferFeeModeLabel}` : '选择手续费方式'"
+                  >
+                    {{ transferFeeModeLabel }}
+                  </NButton>
+                </template>
+                <div class="ledger-fee-mode-options" role="radiogroup" aria-label="手续费方式">
+                  <button
+                    type="button"
+                    role="radio"
+                    :aria-checked="transferFeeMode === 'deducted'"
+                    @click="selectTransferFeeMode('deducted')"
+                  >
+                    从提现金额中扣除
+                  </button>
+                  <button
+                    type="button"
+                    role="radio"
+                    :aria-checked="transferFeeMode === 'extra'"
+                    @click="selectTransferFeeMode('extra')"
+                  >
+                    额外扣除
+                  </button>
+                </div>
+              </NPopover>
+            </div>
+          </template>
           <div class="ledger-money-input">
             <span>{{ currency }}</span>
             <NInput
@@ -133,23 +204,6 @@ defineExpose({
             />
           </div>
         </NFormItem>
-      </div>
-
-      <div v-if="transferKind === 'withdrawal' && transferSummary" class="ledger-transfer-fee-mode">
-        <span class="ledger-transfer-summary-label">手续费方式</span>
-        <NRadioGroup v-model:value="transferFeeMode" size="small" :disabled="saving" aria-label="手续费方式">
-          <NRadioButton value="extra">额外扣除</NRadioButton>
-          <NRadioButton value="deducted">从提现金额中扣除</NRadioButton>
-        </NRadioGroup>
-      </div>
-
-      <div v-if="transferSummary" class="ledger-transfer-summary" aria-label="转账金额明细">
-        <span>{{ transferKind === 'repayment' ? '总扣款' : transferFeeMode === 'deducted' ? '实际扣款' : '实际扣款' }}</span>
-        <strong>{{ moneyLabel(transferSummary.total) }}</strong>
-        <template v-if="transferKind === 'withdrawal'">
-          <span>到账金额</span>
-          <strong>{{ moneyLabel(transferSummary.transferAmount) }}</strong>
-        </template>
       </div>
 
       <div v-if="type !== 'transfer'" class="ledger-form-grid">
@@ -307,10 +361,14 @@ defineExpose({
 .ledger-transfer-kinds { display: flex; width: 100%; }
 .ledger-transfer-kinds :deep(.n-radio-button) { display: flex; min-width: 0; flex: 1 1 0; justify-content: center; }
 .ledger-transfer-kinds :deep(.n-radio-button__label) { width: 100%; text-align: center; }
-.ledger-transfer-fee-mode { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--border) 66%, transparent); border-radius: 8px; background: color-mix(in srgb, var(--bg-soft) 54%, transparent); }
-.ledger-transfer-summary { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; padding: 9px 10px; border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--accent) 5%, transparent); color: var(--text-muted); font-size: .78rem; }
-.ledger-transfer-summary strong { color: var(--text-h); font-variant-numeric: tabular-nums; text-align: right; }
-.ledger-transfer-summary-label { color: var(--text-muted); font-size: .78rem; font-weight: 650; }
+.ledger-fee-label-row { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 8px; }
+.ledger-amount-label-row { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 8px; }
+.ledger-received-amount { color: var(--accent); font-size: .72rem; font-weight: 650; }
+.ledger-fee-mode-trigger { color: var(--accent); font-size: .72rem; font-weight: 650; }
+.ledger-fee-mode-options { display: grid; gap: 2px; }
+.ledger-fee-mode-options button { padding: 5px 7px; border: 0; border-radius: 5px; background: transparent; color: var(--text); cursor: pointer; font: inherit; font-size: .82rem; text-align: left; }
+.ledger-fee-mode-options button:hover,
+.ledger-fee-mode-options button[aria-checked="true"] { background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--accent); }
 .ledger-money-input { display: flex; align-items: center; width: 100%; min-height: 34px; box-sizing: border-box; gap: 8px; padding: 2px 10px; border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--bg) 78%, transparent); box-shadow: 0 3px 12px color-mix(in srgb, var(--accent) 5%, transparent); }
 .ledger-money-input:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent); }
 .ledger-money-input > span { color: var(--accent); font-size: .78rem; font-weight: 750; }
@@ -327,6 +385,5 @@ defineExpose({
 @media (max-width: 600px) {
   .ledger-form-grid,
   .ledger-transfer-amount-grid { grid-template-columns: 1fr; }
-  .ledger-transfer-fee-mode { align-items: flex-start; flex-direction: column; }
 }
 </style>

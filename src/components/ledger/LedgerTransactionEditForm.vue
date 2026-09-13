@@ -33,7 +33,7 @@ const fromAccountId = ref('')
 const toAccountId = ref('')
 const transferKind = ref<LedgerTransferKind>('general')
 const transferFeeAmount = ref('')
-const transferFeeMode = ref<LedgerTransferFeeMode>('extra')
+const transferFeeMode = ref<LedgerTransferFeeMode | null>('deducted')
 const occurredAt = ref('')
 const location = ref('')
 const payee = ref('')
@@ -48,7 +48,7 @@ type FormSnapshot = {
   toAccountId: string
   transferKind: LedgerTransferKind
   transferFeeAmount: string
-  transferFeeMode: LedgerTransferFeeMode
+  transferFeeMode: LedgerTransferFeeMode | null
   occurredAt: string
   location: string
   payee: string
@@ -145,7 +145,9 @@ function reset(): void {
   transferFeeAmount.value = fee
     ? ledgerDecimalFromMinor(fee.amountMinor, store.settings.value?.baseCurrency ?? 'CNY')
     : ''
-  transferFeeMode.value = value.type === 'transfer' ? value.feeMode ?? 'extra' : 'extra'
+  transferFeeMode.value = value.type === 'transfer'
+    ? value.feeMode ?? (value.transferKind === 'withdrawal' ? 'deducted' : null)
+    : null
   error.value = ''
   initialSnapshot.value = snapshot()
 }
@@ -161,7 +163,11 @@ watch(transferKind, () => {
   if (transaction.value.type !== 'transfer') return
   if (transferKind.value === 'general') {
     transferFeeAmount.value = ''
-    transferFeeMode.value = 'extra'
+    transferFeeMode.value = null
+  } else if (transferKind.value === 'repayment') {
+    transferFeeMode.value = null
+  } else if (transferKind.value === 'withdrawal') {
+    transferFeeMode.value = 'deducted'
   }
   const from = store.activeAccounts.value.find((account) => account.id === fromAccountId.value)
   const to = store.activeAccounts.value.find((account) => account.id === toAccountId.value)
@@ -253,10 +259,15 @@ function validateFinancialFields(): {
         error.value = '利息或手续费不能为负数。'
         return null
       }
-      if (feeMinor > 0 && transferKind.value === 'withdrawal'
-        && transferFeeMode.value === 'deducted' && feeMinor >= amountMinor) {
-        error.value = '从提现金额中扣除时，手续费必须小于提现金额。'
-        return null
+      if (feeMinor > 0 && transferKind.value === 'withdrawal') {
+        if (!transferFeeMode.value) {
+          error.value = '请选择手续费方式。'
+          return null
+        }
+        if (transferFeeMode.value === 'deducted' && feeMinor >= amountMinor) {
+          error.value = '从提现金额中扣除时，手续费必须小于提现金额。'
+          return null
+        }
       }
     }
   } else if (!accountId.value || !categoryId.value) {
@@ -270,6 +281,7 @@ function validateFinancialFields(): {
     ...(transaction.value.type === 'transfer'
       && transferKind.value === 'withdrawal'
       && feeMinor > 0
+      && transferFeeMode.value
       ? { feeMode: transferFeeMode.value }
       : {}),
   }

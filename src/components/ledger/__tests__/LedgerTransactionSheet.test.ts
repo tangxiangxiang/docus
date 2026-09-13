@@ -284,6 +284,46 @@ describe('Ledger transaction creation sheet', () => {
     }), expect.any(String))
   })
 
+  it('reveals a lightweight withdrawal fee mode picker only after a positive fee is entered', async () => {
+    await openSheet()
+    const sheet = getSheet()
+    await sheet.findAll('[role="tab"]').find((button) => button.text() === '转账')!.trigger('click')
+    await sheet.findAll('.n-radio-button').find((button) => button.text() === '提现')!.trigger('click')
+
+    expect(sheet.find('[aria-label="选择手续费方式"]').exists()).toBe(false)
+    await sheet.get('input[name="feeAmount"]').setValue('1')
+    await nextTick()
+
+    const feeModeTrigger = sheet.get('[aria-label="修改手续费方式：从提现金额中扣除"]')
+    expect(feeModeTrigger.text()).toBe('从提现金额中扣除')
+    await feeModeTrigger.trigger('click')
+    await nextTick()
+
+    const body = new DOMWrapper(document.body)
+    const deductedOption = body.findAll('[role="radio"]').find((button) => button.text() === '从提现金额中扣除')
+    expect(deductedOption).toBeDefined()
+    await deductedOption!.trigger('click')
+    await nextTick()
+
+    expect(sheet.get('[aria-label="修改手续费方式：从提现金额中扣除"]').text()).toBe('从提现金额中扣除')
+    await sheet.get('input[name="amount"]').setValue('100')
+    expect(sheet.find('.ledger-amount-field').text()).toContain('实际到账 ¥99.00')
+    await setNaiveSelect(sheet, '转出账户', 'bank-1')
+    await setNaiveSelect(sheet, '转入账户', 'wallet-1')
+    await setLedgerDateTime(sheet, '2026-09-05T12:30')
+    api.createLedgerTransaction.mockResolvedValue({ id: 'withdrawal-1', type: 'transfer' } as unknown as LedgerTransactionDto)
+    await sheet.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(api.createLedgerTransaction).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'transfer',
+      transferKind: 'withdrawal',
+      amountMinor: 10_000,
+      feeMinor: 100,
+      feeMode: 'deducted',
+    }), expect.any(String))
+  })
+
   it('preserves only amount, time, and note across semantic type switches', async () => {
     await openSheet()
     const sheet = getSheet()

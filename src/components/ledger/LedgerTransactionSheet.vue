@@ -50,7 +50,7 @@ const fromAccountId = ref('')
 const toAccountId = ref('')
 const transferKind = ref<LedgerTransferKind>('general')
 const transferFeeAmount = ref('')
-const transferFeeMode = ref<LedgerTransferFeeMode>('extra')
+const transferFeeMode = ref<LedgerTransferFeeMode | null>('deducted')
 const occurredAt = ref('')
 const location = ref('')
 const payee = ref('')
@@ -114,7 +114,7 @@ function resetForm(): void {
   toAccountId.value = ''
   transferKind.value = 'general'
   transferFeeAmount.value = ''
-  transferFeeMode.value = 'extra'
+  transferFeeMode.value = null
   occurredAt.value = defaultOccurredAt()
   location.value = ''
   payee.value = ''
@@ -154,7 +154,7 @@ watch(type, (nextType, previousType) => {
   toAccountId.value = ''
   transferKind.value = 'general'
   transferFeeAmount.value = ''
-  transferFeeMode.value = 'extra'
+  transferFeeMode.value = null
   if (nextType !== 'transfer' && activeAccounts.value.length === 1) {
     accountId.value = activeAccounts.value[0]!.id
   }
@@ -169,7 +169,9 @@ watch(transferKind, () => {
   if (transferKind.value === 'withdrawal' && to?.nature !== 'asset') toAccountId.value = ''
   if (transferKind.value === 'general') {
     transferFeeAmount.value = ''
-    transferFeeMode.value = 'extra'
+    transferFeeMode.value = null
+  } else {
+    transferFeeMode.value = transferKind.value === 'withdrawal' ? 'deducted' : null
   }
 })
 
@@ -308,8 +310,11 @@ function validate(): { amountMinor: number; occurredAtMs: number; feeMinor: numb
         }
         if (feeMinor < 0) return validationFailure('利息或手续费不能为负数。')
       }
-      if (transferKind.value === 'withdrawal' && transferFeeMode.value === 'deducted' && feeMinor >= amountMinor) {
-        return validationFailure('从提现金额中扣除时，手续费必须小于提现金额。')
+      if (transferKind.value === 'withdrawal' && feeMinor > 0) {
+        if (!transferFeeMode.value) return validationFailure('请选择手续费方式。')
+        if (transferFeeMode.value === 'deducted' && feeMinor >= amountMinor) {
+          return validationFailure('从提现金额中扣除时，手续费必须小于提现金额。')
+        }
       }
     }
   } else {
@@ -357,7 +362,7 @@ async function submit(): Promise<void> {
             amountMinor: parsed.amountMinor,
             ...(parsed.feeMinor > 0 ? {
               feeMinor: parsed.feeMinor,
-              ...(transferKind.value === 'withdrawal' ? { feeMode: transferFeeMode.value } : {}),
+              ...(transferKind.value === 'withdrawal' && transferFeeMode.value ? { feeMode: transferFeeMode.value } : {}),
             } : {}),
             fromAccountId: fromAccountId.value,
             toAccountId: toAccountId.value,
