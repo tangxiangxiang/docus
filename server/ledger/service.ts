@@ -1285,7 +1285,7 @@ export function createLedgerService(
                   categoryId: feeCategory.id,
                   occurredAt,
                   location: updated.location,
-                  payee: companionPayee(transferKind, fromAccount.name, toAccount.name, updated.payee),
+                  payee: existingFee.payee,
                   note: updated.note,
                   version: nextVersion(existingFee.version),
                   updatedAt: timestamp,

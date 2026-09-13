@@ -113,6 +113,7 @@ function insertGroupedExpense(
   accountId: string,
   categoryId: string,
   payee = '',
+  version = 1,
 ): void {
   db.prepare(`
     INSERT INTO ledger_transactions (
@@ -120,8 +121,8 @@ function insertGroupedExpense(
       category_id, occurred_at, payee, note,
       adjustment_calculated_balance_minor, adjustment_target_balance_minor,
       deleted_at, version, created_at, updated_at
-    ) VALUES (?, 'expense', ?, 100, ?, NULL, NULL, ?, 2_000, ?, '', NULL, NULL, NULL, 1, 2_000, 2_000)
-  `).run(id, groupId, accountId, categoryId, payee)
+    ) VALUES (?, 'expense', ?, 100, ?, NULL, NULL, ?, 2_000, ?, '', NULL, NULL, NULL, ?, 2_000, 2_000)
+  `).run(id, groupId, accountId, categoryId, payee, version)
 }
 
 function insertAdjustment(
@@ -240,21 +241,23 @@ describe('Ledger 0013 foundation migration', () => {
     expect(db.prepare('SELECT payee FROM ledger_transactions WHERE id = ?').get('transfer-with-payee')).toEqual({ payee: '招商银行还款' })
   })
 
-  it('backfills persisted payees for legacy grouped repayment and withdrawal charges', () => {
+  it('backfills known legacy grouped payees and preserves transaction snapshots', () => {
     const db = freshDb()
     applyMigrations(db, 28)
     insertAccount(db, 'withdrawal-source')
     insertAccount(db, 'withdrawal-destination')
     insertAccount(db, 'repayment-source')
     insertAccount(db, 'repayment-destination', 'liability')
+    insertAccount(db, 'preserved-repayment-destination', 'liability')
     insertCategory(db, 'legacy-charge-category')
     db.prepare(`
       UPDATE ledger_accounts
       SET name = CASE id
-        WHEN 'withdrawal-source' THEN '微信零钱'
+        WHEN 'withdrawal-source' THEN '微信钱包'
         WHEN 'withdrawal-destination' THEN '招商银行储蓄卡'
         WHEN 'repayment-source' THEN '招商银行储蓄卡'
         WHEN 'repayment-destination' THEN '花呗'
+        WHEN 'preserved-repayment-destination' THEN '花呗账单'
       END
       WHERE id IN ('withdrawal-source', 'withdrawal-destination', 'repayment-source', 'repayment-destination')
     `).run()
@@ -275,16 +278,67 @@ describe('Ledger 0013 foundation migration', () => {
       'legacy-charge-category',
       '花呗',
     )
+    insertTransfer(db, 'preserved-withdrawal', 'withdrawal-source', 'withdrawal-destination', {
+      transferKind: 'withdrawal',
+      groupId: 'preserved-withdrawal-group',
+    })
+    insertGroupedExpense(
+      db,
+      'preserved-withdrawal-fee',
+      'preserved-withdrawal-group',
+      'withdrawal-source',
+      'legacy-charge-category',
+      '微信零钱提现手续费',
+      7,
+    )
+    insertTransfer(db, 'preserved-repayment', 'repayment-source', 'repayment-destination', {
+      transferKind: 'repayment',
+      groupId: 'preserved-repayment-group',
+    })
+    insertGroupedExpense(
+      db,
+      'preserved-repayment-interest',
+      'preserved-repayment-group',
+      'repayment-source',
+      'legacy-charge-category',
+      '历史花呗还款利息',
+      8,
+    )
+    insertTransfer(db, 'renamed-repayment', 'repayment-source', 'preserved-repayment-destination', {
+      transferKind: 'repayment',
+      groupId: 'renamed-repayment-group',
+    })
+    insertGroupedExpense(
+      db,
+      'renamed-repayment-interest',
+      'renamed-repayment-group',
+      'repayment-source',
+      'legacy-charge-category',
+      '花呗还款利息',
+      9,
+    )
 
     applyMigrations(db)
 
     expect(db.prepare('SELECT payee, version FROM ledger_transactions WHERE id = ?').get('legacy-withdrawal-fee')).toEqual({
-      payee: '微信零钱提现手续费',
+      payee: '微信钱包提现手续费',
       version: 2,
     })
     expect(db.prepare('SELECT payee, version FROM ledger_transactions WHERE id = ?').get('legacy-repayment-interest')).toEqual({
       payee: '花呗还款利息',
       version: 2,
+    })
+    expect(db.prepare('SELECT payee, version FROM ledger_transactions WHERE id = ?').get('preserved-withdrawal-fee')).toEqual({
+      payee: '微信零钱提现手续费',
+      version: 7,
+    })
+    expect(db.prepare('SELECT payee, version FROM ledger_transactions WHERE id = ?').get('preserved-repayment-interest')).toEqual({
+      payee: '历史花呗还款利息',
+      version: 8,
+    })
+    expect(db.prepare('SELECT payee, version FROM ledger_transactions WHERE id = ?').get('renamed-repayment-interest')).toEqual({
+      payee: '花呗还款利息',
+      version: 9,
     })
   })
 

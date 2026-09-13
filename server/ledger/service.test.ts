@@ -600,9 +600,17 @@ describe('Ledger Transaction and Adjustment service lifecycle', () => {
   it('keeps transfer charges as a grouped expense and edits or deletes the bundle atomically', () => {
     const { repository, service } = freshService()
     initialize(service)
-    const bank = createAccount(service, 'bundle-bank', { openingBalanceMinor: 10_000 })
-    const wallet = createAccount(service, 'bundle-wallet', { type: 'wallet', openingBalanceMinor: 10_000 })
+    const bank = createAccount(service, 'bundle-bank', {
+      name: '招商银行储蓄卡',
+      openingBalanceMinor: 10_000,
+    })
+    const wallet = createAccount(service, 'bundle-wallet', {
+      name: '微信零钱',
+      type: 'wallet',
+      openingBalanceMinor: 10_000,
+    })
     const loan = createAccount(service, 'bundle-loan', {
+      name: '花呗',
       type: 'loan',
       nature: 'liability',
     })
@@ -628,11 +636,15 @@ describe('Ledger Transaction and Adjustment service lifecycle', () => {
       amountMinor: 300,
       accountId: bank.id,
       categoryId: interestCategory.id,
-      payee: 'Test account还款利息',
+      payee: '花呗还款利息',
     })
     expect(service.getAccount(bank.id).currentBalanceMinor).toBe(4_700)
     expect(service.getAccount(loan.id).currentBalanceMinor).toBe(-5_000)
 
+    service.patchAccount(loan.id, {
+      expectedVersion: loan.version,
+      name: '花呗账单',
+    })
     const patched = service.patchTransaction(repayment.id, {
       expectedVersion: repayment.version,
       amountMinor: 5_500,
@@ -643,7 +655,7 @@ describe('Ledger Transaction and Adjustment service lifecycle', () => {
     expect(repository.listTransactionsByGroupId(groupId).find((item) => item.type === 'expense')).toMatchObject({
       amountMinor: 400,
       categoryId: interestCategory.id,
-      payee: 'Test account还款利息',
+      payee: '花呗还款利息',
       note: 'updated repayment',
     })
     expect(service.getAccount(bank.id).currentBalanceMinor).toBe(4_100)
@@ -669,13 +681,17 @@ describe('Ledger Transaction and Adjustment service lifecycle', () => {
       payee: '微信提现吗',
     }), 'withdrawal-bundle'))
     const withdrawalFee = repository.listTransactionsByGroupId(withdrawal.groupId!).find((item) => item.type === 'expense')!
-    expect(withdrawalFee.payee).toBe(`${wallet.name}提现手续费`)
+    expect(withdrawalFee.payee).toBe('微信零钱提现手续费')
+    service.patchAccount(wallet.id, {
+      expectedVersion: wallet.version,
+      name: '微信钱包',
+    })
     const patchedWithdrawal = service.patchTransaction(withdrawal.id, {
       expectedVersion: withdrawal.version,
       payee: '支付宝提现',
     })
     const patchedWithdrawalFee = repository.listTransactionsByGroupId(patchedWithdrawal.groupId!).find((item) => item.type === 'expense')!
-    expect(patchedWithdrawalFee.payee).toBe(`${wallet.name}提现手续费`)
+    expect(patchedWithdrawalFee.payee).toBe('微信零钱提现手续费')
     expectLedgerError(() => service.getTransaction(withdrawalFee.id), 'ledger-not-found')
     service.deleteTransaction(patchedWithdrawal.id, { expectedVersion: patchedWithdrawal.version })
     expect(repository.getTransaction(withdrawal.id)?.deletedAt).not.toBeNull()
