@@ -8,8 +8,6 @@ type LedgerSettings = {
 
 type LedgerAccount = {
   id: string
-  name: string
-  archivedAt: number | null
 }
 
 type LedgerCategory = {
@@ -28,11 +26,14 @@ type Viewport = {
 }
 
 async function ensureLedgerFixture(request: APIRequestContext): Promise<LedgerTransaction> {
+  const fixtureId = crypto.randomUUID()
+  const openingDate = '2026-01-01'
+
   let settingsResponse = await request.get('/api/ledger/settings')
   if (settingsResponse.status() === 404) {
     const initialize = await request.post('/api/ledger/settings', {
       data: { baseCurrency: 'CNY', timezone: 'Asia/Shanghai' },
-      headers: { 'Idempotency-Key': `closure-settings-${Date.now()}` },
+      headers: { 'Idempotency-Key': `closure-settings-${fixtureId}` },
     })
     if (initialize.status() === 409) settingsResponse = await request.get('/api/ledger/settings')
     else {
@@ -43,26 +44,24 @@ async function ensureLedgerFixture(request: APIRequestContext): Promise<LedgerTr
   expect(settingsResponse.status()).toBe(200)
   const settings = await settingsResponse.json() as LedgerSettings
 
-  const accountsResponse = await request.get('/api/ledger/accounts?includeArchived=true')
-  expect(accountsResponse.status()).toBe(200)
-  const accounts = await accountsResponse.json() as LedgerAccount[]
-  let account = accounts.find((candidate) => candidate.archivedAt === null)
-  if (!account) {
-    const createAccount = await request.post('/api/ledger/accounts', {
-      data: {
-        name: `Closure geometry account ${Date.now()}`,
-        type: 'bank',
-        nature: 'asset',
-        openingBalanceMinor: 0,
-        openingDate: '2026-01-01',
-        currency: settings.baseCurrency,
-        note: '',
-      },
-      headers: { 'Idempotency-Key': `closure-account-${Date.now()}` },
-    })
-    expect(createAccount.status()).toBe(201)
-    account = await createAccount.json() as LedgerAccount
+  const createAccount = await request.post('/api/ledger/accounts', {
+    data: {
+      name: `Closure geometry account ${fixtureId}`,
+      type: 'bank',
+      nature: 'asset',
+      openingBalanceMinor: 0,
+      openingDate,
+      currency: settings.baseCurrency,
+      note: '',
+    },
+    headers: { 'Idempotency-Key': `closure-account-${fixtureId}` },
+  })
+  if (createAccount.status() !== 201) {
+    throw new Error(
+      `Failed to create geometry fixture account: ${createAccount.status()} ${await createAccount.text()}`,
+    )
   }
+  const account = await createAccount.json() as LedgerAccount
 
   const categoriesResponse = await request.get('/api/ledger/categories?kind=expense&includeArchived=true')
   expect(categoriesResponse.status()).toBe(200)
@@ -70,8 +69,8 @@ async function ensureLedgerFixture(request: APIRequestContext): Promise<LedgerTr
   let category = categories.find((candidate) => candidate.archivedAt === null)
   if (!category) {
     const createCategory = await request.post('/api/ledger/categories', {
-      data: { kind: 'expense', name: `Closure geometry category ${Date.now()}` },
-      headers: { 'Idempotency-Key': `closure-category-${Date.now()}` },
+      data: { kind: 'expense', name: `Closure geometry category ${fixtureId}` },
+      headers: { 'Idempotency-Key': `closure-category-${fixtureId}` },
     })
     expect(createCategory.status()).toBe(201)
     category = await createCategory.json() as LedgerCategory
@@ -83,13 +82,17 @@ async function ensureLedgerFixture(request: APIRequestContext): Promise<LedgerTr
       amountMinor: 123,
       accountId: account.id,
       categoryId: category.id,
-      occurredAt: instantFromLocalDateTime('2026-01-01T12:00', settings.timezone),
+      occurredAt: instantFromLocalDateTime(`${openingDate}T12:00`, settings.timezone),
       payee: 'Closure geometry fixture',
       note: '',
     },
-    headers: { 'Idempotency-Key': `closure-transaction-${Date.now()}` },
+    headers: { 'Idempotency-Key': `closure-transaction-${fixtureId}` },
   })
-  expect(createTransaction.status()).toBe(201)
+  if (createTransaction.status() !== 201) {
+    throw new Error(
+      `Failed to create geometry fixture transaction: ${createTransaction.status()} ${await createTransaction.text()}`,
+    )
+  }
   return await createTransaction.json() as LedgerTransaction
 }
 
