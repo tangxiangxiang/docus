@@ -928,6 +928,11 @@ describe('Ledger Overview and trend projections', () => {
       fromAccountId: bank.id,
       toAccountId: loan.id,
     })
+    const legacyRepaymentFee = fixture.repository.listTransactionsByGroupId(repayment.groupId!).find((item) => item.type === 'expense')!
+    expect(fixture.repository.updateTransaction({
+      transaction: { ...legacyRepaymentFee, payee: loan.name },
+      expectedVersion: legacyRepaymentFee.version,
+    })).toBe(1)
 
     const page = fixture.projections.listTransactions(query())
     expect(page.transactions).toHaveLength(2)
@@ -951,6 +956,7 @@ describe('Ledger Overview and trend projections', () => {
       amountMinor: 300,
       categoryId: feeCategory.id,
       groupId: repayment.groupId,
+      payee: `${loan.name}还款利息`,
     })
     expect(feeRows.page.total).toBe(1)
 
@@ -978,6 +984,7 @@ describe('Ledger Overview and trend projections', () => {
     expect(bankDetailBalances.get(repayment.id)).toBe(5_000)
     expect(repaymentFee === undefined ? undefined : bankDetailBalances.get(repaymentFee.id)).toBe(4_700)
 
+    const withdrawalDestination = account(fixture, 'grouped-wallet', { type: 'wallet' })
     const withdrawal = transaction(fixture, 'grouped-withdrawal', {
       // Keep the withdrawal on the same fixture while giving it a valid asset destination.
       // The grouped query must still expose both accounting rows.
@@ -986,8 +993,13 @@ describe('Ledger Overview and trend projections', () => {
       amountMinor: 2_000,
       feeMinor: 50,
       fromAccountId: bank.id,
-      toAccountId: account(fixture, 'grouped-wallet', { type: 'wallet' }).id,
+      toAccountId: withdrawalDestination.id,
     })
+    const legacyWithdrawalFee = fixture.repository.listTransactionsByGroupId(withdrawal.groupId!).find((item) => item.type === 'expense')!
+    expect(fixture.repository.updateTransaction({
+      transaction: { ...legacyWithdrawalFee, payee: '' },
+      expectedVersion: legacyWithdrawalFee.version,
+    })).toBe(1)
     const withdrawalGroup = fixture.projections.listTransactions(query({ groupId: withdrawal.groupId }))
     expect(withdrawalGroup.transactions.map((row) => row.type).sort()).toEqual(['expense', 'transfer'])
     expect(withdrawalGroup.page.total).toBe(2)
@@ -999,6 +1011,7 @@ describe('Ledger Overview and trend projections', () => {
       amountMinor: 50,
       categoryId: withdrawalFeeCategory.id,
       groupId: withdrawal.groupId,
+      payee: `${bank.name}提现手续费`,
     })
     expect(withdrawalFeeRows.page.total).toBe(1)
   })

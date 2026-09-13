@@ -48,6 +48,19 @@ const deleted = computed(() => transaction.value?.deletedAt !== null)
 const groupedCompanion = computed(() => transaction.value?.type === 'expense' && transaction.value.groupId !== undefined)
 const canEdit = computed(() => ordinaryTransaction.value && !deleted.value && !groupedCompanion.value)
 const groupedExpense = computed(() => groupTransactions.value.find((item) => item.type === 'expense') ?? null)
+const groupedTransfer = computed(() => groupTransactions.value.find((item) => item.type === 'transfer') ?? null)
+const transactionPayee = computed(() => {
+  const value = transaction.value
+  if (!value || value.type !== 'expense') return ''
+  const transfer = groupedTransfer.value
+  if (value.groupId !== undefined && transfer?.type === 'transfer' && transfer.transferKind === 'repayment') {
+    return `${accountName(transfer.toAccountId)}还款利息`
+  }
+  if (value.groupId !== undefined && transfer?.type === 'transfer' && transfer.transferKind === 'withdrawal') {
+    return `${accountName(transfer.fromAccountId)}提现手续费`
+  }
+  return value.payee
+})
 const groupedTotalMinor = computed(() => {
   const value = transaction.value
   if (!value || value.type !== 'transfer' || !groupedExpense.value) return null
@@ -230,7 +243,7 @@ async function remove(): Promise<void> {
             <template v-if="transaction.type === 'income' || transaction.type === 'expense'">
               <div class="ledger-detail-row"><span>账户</span><strong>{{ accountName(transaction.accountId) }}<em v-if="associatedAccounts.some((account) => account.archivedAt !== null)">（已归档）</em></strong></div>
               <div class="ledger-detail-row"><span>分类</span><strong>{{ categoryName(transaction.categoryId) }}</strong></div>
-              <div class="ledger-detail-row"><span>交易对象</span><strong>{{ transaction.payee || '未填写' }}</strong></div>
+              <div class="ledger-detail-row"><span>交易对象</span><strong>{{ transactionPayee || '未填写' }}</strong></div>
             </template>
             <template v-else-if="transaction.type === 'transfer'">
               <div class="ledger-detail-row"><span>转账类型</span><strong>{{ typeLabel(transaction) }}</strong></div>
@@ -272,10 +285,10 @@ async function remove(): Promise<void> {
 
 <style scoped>
 .ledger-detail-sheet-card {
-  align-self: flex-end;
+  align-self: center;
   width: min(100%, 620px);
   max-height: min(92vh, 820px);
-  margin: auto auto 20px;
+  margin: auto;
   overflow: auto;
   box-sizing: border-box;
   border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);

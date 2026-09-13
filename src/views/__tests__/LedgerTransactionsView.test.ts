@@ -83,6 +83,12 @@ function account(
 
 const activeAccount = account('bank-1', '招商银行')
 const archivedAccount = account('old-bank', '旧账户', 20)
+const walletAccount = { ...account('wallet-1', '微信零钱'), type: 'wallet' as const }
+const liabilityAccount = {
+  ...account('liability-1', '花呗'),
+  type: 'credit_card' as const,
+  nature: 'liability' as const,
+}
 
 function category(
   id: string,
@@ -161,6 +167,58 @@ const adjustment: LedgerTransactionDto = {
   adjustmentTargetBalanceMinor: 100_000,
   occurredAt: Date.UTC(2026, 8, 2, 4, 30),
   note: '期初校准',
+  deletedAt: null,
+  version: 1,
+  createdAt: 1,
+  updatedAt: 2,
+}
+
+const withdrawalFee: LedgerTransactionDto = {
+  ...expense,
+  id: 'tx-withdrawal-fee',
+  groupId: 'withdrawal-group',
+  accountId: walletAccount.id,
+  categoryId: 'fee',
+  payee: '',
+}
+
+const withdrawal: LedgerTransactionDto = {
+  id: 'tx-withdrawal',
+  groupId: withdrawalFee.groupId,
+  type: 'transfer',
+  transferKind: 'withdrawal',
+  feeMode: 'deducted',
+  amountMinor: 9_900,
+  fromAccountId: walletAccount.id,
+  toAccountId: activeAccount.id,
+  occurredAt: withdrawalFee.occurredAt,
+  payee: '',
+  note: '',
+  deletedAt: null,
+  version: 1,
+  createdAt: 1,
+  updatedAt: 2,
+}
+
+const repaymentInterest: LedgerTransactionDto = {
+  ...expense,
+  id: 'tx-repayment-interest',
+  groupId: 'repayment-group',
+  categoryId: 'interest',
+  payee: '花呗账单',
+}
+
+const repayment: LedgerTransactionDto = {
+  id: 'tx-repayment',
+  groupId: repaymentInterest.groupId,
+  type: 'transfer',
+  transferKind: 'repayment',
+  amountMinor: 10_000,
+  fromAccountId: activeAccount.id,
+  toAccountId: liabilityAccount.id,
+  occurredAt: repaymentInterest.occurredAt,
+  payee: '',
+  note: '',
   deletedAt: null,
   version: 1,
   createdAt: 1,
@@ -403,6 +461,46 @@ describe('Ledger live transaction history workspace', () => {
       location: '',
       note: '已核对',
     })
+  })
+
+  it('shows the withdrawal source fee label as the payee for a legacy blank fee row', async () => {
+    setup(
+      { transactions: [withdrawalFee, withdrawal], page: { nextCursor: null } },
+      [activeAccount, walletAccount],
+    )
+    api.listLedgerTransactions.mockImplementation((query: { groupId?: string }) => Promise.resolve(
+      query.groupId === withdrawalFee.groupId
+        ? { transactions: [withdrawal, withdrawalFee], page: { nextCursor: null } }
+        : { transactions: [withdrawalFee, withdrawal], page: { nextCursor: null } },
+    ))
+    const wrapper = await mountView()
+
+    expect(wrapper.get('[data-testid="ledger-transaction-row-tx-withdrawal-fee"]').text()).toContain('微信零钱提现手续费')
+    await wrapper.get('[data-testid="ledger-transaction-row-tx-withdrawal-fee"]').trigger('click')
+    await flushPromises()
+
+    expect(getDetail().text()).toContain('交易对象微信零钱提现手续费')
+    expect(getDetail().text()).not.toContain('交易对象未填写')
+  })
+
+  it('shows the repayment destination interest label as the payee for a legacy fee row', async () => {
+    setup(
+      { transactions: [repaymentInterest, repayment], page: { nextCursor: null } },
+      [activeAccount, liabilityAccount],
+    )
+    api.listLedgerTransactions.mockImplementation((query: { groupId?: string }) => Promise.resolve(
+      query.groupId === repaymentInterest.groupId
+        ? { transactions: [repayment, repaymentInterest], page: { nextCursor: null } }
+        : { transactions: [repaymentInterest, repayment], page: { nextCursor: null } },
+    ))
+    const wrapper = await mountView()
+
+    expect(wrapper.get('[data-testid="ledger-transaction-row-tx-repayment-interest"]').text()).toContain('花呗还款利息')
+    await wrapper.get('[data-testid="ledger-transaction-row-tx-repayment-interest"]').trigger('click')
+    await flushPromises()
+
+    expect(getDetail().text()).toContain('交易对象花呗还款利息')
+    expect(getDetail().text()).not.toContain('交易对象花呗账单')
   })
 
   it('guards every detail close path when an edit is dirty', async () => {

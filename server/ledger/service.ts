@@ -437,10 +437,13 @@ export function createLedgerService(
 
   function companionPayee(
     transferKind: LedgerTransferKind,
+    fromAccountName: string,
     toAccountName: string,
     transferPayee: string,
   ): string {
-    return transferKind === 'repayment' ? toAccountName : transferPayee
+    if (transferKind === 'repayment') return `${toAccountName}还款利息`
+    if (transferKind === 'withdrawal') return `${fromAccountName}提现手续费`
+    return transferPayee
   }
 
   function assertTransferKindAccounts(
@@ -1036,7 +1039,7 @@ export function createLedgerService(
                 categoryId: feeCategory.id,
                 occurredAt: request.occurredAt,
                 location: request.location ?? '',
-                payee: transferKind === 'repayment' ? toAccount.name : request.payee,
+                payee: companionPayee(transferKind, fromAccount.name, toAccount.name, request.payee),
                 note: request.note,
                 deletedAt: null,
                 version: 1,
@@ -1282,7 +1285,7 @@ export function createLedgerService(
                   categoryId: feeCategory.id,
                   occurredAt,
                   location: updated.location,
-                  payee: companionPayee(transferKind, toAccount.name, updated.payee),
+                  payee: companionPayee(transferKind, fromAccount.name, toAccount.name, updated.payee),
                   note: updated.note,
                   version: nextVersion(existingFee.version),
                   updatedAt: timestamp,
@@ -1296,7 +1299,7 @@ export function createLedgerService(
                   categoryId: feeCategory.id,
                   occurredAt,
                   location: updated.location,
-                  payee: companionPayee(transferKind, toAccount.name, updated.payee),
+                  payee: companionPayee(transferKind, fromAccount.name, toAccount.name, updated.payee),
                   note: updated.note,
                   deletedAt: null,
                   version: 1,
