@@ -4,7 +4,7 @@
 **Closure Date:** 2026-09-14<br>
 **Branch:** `main`<br>
 **Closure Baseline:** `cff21074c36e3e051b6198cfd7d9dcb25b8f3de6`<br>
-**CI:** [#798](https://github.com/tangxiangxiang/docus/actions/runs/798) — passed
+**CI:** [#798](https://github.com/tangxiangxiang/docus/actions/runs/34767552585) — passed
 
 This is a historical closure record, not the authority for current runtime
 behavior. The maintained authority remains the [current Ledger Architecture](../../architecture/ledger.md),
@@ -180,7 +180,7 @@ Closure baseline:
 `cff21074c36e3e051b6198cfd7d9dcb25b8f3de6` —
 `test(ledger): align adjustment parity fixture`
 
-CI [#798](https://github.com/tangxiangxiang/docus/actions/runs/798) passed; the
+CI [#798](https://github.com/tangxiangxiang/docus/actions/runs/34767552585) passed; the
 closure baseline was fully green.
 
 Key traceability commits, listed for lineage rather than as a changelog:
@@ -282,7 +282,7 @@ and natural-balance parity protection are established.
 
 Closure baseline:
 `cff21074c36e3e051b6198cfd7d9dcb25b8f3de6`<br>
-CI: [#798](https://github.com/tangxiangxiang/docus/actions/runs/798) — passed
+CI: [#798](https://github.com/tangxiangxiang/docus/actions/runs/34767552585) — passed
 
 There is no known P0/P1 correctness issue blocking closure. Ledger is no longer
 an active feature-development stream; future work follows Maintenance Mode and
