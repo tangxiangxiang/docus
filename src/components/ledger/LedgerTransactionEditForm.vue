@@ -146,7 +146,7 @@ function reset(): void {
     ? ledgerDecimalFromMinor(fee.amountMinor, store.settings.value?.baseCurrency ?? 'CNY')
     : ''
   transferFeeMode.value = value.type === 'transfer'
-    ? value.feeMode ?? (value.transferKind === 'withdrawal' ? 'deducted' : null)
+    ? value.feeMode ?? (value.transferKind === 'withdrawal' ? 'extra' : null)
     : null
   error.value = ''
   initialSnapshot.value = snapshot()

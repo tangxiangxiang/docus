@@ -68,7 +68,7 @@ const SELECT_ACCOUNTS = `
 
 const SELECT_ACTIVE_ACCOUNTS = `
   SELECT id, name, type, nature, icon, opening_balance_minor, opening_date,
-         currency, note, archived_at, version, created_at, updated_at
+         currency, note, card_number, archived_at, version, created_at, updated_at
   FROM ledger_accounts
   WHERE archived_at IS NULL
   ORDER BY updated_at DESC, id DESC

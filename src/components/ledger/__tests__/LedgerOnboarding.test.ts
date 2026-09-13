@@ -144,13 +144,12 @@ describe('Ledger initialization and first-account onboarding', () => {
     expect(wrapper.find('[data-testid="ledger-account-form"]').exists()).toBe(true)
   })
 
-  it('creates the first account using display decimal input and inherited Ledger currency', async () => {
+  it('creates the first account without requiring a card number', async () => {
     setupLoadedState(settings(false))
     const wrapper = mount(LedgerView)
     await flushPromises()
 
     const form = wrapper.get('[data-testid="ledger-account-form"]')
-    await form.get('input[name="cardNumber"]').setValue('6222021234567890')
     await form.get('input[name="name"]').setValue('招商银行')
     await form.get('input[name="openingBalance"]').setValue('10000.00')
     await form.get('[data-testid="ledger-account-opening-date"] input').setValue('2026-09-05')
@@ -169,7 +168,6 @@ describe('Ledger initialization and first-account onboarding', () => {
       openingDate: '2026-09-05',
       currency: 'CNY',
       note: '',
-      cardNumber: '6222021234567890',
     }, expect.any(String))
     expect(wrapper.find('[data-testid="ledger-dashboard"]').exists()).toBe(true)
   })

@@ -295,6 +295,30 @@ describe('Ledger Settings and default Category service', () => {
 })
 
 describe('Ledger Account service lifecycle', () => {
+  it('keeps optional card numbers consistent across account reads and patches', () => {
+    const { service } = freshService()
+    initialize(service)
+
+    for (const type of ['cash', 'wallet', 'bank'] as const) {
+      const created = createAccount(service, `account-without-card-${type}`, { type })
+      expect(created.cardNumber).toBeUndefined()
+      expect(service.listAccounts(false).find((account) => account.id === created.id)?.cardNumber).toBeUndefined()
+      expect(service.listAccounts(true).find((account) => account.id === created.id)?.cardNumber).toBeUndefined()
+      expect(service.getAccount(created.id).cardNumber).toBeUndefined()
+    }
+
+    const withCard = createAccount(service, 'account-with-card', { cardNumber: '6222021234567890' })
+    expect(service.listAccounts(false).find((account) => account.id === withCard.id)?.cardNumber).toBe('6222021234567890')
+    expect(service.listAccounts(true).find((account) => account.id === withCard.id)?.cardNumber).toBe('6222021234567890')
+    expect(service.getAccount(withCard.id).cardNumber).toBe('6222021234567890')
+
+    const renamed = service.patchAccount(withCard.id, {
+      expectedVersion: withCard.version,
+      name: 'Renamed card account',
+    })
+    expect(renamed.cardNumber).toBe('6222021234567890')
+  })
+
   it('uses the balance engine for projections and enforces the account PATCH matrix', () => {
     const { repository, service } = freshService()
     initialize(service)

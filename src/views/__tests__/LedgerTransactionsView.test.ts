@@ -503,6 +503,98 @@ describe('Ledger live transaction history workspace', () => {
     expect(getDetail().text()).not.toContain('交易对象花呗账单')
   })
 
+  it('restores an archived account and refreshes an ordinary transaction', async () => {
+    const archivedExpense = { ...expense, id: 'tx-restore-ordinary', accountId: archivedAccount.id }
+    setup({ transactions: [archivedExpense], page: { nextCursor: null } }, [archivedAccount])
+    api.restoreLedgerAccount.mockResolvedValue({ ...archivedAccount, archivedAt: null, version: 5 })
+    api.listLedgerAccounts
+      .mockResolvedValueOnce([archivedAccount])
+      .mockResolvedValue([{ ...archivedAccount, archivedAt: null, version: 5 }])
+    api.getLedgerTransaction.mockResolvedValue(archivedExpense)
+    const wrapper = await mountView()
+
+    await wrapper.get('[data-testid="ledger-transaction-row-tx-restore-ordinary"]').trigger('click')
+    await flushPromises()
+    await getDetail().findAll('button').find((button) => button.text() === '恢复账户')!.trigger('click')
+    await flushPromises()
+
+    expect(api.restoreLedgerAccount).toHaveBeenCalledWith(archivedAccount.id, archivedAccount.version)
+    expect(api.getLedgerTransaction).toHaveBeenCalledWith(archivedExpense.id)
+    expect(getDetail().text()).not.toContain('账户没有恢复')
+  })
+
+  it.each([
+    ['repayment interest', repaymentInterest, repayment, archivedAccount],
+    ['withdrawal fee', withdrawalFee, withdrawal, { ...walletAccount, archivedAt: 20, version: 4 }],
+  ])('restores an archived account from a grouped %s companion without reading its forbidden id', async (_label, companion, primary, archived) => {
+    const groupedCompanion = { ...companion, accountId: archived.id }
+    setup({ transactions: [groupedCompanion, primary], page: { nextCursor: null } }, [archived])
+    api.listLedgerTransactions.mockImplementation((query: { groupId?: string }) => Promise.resolve(
+      query.groupId === companion.groupId
+        ? { transactions: [primary, groupedCompanion], page: { nextCursor: null } }
+        : { transactions: [groupedCompanion, primary], page: { nextCursor: null } },
+    ))
+    api.restoreLedgerAccount.mockResolvedValue({ ...archived, archivedAt: null, version: 5 })
+    api.listLedgerAccounts
+      .mockResolvedValueOnce([archived])
+      .mockResolvedValue([{ ...archived, archivedAt: null, version: 5 }])
+    api.getLedgerTransaction.mockRejectedValue(new Error('grouped companion is not directly readable'))
+    const wrapper = await mountView()
+
+    await wrapper.get(`[data-testid="ledger-transaction-row-${groupedCompanion.id}"]`).trigger('click')
+    await flushPromises()
+    await getDetail().findAll('button').find((button) => button.text() === '恢复账户')!.trigger('click')
+    await flushPromises()
+
+    expect(api.restoreLedgerAccount).toHaveBeenCalledWith(archived.id, archived.version)
+    expect(api.getLedgerTransaction).not.toHaveBeenCalled()
+    expect(getDetail().text()).not.toContain('账户没有恢复')
+    expect(getDetail().text()).not.toContain('恢复账户')
+  })
+
+  it('reports a real account restore failure', async () => {
+    const archivedExpense = { ...expense, id: 'tx-restore-failure', accountId: archivedAccount.id }
+    setup({ transactions: [archivedExpense], page: { nextCursor: null } }, [archivedAccount])
+    api.restoreLedgerAccount.mockRejectedValue(new Error('restore failed'))
+    const wrapper = await mountView()
+
+    await wrapper.get('[data-testid="ledger-transaction-row-tx-restore-failure"]').trigger('click')
+    await flushPromises()
+    await getDetail().findAll('button').find((button) => button.text() === '恢复账户')!.trigger('click')
+    await flushPromises()
+
+    expect(api.getLedgerTransaction).not.toHaveBeenCalled()
+    expect(getDetail().text()).toContain('网络连接中断，尚未确认本次操作是否保存。')
+  })
+
+  it('edits a legacy withdrawal without feeMode using the server-compatible extra mode', async () => {
+    const legacyWithdrawal = { ...withdrawal, amountMinor: 10_000, feeMode: undefined }
+    const legacyFee = { ...withdrawalFee, amountMinor: 100 }
+    setup({ transactions: [legacyWithdrawal], page: { nextCursor: null } }, [activeAccount, walletAccount])
+    api.listLedgerTransactions.mockImplementation((query: { groupId?: string }) => Promise.resolve(
+      query.groupId === legacyWithdrawal.groupId
+        ? { transactions: [legacyWithdrawal, legacyFee], page: { nextCursor: null } }
+        : { transactions: [legacyWithdrawal], page: { nextCursor: null } },
+    ))
+    const wrapper = await mountView()
+
+    await wrapper.get('[data-testid="ledger-transaction-row-tx-withdrawal"]').trigger('click')
+    await flushPromises()
+    await getDetail().findAll('button').find((button) => button.text() === '编辑交易')!.trigger('click')
+    const form = getDetail().get('[data-testid="ledger-transaction-edit-form"]')
+
+    expect((form.get('input[name="amount"]').element as HTMLInputElement).value).toBe('100.00')
+    expect(form.get('[aria-label="修改手续费方式：额外扣除"]').text()).toBe('额外扣除')
+    await form.trigger('submit')
+    await flushPromises()
+
+    expect(api.patchLedgerTransaction).toHaveBeenCalledWith(legacyWithdrawal.id, expect.objectContaining({
+      amountMinor: 10_000,
+      feeMinor: 100,
+      feeMode: 'extra',
+    }))
+  })
+
   it('guards every detail close path when an edit is dirty', async () => {
     const wrapper = await mountView()
     await wrapper.find('[data-testid="ledger-transaction-row-tx-expense"]').trigger('click')

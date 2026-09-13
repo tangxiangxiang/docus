@@ -135,7 +135,7 @@ describe('Ledger account management list', () => {
       .toEqual(['archived-high', 'archived-low'])
   })
 
-  it('opens the shared account-create form and uses the real account API', async () => {
+  it('opens the shared account-create form and allows an account without a card number', async () => {
     setup([account('bank-1')])
     const nextRouter = router()
     await nextRouter.push('/ledger/accounts')
@@ -147,7 +147,6 @@ describe('Ledger account management list', () => {
     await wrapper.get('button').trigger('click')
     expect(bodyWrapper().find('[data-testid="ledger-account-form"]').exists()).toBe(true)
     const form = bodyWrapper().get('[data-testid="ledger-account-form"]')
-    await form.get('input[name="cardNumber"]').setValue('6222021234567890')
     await form.get('input[name="name"]').setValue('现金账户')
     api.createLedgerAccount.mockResolvedValue(account('cash-1'))
     api.getLedgerSettings.mockResolvedValue(settings)
@@ -157,8 +156,8 @@ describe('Ledger account management list', () => {
 
     expect(api.createLedgerAccount).toHaveBeenCalledWith(expect.objectContaining({
       name: '现金账户',
-      cardNumber: '6222021234567890',
     }), expect.any(String))
+    expect(api.createLedgerAccount.mock.calls.at(-1)?.[0]).not.toHaveProperty('cardNumber')
     expect(bodyWrapper().find('[data-testid="ledger-account-form"]').exists()).toBe(false)
     expect(wrapper.get('[data-testid="ledger-active-account-list"]').text()).toContain('cash-1')
   })

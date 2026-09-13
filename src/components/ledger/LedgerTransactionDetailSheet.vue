@@ -158,7 +158,9 @@ async function restoreAccount(id: string): Promise<void> {
   actionError.value = ''
   try {
     await store.restoreAccount(id, account.version)
-    const refreshed = await store.getTransaction(current.id)
+    const refreshed = groupedCompanion.value
+      ? current
+      : await store.getTransaction(current.id)
     currentTransaction.value = refreshed
     emit('updated', refreshed)
     toast.success('账户已恢复，交易信息已刷新')

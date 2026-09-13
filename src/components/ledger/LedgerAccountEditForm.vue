@@ -75,10 +75,6 @@ function validate(): number | null {
     error.value = '请给账户起一个容易识别的名称。'
     return null
   }
-  if (!cardNumber.value.trim() && props.account.cardNumber !== undefined) {
-    error.value = '请输入卡号。'
-    return null
-  }
   if (!financialFieldsEditable.value) return 0
   if (!/^\d{4}-\d{2}-\d{2}$/.test(openingDate.value)) {
     error.value = '请选择有效的期初日期。'
@@ -135,7 +131,7 @@ async function submit(): Promise<void> {
       <p class="ledger-form-info">{{ props.account.currency }} · {{ store.settings.value?.timezone ?? 'UTC' }}</p>
     </div>
 
-    <NFormItem class="ledger-form-field" label="卡号" :show-feedback="false" required>
+    <NFormItem class="ledger-form-field" label="卡号（可选）" :show-feedback="false">
       <NInput
         :value="maskedCardNumber"
         class="ledger-form-control"

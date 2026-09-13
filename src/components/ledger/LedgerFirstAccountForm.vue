@@ -91,10 +91,6 @@ function validate(): number | null {
     formError.value = '请给账户起一个容易识别的名称。'
     return null
   }
-  if (!cardNumber.value.trim()) {
-    formError.value = '请输入卡号。'
-    return null
-  }
   if (!currency.value) {
     formError.value = '请先完成 Ledger 基础设置。'
     return null
@@ -127,7 +123,7 @@ async function submit(): Promise<void> {
       openingDate: openingDate.value,
       currency: currency.value,
       note: note.value.trim(),
-      cardNumber: cardNumber.value.trim(),
+      ...(cardNumber.value.trim() ? { cardNumber: cardNumber.value.trim() } : {}),
     })
     emit('saved')
   } catch (error) {
@@ -173,14 +169,14 @@ async function retryPendingAccount(): Promise<void> {
     />
 
     <template v-else>
-    <NFormItem class="ledger-form-field" label="卡号" :show-feedback="false" required>
+    <NFormItem class="ledger-form-field" label="卡号（可选）" :show-feedback="false">
       <NInput
         v-model:value="cardNumber"
         class="ledger-form-control"
         type="text"
         size="medium"
         placeholder="请输入卡号"
-        :input-props="{ id: 'ledger-account-card-number', name: 'cardNumber', inputmode: 'numeric', autocomplete: 'off', required: true }"
+        :input-props="{ id: 'ledger-account-card-number', name: 'cardNumber', inputmode: 'numeric', autocomplete: 'off' }"
         :disabled="saving"
       />
     </NFormItem>
