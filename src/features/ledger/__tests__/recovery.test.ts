@@ -106,6 +106,28 @@ describe('Ledger unresolved create recovery', () => {
     }
   })
 
+  it('accepts the current account create payload with an optional card number', () => {
+    const intent = createLedgerPendingIntent(
+      'account',
+      {
+        name: '招商银行',
+        type: 'bank',
+        nature: 'asset',
+        openingBalanceMinor: 1_000_000,
+        openingDate: '2026-09-05',
+        currency: 'CNY',
+        note: '',
+        cardNumber: '6222021234567890',
+      },
+      'key-account-card-number',
+      null,
+    )
+
+    expect(isLedgerPendingCreateIntent(intent)).toBe(true)
+    writeLedgerPendingCreate(intent)
+    expect(readLedgerPendingCreate()).toEqual({ status: 'valid', intent })
+  })
+
   it('reports a durable-storage write failure instead of pretending the snapshot was saved', () => {
     const intent = createLedgerPendingIntent(
       'category',

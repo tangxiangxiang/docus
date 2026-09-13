@@ -398,6 +398,7 @@ async function retryPending(): Promise<void> {
     :close-on-esc="false"
     :auto-focus="false"
     :trap-focus="true"
+    :on-esc="requestClose"
     :on-update-show="handleVisibilityChange"
     :on-after-enter="focusInitialInput"
   >
@@ -495,7 +496,7 @@ async function retryPending(): Promise<void> {
 </template>
 
 <style scoped>
-.ledger-sheet-card { align-self: center; width: min(100%, 640px); max-height: min(92vh, 820px); margin: auto; overflow: auto; box-sizing: border-box; border: 1px solid color-mix(in srgb, var(--border) 68%, transparent); border-radius: 18px 18px 12px 12px; background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 5%, transparent), transparent 48%), color-mix(in srgb, var(--bg-soft) 68%, transparent); box-shadow: 0 24px 70px color-mix(in srgb, #0f172a 30%, transparent), inset 0 1px 0 color-mix(in srgb, #fff 32%, transparent); -webkit-backdrop-filter: saturate(145%) blur(22px); backdrop-filter: saturate(145%) blur(22px); color: var(--text); }
+.ledger-sheet-card { align-self: flex-end; width: min(100%, 620px); max-height: min(92vh, 820px); margin: auto auto 20px; overflow: auto; box-sizing: border-box; border: 1px solid color-mix(in srgb, var(--border) 68%, transparent); border-radius: 18px 18px 12px 12px; background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 5%, transparent), transparent 48%), color-mix(in srgb, var(--bg-soft) 68%, transparent); box-shadow: 0 24px 70px color-mix(in srgb, #0f172a 30%, transparent), inset 0 1px 0 color-mix(in srgb, #fff 32%, transparent); -webkit-backdrop-filter: saturate(145%) blur(22px); backdrop-filter: saturate(145%) blur(22px); color: var(--text); }
 .ledger-sheet-card :deep(.n-card__content) { display: grid; gap: 14px; }
 .ledger-sheet-card :deep(.n-card__header) { align-items: flex-start; gap: 16px; padding-bottom: 2px; }
 .ledger-sheet-card h2 { margin: 0; color: var(--text-h); font-size: 1.35rem; line-height: 1.25; }

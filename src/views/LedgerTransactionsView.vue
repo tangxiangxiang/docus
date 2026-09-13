@@ -18,7 +18,6 @@ import {
   type SelectOption,
 } from 'naive-ui'
 import { ArrowDown, ArrowRight, ArrowUp, ArrowsVertical, Calendar, Search, Tag, Wallet } from '@vicons/tabler'
-import { useDebounceFn } from '@vueuse/core'
 import { Temporal } from '@js-temporal/polyfill'
 import { useRoute } from 'vue-router'
 import type {
@@ -226,10 +225,19 @@ function filterTypeLabel(value: string): string {
   return value === 'all' ? '全部' : typeLabel(value)
 }
 
-const debouncedSearch = useDebounceFn(() => { void applyFilters() }, 300)
+let searchTimer: ReturnType<typeof setTimeout> | undefined
+
+function cancelSearch(): void {
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = undefined
+}
 
 function scheduleSearch(): void {
-  debouncedSearch()
+  cancelSearch()
+  searchTimer = setTimeout(() => {
+    searchTimer = undefined
+    void applyFilters()
+  }, 300)
 }
 
 function formatTransactionTableTime(instantMs: number): string {
@@ -267,8 +275,7 @@ async function loadTransactions(targetPage = 1): Promise<void> {
 }
 
 async function applyFilters(): Promise<void> {
-  const debounce = debouncedSearch as { cancel?: () => void }
-  debounce.cancel?.()
+  cancelSearch()
   try {
     buildQuery()
   } catch {
@@ -279,7 +286,6 @@ async function applyFilters(): Promise<void> {
 }
 
 async function clearFilters(): Promise<void> {
-  const debounce = debouncedSearch as { cancel?: () => void }
   filterType.value = 'all'
   filterAccountId.value = ''
   filterCategoryId.value = ''
@@ -287,7 +293,7 @@ async function clearFilters(): Promise<void> {
   filterTo.value = ''
   filterSearch.value = ''
   filterDatePreset.value = 'all'
-  debounce.cancel?.()
+  cancelSearch()
   await loadTransactions()
 }
 
@@ -321,8 +327,7 @@ async function changePageSize(value: string | number | null): Promise<void> {
 onBeforeUnmount(() => {
   document.body.classList.remove('ledger-transactions-mode')
   document.documentElement.classList.remove('ledger-transactions-mode')
-  const debounce = debouncedSearch as { cancel?: () => void }
-  debounce.cancel?.()
+  cancelSearch()
 })
 
 function inspect(transaction: LedgerTransactionDto): void {

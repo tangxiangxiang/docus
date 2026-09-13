@@ -12,8 +12,7 @@ const dstLedgerTimezone = 'America/New_York'
 async function assertTemporalBridge(page: import('@playwright/test').Page, value: string, ledgerTimezone: string, roundTrip: string): Promise<void> {
   await expect(page.getByTestId('ledger-temporal-date-only').locator('input')).toHaveValue(value.slice(0, 10))
   await expect(page.getByTestId('ledger-temporal-date-only-model')).toHaveText(value.slice(0, 10))
-  await expect(page.getByTestId('ledger-temporal-date').locator('input')).toHaveValue(value.slice(0, 10))
-  await expect(page.getByTestId('ledger-temporal-time').locator('input')).toHaveValue(value.slice(11))
+  await expect(page.getByTestId('ledger-temporal').locator('input')).toHaveValue(value.replace('T', ' '))
   await expect(page.getByTestId('ledger-temporal-model')).toHaveText(value)
 
   await page.getByTestId('ledger-temporal-validate').click()

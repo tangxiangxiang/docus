@@ -329,16 +329,24 @@ describe('Ledger live transaction history workspace', () => {
     await wrapper.findComponent(NPagination).vm.$emit('update:page', 2)
     await flushPromises()
 
-    expect(api.listLedgerTransactions).toHaveBeenLastCalledWith({ type: 'all', limit: 25, offset: 25 })
-    expect(wrapper.get('[data-testid="ledger-transaction-list"]').text()).toContain('工资')
+    await vi.waitFor(() => {
+      expect(api.listLedgerTransactions).toHaveBeenCalledWith({ type: 'all', limit: 25, offset: 25 })
+    })
+    await vi.waitFor(() => {
+      expect(wrapper.get('[data-testid="ledger-transaction-list"]').text()).toContain('工资')
+      expect(wrapper.get('[data-testid="ledger-transaction-list"]').text()).not.toContain('午餐')
+    })
     expect(wrapper.text()).toContain('共 26 条')
     expect(wrapper.findComponent(NPagination).props('page')).toBe(2)
     expect(wrapper.findComponent(NPagination).props('itemCount')).toBe(26)
     expect(wrapper.findComponent(NPagination).props('showSizePicker')).toBe(true)
     await wrapper.findComponent(NPagination).vm.$emit('update:page', 1)
     await flushPromises()
-    expect(api.listLedgerTransactions).toHaveBeenLastCalledWith({ type: 'all', limit: 25 })
-    expect(wrapper.get('[data-testid="ledger-transaction-list"]').text()).toContain('午餐')
+    await vi.waitFor(() => {
+      expect(api.listLedgerTransactions).toHaveBeenCalledWith({ type: 'all', limit: 25 })
+      expect(wrapper.get('[data-testid="ledger-transaction-list"]').text()).toContain('午餐')
+    })
+    expect(wrapper.get('[data-testid="ledger-transaction-list"]').text()).not.toContain('工资')
   })
 
   it('shows a purposeful empty state for a filtered result', async () => {

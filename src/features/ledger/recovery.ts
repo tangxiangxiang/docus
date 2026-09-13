@@ -90,8 +90,11 @@ function isSafeSettingsPayload(value: unknown): value is LedgerSettingsCreateReq
 
 function isSafeAccountPayload(value: unknown): value is LedgerAccountCreateRequest {
   return isRecord(value)
-    && (hasExactKeys(value, ['name', 'type', 'nature', 'openingBalanceMinor', 'openingDate', 'currency', 'note'])
-      || hasExactKeys(value, ['name', 'type', 'nature', 'icon', 'openingBalanceMinor', 'openingDate', 'currency', 'note']))
+    && hasExactKeys(value, [
+      'name', 'type', 'nature', 'openingBalanceMinor', 'openingDate', 'currency', 'note',
+      ...(Object.prototype.hasOwnProperty.call(value, 'icon') ? ['icon'] : []),
+      ...(Object.prototype.hasOwnProperty.call(value, 'cardNumber') ? ['cardNumber'] : []),
+    ])
     && nonEmptyString(value.name)
     && (value.type === 'cash'
       || value.type === 'bank'
@@ -104,6 +107,8 @@ function isSafeAccountPayload(value: unknown): value is LedgerAccountCreateReque
     && safeDate(value.openingDate)
     && nonEmptyString(value.currency)
     && typeof value.note === 'string'
+    && (value.icon === undefined || safeLedgerIcon(value.icon))
+    && (value.cardNumber === undefined || typeof value.cardNumber === 'string')
 }
 
 function isSafeCategoryPayload(value: unknown): value is LedgerCategoryCreateRequest {

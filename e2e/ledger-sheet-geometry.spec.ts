@@ -203,6 +203,6 @@ test('Ledger detail sheet keeps full-width bottom-anchored mobile geometry', asy
   await expect(dialog).toHaveCount(1)
   await expect(dialog).toHaveAccessibleName(typeLabels[transaction.type])
   await assertMobileGeometry(page.getByTestId('ledger-transaction-detail-sheet'), viewport)
-  await dialog.getByRole('button', { name: '完成' }).click()
+  await dialog.getByRole('button', { name: '关闭交易详情' }).click()
   await expect(dialog).toBeHidden()
 })

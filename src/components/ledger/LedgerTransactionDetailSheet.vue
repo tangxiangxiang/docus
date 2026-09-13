@@ -272,10 +272,10 @@ async function remove(): Promise<void> {
 
 <style scoped>
 .ledger-detail-sheet-card {
-  align-self: center;
+  align-self: flex-end;
   width: min(100%, 620px);
   max-height: min(92vh, 820px);
-  margin: auto;
+  margin: auto auto 20px;
   overflow: auto;
   box-sizing: border-box;
   border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);

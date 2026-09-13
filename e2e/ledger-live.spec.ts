@@ -127,10 +127,11 @@ test('real Ledger onboarding and expense survive dashboard refresh', async ({ pa
   await page.getByRole('button', { name: '保存设置并继续' }).click()
 
   await expect(page.getByTestId('ledger-account-form')).toBeVisible()
+  await page.locator('#ledger-account-card-number').fill('6222021234567890')
   await page.locator('#ledger-account-name').fill('招商银行')
   await page.locator('#ledger-account-opening-balance').fill('10000')
-  await expect(page.locator('#ledger-account-currency')).toHaveValue('CNY')
-  await page.getByRole('button', { name: '创建账户并继续' }).click()
+  await expect(page.getByTestId('ledger-account-form')).toContainText('CNY · Asia/Shanghai')
+  await page.getByRole('button', { name: '继续' }).click()
 
   await expect(page.getByTestId('ledger-dashboard')).toBeVisible()
   await expect(page.locator('.ledger-dashboard-actions')).toHaveCount(1)
@@ -351,8 +352,9 @@ test('an account response loss remains gated after reload and creates one accoun
 
   await page.getByRole('button', { name: '新增账户' }).click()
   await expect(page.getByTestId('ledger-account-form')).toBeVisible()
+  await page.locator('#ledger-account-card-number').fill('6222021234567890')
   await page.locator('#ledger-account-name').fill(uniqueName)
-  await page.getByRole('button', { name: '创建账户' }).click()
+  await page.getByRole('button', { name: '创建' }).click()
 
   await expect(page.getByTestId('ledger-recovery')).toBeVisible()
   expect(droppedKey).not.toBe('')

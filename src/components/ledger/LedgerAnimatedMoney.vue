@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { NNumberAnimation as NumberAnimation } from 'naive-ui'
 import { currencyExponentFor } from '../../features/ledger/money'
 
@@ -25,11 +25,12 @@ function parts(minor: number, currency: string) {
   }
 }
 
+// The initial value is already authoritative. Animate only subsequent
+// changes so the component never flashes the final amount and then jumps back
+// to zero after the first paint.
 const fromMinor = ref(props.minor)
 const animationKey = ref(0)
 let resetTimer: ReturnType<typeof setTimeout> | undefined
-let initialAnimationTimer: ReturnType<typeof setTimeout> | undefined
-void initialAnimationTimer
 const currentParts = computed(() => parts(props.minor, props.currency))
 const fromParts = computed(() => parts(fromMinor.value, props.currency))
 // The Vue template compiler consumes these bindings; keep TypeScript's
@@ -46,12 +47,6 @@ watch(() => ({ minor: props.minor, currency: props.currency }), (next, previous)
   resetTimer = setTimeout(() => { fromMinor.value = props.minor }, 700)
 })
 
-onMounted(() => {
-  initialAnimationTimer = setTimeout(() => {
-    fromMinor.value = 0
-    animationKey.value += 1
-  }, 100)
-})
 </script>
 
 <template>

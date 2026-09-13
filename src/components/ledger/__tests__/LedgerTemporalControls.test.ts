@@ -24,11 +24,14 @@ describe('Ledger Naive temporal controls', () => {
     const wrapper = mount(LedgerDateTimePicker, {
       props: { modelValue: '2026-09-05T12:30', label: '发生时间', testId: 'ledger-datetime-test' },
     })
+    await wrapper.get('[data-testid="ledger-datetime-test"] input').trigger('click')
+    await nextTick()
     const picker = wrapper.findComponent(NDatePicker)
 
     expect(picker.props('type')).toBe('datetime')
-    expect(picker.props('formattedValue')).toBe('2026-09-05T12:30')
+    expect(picker.props('panel')).toBe(true)
     expect(picker.props('valueFormat')).toBe("yyyy-MM-dd'T'HH:mm")
+    expect((wrapper.get('[data-testid="ledger-datetime-test"] input').element as HTMLInputElement).value).toBe('2026-09-05 12:30')
 
     await picker.vm.$emit('update:formatted-value', '2026-09-06T13:45')
     await nextTick()
@@ -41,6 +44,8 @@ describe('Ledger Naive temporal controls', () => {
     const wrapper = mount(LedgerDateTimePicker, {
       props: { modelValue: '2026-09-05T12:30', label: '发生时间' },
     })
+    await wrapper.find('input').trigger('click')
+    await nextTick()
     const picker = wrapper.findComponent(NDatePicker)
 
     await picker.vm.$emit('update:formatted-value', null)

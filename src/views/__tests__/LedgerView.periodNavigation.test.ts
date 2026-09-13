@@ -181,7 +181,7 @@ describe('Ledger historical period route coordination', () => {
     expect((wrapper.get('[data-testid="ledger-period-date"] input').element as HTMLInputElement).value).toBe('2026-08-20')
     expect(wrapper.find('[data-testid="ledger-return-today"]').exists()).toBe(false)
     expect(wrapper.get('[data-testid="ledger-dashboard-assets"] .ledger-dashboard-account').element.tagName).toBe('A')
-    expect(wrapper.get('[data-testid="ledger-dashboard-assets"] .ledger-dashboard-account').attributes('href')).toBe('/ledger/accounts/bank-1')
+    expect(wrapper.get('[data-testid="ledger-dashboard-assets"] .ledger-dashboard-account').attributes('href')).toBe('/ledger/accounts/bank-1?from=overview')
     expect(wrapper.text()).toContain('2026年8月20日 · 账户余额为当前值')
     expect(wrapper.text()).toContain('截至 2026年8月20日')
   })

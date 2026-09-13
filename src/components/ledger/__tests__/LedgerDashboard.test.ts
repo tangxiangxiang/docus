@@ -659,7 +659,9 @@ describe('Ledger live dashboard', () => {
     await flushPromises()
 
     expect(api.getLedgerOverview).toHaveBeenLastCalledWith({ scope: 'all', anchorDate: undefined })
-    expect(wrapper.get('[data-testid="ledger-total-assets"]').text()).toContain('9,962')
+    await vi.waitFor(() => {
+      expect(wrapper.get('[data-testid="ledger-total-assets"]').text()).toContain('9,962')
+    }, { timeout: 2500 })
     expect(wrapper.get('[data-testid="ledger-total-liabilities"]').text()).toContain('0')
     expect(wrapper.get('[data-testid="ledger-period-month"]').text()).toContain('-¥38.00')
   })

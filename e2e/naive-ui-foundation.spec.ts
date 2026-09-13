@@ -126,13 +126,13 @@ test('explicit Docus theme tokens override the OS fallback', async ({ page }) =>
   await page.goto('/e2e/naive-ui-foundation/')
 
   const token = () => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--docus-bg').trim())
-  expect(await token()).toBe('#111827')
+  expect(await token()).toBe('#1e1e1e')
 
   await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'light'))
   expect(await token()).toBe('#ffffff')
 
   await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'))
-  expect(await token()).toBe('#111827')
+  expect(await token()).toBe('#1e1e1e')
 
   await page.emulateMedia({ colorScheme: 'light' })
   await page.evaluate(() => document.documentElement.removeAttribute('data-theme'))

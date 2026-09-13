@@ -147,6 +147,7 @@ describe('Ledger account management list', () => {
     await wrapper.get('button').trigger('click')
     expect(bodyWrapper().find('[data-testid="ledger-account-form"]').exists()).toBe(true)
     const form = bodyWrapper().get('[data-testid="ledger-account-form"]')
+    await form.get('input[name="cardNumber"]').setValue('6222021234567890')
     await form.get('input[name="name"]').setValue('现金账户')
     api.createLedgerAccount.mockResolvedValue(account('cash-1'))
     api.getLedgerSettings.mockResolvedValue(settings)
@@ -154,7 +155,10 @@ describe('Ledger account management list', () => {
     await form.trigger('submit')
     await flushPromises()
 
-    expect(api.createLedgerAccount).toHaveBeenCalledWith(expect.objectContaining({ name: '现金账户' }), expect.any(String))
+    expect(api.createLedgerAccount).toHaveBeenCalledWith(expect.objectContaining({
+      name: '现金账户',
+      cardNumber: '6222021234567890',
+    }), expect.any(String))
     expect(bodyWrapper().find('[data-testid="ledger-account-form"]').exists()).toBe(false)
     expect(wrapper.get('[data-testid="ledger-active-account-list"]').text()).toContain('cash-1')
   })
