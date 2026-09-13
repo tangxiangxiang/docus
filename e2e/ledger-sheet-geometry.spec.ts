@@ -27,13 +27,6 @@ type Viewport = {
   height: number
 }
 
-const typeLabels: Record<LedgerTransaction['type'], string> = {
-  income: '收入',
-  expense: '支出',
-  transfer: '转账',
-  adjustment: '余额调整',
-}
-
 async function ensureLedgerFixture(request: APIRequestContext): Promise<LedgerTransaction> {
   let settingsResponse = await request.get('/api/ledger/settings')
   if (settingsResponse.status() === 404) {
@@ -83,11 +76,6 @@ async function ensureLedgerFixture(request: APIRequestContext): Promise<LedgerTr
     expect(createCategory.status()).toBe(201)
     category = await createCategory.json() as LedgerCategory
   }
-
-  const transactionsResponse = await request.get('/api/ledger/transactions?limit=1')
-  expect(transactionsResponse.status()).toBe(200)
-  const transactionPage = await transactionsResponse.json() as { transactions: LedgerTransaction[] }
-  if (transactionPage.transactions[0]) return transactionPage.transactions[0]
 
   const createTransaction = await request.post('/api/ledger/transactions', {
     data: {
@@ -179,7 +167,7 @@ test('Ledger detail sheet keeps centered desktop geometry and one labelled dialo
   const dialog = page.getByRole('dialog')
   await expect(dialog).toHaveCount(1)
   await expect(dialog).toBeVisible()
-  await expect(dialog).toHaveAccessibleName(typeLabels[transaction.type])
+  await expect(dialog).toHaveAccessibleName('支出')
   await expect(page.getByTestId('ledger-transaction-detail-sheet')).toBeVisible()
   await expect(page.locator('.ledger-detail-content')).toBeFocused()
   await assertDesktopGeometry(page.getByTestId('ledger-transaction-detail-sheet'), viewport)
@@ -201,7 +189,7 @@ test('Ledger detail sheet keeps full-width bottom-anchored mobile geometry', asy
 
   const dialog = page.getByRole('dialog')
   await expect(dialog).toHaveCount(1)
-  await expect(dialog).toHaveAccessibleName(typeLabels[transaction.type])
+  await expect(dialog).toHaveAccessibleName('支出')
   await assertMobileGeometry(page.getByTestId('ledger-transaction-detail-sheet'), viewport)
   await dialog.getByRole('button', { name: '关闭交易详情' }).click()
   await expect(dialog).toBeHidden()

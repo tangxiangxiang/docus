@@ -313,7 +313,7 @@ describe('Ledger account detail lifecycle', () => {
     expect(rows[1]!.text()).toContain('¥5,000.00')
   })
 
-  it('anchors the latest recent balance to the current balance and walks older rows backward', async () => {
+  it('renders server-provided running balances for recent transactions', async () => {
     const original = account({ openingBalanceMinor: 100_000, currentBalanceMinor: 106_000 })
     const latest: LedgerTransactionDto = {
       id: 'recent-latest',
