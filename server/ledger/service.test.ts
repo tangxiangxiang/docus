@@ -717,6 +717,96 @@ describe('Ledger Transaction and Adjustment service lifecycle', () => {
     expect(service.getAccount(bank.id).currentBalanceMinor).toBe(4_500)
   })
 
+  it('refreshes a repayment companion payee when its destination account changes', () => {
+    const { repository, service } = freshService()
+    initialize(service)
+    const source = createAccount(service, 'repayment-identity-source', {
+      name: '招商银行储蓄卡',
+      openingBalanceMinor: 10_000,
+    })
+    const originalDestination = createAccount(service, 'repayment-identity-original-destination', {
+      name: '花呗账单',
+      type: 'loan',
+      nature: 'liability',
+    })
+    const replacementDestination = createAccount(service, 'repayment-identity-replacement-destination', {
+      name: '京东白条',
+      type: 'loan',
+      nature: 'liability',
+    })
+
+    const repayment = transactionFromResult(service.createTransaction(transactionRequest({
+      type: 'transfer',
+      transferKind: 'repayment',
+      amountMinor: 5_000,
+      feeMinor: 300,
+      fromAccountId: source.id,
+      toAccountId: originalDestination.id,
+    }), 'repayment-destination-identity-change'))
+    const originalFee = repository.listTransactionsByGroupId(repayment.groupId!).find((item) => item.type === 'expense')!
+    expect(originalFee.payee).toBe('花呗账单还款利息')
+
+    const patched = service.patchTransaction(repayment.id, {
+      expectedVersion: repayment.version,
+      toAccountId: replacementDestination.id,
+    })
+    const patchedFee = repository.listTransactionsByGroupId(patched.groupId!).find((item) => item.type === 'expense')!
+
+    expect(patched).toMatchObject({ toAccountId: replacementDestination.id })
+    expect(patchedFee).toMatchObject({
+      id: originalFee.id,
+      accountId: source.id,
+      payee: '京东白条还款利息',
+    })
+  })
+
+  it('refreshes a companion payee when a transfer changes from repayment to withdrawal', () => {
+    const { repository, service } = freshService()
+    initialize(service)
+    const source = createAccount(service, 'transfer-kind-identity-source', {
+      name: '招商银行储蓄卡',
+      openingBalanceMinor: 10_000,
+    })
+    const repaymentDestination = createAccount(service, 'transfer-kind-identity-repayment-destination', {
+      name: '花呗账单',
+      type: 'loan',
+      nature: 'liability',
+    })
+    const withdrawalDestination = createAccount(service, 'transfer-kind-identity-withdrawal-destination', {
+      name: '微信零钱',
+      type: 'wallet',
+    })
+
+    const repayment = transactionFromResult(service.createTransaction(transactionRequest({
+      type: 'transfer',
+      transferKind: 'repayment',
+      amountMinor: 5_000,
+      feeMinor: 300,
+      fromAccountId: source.id,
+      toAccountId: repaymentDestination.id,
+    }), 'transfer-kind-identity-change'))
+    const originalFee = repository.listTransactionsByGroupId(repayment.groupId!).find((item) => item.type === 'expense')!
+    expect(originalFee.payee).toBe('花呗账单还款利息')
+
+    const patched = service.patchTransaction(repayment.id, {
+      expectedVersion: repayment.version,
+      transferKind: 'withdrawal',
+      toAccountId: withdrawalDestination.id,
+    })
+    const patchedFee = repository.listTransactionsByGroupId(patched.groupId!).find((item) => item.type === 'expense')!
+
+    expect(patched).toMatchObject({
+      transferKind: 'withdrawal',
+      toAccountId: withdrawalDestination.id,
+      feeMode: 'extra',
+    })
+    expect(patchedFee).toMatchObject({
+      id: originalFee.id,
+      accountId: source.id,
+      payee: '招商银行储蓄卡提现手续费',
+    })
+  })
+
   it('applies withdrawal fees as either an extra debit or a deducted receipt', () => {
     const { repository, service } = freshService()
     initialize(service)
