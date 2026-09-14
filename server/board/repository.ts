@@ -88,12 +88,14 @@ function metadataFromRow(row: BoardRow): BoardMetadata {
 }
 
 export class SqliteBoardRepository implements BoardRepository {
+  private readonly db: DatabaseT
   private readonly assets: AssetRepository
 
   constructor(
-    private readonly db: DatabaseT,
+    db: DatabaseT,
     assets: AssetRepository = new SqliteAssetRepository(db),
   ) {
+    this.db = db
     this.assets = assets
   }
 

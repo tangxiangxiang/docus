@@ -34,6 +34,13 @@ function requestHasBody(request: Request): boolean {
   return request.headers.has('transfer-encoding')
 }
 
+function requiresJsonBody(method: string, path: string): boolean {
+  // Asset uploads are the one authenticated mutation that intentionally
+  // carries a binary body. Keep the exception exact; every other body-bearing
+  // mutation remains subject to the existing JSON content-type boundary.
+  return !(method === 'PUT' && /^\/api\/assets\/[^/]+$/.test(path))
+}
+
 /**
  * The single application authentication boundary. It intentionally owns no
  * domain behavior: route handlers remain responsible for their existing
@@ -97,7 +104,7 @@ export const authBoundary: MiddlewareHandler = async (c, next) => {
     // A body-bearing mutation must be JSON. Wire-level framing headers are
     // inspected without consuming the stream, so streaming handlers remain
     // intact.
-    if (requestHasBody(c.req.raw)) {
+    if (requestHasBody(c.req.raw) && requiresJsonBody(method, c.req.path)) {
       const content = checkJsonContentType(c.req.raw.headers)
       if (!content.ok) return jsonError(c, 415, content.message, content.code)
     }
@@ -106,4 +113,4 @@ export const authBoundary: MiddlewareHandler = async (c, next) => {
   return next()
 }
 
-export { PUBLIC_ENDPOINTS, isPublicEndpoint }
+export { PUBLIC_ENDPOINTS, isPublicEndpoint, requiresJsonBody }

@@ -43,7 +43,11 @@ function runImmediate<T>(db: DatabaseT, callback: () => T): T {
 }
 
 export class SqliteAssetRepository implements AssetRepository {
-  constructor(private readonly db: DatabaseT) {}
+  private readonly db: DatabaseT
+
+  constructor(db: DatabaseT) {
+    this.db = db
+  }
 
   findAsset(assetId: string): AssetMetadata | null {
     const row = this.db.prepare(`

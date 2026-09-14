@@ -1,6 +1,8 @@
 import { Hono } from 'hono'
 import aiRoutes from './ai/routes.js'
 import authRoutes from './auth/routes.js'
+import assetRoutes from './assets/routes.js'
+import boardRoutes from './board/routes.js'
 import diaryRoutes from './routes/diary.js'
 import diaryAccessRoutes from './routes/diaryAccess.js'
 import diaryMigrationRoutes from './routes/diaryMigration.js'
@@ -43,6 +45,8 @@ app.route('/', vaultRoutes)
 app.route('/', linkRoutes)
 app.route('/', markdownResourceRoutes)
 app.route('/api/ai', aiRoutes)
+app.route('/api/assets', assetRoutes)
+app.route('/api/board', boardRoutes)
 app.route('/api/history', historyRoutes)
 app.route('/api/ledger', ledgerRoutes)
 
