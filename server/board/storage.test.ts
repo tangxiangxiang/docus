@@ -122,7 +122,24 @@ describe('Board metadata and canonical scene storage', () => {
     fixture.now.value += 100
     const renamed = fixture.boards.renameBoard(first.metadata.id, '  Renamed  ')
     expect(renamed.title).toBe('Renamed')
+    expect(renamed.updatedAt).toBe(fixture.now.value)
     expect(fixture.boards.listBoards()[0]?.id).toBe(first.metadata.id)
+  })
+
+  it('normalizes empty and whitespace titles for create and rename', () => {
+    const empty = fixture.boards.createBoard({ title: '' })
+    const whitespace = fixture.boards.createBoard({ title: '   ' })
+    expect(empty.metadata.title).toBe('Untitled Board')
+    expect(whitespace.metadata.title).toBe('Untitled Board')
+
+    expect(fixture.boards.renameBoard(empty.metadata.id, '').title).toBe('Untitled Board')
+    expect(fixture.boards.renameBoard(whitespace.metadata.id, '   ').title).toBe('Untitled Board')
+    expect(fixture.boards.renameBoard(empty.metadata.id, '  Hello  ').title).toBe('Hello')
+
+    for (const title of [null, 123, {}]) {
+      expect(() => fixture.boards.createBoard({ title })).toThrow('Board title must be a string')
+      expect(() => fixture.boards.renameBoard(empty.metadata.id, title)).toThrow('Board title must be a string')
+    }
   })
 
   it('deletes Board rows and only releases assets that are no longer referenced', async () => {
@@ -190,6 +207,20 @@ describe('Asset durable persistence', () => {
       data: Buffer.from('different'),
     })).rejects.toMatchObject({ code: 'ASSET_ID_CONFLICT' })
     expect(await fixture.assets.readAssetBinary(id)).toEqual(original)
+  })
+
+  it('fails closed when a binary exists without committed metadata', async () => {
+    const id = randomUUID()
+    const data = Buffer.from('incumbent-binary')
+    await fixture.storage.createAssetBinary(id, data)
+
+    await expect(fixture.assets.persistAsset({
+      assetId: id,
+      mimeType: 'image/png',
+      data,
+    })).rejects.toMatchObject({ code: 'ASSET_BINARY_CONFLICT', status: 409 })
+    expect(fixture.assets.getAssetMetadata(id)).toBeNull()
+    expect(await fs.readFile(fixture.storage.pathForAssetId(id))).toEqual(data)
   })
 
   it('enforces the Board V1 image MIME allow-list and optional byte limit', async () => {
@@ -287,6 +318,8 @@ describe('Scene revision, references, and fail-closed reads', () => {
       scene: scene([asset.id, asset.id]),
     })
     expect(saved.revision).toBe(1)
+    expect(saved.updatedAt).toBe(fixture.now.value)
+    expect(fixture.boards.getBoardMetadata(board.metadata.id).updatedAt).toBe(fixture.now.value)
     expect(fixture.db.prepare('SELECT COUNT(*) AS count FROM asset_references WHERE owner_id = ?').get(board.metadata.id)).toEqual({ count: 1 })
 
     await expect(fixture.boards.saveBoardScene({
@@ -392,14 +425,30 @@ describe('Scene revision, references, and fail-closed reads', () => {
     await expect(fixture.boards.getBoard(future.metadata.id)).rejects.toMatchObject({ code: 'BOARD_SCENE_VERSION_UNSUPPORTED' })
   })
 
-  it('projects thumbnail references and cleans the replaced asset post-commit', async () => {
+  it('replaces thumbnail references without changing Board updatedAt', async () => {
     const board = fixture.boards.createBoard()
     const first = await persistPng(fixture, 'thumbnail-one')
     const second = await persistPng(fixture, 'thumbnail-two')
+
+    const createdAt = board.metadata.updatedAt
+    fixture.now.value += 100
     await fixture.boards.setThumbnailAsset(board.metadata.id, first.id)
     expect(fixture.boards.getBoardMetadata(board.metadata.id).thumbnailAssetId).toBe(first.id)
+
+    const afterFirst = fixture.boards.getBoardMetadata(board.metadata.id)
+    expect(afterFirst.updatedAt).toBe(createdAt)
+    expect(fixture.db.prepare(`
+      SELECT created_at
+      FROM asset_references
+      WHERE owner_id = ? AND purpose = 'thumbnail'
+    `).get(board.metadata.id)).toEqual({ created_at: fixture.now.value })
+
+    fixture.now.value += 100
     await fixture.boards.setThumbnailAsset(board.metadata.id, second.id)
-    expect(fixture.boards.getBoardMetadata(board.metadata.id).thumbnailAssetId).toBe(second.id)
+    expect(fixture.boards.getBoardMetadata(board.metadata.id)).toMatchObject({
+      thumbnailAssetId: second.id,
+      updatedAt: createdAt,
+    })
     expect(fixture.assets.getAssetMetadata(first.id)).toBeNull()
     expect(fixture.assets.getAssetMetadata(second.id)).not.toBeNull()
   })
@@ -428,6 +477,7 @@ describe('Atomic Asset cleanup claim concurrency', () => {
   })
 
   afterEach(async () => {
+    __setDurableArtifactTestHooksForTesting(null)
     dbA.close()
     dbB.close()
     await fs.rm(root, { recursive: true, force: true })
@@ -464,6 +514,46 @@ describe('Atomic Asset cleanup claim concurrency', () => {
     `).run(cleanupWinsId, Date.now())).toThrow()
     expect(assetsA.getAssetMetadata(cleanupWinsId)).toBeNull()
     expect(dbB.prepare('SELECT COUNT(*) AS count FROM asset_references WHERE asset_id = ?').get(cleanupWinsId)).toEqual({ count: 0 })
+  })
+
+  it('does not recreate metadata during the cleanup physical-delete window', async () => {
+    const id = randomUUID()
+    const data = Buffer.from('cleanup-window')
+    await assetsA.persistAsset({ assetId: id, mimeType: 'image/png', data })
+
+    let signalPhysicalDelete = () => {}
+    let releasePhysicalDelete = () => {}
+    const physicalDeleteEntered = new Promise<void>((resolve) => {
+      signalPhysicalDelete = resolve
+    })
+    const allowPhysicalDelete = new Promise<void>((resolve) => {
+      releasePhysicalDelete = resolve
+    })
+    __setDurableArtifactTestHooksForTesting({
+      beforeDurableArtifactUnlink: async () => {
+        signalPhysicalDelete()
+        await allowPhysicalDelete
+      },
+    })
+
+    const cleanupPromise = assetsA.tryClaimUnreferencedAssetForDeletion(id)
+    await physicalDeleteEntered
+    try {
+      expect(assetsA.getAssetMetadata(id)).toBeNull()
+      expect(await fs.readFile(storage.pathForAssetId(id))).toEqual(data)
+      await expect(assetsB.persistAsset({ assetId: id, mimeType: 'image/png', data }))
+        .rejects.toMatchObject({ code: 'ASSET_BINARY_CONFLICT', status: 409 })
+      expect(assetsB.getAssetMetadata(id)).toBeNull()
+    } finally {
+      releasePhysicalDelete()
+    }
+
+    await expect(cleanupPromise).resolves.toMatchObject({
+      claimed: true,
+      physicalDeleted: true,
+    })
+    expect(assetsA.getAssetMetadata(id)).toBeNull()
+    await expect(fs.stat(storage.pathForAssetId(id))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })
 

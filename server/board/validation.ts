@@ -1,6 +1,7 @@
 import {
   BOARD_ENGINE_EXCALIDRAW,
   CURRENT_BOARD_SCENE_VERSION,
+  DEFAULT_BOARD_TITLE,
   type BoardPersistentAppState,
   type BoardScene,
 } from '../../shared/boardProtocol.js'
@@ -27,8 +28,7 @@ export function assertBoardId(value: unknown): string {
 export function normalizeBoardTitle(value: unknown): string {
   if (typeof value !== 'string') validationError('Board title must be a string')
   const title = value.trim()
-  if (title.length === 0) validationError('Board title must not be empty')
-  return title
+  return title.length === 0 ? DEFAULT_BOARD_TITLE : title
 }
 
 export function assertExpectedRevision(value: unknown): number {

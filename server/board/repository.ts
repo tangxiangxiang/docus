@@ -51,7 +51,7 @@ export interface BoardRepository {
   renameBoard(boardId: string, title: string, updatedAt: number): BoardMetadata
   deleteBoard(boardId: string): string[] | null
   saveBoardScene(input: SaveBoardSceneInput, updatedAt: number): SaveBoardSceneResult
-  replaceThumbnailReference(boardId: string, assetId: string | null, updatedAt: number): string[]
+  replaceThumbnailReference(boardId: string, assetId: string | null, referenceCreatedAt: number): string[]
 }
 
 const THUMBNAIL_PROJECTION = `
@@ -272,7 +272,7 @@ export class SqliteBoardRepository implements BoardRepository {
     }
   }
 
-  replaceThumbnailReference(boardId: string, assetId: string | null, updatedAt: number): string[] {
+  replaceThumbnailReference(boardId: string, assetId: string | null, referenceCreatedAt: number): string[] {
     const id = assertBoardId(boardId)
     try {
       return this.db.transaction(() => {
@@ -286,10 +286,8 @@ export class SqliteBoardRepository implements BoardRepository {
         const oldAssetIds = this.assets.listReferenceIds(owner)
         this.assets.deleteReferences(owner)
         if (assetId) {
-          this.assets.replaceReferences(owner, [assetId], updatedAt)
+          this.assets.replaceReferences(owner, [assetId], referenceCreatedAt)
         }
-        const updated = this.db.prepare('UPDATE boards SET updated_at = ? WHERE id = ?').run(updatedAt, id)
-        if (updated.changes !== 1) throw new BoardError('BOARD_STORAGE_ERROR', 500, 'Board metadata update failed')
         return oldAssetIds.filter((oldAssetId) => oldAssetId !== assetId)
       }).immediate()
     } catch (error) {

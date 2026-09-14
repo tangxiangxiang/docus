@@ -86,19 +86,14 @@ export class AssetService {
       const raced = this.repository.findAsset(assetId)
       if (raced) return this.verifyIdempotentAsset(raced, byteSize, sha256)
 
-      // A previous metadata failure may have left an orphan binary.  Adopt it
-      // only when its bytes are exactly the requested content; never replace
-      // or delete an incumbent we did not create.
-      let incumbent: Buffer
-      try {
-        incumbent = await this.storage.readAssetBinary(assetId)
-      } catch (readError) {
-        throw new AssetError('ASSET_BINARY_CONFLICT', 409, 'Asset ID is occupied by an unreadable binary', { cause: readError })
-      }
-      const incumbentHash = createHash('sha256').update(incumbent).digest('hex')
-      if (incumbent.byteLength !== byteSize || incumbentHash !== sha256) {
-        throw new AssetError('ASSET_ID_CONFLICT', 409, 'Asset ID is already used for different content')
-      }
+      // EEXIST means this call never owned the incumbent directory entry.
+      // Without committed metadata there is no safe way to distinguish an
+      // orphan from a cleanup or concurrent-commit window, so fail closed.
+      throw new AssetError(
+        'ASSET_BINARY_CONFLICT',
+        409,
+        'Asset binary exists without committed metadata',
+      )
     }
 
     try {
