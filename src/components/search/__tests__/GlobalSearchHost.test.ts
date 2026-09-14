@@ -4,10 +4,12 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import GlobalSearchHost from '../GlobalSearchHost.vue'
 import { boardMetadataSource } from '../../../features/board/metadataSource'
+import { documentSearchSource } from '../../../lib/documentSearchSource'
 import type { BoardMetadata } from '../../../../shared/boardProtocol'
 
-const api = vi.hoisted(() => ({ listBoards: vi.fn() }))
+const api = vi.hoisted(() => ({ listBoards: vi.fn(), listPosts: vi.fn() }))
 vi.mock('../../../features/board/api', () => api)
+vi.mock('../../../lib/api', () => ({ listPosts: api.listPosts }))
 
 function board(id: string, title: string): BoardMetadata {
   return { id, title, thumbnailAssetId: null, createdAt: 1, updatedAt: 1 }
@@ -17,10 +19,12 @@ describe('App-level GlobalSearchHost', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     boardMetadataSource.invalidate()
+    documentSearchSource.invalidate()
   })
 
   afterEach(() => {
     boardMetadataSource.invalidate()
+    documentSearchSource.invalidate()
     document.body.innerHTML = ''
   })
 
@@ -55,6 +59,36 @@ describe('App-level GlobalSearchHost', () => {
 
     expect(router.currentRoute.value.name).toBe('board-editor')
     expect(router.currentRoute.value.params.boardId).toBe('atlas')
+    wrapper.unmount()
+  })
+
+  it.each(['/board', '/ledger'])('loads Document results on a fresh %s route', async (path) => {
+    api.listBoards.mockResolvedValue([])
+    api.listPosts.mockResolvedValue([{
+      path: 'inbox/atlas', title: 'Project Atlas', created: '', updated: '', tags: [], size: 0, mtime: 1,
+    }])
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{
+        path: '/:workspace',
+        name: 'workspace',
+        component: { template: '<div />' },
+        meta: { workspace: true, chromeStyle: 'workspace' },
+      }],
+    })
+    await router.push(path)
+    await router.isReady()
+    const wrapper = mount(GlobalSearchHost, { global: { plugins: [router] } })
+
+    ;(wrapper.vm as unknown as { show: () => void }).show()
+    await flushPromises()
+    const input = document.body.querySelector<HTMLInputElement>('.palette-input input')!
+    input.value = 'atlas'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await flushPromises()
+
+    expect(document.body.querySelector('[role="option"]')?.textContent).toContain('Project Atlas')
+    expect(api.listPosts).toHaveBeenCalledOnce()
     wrapper.unmount()
   })
 })

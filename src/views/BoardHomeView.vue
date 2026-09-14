@@ -43,6 +43,10 @@ function messageFor(error: unknown, fallback: string): string {
   return error instanceof BoardApiError && error.message.trim() ? error.message : fallback
 }
 
+function invalidateIfUncertain(error: unknown): void {
+  if (error instanceof BoardApiError && error.uncertain) boardMetadataSource.invalidate()
+}
+
 async function loadBoards(): Promise<void> {
   if (loading.value) return
   loading.value = true
@@ -73,6 +77,7 @@ async function newBoard(): Promise<void> {
     toast.success(t('board.created'))
     await router.push({ name: 'board-editor', params: { boardId: aggregate.metadata.id } })
   } catch (error) {
+    invalidateIfUncertain(error)
     toast.error(messageFor(error, t('board.create_failed')))
   } finally {
     setMutationBusy('__create__', false)
@@ -94,6 +99,7 @@ async function submitRename(): Promise<void> {
     renameOpen.value = false
     toast.success(t('board.renamed'))
   } catch (error) {
+    invalidateIfUncertain(error)
     toast.error(messageFor(error, t('board.rename_failed')))
   } finally {
     renameBusy.value = false
@@ -129,6 +135,7 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
     boardMetadataSource.remove(board.id)
     toast.success(t('board.deleted'))
   } catch (error) {
+    invalidateIfUncertain(error)
     toast.error(messageFor(error, t('board.delete_failed')))
   } finally {
     setMutationBusy(board.id, false)
@@ -240,7 +247,7 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
       />
       <template #action>
         <NButton attr-type="button" :disabled="renameBusy" @click="closeRename">{{ t('common.cancel') }}</NButton>
-        <NButton attr-type="button" type="primary" :loading="renameBusy" @click="submitRename">{{ t('common.save') }}</NButton>
+        <NButton data-testid="board-rename-submit" attr-type="button" type="primary" :loading="renameBusy" @click="submitRename">{{ t('common.save') }}</NButton>
       </template>
     </NModal>
   </div>

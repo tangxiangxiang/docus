@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDocumentSearchProvider, createLatestSearchRunner, invalidateDocumentSearchState, searchEverywhere, type SearchProvider, type SearchResultSection } from '../searchResults'
 import { dispose } from '../search'
 import type { PostSummary } from '../api'
+import { createDocumentSearchSource } from '../documentSearchSource'
 
 const makePost = (path: string, title: string, summary = ''): PostSummary => ({ path, title, created: '', updated: '', tags: [], summary, size: 0, mtime: 1 })
 
@@ -32,6 +33,15 @@ describe('Search Everywhere document provider', () => {
     posts = [makePost('inbox/new', 'New')]
     expect((await provider('New')).results[0].title).toBe('New')
     expect((await provider('Old')).results).toHaveLength(0)
+  })
+
+  it('loads document metadata without a VaultView consumer', async () => {
+    const source = createDocumentSearchSource(async () => [makePost('inbox/atlas', 'Project Atlas')])
+    const provider = createDocumentSearchProvider(source)
+
+    const result = await provider('atlas')
+
+    expect(result.results[0]).toMatchObject({ title: 'Project Atlas', payload: { path: 'inbox/atlas' } })
   })
 
   it('refetches and replaces cached body content when mtime changes', async () => {

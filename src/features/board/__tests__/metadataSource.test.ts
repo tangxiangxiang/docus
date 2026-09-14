@@ -55,4 +55,18 @@ describe('Board metadata source', () => {
     expect(fetchBoards).toHaveBeenCalledTimes(2)
     expect(source.getSnapshot()).toEqual([board('current', 'Current', 20)])
   })
+
+  it('reloads after an invalidation so search and Gallery can reconcile', async () => {
+    const fetchBoards = vi.fn()
+      .mockResolvedValueOnce([board('old', 'Old', 10)])
+      .mockResolvedValueOnce([board('current', 'Current', 20)])
+    const source = createBoardMetadataSource(fetchBoards)
+
+    await source.ensureLoaded()
+    source.invalidate()
+    await source.ensureLoaded()
+
+    expect(fetchBoards).toHaveBeenCalledTimes(2)
+    expect(source.getSnapshot()).toEqual([board('current', 'Current', 20)])
+  })
 })

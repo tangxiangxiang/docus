@@ -3,12 +3,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import BoardHomeView from '../BoardHomeView.vue'
+import BoardGallery from '../../components/board/BoardGallery.vue'
 import { boardMetadataSource } from '../../features/board/metadataSource'
 import type { BoardMetadata } from '../../../shared/boardProtocol'
 import { useI18n } from '../../composables/useI18n'
 
 const api = vi.hoisted(() => ({
-  BoardApiError: class BoardApiError extends Error {},
+  BoardApiError: class BoardApiError extends Error {
+    uncertain: boolean
+    constructor(message: string, uncertain = true) {
+      super(message)
+      this.uncertain = uncertain
+    }
+  },
   listBoards: vi.fn(),
   createBoard: vi.fn(),
   renameBoard: vi.fn(),
@@ -17,6 +24,9 @@ const api = vi.hoisted(() => ({
 }))
 
 vi.mock('../../features/board/api', () => api)
+vi.mock('../../composables/useConfirm', () => ({
+  useConfirm: () => ({ confirm: vi.fn(async () => true) }),
+}))
 
 function board(id: string, title: string, updatedAt = 1): BoardMetadata {
   return { id, title, thumbnailAssetId: null, createdAt: updatedAt - 1, updatedAt }
@@ -98,6 +108,57 @@ describe('Board Gallery Home', () => {
 
     expect(router.currentRoute.value.name).toBe('board-editor')
     expect(router.currentRoute.value.params.boardId).toBe('atlas')
+    wrapper.unmount()
+  })
+
+  it('invalidates metadata after an uncertain create transport failure', async () => {
+    api.listBoards.mockResolvedValue([board('existing', 'Existing')])
+    api.createBoard.mockRejectedValue(new api.BoardApiError('network failed', true))
+    const { wrapper } = await mountHome()
+
+    await wrapper.get('.board-new-button').trigger('click')
+    await flushPromises()
+
+    expect(boardMetadataSource.getSnapshot()).toEqual([])
+    wrapper.unmount()
+  })
+
+  it('invalidates metadata after uncertain rename and delete failures', async () => {
+    api.listBoards.mockResolvedValue([board('existing', 'Existing')])
+    api.renameBoard.mockRejectedValue(new api.BoardApiError('network failed', true))
+    api.deleteBoard.mockRejectedValue(new api.BoardApiError('network failed', true))
+    const { wrapper } = await mountHome()
+
+    wrapper.findComponent(BoardGallery).vm.$emit('rename', board('existing', 'Existing'))
+    await flushPromises()
+    const renameSubmit = document.body.querySelector('[data-testid="board-rename-submit"]') as HTMLElement | null
+    expect(renameSubmit).not.toBeNull()
+    renameSubmit?.click()
+    await flushPromises()
+    expect(boardMetadataSource.getSnapshot()).toEqual([])
+
+    boardMetadataSource.upsert(board('existing', 'Existing'))
+    await flushPromises()
+    wrapper.findComponent(BoardGallery).vm.$emit('delete', board('existing', 'Existing'))
+    await flushPromises()
+    expect(api.deleteBoard).toHaveBeenCalledOnce()
+    expect(boardMetadataSource.getSnapshot()).toEqual([])
+    wrapper.unmount()
+  })
+
+  it('keeps metadata loaded after a definite Board API failure', async () => {
+    api.listBoards.mockResolvedValue([board('existing', 'Existing')])
+    api.renameBoard.mockRejectedValue(new api.BoardApiError('invalid title', false))
+    const { wrapper } = await mountHome()
+
+    wrapper.findComponent(BoardGallery).vm.$emit('rename', board('existing', 'Existing'))
+    await flushPromises()
+    const renameSubmit = document.body.querySelector('[data-testid="board-rename-submit"]') as HTMLElement | null
+    expect(renameSubmit).not.toBeNull()
+    renameSubmit?.click()
+    await flushPromises()
+
+    expect(boardMetadataSource.getSnapshot()).toHaveLength(1)
     wrapper.unmount()
   })
 })

@@ -3,14 +3,14 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import CommandPalette from '../vault/CommandPalette.vue'
 import { createDocumentSearchProvider, type SearchResult } from '../../lib/searchResults'
-import { getDocumentSearchPosts } from '../../lib/documentSearchSource'
+import { documentSearchSource } from '../../lib/documentSearchSource'
 import { boardMetadataSource } from '../../features/board/boardMetadataSource'
 import { createBoardSearchProvider, type BoardSearchPayload } from '../../features/board/searchProvider'
 
 const router = useRouter()
 const route = useRoute()
 const paletteRef = ref<InstanceType<typeof CommandPalette> | null>(null)
-const documentProvider = createDocumentSearchProvider(getDocumentSearchPosts)
+const documentProvider = createDocumentSearchProvider(documentSearchSource)
 const boardProvider = createBoardSearchProvider(boardMetadataSource)
 const providers = [documentProvider, boardProvider]
 const canOpen = computed(() => route.meta.workspace === true && route.meta.chromeStyle !== 'immersive')
@@ -52,7 +52,7 @@ function onKeydown(event: KeyboardEvent): void {
   }
 }
 
-watch(boardMetadataSource.snapshot, () => {
+watch([boardMetadataSource.snapshot, documentSearchSource.snapshot], () => {
   if (paletteRef.value) void paletteRef.value.refresh()
 }, { deep: false })
 

@@ -1,4 +1,5 @@
 import type { PostSummary } from './api'
+import type { DocumentSearchSource } from './documentSearchSource'
 import { buildIndex, captureSearchEpoch, invalidateSearchState, primeBody, rebuildIndex, search } from './search'
 import { isManagedDiaryPath } from '../../shared/diaryProtocol'
 
@@ -8,18 +9,28 @@ export interface SearchResultSection { id: string; label: string; results: Searc
 export type SearchProvider = (query: string) => SearchResultSection | Promise<SearchResultSection>
 export interface DocumentSearchPayload { path: string; match: 'title' | 'path' | 'tag' | 'summary' | 'body'; snippet?: string }
 
-function postsSignature(posts: PostSummary[]): string {
+function postsSignature(posts: readonly PostSummary[]): string {
   return posts.map((post) => `${post.path}\0${isManagedDiaryPath(post.path) ? '' : post.title}\0${post.mtime}\0${isManagedDiaryPath(post.path) ? '' : (post.summary ?? '')}\0${isManagedDiaryPath(post.path) ? '' : post.tags.join(',')}`).join('\u0001')
 }
 
-export function createDocumentSearchProvider(getPosts: () => PostSummary[]): SearchProvider {
+type DocumentPostsInput =
+  | (() => readonly PostSummary[] | Promise<readonly PostSummary[]>)
+  | Pick<DocumentSearchSource, 'ensureLoaded' | 'getSnapshot'>
+
+async function resolvePosts(input: DocumentPostsInput): Promise<PostSummary[]> {
+  if (typeof input === 'function') return [...await input()]
+  await input.ensureLoaded()
+  return [...input.getSnapshot()]
+}
+
+export function createDocumentSearchProvider(input: DocumentPostsInput): SearchProvider {
   let indexed = false
   let signature = ''
   let priming: Promise<void> | null = null
 
   return async (query) => {
     const requestEpoch = captureSearchEpoch()
-    const posts = getPosts()
+    const posts = await resolvePosts(input)
     const nextSignature = postsSignature(posts)
     if (!indexed) {
       buildIndex(posts)

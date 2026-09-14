@@ -21,7 +21,7 @@ import { AppShellContextKey } from './composables/appShellContext'
 import DiaryAccessDialog from './components/diary/DiaryAccessDialog.vue'
 import type { ScopeKey } from '../shared/scopeProtocol'
 import { boardMetadataSource } from './features/board/boardMetadataSource'
-import { clearDocumentSearchPosts } from './lib/documentSearchSource'
+import { documentSearchSource } from './lib/documentSearchSource'
 import { workspaceKindForPath, type ChromeStyle, type WorkspaceKind } from './lib/workspace'
 
 const route = useRoute()
@@ -230,7 +230,7 @@ watch(() => diaryAccess.state.value, (next) => {
 watch(() => auth.state.value, (next) => {
   if (next === 'authenticated') return
   boardMetadataSource.invalidate()
-  clearDocumentSearchPosts()
+  documentSearchSource.invalidate()
   if (pendingAccess) finishAccess(false)
   else accessIntentGeneration += 1
 })

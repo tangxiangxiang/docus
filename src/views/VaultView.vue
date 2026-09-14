@@ -53,7 +53,7 @@ import {
   type AiLiveContextCapture,
 } from '../composables/vault/aiLiveContext'
 import { invalidateDocumentSearchState } from '../lib/searchResults'
-import { clearDocumentSearchPosts, setDocumentSearchPosts } from '../lib/documentSearchSource'
+import { documentSearchSource } from '../lib/documentSearchSource'
 import { createVaultContext } from '../composables/vault/context/createVaultContext'
 import { provideVaultContext } from '../composables/vault/context/useVaultContext'
 import { createVaultFileChanges } from '../composables/vault/context/fileChanges'
@@ -369,8 +369,8 @@ const {
 })
 
 watch(searchablePosts, (next) => {
-  setDocumentSearchPosts(next)
-}, { immediate: true })
+  documentSearchSource.replace(next)
+})
 
 watch(() => diaryAccess.state.value, (next) => {
   if (next === 'UNLOCKED') {
@@ -2455,7 +2455,7 @@ const stopDiaryTeardown = subscribeDiaryTeardown(() => {
   workingTreeDiffs.clearSensitiveState()
   clearLinkIndex(fileChanges)
   invalidateDocumentSearchState()
-  clearDocumentSearchPosts()
+  documentSearchSource.invalidate()
   disposeManagedDiaryModels()
   vaultContext.toc.tocHeadings.value = []
   vaultContext.toc.tocActiveId.value = ''
@@ -2475,7 +2475,6 @@ onBeforeUnmount(() => {
   // search host while moving between Vault, Ledger, and Board. Auth logout
   // clears the source centrally; a still-authenticated route change does not
   // create a new session boundary.
-  if (auth.state.value !== 'authenticated') clearDocumentSearchPosts()
   if (appShell) appShell.diaryCalendarVisible.value = false
 })
 

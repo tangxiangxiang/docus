@@ -10,16 +10,18 @@ export interface BoardAggregate {
 export class BoardApiError extends Error {
   readonly status: number
   readonly code: string
+  readonly uncertain: boolean
 
-  constructor(message: string, status = 500, code = 'BOARD_API_ERROR') {
+  constructor(message: string, status = 500, code = 'BOARD_API_ERROR', uncertain = true) {
     super(message)
     this.name = 'BoardApiError'
     this.status = status
     this.code = code
+    this.uncertain = uncertain
   }
 }
 
-function asBoardApiError(error: unknown): BoardApiError {
+function asBoardApiError(error: unknown, uncertain = true): BoardApiError {
   if (error instanceof BoardApiError) return error
   const source = error as { message?: unknown; status?: unknown; code?: unknown } | null
   return new BoardApiError(
@@ -28,14 +30,24 @@ function asBoardApiError(error: unknown): BoardApiError {
       : 'Board request failed.',
     typeof source?.status === 'number' && Number.isFinite(source.status) ? source.status : 500,
     typeof source?.code === 'string' && source.code.trim() ? source.code : 'BOARD_API_ERROR',
+    uncertain,
   )
 }
 
 async function readJson<T>(response: Response): Promise<T> {
+  let definiteError = false
+  if (!response.ok) {
+    try {
+      await response.clone().json()
+      definiteError = true
+    } catch {
+      // An unreadable error response leaves the mutation outcome unknown.
+    }
+  }
   try {
     return await jsonOrThrow<T>(response)
   } catch (error) {
-    throw asBoardApiError(error)
+    throw asBoardApiError(error, !response.ok ? !definiteError : true)
   }
 }
 
@@ -44,16 +56,24 @@ async function requestJson<T>(
   method: 'POST' | 'PATCH',
   body: Record<string, unknown>,
 ): Promise<T> {
-  const response = await authFetch(path, {
-    method,
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  return readJson<T>(response)
+  try {
+    const response = await authFetch(path, {
+      method,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    return await readJson<T>(response)
+  } catch (error) {
+    throw asBoardApiError(error)
+  }
 }
 
 export async function listBoards(): Promise<BoardMetadata[]> {
-  return readJson<BoardMetadata[]>(await authFetch('/api/board'))
+  try {
+    return await readJson<BoardMetadata[]>(await authFetch('/api/board'))
+  } catch (error) {
+    throw asBoardApiError(error)
+  }
 }
 
 export async function createBoard(title?: string): Promise<BoardAggregate> {
@@ -69,9 +89,13 @@ export async function renameBoard(boardId: string, title: string): Promise<Board
 }
 
 export async function deleteBoard(boardId: string): Promise<void> {
-  const response = await authFetch(`/api/board/${encodeURIComponent(boardId)}`, { method: 'DELETE' })
-  if (response.ok) return
-  await readJson<never>(response)
+  try {
+    const response = await authFetch(`/api/board/${encodeURIComponent(boardId)}`, { method: 'DELETE' })
+    if (response.ok) return
+    await readJson<never>(response)
+  } catch (error) {
+    throw asBoardApiError(error)
+  }
 }
 
 export function boardAssetUrl(assetId: string): string {
