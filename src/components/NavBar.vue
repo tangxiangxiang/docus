@@ -128,6 +128,7 @@ function isVaultLedgerDocument(): boolean {
 }
 
 function isScopeActive(scope: ScopeKey): boolean {
+  if (isBoard.value) return false
   if (isLedger.value) return scope === 'ledger'
   if (scope === 'ledger' && isVaultLedgerDocument()) return true
   return activeScope.value === scope
@@ -177,10 +178,13 @@ function onScopeClick(scope: ScopeKey): void {
     return
   }
   if (scope === 'diary' && diaryAccess) {
-    void diaryAccess.requestScopeChange(scope)
+    void diaryAccess.requestScopeChange(scope).then(() => {
+      if (isBoard.value && activeScope.value === scope) void router.push({ name: 'vault' })
+    })
     return
   }
   selectScope(scope)
+  if (isBoard.value) void router.push({ name: 'vault' })
 }
 
 /* Right-rail toggle. This button owns only the rail's expanded/collapsed
