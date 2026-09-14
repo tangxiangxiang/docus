@@ -199,12 +199,7 @@ async function leaveAfterFlush(): Promise<boolean> {
   const coordinator = saveCoordinator.value
   if (!coordinator) return true
   const result = await coordinator.flush()
-  if (result.ok) {
-    coordinator.dispose()
-    saveCoordinator.value = null
-    saveState.value = null
-    return true
-  }
+  if (result.ok) return true
   const leave = await confirm(
     t('board.editor_leave_title'),
     t('board.editor_leave_detail'),
@@ -214,11 +209,6 @@ async function leaveAfterFlush(): Promise<boolean> {
       destructive: true,
     },
   )
-  if (leave) {
-    coordinator.dispose()
-    saveCoordinator.value = null
-    saveState.value = null
-  }
   return leave
 }
 

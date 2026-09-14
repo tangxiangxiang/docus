@@ -78,6 +78,7 @@ describe('Board Editor B4 lifecycle', () => {
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     boardMetadataSource.invalidate()
     useI18n().setLocale('zh')
   })
@@ -200,6 +201,46 @@ describe('Board Editor B4 lifecycle', () => {
     expect(api.saveBoardScene).toHaveBeenCalledWith('a', expect.objectContaining({ expectedRevision: 3 }))
     expect(router.currentRoute.value.params.boardId).toBe('b')
     expect(api.getBoard).toHaveBeenCalledWith('b')
+    wrapper.unmount()
+  })
+
+  it('keeps autosave alive when a later guard cancels after a successful flush', async () => {
+    api.getBoard.mockResolvedValueOnce(board('a'))
+    api.saveBoardScene
+      .mockResolvedValueOnce({ revision: 4, updatedAt: 20 })
+      .mockResolvedValueOnce({ revision: 5, updatedAt: 21 })
+    const { wrapper, router } = await mountEditor('a')
+    await flushPromises()
+    const host = wrapper.findComponent(ExcalidrawHost)
+    host.vm.$emit('ready')
+    host.vm.$emit('change', {
+      elements: [{ id: 'rectangle-1', type: 'rectangle', version: 1, x: 10, y: 10, width: 20, height: 20 }],
+      appState: {},
+      files: {},
+    })
+    await flushPromises()
+
+    const removeGuard = router.beforeResolve(() => {
+      removeGuard()
+      return false
+    })
+    await router.push('/board/b')
+    await flushPromises()
+
+    expect(router.currentRoute.value.params.boardId).toBe('a')
+    expect(api.saveBoardScene).toHaveBeenCalledTimes(1)
+
+    vi.useFakeTimers()
+    host.vm.$emit('change', {
+      elements: [{ id: 'rectangle-2', type: 'rectangle', version: 1, x: 30, y: 30, width: 20, height: 20 }],
+      appState: {},
+      files: {},
+    })
+    await vi.advanceTimersByTimeAsync(800)
+    await flushPromises()
+
+    expect(api.saveBoardScene).toHaveBeenCalledTimes(2)
+    expect(api.saveBoardScene).toHaveBeenLastCalledWith('a', expect.objectContaining({ expectedRevision: 4 }))
     wrapper.unmount()
   })
 
