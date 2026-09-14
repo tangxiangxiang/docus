@@ -218,7 +218,23 @@ React createRoot()
 
 React Island 只负责 Excalidraw 的渲染、API 调用和 Scene 事件桥接。Vue 负责 Board 生命周期、路由、Metadata、标题、保存状态、Board Service 以及 Docus Theme。
 
-Excalidraw 的高频 `onChange` 只能更新 Board Editor 局部的内存状态，不能经由全局 Store 驱动整个 Docus 响应式更新。Vue Host 必须负责 React Root 的创建、卸载和异常边界。
+Excalidraw 的高频 `onChange` 只能更新 Board Editor 局部的内存状态，不能经由全局 Store 驱动整个 Docus 响应式更新。Vue Host 负责 React Root 的创建、卸载、Vue ↔ React 事件桥接和 fallback container；React Error Boundary 位于 React Island 内部，不由 Vue 直接承担。
+
+React Island 内部结构为：
+
+```text
+BoardEditor.vue
+      ↓
+ExcalidrawHost
+      ↓
+React Root
+      ↓
+BoardReactErrorBoundary
+      ↓
+<Excalidraw />
+```
+
+`BoardReactErrorBoundary` 负责捕获 React / Excalidraw 的渲染异常，并通知 Vue Host；Vue Host 再使用 fallback container 展示 Docus 统一的 Board Error UI。
 
 ### 5.3 按需加载
 
@@ -294,14 +310,16 @@ V1 只需要 `ExcalidrawBoardEngineAdapter`。Adapter 的目标是隔离领域�
 
 ```text
 Board
-├── Metadata
-├── Engine
-├── Scene Version
-├── Engine Data
-└── Assets
+├── BoardMetadata
+└── BoardSceneRecord
+    ├── Engine
+    ├── Scene Schema Version
+    ├── Server Revision
+    ├── Engine Data
+    └── Asset References
 ```
 
-Board Domain、Board Service 和 Storage Contract 不应泄漏 Excalidraw 专有类型。持久化可以使用 Metadata Store、Scene Store 和 Asset Store，也可以在现有存储中采用其他物理组织方式，但逻辑边界必须保持。
+`engine`、`sceneVersion` 和服务端 `revision` 都只属于 `BoardSceneRecord`，不能复制到 `BoardMetadata` 或其他业务对象中形成第二个 Source of Truth。Board Domain、Board Service 和 Storage Contract 不应泄漏 Excalidraw 专有类型。持久化可以使用 Metadata Store、Scene Store 和 Asset Store，也可以在现有存储中采用其他物理组织方式，但逻辑边界必须保持。
 
 ## 7. Board 信息架构
 
@@ -556,27 +574,99 @@ Board 不提供手动 Save 按钮。所有 Scene 修改和 Board Title 修改都
 
 ### 15.1 Debounce
 
-Excalidraw `onChange` 先更新 Board Editor 局部的 `latestSceneRef` 并标记 dirty，再由 Debounce 触发持久化：
+Excalidraw `onChange` 先更新 Board Editor 局部的 `latestSceneRef`，递增本地 `localRevision` 并标记 dirty，再写入 Crash Checkpoint，最后由 Debounce 触发服务端持久化：
 
 ```text
 Excalidraw onChange
         ↓
 latestSceneRef
         ↓
-mark dirty
+localRevision++
+        ↓
+Crash Checkpoint
         ↓
 Debounce
         ↓
-Board Service
+Client Save Queue
         ↓
-Storage
+Server Scene Update
 ```
 
 禁止每次 Pointer Move 立即写数据库。Scene 保存 Debounce 建议为 `500ms ~ 1000ms`，具体值由实现阶段结合性能验证确定。
 
-### 15.2 Save Queue / Revision
+`localRevision` 只表示当前 Editor Session 的本地 Scene 变更序号，不等同于服务端 `revision`。
 
-保存请求必须保证旧 Scene 不能覆盖新 Scene。实现可以使用串行 Save Queue，或使用单调递增 revision、expected version 等并发控制；无论采用哪种方式，都必须覆盖以下情况：
+### 15.2 Save Queue / Server Revision
+
+Client Save Queue 与 Server Revision 并不是二选一：
+
+```text
+Client Save Queue
+→ 保证当前 Board Editor Session 内部保存有序
+
+Server revision / expectedRevision
+→ 防止跨请求、跨 Tab、跨窗口和跨 Session 的 stale write
+```
+
+每个 Scene 保存请求至少携带：
+
+```text
+scene snapshot
+localRevision
+expectedRevision = currentServerRevision
+```
+
+其中 `currentServerRevision` 是当前 Editor 已读取或由服务端成功响应确认的最新服务端 `revision`。`revision` 表示当前 Board Scene 的服务端持久化版本号，初始值可由实现选择 `0` 或 `1`，但必须单调递增；每次成功提交新的 Scene 后递增一次。
+
+Server Scene Update 必须校验 `expectedRevision`。例如：
+
+```text
+Server current revision = 12
+
+expectedRevision = 12
+→ 接受更新
+→ 保存新 Scene
+→ 返回 revision = 13
+
+expectedRevision = 12，但 Server current revision = 13
+→ 拒绝旧更新
+→ 返回 Conflict（可使用 409 或项目统一冲突协议）
+```
+
+完整的正常保存流程为：
+
+```text
+Excalidraw onChange
+        ↓
+latestSceneRef
+        ↓
+localRevision++
+        ↓
+Crash Checkpoint
+        ↓
+Debounce
+        ↓
+Client Save Queue
+        ↓
+Persist newly referenced Assets
+        ↓
+PUT Scene
+expectedRevision = currentServerRevision
+        ↓
+Server validates expectedRevision
+        ↓
+Success
+        ↓
+Server revision++
+        ↓
+update currentServerRevision
+        ↓
+clear / advance Checkpoint
+        ↓
+Saved
+```
+
+Client Save Queue 仍必须保证当前 Editor Session 内部不会因请求完成顺序而覆盖新 Scene：
 
 ```text
 Save A 发出
@@ -584,7 +674,7 @@ Save B 发出
 B 先完成，A 后完成
 ```
 
-A 完成后不得把旧快照写回并覆盖 B。保存期间产生的新修改必须继续保留为待保存的最新 revision，`flush()` 必须等待该 revision 完成。
+A 完成后不得把旧快照写回并覆盖 B。保存期间产生的新修改必须继续保留为待保存的最新 `localRevision`，`flush()` 必须等待队列处理到最新 `localRevision`，并获得成功、失败或 Conflict 的明确结果。任何 Conflict 都不得静默覆盖 Server Scene 或丢弃本地 Scene；V1 不要求自动合并或实时冲突解决，但必须保留本地 Scene 和 Checkpoint。
 
 ### 15.3 Save Status
 
@@ -596,26 +686,86 @@ Server success     → Saved
 Server failure     → Save failed
 ```
 
-Debounce timer 执行本身不能触发 `Saved`。保存失败时，当前 Scene 必须保留在内存和本地 Checkpoint 中，并允许后续变化或重试再次保存。
+Debounce timer 执行本身不能触发 `Saved`。Asset Persist 失败、Revision Conflict 或 Scene Save 失败都必须显示 `Save failed`，保留当前 Scene 和本地 Checkpoint，并允许后续变化或重试再次保存。Thumbnail 生成失败不影响已成功的 Scene Save，也不应把已保存的 Scene 降级为失败。
+
+失败流程为：
+
+```text
+Asset Failure
+or Revision Conflict
+or Scene Save Failure
+        ↓
+Save failed
+        ↓
+Keep local Scene
+Keep Crash Checkpoint
+Do not report Saved
+```
 
 ### 15.4 Crash Checkpoint
 
 除 Server Autosave 外，Board 需要维护本地 Crash Checkpoint，以覆盖 Browser Refresh、Tab Close、Process Kill 等异步保存来不及完成的场景。
 
-Checkpoint 至少包含：
+Checkpoint 至少包含以下逻辑字段：
 
 ```text
 key: docus:board:checkpoint:{boardId}
 boardId
 sceneVersion
-revision
+baseRevision
+localRevision
 BoardScene
 savedAt
 ```
 
-Checkpoint 应在最新本地 Scene 更新后及时写入，不得等待 Server Save 成功；实现可使用项目合适的本地持久化方式。Server 对同一 revision 保存成功后清理该 Checkpoint；保存失败、保存中或 Board 被正常关闭但未确认成功时保留它。删除 Board 时必须清理对应 Checkpoint。
+推荐概念模型为：
 
-重新打开 Board 时，应将 Checkpoint 与 Server Scene 的 revision / 时间进行 reconciliation：Checkpoint 更新时展示恢复提示并允许恢复，Server 更新或两者一致时清理过期 Checkpoint。Checkpoint 损坏时只能进入错误恢复流程，不能用空 Scene 覆盖 Server 数据。Checkpoint 复用 Draft / Recovery 的思想即可，不强行复用整个 Note 领域实现。
+```ts
+interface BoardCheckpoint {
+  boardId: string
+  sceneVersion: number
+  baseRevision: number
+  localRevision: number
+  scene: BoardScene
+  savedAt: number
+}
+```
+
+其中：
+
+```text
+sceneVersion
+→ Checkpoint 中 Scene 快照所使用的 Schema Version；Source of Truth 仍是 BoardSceneRecord.sceneVersion
+
+baseRevision
+→ 该本地快照基于哪个 Server Scene revision 产生
+
+localRevision
+→ 当前本地 Scene 变更序号；不承担 Server Revision 含义
+```
+
+Checkpoint 应在最新本地 Scene 更新后及时写入，不得等待 Server Save 成功。Server 成功接受对应 `localRevision` 的 Scene 后，客户端应更新 `currentServerRevision`，并清理已确认的 Checkpoint；若期间已有更新的本地 revision，则只能推进或重写 Checkpoint，不能清理更新中的本地修改。保存失败、保存中、Conflict 或 Board 被正常关闭但未确认成功时保留 Checkpoint。删除 Board 时必须清理对应 Checkpoint。
+
+重新打开 Board 时，必须按 Server `revision` 对 Checkpoint 做 reconciliation：
+
+```text
+Load Server SceneRecord
+        ↓
+读取 server revision = N
+        ↓
+Load Local Checkpoint
+        ↓
+比较 baseRevision / localRevision
+```
+
+恢复判断至少遵循以下规则：
+
+* Checkpoint 不存在：直接打开 Server Scene。
+* Checkpoint 的 `baseRevision` 等于当前 Server `revision`，且存在未确认提交的本地修改：提示用户恢复。
+* Server `revision` 已领先于 Checkpoint 的 `baseRevision`：不得自动用旧 Checkpoint 覆盖 Server Scene，进入 Recovery / Conflict flow。
+* Checkpoint 损坏或无法校验：保留 Server Scene，忽略自动写回，进入恢复错误提示；不得用空 Scene 覆盖 Server 数据。
+
+Checkpoint recovery 不得绕过 Server `expectedRevision` 校验。Checkpoint 复用 Draft / Recovery 的思想即可，不强行复用整个 Note 领域实现。
 
 ## 16. 编辑器状态边界
 
@@ -634,7 +784,7 @@ updatedAt
 
 ## 17. 离开页面时保存
 
-如果用户在 Debounce 尚未触发或保存队列仍有待处理 revision 时离开 Board：
+如果用户在 Debounce 尚未触发或保存队列仍有待处理 `localRevision` 时离开 Board：
 
 ```text
 Board
@@ -644,7 +794,7 @@ Navigation
 await flush()
 ```
 
-对于 Docus 内部 Route Leave、Back 和 Close Board，必须主动等待 `flush()`，尽量确保最后一次 Scene Change 被持久化。`flush()` 以保存队列中最新 revision 完成为准。
+对于 Docus 内部 Route Leave、Back 和 Close Board，必须主动等待 `flush()`，尽量确保最后一次 Scene Change 被持久化。`flush()` 以保存队列中最新 `localRevision` 获得成功、失败或 Conflict 的明确结果为准，并在失败或 Conflict 时保留 Checkpoint。
 
 `beforeunload` 只能作为 Browser Refresh、Tab Close 等场景下的 Best Effort，不能作为数据安全机制；突发关闭由第 15.4 节的本地 Crash Checkpoint 提供额外恢复能力。
 
@@ -700,24 +850,36 @@ loading → hydrating → ready
 正确顺序为：
 
 ```text
-Load Board Metadata and Scene
+Load Board Metadata
+        ↓
+Load Server BoardSceneRecord
+        ↓
+读取 engine、sceneVersion、revision
         ↓
 Load referenced Assets
         ↓
-Migrate and validate Scene
+Migrate Scene
         ↓
-Mount Excalidraw
+Validate Scene
         ↓
-Hydration completed
+Load local Crash Checkpoint
+        ↓
+Reconcile Checkpoint against Server revision
+        ↓
+Hydrate Board Editor state
+        ↓
+Mount React Island / Excalidraw
+        ↓
+ready
         ↓
 Enable Autosave
 ```
 
-在 `ready` 之前禁止业务 Autosave；不得先 Mount 一个可编辑 Empty Scene，再异步替换为已保存内容。
+在 `ready` 之前禁止业务 Autosave；不得先 Mount 一个可编辑 Empty Scene，再异步替换为已保存内容。Checkpoint recovery 必须继续通过 Server `expectedRevision` 并发保护，不能绕过服务端版本校验。
 
 ### 18.4 Fail Closed
 
-Parse、Migration、校验或必要 Asset 组装失败时，必须停止加载并展示错误恢复 UI：
+Parse、Migration、校验、必要 Asset 组装或 Checkpoint reconciliation 失败时，必须停止加载并展示错误恢复 UI：
 
 ```text
 Load / Validate Scene
@@ -727,7 +889,7 @@ Failed
 STOP + Error UI
 ```
 
-失败状态下不 Mount 可编辑的空 Scene、不启用 Autosave，也不允许将空数据写回原 Board。原始 Server Scene 和本地 Checkpoint 必须保留。
+失败状态下不 Mount 可编辑的空 Scene、不启用 Autosave，也不允许将空数据写回原 Board。Referenced Asset 缺失属于数据完整性错误，必须遵循同样的 Fail Closed 规则。原始 Server Scene 和本地 Checkpoint 必须保留。
 
 ## 19. Files / Assets
 
@@ -749,7 +911,33 @@ Board
 
 Scene 只保存 `fileId` 对应的 `assetRefs`。Board 不重新建立一套完全独立于 Docus 的附件体系。
 
-### 19.2 Runtime BinaryFiles
+### 19.2 Asset / Scene 写入顺序
+
+插入新图片或其他二进制资源时，必须先完成 Asset 持久化，再允许 Scene 提交对该资源的引用：
+
+```text
+New Asset
+    ↓
+Persist Asset
+    ↓
+Asset becomes readable / committed
+    ↓
+Scene may commit assetRef
+```
+
+`Scene revision` 不得成功提交对尚未持久化成功 Asset 的引用。如果 Asset Persist 失败，不得提交包含该 `assetRef` 的 Scene revision；UI 必须显示资源保存失败，保留本地 Scene / Checkpoint 并允许重试，不能显示 `Saved`。
+
+V1 不要求 Asset 与 Scene 一定使用数据库级跨表事务。允许采用 `Asset first → Scene second` 的顺序，因此 Scene 保存失败时可能产生 orphan Asset；这属于可由未来 GC / cleanup 回收的问题。必须优先保证不产生 dangling asset reference：
+
+```text
+Orphan Asset
+→ 可回收问题
+
+Missing Referenced Asset
+→ 数据完整性问题，必须 Fail Closed
+```
+
+### 19.3 Runtime BinaryFiles
 
 打开 Board 时由 Scene 和 Docus Assets 组装 Excalidraw 所需的运行时 `BinaryFiles`；关闭或保存时通过 Adapter 将资源引用和 Engine Data 持久化。不得同时长期保存完整的 Scene `BinaryFiles` 副本和 Asset Store 副本。
 
@@ -761,11 +949,11 @@ Docus Asset Store
 Runtime BinaryFiles
 ```
 
-### 19.3 Asset Ownership / Cleanup
+### 19.4 Asset Ownership / Cleanup
 
 Asset 删除必须基于引用关系，而不是简单按 Board 删除所有图片。共享 Asset 不得因为某个 Board 被删除而失效；只有确认 Asset 为 Board-private 且不存在其他引用时，才允许随 Board 清理。
 
-V1 删除 Board 时至少处理 Metadata、Scene、符合上述条件的 Board-private Assets、Thumbnail 和 Crash Checkpoint。若现有 Docus 已有统一 Trash，则优先遵循统一 Trash 规则；否则按第 20 节的永久删除流程执行。
+未被任何 Scene、Note 或其他 Docus Resource 引用的 Asset 可以在未来由 GC / cleanup 回收；V1 不提前建设完整 Asset GC Framework。删除 Board 时至少处理 Metadata、Scene、符合上述条件的 Board-private Assets、Thumbnail 和 Crash Checkpoint。若现有 Docus 已有统一 Trash，则优先遵循统一 Trash 规则；否则按第 20 节的永久删除流程执行。
 
 ## 20. 删除 Board
 
@@ -796,7 +984,7 @@ Trash
 Restore
 ```
 
-如果 Docus 已经存在统一 Trash 系统，则应接入统一 Trash。永久删除时按第 19.3 节执行引用检查，并清理 Board Metadata、Scene、可安全回收的 Board-private Assets、Thumbnail 和本地 Crash Checkpoint。
+如果 Docus 已经存在统一 Trash 系统，则应接入统一 Trash。永久删除时按第 19.4 节执行引用检查，并清理 Board Metadata、Scene、可安全回收的 Board-private Assets、Thumbnail 和本地 Crash Checkpoint。
 
 ## 21. 重命名
 
@@ -1151,30 +1339,36 @@ Board Domain 由 Metadata 与 Scene 组成。以下是逻辑模型，实际实�
 interface BoardMetadata {
   id: string
   title: string
-  engine: 'excalidraw'
-  sceneVersion: number
   thumbnail?: string
   createdAt: number
   updatedAt: number
 }
 ```
 
+`BoardMetadata` 只描述 Board 本身及其 Gallery 所需信息，不包含 Canvas Engine、Scene Schema Version 或服务端 Scene Revision。
+
 ### 35.2 Domain Aggregate 与存储边界
 
 ```ts
 interface Board {
   metadata: BoardMetadata
-  scene: BoardScene
+  sceneRecord: BoardSceneRecord
 }
 
 interface BoardSceneRecord {
   boardId: string
+  engine: 'excalidraw'
   sceneVersion: number
+  revision: number
   scene: BoardScene
 }
 ```
 
-`Board` 可以作为业务层聚合返回，但 Metadata Store、Scene Store 和 Asset Store 是否拆成独立表或记录由实现决定。不得因为物理存储方便，把所有内容做成没有边界的巨大 JSON；Metadata 与 Scene 的更新、revision 和错误处理边界必须清晰。
+`BoardSceneRecord` 是服务端 Scene 持久化记录，统一拥有 `engine`、`sceneVersion`、`revision` 和 `scene`。其中 `sceneVersion` 是 Board Scene Schema Version，`revision` 是当前 Board Scene 的服务端持久化版本号；`revision` 的初始值可由实现选择 `0` 或 `1`，但必须单调递增，每次成功提交新的 Scene 后递增。
+
+Scene Update 请求必须携带 `expectedRevision`，用于服务端校验并发版本：服务端当前 `revision` 等于 `expectedRevision` 才能接受更新并返回递增后的 `revision`；不相等时必须拒绝旧更新并返回 Conflict（可使用 `409` 或项目统一冲突协议）。`expectedRevision` 是请求条件，不是另一个持久化 Source of Truth。
+
+`Board` 可以作为业务层聚合返回，但 Metadata Store、Scene Store 和 Asset Store 是否拆成独立表或记录由实现决定。不得因为物理存储方便，把所有内容做成没有边界的巨大 JSON；Metadata 与 Scene 的更新、revision、并发校验和错误处理边界必须清晰。
 
 ## 36. BoardScene
 
@@ -1190,9 +1384,11 @@ interface BoardScene {
 
 `engineData` 的具体格式由 `BoardEngineAdapter` 管理；`persistentAppState` 只包含 Docus 通用、适合恢复的 Canvas 状态；`assetRefs` 只保存 Docus Asset 引用。Board Service 不直接依赖 Excalidraw 类型，`BinaryFiles` 仅在运行时组装。
 
-Board 的 `sceneVersion` 表示当前 Board Scene Schema 版本。不能假定未来 Scene Schema、Asset 映射或 Engine 数据永远不变化。
+`BoardSceneRecord.sceneVersion` 表示当前 Board Scene Schema 版本，是该版本的唯一持久化 Source of Truth。Checkpoint 中的 `sceneVersion` 只是对应本地快照的 Schema Version 副本，不改变上述归属。不能假定未来 Scene Schema、Asset 映射或 Engine 数据永远不变化。
 
 ## 37. Scene Version
+
+`sceneVersion` 只表示 Board Scene Schema Version，唯一归属于 `BoardSceneRecord`；它不是服务端保存次数，也不承担本地未保存变更序号。
 
 初始：
 
@@ -1234,7 +1430,7 @@ Docus Version
 Excalidraw Data
 ```
 
-之间的边界。
+之间的边界。服务端 `revision` 是 Scene 持久化并发版本，与 `sceneVersion` 的 Schema 迁移版本相互独立；`localRevision` 只属于 Editor Session 的本地变更追踪。
 
 未来升级 `@excalidraw/excalidraw` 时必须验证已有 Scene 的兼容性。
 
@@ -1242,7 +1438,7 @@ Excalidraw Data
 
 ## 39. 错误恢复
 
-Board Scene 的加载、迁移、校验和必要 Asset 组装失败时，遵循第 18.4 节的 Fail Closed 规则：停止加载、展示错误恢复 UI、保留原始 Server Scene 与本地 Checkpoint，并禁用 Autosave。
+Board Scene 的加载、迁移、校验、必要 Asset 组装或 Checkpoint reconciliation 失败时，遵循第 18.4 节的 Fail Closed 规则：停止加载、展示错误恢复 UI、保留原始 Server Scene 与本地 Checkpoint，并禁用 Autosave。
 
 禁止将失败结果转换成可编辑 Empty Scene 后自动保存。
 
@@ -1258,11 +1454,11 @@ Memory latestSceneRef: 保留
 Local Crash Checkpoint: 保留
 ```
 
-不得显示 `Saved`。后续变化或重试可以再次发起保存。
+不得显示 `Saved`。Revision Conflict、Asset Persist 失败和 Scene Save 失败都遵循此规则；后续变化或重试可以再次发起保存，具体冲突恢复交互不在 V1 自动合并范围内。
 
 ## 41. Loading
 
-Board 打开时展示 Loading 状态，并按第 18.3 节完成 Metadata、Scene、Assets 的读取、迁移、校验和 Hydration。
+Board 打开时展示 Loading 状态，并按第 18.3 节完成 Metadata、SceneRecord（含 `engine`、`sceneVersion`、`revision`）、Assets 的读取、迁移、校验、Checkpoint reconciliation 和 Hydration。
 
 Scene 未达到 `ready` 之前：
 
@@ -1700,6 +1896,7 @@ Note ≠ Board
 * 图片插入正常。
 * Vue 与 React 通过局部 Host 边界协作，Scene 高频变化不会导致整个 Docus 重渲染。
 * React、React DOM 和 Excalidraw 不进入 Board Gallery 的初始加载路径。
+* React Error Boundary 位于 React Island 内部；React / Excalidraw 失败可以通知 Vue Host，并展示 Docus Board Error UI。
 
 ### 保存
 
@@ -1710,12 +1907,29 @@ Note ≠ Board
 * 旧 Save 请求不能覆盖更新的 Scene。
 * 离开页面前最后一次修改不会因为 Debounce 丢失。
 
+### Revision 与并发保护
+
+* Server Scene 只有一个持久化 `revision`，成功保存后单调递增。
+* Scene Save 请求携带 `expectedRevision`；stale revision 会被拒绝并返回 Conflict（如 `409`）。
+* Client Save Queue 保证当前 Editor Session 内保存有序，Server Revision 防止跨 Tab、跨窗口或跨 Session 的 stale write。
+* 旧请求无法覆盖较新的 Scene，Conflict 不会静默丢弃本地 Scene。
+
 ### 恢复
 
 * 关闭 Board 后重新进入，内容完全恢复。
 * 刷新页面后内容完全恢复。
 * Viewport 在合理范围内恢复。
 * Server Save 未完成时突然关闭，重新进入可发现并处理较新的本地 Crash Checkpoint。
+* Checkpoint 明确记录其 `baseRevision`，Server Scene 已领先时不会自动覆盖 Server Scene。
+* Checkpoint recovery 不会绕过 `expectedRevision` 校验。
+
+### Assets
+
+* Scene 不会成功提交对尚未成功持久化 Asset 的引用。
+* Asset 保存失败时 Scene 不显示 `Saved`，本地 Scene / Checkpoint 可以保留并重试。
+* Asset 成功但 Scene 保存失败时允许产生 orphan Asset，且 orphan asset 不影响 Scene 数据正确性。
+* 未被引用的 orphan Asset 可由未来 GC / cleanup 回收；V1 不要求完整 Asset GC Framework。
+* referenced Asset 缺失时 Load 遵循 Fail Closed，不挂载可编辑空 Scene，也不自动写回。
 
 ### 数据安全
 
