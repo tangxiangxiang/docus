@@ -184,7 +184,7 @@ Board Domain：
 interface BoardMetadata {
   id: string
   title: string
-  thumbnail?: string
+  thumbnailAssetId: string | null
   createdAt: number
   updatedAt: number
 }
@@ -211,6 +211,18 @@ interface BoardPersistentAppState {
   viewBackgroundColor?: string
 }
 ```
+
+`thumbnailAssetId` 的语义固定为 Docus Asset ID：
+
+```
+Asset ID
+≠ URL
+≠ Data URL
+≠ File Path
+```
+
+没有 Thumbnail 时返回 `null`。Board Domain 不保存 Server URL；UI 通过
+Asset URL resolver 将 Asset ID 转换为 `/api/assets/:assetId`。
 
 Server authoritative fields：
 
@@ -462,6 +474,17 @@ sceneVersion = 1
 revision initial = 0
 ```
 
+`engine_data_json` 是 `NOT NULL`，因此 Empty Scene 也必须写入合法的
+Excalidraw V1 Engine Data，不能使用 `null`：
+
+```text
+engine_data_json = '{"elements":[],"fileMap":{}}'
+persistent_app_state_json = '{}'
+```
+
+在 `engine = 'excalidraw'` 且 `sceneVersion = 1` 时，`BoardScene.engineData`
+始终是 `ExcalidrawEngineDataV1` 形状，即使没有任何元素或图片。
+
 第一笔成功 Scene Save：
 
 ```
@@ -486,6 +509,11 @@ asset_references
 
 作为关系型 Source of Truth。
 
+`BoardMetadata.thumbnailAssetId` 是 `asset_references` 中
+`owner_type = board`、`purpose = thumbnail` 的投影：存在引用时返回 Asset
+ID，没有引用时返回 `null`。不在 Board metadata 中另存 URL、Data URL 或
+filesystem path。
+
 Server 读取：
 
 ```
@@ -509,6 +537,11 @@ update board_scenes
 replace scene asset references
 update boards.updated_at
 ```
+
+替换引用时必须在事务中记录旧引用与新引用的差集。事务成功提交后，已知
+被移除的 Asset 才可以执行引用计数检查和 eager cleanup；cleanup 失败不能
+回滚已经成功的 Scene 或 Thumbnail 保存，且必须记录或返回非致命 cleanup
+结果。
 
 这样可以直接回答：
 
@@ -539,6 +572,18 @@ server/assets/
 data/assets/
 ```
 
+Asset Storage 初始化属于 B1：
+
+```
+ensure data/assets exists
+      ↓
+lstat data/assets
+      ↓
+必须是普通目录，且不能是 symlink
+```
+
+初始化必须复用现有 filesystem 安全模型；目录检查失败时禁止继续写入。
+
 Binary 写入复用：
 
 ```
@@ -553,6 +598,20 @@ fsync
 sha256
 no accidental overwrite
 ```
+
+Asset Persist 是两个阶段，不是跨 filesystem / SQLite 的原生事务：
+
+```
+1. durable create binary
+2. BEGIN SQLite transaction
+3. INSERT asset metadata
+4. COMMIT
+```
+
+如果 binary 已创建但 metadata INSERT 或 COMMIT 失败，并且能够确认该文件
+属于本次调用，则调用 `removeCreatedDurableFile()`。补偿删除也失败时允许
+留下 orphan file，但不得留下指向不确定 binary 的 DB metadata；成功的
+Board / Scene 保存不能因此被回滚。
 
 ---
 
@@ -578,6 +637,10 @@ authBoundary
 
 客户端提前生成 UUID。
 
+Server 必须先验证 raw `assetId` 满足 UUID 格式，再生成 `storage_key` 和
+filesystem path。禁止把未验证的 route param 直接传给 `path.join`，也不允许
+`../`、`/`、`\\`、URI 或任意文件名进入路径逻辑。
+
 请求：
 
 ```
@@ -596,6 +659,19 @@ image/webp
 image/gif
 image/avif
 ```
+
+上传必须受 Server-side hard byte limit 保护：
+
+```
+Content-Length 已超限 → 立即拒绝
+未知或不可信 Content-Length → streaming 过程中按字节数限制
+超限 → 413 ASSET_TOO_LARGE
+```
+
+Server 不能先无限 buffering 再检查大小。`Content-Type` 只代表客户端声明，
+不能单独作为内容可信依据；allow-list 是强制要求，B1/B2 还必须明确评估
+并测试 magic-byte validation，并拒绝声明 MIME 与可识别文件签名不一致的
+情况（具体检测库或实现方式属于 implementation detail）。
 
 V1 不接受 SVG Asset。
 
@@ -635,6 +711,10 @@ assetId same
 hash different
 → 409 ASSET_ID_CONFLICT
 ```
+
+相同 `assetId` 的 retry 必须核对已有 metadata、物理 binary 和 hash。任何
+retry 都不得覆盖旧 binary；已有记录但 metadata、binary 或 hash 无法一致
+验证时返回失败结果，不得伪造成功。
 
 ---
 
@@ -744,17 +824,26 @@ INSERT board_scenes
   engine = excalidraw
   scene_version = 1
   revision = 0
-  engine_data_json = null
-  persistent_app_state_json = {}
+  engine_data_json = '{"elements":[],"fileMap":{}}'
+  persistent_app_state_json = '{}'
 ```
 
 Canonical Empty Scene：
 
+```json
+{
+  "engineData": {
+    "elements": [],
+    "fileMap": {}
+  },
+  "persistentAppState": {},
+  "assetRefs": []
+}
 ```
-engineData = null
-persistentAppState = {}
-assetRefs = []
-```
+
+当 `engine = 'excalidraw'` 且 `sceneVersion = 1` 时，Empty Scene 的
+`engineData` 不使用 `null` 表示。创建 Board 和 Adapter 初始化必须使用同一
+个 Canonical Empty Engine Data。
 
 注意：
 
@@ -949,6 +1038,29 @@ replace asset reference
 purpose = thumbnail
 ```
 
+Thumbnail Asset 是 create-only binary，因此每次内容变化都必须显式处理旧
+引用：
+
+```
+oldAssetId = current thumbnail reference
+
+newAssetId uploaded
+        ↓
+BEGIN SQLite transaction
+        ↓
+replace thumbnail reference with newAssetId
+        ↓
+COMMIT
+        ↓
+if oldAssetId reference count == 0
+    attempt eager cleanup
+```
+
+只有新引用事务成功提交后，才允许清理旧 Asset。清理失败时保留 orphan
+Asset 并记录或返回非致命结果；不能回滚已经成功的 Thumbnail 或 Scene 保存。
+这属于对已知移除引用的 eager release，不建设 background GC、periodic
+scanner 或 mark-and-sweep。
+
 非常重要：
 
 ```
@@ -1012,6 +1124,8 @@ for candidate assets
 留下 orphan Asset
 ```
 
+Cleanup failure 只返回或记录非致命结果，不回滚已经成功的 Board Delete。
+
 不能：
 
 ```
@@ -1023,6 +1137,31 @@ for candidate assets
 ```
 orphan > dangling reference
 ```
+
+Scene `assetRefs` 也遵循同一生命周期：事务中用旧集合与新集合计算
+`removedAssetIds`，提交成功后逐个检查全局 reference count；只有计数为零
+时才尝试 safe cleanup。cleanup 失败保留 orphan Asset，不回滚成功的
+Scene 或 Board Delete。
+
+---
+
+## Client-side recovery cleanup
+
+用户确认删除后，客户端严格按以下顺序处理：
+
+```
+DELETE /api/board/:id
+        ↓
+Server delete success
+        ↓
+delete IndexedDB checkpoint for boardId
+delete IndexedDB pending-assets for boardId
+        ↓
+navigate back to Board Home
+```
+
+如果 Server Delete 失败，必须保留该 Board 的 checkpoint 和 pending-assets，
+不得先清理本地 Recovery 数据。
 
 安全得多。
 
@@ -1037,6 +1176,7 @@ src/features/board/
 ├── api.ts
 ├── domain.ts
 ├── boardErrors.ts
+├── boardSearchProvider.ts
 ├── saveCoordinator.ts
 ├── checkpointStore.ts
 ├── checkpointReconciliation.ts
@@ -1111,6 +1251,19 @@ engine/excalidraw/*
 
 内部。
 
+对于 `engine = 'excalidraw'`、`sceneVersion = 1` 的输入，
+`deserialize()` 必须能直接处理 Canonical Empty Engine Data：
+
+```ts
+{
+  elements: [],
+  fileMap: {},
+}
+```
+
+Adapter 初始化不得把 Empty Scene 转换成 `null`，也不得在加载失败时用
+空 Scene 覆盖已获取的 Server Scene。
+
 ---
 
 # 19. Excalidraw Adapter V1
@@ -1181,6 +1334,10 @@ Canvas Background：
 Board Scene
 ```
 
+`BoardPersistentAppState` 只表示 Docus 通用 Canvas 状态。若某个字段最终
+属于 Excalidraw 专有运行时状态，应放入 `engineData` 并由 Adapter 转换，
+不能逐步把 Excalidraw 专有 AppState 字段扩散到 Domain Model。
+
 ---
 
 # 21. React Island
@@ -1191,9 +1348,20 @@ Mount 时：
 
 ```ts
 const island = await import(
-  '../features/board/engine/excalidraw/reactIsland'
+  '@/features/board/engine/excalidraw/reactIsland'
 )
 ```
+
+如果当前项目没有 `@` alias，使用从
+`src/components/board/ExcalidrawHost.vue` 到目标模块的正确相对路径：
+
+```ts
+const island = await import(
+  '../../features/board/engine/excalidraw/reactIsland'
+)
+```
+
+Plan 不得保留 `../features/...` 这一层级错误的路径。
 
 所以：
 
@@ -1246,6 +1414,41 @@ onFatalError
 /board/:boardId
 ```
 
+App Shell 使用明确的 Workspace identity：
+
+```ts
+type WorkspaceKind =
+  | 'vault'
+  | 'ledger'
+  | 'board'
+  | null
+```
+
+Route 到 Workspace 的映射固定为：
+
+```
+/vault/*
+→ vault
+
+/ledger/*
+→ ledger
+
+/board
+→ board
+
+/board/:boardId
+→ board
+```
+
+Board Editor 另外使用 `immersive` Chrome style。Workspace identity 与 Chrome
+style 是两个独立概念：
+
+```
+Chrome style
+≠
+Workspace identity
+```
+
 建议：
 
 ```ts
@@ -1256,6 +1459,8 @@ onFatalError
   meta: {
     fullWidth: true,
     workspace: true,
+    workspaceKind: 'board',
+    chromeStyle: 'workspace',
     sidebar: false,
   },
 }
@@ -1267,6 +1472,8 @@ onFatalError
   meta: {
     fullWidth: true,
     workspace: true,
+    workspaceKind: 'board',
+    chromeStyle: 'immersive',
     sidebar: false,
     immersive: true,
   },
@@ -1277,6 +1484,8 @@ onFatalError
 
 ```ts
 immersive?: boolean
+workspaceKind?: WorkspaceKind
+chromeStyle?: 'workspace' | 'immersive'
 ```
 
 ---
@@ -1314,6 +1523,27 @@ Board Home
 
 Board Editor
 → immersive chrome
+```
+
+`isWorkspaceChrome` 或等价字段只决定 Chrome style，不能再作为
+`NavBar.isVault` 的替代值。App Shell 必须根据真实 `workspaceKind` 传递
+NavBar 状态；Board 不得通过 `isVault = true` 表示“使用 compact workspace
+chrome”。
+
+NavBar 的显示规则：
+
+```
+workspaceKind === 'vault'
+→ Vault-only controls
+
+workspaceKind === 'ledger'
+→ Ledger-only controls
+
+workspaceKind === 'board' 且 route = /board
+→ 通用 Workspace Chrome + Board navigation state
+
+workspaceKind === 'board' 且 route = /board/:boardId
+→ 不显示 Global NavBar
 ```
 
 Editor 页面：
@@ -1355,6 +1585,19 @@ Board
 =
 Independent Workspace
 ```
+
+Scope selection 与 Workspace navigation 是两个概念。NavBar 中：
+
+```
+Note / Diary
+→ 选择 Vault Scope
+
+Ledger / Board
+→ 导航到 Workspace Route
+```
+
+Board 仍然不能进入 `ScopeKey`；不能把 `ScopeKey` 扩展为 `board` 来表达
+Workspace identity。
 
 当前：
 
@@ -1415,7 +1658,78 @@ GET /api/board
 client-side title filtering
 ```
 
-不需要为 V1 建全文索引。
+这是 Board Home 内的本地列表过滤，不等于 Docus Global Search。V1 不需要
+为 Board Scene 建全文索引。
+
+## Docus Global Search
+
+Board 必须接入现有 Search Provider 架构：
+
+```
+SearchProvider
+SearchResultSection
+searchEverywhere()
+createLatestSearchRunner()
+```
+
+新增：
+
+```
+createBoardSearchProvider()
+```
+
+数据来源为 Board Metadata，V1 只搜索：
+
+```
+Board Title
+```
+
+明确不搜索：
+
+```
+Shape Text
+Scene JSON
+OCR
+Assets
+```
+
+Search Result 类型增加 Board：
+
+```ts
+type SearchResultType =
+  | ...
+  | 'board'
+```
+
+Board Result 至少包含：
+
+```ts
+{
+  id: `board:${board.id}`,
+  type: 'board',
+  title: board.title,
+  subtitle: 'Board',
+  payload: {
+    boardId: board.id,
+  },
+}
+```
+
+Provider 注册到 `searchEverywhere()`，并通过独立的 `Boards` Section 展示。
+CommandPalette commit 逻辑必须区分：
+
+```
+file
+→ 打开 Vault document
+
+board
+→ router.push({
+    name: 'board-editor',
+    params: { boardId },
+  })
+```
+
+Global Search 中点击或提交 Board 结果必须能直接进入 Board Editor。
 
 创建：
 
@@ -1608,6 +1922,30 @@ Pending Asset 可以删除
 
 因为 binary 已经成为 Server Asset。
 
+Pending Asset 生命周期：
+
+```
+Asset upload success
+→ delete pending Blob
+
+Asset upload failure
+→ keep pending Blob
+
+Asset upload success but Scene Save failure
+→ pending Blob 可以删除
+→ Server Asset 作为 orphan candidate 保留
+→ 允许稍后重试 Scene reference save
+
+Server Board Delete success
+→ delete 该 boardId 的全部 pending-assets
+
+Server Board Delete failure
+→ 保留 checkpoint 和 pending-assets
+```
+
+本地 Recovery 清理必须以 Server 操作成功为前提，不能因本地预期的删除
+结果提前丢失可恢复数据。
+
 ---
 
 # 30. Recovery Asset Resolution
@@ -1672,7 +2010,8 @@ saveCoordinator.ts
 currentServerRevision
 localRevision
 
-latestScene
+latestRuntimeSceneRef
+latestSceneSnapshot
 dirty
 
 saveInFlight
@@ -1725,35 +2064,66 @@ latest snapshot coalescing
 
 # 33. Save Algorithm
 
-每次变化：
+Excalidraw `onChange` 只更新最新运行时引用和 revision，并安排两个相互
+独立的 scheduler：
 
 ```
-onChange
-   ↓
-Adapter.serialize()
-   ↓
-latestScene = snapshot
-   ↓
+Excalidraw onChange
+        ↓
+latestRuntimeSceneRef = latest runtime scene
 localRevision++
-   ↓
-write checkpoint
-   ↓
-schedule debounce
+dirty = true
+        │
+        ├── Checkpoint Scheduler
+        │      trailing 250ms debounce
+        │
+        └── Server Save Scheduler
+               trailing 800ms debounce
 ```
 
-Debounce：
+`onChange` 不得直接执行完整的 `Adapter.serialize()` 和 IndexedDB write。
+Checkpoint Scheduler 触发时才 capture 当前最新 Scene 与 `localRevision`，
+Server Save Scheduler 同样只提交捕获到的最新 snapshot；两个 scheduler 都
+必须允许在一次写入期间继续累积新的 change。
+
+Checkpoint Scheduler：
+
+```
+timer fires
+    ↓
+capture latest runtime scene + localRevision
+    ↓
+Adapter.serialize()
+    ↓
+write one coalesced checkpoint
+```
+
+如果 checkpoint 写入过程中产生新的 Scene Change：
+
+```
+旧 checkpoint 完成
+        ↓
+发现 localRevision 已更新
+        ↓
+再次安排最新 revision 的 checkpoint
+```
+
+旧 snapshot 不能被当作当前最新状态。安全性来自编辑过程中的持续
+coalesced checkpoint，而不是 `beforeunload` 时的异步 IndexedDB write。
+
+Checkpoint debounce 固定为：
+
+```
+250ms trailing
+```
+
+Server Save debounce 固定为：
 
 ```
 800ms
 ```
 
-建议 V1 固定为：
-
-```
-800ms
-```
-
-而不是继续保留范围。
+Checkpoint 比 Server Save 更积极，但绝不按每个 pointer event 写盘。
 
 ---
 
@@ -1814,6 +2184,10 @@ keep localRevision = 11
 keep latest local Scene
 rewrite checkpoint
 ```
+
+如果旧 checkpoint write 或旧 Server Save 完成时已经有更高
+`localRevision`，必须继续安排最新 revision；旧 completion 不能清掉或覆盖
+更新后的 checkpoint。
 
 只有：
 
@@ -1940,7 +2314,7 @@ Best Effort
 核心安全依赖：
 
 ```
-频繁 IndexedDB Checkpoint
+250ms trailing、coalesced IndexedDB Checkpoint
 ```
 
 ---
@@ -2188,6 +2562,17 @@ server/board/repository.ts
 server/board/service.ts
 ```
 
+本 Slice 同时冻结 Asset Storage 的物理安全与补偿规则：
+
+```
+初始化并校验 data/assets 普通目录（拒绝 symlink）
+验证 UUID assetId 后才生成 storage path
+Server-side hard byte limit，超限返回 413 ASSET_TOO_LARGE
+allow-list MIME，并明确 magic-byte validation 策略
+durable binary + SQLite metadata 的双阶段补偿
+same assetId retry 的 metadata / binary / hash 校验
+```
+
 完成：
 
 ```
@@ -2203,6 +2588,10 @@ migration
 repository
 asset durable write
 revision conflict
+asset directory initialization and path traversal rejection
+oversized upload and MIME validation
+binary / metadata failure compensation
+same assetId idempotent retry and hash conflict
 ```
 
 建议 commit：
@@ -2246,6 +2635,8 @@ validation
 409 revision conflict
 missing asset
 idempotent asset upload
+asset reference replacement and post-commit eager cleanup
+cleanup failure leaves orphan without rolling back saved data
 ```
 
 建议 commit：
@@ -2282,6 +2673,9 @@ Search
 Create
 Rename
 Delete
+WorkspaceKind-aware App Shell / NavBar
+Board title appears in Docus Global Search
+Global Search can navigate directly to Board Editor
 ```
 
 不得：
@@ -2290,6 +2684,11 @@ Delete
 修改 FileTree.vue
 把 Board 加到 ScopeKey
 ```
+
+Board Home 的列表搜索仍然是 client-side title filtering；Global Search 则
+必须通过 `createBoardSearchProvider()`、独立 `Boards` Section 和 `board`
+result type 接入现有搜索架构。Board Home 不能以 `isVault = true` 伪装
+Workspace identity，Vault-only controls 不能在 Board 上显示。
 
 建议 commit：
 
@@ -2321,6 +2720,11 @@ Draw
 Serialize
 Basic theme
 ```
+
+Empty Board 必须从
+`{ elements: [], fileMap: {} }` 初始化，不得从 `null` 初始化。React
+Island dynamic import 使用项目 alias；无 alias 时使用
+`../../features/board/engine/excalidraw/reactIsland`。
 
 暂时可以手动触发 Save。
 
@@ -2355,6 +2759,10 @@ route leave
 conflict state
 ```
 
+Server Save 使用 800ms trailing debounce；Checkpoint Scheduler 在 B6 实现，
+使用独立的 250ms trailing debounce，不能把完整 IndexedDB write 放在每次
+Excalidraw `onChange` 中。
+
 重点测试：
 
 ```
@@ -2383,6 +2791,8 @@ checkpoint reconciliation
 pending asset store
 recovery UI
 fail closed
+checkpoint trailing coalescing scheduler
+delete success 后清理 board checkpoint 与 pending-assets
 ```
 
 测试：
@@ -2393,6 +2803,8 @@ older checkpoint
 server ahead
 damaged checkpoint
 refresh during unsaved work
+checkpoint writes are coalesced and latest revision wins
+server delete failure preserves local recovery data
 ```
 
 建议 commit：
@@ -2416,6 +2828,11 @@ pending asset recovery
 asset reference transaction
 ```
 
+Scene / Thumbnail 引用替换成功提交后，对已知移除引用执行 reference-count
+检查和 eager cleanup；cleanup 失败只留下 orphan，不回滚成功保存。Pending
+Asset 按 upload success、upload failure、Scene save failure 和 Board delete
+success 分别执行对应清理规则。
+
 测试：
 
 ```
@@ -2429,6 +2846,8 @@ scene not committed
 
 missing referenced asset
 fail closed
+removed scene / thumbnail asset cleanup
+cleanup failure does not roll back Scene / Thumbnail save
 ```
 
 建议 commit：
@@ -2482,6 +2901,10 @@ Image restored
 Dark mode
 Export
 Delete
+
+Global Search
+Board result
+Open Board Editor
 ```
 
 同时运行：
@@ -2518,6 +2941,8 @@ BoardScene validation
 sceneVersion migration
 persistentAppState normalization
 fileMap ↔ assetRefs consistency
+Canonical Empty Scene uses { elements: [], fileMap: {} }
+BoardMetadata uses thumbnailAssetId: string | null
 ```
 
 ## Save Coordinator
@@ -2530,6 +2955,20 @@ edit while saving
 save failure
 revision conflict
 flush
+checkpoint scheduler does not write on every onChange
+checkpoint scheduler latest revision wins
+```
+
+## Search and App Shell
+
+```
+createBoardSearchProvider searches title only
+Board result uses type = board and board:<id> result id
+Boards SearchResultSection is registered in searchEverywhere()
+CommandPalette board result navigates to board-editor
+Board uses workspaceKind = board, never isVault = true
+Vault-only controls are hidden on Board Home
+Board Editor hides Global NavBar
 ```
 
 ## Checkpoint
@@ -2541,6 +2980,7 @@ clear
 server ahead
 corrupt checkpoint
 pending asset
+delete Board clears checkpoint and pending-assets only after server success
 ```
 
 ## Server
@@ -2555,6 +2995,8 @@ expectedRevision conflict
 missing asset rejection
 asset ref replacement
 thumbnail does not update updatedAt
+create Board stores non-null canonical empty engine data
+Board delete failure preserves local recovery data
 ```
 
 ## Asset
@@ -2565,6 +3007,11 @@ same ID same hash retry
 same ID different hash conflict
 missing physical file
 unreferenced cleanup
+asset directory initialization and symlink rejection
+assetId path validation
+hard byte limit
+allow-list MIME and magic-byte mismatch handling
+binary / metadata compensation
 ```
 
 ---
@@ -2607,6 +3054,8 @@ Scene save failure
 Thumbnail failure
 Route leave during debounce
 Browser reload before autosave
+Board delete success clears local recovery data
+Board delete failure preserves local recovery data
 ```
 
 每个测试都验证：
@@ -2626,6 +3075,9 @@ V1 不需要 Benchmark Framework。
 ```
 拖动 Shape
 → 不产生连续 HTTP Save
+
+拖动 Shape
+→ 不产生每个 onChange 一次的完整 IndexedDB write
 
 onChange
 → 不更新 App global reactive state
@@ -2677,6 +3129,12 @@ Implementation 时不要重新讨论：
 Board 是否独立 Workspace
 → Yes
 
+Workspace identity 是否通过 isVault 表示
+→ No；使用 WorkspaceKind
+
+Board 是否加入 ScopeKey
+→ No
+
 Excalidraw 是否采用
 → Yes
 
@@ -2700,6 +3158,18 @@ V1 是否 Folder
 
 是否 Docus Asset 为 binary Source of Truth
 → Yes
+
+Thumbnail Domain 字段
+→ thumbnailAssetId，仅保存 Asset ID
+
+Global Search 是否支持 Board Title
+→ Yes；接入现有 SearchProvider
+
+Empty Excalidraw Scene
+→ { elements: [], fileMap: {} }，不使用 null
+
+Checkpoint 是否每次 onChange 完整写入
+→ No；250ms trailing coalescing scheduler
 ```
 
 ---
@@ -2724,6 +3194,8 @@ Recent 响应式显示数量
 Asset / Scene JSON 最终 size limit
 
 requestIdleCallback fallback 细节
+
+magic-byte validation 的具体检测实现
 ```
 
 但不得改变已经冻结的领域边界。
@@ -2737,11 +3209,19 @@ Board V1 只有满足以下条件才能关闭：
 ```
 [ ] /board 是独立 Gallery Home
 
+[ ] Board 使用 workspaceKind = board，不伪装成 Vault
+
+[ ] Board 不加入 ScopeKey
+
 [ ] 不依赖 FileTree
 
 [ ] /board/:id 使用隔离 React Island
 
 [ ] Board Home 不加载 React / Excalidraw
+
+[ ] Board Home 不显示 Vault-only controls
+
+[ ] Board Editor 不显示 Global NavBar
 
 [ ] 创建 Board 无 Modal
 
@@ -2755,6 +3235,8 @@ Board V1 只有满足以下条件才能关闭：
 
 [ ] 高频 drag 不持续请求 Server
 
+[ ] 高频 onChange 不产生逐事件完整 IndexedDB write
+
 [ ] Server revision 单调递增
 
 [ ] stale expectedRevision 返回 Conflict
@@ -2764,6 +3246,8 @@ Board V1 只有满足以下条件才能关闭：
 [ ] Missing Asset Fail Closed
 
 [ ] Empty Scene 无法覆盖损坏/加载失败的数据
+
+[ ] 新建 Board 持久化 { elements: [], fileMap: {} }，不写入 null
 
 [ ] Refresh 恢复 Scene
 
@@ -2777,6 +3261,10 @@ Board V1 只有满足以下条件才能关闭：
 
 [ ] Thumbnail failure 不影响 Scene Saved
 
+[ ] Thumbnail 与 Scene 移除引用在提交后执行 eager cleanup
+
+[ ] Cleanup failure 不回滚成功的保存
+
 [ ] PNG Export
 
 [ ] SVG Export
@@ -2786,6 +3274,14 @@ Board V1 只有满足以下条件才能关闭：
 [ ] Delete + Confirm
 
 [ ] Search Title
+
+[ ] Docus Global Search 可以找到 Board Title
+
+[ ] Global Search Board result 可以直接进入 Board Editor
+
+[ ] Server 删除成功后清理对应 checkpoint 与 pending-assets
+
+[ ] Server 删除失败时保留对应本地 Recovery 数据
 
 [ ] CI typecheck / unit / integration / build 通过
 
