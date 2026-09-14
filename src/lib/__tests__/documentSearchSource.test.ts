@@ -47,4 +47,26 @@ describe('Document search source', () => {
 
     expect(source.getSnapshot().map((item) => item.title)).toEqual(['New'])
   })
+
+  it('does not let a pending initial load overwrite a later live replace', async () => {
+    let resolveLoad!: (posts: readonly PostSummary[]) => void
+    let fetchCalls = 0
+    const fetchPosts = (() => {
+      fetchCalls += 1
+      return new Promise<readonly PostSummary[]>((resolve) => { resolveLoad = resolve })
+    })
+    const source = createDocumentSearchSource(fetchPosts)
+    const load = source.ensureLoaded()
+    const live = post('inbox/live', 'Live')
+
+    source.replace([live])
+    expect(source.getSnapshot()).toEqual([live])
+
+    resolveLoad([post('inbox/stale', 'Stale')])
+    await load
+
+    expect(source.getSnapshot()).toEqual([live])
+    await source.ensureLoaded()
+    expect(fetchCalls).toBe(1)
+  })
 })

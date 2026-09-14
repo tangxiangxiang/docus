@@ -37,6 +37,11 @@ export function createDocumentSearchSource(fetchPosts: PostFetcher = listPosts):
   }
 
   function replace(next: readonly PostSummary[]): void {
+    // A live Vault snapshot is authoritative over any initial load that was
+    // started before it arrived. Advance the publication boundary before
+    // installing it so the older request can only settle harmlessly.
+    generation += 1
+    inFlight = null
     posts.value = [...next]
     loaded = true
   }
