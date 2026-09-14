@@ -621,6 +621,7 @@ defineExpose({ focusDate, closeMoodPicker })
   position: absolute;
   top: 0;
   left: 0;
+  display: block;
   height: 76px;
   width: 100%;
   min-width: 0;
@@ -629,6 +630,7 @@ defineExpose({ focusDate, closeMoodPicker })
   font-size: 0.95rem;
   font-weight: 600;
   letter-spacing: 0.02em;
+  overflow: visible;
 }
 
 .diary-calendar-month {
@@ -927,16 +929,12 @@ defineExpose({ focusDate, closeMoodPicker })
     padding-right: 4px;
   }
 
-  .diary-calendar-host :deep(.n-calendar-header__title) {
-    max-width: calc(100% - 80px);
-  }
-
   .diary-calendar-host :deep(.n-calendar-header__extra .n-button:first-child) {
-    right: calc(50% + 38px);
+    right: calc(50% + 44px);
   }
 
   .diary-calendar-host :deep(.n-calendar-header__extra .n-button:last-child) {
-    left: calc(50% + 38px);
+    left: calc(50% + 44px);
   }
 
   .diary-calendar-host :deep(.n-calendar-cell) {
