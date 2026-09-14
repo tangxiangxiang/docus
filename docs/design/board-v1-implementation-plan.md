@@ -2,7 +2,7 @@
 
 **日期：** 2026-09-14
 **模块：** Board
-**状态：** Ready for Implementation
+**状态：** Frozen for B0 / Ready for Implementation
 **依据：** `docs/design/board-v1-prd.md`
 **目标版本：** Board V1
 
@@ -73,11 +73,13 @@ Docus
 │
 ├── Vue App Shell
 │   │
+│   ├── GlobalSearchHost
+│   │
 │   ├── BoardHomeView
 │   │
 │   └── BoardEditorView
-│           │
-│           └── ExcalidrawHost.vue
+│       │
+│       └── ExcalidrawHost.vue
 │                    │
 │                    ▼
 │              React Island
@@ -539,8 +541,10 @@ update boards.updated_at
 ```
 
 替换引用时必须在事务中记录旧引用与新引用的差集。事务成功提交后，已知
-被移除的 Asset 才可以执行引用计数检查和 eager cleanup；cleanup 失败不能
-回滚已经成功的 Scene 或 Thumbnail 保存，且必须记录或返回非致命 cleanup
+被移除的 Asset 才可以进入统一的 eager cleanup。cleanup 不得采用独立的
+`reference count == 0` 查询再删除 metadata 或 binary 的 check-then-delete
+流程；必须先通过原子 metadata claim 获得删除权。cleanup 失败不能回滚已经
+成功的 Scene、Thumbnail 或 Board Delete，且必须记录或返回非致命 cleanup
 结果。
 
 这样可以直接回答：
@@ -612,6 +616,55 @@ Asset Persist 是两个阶段，不是跨 filesystem / SQLite 的原生事务：
 属于本次调用，则调用 `removeCreatedDurableFile()`。补偿删除也失败时允许
 留下 orphan file，但不得留下指向不确定 binary 的 DB metadata；成功的
 Board / Scene 保存不能因此被回滚。
+
+## Unreferenced Asset Cleanup
+
+所有已知移除引用的 cleanup 都使用同一个概念 primitive（具体函数名由
+实现决定）：
+
+```ts
+tryClaimUnreferencedAssetForDeletion(assetId): {
+  claimed: boolean
+  storageKey?: string
+}
+```
+
+它必须在独立的 SQLite 写事务中原子完成 metadata deletion 与 zero-reference
+判断：
+
+```sql
+BEGIN IMMEDIATE;
+
+DELETE FROM assets
+WHERE id = :assetId
+  AND NOT EXISTS (
+    SELECT 1
+    FROM asset_references
+    WHERE asset_id = :assetId
+  );
+
+COMMIT;
+```
+
+只有 `DELETE` 成功影响一行并提交，当前 cleanup 才取得该 Asset 的 physical
+binary 删除权，并可以根据返回的 `storageKey` 删除文件。metadata deletion
+未发生时，不得删除 binary；这表示 Asset 仍有引用，或已经被其他 cleanup
+claim。
+
+`asset_references.asset_id` 继续通过 `REFERENCES assets(id)` 保护。metadata
+delete 先提交后，新的 reference insert 将因外键约束失败，因此并发 Save
+只能在 claim 之前保留 Asset，或在 claim 之后失败，不能提交 dangling
+reference。metadata 已成功删除但 physical delete 失败时允许留下 orphan
+binary；不得重建 metadata、回滚已成功的数据保存，或把 orphan 当成失败的
+Scene / Thumbnail / Board Delete。
+
+以下路径必须复用该 primitive，不得各自实现 `count → delete`：
+
+```text
+Scene removedAssetIds
+Thumbnail oldAssetId
+Board Delete candidateAssets
+```
 
 ---
 
@@ -775,6 +828,67 @@ app.route('/api/board', boardRoutes)
 app.route('/api/assets', assetRoutes)
 ```
 
+## Asset Reference Trust Boundary
+
+浏览器提交的 `assetRefs` 只是待校验的输入，不是 Server 的可信事实。Scene
+Save 在进入 repository 或 SQLite reference transaction 之前，必须独立执行：
+
+```
+接收 scene.assetRefs
+      ↓
+验证是 array
+      ↓
+验证每个 assetId 是 UUID
+      ↓
+去重并形成 normalizedAssetIds
+      ↓
+验证每个 Asset metadata 存在
+      ↓
+验证每个 physical binary 可读取
+      ↓
+继续 Scene reference transaction
+```
+
+非法形状、非法 ID 或不可引用的 Asset 必须 fail closed（例如返回
+`400 INVALID_ASSET_REFERENCE` 或统一 validation error）。如果 preflight 之后
+Asset 在并发 cleanup 中被 claim，后续 reference transaction 仍必须因
+`REFERENCES assets(id)` 或等价的事务保护而失败；Scene 不得提交 dangling
+reference。
+
+Server 不解析或修复 Excalidraw `engineData`、elements 或 fileMap。Adapter
+负责 `engineData` 与 `assetRefs` 的 extraction consistency；Server 只负责
+`assetRefs` 的 shape、ID、去重、Asset 存在性和 binary 可读性，并保证实际
+写入 `asset_references` 的 ID 全部已通过这些检查。
+
+`asset_references` 保持通用表，`owner_type` 与 `purpose` 不由浏览器控制：
+
+```text
+Browser 只提交：assetId / assetRefs
+
+Scene Save：
+  owner_type = board
+  owner_id   = boardId
+  purpose    = scene
+
+Thumbnail：
+  owner_type = board
+  owner_id   = boardId
+  purpose    = thumbnail
+```
+
+这些语义由 Board Domain Service 在内部注入。Route 不接受也不透传
+`owner_type`、`owner_id` 或 `purpose`；Repository 不向 Route 暴露任意
+reference write API，而提供语义化能力，例如：
+
+```ts
+BoardService.replaceSceneAssetRefs(boardId, normalizedAssetIds)
+BoardService.replaceThumbnailAsset(boardId, assetId)
+```
+
+具体函数名可以在实现阶段调整，但不能改变上述信任边界。通用表可以继续
+支持未来的 Note、Diary 等 owner，不为了 Board V1 加上只允许 `board` 的
+CHECK；通用的非空约束仍可作为 B1 implementation detail。
+
 ---
 
 # 12. Board API
@@ -917,27 +1031,38 @@ interface SaveBoardSceneRequest {
 ```
 1. Validate request envelope
 
-2. Verify every assetRef exists
+2. Validate scene.assetRefs is an array
 
-3. Verify referenced asset binary is readable
+3. Validate every assetRef as UUID
 
-4. BEGIN SQLite transaction
+4. Deduplicate assetRefs into normalizedAssetIds
 
-5. SELECT current revision
+5. Verify every referenced Asset metadata exists
 
-6. currentRevision != expectedRevision
+6. Verify every referenced Asset binary is readable
+
+7. BEGIN SQLite transaction
+
+8. SELECT current revision
+
+9. currentRevision != expectedRevision
       → Conflict
 
-7. UPDATE board_scenes
+10. UPDATE board_scenes
       revision = revision + 1
 
-8. Replace asset_references
+11. Replace asset_references using normalizedAssetIds
       purpose = scene
 
-9. UPDATE boards.updated_at
+12. UPDATE boards.updated_at
 
-10. COMMIT
+13. COMMIT
 ```
+
+Reference writes use the Server-injected `owner_type = board`、`owner_id =
+boardId`、`purpose = scene`，不读取请求中的同名字段。若 Asset 在 preflight
+与 transaction 之间消失，外键或等价的 transaction guard 必须使整个 Scene
+Save 失败，不得提交部分 reference 或 Scene。
 
 Response：
 
@@ -1034,7 +1159,10 @@ Body：
 Server：
 
 ```
+validate assetId and referenced Asset
 replace asset reference
+owner_type = board
+owner_id = boardId
 purpose = thumbnail
 ```
 
@@ -1052,14 +1180,18 @@ replace thumbnail reference with newAssetId
         ↓
 COMMIT
         ↓
-if oldAssetId reference count == 0
-    attempt eager cleanup
+tryClaimUnreferencedAssetForDeletion(oldAssetId)
+        ↓
+if claimed
+    delete physical binary
 ```
 
-只有新引用事务成功提交后，才允许清理旧 Asset。清理失败时保留 orphan
-Asset 并记录或返回非致命结果；不能回滚已经成功的 Thumbnail 或 Scene 保存。
-这属于对已知移除引用的 eager release，不建设 background GC、periodic
-scanner 或 mark-and-sweep。
+只有新引用事务成功提交后，才允许对旧 Asset 执行 metadata claim。必须使用
+第 9 节的统一原子 cleanup primitive；不能先查询 reference count，也不能先
+删 binary。claim 失败时保留 Asset；claim 成功但 physical delete 失败时保留
+orphan binary。任一 cleanup 失败都只记录或返回非致命结果，不能回滚已经
+成功的 Thumbnail 或 Scene 保存。这属于对已知移除引用的 eager release，不
+建设 background GC、periodic scanner 或 mark-and-sweep。
 
 非常重要：
 
@@ -1114,14 +1246,19 @@ Commit 后：
 
 ```
 for candidate assets
-  if reference count == 0
-    attempt safe cleanup
+  claim unreferenced metadata atomically
+  if claimed
+    delete physical binary
 ```
 
-删除 Asset 失败：
+Cleanup 结果：
 
 ```
-留下 orphan Asset
+metadata claim 未成功
+→ 不删除 physical binary，Asset 保留
+
+metadata claim 成功但 physical delete 失败
+→ 允许留下 orphan binary
 ```
 
 Cleanup failure 只返回或记录非致命结果，不回滚已经成功的 Board Delete。
@@ -1139,9 +1276,10 @@ orphan > dangling reference
 ```
 
 Scene `assetRefs` 也遵循同一生命周期：事务中用旧集合与新集合计算
-`removedAssetIds`，提交成功后逐个检查全局 reference count；只有计数为零
-时才尝试 safe cleanup。cleanup 失败保留 orphan Asset，不回滚成功的
-Scene 或 Board Delete。
+`removedAssetIds`，提交成功后逐个调用统一的 metadata claim；只有 claim
+成功才尝试删除 physical binary。cleanup 失败保留 orphan Asset，不回滚成功
+的 Scene 或 Board Delete。Scene、Thumbnail 和 Board Delete 都禁止各自实现
+`count → delete`。
 
 ---
 
@@ -1176,6 +1314,7 @@ src/features/board/
 ├── api.ts
 ├── domain.ts
 ├── boardErrors.ts
+├── boardMetadataSource.ts
 ├── boardSearchProvider.ts
 ├── saveCoordinator.ts
 ├── checkpointStore.ts
@@ -1195,6 +1334,9 @@ src/features/board/
 Vue components：
 
 ```
+src/components/search/
+└── GlobalSearchHost.vue
+
 src/components/board/
 ├── BoardCard.vue
 ├── BoardGallery.vue
@@ -1556,6 +1698,68 @@ Editor 页面：
 
 ---
 
+## Global Search Host
+
+Docus Global Search 属于 App Shell，不属于 `VaultView`。`App.vue` 只挂载一个
+全局 Host，路由切换时保持同一实例：
+
+```text
+App.vue
+   ├── NavBar
+   ├── RouterView
+   └── GlobalSearchHost.vue
+```
+
+`GlobalSearchHost` 负责：
+
+```text
+Open / Close
+Keyboard shortcut
+Focus trap
+Result rendering
+Provider coordination
+Result commit / navigation
+```
+
+它不能拥有 Vault-specific domain，也不能 import `VaultView`。现有
+`CommandPalette.vue` 的搜索 UI 应抽取、重命名或等价迁移为该 Host，避免并行
+实现第二套搜索 UI；Vault document provider 则从 `VaultView` 的私有创建逻辑
+中移出，由 App-level provider registry 或独立 Search feature 提供。
+
+Provider Registry：
+
+```text
+GlobalSearchHost
+        ↓
+Search Provider Registry
+        ├── Document Search Provider
+        └── Board Search Provider
+```
+
+继续使用现有 `SearchProvider`、`SearchResultSection`、`searchEverywhere()`
+和 `createLatestSearchRunner()`。NavBar 的 Search button 与 Cmd/Ctrl + P
+必须调用 App-level 的 `openGlobalSearch()`（通过现有 App Shell context 或
+等价的 `GlobalSearchContext`），不得再依赖 `VaultView.paletteRef`。
+
+Host 在 `/vault/*`、`/ledger/*` 和 `/board` 都可打开；Board Editor 的
+immersive route 可以按 B3/B4 的实现细节决定是否禁用 shortcut，但 Board Home
+必须可用。Result commit 统一由 Host 处理：
+
+```text
+file
+→ 打开 Vault document
+
+board
+→ router.push({
+    name: 'board-editor',
+    params: { boardId },
+  })
+```
+
+Board 不得通过 import `VaultView` 获得搜索能力。
+
+---
+
 # 24. NavBar
 
 不要修改：
@@ -1652,6 +1856,50 @@ All Boards
 GET /api/board
 ```
 
+该请求由轻量的 `Board Metadata Source` 负责，不由 Board Home 和 Global
+Search 各自维护一份列表。Source 可以是 module-level cache、small reactive
+source 或 feature-level metadata repository，不要求引入 Pinia 或新的大型
+全局状态框架。它只保存当前 Board metadata，不加载 Scene 或 Asset bytes。
+
+概念契约：
+
+```ts
+interface BoardMetadataSource {
+  getSnapshot(): readonly BoardMetadata[]
+  ensureLoaded(): Promise<void>
+  refresh(): Promise<void>
+  upsert(metadata: BoardMetadata): void
+  remove(boardId: string): void
+  invalidate(): void
+}
+```
+
+具体接口名称可以调整，但生命周期必须固定：
+
+```text
+首次 Board Home 或 Search 需要 metadata
+→ GET /api/board（并复用 in-flight request）
+→ populate snapshot
+
+POST /api/board success
+→ upsert returned metadata
+
+PATCH title success
+→ update metadata in snapshot
+
+DELETE board success
+→ remove metadata from snapshot
+
+recovery / uncertain state
+→ invalidate
+→ next access refetch
+```
+
+Board Home Gallery 与 `createBoardSearchProvider()` 必须读取同一个 snapshot。
+因此 create、rename、delete 的成功结果会立即反映在两个消费者中；每次
+Global Search query 只在内存 snapshot 上过滤标题，不得因为 query keystroke
+执行 `GET /api/board`。
+
 搜索：
 
 ```
@@ -1678,7 +1926,7 @@ createLatestSearchRunner()
 createBoardSearchProvider()
 ```
 
-数据来源为 Board Metadata，V1 只搜索：
+数据来源为共享 Board Metadata snapshot，V1 只搜索：
 
 ```
 Board Title
@@ -1715,8 +1963,10 @@ Board Result 至少包含：
 }
 ```
 
-Provider 注册到 `searchEverywhere()`，并通过独立的 `Boards` Section 展示。
-CommandPalette commit 逻辑必须区分：
+`createBoardSearchProvider()` 每次调用只读取当前 metadata snapshot 并过滤
+标题，不发起网络请求。Provider 注册到 App-level registry，由
+`searchEverywhere()` 统一运行，并通过独立的 `Boards` Section 展示。
+`GlobalSearchHost` 的 commit 逻辑必须区分：
 
 ```
 file
@@ -2571,6 +2821,10 @@ Server-side hard byte limit，超限返回 413 ASSET_TOO_LARGE
 allow-list MIME，并明确 magic-byte validation 策略
 durable binary + SQLite metadata 的双阶段补偿
 same assetId retry 的 metadata / binary / hash 校验
+atomic claim-unreferenced-asset metadata deletion primitive
+concurrent-safe asset cleanup semantics
+server-side assetRefs shape / UUID validation and deduplication
+server-injected owner_type / owner_id / purpose semantics
 ```
 
 完成：
@@ -2592,6 +2846,8 @@ asset directory initialization and path traversal rejection
 oversized upload and MIME validation
 binary / metadata failure compensation
 same assetId idempotent retry and hash conflict
+asset cleanup metadata claim race
+assetRefs normalization and trust-boundary validation
 ```
 
 建议 commit：
@@ -2635,8 +2891,10 @@ validation
 409 revision conflict
 missing asset
 idempotent asset upload
-asset reference replacement and post-commit eager cleanup
+asset reference replacement and post-commit atomic cleanup claim
 cleanup failure leaves orphan without rolling back saved data
+concurrent reference insertion cannot create dangling reference
+routes cannot control owner_type or purpose
 ```
 
 建议 commit：
@@ -2647,7 +2905,7 @@ feat(board): add board and asset APIs
 
 ---
 
-## B3 — Gallery Home + Navigation
+## B3 — Gallery Home + Workspace Navigation + Global Search Host
 
 实现：
 
@@ -2656,10 +2914,12 @@ BoardHomeView.vue
 BoardCard.vue
 BoardGallery.vue
 src/features/board/api.ts
+src/features/board/boardMetadataSource.ts
 
 router
 App.vue
 NavBar.vue
+src/components/search/GlobalSearchHost.vue
 i18n
 ```
 
@@ -2674,6 +2934,10 @@ Create
 Rename
 Delete
 WorkspaceKind-aware App Shell / NavBar
+App-level GlobalSearchHost mounted once outside VaultView
+Document Search provider extraction / migration from CommandPalette
+Shared Board Metadata Source for Gallery and Search
+BoardSearchProvider without per-keystroke fetch
 Board title appears in Docus Global Search
 Global Search can navigate directly to Board Editor
 ```
@@ -2686,9 +2950,10 @@ Global Search can navigate directly to Board Editor
 ```
 
 Board Home 的列表搜索仍然是 client-side title filtering；Global Search 则
-必须通过 `createBoardSearchProvider()`、独立 `Boards` Section 和 `board`
-result type 接入现有搜索架构。Board Home 不能以 `isVault = true` 伪装
-Workspace identity，Vault-only controls 不能在 Board 上显示。
+必须通过 App-level `GlobalSearchHost`、共享 metadata source、
+`createBoardSearchProvider()`、独立 `Boards` Section 和 `board` result type
+接入现有搜索架构。Board Home 不能以 `isVault = true` 伪装 Workspace
+identity，Vault-only controls 不能在 Board 上显示。
 
 建议 commit：
 
@@ -2828,10 +3093,10 @@ pending asset recovery
 asset reference transaction
 ```
 
-Scene / Thumbnail 引用替换成功提交后，对已知移除引用执行 reference-count
-检查和 eager cleanup；cleanup 失败只留下 orphan，不回滚成功保存。Pending
-Asset 按 upload success、upload failure、Scene save failure 和 Board delete
-success 分别执行对应清理规则。
+Scene / Thumbnail 引用替换成功提交后，对已知移除引用执行统一的原子
+metadata deletion claim；只有 claim 成功才删除 physical binary。cleanup
+失败只留下 orphan，不回滚成功保存。Pending Asset 按 upload success、upload
+failure、Scene save failure 和 Board delete success 分别执行对应清理规则。
 
 测试：
 
@@ -2846,8 +3111,9 @@ scene not committed
 
 missing referenced asset
 fail closed
-removed scene / thumbnail asset cleanup
+removed scene / thumbnail asset cleanup uses metadata claim
 cleanup failure does not roll back Scene / Thumbnail save
+concurrent reference insertion cannot produce dangling reference
 ```
 
 建议 commit：
@@ -2965,7 +3231,17 @@ checkpoint scheduler latest revision wins
 createBoardSearchProvider searches title only
 Board result uses type = board and board:<id> result id
 Boards SearchResultSection is registered in searchEverywhere()
-CommandPalette board result navigates to board-editor
+GlobalSearchHost mounts once at App level, outside VaultView
+NavBar opens the App-level Search Host from Vault, Ledger and Board Home
+Document provider remains available after CommandPalette migration
+Board provider reads shared metadata snapshot
+Board create / rename / delete update the shared metadata snapshot
+Board Search does not fetch /api/board per query keystroke
+GlobalSearchHost board result navigates to board-editor
+GlobalSearchHost document result continues opening Vault document
+Vault route can find and open a document
+Board Home can find and open a Board
+Ledger route can open the same Search Host
 Board uses workspaceKind = board, never isVault = true
 Vault-only controls are hidden on Board Home
 Board Editor hides Global NavBar
@@ -2993,6 +3269,12 @@ delete
 revision increment
 expectedRevision conflict
 missing asset rejection
+assetRefs non-array rejection
+invalid assetRef UUID rejection
+duplicate assetRefs are normalized before persistence
+missing Asset metadata rejection
+missing Asset binary rejection
+client cannot control owner_type, owner_id or purpose
 asset ref replacement
 thumbnail does not update updatedAt
 create Board stores non-null canonical empty engine data
@@ -3006,7 +3288,12 @@ durable create
 same ID same hash retry
 same ID different hash conflict
 missing physical file
-unreferenced cleanup
+unreferenced cleanup uses atomic metadata claim
+failed metadata claim does not delete binary
+successful metadata claim permits binary deletion
+binary deletion failure leaves an orphan without restoring metadata
+concurrent reference insertion cannot create dangling reference
+two cleanup workers have one deletion owner
 asset directory initialization and symlink rejection
 assetId path validation
 hard byte limit
@@ -3034,6 +3321,25 @@ Client B expectedRevision 3
 
 ```
 B 无法覆盖 A
+```
+
+Asset cleanup 并发也必须覆盖：
+
+```text
+Asset X 无引用
+
+Cleanup A 与 Save B 同时处理 X
+→ B 先建立 reference：Cleanup A 的 metadata claim 失败，X 保留
+或
+→ Cleanup A 先 claim metadata：B 的 reference insert 失败，Scene 不提交
+```
+
+以及：
+
+```text
+Cleanup A 与 Cleanup B 同时处理 X
+→ 至多一个 DELETE FROM assets 成功
+→ 只有该 worker 可以尝试删除 physical binary
 ```
 
 ---
@@ -3087,6 +3393,9 @@ Board Home
 
 Thumbnail
 → 不在 Pointer Move 过程中生成
+
+Global Search query keystroke
+→ 不触发 GET /api/board
 ```
 
 ---
@@ -3165,6 +3474,18 @@ Thumbnail Domain 字段
 Global Search 是否支持 Board Title
 → Yes；接入现有 SearchProvider
 
+Global Search Host ownership
+→ App-level；不属于 VaultView，且只挂载一个 Host
+
+Board Search metadata source
+→ Board Home 与 Search Provider 共用轻量 snapshot；query 不发请求
+
+Asset eager cleanup ownership
+→ 先原子 claim Asset metadata，再删除 physical binary；宁可 orphan，不得 dangling
+
+Server assetRefs trust boundary
+→ Server 验证 shape / UUID / existence / binary、去重；owner_type / owner_id / purpose 由 Board Service 注入
+
 Empty Excalidraw Scene
 → { elements: [], fileMap: {} }，不使用 null
 
@@ -3196,6 +3517,14 @@ Asset / Scene JSON 最终 size limit
 requestIdleCallback fallback 细节
 
 magic-byte validation 的具体检测实现
+
+GlobalSearchContext 或 AppShellContext 的具体实现
+
+BoardMetadataSource 的具体 reactive / cache 形态
+
+GlobalSearchHost / CommandPalette 的最终文件命名
+
+tryClaimUnreferencedAssetForDeletion 的具体函数名
 ```
 
 但不得改变已经冻结的领域边界。
@@ -3263,6 +3592,12 @@ Board V1 只有满足以下条件才能关闭：
 
 [ ] Thumbnail 与 Scene 移除引用在提交后执行 eager cleanup
 
+[ ] Asset cleanup 先原子 claim metadata，再删除 physical binary
+
+[ ] 并发 reference insertion 无法提交 dangling asset reference
+
+[ ] 两个 cleanup worker 至多一个获得 Asset deletion ownership
+
 [ ] Cleanup failure 不回滚成功的保存
 
 [ ] PNG Export
@@ -3278,6 +3613,22 @@ Board V1 只有满足以下条件才能关闭：
 [ ] Docus Global Search 可以找到 Board Title
 
 [ ] Global Search Board result 可以直接进入 Board Editor
+
+[ ] GlobalSearchHost 在 App-level 挂载且不属于 VaultView
+
+[ ] Vault / Ledger / Board Home 都能打开同一个 Global Search Host
+
+[ ] Board Home 与 Board Search 共用 metadata source
+
+[ ] Board Search 不在每次 query 时 GET /api/board
+
+[ ] Document Search provider 在 Host 迁移后不回归
+
+[ ] Server 独立验证并 deduplicate assetRefs
+
+[ ] Server 拒绝不存在或 binary 不可读的 Asset reference
+
+[ ] Browser 无法控制 asset_references.owner_type / owner_id / purpose
 
 [ ] Server 删除成功后清理对应 checkpoint 与 pending-assets
 
@@ -3334,3 +3685,7 @@ B9 Closure
 ```
 
 这样如果 Excalidraw、Asset 或 Recovery 某一层出现问题，不会把整个 Board 功能一起拖进不可审查的大提交。
+
+本轮收口后 Implementation Plan 冻结。只有 B0 Compatibility Spike 发现真实的
+Excalidraw API 或 bundling blocker 时，才允许针对该 blocker 重新打开相关
+决策；不得借此扩大 Board V1 Scope。
