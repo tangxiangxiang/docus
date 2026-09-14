@@ -76,6 +76,14 @@ export async function listBoards(): Promise<BoardMetadata[]> {
   }
 }
 
+export async function getBoard(boardId: string): Promise<BoardAggregate> {
+  try {
+    return await readJson<BoardAggregate>(await authFetch(`/api/board/${encodeURIComponent(boardId)}`))
+  } catch (error) {
+    throw asBoardApiError(error)
+  }
+}
+
 export async function createBoard(title?: string): Promise<BoardAggregate> {
   return requestJson<BoardAggregate>('/api/board', 'POST', title === undefined ? {} : { title })
 }

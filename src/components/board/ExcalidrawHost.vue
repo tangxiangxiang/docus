@@ -1,18 +1,17 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import type {
-  ExcalidrawIslandHandle,
-  ExcalidrawIslandTheme,
-} from '../../features/board/engine/excalidraw/reactIsland'
+import type { ExcalidrawIslandHandle, ExcalidrawIslandTheme } from '../../features/board/engine/excalidraw/reactIsland'
+import type { ExcalidrawRuntimeScene } from '../../features/board/engine/types'
 
 const props = withDefaults(defineProps<{
+  initialScene: ExcalidrawRuntimeScene
   theme?: ExcalidrawIslandTheme
 }>(), {
   theme: 'light',
 })
 
 const emit = defineEmits<{
-  change: []
+  change: [scene: ExcalidrawRuntimeScene]
   ready: []
   error: [error: unknown]
 }>()
@@ -29,8 +28,9 @@ onMounted(() => {
 
     const nextIsland = await module.mountExcalidrawIsland({
       container: host.value,
+      initialScene: props.initialScene,
       theme: props.theme,
-      onChange: () => emit('change'),
+      onChange: (scene) => emit('change', scene),
       onReady: () => emit('ready'),
       onError: (error) => emit('error', error),
     })

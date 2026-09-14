@@ -55,6 +55,7 @@ function onError(error: unknown): void {
     <section class="spike-surface" aria-label="Excalidraw compatibility surface">
       <ExcalidrawHost
         v-if="mounted"
+        :initial-scene="{ elements: [], appState: {}, files: {} }"
         :theme="theme"
         @change="onChange"
         @ready="ready = true"

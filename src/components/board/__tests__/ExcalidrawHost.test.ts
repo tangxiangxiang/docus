@@ -29,10 +29,12 @@ describe('ExcalidrawHost', () => {
       }
     })
 
-    const wrapper = mount(ExcalidrawHost, { props: { theme: 'light' } })
+    const initialScene = { elements: [], appState: {}, files: {} }
+    const wrapper = mount(ExcalidrawHost, { props: { initialScene, theme: 'light' } })
     await flushPromises()
 
     expect(islandMocks.mount).toHaveBeenCalledOnce()
+    expect(islandMocks.mount).toHaveBeenCalledWith(expect.objectContaining({ initialScene }))
     expect(wrapper.emitted('ready')).toHaveLength(1)
 
     await wrapper.setProps({ theme: 'dark' })

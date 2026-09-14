@@ -415,6 +415,13 @@ const STRINGS: Strings = {
   'board.delete_detail': { zh: '删除后无法撤销。Board 中的内容也会被删除。', en: 'This cannot be undone. The content in this board will also be deleted.' },
   'board.editor_coming_soon': { zh: 'Board 编辑器即将上线', en: 'Board editor is coming soon' },
   'board.editor_coming_soon_detail': { zh: 'Board 已准备好，编辑器将在下一阶段接入。', en: 'The board is ready; its editor will be added in the next phase.' },
+  'board.editor_loading': { zh: '正在加载 Board…', en: 'Loading board…' },
+  'board.editor_hydrating': { zh: '正在准备画布…', en: 'Preparing canvas…' },
+  'board.editor_ready': { zh: '已就绪', en: 'Ready' },
+  'board.editor_load_failed': { zh: 'Board 加载失败', en: 'Could not load board' },
+  'board.editor_not_found': { zh: 'Board 不存在或已被删除。', en: 'This board does not exist or has been deleted.' },
+  'board.editor_scene_unsupported': { zh: '此 Board 使用了当前版本不支持的画布数据。', en: 'This board uses canvas data unsupported by the current version.' },
+  'board.editor_canvas_failed': { zh: '画布初始化失败，请重试。', en: 'The canvas could not be initialized. Please retry.' },
   'board.back_to_boards': { zh: '返回 Board', en: 'Back to boards' },
   'document_hover.modified': { zh: '修改于 {date}', en: 'Modified {date}' },
   // AI panel quick prompts (note open)
