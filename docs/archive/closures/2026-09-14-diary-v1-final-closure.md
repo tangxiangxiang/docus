@@ -35,7 +35,9 @@ The baseline was verified on `main` at:
 test(diary): cover d c close flow
 ```
 
-The baseline matches `github/main`. GitHub Actions run [#809](https://github.com/tangxiangxiang/docus/actions/runs/34801186048)
+The runtime baseline was the last Diary runtime-changing state on `main`.
+Subsequent documentation-only commits do not change the closed Diary V1
+runtime. GitHub Actions run [#809](https://github.com/tangxiangxiang/docus/actions/runs/34801186048)
 completed successfully. Its required lanes all passed:
 
 | CI lane | Result |
