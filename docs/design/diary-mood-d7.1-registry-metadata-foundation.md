@@ -1,5 +1,9 @@
 # D7.1 — Registry and Metadata Foundation
 
+> **Historical lineage — not current runtime authority.** Current behavior is
+> defined by [Diary Architecture](../architecture/diary.md) and [Diary User
+> Guide](../user-guide/diary.md). This file is retained for D7 traceability.
+
 Status: **REVIEW-CLOSED**
 Independent Review: **PASS**
 Self-review: **P0 = 0 / P1 = 0 / P2 = 0**

@@ -1,5 +1,10 @@
 # D8.4 Independent Planning Re-review Round 2
 
+> **Historical lineage — not current runtime authority.** Current behavior is
+> defined by [Diary Architecture](../architecture/diary.md) and [Diary User
+> Guide](../user-guide/diary.md). This file is retained for D8 review
+> traceability.
+
 ## 1. Verdict
 
 ```text

@@ -1,5 +1,10 @@
 # D8.3 Post-Closure Follow-up Evidence
 
+> **Historical lineage — not current runtime authority.** Current behavior is
+> defined by [Diary Architecture](../architecture/diary.md) and [Diary User
+> Guide](../user-guide/diary.md). This file is retained for D8 review
+> traceability.
+
 Status: `IMPLEMENTED / REVIEW-READY`. The original D8.3 closure remains
 `REVIEW-CLOSED (historical)`. This follow-up has not received an independent
 follow-up review. It is a focused product-consistency remediation for managed

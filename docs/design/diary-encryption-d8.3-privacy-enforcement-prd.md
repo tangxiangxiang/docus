@@ -1,5 +1,10 @@
 # D8.3 — Privacy Enforcement PRD
 
+> **Historical lineage — not current runtime authority.** Current behavior is
+> defined by [Diary Architecture](../architecture/diary.md) and [Diary User
+> Guide](../user-guide/diary.md). This file is retained for D8 review
+> traceability.
+
 Status: `IMPLEMENTED / REVIEW-READY` for the post-closure follow-up. The
 original D8.3 closure remains `REVIEW-CLOSED` as a historical event; this
 follow-up has not received an independent follow-up review. D8.4 remains

@@ -1,5 +1,9 @@
 # D7.2 — Native Diary Context and 4×6 Mood Picker
 
+> **Historical lineage — not current runtime authority.** Current behavior is
+> defined by [Diary Architecture](../architecture/diary.md) and [Diary User
+> Guide](../user-guide/diary.md). This file is retained for D7 traceability.
+
 ## Status
 
 **D7.2 = REVIEW-CLOSED**

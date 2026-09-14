@@ -1,5 +1,9 @@
 # D7.3 — Calendar Integration Evidence
 
+> **Historical lineage — not current runtime authority.** Current behavior is
+> defined by [Diary Architecture](../architecture/diary.md) and [Diary User
+> Guide](../user-guide/diary.md). This file is retained for D7 traceability.
+
 ## Status
 
 `REVIEW-CLOSED`

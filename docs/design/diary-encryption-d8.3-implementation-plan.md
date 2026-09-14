@@ -1,5 +1,10 @@
 # D8.3 — Privacy Enforcement Implementation Plan
 
+> **Historical lineage — not current runtime authority.** Current behavior is
+> defined by [Diary Architecture](../architecture/diary.md) and [Diary User
+> Guide](../user-guide/diary.md). This file is retained for D8 review
+> traceability.
+
 Status: `IMPLEMENTED / REVIEW-READY` for the post-closure follow-up. The
 original planning and closure checkpoints remain historical; an independent
 follow-up review has not been performed. See the companion [D8.3 Privacy

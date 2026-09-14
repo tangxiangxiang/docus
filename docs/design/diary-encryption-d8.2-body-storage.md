@@ -1,5 +1,10 @@
 # D8.2 — Encrypted Diary Body Read / Write
 
+> **Historical lineage — not current runtime authority.** Current behavior is
+> defined by [Diary Architecture](../architecture/diary.md) and [Diary User
+> Guide](../user-guide/diary.md). This file is retained for D8 review
+> traceability.
+
 Status: `REVIEW-CLOSED`
 
 This phase implements the first encrypted managed-Diary body storage seam after

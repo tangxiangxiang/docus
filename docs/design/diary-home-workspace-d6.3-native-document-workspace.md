@@ -1,5 +1,9 @@
 # D6.3 Native Document Workspace Handoff Evidence
 
+> **Historical lineage — not current runtime authority.** Current behavior is
+> defined by [Diary Architecture](../architecture/diary.md) and [Diary User
+> Guide](../user-guide/diary.md). This file is retained for D6 traceability.
+
 ## Status
 
 - D6.3 = `REVIEW-CLOSED`

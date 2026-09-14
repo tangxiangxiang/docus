@@ -1,5 +1,9 @@
 # D6.6 — Responsive / Accessibility Evidence
 
+> **Historical lineage — not current runtime authority.** Current behavior is
+> defined by [Diary Architecture](../architecture/diary.md) and [Diary User
+> Guide](../user-guide/diary.md). This file is retained for D6 traceability.
+
 状态：`REVIEW-CLOSED`
 Independent Review：`PASS (P0 = 0 / P1 = 0 / P2 = 0)`
 Task self-review：`P0 = 0 / P1 = 0 / P2 = 0`

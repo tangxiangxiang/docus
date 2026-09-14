@@ -1,5 +1,10 @@
 # D8.4 Planning Remediation Evidence
 
+> **Historical lineage — not current runtime authority.** Current behavior is
+> defined by [Diary Architecture](../architecture/diary.md) and [Diary User
+> Guide](../user-guide/diary.md). This file is retained for D8 review
+> traceability.
+
 ## 1. Scope and lifecycle
 
 This file records the docs-only D8.4 Planning Remediation Round 1, Round 2

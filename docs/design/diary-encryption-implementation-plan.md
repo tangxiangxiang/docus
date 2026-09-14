@@ -1,5 +1,11 @@
 # D8 — Diary Encryption Implementation Plan
 
+> **Historical implementation lineage — not current runtime authority.** Use
+> [Diary Architecture](../architecture/diary.md) and [Diary User
+> Guide](../user-guide/diary.md) for current behavior. This file records D8
+> planning and review history; current encryption and migration behavior is
+> described by the maintained Diary Architecture.
+
 状态：`D8.0 REVIEW-CLOSED`；`D8.0 Self-review = PASS (P0/P1/P2 = 0/0/0)`；`D8.0 Independent Review = PASS (P0/P1/P2 = 0/0/0)`；`D8.1 REVIEW-CLOSED`；`D8.1 Independent Review = PASS (P0/P1/P2 = 0/0/0)`；`D8.2 REVIEW-CLOSED`；`D8.2 Self-review = PASS (P0/P1/P2 = 0/0/0)`；`D8.2 Independent Review = PASS (P0/P1/P2 = 0/0/0)`；`D8.3 original closure = REVIEW-CLOSED (historical)`；`D8.3 post-closure follow-up = IMPLEMENTED / REVIEW-READY`；`D8.3 independent follow-up review = NOT YET PERFORMED`；`D8.4 Planning = REVIEW-READY / NOT APPROVED`；`D8.4 Independent Planning Review = CHANGES REQUIRED (0/5/3) [historical]`；`D8.4 Planning Remediation Round 1 = COMPLETE`；`D8.4 Independent Planning Re-review = CHANGES REQUIRED (0/1/1) [historical]`；`D8.4 Planning Remediation Round 2 = COMPLETE`；`D8.4 Independent Planning Re-review Round 2 = CHANGES REQUIRED (0/1/0) [historical]`；`D8.4 Planning Remediation Round 3 = COMPLETE`；`D8.4 Independent Planning Re-review Round 3 = PENDING`；`D8.4 implementation = BLOCKED / NOT STARTED`。
 
 基线：`1fb1389cab053d5ff72630253f509f0170e588c2`（`docs(diary): close D7 mood implementation`）。D7.0A、D7.0、D7.1、D7.2、D7.3、D7.4、D7.5、D7.6 均保持 `REVIEW-CLOSED`。D8 只从 Diary 加密边界开始，不重开 D7，也不创建独立 Private Vault。

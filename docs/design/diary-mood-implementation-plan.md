@@ -1,5 +1,10 @@
 # D7 — Mood Diary Implementation Plan
 
+> **Historical implementation lineage — not current runtime authority.** Use
+> [Diary Architecture](../architecture/diary.md) and [Diary User
+> Guide](../user-guide/diary.md) for current behavior. This file records the
+> closed D7 implementation lineage; its old `NOT STARTED` wording is historical.
+
 状态：**REVIEW-CLOSED**
 Independent Review：PASS
 P0/P1/P2：0/0/0

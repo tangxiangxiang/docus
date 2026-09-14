@@ -1,5 +1,11 @@
 # Diary Calendar PRD
 
+> **Historical planning document — not current runtime authority.** The
+> maintained Diary authorities are [Diary Architecture](../architecture/diary.md)
+> and [Diary User Guide](../user-guide/diary.md). This PRD records the earlier
+> Diary planning and review lineage; it contains superseded VCalendar and
+> pre-Mood/pre-encryption statements.
+
 状态：`REVIEW-CLOSED`（PRD 本身已关闭；VCalendar `3.1.2` exact-stack gate = `PASS / REVIEW-CLOSED`；D3.0 post-closure compatibility regression follow-up = `REVIEW-CLOSED`；D3.2 Calendar-first surface、D4 editor/lifecycle integration 已完成实现并分别 `REVIEW-CLOSED`；D5 = `REVIEW-CLOSED`，base implementation/test commit 为 `adfd010e914c6572f33eceb5a5ea778ef0014c39`，responsive P1 fix 为 `05906f9`，docs follow-up 为 `f64c4ac`，final independent re-review P0/P1/P2 = 0/0/0；Diary Calendar MVP = `COMPLETE / REVIEW-CLOSED`）
 
 PRD review status：`P0 = 0`、`P1 = 0`、`P2 = 0`。PRD contract 与 D3.0 compatibility evidence 已分开记录；D3.0 gate result 为 `PASS`，D3.0 closure 已完成。

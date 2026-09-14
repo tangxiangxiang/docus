@@ -1,6 +1,11 @@
 
 # Diary Implementation Plan
 
+> **Historical implementation lineage — not current runtime authority.** Use
+> [Diary Architecture](../architecture/diary.md) and [Diary User
+> Guide](../user-guide/diary.md) for current behavior. This file preserves the
+> completed D0–D5 plan and evidence, including superseded VCalendar decisions.
+
 ## 1. Status
 
 - **Status:** D0 REVIEW-CLOSED；D1 REVIEW-CLOSED；D2 REVIEW-CLOSED；D3.0 REVIEW-CLOSED / PASS；D3.0 post-closure compatibility regression follow-up REVIEW-CLOSED（`ed47c94`；independent review P0/P1/P2 = 0/0/0）；D3.1 REVIEW-CLOSED；D3.2 REVIEW-CLOSED；D4 REVIEW-CLOSED；D5 REVIEW-CLOSED；Diary Calendar MVP COMPLETE / REVIEW-CLOSED。本文件保留 Diary MVP 的阶段边界、测试、证据和 review trail。

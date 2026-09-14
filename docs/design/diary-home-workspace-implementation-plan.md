@@ -1,5 +1,10 @@
 # D6 — Diary Home Workspace Implementation Plan
 
+> **Historical implementation lineage — not current runtime authority.** Use
+> [Diary Architecture](../architecture/diary.md) and [Diary User
+> Guide](../user-guide/diary.md) for current behavior. This file records the
+> closed D6 implementation plan and evidence.
+
 状态：`REVIEW-CLOSED`（原始 D6 design baseline）；Native Document Workspace superseding design amendment = `REVIEW-CLOSED`，Independent Review = `PASS`（P0/P1/P2 = 0/0/0）。D6.4 closure review = `PASS`（P0/P1/P2 = 0/0/0）。
 
 基线：D6.0–D6.7 `REVIEW-CLOSED`。旧 D6.3 Reader Dialog implementation 在 closure 前被产品决定替代；D6.5 生命周期回归、D6.6 responsive/accessibility evidence 与 D6.7 release closure evidence 均已记录并通过独立复审，P0/P1/P2 = `0/0/0`。整个 D6 已正式关闭。

@@ -1,5 +1,9 @@
 # D7.0 — Storage / Metadata Ownership Verification
 
+> **Historical lineage — not current runtime authority.** Current behavior is
+> defined by [Diary Architecture](../architecture/diary.md) and [Diary User
+> Guide](../user-guide/diary.md). This file is retained for D7 traceability.
+
 状态（D7.0 Revalidation）：**REVIEW-CLOSED**
 
 Independent Revalidation Review（本次 revalidation）：`PASS`

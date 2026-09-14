@@ -1,5 +1,10 @@
 # Diary VCalendar Compatibility Report
 
+> **Historical lineage — not current runtime authority.** Current behavior is
+> defined by [Diary Architecture](../architecture/diary.md) and [Diary User
+> Guide](../user-guide/diary.md). This file records the superseded VCalendar
+> compatibility decision for traceability.
+
 ## Status
 
 - D3.0: `REVIEW-CLOSED`

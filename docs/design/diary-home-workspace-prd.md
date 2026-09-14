@@ -1,5 +1,10 @@
 # D6 — Diary Home Workspace PRD
 
+> **Historical implementation lineage — not current runtime authority.** Use
+> [Diary Architecture](../architecture/diary.md) and [Diary User
+> Guide](../user-guide/diary.md) for current behavior. This file records the
+> closed D6 planning decisions and evidence.
+
 状态：`REVIEW-CLOSED`（原始 D6 产品 contract baseline）；2026-08-26 Native Document Workspace superseding amendment = `REVIEW-CLOSED`，Independent Review = `PASS`（P0/P1/P2 = 0/0/0）。
 
 已有状态保持不变：D0–D5、D6.0、D6.1、D6.2、D6.2.1、D6.3、D6.4、D6.5、D6.6、D6.7 均为 `REVIEW-CLOSED`。D6.4、D6.5、D6.6 与 D6.7 Independent Review 均为 `PASS`（P0/P1/P2 = 0/0/0）。整个 D6 已正式关闭。

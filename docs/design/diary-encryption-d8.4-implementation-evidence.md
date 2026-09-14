@@ -1,5 +1,10 @@
 # D8.4 Implementation Evidence — Diary Migration & Legacy Cleanup
 
+> **Historical lineage — not current runtime authority.** Current behavior is
+> defined by [Diary Architecture](../architecture/diary.md) and [Diary User
+> Guide](../user-guide/diary.md). This file is retained for D8 review
+> traceability.
+
 Date: 2026-09-01
 
 This record documents the owner-authorized fast-closure implementation pass. It

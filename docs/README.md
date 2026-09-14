@@ -11,6 +11,7 @@ Docus is a self-hosted Markdown knowledge base with a Vue interface, a Hono serv
 ## User Guide
 
 - [Overview](user-guide/overview.md)
+- [Diary (Current)](user-guide/diary.md)
 - [Ledger (Current)](user-guide/ledger.md)
 - [Vault and Archive Protocol](user-guide/vault.md)
 - [Editor and Draft Recovery](user-guide/editor.md)
@@ -31,6 +32,7 @@ Docus is a self-hosted Markdown knowledge base with a Vue interface, a Hono serv
 ## Architecture
 
 - [Architecture Overview](architecture/overview.md)
+- [Diary Architecture (Current)](architecture/diary.md)
 - [Ledger Architecture (Current)](architecture/ledger.md)
 - [Storage](architecture/storage.md)
 - [Edit and Save](architecture/edit-and-save.md)
@@ -73,7 +75,19 @@ Docus is a self-hosted Markdown knowledge base with a Vue interface, a Hono serv
 - [Docus VitePress-Style Markdown Extensions MD-EXT-6 Safe Snippets & Markdown Includes](design/vitepress-markdown-extensions-md-ext-6-resources.md)
 - [PDF Export V1 PRD](design/pdf-export-prd.md)
 - [PDF Export V1 Implementation Plan](design/pdf-export-implementation-plan.md)
-- [Diary Calendar PRD](design/diary-prd.md)
+- [Board V1 PRD](design/board-v1-prd.md)
+
+Diary design and implementation lineage below is historical and cannot
+override the [Diary Architecture](architecture/diary.md) or [Diary User
+Guide](user-guide/diary.md):
+
+- [Diary Calendar PRD (Historical Planning)](design/diary-prd.md)
+- [Diary Implementation Plan (Historical)](design/diary-implementation-plan.md)
+- [Diary Home Workspace Lineage (Historical)](design/diary-home-workspace-prd.md)
+- [Diary Mood Lineage (Historical)](design/diary-mood-prd.md)
+- [Diary Encryption Lineage (Historical)](design/diary-encryption-implementation-plan.md)
+- [Diary VCalendar Compatibility Evidence (Historical)](design/diary-vcalendar-compatibility-report.md)
+
 Ledger planning documents below are historical implementation lineage, not current runtime authority:
 
 - [Ledger v1 Product Requirements (Historical Planning)](design/ledger-v1-prd.md)
@@ -93,7 +107,7 @@ Ledger planning documents below are historical implementation lineage, not curre
 
 ## Historical Documents
 
-[The documentation archive](archive/README.md) preserves completed plans, former specifications, implementation records, closure evidence, and freeze backlogs. It explains how Docus evolved; it is not authoritative for current behavior.
+[The documentation archive](archive/README.md) preserves completed plans, former specifications, implementation records, closure evidence, and freeze backlogs. It explains how Docus evolved; it is not authoritative for current behavior. The [Diary V1 Final Closure](archive/closures/2026-09-14-diary-v1-final-closure.md) records the closure decision.
 
 ## Documentation Conventions
 

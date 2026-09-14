@@ -1,5 +1,10 @@
 # D7 — Mood Diary PRD
 
+> **Historical implementation lineage — not current runtime authority.** Use
+> [Diary Architecture](../architecture/diary.md) and [Diary User
+> Guide](../user-guide/diary.md) for current behavior. This file records the
+> closed D7 planning lineage.
+
 状态：`REVIEW-CLOSED`（D7 PRD；未开始实现）
 
 Independent Review：`PASS`（P0 = 0，P1 = 0，P2 = 0）

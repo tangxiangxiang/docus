@@ -1,5 +1,10 @@
 # D8.3 Independent Review
 
+> **Historical lineage — not current runtime authority.** Current behavior is
+> defined by [Diary Architecture](../architecture/diary.md) and [Diary User
+> Guide](../user-guide/diary.md). This file is retained for D8 review
+> traceability.
+
 Status: `CHANGES REQUIRED`
 
 Independent result: `D8.3 Independent Review = CHANGES REQUIRED (0/2/0)`

@@ -1,5 +1,10 @@
 # D8.4 Migration, Legacy Cleanup & Release Closure PRD
 
+> **Historical lineage — not current runtime authority.** Current behavior is
+> defined by [Diary Architecture](../architecture/diary.md) and [Diary User
+> Guide](../user-guide/diary.md). This file is retained for D8 review
+> traceability.
+
 Status: `REVIEW-READY`; D8.4 Independent Planning Review:
 `CHANGES REQUIRED (0/5/3)` [historical]; D8.4 Planning Remediation Round 1:
 `COMPLETE`; D8.4 Independent Planning Re-review:

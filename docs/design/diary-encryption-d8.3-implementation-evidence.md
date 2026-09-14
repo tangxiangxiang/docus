@@ -1,5 +1,10 @@
 # D8.3 — Privacy Enforcement Implementation Evidence
 
+> **Historical lineage — not current runtime authority.** Current behavior is
+> defined by [Diary Architecture](../architecture/diary.md) and [Diary User
+> Guide](../user-guide/diary.md). This file is retained for D8 review
+> traceability.
+
 Status: historical D8.3 closure evidence. The original implementation and
 fresh diff-based self-review were complete, and exact-head CI for that
 checkpoint was 8/8 success. The direct managed-Diary delete rows in this
