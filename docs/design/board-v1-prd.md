@@ -171,6 +171,8 @@ Board V1 使用：
 
 作为底层 Infinite Canvas Engine。
 
+### 5.1 Excalidraw
+
 Excalidraw 负责：
 
 ```text
@@ -195,9 +197,38 @@ Canvas
 └── Export Scene
 ```
 
-Docus 不重新实现上述基础能力。
+Docus 不重新实现上述基础能力，外围只负责 Board 的产品边界和 Docus 集成。
 
----
+### 5.2 Vue / React Island
+
+Docus 前端主体为 Vue 3、Vue Router、Vite 和 TypeScript；Excalidraw 为 React Component。两者必须通过明确的 React Island 边界集成，不在 Vue 组件体系中无边界混用 React 状态。
+
+```text
+BoardEditor.vue
+      │
+      ▼
+ExcalidrawHost
+      │
+      ▼
+React createRoot()
+      │
+      ▼
+<Excalidraw />
+```
+
+React Island 只负责 Excalidraw 的渲染、API 调用和 Scene 事件桥接。Vue 负责 Board 生命周期、路由、Metadata、标题、保存状态、Board Service 以及 Docus Theme。
+
+Excalidraw 的高频 `onChange` 只能更新 Board Editor 局部的内存状态，不能经由全局 Store 驱动整个 Docus 响应式更新。Vue Host 必须负责 React Root 的创建、卸载和异常边界。
+
+### 5.3 按需加载
+
+React、React DOM 和 Excalidraw 必须按需加载，仅在进入：
+
+```text
+/board/:boardId
+```
+
+的 Board Editor 时承担加载成本。Board Gallery、Note、Diary、Ledger、Login 和 Setup 等页面不应因为 Board 编辑器而加载 Excalidraw 初始 Bundle。实现应使用 dynamic import、lazy loading 或 Vite code splitting 达成这一边界。
 
 ## 6. 架构原则
 
@@ -225,23 +256,41 @@ Docus
               └── Canvas Engine
 ```
 
-即：
-
 > Board 属于 Docus。
 
 > Excalidraw 属于 Board 的编辑器实现。
 
----
+### 6.2 BoardEngineAdapter
 
-### 6.2 禁止直接把 Excalidraw 当业务模型
-
-不得出现类似设计：
+Board Service 不得在各处直接依赖 Excalidraw API 或类型。通过最小必要的 `BoardEngineAdapter` 隔离 Canvas Engine：
 
 ```text
-Board = Excalidraw JSON
+Board Service
+      │
+      ▼
+BoardEngineAdapter
+      │
+      ▼
+Excalidraw Engine
 ```
 
-而应该：
+Adapter 至少覆盖：
+
+```text
+load scene
+deserialize scene
+serialize scene
+normalize persistent app state
+export PNG
+export SVG
+generate thumbnail
+```
+
+V1 只需要 `ExcalidrawBoardEngineAdapter`。Adapter 的目标是隔离领域边界，不是提前建设第二套 Canvas 平台。
+
+### 6.3 Domain Boundary
+
+`Board` 是 Docus Domain；Excalidraw 是当前 Engine。Board Metadata、Scene Version、保存、恢复、资源引用和生命周期由 Docus 定义，Engine-specific data 由 Adapter 序列化。
 
 ```text
 Board
@@ -252,45 +301,7 @@ Board
 └── Assets
 ```
 
-例如：
-
-```ts
-interface Board {
-  id: string
-  title: string
-
-  engine: 'excalidraw'
-
-  sceneVersion: number
-
-  scene: BoardScene
-
-  createdAt: number
-  updatedAt: number
-}
-```
-
-其中：
-
-```ts
-interface BoardScene {
-  engineData: unknown
-  persistentAppState: BoardPersistentAppState
-  assetRefs: readonly string[]
-}
-```
-
-未来即使替换 Excalidraw：
-
-```text
-Excalidraw
-     ↓
-其他 Canvas Engine
-```
-
-Board 本身依然可以存在。
-
----
+Board Domain、Board Service 和 Storage Contract 不应泄漏 Excalidraw 专有类型。持久化可以使用 Metadata Store、Scene Store 和 Asset Store，也可以在现有存储中采用其他物理组织方式，但逻辑边界必须保持。
 
 ## 7. Board 信息架构
 
@@ -326,34 +337,28 @@ Board
 
 ### 8.1 页面结构
 
-Board 首页负责管理所有白板。
+Board Home 是纯 Gallery Home，负责管理所有白板；V1 不提供 Folder、FileTree、Board Directory、左侧文件树或 Board 拖入文件夹。
 
-V1 采用纯 Gallery Home，不提供 Folder、FileTree 或 Board Directory。
-首页固定由 Recent 和 All Boards 两个画廊区域组成；All Boards 默认按
-`updatedAt DESC` 排序。
-
-建议结构：
+页面固定包含：
 
 ```text
-┌──────────────────────────────────────────────┐
-│ Board                              + New Board│
-├──────────────────────────────────────────────┤
-│                                              │
-│ Search boards...                             │
-│                                              │
-│ ┌────────────┐ ┌────────────┐ ┌────────────┐ │
-│ │            │ │            │ │            │ │
-│ │ Thumbnail  │ │ Thumbnail  │ │ Thumbnail  │ │
-│ │            │ │            │ │            │ │
-│ ├────────────┤ ├────────────┤ ├────────────┤ │
-│ │ 架构设计    │ │ Ledger     │ │ Ideas      │ │
-│ │ 2 min ago  │ │ Yesterday  │ │ Sep 10     │ │
-│ └────────────┘ └────────────┘ └────────────┘ │
-│                                              │
-└──────────────────────────────────────────────┘
+Board                         + New Board
+
+[ Search boards... ]
+
+Recent
+────────────────────────────────────────────
+[ Thumbnail ]  [ Thumbnail ]  [ Thumbnail ]
+
+All Boards
+────────────────────────────────────────────
+[ Thumbnail ]  [ Thumbnail ]  [ Thumbnail ]
+[ Thumbnail ]  [ Thumbnail ]  [ Thumbnail ]
 ```
 
----
+Recent 展示最近编辑的若干 Board；All Boards 展示全部 Board，默认按 `updatedAt DESC` 排序。Search V1 只匹配 Board Title。
+
+Board Home 不复用 `src/components/vault/FileTree.vue` 作为 UI。FileTree 属于 Vault 领域，包含 Note、Tag、Diary、Archive、Metadata 和 Document Lifecycle 等逻辑；Board Home 与 FileTree 是两个不同的产品模型。
 
 ## 9. Board Card
 
@@ -388,7 +393,7 @@ Updated Time
 
 Board 应支持生成预览图。
 
-Thumbnail 用于 Board 列表快速识别内容。
+Thumbnail 用于 Board 列表快速识别内容，属于 Scene 的派生数据，不是 Scene 持久化成功的前置条件。
 
 生成时机：
 
@@ -397,32 +402,16 @@ Scene 保存成功
       ↓
 Thumbnail 标记为 dirty
       ↓
-延迟生成 Thumbnail
+Debounce 2 ~ 5 seconds 或进入 idle
+      ↓
+BoardEngineAdapter.generateThumbnail()
+      ↓
+保存新的 Thumbnail Metadata
 ```
 
-Thumbnail 不要求每次 Scene 改变立即刷新。
+Thumbnail 不要求每次 Scene 改变立即刷新，也不能在每次 Pointer Move 或每次 `onChange` 生成。
 
-可以使用 Debounce。
-
-例如：
-
-```text
-Scene changed
-
-      ↓
-
-Autosave
-      ↓
-
-Debounce 2 ~ 5 seconds
-      ↓
-
-Generate Thumbnail
-```
-
-避免频繁进行图片生成。
-
----
+Thumbnail 生成失败时，Scene 仍保持已保存状态；可以保留旧 Thumbnail 或显示 fallback，不得把派生数据失败报告为 Scene 保存失败。
 
 ## 11. 创建 Board
 
@@ -551,9 +540,7 @@ Untitled Board
 
 ## 15. 自动保存
 
-Board 不提供手动 Save 按钮。
-
-所有修改自动保存。
+Board 不提供手动 Save 按钮。所有 Scene 修改和 Board Title 修改都自动保存。
 
 包括：
 
@@ -567,38 +554,16 @@ Board 不提供手动 Save 按钮。
 * 修改图片
 * 修改 Board Title
 
-状态：
+### 15.1 Debounce
 
-```text
-Saving...
-
-Saved
-```
-
-正常情况下只短暂出现。
-
----
-
-## 16. Autosave 策略
-
-禁止：
-
-```text
-onChange
-   ↓
-立即写数据库
-```
-
-因为 Excalidraw 拖动 Element 时可能连续触发大量 Change。
-
-应使用 Debounce。
-
-例如：
+Excalidraw `onChange` 先更新 Board Editor 局部的 `latestSceneRef` 并标记 dirty，再由 Debounce 触发持久化：
 
 ```text
 Excalidraw onChange
         ↓
-Update local state
+latestSceneRef
+        ↓
+mark dirty
         ↓
 Debounce
         ↓
@@ -607,54 +572,85 @@ Board Service
 Storage
 ```
 
-建议：
+禁止每次 Pointer Move 立即写数据库。Scene 保存 Debounce 建议为 `500ms ~ 1000ms`，具体值由实现阶段结合性能验证确定。
+
+### 15.2 Save Queue / Revision
+
+保存请求必须保证旧 Scene 不能覆盖新 Scene。实现可以使用串行 Save Queue，或使用单调递增 revision、expected version 等并发控制；无论采用哪种方式，都必须覆盖以下情况：
 
 ```text
-500ms ~ 1000ms
+Save A 发出
+Save B 发出
+B 先完成，A 后完成
 ```
 
-范围内保存。
+A 完成后不得把旧快照写回并覆盖 B。保存期间产生的新修改必须继续保留为待保存的最新 revision，`flush()` 必须等待该 revision 完成。
 
-具体时间由实现阶段决定。
+### 15.3 Save Status
 
----
+Header 状态必须以真实持久化结果为准：
+
+```text
+Save request       → Saving...
+Server success     → Saved
+Server failure     → Save failed
+```
+
+Debounce timer 执行本身不能触发 `Saved`。保存失败时，当前 Scene 必须保留在内存和本地 Checkpoint 中，并允许后续变化或重试再次保存。
+
+### 15.4 Crash Checkpoint
+
+除 Server Autosave 外，Board 需要维护本地 Crash Checkpoint，以覆盖 Browser Refresh、Tab Close、Process Kill 等异步保存来不及完成的场景。
+
+Checkpoint 至少包含：
+
+```text
+key: docus:board:checkpoint:{boardId}
+boardId
+sceneVersion
+revision
+BoardScene
+savedAt
+```
+
+Checkpoint 应在最新本地 Scene 更新后及时写入，不得等待 Server Save 成功；实现可使用项目合适的本地持久化方式。Server 对同一 revision 保存成功后清理该 Checkpoint；保存失败、保存中或 Board 被正常关闭但未确认成功时保留它。删除 Board 时必须清理对应 Checkpoint。
+
+重新打开 Board 时，应将 Checkpoint 与 Server Scene 的 revision / 时间进行 reconciliation：Checkpoint 更新时展示恢复提示并允许恢复，Server 更新或两者一致时清理过期 Checkpoint。Checkpoint 损坏时只能进入错误恢复流程，不能用空 Scene 覆盖 Server 数据。Checkpoint 复用 Draft / Recovery 的思想即可，不强行复用整个 Note 领域实现。
+
+## 16. 编辑器状态边界
+
+Board Editor 自己持有当前 Scene、`latestSceneRef`、dirty 标记和保存队列。完整 `elements[]` 及高频 Scene 变化不得长期放入 Docus 全局 Pinia 或全局 reactive state。
+
+全局层只保留页面和导航所需的最小状态，例如：
+
+```text
+boardId
+title
+saveStatus
+updatedAt
+```
+
+这样可以避免拖动 Shape 时触发整个 Docus App 重渲染；React Island 与 Vue Host 之间只传递必要事件和快照。
 
 ## 17. 离开页面时保存
 
-如果用户在 Debounce 尚未触发时离开：
+如果用户在 Debounce 尚未触发或保存队列仍有待处理 revision 时离开 Board：
 
 ```text
 Board
  ↓
 Navigation
+ ↓
+await flush()
 ```
 
-必须执行一次：
+对于 Docus 内部 Route Leave、Back 和 Close Board，必须主动等待 `flush()`，尽量确保最后一次 Scene Change 被持久化。`flush()` 以保存队列中最新 revision 完成为准。
 
-```text
-flush()
-```
-
-对于 Docus 内部 Route Leave、Back 和 Close Board，应主动等待 `flush()`，
-尽量确保最后一次 Scene Change 被持久化。
-
-包括：
-
-```text
-Back
-Route Change
-Close Board
-Application Close
-```
-
-`beforeunload` 只能作为 Browser Refresh、Tab Close 等场景下的 Best Effort，
-不能作为数据安全机制；突发关闭由本地 Crash Checkpoint 提供额外恢复能力。
-
----
+`beforeunload` 只能作为 Browser Refresh、Tab Close 等场景下的 Best Effort，不能作为数据安全机制；突发关闭由第 15.4 节的本地 Crash Checkpoint 提供额外恢复能力。
 
 ## 18. Scene 数据
 
-Excalidraw Scene 主要包含：
+Excalidraw 原始编辑器通常包含：
 
 ```text
 elements
@@ -662,47 +658,15 @@ appState
 files
 ```
 
-Docus 的持久层由 Board Domain 和 Canvas Engine Adapter 共同定义。
-Engine-specific data 由 Adapter 序列化；`BinaryFiles` 只作为 Excalidraw
-运行时数据组装，不与 Docus Asset Store 双重长期保存。
+Docus 不直接把这份对象作为持久化业务模型。Board Scene 由 Board Domain 和 `BoardEngineAdapter` 共同定义，持久化范围为可恢复的 `engineData`、Docus 通用的 `persistentAppState` 和资源引用 `assetRefs`。
 
-Docus 需要持久化 `engineData`（其中必须包含可恢复的 elements 数据）、
-`persistentAppState` 和 `assetRefs`。这些字段由 Board Domain 与
-`BoardEngineAdapter` 共同定义；Excalidraw `BinaryFiles` 仅在运行时组装。
+### 18.1 Engine Data
 
----
+`engineData` 是由 Adapter 序列化的 Engine-specific data，必须包含恢复 Board 所需的元素数据。其具体格式不向 Board Service 泄漏 Excalidraw 类型，并随 `sceneVersion` 迁移和校验。
 
-### appState
+### 18.2 Persistent AppState
 
-只保存能够恢复用户工作环境且适合持久化的字段。
-
-不要直接无脑持久化整个 AppState。
-
-原因：
-
-AppState 中包含大量运行时状态。
-
-例如：
-
-```text
-selectedElementIds
-contextMenu
-openDialog
-draggingElement
-editingElement
-```
-
-这些状态不应该进入持久层。
-
-需要建立：
-
-```text
-BoardPersistentAppState
-```
-
-只保存必要内容。
-
-例如：
+禁止直接 `JSON.stringify(appState)` 完整写入持久层。应通过 `BoardPersistentAppState` 只保存适合恢复工作环境的字段，例如：
 
 ```text
 viewBackgroundColor
@@ -712,20 +676,64 @@ scrollX
 scrollY
 ```
 
-`theme` 不属于 Board Scene 的持久状态。Theme 由 Docus 全局状态负责，
-Board 只持久化用户主动设置的 Canvas Background 等 Board-owned 字段。
+不得保存以下运行时状态：
 
-最终字段根据 Excalidraw API 决定。
+```text
+selectedElementIds
+contextMenu
+openDialog
+draggingElement
+editingElement
+```
 
----
+`persistentAppState` 必须保持为 Docus 通用 Canvas 状态。如果未来出现 Excalidraw 专有字段，应放回 `engineData`，而不是让领域模型依赖 Excalidraw AppState。`theme` 不属于 Scene 持久状态；Canvas Background 等 Board-owned 字段可以保留。
+
+### 18.3 Loading / Hydration
+
+打开 Board 时必须明确区分：
+
+```text
+loading → hydrating → ready
+                     ↘ error
+```
+
+正确顺序为：
+
+```text
+Load Board Metadata and Scene
+        ↓
+Load referenced Assets
+        ↓
+Migrate and validate Scene
+        ↓
+Mount Excalidraw
+        ↓
+Hydration completed
+        ↓
+Enable Autosave
+```
+
+在 `ready` 之前禁止业务 Autosave；不得先 Mount 一个可编辑 Empty Scene，再异步替换为已保存内容。
+
+### 18.4 Fail Closed
+
+Parse、Migration、校验或必要 Asset 组装失败时，必须停止加载并展示错误恢复 UI：
+
+```text
+Load / Validate Scene
+        ↓
+Failed
+        ↓
+STOP + Error UI
+```
+
+失败状态下不 Mount 可编辑的空 Scene、不启用 Autosave，也不允许将空数据写回原 Board。原始 Server Scene 和本地 Checkpoint 必须保留。
 
 ## 19. Files / Assets
 
-图片等二进制资源不应该直接长期依赖 Excalidraw 内部临时状态。
+### 19.1 Asset Source of Truth
 
-长期持久化时必须以 Docus Asset Layer 作为图片和二进制资源的唯一真相源。
-
-逻辑：
+图片等二进制资源长期持久化时必须以 Docus Asset Layer 作为唯一真相源。
 
 ```text
 Board
@@ -733,28 +741,31 @@ Board
   └── Image Element
           │
           ↓
-       fileId
+        fileId
           │
           ↓
      Docus Asset
 ```
 
-Scene 只保存 `fileId` 对应的 `assetRefs`。打开 Board 时由 Scene 和 Docus
-Assets 组装 Excalidraw 所需的 `BinaryFiles`；不得同时长期保存完整的
-Scene `BinaryFiles` 副本和 Asset Store 副本。
+Scene 只保存 `fileId` 对应的 `assetRefs`。Board 不重新建立一套完全独立于 Docus 的附件体系。
 
-长期目标：
+### 19.2 Runtime BinaryFiles
+
+打开 Board 时由 Scene 和 Docus Assets 组装 Excalidraw 所需的运行时 `BinaryFiles`；关闭或保存时通过 Adapter 将资源引用和 Engine Data 持久化。不得同时长期保存完整的 Scene `BinaryFiles` 副本和 Asset Store 副本。
 
 ```text
-Asset
-├── image
-├── attachment
-└── other binary resource
+Board Scene assetRefs
+        +
+Docus Asset Store
+        ↓
+Runtime BinaryFiles
 ```
 
-Board 不重新建立一套完全独立于 Docus 的附件体系。
+### 19.3 Asset Ownership / Cleanup
 
----
+Asset 删除必须基于引用关系，而不是简单按 Board 删除所有图片。共享 Asset 不得因为某个 Board 被删除而失效；只有确认 Asset 为 Board-private 且不存在其他引用时，才允许随 Board 清理。
+
+V1 删除 Board 时至少处理 Metadata、Scene、符合上述条件的 Board-private Assets、Thumbnail 和 Crash Checkpoint。若现有 Docus 已有统一 Trash，则优先遵循统一 Trash 规则；否则按第 20 节的永久删除流程执行。
 
 ## 20. 删除 Board
 
@@ -785,9 +796,7 @@ Trash
 Restore
 ```
 
-如果 Docus 已经存在统一 Trash 系统，则应接入统一 Trash。
-
----
+如果 Docus 已经存在统一 Trash 系统，则应接入统一 Trash。永久删除时按第 19.3 节执行引用检查，并清理 Board Metadata、Scene、可安全回收的 Board-private Assets、Thumbnail 和本地 Crash Checkpoint。
 
 ## 21. 重命名
 
@@ -1134,30 +1143,38 @@ Board 点击内部链接时由 Docus Router 接管。
 
 ## 35. 数据模型
 
-建议 Board Metadata：
+Board Domain 由 Metadata 与 Scene 组成。以下是逻辑模型，实际实现应根据 Docus 当前 Storage Architecture 调整。
+
+### 35.1 Board Metadata
 
 ```ts
-interface Board {
+interface BoardMetadata {
   id: string
-
   title: string
-
   engine: 'excalidraw'
-
   sceneVersion: number
-
-  scene: BoardScene
-
   thumbnail?: string
-
   createdAt: number
   updatedAt: number
 }
 ```
 
-实际实现应根据 Docus 当前 Storage Architecture 调整。
+### 35.2 Domain Aggregate 与存储边界
 
----
+```ts
+interface Board {
+  metadata: BoardMetadata
+  scene: BoardScene
+}
+
+interface BoardSceneRecord {
+  boardId: string
+  sceneVersion: number
+  scene: BoardScene
+}
+```
+
+`Board` 可以作为业务层聚合返回，但 Metadata Store、Scene Store 和 Asset Store 是否拆成独立表或记录由实现决定。不得因为物理存储方便，把所有内容做成没有边界的巨大 JSON；Metadata 与 Scene 的更新、revision 和错误处理边界必须清晰。
 
 ## 36. BoardScene
 
@@ -1166,18 +1183,14 @@ interface Board {
 ```ts
 interface BoardScene {
   engineData: unknown
-
   persistentAppState: BoardPersistentAppState
-
   assetRefs: readonly string[]
 }
 ```
 
-其中，Board 的 `sceneVersion` 表示当前 Board Scene Schema 版本，非常重要。
-`engineData` 的具体格式由 `BoardEngineAdapter` 管理，Board Service 不直接
-依赖 Excalidraw 类型。不能假定未来 Scene Schema 永远不变化。
+`engineData` 的具体格式由 `BoardEngineAdapter` 管理；`persistentAppState` 只包含 Docus 通用、适合恢复的 Canvas 状态；`assetRefs` 只保存 Docus Asset 引用。Board Service 不直接依赖 Excalidraw 类型，`BinaryFiles` 仅在运行时组装。
 
----
+Board 的 `sceneVersion` 表示当前 Board Scene Schema 版本。不能假定未来 Scene Schema、Asset 映射或 Engine 数据永远不变化。
 
 ## 37. Scene Version
 
@@ -1229,97 +1242,34 @@ Excalidraw Data
 
 ## 39. 错误恢复
 
-如果 Board Scene 加载失败：
+Board Scene 的加载、迁移、校验和必要 Asset 组装失败时，遵循第 18.4 节的 Fail Closed 规则：停止加载、展示错误恢复 UI、保留原始 Server Scene 与本地 Checkpoint，并禁用 Autosave。
 
-不能直接显示空白白板并自动覆盖。
-
-否则可能造成原始数据永久丢失。
-
-正确行为：
-
-```text
-Load Scene
-    ↓
-Parse Failed
-    ↓
-STOP
-    ↓
-Show Error
-```
-
-禁止：
-
-```text
-Parse Failed
-    ↓
-Empty Scene
-    ↓
-Autosave
-    ↓
-覆盖原始数据
-```
-
-这是 Board 最重要的数据安全原则之一。
-
----
+禁止将失败结果转换成可编辑 Empty Scene 后自动保存。
 
 ## 40. 保存异常
 
+保存状态与失败处理遵循第 15.3 节：状态必须来自真实持久化结果。
+
 如果 Autosave 失败：
 
-Header：
-
 ```text
-Save failed
+Header: Save failed
+Memory latestSceneRef: 保留
+Local Crash Checkpoint: 保留
 ```
 
-不得显示：
-
-```text
-Saved
-```
-
-用户继续编辑时，本地状态仍应保留。
-
-再次发生变化或者恢复正常后可以重新尝试保存。
-
----
+不得显示 `Saved`。后续变化或重试可以再次发起保存。
 
 ## 41. Loading
 
-打开 Board：
+Board 打开时展示 Loading 状态，并按第 18.3 节完成 Metadata、Scene、Assets 的读取、迁移、校验和 Hydration。
+
+Scene 未达到 `ready` 之前：
 
 ```text
-Loading Board
+不 Mount 可编辑 Empty Excalidraw
+不启用业务 Autosave
 ```
-
-Scene 完成读取之前：
-
-不要先初始化一个可编辑 Empty Excalidraw 再异步替换。
-
-否则容易产生：
-
-```text
-empty scene
-     ↓
-onChange
-     ↓
-autosave
-     ↓
-覆盖旧数据
-```
-
-推荐：
-
-```text
-Load Board
-    ↓
-Scene Ready
-    ↓
-Mount Excalidraw
-```
-
----
 
 ## 42. Empty State
 
@@ -1727,6 +1677,14 @@ Note ≠ Board
 
 ## 57. 验收标准
 
+### 首页
+
+* Board Home 是纯 Gallery Home。
+* 首页包含 Recent 和 All Boards 两个区域。
+* All Boards 默认按 `updatedAt DESC` 排序。
+* V1 不出现 Folder、FileTree 或 Board Directory。
+* 不直接复用 `src/components/vault/FileTree.vue` 作为 Board UI。
+
 ### 创建
 
 * 可以从 Board 首页创建新 Board。
@@ -1740,13 +1698,16 @@ Note ≠ Board
 * 可以移动、删除、修改 Element。
 * Undo / Redo 正常。
 * 图片插入正常。
+* Vue 与 React 通过局部 Host 边界协作，Scene 高频变化不会导致整个 Docus 重渲染。
+* React、React DOM 和 Excalidraw 不进入 Board Gallery 的初始加载路径。
 
 ### 保存
 
 * Scene 修改后自动保存。
 * 用户不需要点击 Save。
 * 保存期间可以显示 `Saving...`。
-* 完成后显示 `Saved`。
+* 完成后仅在真实持久化成功后显示 `Saved`。
+* 旧 Save 请求不能覆盖更新的 Scene。
 * 离开页面前最后一次修改不会因为 Debounce 丢失。
 
 ### 恢复
@@ -1754,18 +1715,22 @@ Note ≠ Board
 * 关闭 Board 后重新进入，内容完全恢复。
 * 刷新页面后内容完全恢复。
 * Viewport 在合理范围内恢复。
+* Server Save 未完成时突然关闭，重新进入可发现并处理较新的本地 Crash Checkpoint。
 
 ### 数据安全
 
-* Scene 加载失败不能覆盖原数据。
+* Scene 加载、迁移、校验或必要 Asset 组装失败不能覆盖原数据。
 * Scene 未加载完成前不能触发空 Scene Autosave。
 * 保存失败不能错误显示 `Saved`。
+* Docus Asset 是二进制资源的唯一持久化真相源。
+* Thumbnail 生成失败不影响 Scene 已保存状态。
 
 ### Board 管理
 
 * 可以重命名。
 * 可以删除。
 * 删除需要确认。
+* 删除会清理 Scene、Thumbnail、Checkpoint，并按引用关系处理 Board-private Assets。
 * 默认按最近更新时间排序。
 
 ### 搜索
@@ -1778,6 +1743,7 @@ Note ≠ Board
 * Light Mode 正常。
 * Dark Mode 正常。
 * 跟随 Docus Theme。
+* Docus Theme 不会被 Board Scene 中的持久字段覆盖。
 
 ### Export
 
@@ -1789,8 +1755,7 @@ Note ≠ Board
 * 正常规模 Board 编辑过程中无明显卡顿。
 * 拖动 Element 不会持续写入数据库。
 * Scene Change 不会导致整个 Docus 页面频繁重渲染。
-
----
+* Thumbnail 不会在每次 Scene Change 或 Pointer Move 时生成。
 
 ## 58. 最终定义
 
@@ -1821,1341 +1786,3 @@ Board
 ```
 
 在这个空间中真正产生连接。
-
-这版我特意把 **“加载失败禁止空 Scene 覆盖原数据”**、**Autosave flush**、**Scene Version** 和 **Excalidraw 不能等于 Board 业务模型** 写进了 PRD，我觉得这几个点后面实现时非常重要，否则白板功能很容易“看起来简单，实际上埋数据丢失的坑”。
-
----
-
-## 59. Board V1 开发约束补充（冻结）
-
-以下内容是已经确认的产品与架构决策。
-
-Implementation Plan 和后续编码必须遵守这些约束。
-
-如果当前 PRD 中存在与以下内容冲突、含糊或未定义的部分，以本补充为准，并同步修正 PRD。
-
----
-
-### 1. Board 首页采用纯 Gallery Home
-
-Board V1 首页已经确定采用纯画廊式首页。
-
-结构：
-
-```text
-Board
-
-[ Search boards... ]                         [ + New Board ]
-
-Recent
-────────────────────────────────────────────────────────
-[ Thumbnail ]  [ Thumbnail ]  [ Thumbnail ]  [ Thumbnail ]
-
-All Boards
-────────────────────────────────────────────────────────
-[ Thumbnail ]  [ Thumbnail ]  [ Thumbnail ]  [ Thumbnail ]
-[ Thumbnail ]  [ Thumbnail ]  [ Thumbnail ]  [ Thumbnail ]
-```
-
-Board Card 至少包含：
-
-```text
-Thumbnail
-Title
-Updated Time
-```
-
-默认：
-
-```text
-All Boards = updatedAt DESC
-```
-
-Recent 展示最近编辑的若干 Board。
-
----
-
-### 2. V1 不实现 Folder / FileTree
-
-Board V1 明确不包含：
-
-```text
-❌ Folder
-❌ Folder Tree
-❌ Board Directory
-❌ 左侧文件树
-❌ Board 拖入文件夹
-❌ Folder 创建 / 删除 / 重命名
-```
-
-不要直接复用：
-
-```text
-src/components/vault/FileTree.vue
-```
-
-作为 Board UI。
-
-现有 FileTree 已经包含：
-
-```text
-Note
-Tag
-Diary
-Archive
-Metadata
-Document Lifecycle
-```
-
-等 Vault 领域逻辑，它不是通用 Board 组件。
-
-因此：
-
-```text
-Board Home ≠ FileTree
-```
-
-不要为了未来可能出现的 Folder 需求，提前重构现有 FileTree 或建立复杂的 Workspace Tree Framework。
-
-未来如确认需要目录组织，再从：
-
-```text
-Recent
-All Boards
-```
-
-演进为：
-
-```text
-Recent
-Folders
-All Boards
-```
-
----
-
-### 3. Excalidraw 必须通过 React Island 集成
-
-Docus 当前前端主体技术栈为：
-
-```text
-Vue 3
-Vue Router
-Vite
-TypeScript
-```
-
-而：
-
-```text
-@excalidraw/excalidraw
-```
-
-是 React Component。
-
-因此禁止在 Vue 组件体系中无边界地混用 React 状态。
-
-应建立明确的 Bridge：
-
-```text
-BoardEditor.vue
-      │
-      ▼
-ExcalidrawHost
-      │
-      ▼
-React createRoot()
-      │
-      ▼
-<Excalidraw />
-```
-
-推荐类似：
-
-```text
-Vue Workspace
-    │
-    └── BoardEditor.vue
-            │
-            └── ExcalidrawHost.ts
-                    │
-                    └── React Root
-                            │
-                            └── Excalidraw
-```
-
----
-
-#### 3.1 React Island 边界
-
-React 只负责：
-
-```text
-Excalidraw rendering
-Excalidraw API
-Scene event bridge
-```
-
-Vue 负责：
-
-```text
-Board lifecycle
-Routing
-Metadata
-Save status
-Board title
-Docus theme
-Board service
-```
-
-禁止：
-
-```text
-Excalidraw 高频 onChange
-        ↓
-Vue Global Store
-        ↓
-整个 Docus 响应式更新
-```
-
-Scene 的高频变化必须限制在 Board Editor 局部边界内。
-
----
-
-#### 3.2 按需加载
-
-React、React DOM 和 Excalidraw 必须尽量只在：
-
-```text
-/board/:boardId
-```
-
-进入 Board Editor 时加载。
-
-不要让：
-
-```text
-Note
-Diary
-Ledger
-Login
-Setup
-```
-
-等页面承担 Excalidraw 的初始 Bundle 成本。
-
-优先使用：
-
-```text
-dynamic import
-lazy loading
-code splitting
-```
-
----
-
-### 4. Board Domain 不等于 Excalidraw 数据
-
-必须保持：
-
-```text
-Board
-    ≠
-Excalidraw JSON
-```
-
-Board 是 Docus Domain。
-
-Excalidraw 是 Board 当前使用的 Canvas Engine。
-
-建议明确以下边界：
-
-```text
-Board
-├── metadata
-├── engine
-├── sceneVersion
-├── engineData
-└── assets
-```
-
-例如：
-
-```ts
-interface Board {
-  id: string
-  title: string
-
-  engine: 'excalidraw'
-
-  sceneVersion: number
-
-  scene: BoardScene
-
-  createdAt: number
-  updatedAt: number
-}
-```
-
----
-
-### 5. 增加 Canvas Engine Adapter 边界
-
-不要让 Board Service 到处直接依赖 Excalidraw API。
-
-建议存在类似：
-
-```text
-BoardEngineAdapter
-```
-
-职责：
-
-```text
-load scene
-serialize scene
-deserialize scene
-export PNG
-export SVG
-generate thumbnail
-normalize persistent app state
-```
-
-例如概念模型：
-
-```ts
-interface BoardEngineAdapter {
-  serialize(...)
-  deserialize(...)
-  exportPng(...)
-  exportSvg(...)
-  generateThumbnail(...)
-}
-```
-
-V1 只有：
-
-```text
-ExcalidrawBoardEngineAdapter
-```
-
-即可。
-
-目的不是为了现在实现第二种 Canvas Engine。
-
-而是为了明确：
-
-```text
-哪些属于 Docus
-哪些属于 Excalidraw
-```
-
-避免 Excalidraw 类型泄漏到整个 Board Domain。
-
-不要为了这一点做过度抽象。
-
-保持最小必要 Adapter 即可。
-
----
-
-### 6. Scene Schema 必须版本化
-
-Board Scene 必须包含：
-
-```text
-sceneVersion
-```
-
-初始：
-
-```text
-sceneVersion = 1
-```
-
-加载时：
-
-```text
-Stored Scene
-    ↓
-Read version
-    ↓
-Migration
-    ↓
-Current Scene
-```
-
-应为未来预留：
-
-```ts
-migrateBoardScene(...)
-```
-
-不要假设：
-
-```text
-Excalidraw 当前 JSON
-```
-
-会永远与未来版本兼容。
-
----
-
-### 7. 不要持久化完整 Excalidraw AppState
-
-Excalidraw 的：
-
-```text
-AppState
-```
-
-包含大量临时 UI 状态。
-
-禁止直接：
-
-```text
-JSON.stringify(appState)
-```
-
-完整写入持久层。
-
-应建立：
-
-```text
-BoardPersistentAppState
-```
-
-只保存确实需要恢复的字段。
-
-例如：
-
-```text
-zoom
-scrollX
-scrollY
-gridSize
-viewBackgroundColor
-```
-
-最终字段以实际 Excalidraw API 和需求为准。
-
-不要保存：
-
-```text
-selectedElementIds
-editingElement
-draggingElement
-contextMenu
-openDialog
-```
-
-等运行时状态。
-
----
-
-### 8. Theme 不属于 Board Scene 的持久状态
-
-Docus Theme 是全局 Source of Truth。
-
-因此：
-
-```text
-Docus Theme
-      ↓
-Excalidraw Theme
-```
-
-禁止 Board Scene 单独持久化一个长期有效的：
-
-```text
-theme
-```
-
-并在重新打开 Board 后覆盖 Docus 当前 Theme。
-
-正确关系：
-
-```text
-Light / Dark / System
-        ↓
-Docus Theme
-        ↓
-Board Editor
-        ↓
-Excalidraw
-```
-
-但是：
-
-```text
-viewBackgroundColor
-```
-
-可以属于 Board 自身状态。
-
-因为用户可能主动设置某个 Board 的背景。
-
-因此：
-
-```text
-Theme
-→ Docus-owned
-
-Canvas Background
-→ Board-owned
-```
-
-两者必须区分。
-
----
-
-### 9. BinaryFiles 与 Docus Asset 必须只有一个 Source of Truth
-
-当前 PRD 中存在潜在冲突：
-
-一方面：
-
-```ts
-BoardScene {
-  files: BinaryFiles
-}
-```
-
-另一方面又要求：
-
-```text
-图片由 Docus Asset Layer 管理
-```
-
-V1 实现时必须消除这个双重真相源。
-
-长期持久层应以：
-
-```text
-Docus Asset
-```
-
-作为图片 / 二进制资源的 Source of Truth。
-
-概念模型：
-
-```text
-Board
-  │
-  └── Scene Element
-          │
-          └── fileId
-                │
-                ▼
-           Docus Asset
-```
-
-打开 Board 时：
-
-```text
-Board Scene
-+
-Docus Assets
-     ↓
-组装
-     ↓
-Excalidraw BinaryFiles
-```
-
-即：
-
-```text
-BinaryFiles
-```
-
-主要作为 Excalidraw runtime 数据。
-
-不要同时长期保存：
-
-```text
-Scene 内一份完整 BinaryFiles
-+
-Asset Store 再保存一份
-```
-
-从而产生双副本和一致性问题。
-
----
-
-### 10. Asset 删除必须考虑引用关系
-
-不要简单地：
-
-```text
-删除 Board
-    ↓
-删除所有相关图片
-```
-
-除非确认该 Asset 只属于该 Board。
-
-需要明确资产所有权策略。
-
-至少保证：
-
-```text
-Asset 不会因为错误 GC
-而导致其他内容引用失效
-```
-
-V1 如果 Board Asset 完全私有，可以采用：
-
-```text
-boardId scoped assets
-```
-
-但这个决定必须显式写进 Implementation Plan。
-
----
-
-### 11. Autosave 使用 Debounce，但必须区分内存状态与持久状态
-
-推荐：
-
-```text
-Excalidraw onChange
-       ↓
-latestSceneRef
-       ↓
-mark dirty
-       ↓
-debounce
-       ↓
-Board save
-```
-
-不要让每次 Pointer Move：
-
-```text
-写数据库
-```
-
-建议保存 Debounce：
-
-```text
-500ms ~ 1000ms
-```
-
-具体值实现阶段确定。
-
----
-
-### 12. Route Change 可以 flush，但不能依赖 beforeunload 保证数据安全
-
-对于 Docus 内部导航：
-
-```text
-Board
-  ↓
-Route Leave
-```
-
-应主动：
-
-```text
-await flush()
-```
-
-尽量保证最后的修改持久化。
-
-但是：
-
-```text
-Browser Refresh
-Tab Close
-Browser Crash
-Process Kill
-Network Failure
-```
-
-场景中不能假设异步 Server Save 一定执行完成。
-
-因此：
-
-```text
-beforeunload flush
-```
-
-只能作为 Best Effort。
-
-不能作为数据安全机制。
-
----
-
-### 13. Board 需要本地 Crash Checkpoint
-
-Board 应参考 Docus 已有 Draft / Recovery 的产品思想。
-
-目标是：
-
-即使：
-
-```text
-Server Autosave
-```
-
-尚未成功，而页面突然关闭，
-
-仍尽量可以恢复最近编辑内容。
-
-建议架构：
-
-```text
-Excalidraw onChange
-        │
-        ├── debounce → Server Persist
-        │
-        └── local checkpoint
-```
-
-Local checkpoint 可以使用项目中合适的本地持久化方式。
-
-Implementation Plan 应明确：
-
-```text
-checkpoint 写入时机
-checkpoint key
-checkpoint 清理时机
-server 保存成功后的 reconciliation
-恢复策略
-```
-
-但不要无必要地直接复用整个 Note Draft Recovery 系统。
-
-优先复用其思想和通用基础能力，而不是强行共享 Note 领域代码。
-
----
-
-### 14. Board Load 必须 Fail Closed
-
-这是 P0 数据安全要求。
-
-禁止：
-
-```text
-Load Board
-    ↓
-Load Failed
-    ↓
-Mount Empty Board
-    ↓
-onChange
-    ↓
-Autosave
-    ↓
-覆盖原数据
-```
-
-必须：
-
-```text
-Load Board
-    ↓
-Validate Scene
-    ↓
-Success
-    ↓
-Mount Excalidraw
-```
-
-失败：
-
-```text
-Load Board
-    ↓
-Parse / Migration / Asset Error
-    ↓
-STOP
-    ↓
-Error Recovery UI
-```
-
-此时：
-
-```text
-Autosave disabled
-```
-
-不能把 Empty Scene 写回。
-
----
-
-### 15. Initial Mount 必须避免 Empty Scene Autosave
-
-Excalidraw 首次初始化时可能产生状态变化。
-
-因此需要区分：
-
-```text
-loading
-hydrating
-ready
-error
-```
-
-至少在：
-
-```text
-ready
-```
-
-之前禁止业务 Autosave。
-
-推荐类似：
-
-```text
-Load Board Data
-      ↓
-Load Assets
-      ↓
-Migrate Scene
-      ↓
-Mount Excalidraw
-      ↓
-Hydration Completed
-      ↓
-autosaveEnabled = true
-```
-
----
-
-### 16. Save 状态必须基于真实持久化结果
-
-允许：
-
-```text
-Saving...
-Saved
-Save failed
-```
-
-禁止：
-
-```text
-debounce timer 执行
-    ↓
-立即显示 Saved
-```
-
-正确：
-
-```text
-Save request
-    ↓
-Server success
-    ↓
-Saved
-```
-
-失败：
-
-```text
-Save failed
-```
-
-但用户当前 Scene 仍必须保留在内存 / checkpoint 中。
-
----
-
-### 17. 必须考虑并发保存顺序
-
-高频编辑时可能出现：
-
-```text
-Save A
-Save B
-```
-
-如果：
-
-```text
-B 先完成
-A 后完成
-```
-
-不能让旧 Scene A 覆盖新 Scene B。
-
-Implementation Plan 必须说明至少一种处理方式：
-
-```text
-serial save queue
-```
-
-或者：
-
-```text
-revision / expectedVersion
-```
-
-或者：
-
-```text
-latest-write token
-```
-
-总之必须保证：
-
-```text
-旧请求不能覆盖新状态
-```
-
----
-
-### 18. Board Metadata 与 Scene 保存应明确边界
-
-以下数据：
-
-```text
-title
-createdAt
-updatedAt
-thumbnail
-engine
-sceneVersion
-```
-
-属于 Board Metadata。
-
-以下：
-
-```text
-elements
-persistentAppState
-assetRefs
-```
-
-属于 Scene。
-
-不要把所有内容塞进一个巨大 JSON 后再整体覆写。
-
-Implementation Plan 应明确：
-
-```text
-Metadata Store
-Scene Store
-Asset Store
-```
-
-之间的关系。
-
-不要求必须三张数据库表。
-
-但领域边界必须明确。
-
----
-
-### 19. Thumbnail 不能绑定每次 Scene Change
-
-Thumbnail 属于派生数据。
-
-推荐：
-
-```text
-Scene save success
-      ↓
-thumbnail dirty
-      ↓
-long debounce / idle
-      ↓
-generate thumbnail
-```
-
-不要：
-
-```text
-pointer move
-   ↓
-render SVG / Canvas
-   ↓
-generate thumbnail
-```
-
-建议采用比 Autosave 更长的 Debounce。
-
-例如：
-
-```text
-2s ~ 5s
-```
-
-Implementation Plan 可根据性能测试确定。
-
----
-
-### 20. Thumbnail 生成失败不能影响 Scene 保存
-
-必须保证：
-
-```text
-Scene 保存成功
-Thumbnail 生成失败
-```
-
-时 Board 本身仍然是：
-
-```text
-Saved
-```
-
-Thumbnail 属于非关键派生数据。
-
-可以保留旧 thumbnail 或显示 fallback。
-
----
-
-### 21. Board Editor 不应该重复 Excalidraw 工具
-
-Docus Header 只负责：
-
-```text
-Back
-Board Title
-Save Status
-Board Menu
-```
-
-Excalidraw 已有：
-
-```text
-Shape
-Arrow
-Text
-Color
-Stroke
-Zoom
-Undo
-Redo
-```
-
-不要重新在 Docus Header 中实现一套。
-
-V1 优先使用 Excalidraw 原生 Editor UI。
-
----
-
-### 22. Shortcut Ownership 必须明确
-
-Board Editor 激活时：
-
-```text
-Ctrl/Cmd + Z
-Ctrl/Cmd + C
-Ctrl/Cmd + V
-Ctrl/Cmd + A
-Delete
-Backspace
-Space
-```
-
-优先属于 Excalidraw。
-
-Docus Global Shortcut 不得错误拦截。
-
-特别是在：
-
-```text
-Excalidraw text editing
-input
-textarea
-contenteditable
-```
-
-场景。
-
-Implementation Plan 应列出与现有 Docus shortcut system 的冲突检查。
-
----
-
-### 23. 路由保持独立
-
-Board 使用独立 Router：
-
-```text
-/board
-/board/:boardId
-```
-
-不要把 Board 塞进：
-
-```text
-/vault/*
-```
-
-或 Note 文件路径体系。
-
-Board 是一级 Workspace。
-
----
-
-### 24. Board 不应该成为特殊类型的 Note
-
-禁止设计：
-
-```ts
-note.type = 'board'
-```
-
-或者：
-
-```text
-src/content/xxx.board.md
-```
-
-作为 Board Domain 的基础模型。
-
-Board 应拥有自己独立的 Domain / Storage。
-
-Board 和 Note 后续通过：
-
-```text
-Resource Reference
-```
-
-互相连接，而不是继承关系。
-
----
-
-### 25. Resource Reference V1 只预留，不实现
-
-可以预留：
-
-```ts
-interface DocusResourceReference {
-  type: 'note' | 'diary' | 'ledger' | 'board' | 'file'
-  id: string
-}
-```
-
-以及未来：
-
-```text
-Excalidraw customData
-```
-
-的绑定能力。
-
-但是 V1 不开发：
-
-```text
-Note Card
-Diary Card
-Ledger Card
-Board Card
-```
-
-不要因为已经预留接口就提前实现。
-
----
-
-### 26. 不提前开发 Custom Shape Framework
-
-V1 使用 Excalidraw 原生：
-
-```text
-Rectangle
-Ellipse
-Diamond
-Text
-Arrow
-Line
-Image
-Free Draw
-```
-
-即可。
-
-不要为了未来 Note Card：
-
-```text
-fork Excalidraw
-修改 Excalidraw core
-开发 Docus Shape Engine
-```
-
-除非 Implementation 过程中发现真正的 blocker。
-
----
-
-### 27. 删除 Board 的行为必须明确
-
-V1 当前产品定义是：
-
-```text
-Delete Board
-→ confirmation
-→ permanent delete
-```
-
-如果实现过程中发现 Docus 已经存在可复用的统一 Trash Domain，可以重新评估接入。
-
-否则不要为了 Board V1 新开发全局 Trash 系统。
-
-删除时至少处理：
-
-```text
-metadata
-scene
-board-private assets
-thumbnail
-local checkpoint
-```
-
----
-
-### 28. Search V1 只搜索 Board Metadata
-
-V1：
-
-```text
-Search Board Title
-```
-
-即可。
-
-不要实现：
-
-```text
-Scene text full-text search
-OCR
-Shape indexing
-Asset indexing
-```
-
-这些属于后续版本。
-
----
-
-### 29. 保持 Board State 局部化
-
-不要把整个：
-
-```text
-elements[]
-```
-
-长期放入 Docus 全局 Pinia / reactive state。
-
-Board Editor 自己持有当前 Scene。
-
-全局层只需要关心：
-
-```text
-boardId
-title
-saveStatus
-updatedAt
-```
-
-等必要状态。
-
-这样可以避免：
-
-```text
-拖动 Shape
-    ↓
-整个 App rerender
-```
-
----
-
-### 30. PRD Markdown 层级需要同步整理
-
-当前 PRD 标题存在类似：
-
-```text
-# PRD
-## 1.
-# 2.
-# 3.
-```
-
-这种层级不一致。
-
-同步修正为统一结构，例如：
-
-```text
-# PRD - Board 白板
-
-## 1. 产品定义
-
-## 2. 背景
-
-## 3. 产品目标
-
-### 3.1 ...
-```
-
-这属于文档质量问题，不影响产品功能，但应在 Implementation Plan 前整理。
-
----
-
-### 31. Implementation Plan 必须明确回答的问题
-
-在开始编码前，请输出 Implementation Plan，并明确回答：
-
-```text
-1. Vue 与 React/Excalidraw 如何隔离？
-2. React/Excalidraw 如何按需加载？
-3. Board Domain Model 如何定义？
-4. Board Scene 如何版本化？
-5. 哪些 AppState 字段持久化？
-6. Theme 与 Canvas Background 的 Source of Truth 分别是什么？
-7. BinaryFiles 与 Docus Asset 如何映射？
-8. Autosave 如何 debounce？
-9. 如何防止旧 Save 覆盖新 Save？
-10. Route Leave 如何 flush？
-11. Browser Crash / Tab Close 如何恢复？
-12. Loading 阶段如何避免 Empty Scene 覆盖？
-13. Thumbnail 在何时生成？
-14. Board 首页如何实现 Recent + All Boards？
-15. 为什么不复用 FileTree.vue？
-16. Board Router 如何加入现有 App Shell？
-17. Board Shortcut 如何避免与 Docus 冲突？
-18. 删除 Board 时如何清理 Scene / Asset / Thumbnail / Checkpoint？
-```
-
-这些问题回答清楚以后，再进入编码。
-
----
-
-### 最终原则
-
-Board V1 必须保持：
-
-```text
-产品简单
-架构边界清晰
-数据安全优先
-Excalidraw 可替换但不过度抽象
-不提前开发未来功能
-```
-
-最终目标仍然只是：
-
-```text
-Create Board
-    ↓
-Draw
-    ↓
-Autosave
-    ↓
-Close
-    ↓
-Reopen
-    ↓
-Everything is still there
-```
-
-任何超出这个闭环的复杂度，都需要证明其对 V1 是必要的。
-
-这里面我尤其建议你把 **第 9、12、13、17** 留着。
-
-因为白板真正容易出事故的地方不是“画不出来”，而是：
-
-**图片资产双份保存、空 Scene 覆盖、关闭时最后几秒数据丢失、旧保存请求反过来覆盖新 Scene。**
-
-这几个坑一旦进生产，处理起来会比 UI 问题麻烦很多。
