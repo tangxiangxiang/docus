@@ -3,9 +3,9 @@ import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NButton, NIcon } from 'naive-ui'
 import {
   Book,
+  Box,
   Edit,
   Eye,
-  LayoutBoard,
   LayoutSidebarLeftExpand,
   LayoutSidebarRightExpand,
   Moon,
@@ -311,7 +311,7 @@ onBeforeUnmount(() => {
           :aria-label="t('nav.board')"
           @click="router.push({ name: 'board' })"
         >
-          <NIcon class="workspace-board-link-icon" aria-hidden="true"><LayoutBoard /></NIcon>
+          <NIcon class="workspace-board-link-icon" aria-hidden="true"><Box /></NIcon>
           <span class="workspace-board-link-label">{{ t('nav.board') }}</span>
         </NButton>
       </div>
