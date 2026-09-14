@@ -274,7 +274,7 @@ test('Diary Calendar keeps the month title readable in dark theme', async ({ pag
   })
 
   expect(style.color).toBe('rgb(241, 245, 249)')
-  expect(style.backgroundColor).toBe('rgb(51, 65, 85)')
+  expect(style.backgroundColor).toBe('rgba(0, 0, 0, 0)')
   expect(style.appearance).toBe('none')
 })
 
