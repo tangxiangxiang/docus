@@ -488,6 +488,10 @@ hr {
   background: var(--navbar-vault-bg);
   border-bottom-color: var(--navbar-vault-border);
 }
+.navbar.is-workspace {
+  background: var(--navbar-vault-bg);
+  border-bottom-color: var(--navbar-vault-border);
+}
 .navbar-inner {
   display: flex;
   align-items: center;
@@ -497,6 +501,10 @@ hr {
   padding-right: 3px;
 }
 .navbar.is-vault .navbar-inner {
+  height: 36px;
+  gap: 20px;
+}
+.navbar.is-workspace .navbar-inner {
   height: 36px;
   gap: 20px;
 }
@@ -536,6 +544,9 @@ hr {
 .navbar.is-vault .brand { font-size: 0.95rem; }
 .navbar.is-vault .brand-logo { width: 24px; height: 24px; }
 .navbar.is-vault .brand-wordmark { font-size: 0.9rem; }
+.navbar.is-workspace .brand { font-size: 0.95rem; }
+.navbar.is-workspace .brand-logo { width: 24px; height: 24px; }
+.navbar.is-workspace .brand-wordmark { font-size: 0.9rem; }
 
 /* Brand constellation — a delayed, non-interactive knowledge-network
    animation that expands from the small navbar mark. */
@@ -791,6 +802,22 @@ body.brand-constellation-active * {
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
+}
+
+.navbar .workspace-board-link {
+  flex: 0 0 auto;
+  padding: 4px 9px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+.navbar .workspace-board-link:hover,
+.navbar .workspace-board-link.active {
+  color: var(--accent);
+  background: var(--bg-soft);
+  border-color: var(--border);
 }
 
 /* Layout */

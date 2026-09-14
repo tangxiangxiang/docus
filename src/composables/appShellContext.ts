@@ -8,6 +8,8 @@ import type { InjectionKey, Ref } from 'vue'
  */
 export interface AppShellContext {
   readonly settingsRequestTick: Readonly<Ref<number>>
+  /** Open the single App-level search surface from global chrome. */
+  readonly openGlobalSearch?: () => void
   /**
    * The Vault-owned Calendar Home is rendered below the global navbar, so the
    * shell exposes its resolved visibility for chrome that lives above the

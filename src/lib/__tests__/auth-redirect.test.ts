@@ -9,6 +9,8 @@ describe('safe internal auth redirects', () => {
     '/vault/a?view=read#section',
     '/ledger',
     '/ledger/transactions?period=month#recent',
+    '/board',
+    '/board/atlas',
     '/bills',
     '/bills/transactions?period=month',
   ])('accepts %s', (value) => {

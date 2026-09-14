@@ -2,12 +2,25 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NButton, NInput, type InputInst } from 'naive-ui'
 import type { PostSummary } from '../../lib/api'
-import { createDocumentSearchProvider, createLatestSearchRunner, type DocumentSearchPayload, type SearchResult, type SearchResultSection } from '../../lib/searchResults'
+import { createDocumentSearchProvider, createLatestSearchRunner, type DocumentSearchPayload, type SearchProvider, type SearchResult, type SearchResultSection } from '../../lib/searchResults'
 import { useFocusTrap } from '../../composables/useFocusTrap'
 import { useI18n } from '../../composables/useI18n'
 
-const props = defineProps<{ posts: PostSummary[]; activePath: string | null }>()
-const emit = defineEmits<{ select: [path: string]; new: [title: string] }>()
+const props = withDefaults(defineProps<{
+  posts?: PostSummary[]
+  activePath?: string | null
+  providers?: SearchProvider[]
+  keyboardShortcut?: boolean
+  allowCreate?: boolean
+}>(), {
+  keyboardShortcut: true,
+  allowCreate: true,
+})
+const emit = defineEmits<{
+  select: [path: string]
+  new: [title: string]
+  commit: [hit: SearchResult]
+}>()
 const open = ref(false)
 const query = ref('')
 const sections = ref<SearchResultSection[]>([])
@@ -16,16 +29,20 @@ const activeIdx = ref(0)
 const inputRef = ref<InputInst | null>(null)
 const trap = useFocusTrap()
 const { t } = useI18n()
-const placeholder = computed(() => t('search.placeholder', { count: props.posts.length }))
+const placeholder = computed(() => props.providers
+  ? t('search.placeholder.global')
+  : t('search.placeholder', { count: props.posts?.length ?? 0 }))
 function matchLabel(match: DocumentSearchPayload['match']): string {
   return t(`search.match.${match}`)
 }
 function sectionLabel(section: SearchResultSection): string {
-  return section.id === 'files' ? t('search.section.files') : section.label
+  if (section.id === 'files') return t('search.section.files')
+  if (section.id === 'boards') return t('search.section.boards')
+  return section.label
 }
-const documentProvider = createDocumentSearchProvider(() => props.posts)
+const documentProvider = createDocumentSearchProvider(() => props.posts ?? [])
 const runLatestSearch = createLatestSearchRunner(
-  () => [documentProvider],
+  () => props.providers ?? [documentProvider],
   (next) => { sections.value = next; activeIdx.value = 0 },
 )
 
@@ -35,14 +52,19 @@ async function refresh() {
 function show() { trap.activate(); open.value = true; query.value = ''; void refresh(); void nextTick(() => inputRef.value?.focus()) }
 function hide() { open.value = false; void trap.deactivate() }
 function commit(hit: SearchResult) {
-  if (hit.type !== 'file') return
-  emit('select', (hit.payload as { path: string }).path)
+  emit('commit', hit)
+  if (hit.type === 'file') emit('select', (hit.payload as { path: string }).path)
+  else if (hit.type !== 'board') return
   hide()
 }
-function commitNew() { emit('new', query.value.trim()); hide() }
+function commitNew() {
+  if (props.allowCreate === false) return
+  emit('new', query.value.trim())
+  hide()
+}
 function onKey(e: KeyboardEvent) {
   const meta = e.metaKey || e.ctrlKey
-  if (meta && e.key.toLowerCase() === 'p') { e.preventDefault(); show() }
+  if (props.keyboardShortcut !== false && meta && e.key.toLowerCase() === 'p') { e.preventDefault(); show() }
   else if (e.key === 'Escape' && open.value) { e.preventDefault(); hide() }
 }
 function onInputKey(e: KeyboardEvent) {
@@ -53,9 +75,15 @@ function onInputKey(e: KeyboardEvent) {
 function onGlobalKey(e: KeyboardEvent) { if (open.value) trap.onTab(() => document.querySelector<HTMLElement>('.palette'), e) }
 watch(query, refresh)
 watch(() => props.posts, () => { if (open.value) void refresh() }, { deep: false })
-onMounted(() => { document.addEventListener('keydown', onKey); document.addEventListener('keydown', onGlobalKey) })
-onBeforeUnmount(() => { document.removeEventListener('keydown', onKey); document.removeEventListener('keydown', onGlobalKey) })
-defineExpose({ show, hide })
+onMounted(() => {
+  if (props.keyboardShortcut !== false) document.addEventListener('keydown', onKey)
+  document.addEventListener('keydown', onGlobalKey)
+})
+onBeforeUnmount(() => {
+  if (props.keyboardShortcut !== false) document.removeEventListener('keydown', onKey)
+  document.removeEventListener('keydown', onGlobalKey)
+})
+defineExpose({ show, hide, refresh })
 </script>
 
 <template>
@@ -88,7 +116,7 @@ defineExpose({ show, hide })
             </div>
           </section>
         </div>
-        <div v-else class="palette-empty"><div>{{ t('search.no_results') }}</div><NButton v-if="query.trim()" attr-type="button" type="primary" class="palette-new" @click="commitNew">{{ t('search.create', { query: query.trim() }) }}</NButton></div>
+        <div v-else class="palette-empty"><div>{{ t('search.no_results') }}</div><NButton v-if="query.trim() && props.allowCreate !== false" attr-type="button" type="primary" class="palette-new" @click="commitNew">{{ t('search.create', { query: query.trim() }) }}</NButton></div>
         <div class="palette-foot"><span>{{ t('search.navigate') }}</span><span>{{ t('search.open') }}</span><span>{{ t('search.close') }}</span></div>
       </div>
     </div>

@@ -53,6 +53,7 @@ import {
   type AiLiveContextCapture,
 } from '../composables/vault/aiLiveContext'
 import { invalidateDocumentSearchState } from '../lib/searchResults'
+import { clearDocumentSearchPosts, setDocumentSearchPosts } from '../lib/documentSearchSource'
 import { createVaultContext } from '../composables/vault/context/createVaultContext'
 import { provideVaultContext } from '../composables/vault/context/useVaultContext'
 import { createVaultFileChanges } from '../composables/vault/context/fileChanges'
@@ -118,7 +119,6 @@ import {
 } from '../components/vault/workspaceTabActions'
 import { disposeManagedDiaryModels } from '../components/vault/monacoModels'
 import StatusBar from '../components/vault/StatusBar.vue'
-import CommandPalette from '../components/vault/CommandPalette.vue'
 import { requireVaultId } from '../lib/vault-identity'
 import {
   downloadPdfDocument,
@@ -151,10 +151,6 @@ import {
 // actually mounts an editor, keeping navigation/read-only startup lean.
 const EditorPane = defineAsyncComponent(() => import('../components/vault/EditorPane.vue'))
 
-/* App.vue provides a global "open search" trigger so the NavBar button
-   (which lives outside the router view) can ask the vault to open its
-   CommandPalette. We watch the tick and call show() each time. */
-const navSearch = inject<{ tick: ReturnType<typeof ref<number>>; trigger: () => void } | null>('openSearch', null)
 const settingsOpen = ref(false)
 const appShell = inject(AppShellContextKey, null)
 const route = useRoute()
@@ -255,7 +251,6 @@ const emptyActions = computed(() => [
 // Lives in VaultView (not the composable) so the string `ref="vaultRef"`
 // template binding resolves cleanly. startDrag takes the host as a parameter.
 const vaultRef = shallowRef<HTMLElement | null>(null)
-const paletteRef = ref<InstanceType<typeof CommandPalette> | null>(null)
 const editorTabsRef = ref<InstanceType<typeof EditorTabs> | null>(null)
 const fileTreeRef = ref<InstanceType<typeof FileTree> | null>(null)
 const diaryCalendarSurfaceRef = ref<{
@@ -267,7 +262,6 @@ const comparisonPaneRef = ref<InstanceType<typeof HistoryComparisonPane> | null>
 const workingTreeDiffPaneRef = ref<InstanceType<typeof WorkingTreeDiffPane> | null>(null)
 const recoveryPaneRef = ref<InstanceType<typeof DraftRecoveryPane> | null>(null)
 const workspaceTabOrder = ref<string[]>([])
-function openSearch() { paletteRef.value?.show() }
 function switchToReadMode() { viewModeApi?.set('read') }
 
 /* ---------- Tabs / save / route sync ---------- */
@@ -346,7 +340,7 @@ const {
   confirmCloseMany: confirmCloseEditorTabs,
   closeManyConfirmed: closeManyEditorTabsConfirmed,
   selectTab: selectEditorTab, onEditorChange, applyRecoveredDraft, doSaveNow, resolveExternal,
-  prepareHistoryRestore, onKeydown: onEditorKeydown, onCommandPaletteNew,
+  prepareHistoryRestore, onKeydown: onEditorKeydown,
   prepareHistoryCommit,
   prepareDocumentMutation, renameOpenDocuments, removeOpenDocuments,
   reorderOpenDocuments,
@@ -373,6 +367,10 @@ const {
   authorizeDocumentPath: authorizeDiaryDocumentPath,
   isDiaryAccessReady: () => diaryAccess.isUnlocked.value,
 })
+
+watch(searchablePosts, (next) => {
+  setDocumentSearchPosts(next)
+}, { immediate: true })
 
 watch(() => diaryAccess.state.value, (next) => {
   if (next === 'UNLOCKED') {
@@ -2457,6 +2455,7 @@ const stopDiaryTeardown = subscribeDiaryTeardown(() => {
   workingTreeDiffs.clearSensitiveState()
   clearLinkIndex(fileChanges)
   invalidateDocumentSearchState()
+  clearDocumentSearchPosts()
   disposeManagedDiaryModels()
   vaultContext.toc.tocHeadings.value = []
   vaultContext.toc.tocActiveId.value = ''
@@ -2472,10 +2471,13 @@ const stopDiaryTeardown = subscribeDiaryTeardown(() => {
 })
 onBeforeUnmount(() => {
   stopDiaryTeardown()
+  // Keep ordinary document metadata available to the retained App-level
+  // search host while moving between Vault, Ledger, and Board. Auth logout
+  // clears the source centrally; a still-authenticated route change does not
+  // create a new session boundary.
+  if (auth.state.value !== 'authenticated') clearDocumentSearchPosts()
   if (appShell) appShell.diaryCalendarVisible.value = false
 })
-
-watch(() => navSearch?.tick.value, () => openSearch())
 
 /* After the Monaco addAction emits toggle-view-mode and isReadMode
    flips to true, the EditorPane is unmounted — taking the focused
@@ -2796,14 +2798,6 @@ watch(isReadMode, async (reading) => {
       @external-diff="showExternalDiff"
       @external-disk="activePath && resolveExternal(activePath, 'disk')"
       @external-local="activePath && resolveExternal(activePath, 'local')"
-    />
-
-    <CommandPalette
-      ref="paletteRef"
-      :posts="searchablePosts"
-      :active-path="activePath"
-      @select="openPost"
-      @new="onCommandPaletteNew"
     />
 
     <PdfExportSurface

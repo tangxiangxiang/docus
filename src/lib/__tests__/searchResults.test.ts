@@ -55,6 +55,15 @@ describe('Search Everywhere document provider', () => {
     expect(sections.map((section) => section.id)).toEqual(['files', 'commands'])
   })
 
+  it('keeps document results when an optional provider fails', async () => {
+    const posts = [makePost('inbox/redis', 'Redis')]
+    const failing: SearchProvider = async () => { throw new Error('board unavailable') }
+
+    const sections = await searchEverywhere('', [createDocumentSearchProvider(() => posts), failing])
+
+    expect(sections.map((section) => section.id)).toEqual(['files'])
+  })
+
   it('prevents an older async query from replacing newer results', async () => {
     let resolveOld!: (section: SearchResultSection) => void
     const oldResult = new Promise<SearchResultSection>((resolve) => { resolveOld = resolve })

@@ -23,14 +23,20 @@ import { useI18n } from '../composables/useI18n'
 import { DiaryAccessContextKey } from '../composables/diary/diaryAccessContext'
 import { AppShellContextKey } from '../composables/appShellContext'
 import AccountMenu from './vault/AccountMenu.vue'
+import type { ChromeStyle, WorkspaceKind } from '../lib/workspace'
 
 const props = withDefaults(defineProps<{
+  workspaceKind?: WorkspaceKind
+  chromeStyle?: ChromeStyle
+  /** Compatibility alias for isolated Vault/NavBar callers. */
   isVault?: boolean
   username?: string | null
   logoutBusy?: boolean
   diaryUnlocked?: boolean
   diaryLockBusy?: boolean
 }>(), {
+  workspaceKind: null,
+  chromeStyle: 'workspace',
   isVault: false,
   username: '',
   logoutBusy: false,
@@ -49,10 +55,26 @@ const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 
+const effectiveWorkspaceKind = computed<WorkspaceKind>(() => {
+  if (props.workspaceKind !== null && props.workspaceKind !== undefined) return props.workspaceKind
+  return props.isVault ? 'vault' : null
+})
+const isWorkspace = computed(() => effectiveWorkspaceKind.value !== null)
+const isVault = computed(() => effectiveWorkspaceKind.value === 'vault')
 /* Ledger shares this navbar with Vault, but its body does not own Vault's
-   editor/read-mode or right-rail controls. */
+   editor/read-mode or right-rail controls. Keep the route fallback for
+   legacy isolated mounts that still pass only `isVault`. */
 const isLedger = computed(() => (
-  route?.path?.startsWith('/ledger') === true
+  effectiveWorkspaceKind.value === 'ledger'
+  || (props.workspaceKind === null && props.isVault && route?.path?.startsWith('/ledger') === true)
+))
+const isBoard = computed(() => effectiveWorkspaceKind.value === 'board')
+const isImmersive = computed(() => props.chromeStyle === 'immersive')
+const showScopeChips = computed(() => isVault.value || isLedger.value)
+const showSearchButton = computed(() => (
+  isWorkspace.value
+  && !isImmersive.value
+  && (props.workspaceKind !== null || !isLedger.value)
 ))
 
 /* Sun when current theme is dark (click to lighten),
@@ -92,8 +114,13 @@ const { activeScope, selectScope } = useScopeFilter()
 const diaryAccess = inject(DiaryAccessContextKey, null)
 const appShell = inject(AppShellContextKey, null)
 
+function requestGlobalSearch(): void {
+  if (appShell?.openGlobalSearch) appShell.openGlobalSearch()
+  else emit('open-search')
+}
+
 function isVaultLedgerDocument(): boolean {
-  return props.isVault
+  return isVault.value
     && !isLedger.value
     && route?.name === 'vault-doc'
     && route.path.startsWith('/vault/ledger/')
@@ -111,7 +138,7 @@ function isScopeActive(scope: ScopeKey): boolean {
    cannot make Calendar Home controls appear; the route fallback keeps this
    component correct in isolated mounts without the App shell. */
 const isDiaryCalendarVisible = computed(() => (
-  props.isVault
+  isVault.value
   && (
     appShell?.diaryCalendarVisible.value === true
     || (activeScope.value === 'diary' && route?.name === 'vault')
@@ -228,11 +255,11 @@ onBeforeUnmount(() => {
 
 <template>
   <header
-    :class="['navbar', { 'is-vault': props.isVault, 'ledger-nav-mode': isLedger, 'diary-calendar-mode': props.isVault && activeScope === 'diary' }]"
+    :class="['navbar', { 'is-vault': isVault, 'is-workspace': isWorkspace, 'ledger-nav-mode': isLedger, 'board-nav-mode': isBoard, 'diary-calendar-mode': isVault && activeScope === 'diary' }]"
     :inert="props.logoutBusy || undefined"
     :aria-busy="props.logoutBusy || undefined"
   >
-    <div :class="['navbar-inner', { container: !props.isVault, 'full-width': props.isVault }]">
+    <div :class="['navbar-inner', { container: !isWorkspace, 'full-width': isWorkspace }]">
       <NButton
         attr-type="button"
         text
@@ -248,7 +275,7 @@ onBeforeUnmount(() => {
       </NButton>
       <!-- Scope filter: lives in the navbar (the file tree header is too
            narrow on 150px sidebars). The Ledger chip opens the Ledger workspace. -->
-      <div v-if="props.isVault" class="scope-chips" role="tablist" :aria-label="t('nav.scope_label')">
+      <div v-if="showScopeChips" class="scope-chips" role="tablist" :aria-label="t('nav.scope_label')">
         <NButton
           v-for="chip in SCOPE_CHIPS"
           :key="chip.scope"
@@ -267,10 +294,24 @@ onBeforeUnmount(() => {
           <span class="scope-chip-label">{{ chip.label }}</span>
         </NButton>
       </div>
+      <NButton
+        v-if="isWorkspace"
+        class="workspace-board-link"
+        :class="{ active: isBoard }"
+        attr-type="button"
+        size="small"
+        quaternary
+        :bordered="false"
+        :aria-current="isBoard ? 'page' : undefined"
+        :aria-label="t('nav.board')"
+        @click="router.push({ name: 'board' })"
+      >
+        {{ t('nav.board') }}
+      </NButton>
       <div class="nav-spacer" />
       <div class="nav-actions">
         <NButton
-          v-if="props.isVault && !isLedger"
+          v-if="showSearchButton"
           class="nav-search"
           attr-type="button"
           size="small"
@@ -278,7 +319,7 @@ onBeforeUnmount(() => {
           :bordered="false"
           :title="t('nav.search_hint')"
           :aria-label="t('nav.search')"
-          @click="emit('open-search')"
+          @click="requestGlobalSearch"
         >
           <NIcon class="nav-search-icon" aria-hidden="true"><Search /></NIcon>
         </NButton>
@@ -298,7 +339,7 @@ onBeforeUnmount(() => {
           </NIcon>
         </NButton>
         <NButton
-          v-if="props.isVault && !isLedger && viewModeApi && isVaultDocumentVisible && !isDiaryCalendarVisible"
+          v-if="isVault && !isLedger && viewModeApi && isVaultDocumentVisible && !isDiaryCalendarVisible"
           class="view-toggle"
           :class="{ 'is-read': isReadMode }"
           attr-type="button"
@@ -316,7 +357,7 @@ onBeforeUnmount(() => {
           </NIcon>
         </NButton>
         <NButton
-          v-if="props.isVault && !isLedger && !isDiaryCalendarVisible"
+          v-if="isVault && !isLedger && !isDiaryCalendarVisible"
           class="left-panel-toggle"
           attr-type="button"
           size="small"
@@ -331,7 +372,7 @@ onBeforeUnmount(() => {
           <NIcon class="left-panel-toggle-icon" aria-hidden="true"><LayoutSidebarLeftExpand /></NIcon>
         </NButton>
         <NButton
-          v-if="props.isVault && !isLedger && !isDiaryCalendarVisible"
+          v-if="isVault && !isLedger && !isDiaryCalendarVisible"
           class="right-rail-toggle"
           attr-type="button"
           size="small"
@@ -345,7 +386,7 @@ onBeforeUnmount(() => {
           <NIcon class="right-rail-toggle-icon" aria-hidden="true"><LayoutSidebarRightExpand /></NIcon>
         </NButton>
         <AccountMenu
-          v-if="props.isVault"
+          v-if="isWorkspace"
           :username="props.username"
           :logout-busy="props.logoutBusy"
           :diary-unlocked="props.diaryUnlocked"

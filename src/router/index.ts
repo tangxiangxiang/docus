@@ -2,12 +2,17 @@ import { createRouter, createWebHistory, type RouteLocationNormalized, type Rout
 import { useAuth } from '../composables/useAuth'
 import { safeInternalRedirect } from '../lib/auth-redirect'
 import { ensureVaultIdentity } from '../lib/vault-identity'
+import type { ChromeStyle, WorkspaceKind } from '../lib/workspace'
 
 declare module 'vue-router' {
   interface RouteMeta {
     authPage?: boolean
     publicDevPreview?: boolean
     workspace?: boolean
+    workspaceKind?: WorkspaceKind
+    chromeStyle?: ChromeStyle
+    immersive?: boolean
+    requiresVaultIdentity?: boolean
     fullWidth?: boolean
     sidebar?: boolean
   }
@@ -58,37 +63,100 @@ const router = createRouter({
       path: '/vault',
       name: 'vault',
       component: () => import('../views/VaultView.vue'),
-      meta: { fullWidth: true, workspace: true, sidebar: true },
+      meta: {
+        fullWidth: true,
+        workspace: true,
+        workspaceKind: 'vault',
+        chromeStyle: 'workspace',
+        sidebar: true,
+      },
     },
     {
       path: '/vault/:pathMatch(.*)*',
       name: 'vault-doc',
       component: () => import('../views/VaultView.vue'),
-      meta: { fullWidth: true, workspace: true, sidebar: true },
+      meta: {
+        fullWidth: true,
+        workspace: true,
+        workspaceKind: 'vault',
+        chromeStyle: 'workspace',
+        sidebar: true,
+      },
+    },
+    {
+      path: '/board',
+      name: 'board',
+      component: () => import('../views/BoardHomeView.vue'),
+      meta: {
+        fullWidth: true,
+        workspace: true,
+        workspaceKind: 'board',
+        chromeStyle: 'workspace',
+        requiresVaultIdentity: false,
+        sidebar: false,
+      },
+    },
+    {
+      path: '/board/:boardId',
+      name: 'board-editor',
+      component: () => import('../views/BoardEditorView.vue'),
+      meta: {
+        fullWidth: true,
+        workspace: true,
+        workspaceKind: 'board',
+        chromeStyle: 'immersive',
+        immersive: true,
+        requiresVaultIdentity: false,
+        sidebar: false,
+      },
     },
     {
       path: '/ledger',
       name: 'ledger',
       component: () => import('../views/LedgerView.vue'),
-      meta: { fullWidth: true, workspace: true, sidebar: false },
+      meta: {
+        fullWidth: true,
+        workspace: true,
+        workspaceKind: 'ledger',
+        chromeStyle: 'workspace',
+        sidebar: false,
+      },
     },
     {
       path: '/ledger/transactions',
       name: 'ledger-transactions',
       component: () => import('../views/LedgerTransactionsView.vue'),
-      meta: { fullWidth: true, workspace: true, sidebar: false },
+      meta: {
+        fullWidth: true,
+        workspace: true,
+        workspaceKind: 'ledger',
+        chromeStyle: 'workspace',
+        sidebar: false,
+      },
     },
     {
       path: '/ledger/accounts',
       name: 'ledger-accounts',
       component: () => import('../views/LedgerAccountsView.vue'),
-      meta: { fullWidth: true, workspace: true, sidebar: false },
+      meta: {
+        fullWidth: true,
+        workspace: true,
+        workspaceKind: 'ledger',
+        chromeStyle: 'workspace',
+        sidebar: false,
+      },
     },
     {
       path: '/ledger/accounts/:id',
       name: 'ledger-account',
       component: () => import('../views/LedgerAccountDetailView.vue'),
-      meta: { fullWidth: true, workspace: true, sidebar: false },
+      meta: {
+        fullWidth: true,
+        workspace: true,
+        workspaceKind: 'ledger',
+        chromeStyle: 'workspace',
+        sidebar: false,
+      },
     },
     {
       path: '/bills/transactions',
@@ -163,6 +231,7 @@ router.beforeEach(async (to) => {
       return { name: 'login', query: { redirect: intendedRedirect(to) } }
     }
     if (state === 'authenticated') {
+      if (to.meta.requiresVaultIdentity === false) return true
       try {
         await ensureVaultIdentity()
         return true

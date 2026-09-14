@@ -3,6 +3,7 @@ import { computed, provide, ref, watch, watchEffect } from 'vue'
 import { NButton } from 'naive-ui'
 import { useRoute, useRouter } from 'vue-router'
 import NavBar from './components/NavBar.vue'
+import GlobalSearchHost from './components/search/GlobalSearchHost.vue'
 import ToastHost from './components/ToastHost.vue'
 import ConfirmHost from './components/ConfirmHost.vue'
 import PromptHost from './components/PromptHost.vue'
@@ -19,6 +20,9 @@ import { DiaryAccessContextKey } from './composables/diary/diaryAccessContext'
 import { AppShellContextKey } from './composables/appShellContext'
 import DiaryAccessDialog from './components/diary/DiaryAccessDialog.vue'
 import type { ScopeKey } from '../shared/scopeProtocol'
+import { boardMetadataSource } from './features/board/boardMetadataSource'
+import { clearDocumentSearchPosts } from './lib/documentSearchSource'
+import { workspaceKindForPath, type ChromeStyle, type WorkspaceKind } from './lib/workspace'
 
 const route = useRoute()
 const router = useRouter()
@@ -31,39 +35,63 @@ const { activeScope, selectScope } = useScopeFilter()
 const settingsRequestTick = ref(0)
 const ledgerSettingsOpen = ref(false)
 const diaryCalendarVisible = ref(false)
+const globalSearchHost = ref<{ show: () => void } | null>(null)
 
 function requestSettings(): void {
   settingsRequestTick.value += 1
   if (route.path === '/ledger' || route.path.startsWith('/ledger/')) ledgerSettingsOpen.value = true
 }
 
-provide(AppShellContextKey, { settingsRequestTick, diaryCalendarVisible })
-/* Vault and Ledger routes both use the compact workspace navbar. Only the
-   `/vault` path owns the locked, three-pane Vault surface; Ledger remains a
-   normal scrollable body below the same global chrome. */
-const isVaultRoute = computed(() =>
-  route.meta.fullWidth === true
-  && route.path.startsWith('/vault')
+function onOpenSearch(): void {
+  globalSearchHost.value?.show()
+}
+
+provide(AppShellContextKey, {
+  settingsRequestTick,
+  diaryCalendarVisible,
+  openGlobalSearch: onOpenSearch,
+})
+
+const workspaceKind = computed<WorkspaceKind>(() => (
+  route.meta.workspaceKind !== undefined
+    ? route.meta.workspaceKind
+    : workspaceKindForPath(route.path)
+))
+const chromeStyle = computed<ChromeStyle>(() => route.meta.chromeStyle ?? 'workspace')
+const requiresVaultIdentity = computed(() => (
+  route.meta.workspace === true && route.meta.requiresVaultIdentity !== false
+))
+/* Vault and Ledger routes both use the compact workspace navbar. Board Home
+   joins that chrome, while the Board editor placeholder is intentionally
+   immersive and owns no global workspace bar. */
+const isVaultRoute = computed(() => (
+  workspaceKind.value === 'vault'
   && auth.state.value === 'authenticated'
-  && vaultIdentity.state.value === 'ready',
-)
-const isLedgerRoute = computed(() => route.path === '/ledger' || route.path.startsWith('/ledger/'))
-const isWorkspaceChrome = computed(() => isVaultRoute.value || isLedgerRoute.value)
+  && vaultIdentity.state.value === 'ready'
+))
+const isLedgerRoute = computed(() => workspaceKind.value === 'ledger')
+const isWorkspaceChrome = computed(() => (
+  auth.state.value === 'authenticated'
+  && workspaceKind.value !== null
+  && chromeStyle.value === 'workspace'
+))
+const isImmersive = computed(() => chromeStyle.value === 'immersive')
 const isPublicDevPreview = computed(() => route.meta.publicDevPreview === true)
 const showNormalChrome = computed(() => shouldShowNormalChrome(
   auth.state.value,
   route.meta.authPage === true,
   isPublicDevPreview.value,
-  !route.meta.workspace || vaultIdentity.state.value === 'ready',
-))
+  !requiresVaultIdentity.value || vaultIdentity.state.value === 'ready',
+) && !isImmersive.value)
 const identityLoading = computed(() => auth.state.value === 'authenticated'
-  && route.meta.workspace
+  && requiresVaultIdentity.value
   && (vaultIdentity.state.value === 'unknown' || vaultIdentity.state.value === 'loading'))
 const identityFailure = computed(() => auth.state.value === 'authenticated'
-  && route.meta.workspace
+  && requiresVaultIdentity.value
   && vaultIdentity.state.value === 'error')
 const showRoutedContent = computed(() => isPublicDevPreview.value
-  || (auth.state.value !== 'unknown' && (!route.meta.workspace || vaultIdentity.state.value === 'ready')))
+  || (auth.state.value !== 'unknown'
+    && (!route.meta.workspace || !requiresVaultIdentity.value || vaultIdentity.state.value === 'ready')))
 const authLoading = computed(() => auth.hydrating.value || (auth.state.value === 'unknown' && !auth.hydrationError.value))
 const authFailureMessage = computed(() => {
   return auth.hydrationError.value ? t('auth.unavailable') : ''
@@ -201,6 +229,8 @@ watch(() => diaryAccess.state.value, (next) => {
 
 watch(() => auth.state.value, (next) => {
   if (next === 'authenticated') return
+  boardMetadataSource.invalidate()
+  clearDocumentSearchPosts()
   if (pendingAccess) finishAccess(false)
   else accessIntentGeneration += 1
 })
@@ -235,13 +265,6 @@ watchEffect(() => {
   document.documentElement.classList.toggle('ledger-mode', isLedgerRoute.value)
 })
 
-/* Global open-search trigger: incremented by NavBar, watched by the
-   vault view to open the CommandPalette. Lives in App so a button in
-   the chrome (outside the router view) can reach the vault. */
-const openSearchTick = ref(0)
-function onOpenSearch() { openSearchTick.value++ }
-provide('openSearch', { tick: openSearchTick, trigger: onOpenSearch })
-
 /* View mode for the vault (edit vs read). Persisted to localStorage so
    the user's preference survives reloads. Defaults to 'edit' — the
    current split-pane authoring experience. Provided globally so the
@@ -271,7 +294,8 @@ provide(VaultViewModeKey, { mode: viewMode, set: setViewMode, toggle: toggleView
 <template>
   <NavBar
     v-if="showNormalChrome"
-    :is-vault="isWorkspaceChrome"
+    :workspace-kind="workspaceKind"
+    :chrome-style="chromeStyle"
     :username="auth.user.value?.username"
     :logout-busy="auth.transitionKind.value === 'logout'"
     :diary-unlocked="diaryAccess.isUnlocked.value"
@@ -326,6 +350,7 @@ provide(VaultViewModeKey, { mode: viewMode, set: setViewMode, toggle: toggleView
       <component :is="Component" @logout="onLogout" />
     </main>
   </RouterView>
+  <GlobalSearchHost ref="globalSearchHost" />
   <ToastHost />
   <ConfirmHost />
   <PromptHost />

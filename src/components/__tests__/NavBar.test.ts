@@ -325,6 +325,33 @@ describe('NavBar — scope chips', () => {
 
     expect(wrapper.find('.scope-chips').exists()).toBe(false)
   })
+
+  it('renders Board as the active workspace entry without Vault-only controls', async () => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/board', name: 'board', component: { template: '<div />' } },
+        { path: '/vault', name: 'vault', component: { template: '<div />' } },
+      ],
+    })
+    await router.push('/board')
+    await router.isReady()
+
+    const wrapper = mount(NavBar, {
+      props: { workspaceKind: 'board' },
+      global: { plugins: [router] },
+    })
+
+    expect(wrapper.find('.navbar').classes()).toContain('is-workspace')
+    expect(wrapper.find('.workspace-board-link').classes()).toContain('active')
+    expect(wrapper.find('.workspace-board-link').attributes('aria-current')).toBe('page')
+    expect(wrapper.find('.scope-chips').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="view-toggle"]').exists()).toBe(false)
+    expect(wrapper.find('.left-panel-toggle').exists()).toBe(false)
+    await wrapper.find('.nav-search').trigger('click')
+    expect(wrapper.emitted('open-search')).toHaveLength(1)
+    wrapper.unmount()
+  })
 })
 
 describe('NavBar — brand constellation', () => {

@@ -2,7 +2,7 @@ import type { PostSummary } from './api'
 import { buildIndex, captureSearchEpoch, invalidateSearchState, primeBody, rebuildIndex, search } from './search'
 import { isManagedDiaryPath } from '../../shared/diaryProtocol'
 
-export type SearchResultType = 'file' | 'heading' | 'tag' | 'alias' | 'command' | 'ai' | 'recent-file'
+export type SearchResultType = 'file' | 'heading' | 'tag' | 'alias' | 'command' | 'ai' | 'recent-file' | 'board'
 export interface SearchResult<T = unknown> { id: string; type: SearchResultType; title: string; subtitle?: string; icon?: string; score: number; payload: T }
 export interface SearchResultSection { id: string; label: string; results: SearchResult[] }
 export type SearchProvider = (query: string) => SearchResultSection | Promise<SearchResultSection>
@@ -57,7 +57,10 @@ export function createDocumentSearchProvider(getPosts: () => PostSummary[]): Sea
 }
 
 export async function searchEverywhere(query: string, providers: SearchProvider[]): Promise<SearchResultSection[]> {
-  return (await Promise.all(providers.map((provider) => provider(query))))
+  const results = await Promise.allSettled(providers.map((provider) => provider(query)))
+  return results
+    .filter((result): result is PromiseFulfilledResult<SearchResultSection> => result.status === 'fulfilled')
+    .map((result) => result.value)
     .filter((section) => section.results.length > 0)
 }
 
