@@ -71,6 +71,20 @@ async function seedDiary(
   return { documentId: detail.metadata!.id!, raw: detail.raw }
 }
 
+async function setDiaryMood(
+  request: APIRequestContext,
+  date: string,
+  mood: string,
+): Promise<void> {
+  const current = await request.get(`/api/posts/${diaryPath(date)}`)
+  expect(current.status(), await current.text()).toBe(200)
+  const metadata = await current.json() as { metadata: { updatedAt: number } }
+  const response = await request.patch(`/api/metadata/documents/${diaryPath(date)}`, {
+    data: { mood, expectedUpdatedAt: metadata.metadata.updatedAt },
+  })
+  expect(response.status(), await response.text()).toBe(200)
+}
+
 async function seedNote(request: APIRequestContext, path: string): Promise<void> {
   await deletePost(request, path)
   const created = await request.post('/api/posts', {
@@ -583,6 +597,57 @@ test('Native DOCUMENT Cmd/Ctrl+W closes through the existing focus and dirty pol
   } finally {
     await deletePost(request, diary)
     await deletePost(request, note)
+  }
+
+  expect(state.pageErrors).toEqual([])
+  expect(state.consoleErrors).toEqual([])
+})
+
+test('Diary D C shortcut closes the active diary and returns to the same calendar month', async ({ page, request }) => {
+  const date = '2026-08-15'
+  const diary = diaryPath(date)
+  const state = await captureDiagnostics(page)
+
+  try {
+    await seedDiary(request, date, `# D C close integration ${RUN_ID}\n`)
+    await setDiaryMood(request, date, 'happy')
+    await openDiaryHome(page)
+    await moveToMonth(page, date)
+
+    const calendar = page.getByTestId('diary-calendar')
+    const day = calendarDay(calendar, date)
+    const mood = page.locator(`[data-testid="diary-calendar-mood"][data-date="${date}"]`)
+    await expect(calendar).toHaveAttribute('data-month', '2026-08')
+    await expect(day).not.toHaveClass(/is-selected/)
+    await expect(day).toHaveAttribute('aria-pressed', 'false')
+    await expect(mood).toBeVisible()
+    await expect(mood.locator('img')).toHaveAttribute('src', '/emoji/开心.svg')
+
+    await day.click()
+    await assertNativeRead(page, date)
+    const diaryTab = page.locator(`[role="tab"][data-tab-id="${diary}"]`)
+    await expect(diaryTab).toHaveAttribute('aria-selected', 'true')
+    const timeOriginBeforeClose = await page.evaluate(() => performance.timeOrigin)
+
+    await page.locator('.vault').focus()
+    await page.keyboard.press('d')
+    await page.keyboard.press('c')
+
+    await expect(diaryTab).toHaveCount(0)
+    await expect(page.getByTestId('diary-workspace-shell')).toHaveAttribute('data-presentation-mode', 'home')
+    await expect(page.getByTestId('diary-workspace-home')).toBeVisible()
+    await expect(calendar).toBeVisible()
+    await expect(calendar).toHaveAttribute('data-month', '2026-08')
+    await expect(page.locator('.scope-chip').filter({ hasText: 'diary' })).toHaveAttribute('aria-pressed', 'true')
+    await expect(day).not.toHaveClass(/is-selected/)
+    await expect(day).not.toHaveAttribute('aria-pressed', 'true')
+    await expect(day).toHaveAttribute('aria-pressed', 'false')
+    await expect(mood).toBeVisible()
+    await expect(mood.locator('img')).toHaveAttribute('src', '/emoji/开心.svg')
+    await expect(page).toHaveURL(/\/vault(?:[?#]|$)/)
+    expect(await page.evaluate(() => performance.timeOrigin)).toBe(timeOriginBeforeClose)
+  } finally {
+    await deletePost(request, diary)
   }
 
   expect(state.pageErrors).toEqual([])
