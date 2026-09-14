@@ -26,6 +26,7 @@ const D75_VIEWPORTS: readonly Viewport[] = [
   { name: 'desktop', width: 1280, height: 800 },
   { name: 'tablet', width: 768, height: 1024 },
   { name: 'mobile', width: 375, height: 812 },
+  { name: 'mobile-wide', width: 390, height: 844 },
   { name: 'narrow-mobile', width: 320, height: 700 },
 ]
 

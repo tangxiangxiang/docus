@@ -326,7 +326,7 @@ describe('NavBar — scope chips', () => {
     expect(wrapper.find('.scope-chips').exists()).toBe(false)
   })
 
-  it('renders Board as the active workspace entry without Vault-only controls', async () => {
+  it('renders Board as the active workspace entry with shared workspace navigation', async () => {
     const router = createRouter({
       history: createMemoryHistory(),
       routes: [
@@ -345,7 +345,8 @@ describe('NavBar — scope chips', () => {
     expect(wrapper.find('.navbar').classes()).toContain('is-workspace')
     expect(wrapper.find('.workspace-board-link').classes()).toContain('active')
     expect(wrapper.find('.workspace-board-link').attributes('aria-current')).toBe('page')
-    expect(wrapper.find('.scope-chips').exists()).toBe(false)
+    expect(wrapper.find('.scope-chips').exists()).toBe(true)
+    expect(wrapper.findAll('.scope-chip')).toHaveLength(3)
     expect(wrapper.find('[data-testid="view-toggle"]').exists()).toBe(false)
     expect(wrapper.find('.left-panel-toggle').exists()).toBe(false)
     await wrapper.find('.nav-search').trigger('click')

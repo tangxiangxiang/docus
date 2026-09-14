@@ -5,6 +5,7 @@ import {
   Book,
   Edit,
   Eye,
+  LayoutBoard,
   LayoutSidebarLeftExpand,
   LayoutSidebarRightExpand,
   Moon,
@@ -70,7 +71,7 @@ const isLedger = computed(() => (
 ))
 const isBoard = computed(() => effectiveWorkspaceKind.value === 'board')
 const isImmersive = computed(() => props.chromeStyle === 'immersive')
-const showScopeChips = computed(() => isVault.value || isLedger.value)
+const showScopeChips = computed(() => isWorkspace.value && !isImmersive.value)
 const showSearchButton = computed(() => (
   isWorkspace.value
   && !isImmersive.value
@@ -275,39 +276,41 @@ onBeforeUnmount(() => {
       </NButton>
       <!-- Scope filter: lives in the navbar (the file tree header is too
            narrow on 150px sidebars). The Ledger chip opens the Ledger workspace. -->
-      <div v-if="showScopeChips" class="scope-chips" role="tablist" :aria-label="t('nav.scope_label')">
+      <div v-if="isWorkspace" class="workspace-navigation">
+        <div v-if="showScopeChips" class="scope-chips" role="tablist" :aria-label="t('nav.scope_label')">
+          <NButton
+            v-for="chip in SCOPE_CHIPS"
+            :key="chip.scope"
+            class="scope-chip"
+            :class="{ active: isScopeActive(chip.scope) }"
+            attr-type="button"
+            size="small"
+            quaternary
+            :bordered="false"
+            :aria-pressed="isScopeActive(chip.scope)"
+            :aria-label="scopeLabel(chip.scope, chip.label)"
+            :title="scopeLabel(chip.scope, chip.label)"
+            @click="onScopeClick(chip.scope)"
+          >
+            <NIcon class="scope-chip-icon" aria-hidden="true"><component :is="chip.icon" /></NIcon>
+            <span class="scope-chip-label">{{ chip.label }}</span>
+          </NButton>
+        </div>
         <NButton
-          v-for="chip in SCOPE_CHIPS"
-          :key="chip.scope"
-          class="scope-chip"
-          :class="{ active: isScopeActive(chip.scope) }"
+          class="workspace-board-link"
+          :class="{ active: isBoard }"
           attr-type="button"
           size="small"
           quaternary
           :bordered="false"
-          :aria-pressed="isScopeActive(chip.scope)"
-          :aria-label="scopeLabel(chip.scope, chip.label)"
-          :title="scopeLabel(chip.scope, chip.label)"
-          @click="onScopeClick(chip.scope)"
+          :aria-current="isBoard ? 'page' : undefined"
+          :aria-label="t('nav.board')"
+          @click="router.push({ name: 'board' })"
         >
-          <NIcon class="scope-chip-icon" aria-hidden="true"><component :is="chip.icon" /></NIcon>
-          <span class="scope-chip-label">{{ chip.label }}</span>
+          <NIcon class="workspace-board-link-icon" aria-hidden="true"><LayoutBoard /></NIcon>
+          <span class="workspace-board-link-label">{{ t('nav.board') }}</span>
         </NButton>
       </div>
-      <NButton
-        v-if="isWorkspace"
-        class="workspace-board-link"
-        :class="{ active: isBoard }"
-        attr-type="button"
-        size="small"
-        quaternary
-        :bordered="false"
-        :aria-current="isBoard ? 'page' : undefined"
-        :aria-label="t('nav.board')"
-        @click="router.push({ name: 'board' })"
-      >
-        {{ t('nav.board') }}
-      </NButton>
       <div class="nav-spacer" />
       <div class="nav-actions">
         <NButton

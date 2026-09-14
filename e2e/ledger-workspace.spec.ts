@@ -54,3 +54,31 @@ test('Ledger keeps the shared theme readable', async ({ page }) => {
   await expect(page.getByTestId('ledger-page')).toBeVisible()
   await expect(page.locator('body')).not.toContainText('Bills')
 })
+
+test('shared workspace navbar keeps the Board entry usable at phone width', async ({ page }) => {
+  await page.goto('/vault')
+  await page.setViewportSize({ width: 320, height: 700 })
+
+  const boardLink = page.locator('.workspace-board-link')
+  await expect(boardLink).toBeVisible()
+  await expect(boardLink).toHaveAttribute('aria-label', /board/i)
+
+  const metrics = await page.evaluate(() => {
+    const navbar = document.querySelector<HTMLElement>('.navbar')
+    const board = document.querySelector<HTMLElement>('.workspace-board-link')
+    return {
+      viewportWidth: window.innerWidth,
+      navbarClientWidth: navbar?.clientWidth ?? 0,
+      navbarScrollWidth: navbar?.scrollWidth ?? 0,
+      navbarRight: navbar?.getBoundingClientRect().right ?? 0,
+      boardRight: board?.getBoundingClientRect().right ?? 0,
+    }
+  })
+
+  expect(metrics.navbarScrollWidth).toBeLessThanOrEqual(metrics.navbarClientWidth + 1)
+  expect(metrics.navbarRight).toBeLessThanOrEqual(metrics.viewportWidth + 1)
+  expect(metrics.boardRight).toBeLessThanOrEqual(metrics.viewportWidth + 1)
+
+  await boardLink.click()
+  await expect(page).toHaveURL(/\/board(?:[/?#]|$)/)
+})
