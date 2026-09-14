@@ -782,12 +782,13 @@ defineExpose({ focusDate, closeMoodPicker })
   inset: 0;
   z-index: 1;
   min-height: 44px;
+  --diary-calendar-date-top: max(0px, calc(50% - 36px));
   pointer-events: none;
 }
 
 .diary-calendar-day-content > [data-diary-day-content] {
   position: absolute;
-  top: max(0px, calc(50% - 36px));
+  top: var(--diary-calendar-date-top);
   left: 50%;
   display: flex;
   width: 44px;
@@ -849,7 +850,7 @@ defineExpose({ focusDate, closeMoodPicker })
 
 .diary-calendar-mood {
   position: absolute;
-  top: calc(100% - 14px);
+  top: calc(var(--diary-calendar-date-top) + 65px);
   left: 50%;
   z-index: 2;
   display: inline-flex;
@@ -947,6 +948,7 @@ defineExpose({ focusDate, closeMoodPicker })
   }
 
   .diary-calendar-mood {
+    top: calc(var(--diary-calendar-date-top) + 61px);
     width: 24px;
     height: 24px;
   }
