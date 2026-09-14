@@ -126,4 +126,33 @@ describe('Board Save Coordinator', () => {
     await expect(second).resolves.toMatchObject({ ok: true, status: 'saved' })
     expect(save).toHaveBeenCalledOnce()
   })
+
+  it('restores an initial local revision and emits save lifecycle events', async () => {
+    const save = vi.fn().mockResolvedValue({ revision: 4, updatedAt: 11 })
+    const onChange = vi.fn()
+    const onSaved = vi.fn()
+    const coordinator = createBoardSaveCoordinator<RuntimeScene>({
+      boardId: 'board-1',
+      engine: 'excalidraw',
+      sceneVersion: 1,
+      currentServerRevision: 3,
+      initialBaseRevision: 3,
+      initialLocalRevision: 8,
+      initialLastSavedLocalRevision: 0,
+      initialDirty: true,
+      initialRuntimeScene: { id: 8 },
+      initialFingerprint: '8',
+      serialize: scene,
+      save: save as unknown as (boardId: string, request: SaveBoardSceneRequest) => Promise<SaveBoardSceneResponse>,
+      onMeaningfulChange: onChange,
+      onSaveSucceeded: onSaved,
+    })
+
+    expect(coordinator.getSnapshot()).toMatchObject({ localRevision: 8, baseRevision: 3, dirty: true })
+    coordinator.schedule()
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.waitFor(() => expect(onSaved).toHaveBeenCalledWith({ revision: 4, savedLocalRevision: 8, currentLocalRevision: 8 }))
+    expect(save).toHaveBeenCalledWith('board-1', expect.objectContaining({ expectedRevision: 3 }))
+    expect(onChange).not.toHaveBeenCalled()
+  })
 })

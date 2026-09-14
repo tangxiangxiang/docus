@@ -28,7 +28,28 @@ const api = vi.hoisted(() => ({
   saveBoardScene: vi.fn(),
 }))
 
+const recovery = vi.hoisted(() => {
+  let checkpoint: unknown = null
+  return {
+    seed(value: unknown) { checkpoint = value },
+    reset() { checkpoint = null },
+    store: {
+      get: vi.fn(async () => checkpoint),
+      put: vi.fn(async (value: unknown) => { checkpoint = value }),
+      delete: vi.fn(async () => { checkpoint = null }),
+      clearBoardRecovery: vi.fn(async () => { checkpoint = null }),
+    },
+    BoardRecoveryStoreError: class BoardRecoveryStoreError extends Error {
+      code = 'BOARD_RECOVERY_OPERATION_FAILED'
+    },
+  }
+})
+
 vi.mock('../../features/board/api', () => api)
+vi.mock('../../features/board/checkpointStore', () => ({
+  createIndexedDbBoardCheckpointStore: () => recovery.store,
+  BoardRecoveryStoreError: recovery.BoardRecoveryStoreError,
+}))
 vi.mock('../../components/board/ExcalidrawHost.vue', () => ({
   default: {
     name: 'ExcalidrawHost',
@@ -73,6 +94,7 @@ async function mountEditor(boardId = 'a') {
 describe('Board Editor B4 lifecycle', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    recovery.reset()
     boardMetadataSource.invalidate()
     useI18n().setLocale('en')
   })
@@ -160,6 +182,35 @@ describe('Board Editor B4 lifecycle', () => {
     await flushPromises()
     expect(wrapper.get('[data-testid="board-local-revision"]').attributes('data-local-revision')).toBe('1')
     expect(api.getBoard).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('waits for a recovery choice before mounting and restores the checkpoint scene', async () => {
+    api.getBoard.mockResolvedValueOnce(board('a'))
+    recovery.seed({
+      boardId: 'a',
+      sceneVersion: 1,
+      baseRevision: 3,
+      localRevision: 5,
+      scene: {
+        engineData: { elements: [{ id: 'recovered', type: 'rectangle', version: 1, x: 1, y: 2, width: 3, height: 4 }], fileMap: {} },
+        persistentAppState: {},
+        assetRefs: [],
+      },
+      savedAt: 10,
+    })
+    const { wrapper } = await mountEditor()
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="board-editor-recovery"]').exists()).toBe(true)
+    expect(wrapper.findComponent(ExcalidrawHost).exists()).toBe(false)
+    await wrapper.get('[data-testid="board-editor-recovery"] button').trigger('click')
+    await flushPromises()
+
+    const host = wrapper.findComponent(ExcalidrawHost)
+    expect(host.exists()).toBe(true)
+    expect(host.props('initialScene')).toMatchObject({ elements: [{ id: 'recovered' }] })
+    expect(wrapper.get('[data-testid="board-local-revision"]').attributes('data-local-revision')).toBe('5')
     wrapper.unmount()
   })
 

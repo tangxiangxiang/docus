@@ -31,15 +31,31 @@ export interface BoardSaveCoordinatorOptions<TRuntimeScene> {
   currentServerRevision: number
   initialRuntimeScene: TRuntimeScene
   initialFingerprint: string
+  initialBaseRevision?: number
+  initialLocalRevision?: number
+  initialLastSavedLocalRevision?: number
+  initialDirty?: boolean
+  initialConflict?: boolean
   serialize: (runtimeScene: TRuntimeScene) => BoardScene
   save?: typeof saveBoardScene
   debounceMs?: number
   onStateChange?: (state: BoardSaveState) => void
+  onMeaningfulChange?: (event: {
+    runtimeScene: TRuntimeScene
+    localRevision: number
+    baseRevision: number
+  }) => void
+  onSaveSucceeded?: (event: {
+    revision: number
+    savedLocalRevision: number
+    currentLocalRevision: number
+  }) => void
   onMetadataUpdated?: (updatedAt: number) => void
 }
 
 export interface BoardSaveCoordinator<TRuntimeScene> {
   recordChange(runtimeScene: TRuntimeScene, fingerprint: string): void
+  schedule(): void
   flush(): Promise<BoardFlushResult>
   retry(): Promise<BoardFlushResult>
   dispose(): void
@@ -63,13 +79,13 @@ export function createBoardSaveCoordinator<TRuntimeScene>(
   let latestRuntimeScene = options.initialRuntimeScene
   let latestFingerprint = options.initialFingerprint
   let currentServerRevision = options.currentServerRevision
-  let baseRevision = options.currentServerRevision
-  let localRevision = 0
-  let lastSavedLocalRevision = 0
-  let dirty = false
+  let baseRevision = options.initialBaseRevision ?? options.currentServerRevision
+  let localRevision = options.initialLocalRevision ?? 0
+  let lastSavedLocalRevision = options.initialLastSavedLocalRevision ?? 0
+  let dirty = options.initialDirty ?? localRevision > lastSavedLocalRevision
   let saveInFlight = false
-  let status: BoardSaveStatus = 'saved'
-  let conflict = false
+  let conflict = options.initialConflict ?? false
+  let status: BoardSaveStatus = conflict ? 'conflict' : dirty ? 'dirty' : 'saved'
   let revisionUncertain = false
   let lastError: unknown | null = null
   let timer: ReturnType<typeof setTimeout> | null = null
@@ -158,6 +174,11 @@ export function createBoardSaveCoordinator<TRuntimeScene>(
         }
         saveInFlight = false
         publish()
+        options.onSaveSucceeded?.({
+          revision: response.revision,
+          savedLocalRevision: capturedLocalRevision,
+          currentLocalRevision: localRevision,
+        })
       } catch (error) {
         saveInFlight = false
         lastError = error
@@ -192,6 +213,7 @@ export function createBoardSaveCoordinator<TRuntimeScene>(
     latestFingerprint = fingerprint
     localRevision += 1
     dirty = true
+    options.onMeaningfulChange?.({ runtimeScene, localRevision, baseRevision })
     if (!conflict && !revisionUncertain) {
       status = 'dirty'
       schedule()
@@ -213,11 +235,16 @@ export function createBoardSaveCoordinator<TRuntimeScene>(
     return startDrain()
   }
 
+  function scheduleAutosave(): void {
+    if (!dirty || conflict || revisionUncertain) return
+    schedule()
+  }
+
   function dispose(): void {
     if (disposed) return
     disposed = true
     clearTimer()
   }
 
-  return { recordChange, flush, retry, dispose, getSnapshot: snapshot }
+  return { recordChange, schedule: scheduleAutosave, flush, retry, dispose, getSnapshot: snapshot }
 }

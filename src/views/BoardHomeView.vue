@@ -9,6 +9,7 @@ import {
   deleteBoard,
   renameBoard,
 } from '../features/board/api'
+import { createIndexedDbBoardCheckpointStore } from '../features/board/checkpointStore'
 import { boardMetadataSource } from '../features/board/boardMetadataSource'
 import type { BoardMetadata } from '../../shared/boardProtocol'
 import { useConfirm } from '../composables/useConfirm'
@@ -29,6 +30,7 @@ const renameBusy = ref(false)
 const renameTitle = ref('')
 const renameTarget = ref<BoardMetadata | null>(null)
 const renameInput = ref<InputInst | null>(null)
+const recoveryStore = createIndexedDbBoardCheckpointStore()
 
 const normalizedQuery = computed(() => query.value.trim().toLocaleLowerCase())
 const filteredBoards = computed(() => {
@@ -133,6 +135,11 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
   try {
     await deleteBoard(board.id)
     boardMetadataSource.remove(board.id)
+    try {
+      await recoveryStore.clearBoardRecovery(board.id)
+    } catch {
+      toast.error(t('board.recovery_cleanup_failed'))
+    }
     toast.success(t('board.deleted'))
   } catch (error) {
     invalidateIfUncertain(error)

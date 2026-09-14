@@ -23,6 +23,7 @@ import type { ScopeKey } from '../shared/scopeProtocol'
 import { boardMetadataSource } from './features/board/boardMetadataSource'
 import { documentSearchSource } from './lib/documentSearchSource'
 import { workspaceKindForPath, type ChromeStyle, type WorkspaceKind } from './lib/workspace'
+import { createIndexedDbBoardCheckpointStore } from './features/board/checkpointStore'
 
 const route = useRoute()
 const router = useRouter()
@@ -36,6 +37,7 @@ const settingsRequestTick = ref(0)
 const ledgerSettingsOpen = ref(false)
 const diaryCalendarVisible = ref(false)
 const globalSearchHost = ref<{ show: () => void } | null>(null)
+const boardRecoveryStore = createIndexedDbBoardCheckpointStore()
 
 function requestSettings(): void {
   settingsRequestTick.value += 1
@@ -229,6 +231,10 @@ watch(() => diaryAccess.state.value, (next) => {
 
 watch(() => auth.state.value, (next) => {
   if (next === 'authenticated') return
+  // Recovery records are local, but Board ownership is authenticated. Clear
+  // them at the session boundary so a later account cannot see another
+  // account's checkpoint if a board identifier is ever reused.
+  void boardRecoveryStore.clearAllRecovery().catch(() => {})
   boardMetadataSource.invalidate()
   documentSearchSource.invalidate()
   if (pendingAccess) finishAccess(false)
