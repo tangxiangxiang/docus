@@ -28,6 +28,11 @@ const DATA_DIR = path.dirname(DB_PATH)
 // regardless of where vite/tsx was launched from.
 const MIGRATIONS_DIR = path.resolve(import.meta.dirname, 'migrations')
 
+/** The data root used by the current database connection configuration. */
+export function getDataDir(): string {
+  return DATA_DIR
+}
+
 /** Explicit production wait before SQLite reports an exhausted write lock. */
 export const SQLITE_BUSY_TIMEOUT_MS = 5_000
 
