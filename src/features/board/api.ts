@@ -1,10 +1,22 @@
 import { authFetch } from '../../lib/auth-session'
 import { jsonOrThrow } from '../../lib/api'
-import type { BoardMetadata, BoardSceneRecord } from '../../../shared/boardProtocol'
+import type { BoardMetadata, BoardScene, BoardSceneRecord } from '../../../shared/boardProtocol'
 
 export interface BoardAggregate {
   metadata: BoardMetadata
   sceneRecord: BoardSceneRecord
+}
+
+export interface SaveBoardSceneRequest {
+  expectedRevision: number
+  engine: 'excalidraw'
+  sceneVersion: number
+  scene: BoardScene
+}
+
+export interface SaveBoardSceneResponse {
+  revision: number
+  updatedAt: number
 }
 
 export class BoardApiError extends Error {
@@ -53,8 +65,8 @@ async function readJson<T>(response: Response): Promise<T> {
 
 async function requestJson<T>(
   path: string,
-  method: 'POST' | 'PATCH',
-  body: Record<string, unknown>,
+  method: 'POST' | 'PATCH' | 'PUT',
+  body: object,
 ): Promise<T> {
   try {
     const response = await authFetch(path, {
@@ -104,6 +116,17 @@ export async function deleteBoard(boardId: string): Promise<void> {
   } catch (error) {
     throw asBoardApiError(error)
   }
+}
+
+export async function saveBoardScene(
+  boardId: string,
+  request: SaveBoardSceneRequest,
+): Promise<SaveBoardSceneResponse> {
+  return requestJson<SaveBoardSceneResponse>(
+    `/api/board/${encodeURIComponent(boardId)}/scene`,
+    'PUT',
+    request,
+  )
 }
 
 export function boardAssetUrl(assetId: string): string {

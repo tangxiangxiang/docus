@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 const authFetch = vi.hoisted(() => vi.fn())
 vi.mock('../../../lib/auth-session', () => ({ authFetch }))
 
-import { createBoard, deleteBoard, renameBoard } from '../api'
+import { createBoard, deleteBoard, renameBoard, saveBoardScene } from '../api'
 
 describe('Board API mutation uncertainty', () => {
   it('marks transport failures as uncertain', async () => {
@@ -44,5 +44,26 @@ describe('Board API mutation uncertainty', () => {
     authFetch.mockRejectedValueOnce(new TypeError('network failed'))
 
     await expect(mutation()).rejects.toMatchObject({ uncertain: true })
+  })
+
+  it('saves only the server scene contract with the expected revision', async () => {
+    authFetch.mockResolvedValueOnce(new Response(JSON.stringify({ revision: 4, updatedAt: 123 }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }))
+
+    const scene = { engineData: { elements: [], fileMap: {} }, persistentAppState: {}, assetRefs: [] }
+    await expect(saveBoardScene('board/1', {
+      expectedRevision: 3,
+      engine: 'excalidraw',
+      sceneVersion: 1,
+      scene,
+    })).resolves.toEqual({ revision: 4, updatedAt: 123 })
+
+    expect(authFetch).toHaveBeenCalledWith('/api/board/board%2F1/scene', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ expectedRevision: 3, engine: 'excalidraw', sceneVersion: 1, scene }),
+    })
   })
 })

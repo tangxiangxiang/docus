@@ -8,6 +8,7 @@ import type { BoardAggregate } from '../../features/board/api'
 import type { BoardScene } from '../../../shared/boardProtocol'
 import { useI18n } from '../../composables/useI18n'
 import { useToast } from '../../composables/useToast'
+import { useConfirm } from '../../composables/useConfirm'
 import { boardMetadataSource } from '../../features/board/metadataSource'
 
 const api = vi.hoisted(() => ({
@@ -24,6 +25,7 @@ const api = vi.hoisted(() => ({
   },
   listBoards: vi.fn(),
   getBoard: vi.fn(),
+  saveBoardScene: vi.fn(),
 }))
 
 vi.mock('../../features/board/api', () => api)
@@ -64,7 +66,7 @@ async function mountEditor(boardId = 'a') {
   })
   await router.push(`/board/${boardId}`)
   await router.isReady()
-  const wrapper = mount(BoardEditorView, { global: { plugins: [router] } })
+  const wrapper = mount({ template: '<router-view />' }, { global: { plugins: [router] } })
   return { wrapper, router }
 }
 
@@ -176,6 +178,72 @@ describe('Board Editor B4 lifecycle', () => {
     expect(wrapper.get('[data-testid="board-local-revision"]').attributes('data-local-revision')).toBe('0')
     expect(useToast().toasts.value.at(-1)?.message).toBe('Image insertion is not available in Board yet.')
     useToast().toasts.value.forEach((item) => useToast().dismiss(item.id))
+    wrapper.unmount()
+  })
+
+  it('flushes a dirty Board before same-component boardId navigation', async () => {
+    api.getBoard.mockResolvedValueOnce(board('a')).mockResolvedValueOnce(board('b'))
+    api.saveBoardScene.mockResolvedValueOnce({ revision: 4, updatedAt: 20 })
+    const { wrapper, router } = await mountEditor('a')
+    await flushPromises()
+    const host = wrapper.findComponent(ExcalidrawHost)
+    host.vm.$emit('ready')
+    host.vm.$emit('change', {
+      elements: [{ id: 'rectangle-1', type: 'rectangle', version: 1, x: 10, y: 10, width: 20, height: 20 }],
+      appState: {},
+      files: {},
+    })
+    await flushPromises()
+
+    await router.push('/board/b')
+    await flushPromises()
+    expect(api.saveBoardScene).toHaveBeenCalledWith('a', expect.objectContaining({ expectedRevision: 3 }))
+    expect(router.currentRoute.value.params.boardId).toBe('b')
+    expect(api.getBoard).toHaveBeenCalledWith('b')
+    wrapper.unmount()
+  })
+
+  it('blocks same-component boardId navigation when a failed flush is not confirmed', async () => {
+    api.getBoard.mockResolvedValueOnce(board('a')).mockResolvedValueOnce(board('b'))
+    api.saveBoardScene.mockRejectedValueOnce(new api.BoardApiError('save failed', 500, 'BOARD_INTERNAL_ERROR', false))
+    const { wrapper, router } = await mountEditor('a')
+    await flushPromises()
+    const host = wrapper.findComponent(ExcalidrawHost)
+    host.vm.$emit('ready')
+    host.vm.$emit('change', {
+      elements: [{ id: 'rectangle-1', type: 'rectangle', version: 1, x: 10, y: 10, width: 20, height: 20 }],
+      appState: {},
+      files: {},
+    })
+    await flushPromises()
+
+    const navigation = router.push('/board/b')
+    await flushPromises()
+    const request = useConfirm().queue.value[0]
+    expect(request?.message).toBe('Changes could not be safely saved')
+    if (request) useConfirm().answer(request.id, false)
+    await navigation
+    expect(router.currentRoute.value.params.boardId).toBe('a')
+    expect(api.getBoard).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('warns synchronously on beforeunload while a scene save is at risk', async () => {
+    api.getBoard.mockResolvedValueOnce(board('a'))
+    const { wrapper } = await mountEditor()
+    await flushPromises()
+    const host = wrapper.findComponent(ExcalidrawHost)
+    host.vm.$emit('ready')
+    host.vm.$emit('change', {
+      elements: [{ id: 'rectangle-1', type: 'rectangle', version: 1, x: 10, y: 10, width: 20, height: 20 }],
+      appState: {},
+      files: {},
+    })
+    await flushPromises()
+
+    const event = new Event('beforeunload', { cancelable: true }) as BeforeUnloadEvent
+    window.dispatchEvent(event)
+    expect(event.defaultPrevented).toBe(true)
     wrapper.unmount()
   })
 })

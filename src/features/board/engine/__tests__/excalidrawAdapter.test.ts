@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   assertSupportedExcalidrawScene,
   excalidrawAdapter,
+  runtimePersistenceFingerprint,
 } from '../excalidrawAdapter'
 import { BoardEngineCompatibilityError } from '../types'
 import {
@@ -76,6 +77,22 @@ describe('excalidrawAdapter', () => {
       },
       assetRefs: [],
     })
+  })
+
+  it('ignores Excalidraw default app state when fingerprinting initial hydration', () => {
+    expect(runtimePersistenceFingerprint({ elements: [], appState: {}, files: {} }))
+      .toBe(runtimePersistenceFingerprint({
+        elements: [],
+        appState: {
+          zoom: { value: 1 },
+          scrollX: 0,
+          scrollY: 0,
+          gridSize: 20,
+          viewBackgroundColor: '#ffffff',
+          selectedElementIds: { shape: true },
+        },
+        files: {},
+      }))
   })
 
   it.each([

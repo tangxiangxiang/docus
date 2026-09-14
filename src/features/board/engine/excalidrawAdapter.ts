@@ -138,6 +138,55 @@ function containsImage(elements: readonly unknown[]): boolean {
   return elements.some((element) => isRecord(element) && element.type === 'image')
 }
 
+function fingerprintValue(value: unknown): string {
+  if (value === null) return 'null'
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'string') return String(value)
+  if (Array.isArray(value)) return `[${value.map(fingerprintValue).join(',')}]`
+  if (isRecord(value)) return `{${Object.keys(value).sort().map((key) => `${key}:${fingerprintValue(value[key])}`).join(',')}}`
+  return String(value)
+}
+
+/**
+ * A cheap persistence-only signal for high-frequency Excalidraw changes.
+ * This deliberately does not serialize a BoardScene or stringify the full
+ * runtime payload. Full domain serialization happens only when a save is
+ * captured by the Save Coordinator.
+ */
+export function runtimePersistenceFingerprint(runtime: ExcalidrawRuntimeScene): string {
+  const elements = runtime.elements.map((element, index) => {
+    if (!isRecord(element)) return `${index}:${fingerprintValue(element)}`
+    const persisted = [
+      element.id,
+      element.version,
+      element.versionNonce,
+      element.isDeleted,
+      element.type,
+      element.x,
+      element.y,
+      element.width,
+      element.height,
+      element.angle,
+      element.text,
+      Array.isArray(element.points) ? element.points.length : undefined,
+    ]
+    return `${index}:${persisted.map(fingerprintValue).join('|')}`
+  }).join(';;')
+  const appState = runtime.appState
+  const zoom = isRecord(appState.zoom) ? appState.zoom.value : appState.zoom
+  // Excalidraw fills these defaults into its first onChange payload even
+  // when the hydrated domain scene omitted them. Treating them as absent
+  // keeps initial hydration from becoming a false user mutation.
+  const persistentAppState = [
+    zoom === 1 ? undefined : zoom,
+    appState.scrollX === 0 ? undefined : appState.scrollX,
+    appState.scrollY === 0 ? undefined : appState.scrollY,
+    appState.gridSize === 20 ? undefined : appState.gridSize,
+    appState.viewBackgroundColor === '#ffffff' ? undefined : appState.viewBackgroundColor,
+  ].map(fingerprintValue).join('|')
+  const files = Object.keys(runtime.files).sort().join('|')
+  return `${elements}#${persistentAppState}#${files}`
+}
+
 export function assertSupportedExcalidrawScene(engine: unknown, sceneVersion: unknown): void {
   if (engine !== BOARD_ENGINE_EXCALIDRAW) {
     throw new BoardEngineCompatibilityError('BOARD_ENGINE_UNSUPPORTED', `Unsupported Board engine: ${String(engine)}`)
