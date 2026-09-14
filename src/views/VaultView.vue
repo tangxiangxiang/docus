@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, inject, shallowRef, watch, computed, defineAsyncComponent, onBeforeUnmount, nextTick } from 'vue'
+import { ref, inject, shallowRef, watch, computed, defineAsyncComponent, onBeforeUnmount, onMounted, nextTick } from 'vue'
 import { useStorage } from '@vueuse/core'
 import { useRoute } from 'vue-router'
 import { useShortcutDisplay } from '../composables/useShortcutDisplay'
@@ -76,6 +76,7 @@ import { classifyDiaryPath, diaryLogicalPathForDate, type DiaryDate } from '../.
 import { scopeRootsFor } from '../../shared/scopeProtocol'
 import type { DiaryMoodId as MoodId } from '../../shared/diaryMood'
 import { handleDiaryHomeKeydown } from './diaryHomeKeyboard'
+import { createDiaryShortcutChord, isDiaryShortcutBlocked, isDiaryTextEntryContext } from './diaryShortcutChord'
 import FileTree from '../components/vault/FileTree.vue'
 import DiaryWorkspace from '../components/diary/DiaryWorkspace.vue'
 import DiaryCalendarSurface from '../components/diary/DiaryCalendarSurface.vue'
@@ -1473,6 +1474,8 @@ async function revealWorkspaceTabInTree(path: string): Promise<void> {
 }
 
 function onVaultKeydown(event: KeyboardEvent): void {
+  if (diaryCloseChord.onKeydown(event)) return
+
   if (isDiaryPresentationPrimary.value) {
     // Diary Home may keep document tabs mounted for lifecycle continuity, but
     // hidden tabs only own shortcuts when a corresponding workspace target
@@ -1707,6 +1710,34 @@ const isDiaryCalendarVisible = computed(() => (
   isDiaryCalendarMode.value && !hasOpenDiaryDocument.value
 ))
 const isDiaryPresentationPrimary = computed(() => isDiaryCalendarVisible.value)
+
+const diaryCloseChord = createDiaryShortcutChord({
+  isDiaryDocument: () => isDiaryScope.value
+    && isDiaryDocumentMode.value
+    && classifyDiaryPath(activePath.value ?? '') === 'managed',
+  isTextEntryContext: isDiaryTextEntryContext,
+  isBlocked: isDiaryShortcutBlocked,
+  closeDiaryDocument: () => {
+    const activeId = activeWorkspaceTabId.value
+    if (activeId) return closeWorkspaceTab(activeId)
+  },
+})
+
+watch([isDiaryScope, isDiaryDocumentMode, activeWorkspaceTabId], () => {
+  diaryCloseChord.reset()
+}, { flush: 'sync' })
+
+onMounted(() => {
+  window.addEventListener('blur', diaryCloseChord.reset)
+  document.addEventListener('visibilitychange', diaryCloseChord.reset)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('blur', diaryCloseChord.reset)
+  document.removeEventListener('visibilitychange', diaryCloseChord.reset)
+  diaryCloseChord.dispose()
+})
+
 const routeSidebarVisible = computed(() => route.meta.sidebar !== false)
 const workspaceSidebarVisible = computed(() => routeSidebarVisible.value && !isDiaryCalendarVisible.value)
 const workspaceLeftSidebarVisible = computed(() => workspaceSidebarVisible.value && leftSidebarVisible.value)
