@@ -482,6 +482,11 @@ test('mobile Calendar-to-native keyboard journey preserves focus, shortcuts, and
     await expect(tab).toHaveCount(0)
     await expect(page.getByTestId('diary-calendar')).toBeVisible()
     await expect(page.getByTestId('diary-workspace-shell')).toHaveAttribute('data-presentation-mode', 'home')
+    await expect(calendar).toHaveAttribute('data-month', date.slice(0, 7))
+    await expect(calendarDay(calendar, date)).not.toHaveClass(/is-selected/)
+    await expect(calendarDay(calendar, date)).toHaveAttribute('aria-pressed', 'false')
+    await expect(calendarDay(calendar, date)).toHaveClass(/is-today/)
+    await expect(calendarDay(calendar, date)).toHaveAttribute('aria-current', 'date')
     await expect(page).toHaveURL(/\/vault(?:[?#]|$)/)
     await expect(page.locator('.activity-bar')).toHaveCount(0)
     await expect(page.locator('.file-tree')).toHaveCount(0)
@@ -520,6 +525,8 @@ test('Native DOCUMENT Cmd/Ctrl+W closes through the existing focus and dirty pol
 
     await selectScope(page, 'diary')
     await expect(page.getByTestId('diary-calendar')).toBeVisible()
+    await expect(calendarDay(page.getByTestId('diary-calendar'), date)).not.toHaveClass(/is-selected/)
+    await expect(calendarDay(page.getByTestId('diary-calendar'), date)).toHaveAttribute('aria-pressed', 'false')
     await activateDiaryDate(page, date)
     await assertNativeRead(page, date)
 
@@ -541,6 +548,8 @@ test('Native DOCUMENT Cmd/Ctrl+W closes through the existing focus and dirty pol
 
     await selectScope(page, 'diary')
     await expect(page.getByTestId('diary-calendar')).toBeVisible()
+    await expect(calendarDay(page.getByTestId('diary-calendar'), date)).not.toHaveClass(/is-selected/)
+    await expect(calendarDay(page.getByTestId('diary-calendar'), date)).toHaveAttribute('aria-pressed', 'false')
     await activateDiaryDate(page, date)
     await assertNativeRead(page, date)
     await page.locator('.vault').focus()
@@ -559,10 +568,18 @@ test('Native DOCUMENT Cmd/Ctrl+W closes through the existing focus and dirty pol
     await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click()
     await expect(confirmation).not.toBeVisible()
     await expect(diaryTab).toHaveAttribute('data-save-status', 'dirty')
+    await expect(calendarDay(page.getByTestId('diary-calendar'), date)).toHaveClass(/is-selected/)
+    await expect(calendarDay(page.getByTestId('diary-calendar'), date)).toHaveAttribute('aria-pressed', 'true')
     // Let the intentionally retained dirty edit settle before fixture
     // cleanup deletes the server document. Otherwise the delayed autosave
     // can race the cleanup DELETE and report a misleading 404 in the page.
     await expect(diaryTab).toHaveAttribute('data-save-status', 'saved', { timeout: 15_000 })
+    await page.locator('.vault').focus()
+    await page.keyboard.press('ControlOrMeta+w')
+    await expect(diaryTab).toHaveCount(0)
+    await expect(page.getByTestId('diary-calendar')).toBeVisible()
+    await expect(calendarDay(page.getByTestId('diary-calendar'), date)).not.toHaveClass(/is-selected/)
+    await expect(calendarDay(page.getByTestId('diary-calendar'), date)).toHaveAttribute('aria-pressed', 'false')
   } finally {
     await deletePost(request, diary)
     await deletePost(request, note)

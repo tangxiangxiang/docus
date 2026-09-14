@@ -260,6 +260,7 @@ const fileTreeRef = ref<InstanceType<typeof FileTree> | null>(null)
 const diaryCalendarSurfaceRef = ref<{
   focusDate: (date: DiaryDate) => boolean
   closeMoodPicker: (restoreFocus?: boolean) => void
+  clearSelection: () => void
 } | null>(null)
 const comparisonPaneRef = ref<InstanceType<typeof HistoryComparisonPane> | null>(null)
 const workingTreeDiffPaneRef = ref<InstanceType<typeof WorkingTreeDiffPane> | null>(null)
@@ -1881,6 +1882,9 @@ watch(selectedDiaryDate, (date) => {
 // to a trigger that is about to be hidden.
 watch(isDiaryCalendarVisible, (visible, wasVisible) => {
   if (appShell) appShell.diaryCalendarVisible.value = visible
+  if (visible && wasVisible === false) {
+    diaryCalendarSurfaceRef.value?.clearSelection()
+  }
   if (!visible) {
     clearPendingMoodFirstPresentation()
     if (wasVisible) diaryCalendarSurfaceRef.value?.closeMoodPicker(false)

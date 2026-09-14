@@ -40,11 +40,15 @@ function closeMoodPicker(restoreFocus = true): void {
   calendarRef.value?.closeMoodPicker(restoreFocus)
 }
 
+function clearSelection(): void {
+  calendarRef.value?.clearSelection()
+}
+
 function onMoodChange(date: DiaryDate, mood: DiaryMoodId | null): void {
   emit('mood-change', date, mood)
 }
 
-defineExpose({ focusDate, closeMoodPicker })
+defineExpose({ focusDate, closeMoodPicker, clearSelection })
 </script>
 
 <template>

@@ -205,6 +205,34 @@ describe('DiaryCalendar presentation adapter', () => {
     wrapper.unmount()
   })
 
+  it('clears only selection while preserving the visible month, Today, and mood', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 7, 27, 12, 0, 0))
+    const wrapper = mountCalendar([
+      { ...day('2026-08-24', true), mood: 'happy', metadataUpdatedAt: 1 },
+      { ...day('2026-08-27', true), mood: 'sad', metadataUpdatedAt: 2 },
+    ])
+    await flushPromises()
+
+    await wrapper.get('[data-date="2026-08-24"]').trigger('click')
+    await wrapper.get('[data-diary-calendar-nav="next"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="diary-calendar"]').attributes('data-month')).toBe('2026-09')
+
+    const calendarApi = wrapper.vm as unknown as { clearSelection: () => void }
+    calendarApi.clearSelection()
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="diary-calendar"]').attributes('data-month')).toBe('2026-09')
+    await wrapper.get('[data-diary-calendar-nav="previous"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-date="2026-08-24"]').classes()).not.toContain('is-selected')
+    expect(wrapper.get('[data-date="2026-08-24"]').attributes('aria-pressed')).toBe('false')
+    expect(wrapper.get('[data-date="2026-08-27"]').classes()).toContain('is-today')
+    expect(dayCell(wrapper, '2026-08-24').get('[data-testid="diary-calendar-mood"] img').attributes('src')).toBe('/emoji/开心.svg')
+    wrapper.unmount()
+  })
+
   it('keeps Mood actions disabled without a safe CAS version or while busy', async () => {
     const wrapper = mountCalendar([
       { ...day('2026-08-24', true), mood: 'happy' },

@@ -145,6 +145,23 @@ describe('DiaryCalendarSurface', () => {
     expect(wrapper.emitted('month-change')?.at(-1)?.[0]).toEqual({ year: 2026, month: 9 })
   })
 
+  it('forwards selection clearing without remounting the Calendar', async () => {
+    const wrapper = mountSurface()
+    await flushPromises()
+    const calendar = wrapper.get('[data-testid="diary-calendar"]').element
+
+    await wrapper.get('[data-date="2026-08-24"]').trigger('click')
+    expect(wrapper.get('[data-date="2026-08-24"]').classes()).toContain('is-selected')
+
+    const surfaceApi = wrapper.vm as unknown as { clearSelection: () => void }
+    surfaceApi.clearSelection()
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="diary-calendar"]').element).toBe(calendar)
+    expect(wrapper.get('[data-date="2026-08-24"]').classes()).not.toContain('is-selected')
+    expect(wrapper.get('[data-date="2026-08-24"]').attributes('aria-pressed')).toBe('false')
+  })
+
   it('updates markers reactively from the latest tree props', async () => {
     const wrapper = mountSurface(treeWith())
     await flushPromises()

@@ -410,6 +410,10 @@ function focusDate(date: DiaryDate): boolean {
   return document.activeElement === target
 }
 
+function clearSelection(): void {
+  selectedCalendarValue.value = null
+}
+
 onMounted(() => {
   document.addEventListener('pointerdown', onDocumentPointerDown, true)
   window.addEventListener('resize', scheduleMoodPickerPosition)
@@ -430,7 +434,7 @@ onBeforeUnmount(() => {
   if (moodPickerPositionFrame !== null) window.cancelAnimationFrame(moodPickerPositionFrame)
 })
 
-defineExpose({ focusDate, closeMoodPicker })
+defineExpose({ focusDate, closeMoodPicker, clearSelection })
 
 </script>
 
