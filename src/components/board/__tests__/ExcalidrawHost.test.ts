@@ -1,0 +1,45 @@
+// @vitest-environment jsdom
+import { flushPromises, mount } from '@vue/test-utils'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import ExcalidrawHost from '../ExcalidrawHost.vue'
+
+const islandMocks = vi.hoisted(() => ({
+  mount: vi.fn(),
+  update: vi.fn(),
+  unmount: vi.fn(),
+}))
+
+vi.mock('../../../features/board/engine/excalidraw/reactIsland', () => ({
+  mountExcalidrawIsland: islandMocks.mount,
+}))
+
+afterEach(() => {
+  islandMocks.mount.mockReset()
+  islandMocks.update.mockReset()
+  islandMocks.unmount.mockReset()
+})
+
+describe('ExcalidrawHost', () => {
+  it('mounts the lazy Island, updates theme without recreating it, and unmounts it', async () => {
+    islandMocks.mount.mockImplementation(async (options: { onReady?: () => void }) => {
+      options.onReady?.()
+      return {
+        update: islandMocks.update,
+        unmount: islandMocks.unmount,
+      }
+    })
+
+    const wrapper = mount(ExcalidrawHost, { props: { theme: 'light' } })
+    await flushPromises()
+
+    expect(islandMocks.mount).toHaveBeenCalledOnce()
+    expect(wrapper.emitted('ready')).toHaveLength(1)
+
+    await wrapper.setProps({ theme: 'dark' })
+    expect(islandMocks.update).toHaveBeenCalledWith({ theme: 'dark' })
+    expect(islandMocks.mount).toHaveBeenCalledOnce()
+
+    wrapper.unmount()
+    expect(islandMocks.unmount).toHaveBeenCalledOnce()
+  })
+})

@@ -23,10 +23,24 @@ const devRoutes = import.meta.env.DEV
     ]
   : []
 
+const compatibilitySpikeRoutes = [
+  {
+    // Keep the compatibility module in production's async graph so the
+    // production build can prove the React/Excalidraw lazy boundary. The
+    // guard keeps this temporary spike development-only at runtime.
+    path: '/__spike/board-excalidraw',
+    name: 'board-excalidraw-spike',
+    component: () => import('../views/BoardExcalidrawSpikeView.vue'),
+    beforeEnter: () => import.meta.env.DEV,
+    meta: { fullWidth: true, publicDevPreview: true },
+  },
+]
+
 const router = createRouter({
   history: createWebHistory(),
   routes: [
     ...devRoutes,
+    ...compatibilitySpikeRoutes,
     { path: '/', redirect: '/vault', meta: { workspace: true } },
     {
       path: '/login',
