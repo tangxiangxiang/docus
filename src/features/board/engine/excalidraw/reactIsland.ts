@@ -9,6 +9,7 @@ import { BoardReactErrorBoundary } from './ReactErrorBoundary'
 import type { ExcalidrawRuntimeScene } from '../types'
 
 export type ExcalidrawIslandTheme = 'light' | 'dark'
+export type ExcalidrawIslandLangCode = 'zh-CN' | 'en'
 
 export interface ExcalidrawUnsupportedAction {
   kind: 'image-insert'
@@ -19,6 +20,7 @@ export interface ExcalidrawIslandMountOptions {
   container: HTMLElement
   initialScene: ExcalidrawRuntimeScene
   theme: ExcalidrawIslandTheme
+  langCode: ExcalidrawIslandLangCode
   onChange?: (scene: ExcalidrawRuntimeScene) => void
   onReady?: () => void
   onError?: (error: unknown) => void
@@ -26,7 +28,7 @@ export interface ExcalidrawIslandMountOptions {
 }
 
 export interface ExcalidrawIslandHandle {
-  update(options: { theme: ExcalidrawIslandTheme }): void
+  update(options: { theme: ExcalidrawIslandTheme, langCode: ExcalidrawIslandLangCode }): void
   unmount(): void
 }
 
@@ -46,6 +48,7 @@ function hasFileDrop(event: DragEvent): boolean {
 
 function ExcalidrawIslandContent({
   theme,
+  langCode,
   initialScene,
   onChange,
   onReady,
@@ -77,6 +80,7 @@ function ExcalidrawIslandContent({
     { onError },
     React.createElement(Excalidraw, {
       theme,
+      langCode,
       initialData,
       excalidrawAPI: () => onReady?.(),
       onChange: handleChange,
@@ -101,6 +105,7 @@ export async function mountExcalidrawIsland(
   const root = createRoot(options.container)
   let mounted = true
   let currentTheme = options.theme
+  let currentLangCode = options.langCode
 
   const handleDrop = (event: DragEvent): void => {
     if (!hasFileDrop(event)) return
@@ -119,6 +124,7 @@ export async function mountExcalidrawIsland(
   const render = (): void => {
     renderIsland(root, {
       theme: currentTheme,
+      langCode: currentLangCode,
       initialScene: options.initialScene,
       onChange: options.onChange,
       onReady: options.onReady,
@@ -133,6 +139,7 @@ export async function mountExcalidrawIsland(
     update(nextOptions): void {
       if (!mounted) return
       currentTheme = nextOptions.theme
+      currentLangCode = nextOptions.langCode
       render()
     },
     unmount(): void {

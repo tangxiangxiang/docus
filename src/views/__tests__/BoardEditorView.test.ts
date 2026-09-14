@@ -53,7 +53,7 @@ vi.mock('../../features/board/checkpointStore', () => ({
 vi.mock('../../components/board/ExcalidrawHost.vue', () => ({
   default: {
     name: 'ExcalidrawHost',
-    props: ['initialScene', 'theme'],
+    props: ['initialScene', 'theme', 'langCode'],
     emits: ['change', 'ready', 'error', 'unsupported-action'],
     template: '<div data-testid="mock-excalidraw-host" />',
   },
@@ -119,6 +119,24 @@ describe('Board Editor B4 lifecycle', () => {
     await flushPromises()
     expect(wrapper.get('[data-testid="board-editor-status"]').text()).toContain('Ready')
     expect(wrapper.findComponent(ExcalidrawHost).props('initialScene')).toEqual({ elements: [], appState: {}, files: {} })
+    wrapper.unmount()
+  })
+
+  it('maps the Docus locale into Excalidraw without changing scene revision or autosaving', async () => {
+    api.getBoard.mockResolvedValueOnce(board('a', 'Alpha'))
+    const { wrapper } = await mountEditor()
+    await flushPromises()
+
+    const host = wrapper.findComponent(ExcalidrawHost)
+    expect(host.props('langCode')).toBe('en')
+    expect(wrapper.get('[data-testid="board-local-revision"]').attributes('data-local-revision')).toBe('0')
+
+    useI18n().setLocale('zh')
+    await flushPromises()
+
+    expect(host.props('langCode')).toBe('zh-CN')
+    expect(wrapper.get('[data-testid="board-local-revision"]').attributes('data-local-revision')).toBe('0')
+    expect(api.saveBoardScene).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 

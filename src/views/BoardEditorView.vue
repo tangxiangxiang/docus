@@ -49,7 +49,7 @@ interface BoardSession {
 
 const route = useRoute()
 const router = useRouter()
-const { t } = useI18n()
+const { locale, t } = useI18n()
 const { theme } = useTheme()
 const toast = useToast()
 const { confirm } = useConfirm()
@@ -72,6 +72,7 @@ const boardId = computed(() => {
   return Array.isArray(value) ? value[0] ?? '' : value ?? ''
 })
 const boardTitle = computed(() => aggregate.value?.metadata.title ?? t('board.title'))
+const excalidrawLangCode = computed(() => locale.value.startsWith('zh') ? 'zh-CN' as const : 'en' as const)
 const errorTitle = computed(() => {
   if (errorKind.value === 'not-found') return t('board.editor_not_found')
   if (errorKind.value === 'compatibility') return t('board.editor_scene_unsupported')
@@ -507,6 +508,7 @@ onBeforeUnmount(() => {
         v-if="runtimeScene && session"
         :initial-scene="runtimeScene"
         :theme="theme"
+        :lang-code="excalidrawLangCode"
         @change="onHostChange"
         @ready="onHostReady"
         @error="onHostError"

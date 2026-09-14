@@ -2,6 +2,7 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type {
   ExcalidrawIslandHandle,
+  ExcalidrawIslandLangCode,
   ExcalidrawIslandTheme,
   ExcalidrawUnsupportedAction,
 } from '../../features/board/engine/excalidraw/reactIsland'
@@ -10,8 +11,10 @@ import type { ExcalidrawRuntimeScene } from '../../features/board/engine/types'
 const props = withDefaults(defineProps<{
   initialScene: ExcalidrawRuntimeScene
   theme?: ExcalidrawIslandTheme
+  langCode?: ExcalidrawIslandLangCode
 }>(), {
   theme: 'light',
+  langCode: 'en',
 })
 
 const emit = defineEmits<{
@@ -35,6 +38,7 @@ onMounted(() => {
       container: host.value,
       initialScene: props.initialScene,
       theme: props.theme,
+      langCode: props.langCode,
       onChange: (scene) => emit('change', scene),
       onReady: () => emit('ready'),
       onError: (error) => emit('error', error),
@@ -52,8 +56,8 @@ onMounted(() => {
   })
 })
 
-watch(() => props.theme, (theme) => {
-  island?.update({ theme })
+watch([() => props.theme, () => props.langCode], ([theme, langCode]) => {
+  island?.update({ theme, langCode })
 })
 
 onBeforeUnmount(() => {

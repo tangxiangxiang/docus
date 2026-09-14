@@ -36,13 +36,21 @@ describe('mountExcalidrawIsland', () => {
     reactMocks.createRoot.mockReturnValue({ render: reactMocks.render, unmount: reactMocks.unmount })
     const container = document.createElement('div')
     const onError = vi.fn()
-    const island = await mountExcalidrawIsland({ container, initialScene, theme: 'light', onError })
+    const island = await mountExcalidrawIsland({ container, initialScene, theme: 'light', langCode: 'zh-CN', onError })
 
     expect(reactMocks.createRoot).toHaveBeenCalledWith(container)
     expect(reactMocks.render).toHaveBeenCalledOnce()
-    island.update({ theme: 'dark' })
+    const firstRenderedContent = reactMocks.render.mock.calls[0][0] as {
+      type: (props: unknown) => { props: { children: { props: { langCode: string } } } }
+      props: unknown
+    }
+    expect(firstRenderedContent.type(firstRenderedContent.props).props.children.props.langCode).toBe('zh-CN')
+
+    island.update({ theme: 'dark', langCode: 'en' })
     expect(reactMocks.createRoot).toHaveBeenCalledOnce()
     expect(reactMocks.render).toHaveBeenCalledTimes(2)
+    const updatedContent = reactMocks.render.mock.calls[1][0] as typeof firstRenderedContent
+    expect(updatedContent.type(updatedContent.props).props.children.props.langCode).toBe('en')
 
     island.unmount()
     island.unmount()
@@ -54,7 +62,7 @@ describe('mountExcalidrawIsland', () => {
     const container = document.createElement('div')
     const onError = vi.fn()
     const onUnsupportedAction = vi.fn()
-    const island = await mountExcalidrawIsland({ container, initialScene, theme: 'light', onError, onUnsupportedAction })
+    const island = await mountExcalidrawIsland({ container, initialScene, theme: 'light', langCode: 'en', onError, onUnsupportedAction })
     const event = new Event('drop', { bubbles: true, cancelable: true })
     Object.defineProperty(event, 'dataTransfer', { value: { types: ['Files'] } })
 
@@ -75,7 +83,7 @@ describe('mountExcalidrawIsland', () => {
     const container = document.createElement('div')
     const onError = vi.fn()
     const onUnsupportedAction = vi.fn()
-    await mountExcalidrawIsland({ container, initialScene, theme: 'light', onError, onUnsupportedAction })
+    await mountExcalidrawIsland({ container, initialScene, theme: 'light', langCode: 'en', onError, onUnsupportedAction })
 
     const renderedContent = reactMocks.render.mock.calls[0][0] as {
       type: (props: unknown) => { props: { children: { props: { onPaste: (data: unknown) => boolean } } } }

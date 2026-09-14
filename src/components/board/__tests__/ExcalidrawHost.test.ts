@@ -30,15 +30,15 @@ describe('ExcalidrawHost', () => {
     })
 
     const initialScene = { elements: [], appState: {}, files: {} }
-    const wrapper = mount(ExcalidrawHost, { props: { initialScene, theme: 'light' } })
+    const wrapper = mount(ExcalidrawHost, { props: { initialScene, theme: 'light', langCode: 'zh-CN' } })
     await flushPromises()
 
     expect(islandMocks.mount).toHaveBeenCalledOnce()
-    expect(islandMocks.mount).toHaveBeenCalledWith(expect.objectContaining({ initialScene }))
+    expect(islandMocks.mount).toHaveBeenCalledWith(expect.objectContaining({ initialScene, langCode: 'zh-CN' }))
     expect(wrapper.emitted('ready')).toHaveLength(1)
 
-    await wrapper.setProps({ theme: 'dark' })
-    expect(islandMocks.update).toHaveBeenCalledWith({ theme: 'dark' })
+    await wrapper.setProps({ theme: 'dark', langCode: 'en' })
+    expect(islandMocks.update).toHaveBeenCalledWith({ theme: 'dark', langCode: 'en' })
     expect(islandMocks.mount).toHaveBeenCalledOnce()
 
     wrapper.unmount()
