@@ -44,12 +44,12 @@ export function createBoardCheckpointScheduler<TRuntimeScene>(
   let timer: ReturnType<typeof setTimeout> | null = null
   let inFlight = false
   let queued: PendingOperation | null = null
-  let disposed = false
+  let closed = false
   let state: BoardRecoveryState = { status: 'idle', lastError: null }
 
   function publish(nextState: BoardRecoveryState): void {
     state = nextState
-    if (!disposed) options.onStateChange?.(state)
+    if (!closed) options.onStateChange?.(state)
   }
 
   function clearTimer(): void {
@@ -70,7 +70,7 @@ export function createBoardCheckpointScheduler<TRuntimeScene>(
   }
 
   async function pump(): Promise<void> {
-    if (disposed || inFlight || !queued) return
+    if (inFlight || !queued) return
     const operation = queued
     queued = null
     inFlight = true
@@ -87,7 +87,6 @@ export function createBoardCheckpointScheduler<TRuntimeScene>(
       })
     } finally {
       inFlight = false
-      if (disposed) return
       if (checkpointRequested && operation.kind === 'put'
         && (operation.checkpoint.localRevision !== currentLocalRevision
           || operation.checkpoint.baseRevision !== baseRevision)) {
@@ -110,7 +109,7 @@ export function createBoardCheckpointScheduler<TRuntimeScene>(
 
   function capture(): void {
     timer = null
-    if (disposed || !checkpointRequested) return
+    if (closed || !checkpointRequested) return
     try {
       enqueueLatestPut()
     } catch (error) {
@@ -119,7 +118,7 @@ export function createBoardCheckpointScheduler<TRuntimeScene>(
   }
 
   function schedule(runtimeScene: TRuntimeScene, localRevision: number, nextBaseRevision: number): void {
-    if (disposed) return
+    if (closed) return
     latestRuntimeScene = runtimeScene
     currentLocalRevision = localRevision
     baseRevision = nextBaseRevision
@@ -130,7 +129,7 @@ export function createBoardCheckpointScheduler<TRuntimeScene>(
   }
 
   function onServerSaveSucceeded(event: BoardCheckpointSaveSucceeded): void {
-    if (disposed) return
+    if (closed) return
     baseRevision = event.revision
     currentLocalRevision = Math.max(currentLocalRevision, event.currentLocalRevision)
     clearTimer()
@@ -145,10 +144,12 @@ export function createBoardCheckpointScheduler<TRuntimeScene>(
   }
 
   function dispose(): void {
-    if (disposed) return
-    disposed = true
+    if (closed) return
+    closed = true
     clearTimer()
-    queued = null
+    // Closing stops future editor work and UI callbacks, but durable operations
+    // already queued must drain so IndexedDB converges to the latest authority.
+    void pump()
   }
 
   return {

@@ -96,4 +96,86 @@ describe('Board checkpoint scheduler', () => {
     await vi.waitFor(async () => expect(await realStore.get('board-a')).toMatchObject({ baseRevision: 4, localRevision: 1 }))
     scheduler.dispose()
   })
+
+  it('drains a fully-saved delete after dispose', async () => {
+    const first = deferred<void>()
+    const realStore = createMemoryBoardCheckpointStore()
+    let putStarted = false
+    const controlledStore = {
+      ...realStore,
+      put: vi.fn(async (checkpoint: Parameters<typeof realStore.put>[0]) => {
+        putStarted = true
+        await first.promise
+        await realStore.put(checkpoint)
+      }),
+    }
+    const { scheduler } = createScheduler(controlledStore)
+
+    scheduler.schedule({ id: 1 }, 1, 3)
+    await vi.advanceTimersByTimeAsync(250)
+    await vi.waitFor(() => expect(putStarted).toBe(true))
+
+    scheduler.onServerSaveSucceeded({ revision: 4, savedLocalRevision: 1, currentLocalRevision: 1 })
+    scheduler.dispose()
+    first.resolve()
+
+    await vi.waitFor(async () => expect(await realStore.get('board-a')).toBeNull())
+    expect(controlledStore.put).toHaveBeenCalledOnce()
+  })
+
+  it('drains a rebased put after dispose', async () => {
+    const first = deferred<void>()
+    const realStore = createMemoryBoardCheckpointStore()
+    const putBases: number[] = []
+    const controlledStore = {
+      ...realStore,
+      put: vi.fn(async (checkpoint: Parameters<typeof realStore.put>[0]) => {
+        putBases.push(checkpoint.baseRevision)
+        if (putBases.length === 1) await first.promise
+        await realStore.put(checkpoint)
+      }),
+    }
+    const { scheduler } = createScheduler(controlledStore)
+
+    scheduler.schedule({ id: 2 }, 2, 3)
+    await vi.advanceTimersByTimeAsync(250)
+    await vi.waitFor(() => expect(putBases).toEqual([3]))
+
+    scheduler.onServerSaveSucceeded({ revision: 4, savedLocalRevision: 1, currentLocalRevision: 2 })
+    scheduler.dispose()
+    first.resolve()
+
+    await vi.waitFor(async () => expect(await realStore.get('board-a')).toMatchObject({
+      baseRevision: 4,
+      localRevision: 2,
+    }))
+    expect(putBases).toEqual([3, 4])
+  })
+
+  it('lets a fully-saved delete supersede a queued rebase after dispose', async () => {
+    const first = deferred<void>()
+    const realStore = createMemoryBoardCheckpointStore()
+    const putBases: number[] = []
+    const controlledStore = {
+      ...realStore,
+      put: vi.fn(async (checkpoint: Parameters<typeof realStore.put>[0]) => {
+        putBases.push(checkpoint.baseRevision)
+        if (putBases.length === 1) await first.promise
+        await realStore.put(checkpoint)
+      }),
+    }
+    const { scheduler } = createScheduler(controlledStore)
+
+    scheduler.schedule({ id: 2 }, 2, 3)
+    await vi.advanceTimersByTimeAsync(250)
+    await vi.waitFor(() => expect(putBases).toEqual([3]))
+
+    scheduler.onServerSaveSucceeded({ revision: 4, savedLocalRevision: 1, currentLocalRevision: 2 })
+    scheduler.onServerSaveSucceeded({ revision: 5, savedLocalRevision: 2, currentLocalRevision: 2 })
+    scheduler.dispose()
+    first.resolve()
+
+    await vi.waitFor(async () => expect(await realStore.get('board-a')).toBeNull())
+    expect(putBases).toEqual([3])
+  })
 })
