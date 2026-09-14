@@ -7,6 +7,7 @@ import ExcalidrawHost from '../../components/board/ExcalidrawHost.vue'
 import type { BoardAggregate } from '../../features/board/api'
 import type { BoardScene } from '../../../shared/boardProtocol'
 import { useI18n } from '../../composables/useI18n'
+import { useToast } from '../../composables/useToast'
 import { boardMetadataSource } from '../../features/board/metadataSource'
 
 const api = vi.hoisted(() => ({
@@ -30,7 +31,7 @@ vi.mock('../../components/board/ExcalidrawHost.vue', () => ({
   default: {
     name: 'ExcalidrawHost',
     props: ['initialScene', 'theme'],
-    emits: ['change', 'ready', 'error'],
+    emits: ['change', 'ready', 'error', 'unsupported-action'],
     template: '<div data-testid="mock-excalidraw-host" />',
   },
 }))
@@ -156,6 +157,25 @@ describe('Board Editor B4 lifecycle', () => {
     await flushPromises()
     expect(wrapper.get('[data-testid="board-local-revision"]').attributes('data-local-revision')).toBe('1')
     expect(api.getBoard).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('keeps the ready editor and local session when image insertion is unsupported', async () => {
+    api.getBoard.mockResolvedValueOnce(board('a'))
+    const { wrapper } = await mountEditor()
+    await flushPromises()
+    const host = wrapper.findComponent(ExcalidrawHost)
+    host.vm.$emit('ready')
+    await flushPromises()
+
+    host.vm.$emit('unsupported-action', { kind: 'image-insert', source: 'drop' })
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="board-editor-status"]').text()).toContain('Ready')
+    expect(wrapper.findComponent(ExcalidrawHost).exists()).toBe(true)
+    expect(wrapper.get('[data-testid="board-local-revision"]').attributes('data-local-revision')).toBe('0')
+    expect(useToast().toasts.value.at(-1)?.message).toBe('Image insertion is not available in Board yet.')
+    useToast().toasts.value.forEach((item) => useToast().dismiss(item.id))
     wrapper.unmount()
   })
 })

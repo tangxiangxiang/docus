@@ -10,6 +10,11 @@ import type { ExcalidrawRuntimeScene } from '../types'
 
 export type ExcalidrawIslandTheme = 'light' | 'dark'
 
+export interface ExcalidrawUnsupportedAction {
+  kind: 'image-insert'
+  source: 'paste' | 'drop'
+}
+
 export interface ExcalidrawIslandMountOptions {
   container: HTMLElement
   initialScene: ExcalidrawRuntimeScene
@@ -17,6 +22,7 @@ export interface ExcalidrawIslandMountOptions {
   onChange?: (scene: ExcalidrawRuntimeScene) => void
   onReady?: () => void
   onError?: (error: unknown) => void
+  onUnsupportedAction?: (action: ExcalidrawUnsupportedAction) => void
 }
 
 export interface ExcalidrawIslandHandle {
@@ -38,16 +44,13 @@ function hasFileDrop(event: DragEvent): boolean {
   return Array.from(event.dataTransfer?.types ?? []).some((type) => type === 'Files' || type.startsWith('image/'))
 }
 
-function unsupportedImageError(): Error {
-  return new Error('Board image insertion is unavailable before asset persistence is implemented')
-}
-
 function ExcalidrawIslandContent({
   theme,
   initialScene,
   onChange,
   onReady,
   onError,
+  onUnsupportedAction,
 }: ExcalidrawIslandRenderOptions): React.ReactNode {
   const handleChange = React.useCallback((elements: readonly OrderedExcalidrawElement[], appState: AppState, files: BinaryFiles) => {
     onChange?.({
@@ -59,9 +62,9 @@ function ExcalidrawIslandContent({
 
   const handlePaste = React.useCallback((data: ClipboardData) => {
     if (!hasImagePaste(data)) return false
-    onError?.(unsupportedImageError())
+    onUnsupportedAction?.({ kind: 'image-insert', source: 'paste' })
     return true
-  }, [onError])
+  }, [onUnsupportedAction])
 
   const initialData: ExcalidrawInitialDataState = {
     elements: initialScene.elements as readonly OrderedExcalidrawElement[],
@@ -103,7 +106,7 @@ export async function mountExcalidrawIsland(
     if (!hasFileDrop(event)) return
     event.preventDefault()
     event.stopPropagation()
-    options.onError?.(unsupportedImageError())
+    options.onUnsupportedAction?.({ kind: 'image-insert', source: 'drop' })
   }
   const handleDragOver = (event: DragEvent): void => {
     if (!hasFileDrop(event)) return
@@ -120,6 +123,7 @@ export async function mountExcalidrawIsland(
       onChange: options.onChange,
       onReady: options.onReady,
       onError: options.onError,
+      onUnsupportedAction: options.onUnsupportedAction,
     })
   }
 

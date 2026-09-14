@@ -422,6 +422,7 @@ const STRINGS: Strings = {
   'board.editor_not_found': { zh: 'Board 不存在或已被删除。', en: 'This board does not exist or has been deleted.' },
   'board.editor_scene_unsupported': { zh: '此 Board 使用了当前版本不支持的画布数据。', en: 'This board uses canvas data unsupported by the current version.' },
   'board.editor_canvas_failed': { zh: '画布初始化失败，请重试。', en: 'The canvas could not be initialized. Please retry.' },
+  'board.editor_image_unsupported': { zh: '当前版本暂不支持在 Board 中插入图片。', en: 'Image insertion is not available in Board yet.' },
   'board.back_to_boards': { zh: '返回 Board', en: 'Back to boards' },
   'document_hover.modified': { zh: '修改于 {date}', en: 'Modified {date}' },
   // AI panel quick prompts (note open)

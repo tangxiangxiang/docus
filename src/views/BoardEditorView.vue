@@ -13,6 +13,8 @@ import { BoardEngineCompatibilityError, type ExcalidrawRuntimeScene } from '../f
 import type { BoardScene } from '../../shared/boardProtocol'
 import { useI18n } from '../composables/useI18n'
 import { useTheme } from '../composables/useTheme'
+import { useToast } from '../composables/useToast'
+import type { ExcalidrawUnsupportedAction } from '../features/board/engine/excalidraw/reactIsland'
 
 type EditorStatus = 'loading' | 'hydrating' | 'ready' | 'error'
 type EditorErrorKind = 'load' | 'not-found' | 'compatibility' | 'canvas'
@@ -30,6 +32,7 @@ const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
 const { theme } = useTheme()
+const toast = useToast()
 const status = ref<EditorStatus>('loading')
 const errorKind = ref<EditorErrorKind | null>(null)
 const errorMessage = ref('')
@@ -161,6 +164,10 @@ function onHostError(error: unknown): void {
   runtimeScene.value = null
 }
 
+function onUnsupportedAction(action: ExcalidrawUnsupportedAction): void {
+  if (action.kind === 'image-insert') toast.info(t('board.editor_image_unsupported'))
+}
+
 function backToBoards(): void {
   void router.push({ name: 'board' })
 }
@@ -201,6 +208,7 @@ watch(() => boardId.value, () => { void loadBoard() }, { immediate: true })
         @change="onHostChange"
         @ready="onHostReady"
         @error="onHostError"
+        @unsupported-action="onUnsupportedAction"
       />
     </section>
   </main>

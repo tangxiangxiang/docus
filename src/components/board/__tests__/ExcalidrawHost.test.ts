@@ -9,7 +9,7 @@ const islandMocks = vi.hoisted(() => ({
   unmount: vi.fn(),
 }))
 
-vi.mock('../../../features/board/engine/excalidraw/reactIsland', () => ({
+  vi.mock('../../../features/board/engine/excalidraw/reactIsland', () => ({
   mountExcalidrawIsland: islandMocks.mount,
 }))
 
@@ -43,5 +43,19 @@ describe('ExcalidrawHost', () => {
 
     wrapper.unmount()
     expect(islandMocks.unmount).toHaveBeenCalledOnce()
+  })
+
+  it('bridges unsupported actions without treating them as errors', async () => {
+    islandMocks.mount.mockImplementation(async (options: { onUnsupportedAction?: (action: unknown) => void }) => {
+      options.onUnsupportedAction?.({ kind: 'image-insert', source: 'drop' })
+      return { update: islandMocks.update, unmount: islandMocks.unmount }
+    })
+
+    const wrapper = mount(ExcalidrawHost, { props: { initialScene: { elements: [], appState: {}, files: {} } } })
+    await flushPromises()
+
+    expect(wrapper.emitted('unsupportedAction')).toEqual([[{ kind: 'image-insert', source: 'drop' }]])
+    expect(wrapper.emitted('error')).toBeUndefined()
+    wrapper.unmount()
   })
 })

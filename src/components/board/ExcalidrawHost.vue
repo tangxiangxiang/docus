@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import type { ExcalidrawIslandHandle, ExcalidrawIslandTheme } from '../../features/board/engine/excalidraw/reactIsland'
+import type {
+  ExcalidrawIslandHandle,
+  ExcalidrawIslandTheme,
+  ExcalidrawUnsupportedAction,
+} from '../../features/board/engine/excalidraw/reactIsland'
 import type { ExcalidrawRuntimeScene } from '../../features/board/engine/types'
 
 const props = withDefaults(defineProps<{
@@ -14,6 +18,7 @@ const emit = defineEmits<{
   change: [scene: ExcalidrawRuntimeScene]
   ready: []
   error: [error: unknown]
+  unsupportedAction: [action: ExcalidrawUnsupportedAction]
 }>()
 
 const host = ref<HTMLElement | null>(null)
@@ -33,6 +38,7 @@ onMounted(() => {
       onChange: (scene) => emit('change', scene),
       onReady: () => emit('ready'),
       onError: (error) => emit('error', error),
+      onUnsupportedAction: (action) => emit('unsupportedAction', action),
     })
 
     if (generation !== mountGeneration) {
