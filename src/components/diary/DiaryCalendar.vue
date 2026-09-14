@@ -807,10 +807,28 @@ defineExpose({ focusDate, closeMoodPicker })
   font: inherit;
   line-height: 1;
   pointer-events: auto;
+  transition: color 160ms ease-out;
 }
 
-.diary-calendar-day-content > [data-diary-day-content]:hover {
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
+.diary-calendar-day-content > [data-diary-day-content]::before {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  box-sizing: border-box;
+  border: 1px solid transparent;
+  border-radius: inherit;
+  background: transparent;
+  box-shadow: none;
+  content: '';
+  pointer-events: none;
+  transition:
+    background 160ms ease-out,
+    border-color 160ms ease-out,
+    box-shadow 160ms ease-out;
+}
+
+.diary-calendar-day-content > [data-diary-day-content]:hover::before {
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
 }
 
 .diary-calendar-day-content > [data-diary-day-content]:focus {
@@ -829,12 +847,61 @@ defineExpose({ focusDate, closeMoodPicker })
   font-weight: 650;
 }
 
+.diary-calendar-day-content > [data-diary-day-content].is-selected::before {
+  border-color: color-mix(in srgb, var(--accent) 26%, transparent);
+  background: color-mix(in srgb, var(--accent) 11%, transparent);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+.diary-calendar-day-content > [data-diary-day-content].is-selected:hover::before {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
 .diary-calendar-day-content > [data-diary-day-content].is-today .diary-calendar-day-number {
   color: var(--accent);
   font-weight: 650;
-  text-decoration: underline;
-  text-decoration-thickness: 2px;
-  text-underline-offset: 4px;
+}
+
+.diary-calendar-day-content > [data-diary-day-content].is-today .diary-calendar-day-number::after {
+  position: absolute;
+  top: calc(100% + 5px);
+  left: 50%;
+  width: 14px;
+  height: 2px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: var(--accent);
+  content: '';
+}
+
+.diary-calendar-day-content > [data-diary-day-content].is-selected.is-today .diary-calendar-day-number::after {
+  opacity: 0.55;
+}
+
+.diary-calendar[data-theme='dark'] .diary-calendar-day-content > [data-diary-day-content]:hover::before {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.diary-calendar[data-theme='dark'] .diary-calendar-day-content > [data-diary-day-content].is-selected::before {
+  border-color: color-mix(in srgb, var(--accent) 34%, transparent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.diary-calendar[data-theme='dark'] .diary-calendar-day-content > [data-diary-day-content].is-selected:hover::before {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.diary-calendar-host :deep(.n-calendar-cell--other-month) [data-diary-day-content].is-selected::before {
+  border-color: color-mix(in srgb, var(--accent) 20%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 4%, transparent);
+}
+
+.diary-calendar[data-theme='dark'] .diary-calendar-host :deep(.n-calendar-cell--other-month) [data-diary-day-content].is-selected::before {
+  border-color: color-mix(in srgb, var(--accent) 26%, transparent);
+  background: color-mix(in srgb, var(--accent) 11%, transparent);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 5%, transparent);
 }
 
 .diary-calendar-host :deep([data-diary-day-content]:focus-visible) {
