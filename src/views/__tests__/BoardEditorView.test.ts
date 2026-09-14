@@ -7,7 +7,6 @@ import ExcalidrawHost from '../../components/board/ExcalidrawHost.vue'
 import type { BoardAggregate } from '../../features/board/api'
 import type { BoardScene } from '../../../shared/boardProtocol'
 import { useI18n } from '../../composables/useI18n'
-import { useToast } from '../../composables/useToast'
 import { useConfirm } from '../../composables/useConfirm'
 import { boardMetadataSource } from '../../features/board/metadataSource'
 
@@ -37,10 +36,40 @@ const recovery = vi.hoisted(() => {
       get: vi.fn(async () => checkpoint),
       put: vi.fn(async (value: unknown) => { checkpoint = value }),
       delete: vi.fn(async () => { checkpoint = null }),
+      putPendingAsset: vi.fn(async () => {}),
+      getPendingAsset: vi.fn(async () => null),
+      deletePendingAsset: vi.fn(async () => {}),
+      listPendingAssets: vi.fn(async () => []),
       clearBoardRecovery: vi.fn(async () => { checkpoint = null }),
     },
     BoardRecoveryStoreError: class BoardRecoveryStoreError extends Error {
       code = 'BOARD_RECOVERY_OPERATION_FAILED'
+    },
+  }
+})
+
+const assetSession = vi.hoisted(() => {
+  const session = {
+    seedScene: vi.fn(),
+    observeRuntimeAssets: vi.fn(async () => {}),
+    ensureRuntimeSceneReady: vi.fn(async () => {}),
+    ensureAssetReady: vi.fn(async () => {}),
+    ensureSceneAssetsReady: vi.fn(async () => {}),
+    resolveSceneAssets: vi.fn(async () => []),
+    getFileMap: vi.fn(() => ({})),
+    dispose: vi.fn(),
+  }
+  return {
+    session,
+    create: vi.fn(() => session),
+    reset() {
+      for (const method of Object.values(session)) method.mockReset()
+      session.observeRuntimeAssets.mockResolvedValue(undefined)
+      session.ensureRuntimeSceneReady.mockResolvedValue(undefined)
+      session.ensureAssetReady.mockResolvedValue(undefined)
+      session.ensureSceneAssetsReady.mockResolvedValue(undefined)
+      session.resolveSceneAssets.mockResolvedValue([])
+      session.getFileMap.mockReturnValue({})
     },
   }
 })
@@ -50,11 +79,14 @@ vi.mock('../../features/board/checkpointStore', () => ({
   createIndexedDbBoardCheckpointStore: () => recovery.store,
   BoardRecoveryStoreError: recovery.BoardRecoveryStoreError,
 }))
+vi.mock('../../features/board/assetSession', () => ({
+  createBoardAssetSession: assetSession.create,
+}))
 vi.mock('../../components/board/ExcalidrawHost.vue', () => ({
   default: {
     name: 'ExcalidrawHost',
     props: ['initialScene', 'theme', 'langCode'],
-    emits: ['change', 'ready', 'error', 'unsupported-action'],
+    emits: ['change', 'assets-changed', 'asset-error', 'ready', 'error'],
     template: '<div data-testid="mock-excalidraw-host" />',
   },
 }))
@@ -95,6 +127,7 @@ describe('Board Editor B4 lifecycle', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     recovery.reset()
+    assetSession.reset()
     boardMetadataSource.invalidate()
     useI18n().setLocale('en')
   })
@@ -232,7 +265,7 @@ describe('Board Editor B4 lifecycle', () => {
     wrapper.unmount()
   })
 
-  it('keeps the ready editor and local session when image insertion is unsupported', async () => {
+  it('keeps the ready editor and local session while the asset bridge is idle', async () => {
     api.getBoard.mockResolvedValueOnce(board('a'))
     const { wrapper } = await mountEditor()
     await flushPromises()
@@ -240,14 +273,52 @@ describe('Board Editor B4 lifecycle', () => {
     host.vm.$emit('ready')
     await flushPromises()
 
-    host.vm.$emit('unsupported-action', { kind: 'image-insert', source: 'drop' })
+    host.vm.$emit('assets-changed', [])
     await flushPromises()
 
     expect(wrapper.get('[data-testid="board-editor-status"]').text()).toContain('Ready')
     expect(wrapper.findComponent(ExcalidrawHost).exists()).toBe(true)
     expect(wrapper.get('[data-testid="board-local-revision"]').attributes('data-local-revision')).toBe('0')
-    expect(useToast().toasts.value.at(-1)?.message).toBe('Image insertion is not available in Board yet.')
-    useToast().toasts.value.forEach((item) => useToast().dismiss(item.id))
+    wrapper.unmount()
+  })
+
+  it('does not write an image checkpoint until its Pending Blob intake is durable', async () => {
+    api.getBoard.mockResolvedValueOnce(board('a'))
+    const { wrapper } = await mountEditor()
+    await flushPromises()
+    const host = wrapper.findComponent(ExcalidrawHost)
+    host.vm.$emit('ready')
+    await flushPromises()
+
+    const intake = deferred<void>()
+    const assetId = '11111111-1111-4111-8111-111111111111'
+    assetSession.session.getFileMap.mockReturnValue({ 'file-1': assetId })
+    assetSession.session.observeRuntimeAssets.mockReturnValue(intake.promise)
+    const image = {
+      id: 'image-1',
+      type: 'image',
+      fileId: 'file-1',
+      isDeleted: false,
+      version: 1,
+    }
+
+    vi.useFakeTimers()
+    host.vm.$emit('assets-changed', [{ engineFileId: 'file-1', mimeType: 'image/png', blob: new Blob(['image']) }])
+    host.vm.$emit('change', { elements: [image], appState: {}, files: { 'file-1': {} } })
+    await vi.advanceTimersByTimeAsync(250)
+    expect(recovery.store.put).not.toHaveBeenCalled()
+
+    intake.resolve()
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(250)
+    await flushPromises()
+
+    expect(recovery.store.put).toHaveBeenCalledWith(expect.objectContaining({
+      scene: expect.objectContaining({
+        engineData: expect.objectContaining({ fileMap: { 'file-1': assetId } }),
+        assetRefs: [assetId],
+      }),
+    }))
     wrapper.unmount()
   })
 

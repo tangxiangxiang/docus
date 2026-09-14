@@ -26,18 +26,18 @@ function scene(overrides: Partial<BoardScene> = {}): BoardScene {
   }
 }
 
-function expectCompatibility(action: () => unknown, code: BoardEngineCompatibilityError['code']): void {
-  expect(action).toThrow(BoardEngineCompatibilityError)
+async function expectCompatibility(action: () => unknown, code: BoardEngineCompatibilityError['code']): Promise<void> {
+  await expect(Promise.resolve().then(action)).rejects.toBeInstanceOf(BoardEngineCompatibilityError)
   try {
-    action()
+    await Promise.resolve().then(action)
   } catch (error) {
     expect(error).toMatchObject({ code })
   }
 }
 
 describe('excalidrawAdapter', () => {
-  it('hydrates the portable empty scene and maps numeric zoom to Excalidraw runtime shape', () => {
-    expect(excalidrawAdapter.hydrate(scene())).toEqual({
+  it('hydrates the portable empty scene and maps numeric zoom to Excalidraw runtime shape', async () => {
+    await expect(excalidrawAdapter.hydrate(scene())).resolves.toEqual({
       elements: [],
       appState: {
         zoom: { value: 0.8 },
@@ -100,29 +100,72 @@ describe('excalidrawAdapter', () => {
     ['invalid elements', { engineData: { elements: {}, fileMap: {} } }],
     ['invalid fileMap', { engineData: { elements: [], fileMap: [] } }],
     ['asset mismatch', { engineData: { elements: [], fileMap: { file: 'asset-1' } }, assetRefs: [] }],
-  ])('fails closed for %s', (_label, overrides) => {
-    expectCompatibility(() => excalidrawAdapter.hydrate(scene(overrides)), 'BOARD_SCENE_INVALID')
+  ])('fails closed for %s', async (_label, overrides) => {
+    await expectCompatibility(() => excalidrawAdapter.validate(scene(overrides)), 'BOARD_SCENE_INVALID')
   })
 
-  it('fails closed for asset-backed or image scenes before asset persistence', () => {
-    expectCompatibility(() => excalidrawAdapter.hydrate(scene({
-      engineData: { elements: [], fileMap: { file: 'asset-1' } },
+  it('hydrates and serializes image elements through the fileId-to-assetId mapping', async () => {
+    const image = { id: 'image-1', type: 'image', fileId: 'engine-file-1', isDeleted: false, version: 1 }
+    const imageScene = scene({
+      engineData: { elements: [image], fileMap: { 'engine-file-1': 'asset-1' } },
       assetRefs: ['asset-1'],
-    })), 'BOARD_ASSETS_UNSUPPORTED')
-    expectCompatibility(() => excalidrawAdapter.serialize({
-      elements: [{ type: 'image' }],
-      appState: {},
-      files: {},
-    }), 'BOARD_ASSETS_UNSUPPORTED')
+    })
+    const runtime = await excalidrawAdapter.hydrate(imageScene, [{
+      assetId: 'asset-1',
+      engineFileId: 'engine-file-1',
+      mimeType: 'image/png',
+      blob: new Blob(['image-bytes'], { type: 'image/png' }),
+    }])
+
+    expect(runtime.files['engine-file-1']).toMatchObject({
+      id: 'engine-file-1',
+      mimeType: 'image/png',
+    })
+    expect((runtime.files['engine-file-1'] as { dataURL: string }).dataURL).toBe('data:image/png;base64,aW1hZ2UtYnl0ZXM=')
+    const serialized = excalidrawAdapter.serialize(runtime, { 'engine-file-1': 'asset-1' })
+    expect(serialized).toMatchObject({
+      engineData: { fileMap: { 'engine-file-1': 'asset-1' } },
+      assetRefs: ['asset-1'],
+    })
+    expect(JSON.stringify(serialized)).not.toContain('data:image')
   })
 
-  it('rejects unsupported engine and scene versions explicitly', () => {
-    expectCompatibility(
-      () => assertSupportedExcalidrawScene('other', CURRENT_BOARD_SCENE_VERSION),
+  it('fails closed when a non-deleted image mapping or resolved asset is missing', async () => {
+    await expectCompatibility(() => excalidrawAdapter.validate(scene({
+      engineData: { elements: [{ type: 'image', fileId: 'file-1' }], fileMap: {} },
+      assetRefs: [],
+    })), 'BOARD_SCENE_INVALID')
+    await expectCompatibility(() => excalidrawAdapter.hydrate(scene({
+      engineData: { elements: [{ type: 'image', fileId: 'file-1' }], fileMap: { 'file-1': 'asset-1' } },
+      assetRefs: ['asset-1'],
+    })), 'BOARD_SCENE_INVALID')
+  })
+
+  it('keeps deleted image elements from retaining removed asset mappings', () => {
+    const runtime = {
+      elements: [{ type: 'image', fileId: 'file-1', isDeleted: true }],
+      appState: {},
+      files: { 'file-1': {} },
+    }
+    expect(excalidrawAdapter.serialize(runtime, { 'file-1': 'asset-1' })).toMatchObject({
+      engineData: { fileMap: {} },
+      assetRefs: [],
+    })
+  })
+
+  it('includes image file references in the lightweight persistence fingerprint', () => {
+    const base = { elements: [{ type: 'image', fileId: 'file-a', version: 1 }], appState: {}, files: { 'file-a': {} } }
+    const changed = { elements: [{ type: 'image', fileId: 'file-b', version: 1 }], appState: {}, files: { 'file-b': {} } }
+    expect(runtimePersistenceFingerprint(base)).not.toBe(runtimePersistenceFingerprint(changed))
+  })
+
+  it('rejects unsupported engine and scene versions explicitly', async () => {
+    await expectCompatibility(
+      () => { assertSupportedExcalidrawScene('other', CURRENT_BOARD_SCENE_VERSION) },
       'BOARD_ENGINE_UNSUPPORTED',
     )
-    expectCompatibility(
-      () => assertSupportedExcalidrawScene(BOARD_ENGINE_EXCALIDRAW, CURRENT_BOARD_SCENE_VERSION + 1),
+    await expectCompatibility(
+      () => { assertSupportedExcalidrawScene(BOARD_ENGINE_EXCALIDRAW, CURRENT_BOARD_SCENE_VERSION + 1) },
       'BOARD_SCENE_VERSION_UNSUPPORTED',
     )
   })

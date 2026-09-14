@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createMemoryBoardCheckpointStore } from '../checkpointStore'
-import type { BoardCheckpoint } from '../recoveryTypes'
+import type { BoardCheckpoint, PendingBoardAsset } from '../recoveryTypes'
 
 function checkpoint(boardId: string, localRevision = 3): BoardCheckpoint {
   return {
@@ -37,5 +37,24 @@ describe('Board checkpoint store', () => {
     expect(await store.get('b')).toEqual(checkpoint('b'))
     expect(store.getPendingAssetIds('a')).toEqual([])
     expect(store.getPendingAssetIds('b')).toEqual(['asset-b'])
+  })
+
+  it('persists the complete PendingBoardAsset Blob contract', async () => {
+    const store = createMemoryBoardCheckpointStore()
+    const pending: PendingBoardAsset = {
+      assetId: '11111111-1111-4111-8111-111111111111',
+      boardId: 'board-a',
+      engineFileId: 'engine-file-a',
+      mimeType: 'image/png',
+      blob: new Blob(['png'], { type: 'image/png' }),
+      createdAt: 42,
+    }
+
+    await store.putPendingAsset(pending)
+
+    await expect(store.getPendingAsset(pending.assetId)).resolves.toEqual(pending)
+    await expect(store.listPendingAssets(pending.boardId)).resolves.toEqual([pending])
+    await store.deletePendingAsset(pending.assetId)
+    await expect(store.getPendingAsset(pending.assetId)).resolves.toBeNull()
   })
 })

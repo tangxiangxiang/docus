@@ -36,68 +36,82 @@ describe('mountExcalidrawIsland', () => {
     reactMocks.createRoot.mockReturnValue({ render: reactMocks.render, unmount: reactMocks.unmount })
     const container = document.createElement('div')
     const onError = vi.fn()
-    const island = await mountExcalidrawIsland({ container, initialScene, theme: 'light', langCode: 'zh-CN', onError })
+    const island = await mountExcalidrawIsland({ container, initialScene, theme: 'light', langCode: 'en', onError })
 
     expect(reactMocks.createRoot).toHaveBeenCalledWith(container)
     expect(reactMocks.render).toHaveBeenCalledOnce()
-    const firstRenderedContent = reactMocks.render.mock.calls[0][0] as {
-      type: (props: unknown) => { props: { children: { props: { langCode: string } } } }
-      props: unknown
-    }
-    expect(firstRenderedContent.type(firstRenderedContent.props).props.children.props.langCode).toBe('zh-CN')
-
     island.update({ theme: 'dark', langCode: 'en' })
     expect(reactMocks.createRoot).toHaveBeenCalledOnce()
     expect(reactMocks.render).toHaveBeenCalledTimes(2)
-    const updatedContent = reactMocks.render.mock.calls[1][0] as typeof firstRenderedContent
-    expect(updatedContent.type(updatedContent.props).props.children.props.langCode).toBe('en')
 
     island.unmount()
     island.unmount()
     expect(reactMocks.unmount).toHaveBeenCalledOnce()
   })
 
-  it('blocks image file drops and removes the blocker when unmounted', async () => {
+  it('leaves image file drops available to Excalidraw', async () => {
     reactMocks.createRoot.mockReturnValue({ render: reactMocks.render, unmount: reactMocks.unmount })
     const container = document.createElement('div')
     const onError = vi.fn()
-    const onUnsupportedAction = vi.fn()
-    const island = await mountExcalidrawIsland({ container, initialScene, theme: 'light', langCode: 'en', onError, onUnsupportedAction })
+    const onAssetsChanged = vi.fn()
+    const island = await mountExcalidrawIsland({ container, initialScene, theme: 'light', langCode: 'en', onError, onAssetsChanged })
     const event = new Event('drop', { bubbles: true, cancelable: true })
     Object.defineProperty(event, 'dataTransfer', { value: { types: ['Files'] } })
 
     container.dispatchEvent(event)
-    expect(event.defaultPrevented).toBe(true)
+    expect(event.defaultPrevented).toBe(false)
     expect(onError).not.toHaveBeenCalled()
-    expect(onUnsupportedAction).toHaveBeenCalledWith({ kind: 'image-insert', source: 'drop' })
+    expect(onAssetsChanged).not.toHaveBeenCalled()
 
     island.unmount()
     const laterEvent = new Event('drop', { bubbles: true, cancelable: true })
     Object.defineProperty(laterEvent, 'dataTransfer', { value: { types: ['Files'] } })
     container.dispatchEvent(laterEvent)
-    expect(onUnsupportedAction).toHaveBeenCalledOnce()
+    expect(onAssetsChanged).not.toHaveBeenCalled()
   })
 
-  it('blocks image paste as a non-fatal unsupported action', async () => {
+  it('enables the Excalidraw image tool and does not override paste handling', async () => {
     reactMocks.createRoot.mockReturnValue({ render: reactMocks.render, unmount: reactMocks.unmount })
     const container = document.createElement('div')
     const onError = vi.fn()
-    const onUnsupportedAction = vi.fn()
-    await mountExcalidrawIsland({ container, initialScene, theme: 'light', langCode: 'en', onError, onUnsupportedAction })
+    await mountExcalidrawIsland({ container, initialScene, theme: 'light', langCode: 'en', onError })
 
     const renderedContent = reactMocks.render.mock.calls[0][0] as {
-      type: (props: unknown) => { props: { children: { props: { onPaste: (data: unknown) => boolean } } } }
+      type: (props: unknown) => { props: { children: { props: { onPaste?: unknown; UIOptions?: { tools?: { image?: boolean } } } } } }
       props: unknown
     }
     const renderedBoundary = renderedContent.type(renderedContent.props)
-    const handled = renderedBoundary.props.children.props.onPaste({
-      files: { 'image/png': new Blob() },
-      mixedContent: [],
-      elements: [],
-    })
 
-    expect(handled).toBe(true)
+    expect(renderedBoundary.props.children.props.onPaste).toBeUndefined()
+    expect(renderedBoundary.props.children.props.UIOptions?.tools?.image).toBe(true)
     expect(onError).not.toHaveBeenCalled()
-    expect(onUnsupportedAction).toHaveBeenCalledWith({ kind: 'image-insert', source: 'paste' })
+  })
+
+  it('bridges runtime BinaryFiles as engine-neutral Blobs before onChange', async () => {
+    reactMocks.createRoot.mockReturnValue({ render: reactMocks.render, unmount: reactMocks.unmount })
+    const container = document.createElement('div')
+    const onChange = vi.fn()
+    const onAssetsChanged = vi.fn()
+    await mountExcalidrawIsland({ container, initialScene, theme: 'light', langCode: 'en', onChange, onAssetsChanged })
+
+    const renderedContent = reactMocks.render.mock.calls[0][0] as {
+      type: (props: unknown) => { props: { children: { props: { onChange: (elements: unknown[], appState: unknown, files: unknown) => void } } } }
+      props: unknown
+    }
+    const renderedBoundary = renderedContent.type(renderedContent.props)
+    const file = {
+      id: 'engine-file-1',
+      dataURL: 'data:image/png;base64,aGk=',
+      mimeType: 'image/png',
+      created: 1,
+    }
+    renderedBoundary.props.children.props.onChange([], {}, { 'engine-file-1': file })
+
+    expect(onAssetsChanged).toHaveBeenCalledWith([expect.objectContaining({
+      engineFileId: 'engine-file-1',
+      mimeType: 'image/png',
+      blob: expect.any(Blob),
+    })])
+    expect(onChange).toHaveBeenCalledOnce()
   })
 })

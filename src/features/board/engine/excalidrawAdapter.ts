@@ -1,3 +1,5 @@
+import type { BinaryFileData, DataURL } from '@excalidraw/excalidraw/types'
+import type { FileId } from '@excalidraw/excalidraw/element/types'
 import {
   BOARD_ENGINE_EXCALIDRAW,
   CURRENT_BOARD_SCENE_VERSION,
@@ -8,6 +10,7 @@ import {
   BoardEngineCompatibilityError,
   type BoardEngineAdapter,
   type ExcalidrawRuntimeScene,
+  type ResolvedBoardAsset,
 } from './types'
 
 type RecordValue = Record<string, unknown>
@@ -24,10 +27,6 @@ function isPlainRecord(value: unknown): value is RecordValue {
 
 function invalid(message: string): never {
   throw new BoardEngineCompatibilityError('BOARD_SCENE_INVALID', message)
-}
-
-function unsupportedAssets(message: string): never {
-  throw new BoardEngineCompatibilityError('BOARD_ASSETS_UNSUPPORTED', message)
 }
 
 function finiteNumber(value: unknown, field: string): number | undefined {
@@ -63,11 +62,27 @@ function validatePersistentAppState(value: unknown): BoardPersistentAppState {
   return state
 }
 
+function imageFileIds(elements: readonly unknown[]): string[] {
+  const result: string[] = []
+  const seen = new Set<string>()
+  for (const element of elements) {
+    if (!isRecord(element) || element.type !== 'image' || element.isDeleted === true) continue
+    if (typeof element.fileId !== 'string' || element.fileId.length === 0) {
+      invalid('Non-deleted image elements must reference an Excalidraw file ID')
+    }
+    if (seen.has(element.fileId)) continue
+    seen.add(element.fileId)
+    result.push(element.fileId)
+  }
+  return result
+}
+
 function validateScene(scene: BoardScene): {
   elements: readonly unknown[]
   fileMap: RecordValue
   persistentAppState: BoardPersistentAppState
   assetRefs: readonly string[]
+  imageFileIds: readonly string[]
 } {
   if (!isRecord(scene)) invalid('Board scene must be an object')
   const engineData = scene.engineData
@@ -96,11 +111,24 @@ function validateScene(scene: BoardScene): {
     invalid('assetRefs must equal the unique values of engineData.fileMap')
   }
 
+  const requiredImageFileIds = imageFileIds(engineData.elements)
+  for (const fileId of requiredImageFileIds) {
+    if (!Object.prototype.hasOwnProperty.call(fileMap, fileId)) {
+      invalid(`Image element ${fileId} has no fileMap asset mapping`)
+    }
+  }
+  for (const fileId of Object.keys(fileMap)) {
+    if (!requiredImageFileIds.includes(fileId)) {
+      invalid(`fileMap contains an unused Excalidraw file ID: ${fileId}`)
+    }
+  }
+
   return {
     elements: engineData.elements,
     fileMap,
     persistentAppState: validatePersistentAppState(scene.persistentAppState),
     assetRefs,
+    imageFileIds: requiredImageFileIds,
   }
 }
 
@@ -134,10 +162,6 @@ function persistentAppStateFromRuntime(value: unknown): BoardPersistentAppState 
   return state
 }
 
-function containsImage(elements: readonly unknown[]): boolean {
-  return elements.some((element) => isRecord(element) && element.type === 'image')
-}
-
 function fingerprintValue(value: unknown): string {
   if (value === null) return 'null'
   if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'string') return String(value)
@@ -148,9 +172,8 @@ function fingerprintValue(value: unknown): string {
 
 /**
  * A cheap persistence-only signal for high-frequency Excalidraw changes.
- * This deliberately does not serialize a BoardScene or stringify the full
- * runtime payload. Full domain serialization happens only when a save is
- * captured by the Save Coordinator.
+ * This deliberately does not serialize a BoardScene or stringify binary
+ * image data. Full domain serialization happens only when a save is captured.
  */
 export function runtimePersistenceFingerprint(runtime: ExcalidrawRuntimeScene): string {
   const elements = runtime.elements.map((element, index) => {
@@ -167,6 +190,9 @@ export function runtimePersistenceFingerprint(runtime: ExcalidrawRuntimeScene): 
       element.height,
       element.angle,
       element.text,
+      element.fileId,
+      element.status,
+      element.crop,
       Array.isArray(element.points) ? element.points.length : undefined,
     ]
     return `${index}:${persisted.map(fingerprintValue).join('|')}`
@@ -199,13 +225,60 @@ export function assertSupportedExcalidrawScene(engine: unknown, sceneVersion: un
   }
 }
 
+function toBase64(bytes: Uint8Array): string {
+  if (typeof btoa !== 'function') throw new Error('Browser base64 support is unavailable')
+  let binary = ''
+  const chunkSize = 0x8000
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize))
+  }
+  return btoa(binary)
+}
+
+async function blobToDataUrl(blob: Blob, mimeType: string): Promise<DataURL> {
+  const bytes = new Uint8Array(await blob.arrayBuffer())
+  return `data:${mimeType};base64,${toBase64(bytes)}` as DataURL
+}
+
+function binaryFile(
+  asset: ResolvedBoardAsset,
+  dataURL: DataURL,
+): BinaryFileData {
+  const retrievedAt = Date.now()
+  return {
+    id: asset.engineFileId as FileId,
+    dataURL,
+    mimeType: asset.mimeType as BinaryFileData['mimeType'],
+    created: retrievedAt,
+    lastRetrieved: retrievedAt,
+  }
+}
+
 export const excalidrawAdapter: BoardEngineAdapter<ExcalidrawRuntimeScene> = {
-  hydrate(scene) {
+  validate(scene) {
+    validateScene(scene)
+  },
+
+  async hydrate(scene, resolvedAssets = []) {
     const validated = validateScene(scene)
-    if (validated.assetRefs.length > 0 || Object.keys(validated.fileMap).length > 0) {
-      unsupportedAssets('Board images and assets are not available before B7')
+    const resolvedByFileId = new Map<string, ResolvedBoardAsset>()
+    for (const asset of resolvedAssets) {
+      if (resolvedByFileId.has(asset.engineFileId)) invalid(`Duplicate resolved asset for ${asset.engineFileId}`)
+      resolvedByFileId.set(asset.engineFileId, asset)
     }
-    if (containsImage(validated.elements)) unsupportedAssets('Board image elements are not available before B7')
+    if (resolvedByFileId.size !== Object.keys(validated.fileMap).length) {
+      invalid('Every persisted image file must have exactly one resolved asset')
+    }
+
+    const files: Record<string, BinaryFileData> = {}
+    for (const [engineFileId, assetId] of Object.entries(validated.fileMap)) {
+      const asset = resolvedByFileId.get(engineFileId)
+      if (!asset || asset.assetId !== assetId || !asset.blob || asset.blob.size <= 0) {
+        invalid(`Resolved asset is missing for Excalidraw file ID ${engineFileId}`)
+      }
+      const dataURL = await blobToDataUrl(asset.blob, asset.mimeType)
+      files[engineFileId] = binaryFile(asset, dataURL)
+    }
 
     const appState: Record<string, unknown> = {}
     if (validated.persistentAppState.zoom !== undefined) {
@@ -220,24 +293,42 @@ export const excalidrawAdapter: BoardEngineAdapter<ExcalidrawRuntimeScene> = {
     return {
       elements: [...validated.elements],
       appState,
-      files: {},
+      files,
     }
   },
 
-  serialize(runtime) {
+  serialize(runtime, mapping = {}) {
     if (!isRecord(runtime)) invalid('runtime scene must be an object')
     if (!Array.isArray(runtime.elements)) invalid('runtime elements must be an array')
     if (!isPlainRecord(runtime.files)) invalid('runtime files must be a plain object')
-    if (Object.keys(runtime.files).length > 0 || containsImage(runtime.elements)) {
-      unsupportedAssets('Board images and assets are not available before B7')
+    if (!isPlainRecord(mapping)) invalid('runtime asset mapping must be a plain object')
+
+    const requiredFileIds = imageFileIds(runtime.elements)
+    const fileMap: Record<string, string> = {}
+    const assetRefs: string[] = []
+    const seenAssetRefs = new Set<string>()
+    for (const engineFileId of requiredFileIds) {
+      const assetId = mapping[engineFileId]
+      if (typeof assetId !== 'string' || assetId.length === 0) {
+        invalid(`Image element ${engineFileId} has no Docus asset mapping`)
+      }
+      if (!Object.prototype.hasOwnProperty.call(runtime.files, engineFileId)) {
+        invalid(`Runtime BinaryFile is missing for Excalidraw file ID ${engineFileId}`)
+      }
+      fileMap[engineFileId] = assetId
+      if (!seenAssetRefs.has(assetId)) {
+        seenAssetRefs.add(assetId)
+        assetRefs.push(assetId)
+      }
     }
+
     return {
       engineData: {
         elements: [...runtime.elements],
-        fileMap: {},
+        fileMap,
       },
       persistentAppState: persistentAppStateFromRuntime(runtime.appState),
-      assetRefs: [],
+      assetRefs,
     }
   },
 }

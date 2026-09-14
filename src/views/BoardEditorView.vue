@@ -10,12 +10,15 @@ import {
   excalidrawAdapter,
   runtimePersistenceFingerprint,
 } from '../features/board/engine/excalidrawAdapter'
-import { BoardEngineCompatibilityError, type ExcalidrawRuntimeScene } from '../features/board/engine/types'
+import {
+  BoardEngineCompatibilityError,
+  type BoardRuntimeAsset,
+  type ExcalidrawRuntimeScene,
+} from '../features/board/engine/types'
 import { useI18n } from '../composables/useI18n'
 import { useTheme } from '../composables/useTheme'
 import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
-import type { ExcalidrawUnsupportedAction } from '../features/board/engine/excalidraw/reactIsland'
 import {
   createIndexedDbBoardCheckpointStore,
   BoardRecoveryStoreError,
@@ -24,6 +27,8 @@ import {
 import { createBoardCheckpointScheduler, type BoardCheckpointScheduler } from '../features/board/checkpointScheduler'
 import { reconcileBoardCheckpoint, type BoardCheckpointReconciliation } from '../features/board/checkpointReconciliation'
 import type { BoardCheckpoint } from '../features/board/recoveryTypes'
+import { createBoardAssetSession, type BoardAssetSession } from '../features/board/assetSession'
+import { BoardAssetError } from '../features/board/assetClient'
 import {
   createBoardSaveCoordinator,
   type BoardSaveCoordinator,
@@ -62,10 +67,13 @@ const runtimeScene = shallowRef<ExcalidrawRuntimeScene | null>(null)
 const saveCoordinator = shallowRef<BoardSaveCoordinator<ExcalidrawRuntimeScene> | null>(null)
 const saveState = shallowRef<BoardSaveState | null>(null)
 const checkpointScheduler = shallowRef<BoardCheckpointScheduler<ExcalidrawRuntimeScene> | null>(null)
+const assetSession = shallowRef<BoardAssetSession | null>(null)
 const pendingRecovery = shallowRef<PendingRecovery | null>(null)
 const recoveryUnavailable = ref(false)
 const loadGeneration = ref(0)
 const recoveryStore: BoardCheckpointStore = createIndexedDbBoardCheckpointStore()
+let assetIntakePromise: Promise<void> = Promise.resolve()
+let hostChangePromise: Promise<void> = Promise.resolve()
 
 const boardId = computed(() => {
   const value = route.params.boardId
@@ -98,10 +106,33 @@ function errorInfo(error: unknown): { kind: EditorErrorKind; message: string } {
   if (error instanceof BoardEngineCompatibilityError) {
     return { kind: 'compatibility', message: error.message }
   }
+  if (error instanceof BoardAssetError) {
+    return { kind: 'load', message: t('board.editor_asset_restore_failed') }
+  }
   return {
     kind: 'load',
     message: error instanceof Error && error.message.trim() ? error.message : t('board.editor_load_failed'),
   }
+}
+
+function assetFailureMessage(error: unknown, fallback: 'upload' | 'restore'): string {
+  if (error instanceof BoardAssetError) {
+    return t(fallback === 'upload' ? 'board.editor_asset_upload_failed' : 'board.editor_asset_restore_failed')
+  }
+  return error instanceof Error && error.message.trim()
+    ? error.message
+    : t(fallback === 'upload' ? 'board.editor_asset_upload_failed' : 'board.editor_asset_restore_failed')
+}
+
+function showLoadError(error: unknown): void {
+  const info = errorInfo(error)
+  status.value = 'error'
+  errorKind.value = info.kind
+  errorMessage.value = info.message
+  aggregate.value = null
+  session.value = null
+  runtimeScene.value = null
+  disposePersistence()
 }
 
 function disposePersistence(): void {
@@ -109,6 +140,8 @@ function disposePersistence(): void {
   checkpointScheduler.value = null
   saveCoordinator.value?.dispose()
   saveCoordinator.value = null
+  assetSession.value?.dispose()
+  assetSession.value = null
   saveState.value = null
 }
 
@@ -121,73 +154,93 @@ async function mountScene(
   const generation = loadGeneration.value
   status.value = 'hydrating'
   const record = nextAggregate.sceneRecord
-  const nextRuntimeScene = excalidrawAdapter.hydrate(chosenScene)
-  if (generation !== loadGeneration.value) return
-
   const id = record.boardId
-  aggregate.value = nextAggregate
-  boardMetadataSource.upsert(nextAggregate.metadata)
-  session.value = {
-    boardId: id,
-    serverRevision: record.revision,
-    baseRevision: checkpoint?.baseRevision ?? record.revision,
-    localRevision: checkpoint?.localRevision ?? 0,
-  }
-  runtimeScene.value = nextRuntimeScene
+  const nextAssetSession = createBoardAssetSession({ boardId: id, store: recoveryStore })
+  try {
+    nextAssetSession.seedScene(chosenScene)
+    const resolvedAssets = await nextAssetSession.resolveSceneAssets(chosenScene)
+    const nextRuntimeScene = await excalidrawAdapter.hydrate(chosenScene, resolvedAssets)
+    if (generation !== loadGeneration.value) {
+      nextAssetSession.dispose()
+      return
+    }
 
-  const scheduler = createBoardCheckpointScheduler<ExcalidrawRuntimeScene>({
-    boardId: id,
-    sceneVersion: record.sceneVersion,
-    initialRuntimeScene: nextRuntimeScene,
-    initialLocalRevision: checkpoint?.localRevision,
-    initialBaseRevision: checkpoint?.baseRevision ?? record.revision,
-    serialize: (scene) => excalidrawAdapter.serialize(scene),
-    store: recoveryStore,
-    onStateChange: (nextState) => {
-      if (nextState.status === 'error' || nextState.status === 'unavailable') {
-        recoveryUnavailable.value = true
-        toast.error(t('board.editor_recovery_unavailable'))
-      }
-    },
-  })
-  checkpointScheduler.value = scheduler
-  const coordinator = createBoardSaveCoordinator<ExcalidrawRuntimeScene>({
-    boardId: id,
-    engine: record.engine,
-    sceneVersion: record.sceneVersion,
-    currentServerRevision: record.revision,
-    initialBaseRevision: checkpoint?.baseRevision,
-    initialLocalRevision: checkpoint?.localRevision,
-    initialLastSavedLocalRevision: checkpoint ? 0 : undefined,
-    initialDirty: Boolean(checkpoint),
-    initialConflict: recoveryConflict,
-    initialRuntimeScene: nextRuntimeScene,
-    initialFingerprint: runtimePersistenceFingerprint(nextRuntimeScene),
-    serialize: (scene) => excalidrawAdapter.serialize(scene),
-    onMeaningfulChange: ({ runtimeScene: changedScene, localRevision, baseRevision }) => {
-      scheduler.schedule(changedScene, localRevision, baseRevision)
-    },
-    onSaveSucceeded: (event) => scheduler.onServerSaveSucceeded(event),
-    onStateChange: (nextState) => {
-      saveState.value = nextState
-      if (!session.value || session.value.boardId !== id) return
-      session.value = {
-        ...session.value,
-        serverRevision: nextState.currentServerRevision,
-        baseRevision: nextState.baseRevision,
-        localRevision: nextState.localRevision,
-      }
-    },
-    onMetadataUpdated: (updatedAt) => {
-      if (aggregate.value?.metadata.id !== id) return
-      const metadata = { ...aggregate.value.metadata, updatedAt }
-      aggregate.value = { ...aggregate.value, metadata }
-      boardMetadataSource.upsert(metadata)
-    },
-  })
-  saveCoordinator.value = coordinator
-  saveState.value = coordinator.getSnapshot()
-  if (checkpoint && !recoveryConflict) coordinator.schedule()
+    assetSession.value = nextAssetSession
+    assetIntakePromise = Promise.resolve()
+    hostChangePromise = Promise.resolve()
+    aggregate.value = nextAggregate
+    boardMetadataSource.upsert(nextAggregate.metadata)
+    session.value = {
+      boardId: id,
+      serverRevision: record.revision,
+      baseRevision: checkpoint?.baseRevision ?? record.revision,
+      localRevision: checkpoint?.localRevision ?? 0,
+    }
+    runtimeScene.value = nextRuntimeScene
+
+    const serialize = (scene: ExcalidrawRuntimeScene) => (
+      excalidrawAdapter.serialize(scene, nextAssetSession.getFileMap())
+    )
+    const scheduler = createBoardCheckpointScheduler<ExcalidrawRuntimeScene>({
+      boardId: id,
+      sceneVersion: record.sceneVersion,
+      initialRuntimeScene: nextRuntimeScene,
+      initialLocalRevision: checkpoint?.localRevision,
+      initialBaseRevision: checkpoint?.baseRevision ?? record.revision,
+      serialize,
+      store: recoveryStore,
+      onStateChange: (nextState) => {
+        if (nextState.status === 'error' || nextState.status === 'unavailable') {
+          recoveryUnavailable.value = true
+          toast.error(t('board.editor_recovery_unavailable'))
+        }
+      },
+    })
+    checkpointScheduler.value = scheduler
+    const coordinator = createBoardSaveCoordinator<ExcalidrawRuntimeScene>({
+      boardId: id,
+      engine: record.engine,
+      sceneVersion: record.sceneVersion,
+      currentServerRevision: record.revision,
+      initialBaseRevision: checkpoint?.baseRevision,
+      initialLocalRevision: checkpoint?.localRevision,
+      initialLastSavedLocalRevision: checkpoint ? 0 : undefined,
+      initialDirty: Boolean(checkpoint),
+      initialConflict: recoveryConflict,
+      initialRuntimeScene: nextRuntimeScene,
+      initialFingerprint: runtimePersistenceFingerprint(nextRuntimeScene),
+      serialize,
+      prepareSave: async (scene) => {
+        await nextAssetSession.ensureSceneAssetsReady(serialize(scene))
+      },
+      onMeaningfulChange: ({ runtimeScene: changedScene, localRevision, baseRevision }) => {
+        scheduler.schedule(changedScene, localRevision, baseRevision)
+      },
+      onSaveSucceeded: (event) => scheduler.onServerSaveSucceeded(event),
+      onStateChange: (nextState) => {
+        saveState.value = nextState
+        if (!session.value || session.value.boardId !== id) return
+        session.value = {
+          ...session.value,
+          serverRevision: nextState.currentServerRevision,
+          baseRevision: nextState.baseRevision,
+          localRevision: nextState.localRevision,
+        }
+      },
+      onMetadataUpdated: (updatedAt) => {
+        if (aggregate.value?.metadata.id !== id) return
+        const metadata = { ...aggregate.value.metadata, updatedAt }
+        aggregate.value = { ...aggregate.value, metadata }
+        boardMetadataSource.upsert(metadata)
+      },
+    })
+    saveCoordinator.value = coordinator
+    saveState.value = coordinator.getSnapshot()
+    if (checkpoint && !recoveryConflict) coordinator.schedule()
+  } catch (error) {
+    nextAssetSession.dispose()
+    throw error
+  }
 }
 
 function recoveryReason(reconciliation: BoardCheckpointReconciliation): string {
@@ -215,7 +268,7 @@ async function loadBoard(): Promise<void> {
     const record = nextAggregate.sceneRecord
     assertSupportedExcalidrawScene(record.engine, record.sceneVersion)
     // Validate the server scene before asking the user about any local copy.
-    excalidrawAdapter.hydrate(record.scene)
+    excalidrawAdapter.validate(record.scene)
     status.value = 'reconciling'
     let checkpoint: BoardCheckpoint | null
     try {
@@ -240,7 +293,7 @@ async function loadBoard(): Promise<void> {
     const reconciliation = reconcileBoardCheckpoint({
       serverRecord: record,
       checkpoint,
-      validateScene: (scene) => { excalidrawAdapter.hydrate(scene) },
+      validateScene: (scene) => { excalidrawAdapter.validate(scene) },
     })
     if (reconciliation.kind === 'server') {
       await mountScene(nextAggregate, reconciliation.scene, null, false)
@@ -275,14 +328,7 @@ async function loadBoard(): Promise<void> {
     status.value = 'recovery-choice'
   } catch (error) {
     if (generation !== loadGeneration.value) return
-    const info = errorInfo(error)
-    status.value = 'error'
-    errorKind.value = info.kind
-    errorMessage.value = info.message
-    aggregate.value = null
-    session.value = null
-    runtimeScene.value = null
-    disposePersistence()
+    showLoadError(error)
   }
 }
 
@@ -290,7 +336,11 @@ async function recoverLocal(): Promise<void> {
   const pending = pendingRecovery.value
   if (!pending?.checkpoint) return
   pendingRecovery.value = null
-  await mountScene(pending.aggregate, pending.checkpoint.scene, pending.checkpoint, false)
+  try {
+    await mountScene(pending.aggregate, pending.checkpoint.scene, pending.checkpoint, false)
+  } catch (error) {
+    showLoadError(error)
+  }
 }
 
 async function discardLocal(): Promise<void> {
@@ -305,7 +355,11 @@ async function discardLocal(): Promise<void> {
     }
   }
   pendingRecovery.value = null
-  await mountScene(pending.aggregate, pending.aggregate.sceneRecord.scene, null, false)
+  try {
+    await mountScene(pending.aggregate, pending.aggregate.sceneRecord.scene, null, false)
+  } catch (error) {
+    showLoadError(error)
+  }
 }
 
 async function openServerVersionFromRecovery(): Promise<void> {
@@ -316,27 +370,69 @@ async function openServerVersionFromRecovery(): Promise<void> {
     return
   }
   pendingRecovery.value = null
-  await mountScene(pending.aggregate, pending.aggregate.sceneRecord.scene, null, false)
+  try {
+    await mountScene(pending.aggregate, pending.aggregate.sceneRecord.scene, null, false)
+  } catch (error) {
+    showLoadError(error)
+  }
 }
 
 function retryRecoveryRead(): void {
   void loadBoard()
 }
 
-function keepLocalRecoveryOpen(): Promise<void> {
+async function keepLocalRecoveryOpen(): Promise<void> {
   const pending = pendingRecovery.value
-  if (!pending?.checkpoint) return Promise.resolve()
+  if (!pending?.checkpoint) return
   pendingRecovery.value = null
-  return mountScene(pending.aggregate, pending.checkpoint.scene, pending.checkpoint, true)
+  try {
+    await mountScene(pending.aggregate, pending.checkpoint.scene, pending.checkpoint, true)
+  } catch (error) {
+    showLoadError(error)
+  }
 }
 
 function onHostReady(): void {
   if (status.value === 'hydrating') status.value = 'ready'
 }
 
+let hostChangeSequence = 0
+
+function onHostAssetsChanged(assets: readonly BoardRuntimeAsset[]): void {
+  const currentAssetSession = assetSession.value
+  if (!currentAssetSession) return
+  const intake = currentAssetSession.observeRuntimeAssets(assets)
+  assetIntakePromise = Promise.all([
+    assetIntakePromise.catch(() => {}),
+    intake,
+  ]).then(() => undefined)
+  void assetIntakePromise.catch((error: unknown) => {
+    if (currentAssetSession !== assetSession.value) return
+    toast.error(assetFailureMessage(error, 'upload'))
+  })
+}
+
 function onHostChange(nextRuntimeScene: ExcalidrawRuntimeScene): void {
-  if (status.value !== 'ready' || !session.value || !saveCoordinator.value) return
-  saveCoordinator.value.recordChange(nextRuntimeScene, runtimePersistenceFingerprint(nextRuntimeScene))
+  if (status.value !== 'ready' || !session.value || !saveCoordinator.value || !assetSession.value) return
+  const sequence = ++hostChangeSequence
+  const currentCoordinator = saveCoordinator.value
+  const currentAssetSession = assetSession.value
+  const currentIntake = assetIntakePromise
+  const change = currentIntake.catch(() => {}).then(() => currentAssetSession.ensureRuntimeSceneReady(nextRuntimeScene)).then(() => {
+    if (sequence !== hostChangeSequence
+      || status.value !== 'ready'
+      || currentCoordinator !== saveCoordinator.value
+      || currentAssetSession !== assetSession.value) return
+    runtimeScene.value = nextRuntimeScene
+    currentCoordinator.recordChange(nextRuntimeScene, runtimePersistenceFingerprint(nextRuntimeScene))
+  }).catch((error: unknown) => {
+    if (sequence !== hostChangeSequence || currentAssetSession !== assetSession.value) return
+    toast.error(assetFailureMessage(error, 'upload'))
+  })
+  hostChangePromise = Promise.all([
+    hostChangePromise.catch(() => {}),
+    change,
+  ]).then(() => undefined)
 }
 
 function onHostError(error: unknown): void {
@@ -348,8 +444,9 @@ function onHostError(error: unknown): void {
   runtimeScene.value = null
 }
 
-function onUnsupportedAction(action: ExcalidrawUnsupportedAction): void {
-  if (action.kind === 'image-insert') toast.info(t('board.editor_image_unsupported'))
+function onHostAssetError(error: unknown): void {
+  if (status.value === 'error') return
+  toast.error(assetFailureMessage(error, 'upload'))
 }
 
 const displayedSaveStatus = computed(() => {
@@ -374,6 +471,29 @@ const saveStatusLabel = computed(() => {
 })
 
 async function leaveAfterFlush(): Promise<boolean> {
+  let assetPreparationFailed = false
+  try {
+    await assetIntakePromise
+  } catch {
+    assetPreparationFailed = true
+  }
+  try {
+    await hostChangePromise
+  } catch {
+    assetPreparationFailed = true
+  }
+  if (assetPreparationFailed) {
+    const leave = await confirm(
+      t('board.editor_leave_title'),
+      t('board.editor_leave_detail'),
+      {
+        confirmLabel: t('board.editor_leave_anyway'),
+        cancelLabel: t('board.editor_stay'),
+        destructive: true,
+      },
+    )
+    if (!leave) return false
+  }
   const coordinator = saveCoordinator.value
   if (!coordinator) return true
   const result = await coordinator.flush()
@@ -510,9 +630,10 @@ onBeforeUnmount(() => {
         :theme="theme"
         :lang-code="excalidrawLangCode"
         @change="onHostChange"
+        @assets-changed="onHostAssetsChanged"
+        @asset-error="onHostAssetError"
         @ready="onHostReady"
         @error="onHostError"
-        @unsupported-action="onUnsupportedAction"
       />
     </section>
   </main>

@@ -4,9 +4,8 @@ import type {
   ExcalidrawIslandHandle,
   ExcalidrawIslandLangCode,
   ExcalidrawIslandTheme,
-  ExcalidrawUnsupportedAction,
 } from '../../features/board/engine/excalidraw/reactIsland'
-import type { ExcalidrawRuntimeScene } from '../../features/board/engine/types'
+import type { BoardRuntimeAsset, ExcalidrawRuntimeScene } from '../../features/board/engine/types'
 
 const props = withDefaults(defineProps<{
   initialScene: ExcalidrawRuntimeScene
@@ -19,9 +18,10 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   change: [scene: ExcalidrawRuntimeScene]
+  assetsChanged: [assets: readonly BoardRuntimeAsset[]]
+  assetError: [error: unknown]
   ready: []
   error: [error: unknown]
-  unsupportedAction: [action: ExcalidrawUnsupportedAction]
 }>()
 
 const host = ref<HTMLElement | null>(null)
@@ -40,9 +40,10 @@ onMounted(() => {
       theme: props.theme,
       langCode: props.langCode,
       onChange: (scene) => emit('change', scene),
+      onAssetsChanged: (assets) => emit('assetsChanged', assets),
+      onAssetError: (error) => emit('assetError', error),
       onReady: () => emit('ready'),
       onError: (error) => emit('error', error),
-      onUnsupportedAction: (action) => emit('unsupportedAction', action),
     })
 
     if (generation !== mountGeneration) {

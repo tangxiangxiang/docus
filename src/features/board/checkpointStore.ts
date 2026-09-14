@@ -1,4 +1,4 @@
-import type { BoardCheckpoint } from './recoveryTypes'
+import type { BoardCheckpoint, PendingBoardAsset } from './recoveryTypes'
 
 export const BOARD_RECOVERY_DATABASE_NAME = 'docus-board-recovery'
 export const BOARD_RECOVERY_DATABASE_VERSION = 1
@@ -10,6 +10,10 @@ export interface BoardCheckpointStore {
   get(boardId: string): Promise<BoardCheckpoint | null>
   put(checkpoint: BoardCheckpoint): Promise<void>
   delete(boardId: string): Promise<void>
+  putPendingAsset(asset: PendingBoardAsset): Promise<void>
+  getPendingAsset(assetId: string): Promise<PendingBoardAsset | null>
+  deletePendingAsset(assetId: string): Promise<void>
+  listPendingAssets(boardId: string): Promise<PendingBoardAsset[]>
   clearBoardRecovery(boardId: string): Promise<void>
   clearAllRecovery(): Promise<void>
 }
@@ -137,6 +141,44 @@ export function createIndexedDbBoardCheckpointStore(
       })
     },
 
+    async putPendingAsset(asset) {
+      await run(async (database) => {
+        const transaction = database.transaction(BOARD_PENDING_ASSETS_STORE_NAME, 'readwrite')
+        transaction.objectStore(BOARD_PENDING_ASSETS_STORE_NAME).put(asset)
+        await transactionDone(transaction)
+      })
+    },
+
+    getPendingAsset(assetId) {
+      return run(async (database) => {
+        const transaction = database.transaction(BOARD_PENDING_ASSETS_STORE_NAME, 'readonly')
+        const value = await requestResult(transaction.objectStore(BOARD_PENDING_ASSETS_STORE_NAME).get(assetId))
+        await transactionDone(transaction)
+        return value ? value as PendingBoardAsset : null
+      })
+    },
+
+    async deletePendingAsset(assetId) {
+      await run(async (database) => {
+        const transaction = database.transaction(BOARD_PENDING_ASSETS_STORE_NAME, 'readwrite')
+        transaction.objectStore(BOARD_PENDING_ASSETS_STORE_NAME).delete(assetId)
+        await transactionDone(transaction)
+      })
+    },
+
+    listPendingAssets(boardId) {
+      return run(async (database) => {
+        const transaction = database.transaction(BOARD_PENDING_ASSETS_STORE_NAME, 'readonly')
+        const values = await requestResult(
+          transaction.objectStore(BOARD_PENDING_ASSETS_STORE_NAME)
+            .index(BOARD_PENDING_ASSETS_BOARD_INDEX)
+            .getAll(boardId),
+        )
+        await transactionDone(transaction)
+        return values as PendingBoardAsset[]
+      })
+    },
+
     async clearBoardRecovery(boardId) {
       await run(async (database) => {
         const transaction = database.transaction(
@@ -169,10 +211,8 @@ function clone<T>(value: T): T {
   return typeof structuredClone === 'function' ? structuredClone(value) : value
 }
 
-export interface MemoryPendingAssetRecord {
-  assetId: string
-  boardId: string
-}
+export type MemoryPendingAssetRecord = Pick<PendingBoardAsset, 'assetId' | 'boardId'>
+  & Partial<Omit<PendingBoardAsset, 'assetId' | 'boardId'>>
 
 export interface MemoryBoardCheckpointStore extends BoardCheckpointStore {
   seedPendingAsset(record: MemoryPendingAssetRecord): void
@@ -181,7 +221,7 @@ export interface MemoryBoardCheckpointStore extends BoardCheckpointStore {
 
 export function createMemoryBoardCheckpointStore(): MemoryBoardCheckpointStore {
   const checkpoints = new Map<string, BoardCheckpoint>()
-  const pendingAssets = new Map<string, MemoryPendingAssetRecord>()
+  const pendingAssets = new Map<string, PendingBoardAsset>()
   return {
     async get(boardId) {
       return clone(checkpoints.get(boardId) ?? null)
@@ -191,6 +231,20 @@ export function createMemoryBoardCheckpointStore(): MemoryBoardCheckpointStore {
     },
     async delete(boardId) {
       checkpoints.delete(boardId)
+    },
+    async putPendingAsset(asset) {
+      pendingAssets.set(asset.assetId, clone(asset))
+    },
+    async getPendingAsset(assetId) {
+      return clone(pendingAssets.get(assetId) ?? null)
+    },
+    async deletePendingAsset(assetId) {
+      pendingAssets.delete(assetId)
+    },
+    async listPendingAssets(boardId) {
+      return [...pendingAssets.values()]
+        .filter((asset) => asset.boardId === boardId)
+        .map((asset) => clone(asset))
     },
     async clearBoardRecovery(boardId) {
       checkpoints.delete(boardId)
@@ -203,7 +257,14 @@ export function createMemoryBoardCheckpointStore(): MemoryBoardCheckpointStore {
       pendingAssets.clear()
     },
     seedPendingAsset(record) {
-      pendingAssets.set(record.assetId, { ...record })
+      pendingAssets.set(record.assetId, {
+        assetId: record.assetId,
+        boardId: record.boardId,
+        engineFileId: record.engineFileId ?? '',
+        mimeType: record.mimeType ?? 'image/png',
+        blob: record.blob ?? new Blob(),
+        createdAt: record.createdAt ?? 0,
+      })
     },
     getPendingAssetIds(boardId) {
       return [...pendingAssets.values()]

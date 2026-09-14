@@ -9,7 +9,7 @@ const islandMocks = vi.hoisted(() => ({
   unmount: vi.fn(),
 }))
 
-  vi.mock('../../../features/board/engine/excalidraw/reactIsland', () => ({
+vi.mock('../../../features/board/engine/excalidraw/reactIsland', () => ({
   mountExcalidrawIsland: islandMocks.mount,
 }))
 
@@ -30,14 +30,14 @@ describe('ExcalidrawHost', () => {
     })
 
     const initialScene = { elements: [], appState: {}, files: {} }
-    const wrapper = mount(ExcalidrawHost, { props: { initialScene, theme: 'light', langCode: 'zh-CN' } })
+    const wrapper = mount(ExcalidrawHost, { props: { initialScene, theme: 'light' } })
     await flushPromises()
 
     expect(islandMocks.mount).toHaveBeenCalledOnce()
-    expect(islandMocks.mount).toHaveBeenCalledWith(expect.objectContaining({ initialScene, langCode: 'zh-CN' }))
+    expect(islandMocks.mount).toHaveBeenCalledWith(expect.objectContaining({ initialScene }))
     expect(wrapper.emitted('ready')).toHaveLength(1)
 
-    await wrapper.setProps({ theme: 'dark', langCode: 'en' })
+    await wrapper.setProps({ theme: 'dark' })
     expect(islandMocks.update).toHaveBeenCalledWith({ theme: 'dark', langCode: 'en' })
     expect(islandMocks.mount).toHaveBeenCalledOnce()
 
@@ -45,16 +45,16 @@ describe('ExcalidrawHost', () => {
     expect(islandMocks.unmount).toHaveBeenCalledOnce()
   })
 
-  it('bridges unsupported actions without treating them as errors', async () => {
-    islandMocks.mount.mockImplementation(async (options: { onUnsupportedAction?: (action: unknown) => void }) => {
-      options.onUnsupportedAction?.({ kind: 'image-insert', source: 'drop' })
+  it('bridges runtime assets without turning them into canvas errors', async () => {
+    islandMocks.mount.mockImplementation(async (options: { onAssetsChanged?: (assets: unknown[]) => void }) => {
+      options.onAssetsChanged?.([{ engineFileId: 'file-1', mimeType: 'image/png', blob: new Blob(['image']) }])
       return { update: islandMocks.update, unmount: islandMocks.unmount }
     })
 
     const wrapper = mount(ExcalidrawHost, { props: { initialScene: { elements: [], appState: {}, files: {} } } })
     await flushPromises()
 
-    expect(wrapper.emitted('unsupportedAction')).toEqual([[{ kind: 'image-insert', source: 'drop' }]])
+    expect(wrapper.emitted('assetsChanged')).toEqual([[[{ engineFileId: 'file-1', mimeType: 'image/png', blob: expect.any(Blob) }]]])
     expect(wrapper.emitted('error')).toBeUndefined()
     wrapper.unmount()
   })

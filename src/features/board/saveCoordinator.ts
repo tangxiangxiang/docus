@@ -37,6 +37,7 @@ export interface BoardSaveCoordinatorOptions<TRuntimeScene> {
   initialDirty?: boolean
   initialConflict?: boolean
   serialize: (runtimeScene: TRuntimeScene) => BoardScene
+  prepareSave?: (runtimeScene: TRuntimeScene, localRevision: number, baseRevision: number) => Promise<void>
   save?: typeof saveBoardScene
   debounceMs?: number
   onStateChange?: (state: BoardSaveState) => void
@@ -138,20 +139,35 @@ export function createBoardSaveCoordinator<TRuntimeScene>(
       const capturedRuntimeScene = latestRuntimeScene
       const capturedLocalRevision = localRevision
       const capturedExpectedRevision = currentServerRevision
+      saveInFlight = true
+      status = 'saving'
+      publish()
       let capturedScene: BoardScene
       try {
+        await options.prepareSave?.(capturedRuntimeScene, capturedLocalRevision, baseRevision)
+        // Asset preparation can take long enough for another Excalidraw
+        // change to arrive. Never send the pre-gate scene in that case; loop
+        // back through the latest runtime snapshot and its asset set.
+        if (capturedLocalRevision !== localRevision) {
+          saveInFlight = false
+          status = 'dirty'
+          publish()
+          continue
+        }
         capturedScene = options.serialize(capturedRuntimeScene)
       } catch (error) {
+        saveInFlight = false
         lastError = error
         status = 'error'
         dirty = true
         publish()
         return resultForState()
       }
+      if (disposed) {
+        saveInFlight = false
+        return { ok: false, status: 'error', error: null }
+      }
 
-      saveInFlight = true
-      status = 'saving'
-      publish()
       try {
         const response: SaveBoardSceneResponse = await save(options.boardId, {
           expectedRevision: capturedExpectedRevision,
@@ -159,7 +175,10 @@ export function createBoardSaveCoordinator<TRuntimeScene>(
           sceneVersion: options.sceneVersion,
           scene: capturedScene,
         })
-        if (disposed) return { ok: false, status: 'error', error: null }
+        if (disposed) {
+          saveInFlight = false
+          return { ok: false, status: 'error', error: null }
+        }
         currentServerRevision = response.revision
         baseRevision = response.revision
         lastSavedLocalRevision = capturedLocalRevision

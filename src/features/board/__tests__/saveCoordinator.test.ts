@@ -155,4 +155,85 @@ describe('Board Save Coordinator', () => {
     expect(save).toHaveBeenCalledWith('board-1', expect.objectContaining({ expectedRevision: 3 }))
     expect(onChange).not.toHaveBeenCalled()
   })
+
+  it('waits for asset readiness before issuing the Scene request', async () => {
+    const gate = deferred<void>()
+    const save = vi.fn().mockResolvedValue({ revision: 4, updatedAt: 11 })
+    const prepareSave = vi.fn(() => gate.promise)
+    const coordinator = createBoardSaveCoordinator<RuntimeScene>({
+      boardId: 'board-1',
+      engine: 'excalidraw',
+      sceneVersion: 1,
+      currentServerRevision: 3,
+      initialRuntimeScene: { id: 0 },
+      initialFingerprint: '0',
+      serialize: scene,
+      prepareSave,
+      save: save as unknown as (boardId: string, request: SaveBoardSceneRequest) => Promise<SaveBoardSceneResponse>,
+    })
+
+    coordinator.recordChange({ id: 1 }, '1')
+    const flush = coordinator.flush().then(() => undefined)
+    await Promise.resolve()
+    expect(prepareSave).toHaveBeenCalledWith({ id: 1 }, 1, 3)
+    expect(save).not.toHaveBeenCalled()
+
+    gate.resolve()
+    await flush
+    expect(save).toHaveBeenCalledWith('board-1', expect.objectContaining({ scene: scene({ id: 1 }) }))
+  })
+
+  it('blocks the Scene request and preserves dirty state when asset readiness fails', async () => {
+    const error = new Error('asset upload failed')
+    const save = vi.fn().mockResolvedValue({ revision: 4, updatedAt: 11 })
+    const coordinator = createBoardSaveCoordinator<RuntimeScene>({
+      boardId: 'board-1',
+      engine: 'excalidraw',
+      sceneVersion: 1,
+      currentServerRevision: 3,
+      initialRuntimeScene: { id: 0 },
+      initialFingerprint: '0',
+      serialize: scene,
+      prepareSave: vi.fn().mockRejectedValue(error),
+      save: save as unknown as (boardId: string, request: SaveBoardSceneRequest) => Promise<SaveBoardSceneResponse>,
+    })
+
+    coordinator.recordChange({ id: 1 }, '1')
+    await expect(coordinator.flush()).resolves.toEqual({ ok: false, status: 'error', error })
+    expect(save).not.toHaveBeenCalled()
+    expect(coordinator.getSnapshot()).toMatchObject({ dirty: true, status: 'error', lastError: error })
+  })
+
+  it('coalesces an edit that arrives while asset readiness is pending', async () => {
+    const firstGate = deferred<void>()
+    const save = vi.fn().mockResolvedValue({ revision: 4, updatedAt: 11 })
+    const prepareSave = vi.fn()
+      .mockReturnValueOnce(firstGate.promise)
+      .mockResolvedValue(undefined)
+    const coordinator = createBoardSaveCoordinator<RuntimeScene>({
+      boardId: 'board-1',
+      engine: 'excalidraw',
+      sceneVersion: 1,
+      currentServerRevision: 3,
+      initialRuntimeScene: { id: 0 },
+      initialFingerprint: '0',
+      serialize: scene,
+      prepareSave,
+      save: save as unknown as (boardId: string, request: SaveBoardSceneRequest) => Promise<SaveBoardSceneResponse>,
+    })
+
+    coordinator.recordChange({ id: 1 }, '1')
+    const flush = coordinator.flush()
+    await Promise.resolve()
+    coordinator.recordChange({ id: 2 }, '2')
+    firstGate.resolve()
+
+    await expect(flush).resolves.toMatchObject({ ok: true, status: 'saved' })
+    expect(save).toHaveBeenCalledOnce()
+    expect(save).toHaveBeenCalledWith('board-1', expect.objectContaining({
+      expectedRevision: 3,
+      scene: scene({ id: 2 }),
+    }))
+    expect(prepareSave).toHaveBeenLastCalledWith({ id: 2 }, 2, 3)
+  })
 })
