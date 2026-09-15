@@ -896,7 +896,7 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
   --ledger-balance: var(--docus-info);
   width: min(100%, 1240px);
   margin: 0 auto;
-  padding: 42px 28px 72px;
+  padding: 42px 28px 24px;
   box-sizing: border-box;
 }
 
@@ -1819,7 +1819,7 @@ function animatedMoneyParts(minor: number, currency: string, key: MetricKey): { 
 }
 
 @media (max-width: 760px) {
-  .ledger-dashboard { padding: 30px 16px 52px; }
+  .ledger-dashboard { padding: 30px 16px 24px; }
   .ledger-dashboard-header {
     grid-template-columns: 1fr;
     align-items: stretch;

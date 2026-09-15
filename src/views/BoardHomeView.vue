@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { NButton, NEmpty, NIcon, NInput, NModal, NResult, NSelect, type InputInst, type SelectOption } from 'naive-ui'
+import { NButton, NEmpty, NIcon, NInput, NModal, NPagination, NResult, NSelect, type InputInst, type SelectOption } from 'naive-ui'
 import { LayoutGrid, Plus, Search } from '@vicons/tabler'
 import BoardGallery from '../components/board/BoardGallery.vue'
 import {
@@ -61,6 +61,19 @@ const sortedBoards = computed(() => [...filteredBoards.value].sort((left, right)
   }
   return right.updatedAt - left.updatedAt || right.id.localeCompare(left.id)
 }))
+const boardPageSize = ref(10)
+const boardPageSizeOptions = [10, 25, 50]
+const boardPage = ref(1)
+const boardPageCount = computed(() => Math.max(1, Math.ceil(sortedBoards.value.length / boardPageSize.value)))
+const paginatedBoards = computed(() => {
+  const start = (boardPage.value - 1) * boardPageSize.value
+  return sortedBoards.value.slice(start, start + boardPageSize.value)
+})
+watch([query, sortBy], () => { boardPage.value = 1 })
+watch(boardPageSize, () => { boardPage.value = 1 })
+watch(sortedBoards, () => {
+  if (boardPage.value > boardPageCount.value) boardPage.value = boardPageCount.value
+})
 const recentBoardLimit = 5
 const recentOrderedBoards = computed(() => [...boards.value]
   .sort((left, right) => right.updatedAt - left.updatedAt || right.id.localeCompare(left.id))
@@ -298,7 +311,7 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
 
         <section id="board-all-section" class="board-section board-all-section" aria-labelledby="board-all-heading">
           <div class="board-section-heading board-all-section-heading">
-            <h2 id="board-all-heading">{{ hasSearch ? t('board.search_results') : t('board.all_boards') }} <span class="board-count">{{ sortedBoards.length }}</span></h2>
+            <h2 id="board-all-heading">{{ hasSearch ? t('board.search_results') : t('board.all_boards') }}</h2>
             <div class="board-all-heading-controls">
               <NInput
                 v-model:value="query"
@@ -321,9 +334,9 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
             </div>
           </div>
           <BoardGallery
-            v-if="sortedBoards.length"
+            v-if="paginatedBoards.length"
             layout="grid"
-            :boards="sortedBoards"
+            :boards="paginatedBoards"
             :favorite-board-ids="favoriteBoardIds"
             :busy-board-ids="mutationBoardIds"
             @open="openBoard"
@@ -332,6 +345,19 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
             @delete="removeBoard"
           />
           <NEmpty v-else size="small" :description="t('board.no_results')" />
+          <div class="board-pagination">
+            <div class="board-pagination-meta">共 {{ sortedBoards.length }} 条</div>
+            <NPagination
+              v-model:page="boardPage"
+              :page-count="boardPageCount"
+              v-model:page-size="boardPageSize"
+              :item-count="sortedBoards.length"
+              :page-sizes="boardPageSizeOptions"
+              show-size-picker
+              size="medium"
+              :aria-label="t('board.all_boards')"
+            />
+          </div>
         </section>
       </template>
 
@@ -378,7 +404,7 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
 .board-home {
   min-height: calc(100vh - var(--navbar-h, 36px));
   box-sizing: border-box;
-  padding: 42px 0 72px;
+  padding: 42px 0 0;
   background: var(--bg);
   color: var(--text);
 }
@@ -420,9 +446,20 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
 .board-sort-select { width: 148px; }
 .board-sort-select :deep(.n-base-selection) { border-radius: 10px; }
 .board-section { margin: 0 0 38px; }
+.board-all-section { margin-bottom: 0; }
+.board-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 18px;
+  padding: 12px 0;
+  border-top: 1px solid color-mix(in srgb, var(--border) 62%, transparent);
+  background: color-mix(in srgb, var(--bg) 14%, transparent);
+}
+.board-pagination-meta { color: var(--text-muted); font-size: .74rem; }
 .board-section-heading { display: flex; min-height: 34px; margin-bottom: 16px; align-items: center; justify-content: space-between; gap: 16px; }
 .board-section-heading h2 { margin: 0; color: var(--text-h); font-size: 1.18rem; font-weight: 650; letter-spacing: -.02em; }
-.board-count { margin-left: 5px; color: var(--text-muted); font-size: .82rem; font-weight: 500; }
 .board-quick-tabs {
   display: inline-flex;
   height: 34px;
@@ -507,6 +544,9 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
   .board-all-search { width: auto; flex: 1 1 auto; }
   .board-skeleton-recent { display: flex; overflow-x: hidden; }
   .board-skeleton-card { flex: 0 0 calc((100% - 18px) / 2); }
+  .board-pagination { align-items: stretch; flex-direction: column; }
+  .board-pagination-meta { order: 2; }
+  .board-pagination :deep(.n-pagination) { justify-content: space-between; }
 }
 @media (max-width: 440px) {
   .board-home-header h1 { font-size: 1.75rem; }
