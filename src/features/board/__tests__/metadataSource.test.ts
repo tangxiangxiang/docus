@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import type { BoardMetadata } from '../../../../shared/boardProtocol'
 import { createBoardMetadataSource } from '../metadataSource'
 
-function board(id: string, title: string, updatedAt: number): BoardMetadata {
-  return { id, title, thumbnailAssetId: null, createdAt: updatedAt - 10, updatedAt }
+function board(id: string, title: string, updatedAt: number, lastOpenedAt: number | null = null): BoardMetadata {
+  return { id, title, thumbnailAssetId: null, createdAt: updatedAt - 10, updatedAt, lastOpenedAt }
 }
 
 describe('Board metadata source', () => {
@@ -68,5 +68,17 @@ describe('Board metadata source', () => {
 
     expect(fetchBoards).toHaveBeenCalledTimes(2)
     expect(source.getSnapshot()).toEqual([board('current', 'Current', 20)])
+  })
+
+  it('sorts recent metadata by last opened time with an updated-time fallback', async () => {
+    const source = createBoardMetadataSource(vi.fn(async () => [
+      board('edited', 'Edited', 100, 10),
+      board('opened', 'Opened', 20, 90),
+      board('legacy', 'Legacy', 80),
+    ]))
+
+    await source.ensureLoaded()
+
+    expect(source.getSnapshot().map((item) => item.id)).toEqual(['opened', 'legacy', 'edited'])
   })
 })

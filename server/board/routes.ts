@@ -70,6 +70,19 @@ export function createBoardRoutes(getService: BoardServiceFactory = boardService
     }
   })
 
+  // Keep the metadata fallback available when a Board scene is damaged. It
+  // deliberately does not mark the Board as opened.
+  routes.get('/:boardId/metadata', (c) => {
+    try {
+      return c.json(getService().getBoardMetadata(c.req.param('boardId')))
+    } catch (error) {
+      return apiErrorResponse(c, error, {
+        code: 'BOARD_INTERNAL_ERROR',
+        message: 'Board metadata could not be loaded.',
+      })
+    }
+  })
+
   routes.get('/:boardId', async (c) => {
     try {
       return c.json(await getService().getBoard(c.req.param('boardId')))

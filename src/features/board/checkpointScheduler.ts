@@ -166,6 +166,12 @@ export function createBoardCheckpointScheduler<TRuntimeScene>(
       resolveIdleWaiters()
       return
     }
+    if (checkpointRequested && !queued) {
+      // A component can unmount before the local recovery debounce fires.
+      // Capture the latest scene immediately so a failed server save still
+      // leaves a durable recovery copy.
+      enqueueLatestPut()
+    }
     // Closing stops future editor work and UI callbacks, but durable operations
     // already queued must drain so IndexedDB converges to the latest authority.
     void pump().then(resolveIdleWaiters)

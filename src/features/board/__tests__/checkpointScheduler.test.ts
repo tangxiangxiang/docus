@@ -42,6 +42,18 @@ describe('Board checkpoint scheduler', () => {
     scheduler.dispose()
   })
 
+  it('captures a pending checkpoint when disposed before its debounce fires', async () => {
+    const { scheduler, store } = createScheduler()
+    scheduler.schedule({ id: 7 }, 7, 3)
+
+    scheduler.dispose()
+
+    await vi.waitFor(async () => expect(await store.get('board-a')).toMatchObject({
+      localRevision: 7,
+      scene: scene({ id: 7 }),
+    }))
+  })
+
   it('serializes checkpoint writes and catches up after editing during a write', async () => {
     const first = deferred<void>()
     const puts: BoardScene[] = []

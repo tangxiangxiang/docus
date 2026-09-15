@@ -100,6 +100,14 @@ export async function getBoard(boardId: string): Promise<BoardAggregate> {
   }
 }
 
+export async function getBoardMetadata(boardId: string): Promise<BoardMetadata> {
+  try {
+    return await readJson<BoardMetadata>(await authFetch(`/api/board/${encodeURIComponent(boardId)}/metadata`))
+  } catch (error) {
+    throw asBoardApiError(error)
+  }
+}
+
 export async function createBoard(title?: string): Promise<BoardAggregate> {
   return requestJson<BoardAggregate>('/api/board', 'POST', title === undefined ? {} : { title })
 }

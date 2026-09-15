@@ -33,6 +33,7 @@ const renameBusy = ref(false)
 const renameTitle = ref('')
 const renameTarget = ref<BoardMetadata | null>(null)
 const renameInput = ref<InputInst | null>(null)
+const renameComposing = ref(false)
 const recoveryStore = createIndexedDbBoardCheckpointStore()
 
 type BoardSortKey = 'updated' | 'name' | 'created'
@@ -71,24 +72,24 @@ const paginatedBoards = computed(() => {
 })
 watch([query, sortBy], () => { boardPage.value = 1 })
 watch(boardPageSize, () => { boardPage.value = 1 })
-watch(sortedBoards, () => {
+watch(boardPageCount, () => {
   if (boardPage.value > boardPageCount.value) boardPage.value = boardPageCount.value
 })
 const recentBoardLimit = 5
+function boardActivityTimestamp(board: BoardMetadata): number {
+  return board.lastOpenedAt ?? board.updatedAt ?? board.createdAt
+}
 const recentOrderedBoards = computed(() => [...boards.value]
-  .sort((left, right) => right.updatedAt - left.updatedAt || right.id.localeCompare(left.id))
+  .sort((left, right) => boardActivityTimestamp(right) - boardActivityTimestamp(left) || right.id.localeCompare(left.id))
 )
 const recentBoards = computed(() => recentOrderedBoards.value.slice(0, recentBoardLimit))
 const favoriteBoards = computed(() => recentOrderedBoards.value.filter((board) => isFavorite(board.id)))
 const favoriteBoardLimit = 5
-const favoriteQuickExpanded = ref(false)
 type QuickAccessTab = 'recent' | 'favorites'
 const quickAccessTab = ref<QuickAccessTab>('recent')
 const quickAccessBoards = computed(() => {
-  if (quickAccessTab.value === 'recent' || favoriteQuickExpanded.value) return quickAccessTab.value === 'recent' ? recentBoards.value : favoriteBoards.value
-  return favoriteBoards.value.slice(0, favoriteBoardLimit)
+  return (quickAccessTab.value === 'recent' ? recentBoards.value : favoriteBoards.value).slice(0, favoriteBoardLimit)
 })
-const hasMoreFavorites = computed(() => quickAccessTab.value === 'favorites' && !favoriteQuickExpanded.value && favoriteBoards.value.length > favoriteBoardLimit)
 const hasBoards = computed(() => boards.value.length > 0)
 const hasSearch = computed(() => normalizedQuery.value.length > 0)
 function messageFor(error: unknown, fallback: string): string {
@@ -176,6 +177,18 @@ function closeRename(): void {
   if (renameBusy.value) return
   renameOpen.value = false
   renameTarget.value = null
+  renameComposing.value = false
+}
+
+function onRenameKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    closeRename()
+    return
+  }
+  if (event.key !== 'Enter' || renameComposing.value || event.isComposing || event.keyCode === 229) return
+  event.preventDefault()
+  void submitRename()
 }
 
 async function removeBoard(board: BoardMetadata): Promise<void> {
@@ -291,20 +304,7 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
               @delete="removeBoard"
             />
             <div v-else class="board-quick-empty">
-              <NEmpty size="small" :description="t('board.no_favorites')" />
-            </div>
-            <div class="board-quick-more">
-              <NButton
-                v-if="hasMoreFavorites"
-                data-testid="board-quick-more-favorites"
-                attr-type="button"
-                size="small"
-                quaternary
-                type="primary"
-                @click="favoriteQuickExpanded = true"
-              >
-                {{ t('board.view_more') }}
-              </NButton>
+              <NEmpty size="small" :description="t(quickAccessTab === 'favorites' ? 'board.no_favorites' : 'board.no_recent')" />
             </div>
           </div>
         </section>
@@ -349,7 +349,6 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
             <div class="board-pagination-meta">共 {{ sortedBoards.length }} 条</div>
             <NPagination
               v-model:page="boardPage"
-              :page-count="boardPageCount"
               v-model:page-size="boardPageSize"
               :item-count="sortedBoards.length"
               :page-sizes="boardPageSizeOptions"
@@ -390,7 +389,9 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
         :disabled="renameBusy"
         :placeholder="t('board.title_placeholder')"
         :input-props="{ 'aria-label': t('board.title_label'), autocomplete: 'off' }"
-        @keydown.enter.prevent="submitRename"
+        @compositionstart="renameComposing = true"
+        @compositionend="renameComposing = false"
+        @keydown="onRenameKeydown"
       />
       <template #action>
         <NButton attr-type="button" size="small" :disabled="renameBusy" @click="closeRename">{{ t('common.cancel') }}</NButton>
@@ -490,10 +491,9 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
   font-weight: 650;
 }
 .board-quick-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.board-quick-content { min-height: calc(12.5cqi + 60px); }
+.board-quick-content { min-height: 0; }
 .board-quick-empty { display: grid; min-height: inherit; box-sizing: border-box; place-items: center; border: 1px dashed color-mix(in srgb, var(--border) 78%, transparent); border-radius: 12px; }
 .board-quick-empty :deep(.n-empty) { padding: 18px; }
-.board-quick-more { display: grid; min-height: 32px; place-items: center; }
 .board-state { display: grid; min-height: 300px; place-items: center; gap: 12px; margin: 0 auto; color: var(--text-muted); text-align: center; }
 .board-error { max-width: 620px; place-items: stretch; text-align: left; }
 .board-error :deep(.n-result) { padding: 0; }
@@ -525,17 +525,14 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
 .board-skeleton-lines i:last-child { width: 48%; }
 @keyframes board-skeleton-pulse { 0%, 100% { background-position: 100% 0; } 50% { background-position: 0 0; } }
 @media (max-width: 1279px) {
-  .board-quick-content { min-height: calc(15.625cqi + 58px); }
   .board-skeleton-recent { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 @media (max-width: 1023px) {
-  .board-quick-content { min-height: calc(20.833cqi + 56px); }
   .board-skeleton-recent { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (max-width: 767px) {
   .board-home { padding-top: 30px; }
   .board-home-content { padding-inline: 16px; }
-  .board-quick-content { min-height: calc(31.25cqi + 69px); }
   .board-skeleton-recent { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 600px) {

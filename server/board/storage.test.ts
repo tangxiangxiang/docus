@@ -93,6 +93,7 @@ describe('Board metadata and canonical scene storage', () => {
     expect(board.metadata).toMatchObject({
       title: 'Untitled Board',
       thumbnailAssetId: null,
+      lastOpenedAt: null,
     })
     expect(board.sceneRecord).toMatchObject({
       boardId: board.metadata.id,
@@ -124,6 +125,21 @@ describe('Board metadata and canonical scene storage', () => {
     expect(renamed.title).toBe('Renamed')
     expect(renamed.updatedAt).toBe(fixture.now.value)
     expect(fixture.boards.listBoards()[0]?.id).toBe(first.metadata.id)
+  })
+
+  it('tracks Board opens separately from content updates and never moves access time backwards', async () => {
+    const board = fixture.boards.createBoard({ title: 'Opened Board' })
+    const originalUpdatedAt = board.metadata.updatedAt
+
+    fixture.now.value += 100
+    const opened = await fixture.boards.getBoard(board.metadata.id)
+    expect(opened.metadata.lastOpenedAt).toBe(fixture.now.value)
+    expect(opened.metadata.updatedAt).toBe(originalUpdatedAt)
+
+    fixture.now.value -= 50
+    const reopenedWithOlderClock = await fixture.boards.getBoard(board.metadata.id)
+    expect(reopenedWithOlderClock.metadata.lastOpenedAt).toBe(opened.metadata.lastOpenedAt)
+    expect(reopenedWithOlderClock.metadata.updatedAt).toBe(originalUpdatedAt)
   })
 
   it('normalizes empty and whitespace titles for create and rename', () => {

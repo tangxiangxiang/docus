@@ -1,9 +1,18 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
-import { NButton, NDropdown, NSpin } from 'naive-ui'
+import { NButton, NSpin } from 'naive-ui'
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
 import ExcalidrawHost from '../components/board/ExcalidrawHost.vue'
-import { BoardApiError, deleteBoard, getBoard, type BoardAggregate } from '../features/board/api'
+import {
+  BoardApiError,
+  createBoard,
+  deleteBoard,
+  getBoard,
+  getBoardMetadata,
+  renameBoard,
+  saveBoardScene,
+  type BoardAggregate,
+} from '../features/board/api'
 import { boardMetadataSource } from '../features/board/boardMetadataSource'
 import {
   assertSupportedExcalidrawScene,
@@ -36,9 +45,11 @@ import {
   type BoardSaveCoordinator,
   type BoardSaveState,
 } from '../features/board/saveCoordinator'
+import { useBoardFavorites } from '../composables/useBoardFavorites'
+import type { BoardEditorMenuOptions } from '../features/board/engine/excalidraw/reactIsland'
 
 type EditorStatus = 'loading' | 'reconciling' | 'recovery-choice' | 'recovery-conflict' | 'hydrating' | 'ready' | 'error'
-type EditorErrorKind = 'load' | 'not-found' | 'compatibility' | 'canvas' | 'recovery'
+type EditorErrorKind = 'load' | 'not-found' | 'compatibility' | 'corrupt' | 'canvas' | 'recovery'
 
 interface PendingRecovery {
   kind: 'choice' | 'conflict' | 'invalid' | 'read-error'
@@ -60,9 +71,11 @@ const { locale, t } = useI18n()
 const { theme } = useTheme()
 const toast = useToast()
 const { confirm } = useConfirm()
+const { isFavorite, setFavorite } = useBoardFavorites()
 const status = ref<EditorStatus>('loading')
 const errorKind = ref<EditorErrorKind | null>(null)
 const errorMessage = ref('')
+const errorMetadata = shallowRef<BoardAggregate['metadata'] | null>(null)
 const aggregate = shallowRef<BoardAggregate | null>(null)
 const session = shallowRef<BoardSession | null>(null)
 const runtimeScene = shallowRef<ExcalidrawRuntimeScene | null>(null)
@@ -75,34 +88,31 @@ const pendingRecovery = shallowRef<PendingRecovery | null>(null)
 const recoveryUnavailable = ref(false)
 const exportBusy = ref<BoardExportFormat | null>(null)
 const deleting = ref(false)
+const renaming = ref(false)
+const copying = ref(false)
 const loadGeneration = ref(0)
 const recoveryStore: BoardCheckpointStore = createIndexedDbBoardCheckpointStore()
 let assetIntakePromise: Promise<void> = Promise.resolve()
 let hostChangePromise: Promise<void> = Promise.resolve()
+let saveFailureNoticeKey: string | null = null
+let goShortcutTimer: ReturnType<typeof setTimeout> | null = null
 
 const boardId = computed(() => {
   const value = route.params.boardId
   return Array.isArray(value) ? value[0] ?? '' : value ?? ''
 })
-const boardTitle = computed(() => aggregate.value?.metadata.title ?? t('board.title'))
+const boardTitle = computed(() => aggregate.value?.metadata.title ?? errorMetadata.value?.title ?? t('board.title'))
+const favorite = computed(() => Boolean(session.value && isFavorite(session.value.boardId)))
 const excalidrawLangCode = computed(() => locale.value.startsWith('zh') ? 'zh-CN' as const : 'en' as const)
 const errorTitle = computed(() => {
   if (errorKind.value === 'not-found') return t('board.editor_not_found')
   if (errorKind.value === 'compatibility') return t('board.editor_scene_unsupported')
+  if (errorKind.value === 'corrupt') return t('board.editor_scene_corrupt')
   if (errorKind.value === 'canvas') return t('board.editor_canvas_failed')
   if (errorKind.value === 'recovery') return t('board.editor_recovery_failed')
   return t('board.editor_load_failed')
 })
 const errorDescription = computed(() => errorMessage.value || errorTitle.value)
-const statusLabel = computed(() => {
-  if (status.value === 'loading') return t('board.editor_loading')
-  if (status.value === 'reconciling') return t('board.editor_reconciling')
-  if (status.value === 'recovery-choice') return t('board.editor_recovery_found')
-  if (status.value === 'recovery-conflict') return t('board.editor_recovery_conflict')
-  if (status.value === 'hydrating') return t('board.editor_hydrating')
-  if (status.value === 'ready') return t('board.editor_ready')
-  return errorTitle.value
-})
 
 function errorInfo(error: unknown): { kind: EditorErrorKind; message: string } {
   if (error instanceof BoardApiError && (error.status === 404 || error.code === 'BOARD_NOT_FOUND')) {
@@ -110,6 +120,9 @@ function errorInfo(error: unknown): { kind: EditorErrorKind; message: string } {
   }
   if (error instanceof BoardEngineCompatibilityError) {
     return { kind: 'compatibility', message: error.message }
+  }
+  if (error instanceof BoardApiError && error.code === 'BOARD_SCENE_CORRUPT') {
+    return { kind: 'corrupt', message: error.message }
   }
   if (error instanceof BoardAssetError) {
     return { kind: 'load', message: t('board.editor_asset_restore_failed') }
@@ -150,6 +163,39 @@ function disposePersistence(): void {
   assetSession.value?.dispose()
   assetSession.value = null
   saveState.value = null
+  saveFailureNoticeKey = null
+}
+
+async function flushAndDisposePersistence(): Promise<void> {
+  const currentThumbnailScheduler = thumbnailScheduler.value
+  const currentCheckpointScheduler = checkpointScheduler.value
+  const currentSaveCoordinator = saveCoordinator.value
+  const currentAssetSession = assetSession.value
+  const currentAssetIntakePromise = assetIntakePromise
+  const currentHostChangePromise = hostChangePromise
+
+  try {
+    await currentAssetIntakePromise.catch(() => {})
+    await currentHostChangePromise.catch(() => {})
+    const result = await currentSaveCoordinator?.flush()
+    if (result && !result.ok && saveFailureNoticeKey === null) {
+      toast.error(t('board.editor_save_failed_notice'))
+    }
+  } catch {
+    if (saveFailureNoticeKey === null) toast.error(t('board.editor_save_failed_notice'))
+  } finally {
+    currentThumbnailScheduler?.dispose()
+    currentCheckpointScheduler?.dispose()
+    await currentCheckpointScheduler?.waitForIdle()
+    currentSaveCoordinator?.dispose()
+    currentAssetSession?.dispose()
+    if (thumbnailScheduler.value === currentThumbnailScheduler) thumbnailScheduler.value = null
+    if (checkpointScheduler.value === currentCheckpointScheduler) checkpointScheduler.value = null
+    if (saveCoordinator.value === currentSaveCoordinator) saveCoordinator.value = null
+    if (assetSession.value === currentAssetSession) assetSession.value = null
+    saveState.value = null
+    saveFailureNoticeKey = null
+  }
 }
 
 async function mountScene(
@@ -175,6 +221,7 @@ async function mountScene(
     assetSession.value = nextAssetSession
     assetIntakePromise = Promise.resolve()
     hostChangePromise = Promise.resolve()
+    saveFailureNoticeKey = null
     aggregate.value = nextAggregate
     boardMetadataSource.upsert(nextAggregate.metadata)
     session.value = {
@@ -247,6 +294,16 @@ async function mountScene(
       },
       onStateChange: (nextState) => {
         saveState.value = nextState
+        if (nextState.status === 'error') {
+          const errorLabel = nextState.lastError instanceof Error ? nextState.lastError.message : String(nextState.lastError ?? '')
+          const noticeKey = `${nextState.localRevision}:${errorLabel}`
+          if (saveFailureNoticeKey !== noticeKey) {
+            saveFailureNoticeKey = noticeKey
+            toast.error(t('board.editor_save_failed_notice'))
+          }
+        } else if (nextState.status === 'saved' || nextState.status === 'dirty' || nextState.status === 'saving') {
+          saveFailureNoticeKey = null
+        }
         if (!session.value || session.value.boardId !== id) return
         session.value = {
           ...session.value,
@@ -282,6 +339,7 @@ async function loadBoard(): Promise<void> {
   status.value = 'loading'
   errorKind.value = null
   errorMessage.value = ''
+  errorMetadata.value = null
   aggregate.value = null
   session.value = null
   runtimeScene.value = null
@@ -355,6 +413,16 @@ async function loadBoard(): Promise<void> {
     }
     status.value = 'recovery-choice'
   } catch (error) {
+    if (generation !== loadGeneration.value) return
+    if (error instanceof BoardApiError && error.code === 'BOARD_SCENE_CORRUPT') {
+      try {
+        const metadata = await getBoardMetadata(id)
+        if (generation === loadGeneration.value) errorMetadata.value = metadata
+      } catch {
+        // The error surface remains useful even if the metadata fallback is
+        // unavailable; never hide the original scene error.
+      }
+    }
     if (generation !== loadGeneration.value) return
     showLoadError(error)
   }
@@ -579,25 +647,6 @@ async function retrySave(): Promise<void> {
   await saveCoordinator.value?.retry()
 }
 
-const editorMenuOptions = computed(() => [
-  {
-    label: t('board.editor_export_png'),
-    key: 'export-png',
-    disabled: status.value !== 'ready' || exportBusy.value !== null || deleting.value,
-  },
-  {
-    label: t('board.editor_export_svg'),
-    key: 'export-svg',
-    disabled: status.value !== 'ready' || exportBusy.value !== null || deleting.value,
-  },
-  { type: 'divider', key: 'divider' },
-  {
-    label: t('board.editor_delete'),
-    key: 'delete',
-    disabled: !session.value || deleting.value,
-  },
-])
-
 async function exportBoard(format: BoardExportFormat): Promise<void> {
   const scene = runtimeScene.value
   if (exportBusy.value !== null || status.value !== 'ready' || !scene) return
@@ -617,15 +666,94 @@ async function exportBoard(format: BoardExportFormat): Promise<void> {
   }
 }
 
-function onEditorMenuSelect(key: string): void {
-  if (key === 'export-png') {
-    void exportBoard('png')
-  } else if (key === 'export-svg') {
-    void exportBoard('svg')
-  } else if (key === 'delete') {
-    void deleteCurrentBoard()
+async function renameCurrentBoard(title: string): Promise<boolean> {
+  const id = session.value?.boardId
+  const normalizedTitle = title.trim()
+  if (!id || !normalizedTitle || renaming.value) return false
+  if (normalizedTitle === boardTitle.value) return true
+  renaming.value = true
+  try {
+    const metadata = await renameBoard(id, normalizedTitle)
+    if (aggregate.value?.metadata.id !== id) return false
+    aggregate.value = { ...aggregate.value, metadata }
+    boardMetadataSource.upsert(metadata)
+    toast.success(t('board.renamed'))
+    return true
+  } catch (error) {
+    if (error instanceof BoardApiError && error.uncertain) boardMetadataSource.invalidate()
+    toast.error(t('board.rename_failed'))
+    return false
+  } finally {
+    renaming.value = false
   }
 }
+
+function toggleCurrentFavorite(): void {
+  const id = session.value?.boardId
+  if (!id) return
+  const nextFavorite = !isFavorite(id)
+  setFavorite(id, nextFavorite)
+  toast.success(t(nextFavorite ? 'board.favorited' : 'board.unfavorited'))
+}
+
+async function copyCurrentBoard(): Promise<void> {
+  const currentSession = session.value
+  const currentAssetSession = assetSession.value
+  if (!currentSession || !runtimeScene.value || !currentAssetSession || copying.value || status.value !== 'ready') return
+  copying.value = true
+  let createdId: string | null = null
+  try {
+    await assetIntakePromise
+    await hostChangePromise
+    const latestScene = runtimeScene.value
+    if (!latestScene || session.value !== currentSession || assetSession.value !== currentAssetSession) return
+    const serializedScene = excalidrawAdapter.serialize(latestScene, currentAssetSession.getFileMap())
+    await currentAssetSession.ensureSceneAssetsReady(serializedScene)
+    const copied = await createBoard(t('board.editor_copy_title', { title: boardTitle.value }))
+    createdId = copied.metadata.id
+    const saved = await saveBoardScene(createdId, {
+      expectedRevision: copied.sceneRecord.revision,
+      engine: copied.sceneRecord.engine,
+      sceneVersion: copied.sceneRecord.sceneVersion,
+      scene: serializedScene,
+    })
+    boardMetadataSource.upsert({ ...copied.metadata, updatedAt: saved.updatedAt })
+    toast.success(t('board.editor_copied'))
+    await router.push({ name: 'board-editor', params: { boardId: createdId } })
+  } catch {
+    if (createdId) {
+      try { await deleteBoard(createdId) } catch { boardMetadataSource.invalidate() }
+    }
+    toast.error(t('board.editor_copy_failed'))
+  } finally {
+    copying.value = false
+  }
+}
+
+const editorMenu = computed<BoardEditorMenuOptions>(() => ({
+  title: boardTitle.value,
+  saveStatusLabel: saveStatusLabel.value,
+  favorite: favorite.value,
+  busy: status.value !== 'ready' || deleting.value || renaming.value || copying.value || exportBusy.value !== null,
+  labels: {
+    back: t('board.back_to_boards'),
+    rename: t('board.rename'),
+    favorite: t('board.favorite'),
+    unfavorite: t('board.unfavorite'),
+    exportPng: t('board.editor_export_png'),
+    exportSvg: t('board.editor_export_svg'),
+    copy: t('board.editor_copy'),
+    delete: t('board.editor_delete'),
+    titleInput: t('board.title_label'),
+  },
+  onBack: backToBoards,
+  onRename: renameCurrentBoard,
+  onToggleFavorite: toggleCurrentFavorite,
+  onExportPng: () => { void exportBoard('png') },
+  onExportSvg: () => { void exportBoard('svg') },
+  onCopy: () => { void copyCurrentBoard() },
+  onDelete: () => { void deleteCurrentBoard() },
+}))
 
 async function deleteCurrentBoard(): Promise<void> {
   if (deleting.value || !session.value) return
@@ -692,45 +820,82 @@ function backToBoards(): void {
   void router.push({ name: 'board' })
 }
 
+function clearGoShortcut(): void {
+  if (goShortcutTimer !== null) clearTimeout(goShortcutTimer)
+  goShortcutTimer = null
+}
+
+function isTextEditingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false
+  return Boolean(target.closest('input, textarea, select, [contenteditable="true"], [contenteditable=""], .excalidraw-wysiwyg'))
+}
+
+function hasOpenEditorOverlay(): boolean {
+  return Boolean(document.querySelector([
+    '[role="dialog"]',
+    '[role="alertdialog"]',
+    '[role="menu"]',
+    '.dropdown-menu',
+    '.n-dropdown-menu',
+    '.n-modal',
+    '.n-drawer',
+    '.n-popover',
+    '.excalidraw .popover',
+    '.excalidraw .Popover',
+    '[data-radix-popper-content-wrapper]',
+  ].join(', ')))
+}
+
+function handleGoShortcut(event: KeyboardEvent): void {
+  if (event.repeat || event.isComposing || event.metaKey || event.ctrlKey || event.altKey
+    || status.value !== 'ready' || renaming.value || isTextEditingTarget(event.target) || hasOpenEditorOverlay()) {
+    clearGoShortcut()
+    return
+  }
+
+  const key = event.key.toLocaleLowerCase()
+  if (goShortcutTimer !== null) {
+    clearGoShortcut()
+    if (key !== 'b') return
+    event.preventDefault()
+    event.stopPropagation()
+    backToBoards()
+    return
+  }
+
+  if (key !== 'g') return
+  event.preventDefault()
+  event.stopPropagation()
+  goShortcutTimer = setTimeout(() => { goShortcutTimer = null }, 700)
+}
+
 watch(() => boardId.value, () => { void loadBoard() }, { immediate: true })
-onMounted(() => window.addEventListener('beforeunload', handleBeforeUnload))
+let previousDocumentTitle = 'Docus'
+watch(() => aggregate.value?.metadata.title, (title) => {
+  if (title) document.title = `${title} · Docus`
+})
+onMounted(() => {
+  previousDocumentTitle = document.title || 'Docus'
+  if (aggregate.value?.metadata.title) document.title = `${aggregate.value.metadata.title} · Docus`
+  window.addEventListener('beforeunload', handleBeforeUnload)
+  window.addEventListener('keydown', handleGoShortcut, true)
+})
 onBeforeUnmount(() => {
   loadGeneration.value += 1
+  clearGoShortcut()
   window.removeEventListener('beforeunload', handleBeforeUnload)
-  disposePersistence()
+  window.removeEventListener('keydown', handleGoShortcut, true)
+  document.title = previousDocumentTitle
+  void flushAndDisposePersistence()
 })
 </script>
 
 <template>
   <main class="board-editor" data-testid="board-editor">
-    <header class="board-editor-chrome">
-      <NButton attr-type="button" quaternary @click="backToBoards">← {{ t('board.back_to_boards') }}</NButton>
-      <div class="board-editor-title" :title="boardTitle">{{ boardTitle }}</div>
-      <div class="board-editor-status" :data-status="status" data-testid="board-editor-status" role="status" aria-live="polite">
-        <span>{{ statusLabel }}</span>
-        <span v-if="displayedSaveStatus" :data-save-status="displayedSaveStatus">{{ saveStatusLabel }}</span>
-        <span v-if="recoveryUnavailable" data-testid="board-recovery-unavailable">{{ t('board.editor_recovery_unavailable_short') }}</span>
-        <NButton v-if="displayedSaveStatus === 'error'" text size="tiny" attr-type="button" @click="retrySave">{{ t('board.editor_retry_save') }}</NButton>
-        <span v-if="session" class="board-editor-revision" data-testid="board-local-revision" :data-local-revision="session.localRevision">{{ session.localRevision }}</span>
-      </div>
-      <NDropdown
-        :options="editorMenuOptions"
-        placement="bottom-end"
-        trigger="click"
-        @select="onEditorMenuSelect"
-      >
-        <NButton
-          class="board-editor-menu"
-          attr-type="button"
-          quaternary
-          :disabled="deleting"
-          :aria-label="t('board.editor_menu')"
-          data-testid="board-editor-menu"
-        >
-          ⋯
-        </NButton>
-      </NDropdown>
-    </header>
+    <div class="board-editor-status-sr" :data-status="status" data-testid="board-editor-status" role="status" aria-live="polite">
+      <span>{{ status === 'ready' ? t('board.editor_ready') : status }}</span>
+      <span v-if="session" data-testid="board-local-revision" :data-local-revision="session.localRevision">{{ session.localRevision }}</span>
+    </div>
 
     <section v-if="status === 'loading'" class="board-editor-state" data-testid="board-editor-loading" role="status">
       <NSpin size="medium" />
@@ -764,6 +929,7 @@ onBeforeUnmount(() => {
 
     <section v-else-if="status === 'error'" class="board-editor-state" data-testid="board-editor-error" role="alert">
       <h1>{{ errorTitle }}</h1>
+      <p v-if="errorMetadata" class="board-editor-error-board-title" data-testid="board-error-board-title">{{ errorMetadata.title }}</p>
       <p>{{ errorDescription }}</p>
       <div class="board-editor-actions">
         <NButton attr-type="button" type="primary" @click="loadBoard">{{ t('common.retry') }}</NButton>
@@ -772,6 +938,27 @@ onBeforeUnmount(() => {
     </section>
 
     <section v-else class="board-editor-surface" data-testid="board-editor-surface" :aria-label="t('board.editor_canvas_label')">
+      <div
+        v-if="displayedSaveStatus === 'saving'"
+        class="board-editor-save-notice"
+        data-testid="board-editor-save-notice"
+        role="status"
+        aria-live="polite"
+      >
+        {{ saveStatusLabel }}
+      </div>
+      <div
+        v-else-if="displayedSaveStatus === 'error' || displayedSaveStatus === 'uncertain'"
+        class="board-editor-save-notice is-error"
+        data-testid="board-editor-save-error"
+        role="alert"
+      >
+        <span>⚠ {{ saveStatusLabel }}</span>
+        <NButton text size="tiny" attr-type="button" @click="retrySave">{{ t('board.editor_retry_save') }}</NButton>
+      </div>
+      <div v-if="recoveryUnavailable" class="board-editor-save-notice is-error" data-testid="board-recovery-unavailable" role="alert">
+        ⚠ {{ t('board.editor_recovery_unavailable_short') }}
+      </div>
       <div v-if="displayedSaveStatus === 'conflict'" class="board-editor-conflict" data-testid="board-editor-conflict" role="alert">
         <p>{{ t('board.editor_conflict_detail') }}</p>
         <div class="board-editor-actions">
@@ -784,6 +971,7 @@ onBeforeUnmount(() => {
         :initial-scene="runtimeScene"
         :theme="theme"
         :lang-code="excalidrawLangCode"
+        :editor-menu="editorMenu"
         @change="onHostChange"
         @assets-changed="onHostAssetsChanged"
         @asset-error="onHostAssetError"
@@ -795,12 +983,8 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.board-editor { display: flex; flex-direction: column; width: 100%; height: 100vh; min-height: 0; overflow: hidden; background: var(--bg); color: var(--text); }
-.board-editor-chrome { display: flex; align-items: center; gap: .75rem; flex: 0 0 52px; box-sizing: border-box; padding: .5rem .75rem; border-bottom: 1px solid var(--border, var(--docus-border, #d1d5db)); background: var(--surface, var(--bg)); }
-.board-editor-title { min-width: 0; flex: 1; overflow: hidden; color: var(--text-h, inherit); font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-.board-editor-status { display: flex; align-items: center; gap: .35rem; color: var(--text-muted, #6b7280); font-size: .8rem; }
-.board-editor-menu { flex: 0 0 auto; min-width: 2rem; color: var(--text-h, inherit); font-size: 1.25rem; line-height: 1; }
-.board-editor-revision { display: none; }
+.board-editor { position: relative; display: flex; width: 100%; height: 100dvh; min-height: 0; overflow: hidden; background: var(--bg); color: var(--text); }
+.board-editor-status-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 .board-editor-surface { flex: 1 1 auto; min-height: 0; overflow: hidden; }
 .board-editor-surface :deep(.excalidraw-host) { min-height: 0; height: 100%; }
 .board-editor-state { display: grid; flex: 1; place-content: center; justify-items: center; gap: .75rem; min-height: 18rem; padding: 2rem; background: var(--surface, var(--bg)); color: var(--text); text-align: center; }
@@ -812,9 +996,6 @@ onBeforeUnmount(() => {
 .board-editor-conflict { position: absolute; z-index: 2; top: .75rem; right: .75rem; max-width: 28rem; padding: .75rem; border: 1px solid var(--border, #d1d5db); border-radius: .5rem; background: var(--surface, var(--bg)); box-shadow: 0 .5rem 1.5rem rgb(0 0 0 / 12%); }
 .board-editor-conflict p { margin: 0 0 .75rem; color: var(--text-h, inherit); }
 .board-editor-surface { position: relative; }
-@media (max-width: 640px) {
-  .board-editor-chrome { gap: .4rem; padding-inline: .5rem; }
-  .board-editor-status { min-width: 0; overflow: hidden; }
-  .board-editor-status > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-}
+.board-editor-save-notice { position: absolute; z-index: 3; top: 1rem; right: 1rem; display: flex; min-height: 32px; box-sizing: border-box; align-items: center; gap: .5rem; padding: .4rem .7rem; border: 1px solid color-mix(in srgb, var(--border) 78%, transparent); border-radius: 8px; background: color-mix(in srgb, var(--surface, var(--bg)) 94%, transparent); color: var(--text-muted, #6b7280); box-shadow: 0 4px 16px rgb(0 0 0 / 8%); font-size: .78rem; backdrop-filter: blur(8px); }
+.board-editor-save-notice.is-error { border-color: color-mix(in srgb, var(--docus-negative, #b42318) 34%, transparent); color: var(--docus-negative, #b42318); }
 </style>

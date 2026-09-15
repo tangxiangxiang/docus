@@ -4,7 +4,7 @@ import { createBoardSearchProvider } from '../searchProvider'
 import { createBoardMetadataSource } from '../metadataSource'
 
 function board(id: string, title: string): BoardMetadata {
-  return { id, title, thumbnailAssetId: null, createdAt: 1, updatedAt: 1 }
+  return { id, title, thumbnailAssetId: null, createdAt: 1, updatedAt: 1, lastOpenedAt: null }
 }
 
 describe('Board search provider', () => {

@@ -77,10 +77,14 @@ export class BoardService {
   }
 
   async getBoard(boardId: string): Promise<BoardAggregate> {
-    const board = this.repository.getBoard(assertBoardId(boardId))
+    const id = assertBoardId(boardId)
+    const board = this.repository.getBoard(id)
     if (!board) throw new BoardError('BOARD_NOT_FOUND', 404, 'Board was not found')
     await this.assets.assertAssetReferencesReadable(board.sceneRecord.scene.assetRefs)
-    return board
+    // Opening a Board is activity metadata, not a content mutation. Keep
+    // updatedAt untouched so recent access cannot masquerade as an edit.
+    const metadata = this.repository.markBoardOpened(id, this.nextTimestamp())
+    return { ...board, metadata }
   }
 
   renameBoard(boardId: string, title: unknown): BoardMetadata {

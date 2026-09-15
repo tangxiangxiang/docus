@@ -18,6 +18,8 @@ export interface BoardMetadata {
   thumbnailAssetId: string | null
   createdAt: number
   updatedAt: number
+  /** Last time the user opened this Board; null for a Board that has never been opened. */
+  lastOpenedAt: number | null
 }
 
 export interface BoardPersistentAppState {

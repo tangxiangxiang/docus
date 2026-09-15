@@ -31,6 +31,7 @@ interface BoardRow {
   title: string
   created_at: number
   updated_at: number
+  last_opened_at: number | null
   thumbnail_asset_id: string | null
 }
 
@@ -47,6 +48,7 @@ export interface BoardRepository {
   createBoard(id: string, title: string, createdAt: number): void
   getBoardMetadata(boardId: string): BoardMetadata | null
   listBoards(): BoardMetadata[]
+  markBoardOpened(boardId: string, lastOpenedAt: number): BoardMetadata
   getBoard(boardId: string): BoardAggregate | null
   renameBoard(boardId: string, title: string, updatedAt: number): BoardMetadata
   deleteBoard(boardId: string): string[] | null
@@ -84,6 +86,7 @@ function metadataFromRow(row: BoardRow): BoardMetadata {
     thumbnailAssetId: row.thumbnail_asset_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    lastOpenedAt: row.last_opened_at,
   }
 }
 
@@ -126,7 +129,7 @@ export class SqliteBoardRepository implements BoardRepository {
   getBoardMetadata(boardId: string): BoardMetadata | null {
     const id = assertBoardId(boardId)
     const row = this.db.prepare(`
-      SELECT b.id, b.title, b.created_at, b.updated_at,
+      SELECT b.id, b.title, b.created_at, b.updated_at, b.last_opened_at,
              ${THUMBNAIL_PROJECTION}
       FROM boards AS b
       WHERE b.id = ?
@@ -136,12 +139,30 @@ export class SqliteBoardRepository implements BoardRepository {
 
   listBoards(): BoardMetadata[] {
     const rows = this.db.prepare(`
-      SELECT b.id, b.title, b.created_at, b.updated_at,
+      SELECT b.id, b.title, b.created_at, b.updated_at, b.last_opened_at,
              ${THUMBNAIL_PROJECTION}
       FROM boards AS b
       ORDER BY b.updated_at DESC, b.id DESC
     `).all() as BoardRow[]
     return rows.map(metadataFromRow)
+  }
+
+  markBoardOpened(boardId: string, lastOpenedAt: number): BoardMetadata {
+    const id = assertBoardId(boardId)
+    runImmediate(this.db, () => {
+      const result = this.db.prepare(`
+        UPDATE boards
+        SET last_opened_at = CASE
+          WHEN last_opened_at IS NULL OR last_opened_at < @lastOpenedAt THEN @lastOpenedAt
+          ELSE last_opened_at
+        END
+        WHERE id = @id
+      `).run({ id, lastOpenedAt })
+      if (result.changes !== 1) throw new BoardError('BOARD_NOT_FOUND', 404, 'Board was not found')
+    })
+    const metadata = this.getBoardMetadata(id)
+    if (!metadata) throw new BoardError('BOARD_STORAGE_ERROR', 500, 'Board disappeared after open')
+    return metadata
   }
 
   getBoard(boardId: string): BoardAggregate | null {

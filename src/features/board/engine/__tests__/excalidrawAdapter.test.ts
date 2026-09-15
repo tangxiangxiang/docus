@@ -209,6 +209,25 @@ describe('excalidrawAdapter', () => {
     expect(runtimePersistenceFingerprint(base)).not.toBe(runtimePersistenceFingerprint(changed))
   })
 
+  it('treats every persisted element field and app-state field as a meaningful edit', () => {
+    const base = {
+      elements: [{ id: 'shape', type: 'rectangle', strokeColor: '#111111', version: 1 }],
+      appState: { zoom: { value: 1 }, scrollX: 0, scrollY: 0, gridSize: 20, viewBackgroundColor: '#ffffff' },
+      files: {},
+    }
+    const recolored = {
+      ...base,
+      elements: [{ ...base.elements[0], strokeColor: '#222222' }],
+    }
+    const panned = {
+      ...base,
+      appState: { ...base.appState, scrollX: 12 },
+    }
+
+    expect(runtimePersistenceFingerprint(base)).not.toBe(runtimePersistenceFingerprint(recolored))
+    expect(runtimePersistenceFingerprint(base)).not.toBe(runtimePersistenceFingerprint(panned))
+  })
+
   it('rejects unsupported engine and scene versions explicitly', async () => {
     await expectCompatibility(
       () => { assertSupportedExcalidrawScene('other', CURRENT_BOARD_SCENE_VERSION) },

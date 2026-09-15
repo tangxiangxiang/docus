@@ -12,7 +12,7 @@ vi.mock('../../../features/board/api', () => api)
 vi.mock('../../../lib/api', () => ({ listPosts: api.listPosts }))
 
 function board(id: string, title: string): BoardMetadata {
-  return { id, title, thumbnailAssetId: null, createdAt: 1, updatedAt: 1 }
+  return { id, title, thumbnailAssetId: null, createdAt: 1, updatedAt: 1, lastOpenedAt: null }
 }
 
 describe('App-level GlobalSearchHost', () => {

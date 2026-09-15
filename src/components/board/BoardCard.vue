@@ -68,8 +68,8 @@ function selectMenu(key: string | number): void {
         <span v-else class="board-card-placeholder">{{ board.title.slice(0, 1).toUpperCase() || 'B' }}</span>
       </span>
       <span class="board-card-copy">
-        <strong class="board-card-title" data-testid="board-card-title">{{ board.title }}</strong>
-        <span class="board-card-updated">{{ t('board.updated', { date: updatedLabel }) }}</span>
+        <strong class="board-card-title" data-testid="board-card-title" :title="board.title">{{ board.title }}</strong>
+        <span class="board-card-updated" :title="t('board.updated', { date: updatedLabel })">{{ t('board.updated', { date: updatedLabel }) }}</span>
       </span>
     </button>
     <NDropdown :options="menuOptions" size="small" trigger="click" @select="selectMenu">

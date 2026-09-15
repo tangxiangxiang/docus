@@ -58,6 +58,7 @@ type BoardJson = {
     thumbnailAssetId: string | null
     createdAt: number
     updatedAt: number
+    lastOpenedAt: number | null
   }
   sceneRecord: {
     revision: number
@@ -197,6 +198,7 @@ describe('Board HTTP API', () => {
     expect(created.metadata).toMatchObject({
       title: 'Untitled Board',
       thumbnailAssetId: null,
+      lastOpenedAt: null,
     })
     expect(created.sceneRecord).toMatchObject({
       boardId: created.metadata.id,
@@ -219,7 +221,24 @@ describe('Board HTTP API', () => {
 
     const got = await request(`/api/board/${created.metadata.id}`)
     expect(got.status).toBe(200)
-    expect(await responseJson(got)).toEqual(created)
+    const opened = await responseJson<BoardJson>(got)
+    expect(opened).toMatchObject({
+      ...created,
+      metadata: {
+        ...created.metadata,
+        lastOpenedAt: now,
+      },
+    })
+    expect(opened.metadata.updatedAt).toBe(created.metadata.updatedAt)
+
+    const metadataOnly = await request(`/api/board/${created.metadata.id}/metadata`)
+    expect(metadataOnly.status).toBe(200)
+    expect(await responseJson(metadataOnly)).toMatchObject({
+      id: created.metadata.id,
+      title: created.metadata.title,
+      lastOpenedAt: now,
+      updatedAt: created.metadata.updatedAt,
+    })
 
     const renamed = await request(`/api/board/${created.metadata.id}`, {
       method: 'PATCH',

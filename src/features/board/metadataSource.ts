@@ -15,7 +15,9 @@ export interface BoardMetadataSource {
 type BoardFetcher = () => Promise<readonly BoardMetadata[]>
 
 function compareBoards(left: BoardMetadata, right: BoardMetadata): number {
-  return right.updatedAt - left.updatedAt || right.id.localeCompare(left.id)
+  const leftOpenedAt = left.lastOpenedAt ?? left.updatedAt ?? left.createdAt
+  const rightOpenedAt = right.lastOpenedAt ?? right.updatedAt ?? right.createdAt
+  return rightOpenedAt - leftOpenedAt || right.id.localeCompare(left.id)
 }
 
 function normalizeBoards(boards: readonly BoardMetadata[]): readonly BoardMetadata[] {

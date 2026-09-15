@@ -19,7 +19,15 @@ vi.mock('react', async () => {
   }
 })
 
-vi.mock('@excalidraw/excalidraw', () => ({ Excalidraw: 'div' }))
+vi.mock('@excalidraw/excalidraw', () => ({
+  Excalidraw: 'div',
+  MainMenu: Object.assign('main-menu', {
+    Item: 'menu-item',
+    ItemCustom: 'menu-item-custom',
+    Separator: 'menu-separator',
+    DefaultItems: { ToggleTheme: 'toggle-theme', ChangeCanvasBackground: 'change-background' },
+  }),
+}))
 
 import { mountExcalidrawIsland } from '../reactIsland'
 
@@ -105,13 +113,16 @@ describe('mountExcalidrawIsland', () => {
       mimeType: 'image/png',
       created: 1,
     }
-    renderedBoundary.props.children.props.onChange([], {}, { 'engine-file-1': file })
+    const elements = [{ id: 'shape' }]
+    const appState = { zoom: { value: 0.8 } }
+    const files = { 'engine-file-1': file }
+    renderedBoundary.props.children.props.onChange(elements, appState, files)
 
     expect(onAssetsChanged).toHaveBeenCalledWith([expect.objectContaining({
       engineFileId: 'engine-file-1',
       mimeType: 'image/png',
       blob: expect.any(Blob),
     })])
-    expect(onChange).toHaveBeenCalledOnce()
+    expect(onChange).toHaveBeenCalledWith({ elements, appState, files })
   })
 })

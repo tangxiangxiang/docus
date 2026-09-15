@@ -189,39 +189,23 @@ function fingerprintValue(value: unknown): string {
  * image data. Full domain serialization happens only when a save is captured.
  */
 export function runtimePersistenceFingerprint(runtime: ExcalidrawRuntimeScene): string {
-  const elements = runtime.elements.map((element, index) => {
-    if (!isRecord(element)) return `${index}:${fingerprintValue(element)}`
-    const persisted = [
-      element.id,
-      element.version,
-      element.versionNonce,
-      element.isDeleted,
-      element.type,
-      element.x,
-      element.y,
-      element.width,
-      element.height,
-      element.angle,
-      element.text,
-      element.fileId,
-      element.status,
-      element.crop,
-      Array.isArray(element.points) ? element.points.length : undefined,
-    ]
-    return `${index}:${persisted.map(fingerprintValue).join('|')}`
-  }).join(';;')
+  // Element styling and binding fields are persisted too. A hand-picked
+  // subset can silently treat a real edit (for example a color or font
+  // change) as a no-op and skip the save entirely, so fingerprint the full
+  // JSON-shaped element collection while still excluding BinaryFile data.
+  const elements = fingerprintValue(runtime.elements)
   const appState = runtime.appState
   const zoom = isRecord(appState.zoom) ? appState.zoom.value : appState.zoom
   // Excalidraw fills these defaults into its first onChange payload even
   // when the hydrated domain scene omitted them. Treating them as absent
   // keeps initial hydration from becoming a false user mutation.
-  const persistentAppState = [
-    zoom === 1 ? undefined : zoom,
-    appState.scrollX === 0 ? undefined : appState.scrollX,
-    appState.scrollY === 0 ? undefined : appState.scrollY,
-    appState.gridSize === 20 ? undefined : appState.gridSize,
-    appState.viewBackgroundColor === '#ffffff' ? undefined : appState.viewBackgroundColor,
-  ].map(fingerprintValue).join('|')
+  const persistentAppState = fingerprintValue({
+    zoom: zoom === 1 ? undefined : zoom,
+    scrollX: appState.scrollX === 0 ? undefined : appState.scrollX,
+    scrollY: appState.scrollY === 0 ? undefined : appState.scrollY,
+    gridSize: appState.gridSize === 20 ? undefined : appState.gridSize,
+    viewBackgroundColor: appState.viewBackgroundColor === '#ffffff' ? undefined : appState.viewBackgroundColor,
+  })
   const files = Object.keys(runtime.files).sort().join('|')
   return `${elements}#${persistentAppState}#${files}`
 }

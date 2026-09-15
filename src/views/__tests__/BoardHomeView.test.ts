@@ -29,8 +29,8 @@ vi.mock('../../composables/useConfirm', () => ({
   useConfirm: () => ({ confirm: vi.fn(async () => true) }),
 }))
 
-function board(id: string, title: string, updatedAt = 1): BoardMetadata {
-  return { id, title, thumbnailAssetId: null, createdAt: updatedAt - 1, updatedAt }
+function board(id: string, title: string, updatedAt = 1, lastOpenedAt: number | null = null): BoardMetadata {
+  return { id, title, thumbnailAssetId: null, createdAt: updatedAt - 1, updatedAt, lastOpenedAt }
 }
 
 async function mountHome(): Promise<{ wrapper: VueWrapper; router: ReturnType<typeof createRouter> }> {
@@ -149,7 +149,7 @@ describe('Board Gallery Home', () => {
     wrapper.unmount()
   })
 
-  it('limits favorites to five boards until the user asks to see more', async () => {
+  it('limits favorites to five boards without expanding the quick access row', async () => {
     api.listBoards.mockResolvedValue([
       board('one', 'Board 1', 1),
       board('two', 'Board 2', 2),
@@ -165,13 +165,33 @@ describe('Board Gallery Home', () => {
     await flushPromises()
 
     expect(wrapper.findAll('.board-recent-section [data-testid="board-card-title"]')).toHaveLength(5)
-    expect(wrapper.get('[data-testid="board-quick-more-favorites"]').text()).toBe('View more')
+    expect(wrapper.find('[data-testid="board-quick-more-favorites"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
 
-    await wrapper.get('[data-testid="board-quick-more-favorites"]').trigger('click')
+  it('uses last opened time for recent Boards while keeping the all list sortable by edits', async () => {
+    api.listBoards.mockResolvedValue([
+      board('recently-edited', 'Recently edited', 100, 10),
+      board('recently-opened', 'Recently opened', 20, 90),
+    ])
+    const { wrapper } = await mountHome()
+
+    expect(wrapper.findAll('.board-recent-section [data-testid="board-card-title"]').map((item) => item.text())).toEqual([
+      'Recently opened',
+      'Recently edited',
+    ])
+
+    await wrapper.get('.board-sort-select').trigger('click')
+    await flushPromises()
+    const updatedOption = Array.from(document.body.querySelectorAll<HTMLElement>('.n-base-select-option'))
+      .find((element) => element.textContent?.trim() === 'Updated')
+    updatedOption?.click()
     await flushPromises()
 
-    expect(wrapper.findAll('.board-recent-section [data-testid="board-card-title"]')).toHaveLength(6)
-    expect(wrapper.find('[data-testid="board-quick-more-favorites"]').exists()).toBe(false)
+    expect(wrapper.findAll('.board-all-section [data-testid="board-card-title"]').map((item) => item.text())).toEqual([
+      'Recently edited',
+      'Recently opened',
+    ])
     wrapper.unmount()
   })
 
