@@ -759,7 +759,7 @@ body.brand-constellation-active * {
   align-items: center;
   gap: 4px;
 }
-.navbar .scope-chip {
+.navbar .nav-workspace-link {
   /* Icon + label + small count badge. Padding is a bit wider than the
      icon-only nav actions to give the text room to breathe; the count
      badge is absolute-positioned so it doesn't add to the row height. */
@@ -776,12 +776,20 @@ body.brand-constellation-active * {
   cursor: pointer;
   transition: color 0.15s, background 0.15s, border-color 0.15s;
 }
-.navbar .scope-chip:hover {
+.navbar .nav-workspace-link:hover {
   color: var(--text-h);
   background: var(--bg-soft);
   border-color: var(--border);
 }
-.navbar .scope-chip.active {
+/* A mouse click on a locked Diary opens the access dialog without changing
+   the active scope. Do not leave the clicked chip looking selected while it
+   retains ordinary focus; keyboard focus remains visibly outlined. */
+.navbar .nav-workspace-link:not(.active):focus:not(:focus-visible) {
+  color: var(--text-muted);
+  background: transparent;
+  border-color: transparent;
+}
+.navbar .nav-workspace-link.active {
   /* Soft filled accent — matches the pressed state of mode-toggle
      above so all "active" affordances in the navbar read the same. */
   color: var(--accent);
@@ -814,27 +822,10 @@ body.brand-constellation-active * {
   min-width: 0;
 }
 
-.navbar .workspace-board-link {
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  padding: 4px 9px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  color: var(--text-muted);
-  font-family: var(--mono);
-  font-size: 0.78rem;
-}
 .navbar .workspace-board-link-icon {
   display: inline-flex;
   width: 14px;
   height: 14px;
-}
-.navbar .workspace-board-link:hover,
-.navbar .workspace-board-link.active {
-  color: var(--accent);
-  background: var(--bg-soft);
-  border-color: var(--border);
 }
 
 /* Layout */
@@ -1166,7 +1157,7 @@ main.container.auth-page-shell {
     margin-left: 0;
   }
 
-  .navbar.is-workspace .scope-chip {
+  .navbar.is-workspace .nav-workspace-link {
     padding-left: 5px;
     padding-right: 5px;
   }

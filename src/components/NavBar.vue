@@ -286,7 +286,7 @@ onBeforeUnmount(() => {
           <NButton
             v-for="chip in scopeChips"
             :key="chip.scope"
-            class="scope-chip"
+            class="nav-workspace-link scope-chip"
             :class="{ active: isScopeActive(chip.scope) }"
             attr-type="button"
             size="small"
@@ -302,7 +302,7 @@ onBeforeUnmount(() => {
           </NButton>
         </div>
         <NButton
-          class="workspace-board-link"
+          class="nav-workspace-link workspace-board-link"
           :class="{ active: isBoard }"
           attr-type="button"
           size="small"
