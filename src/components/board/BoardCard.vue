@@ -6,30 +6,26 @@ import type { BoardMetadata } from '../../../shared/boardProtocol'
 import { boardAssetUrl } from '../../features/board/api'
 import { useI18n } from '../../composables/useI18n'
 
-type BoardCardLayout = 'recent' | 'grid'
-
 const props = withDefaults(defineProps<{
   board: BoardMetadata
-  layout?: BoardCardLayout
-  /** Compatibility alias for callers that used the original compact prop. */
-  compact?: boolean
+  favorite?: boolean
   busy?: boolean
 }>(), {
-  layout: undefined,
-  compact: false,
+  favorite: false,
   busy: false,
 })
 
 const emit = defineEmits<{
   open: [board: BoardMetadata]
+  favorite: [board: BoardMetadata]
   rename: [board: BoardMetadata]
   delete: [board: BoardMetadata]
 }>()
 
 const { locale, t } = useI18n()
 const thumbnailFailed = ref(false)
-const layout = computed<BoardCardLayout>(() => props.layout ?? (props.compact ? 'grid' : 'recent'))
 const menuOptions = computed<DropdownOption[]>(() => [
+  { label: props.favorite ? t('board.unfavorite') : t('board.favorite'), key: 'favorite' },
   { label: t('board.rename'), key: 'rename' },
   { label: t('board.delete'), key: 'delete' },
 ])
@@ -50,13 +46,14 @@ const updatedLabel = computed(() => {
 watch(() => props.board.thumbnailAssetId, () => { thumbnailFailed.value = false })
 
 function selectMenu(key: string | number): void {
+  if (key === 'favorite') emit('favorite', props.board)
   if (key === 'rename') emit('rename', props.board)
   if (key === 'delete') emit('delete', props.board)
 }
 </script>
 
 <template>
-  <article :class="['board-card', `is-${layout}`, { 'is-busy': busy }]" :data-board-id="board.id">
+  <article :class="['board-card', { 'is-busy': busy }]" :data-board-id="board.id">
     <button
       class="board-card-open"
       type="button"
@@ -101,16 +98,16 @@ function selectMenu(key: string | number): void {
   position: relative;
   min-width: 0;
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 14px;
   background: var(--bg);
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--text-h) 5%, transparent);
+  box-shadow: none;
   transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
 }
 .board-card:hover,
 .board-card:focus-within {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
-  box-shadow: 0 8px 22px color-mix(in srgb, var(--text-h) 10%, transparent);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--text-h) 7%, transparent);
   transform: translateY(-1px);
 }
 .board-card.is-busy { opacity: .64; }
@@ -127,6 +124,7 @@ function selectMenu(key: string | number): void {
   cursor: pointer;
 }
 .board-card-open:disabled { cursor: default; }
+.board-card-open:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
 .board-card-thumbnail {
   position: relative;
   display: grid;
@@ -141,49 +139,32 @@ function selectMenu(key: string | number): void {
   background-size: 18px 18px, 18px 18px, 100% 100%;
   color: var(--accent);
 }
-.board-card.is-recent .board-card-open {
-  min-height: 164px;
-  align-items: center;
-  gap: 18px;
-  padding: 12px;
-}
-.board-card.is-recent .board-card-thumbnail {
-  width: 38%;
-  min-width: 150px;
-  max-width: 250px;
-  aspect-ratio: 16 / 10;
-  flex: 0 1 250px;
-}
-.board-card.is-grid .board-card-open {
+.board-card-open {
   flex-direction: column;
   align-items: stretch;
   gap: 0;
   padding: 0;
 }
-.board-card.is-grid .board-card-thumbnail {
+.board-card-thumbnail {
   width: calc(100% - 24px);
   margin: 12px 12px 0;
   aspect-ratio: 16 / 10;
 }
 .board-card-thumbnail img { display: block; width: 100%; height: 100%; box-sizing: border-box; padding: 8px; object-fit: contain; }
-.board-card-placeholder { font-size: 2rem; font-weight: 700; line-height: 1; }
+.board-card-placeholder { color: color-mix(in srgb, var(--accent) 75%, var(--text-muted)); font-size: 1.5rem; font-weight: 600; line-height: 1; opacity: .78; }
 .board-card-copy {
   display: flex;
   min-width: 0;
   flex: 1;
   flex-direction: column;
   justify-content: center;
-  gap: 5px;
-  padding-right: 32px;
-}
-.board-card.is-grid .board-card-copy {
+  gap: 6px;
   flex: none;
-  padding: 13px 14px 16px;
+  padding: 12px 46px 14px 14px;
   border-top: 1px solid color-mix(in srgb, var(--border) 74%, transparent);
 }
-.board-card-title { overflow: hidden; color: var(--text-h); font-size: 1rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-.board-card.is-grid .board-card-title { font-size: .96rem; }
-.board-card-updated { overflow: hidden; color: var(--text-muted); font-size: .78rem; text-overflow: ellipsis; white-space: nowrap; }
+.board-card-title { overflow: hidden; color: var(--text-h); font-size: .94rem; font-weight: 650; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
+.board-card-updated { overflow: hidden; color: var(--text-muted); font-size: .78rem; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
 .board-card-menu {
   position: absolute;
   top: 12px;
@@ -192,12 +173,13 @@ function selectMenu(key: string | number): void {
   min-width: 30px;
   min-height: 30px;
   padding: 0;
-  border-radius: 8px;
+  border-radius: 7px;
   background: color-mix(in srgb, var(--bg) 80%, transparent);
   color: var(--text-muted);
-  opacity: .72;
+  opacity: .68;
   transition: opacity .15s ease, color .15s ease, background .15s ease;
 }
+.board-card-menu:focus-visible { opacity: 1; outline: 2px solid var(--accent); outline-offset: 1px; }
 .board-card-menu:hover { background: var(--bg-soft); color: var(--text-h); opacity: 1; }
 .board-card-menu :deep(.n-icon) { font-size: 18px; }
 @media (hover: hover) and (pointer: fine) {
@@ -206,9 +188,7 @@ function selectMenu(key: string | number): void {
   .board-card:focus-within .board-card-menu { opacity: .82; }
 }
 @media (max-width: 600px) {
-  .board-card.is-recent .board-card-open { gap: 12px; }
-  .board-card.is-recent .board-card-thumbnail { min-width: 112px; }
-  .board-card.is-grid .board-card-thumbnail { width: calc(100% - 20px); margin: 10px 10px 0; }
-  .board-card.is-grid .board-card-copy { padding: 12px 12px 14px; }
+  .board-card-thumbnail { width: calc(100% - 20px); margin: 10px 10px 0; }
+  .board-card-copy { padding: 12px 42px 14px 12px; }
 }
 </style>

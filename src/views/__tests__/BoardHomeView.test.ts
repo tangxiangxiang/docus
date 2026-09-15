@@ -6,6 +6,7 @@ import BoardHomeView from '../BoardHomeView.vue'
 import BoardGallery from '../../components/board/BoardGallery.vue'
 import { boardMetadataSource } from '../../features/board/metadataSource'
 import type { BoardMetadata } from '../../../shared/boardProtocol'
+import { useBoardFavorites } from '../../composables/useBoardFavorites'
 import { useI18n } from '../../composables/useI18n'
 
 const api = vi.hoisted(() => ({
@@ -50,12 +51,14 @@ async function mountHome(): Promise<{ wrapper: VueWrapper; router: ReturnType<ty
 describe('Board Gallery Home', () => {
   beforeEach(() => {
     useI18n().setLocale('en')
+    useBoardFavorites().favoriteBoardIds.value = []
     vi.clearAllMocks()
     boardMetadataSource.invalidate()
   })
 
   afterEach(() => {
     boardMetadataSource.invalidate()
+    useBoardFavorites().favoriteBoardIds.value = []
     useI18n().setLocale('zh')
     document.body.innerHTML = ''
   })
@@ -92,7 +95,32 @@ describe('Board Gallery Home', () => {
     wrapper.unmount()
   })
 
-  it('keeps two recent boards above the complete grid and exposes real summary counts', async () => {
+  it('keeps five recent boards above the complete grid and reuses the same card style', async () => {
+    api.listBoards.mockResolvedValue([
+      board('older', 'Reading List', 10),
+      board('newer', 'Project Atlas', 30),
+      board('middle', 'Sketch Notes', 20),
+      board('fourth', 'Flow Map', 15),
+      board('fifth', 'Product Plan', 12),
+      board('sixth', 'Meeting Notes', 8),
+    ])
+    const { wrapper } = await mountHome()
+
+    expect(wrapper.findAll('.board-recent-section .board-card')).toHaveLength(5)
+    expect(wrapper.findAll('.board-all-section .board-card')).toHaveLength(6)
+    expect(wrapper.findAll('.board-recent-section .board-card.is-recent')).toHaveLength(0)
+    expect(wrapper.findAll('.board-all-section .board-card.is-grid')).toHaveLength(0)
+    expect(wrapper.find('.board-recent-section .board-gallery').classes()).toContain('is-recent')
+    expect(wrapper.find('.board-all-section .board-gallery').classes()).toContain('is-grid')
+    expect(wrapper.find('.board-recent-section [data-testid="board-card-title"]').text()).toBe('Project Atlas')
+    expect(wrapper.find('[data-testid="board-summary-all"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="board-summary-recent"]').exists()).toBe(false)
+    expect(wrapper.find('.board-section-link').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="board-list-view"]').attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
+
+  it('switches the quick access tabs and persists a favorite Board locally', async () => {
     api.listBoards.mockResolvedValue([
       board('older', 'Reading List', 10),
       board('newer', 'Project Atlas', 30),
@@ -100,15 +128,23 @@ describe('Board Gallery Home', () => {
     ])
     const { wrapper } = await mountHome()
 
-    expect(wrapper.findAll('.board-recent-section .board-card')).toHaveLength(2)
-    expect(wrapper.findAll('.board-recent-section .board-card.is-recent')).toHaveLength(2)
-    expect(wrapper.findAll('.board-all-section .board-card')).toHaveLength(3)
-    expect(wrapper.findAll('.board-all-section .board-card.is-grid')).toHaveLength(3)
-    expect(wrapper.find('.board-recent-section [data-testid="board-card-title"]').text()).toBe('Project Atlas')
-    expect(wrapper.get('[data-testid="board-summary-all"]').text()).toContain('3')
-    expect(wrapper.get('[data-testid="board-summary-recent"]').text()).toContain('2')
-    expect(wrapper.get('.board-section-link').attributes('href')).toBe('#board-all-section')
-    expect(wrapper.get('[data-testid="board-list-view"]').attributes('disabled')).toBeDefined()
+    await wrapper.get('.board-recent-section .board-card-menu').trigger('click')
+    await flushPromises()
+    const favoriteOption = Array.from(document.body.querySelectorAll<HTMLElement>('.n-dropdown-option'))
+      .find((element) => element.textContent?.trim() === 'Add to favorites')
+    favoriteOption?.querySelector<HTMLElement>('.n-dropdown-option-body')?.click()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="board-quick-tab-favorites"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.board-home-eyebrow').text()).toBe('Idea canvas')
+    expect(wrapper.get('.board-recent-section h2').text()).toBe('Quick access')
+    expect(wrapper.get('[data-testid="board-quick-tab-favorites"]').attributes('aria-selected')).toBe('true')
+    expect(wrapper.findAll('.board-recent-section [data-testid="board-card-title"]').map((item) => item.text())).toEqual([
+      'Project Atlas',
+    ])
+    expect(JSON.parse(localStorage.getItem('docus.board.favorites') ?? '[]')).toEqual(['newer'])
     wrapper.unmount()
   })
 

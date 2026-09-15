@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { NButton, NEmpty, NIcon, NInput, NModal, NResult, NSelect, type InputInst, type SelectOption } from 'naive-ui'
-import { ArrowRight, Clock, LayoutGrid, List, Plus, Search } from '@vicons/tabler'
+import { LayoutGrid, List, Plus, Search } from '@vicons/tabler'
 import BoardGallery from '../components/board/BoardGallery.vue'
 import {
   BoardApiError,
@@ -13,6 +13,7 @@ import {
 import { createIndexedDbBoardCheckpointStore } from '../features/board/checkpointStore'
 import { boardMetadataSource } from '../features/board/boardMetadataSource'
 import type { BoardMetadata } from '../../shared/boardProtocol'
+import { useBoardFavorites } from '../composables/useBoardFavorites'
 import { useConfirm } from '../composables/useConfirm'
 import { useI18n } from '../composables/useI18n'
 import { useToast } from '../composables/useToast'
@@ -21,6 +22,7 @@ const router = useRouter()
 const { confirm } = useConfirm()
 const { locale, t } = useI18n()
 const toast = useToast()
+const { favoriteBoardIds, isFavorite, setFavorite } = useBoardFavorites()
 const boards = computed(() => boardMetadataSource.getSnapshot())
 const query = ref('')
 const loading = ref(false)
@@ -59,13 +61,17 @@ const sortedBoards = computed(() => [...filteredBoards.value].sort((left, right)
   }
   return right.updatedAt - left.updatedAt || right.id.localeCompare(left.id)
 }))
-const recentBoardLimit = 2
-const recentBoards = computed(() => sortedBoards.value.slice(0, recentBoardLimit))
+const recentBoardLimit = 5
+const recentOrderedBoards = computed(() => [...boards.value]
+  .sort((left, right) => right.updatedAt - left.updatedAt || right.id.localeCompare(left.id))
+)
+const recentBoards = computed(() => recentOrderedBoards.value.slice(0, recentBoardLimit))
+const favoriteBoards = computed(() => recentOrderedBoards.value.filter((board) => isFavorite(board.id)))
+type QuickAccessTab = 'recent' | 'favorites'
+const quickAccessTab = ref<QuickAccessTab>('recent')
+const quickAccessBoards = computed(() => quickAccessTab.value === 'recent' ? recentBoards.value : favoriteBoards.value)
 const hasBoards = computed(() => boards.value.length > 0)
 const hasSearch = computed(() => normalizedQuery.value.length > 0)
-const hasMoreRecentBoards = computed(() => !hasSearch.value && boards.value.length > recentBoardLimit)
-const recentBoardCount = computed(() => Math.min(boards.value.length, recentBoardLimit))
-
 function messageFor(error: unknown, fallback: string): string {
   return error instanceof BoardApiError && error.message.trim() ? error.message : fallback
 }
@@ -115,6 +121,12 @@ function openBoard(board: BoardMetadata): void {
   void router.push({ name: 'board-editor', params: { boardId: board.id } })
 }
 
+function toggleFavorite(board: BoardMetadata): void {
+  const nextFavorite = !isFavorite(board.id)
+  setFavorite(board.id, nextFavorite)
+  toast.success(t(nextFavorite ? 'board.favorited' : 'board.unfavorited'))
+}
+
 async function submitRename(): Promise<void> {
   const target = renameTarget.value
   if (!target || renameBusy.value) return
@@ -160,6 +172,7 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
   try {
     await deleteBoard(board.id)
     boardMetadataSource.remove(board.id)
+    setFavorite(board.id, false)
     try {
       await recoveryStore.clearBoardRecovery(board.id)
     } catch {
@@ -246,29 +259,9 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
         </div>
       </div>
 
-      <div v-if="!loading && (!loadError || hasBoards)" class="board-summary" :aria-label="t('board.summary_label')">
-        <article class="board-summary-card" data-testid="board-summary-all">
-          <span class="board-summary-icon" aria-hidden="true"><NIcon><LayoutGrid /></NIcon></span>
-          <span class="board-summary-copy">
-            <span class="board-summary-label">{{ t('board.summary_all') }}</span>
-            <strong>{{ boards.length }}</strong>
-          </span>
-        </article>
-        <article class="board-summary-card" data-testid="board-summary-recent">
-          <span class="board-summary-icon" aria-hidden="true"><NIcon><Clock /></NIcon></span>
-          <span class="board-summary-copy">
-            <span class="board-summary-label">{{ t('board.summary_recent') }}</span>
-            <strong>{{ recentBoardCount }}</strong>
-          </span>
-        </article>
-      </div>
-
       <section v-if="loading && !hasBoards" class="board-loading" data-testid="board-loading" role="status" aria-live="polite" :aria-label="t('board.loading')">
-        <div class="board-skeleton-summary" aria-hidden="true">
-          <span v-for="index in 2" :key="index" class="board-skeleton-summary-card" />
-        </div>
         <div class="board-skeleton-recent" aria-hidden="true">
-          <span v-for="index in 2" :key="index" class="board-skeleton-card">
+          <span v-for="index in 5" :key="index" class="board-skeleton-card">
             <span class="board-skeleton-preview" />
             <span class="board-skeleton-lines"><i /><i /><i /></span>
           </span>
@@ -286,22 +279,48 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
       <template v-else-if="hasBoards">
         <p v-if="loadError" class="board-inline-error" role="alert">{{ loadError }}</p>
 
-        <section v-if="!hasSearch" class="board-section board-recent-section" aria-labelledby="board-recent-heading">
+        <section v-if="!hasSearch" class="board-section board-recent-section" aria-labelledby="board-quick-access-heading">
           <div class="board-section-heading">
-            <h2 id="board-recent-heading">{{ t('board.recent') }}</h2>
-            <a v-if="hasMoreRecentBoards" class="board-section-link" href="#board-all-section">
-              {{ t('board.view_all') }}
-              <NIcon aria-hidden="true"><ArrowRight /></NIcon>
-            </a>
+            <h2 id="board-quick-access-heading">{{ t('board.quick_access') }}</h2>
+            <div class="board-quick-tabs" role="tablist" :aria-label="t('board.quick_access')">
+              <button
+                class="board-quick-tab"
+                :class="{ 'is-active': quickAccessTab === 'recent' }"
+                type="button"
+                role="tab"
+                :aria-selected="quickAccessTab === 'recent'"
+                data-testid="board-quick-tab-recent"
+                @click="quickAccessTab = 'recent'"
+              >
+                {{ t('board.recent') }}
+              </button>
+              <button
+                class="board-quick-tab"
+                :class="{ 'is-active': quickAccessTab === 'favorites' }"
+                type="button"
+                role="tab"
+                :aria-selected="quickAccessTab === 'favorites'"
+                data-testid="board-quick-tab-favorites"
+                @click="quickAccessTab = 'favorites'"
+              >
+                {{ t('board.favorites') }}
+              </button>
+            </div>
           </div>
           <BoardGallery
+            v-if="quickAccessBoards.length"
             layout="recent"
-            :boards="recentBoards"
+            :boards="quickAccessBoards"
+            :favorite-board-ids="favoriteBoardIds"
             :busy-board-ids="mutationBoardIds"
             @open="openBoard"
+            @favorite="toggleFavorite"
             @rename="openRename"
             @delete="removeBoard"
           />
+          <div v-else class="board-quick-empty">
+            <NEmpty :description="t('board.no_favorites')" />
+          </div>
         </section>
 
         <section id="board-all-section" class="board-section board-all-section" aria-labelledby="board-all-heading">
@@ -312,8 +331,10 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
             v-if="sortedBoards.length"
             layout="grid"
             :boards="sortedBoards"
+            :favorite-board-ids="favoriteBoardIds"
             :busy-board-ids="mutationBoardIds"
             @open="openBoard"
+            @favorite="toggleFavorite"
             @rename="openRename"
             @delete="removeBoard"
           />
@@ -363,87 +384,82 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
   min-height: calc(100vh - var(--navbar-h, 36px));
   box-sizing: border-box;
   padding: clamp(30px, 4vw, 56px) clamp(20px, 4vw, 64px) 72px;
-  background:
-    radial-gradient(circle at 86% 0%, color-mix(in srgb, var(--accent) 6%, transparent), transparent 28rem),
-    var(--bg);
+  background: var(--bg);
   color: var(--text);
 }
 .board-home-content { width: min(100%, 1440px); margin: 0 auto; }
 .board-home-header {
   display: flex;
-  margin: 0 0 28px;
+  margin: 0 0 24px;
   align-items: flex-start;
   justify-content: space-between;
   gap: 28px;
 }
 .board-home-heading { min-width: 0; }
-.board-home-eyebrow { margin: 0 0 4px; color: var(--accent); font-size: .8rem; font-weight: 650; letter-spacing: .04em; }
-.board-home-header h1 { margin: 0; color: var(--text-h); font-size: clamp(2.35rem, 4vw, 3rem); font-weight: 700; letter-spacing: -.035em; line-height: 1.12; }
-.board-home-subtitle { margin: 9px 0 0; color: var(--text-muted); font-size: .94rem; line-height: 1.5; }
-.board-new-button { min-height: 46px; padding-inline: 18px; border-radius: 11px; font-size: .9rem; font-weight: 650; }
+.board-home-eyebrow { margin: 0 0 4px; color: var(--accent); font-size: .78rem; font-weight: 650; letter-spacing: .04em; }
+.board-home-header h1 { margin: 0; color: var(--text-h); font-size: clamp(2.5rem, 4vw, 2.75rem); font-weight: 700; letter-spacing: -.035em; line-height: 1.1; }
+.board-home-subtitle { margin: 8px 0 0; color: var(--text-muted); font-size: .92rem; line-height: 1.45; }
+.board-new-button { min-height: 44px; padding-inline: 17px; border-radius: 11px; font-size: .88rem; font-weight: 650; }
 .board-new-button :deep(.n-icon) { margin-right: 2px; font-size: 18px; }
 .board-toolbar {
   display: flex;
   min-width: 0;
-  margin-bottom: 20px;
+  margin-bottom: 34px;
   align-items: center;
-  gap: 14px;
+  gap: 10px;
 }
 .board-search-input { min-width: 0; flex: 1; }
-.board-search-input :deep(.n-input) { border-radius: 11px; }
-.board-search-input :deep(.n-input__prefix) { color: var(--text-muted); font-size: 20px; }
-.board-toolbar-controls { display: flex; flex: 0 0 auto; align-items: center; gap: 12px; }
-.board-sort-select { width: 154px; }
-.board-sort-select :deep(.n-base-selection) { border-radius: 11px; }
+.board-search-input :deep(.n-input) { min-height: 44px; border-radius: 10px; }
+.board-search-input :deep(.n-input__prefix) { color: var(--text-muted); font-size: 19px; }
+.board-search-input :deep(.n-input__input) { font-size: .9rem; }
+.board-toolbar-controls { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; }
+.board-sort-select { width: 148px; }
+.board-sort-select :deep(.n-base-selection) { min-height: 44px; border-radius: 10px; }
 .board-view-toggle {
   display: inline-flex;
+  box-sizing: border-box;
+  height: 44px;
   padding: 3px;
   border: 1px solid var(--border);
-  border-radius: 11px;
-  background: var(--bg-soft);
+  border-radius: 10px;
+  background: transparent;
 }
-.board-view-button { min-width: 38px; height: 38px; padding: 0; border-radius: 8px; color: var(--text-muted); }
+.board-view-button { min-width: 36px; height: 36px; padding: 0; border-radius: 7px; color: var(--text-muted); }
 .board-view-button.is-selected { background: color-mix(in srgb, var(--accent) 11%, var(--bg)); color: var(--accent); }
 .board-view-button:disabled { opacity: .55; }
-.board-summary {
-  display: grid;
-  max-width: 850px;
-  margin-bottom: 32px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px;
-}
-.board-summary-card {
-  display: flex;
-  min-height: 68px;
-  box-sizing: border-box;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
-  border-radius: 13px;
-  background: color-mix(in srgb, var(--bg-soft) 58%, transparent);
-}
-.board-summary-icon {
-  display: grid;
-  width: 36px;
-  height: 36px;
-  flex: 0 0 auto;
-  place-items: center;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-  color: var(--accent);
-  font-size: 19px;
-}
-.board-summary-copy { display: grid; min-width: 0; gap: 1px; }
-.board-summary-label { overflow: hidden; color: var(--text-muted); font-size: .78rem; text-overflow: ellipsis; white-space: nowrap; }
-.board-summary-copy strong { color: var(--text-h); font-size: 1.15rem; line-height: 1.2; }
-.board-section { margin: 0 0 42px; }
-.board-section-heading { display: flex; min-height: 30px; margin-bottom: 14px; align-items: center; justify-content: space-between; gap: 16px; }
-.board-section-heading h2 { margin: 0; color: var(--text-h); font-size: 1.22rem; font-weight: 700; letter-spacing: -.02em; }
+.board-section { margin: 0 0 38px; }
+.board-section-heading { display: flex; min-height: 34px; margin-bottom: 16px; align-items: center; justify-content: space-between; gap: 16px; }
+.board-section-heading h2 { margin: 0; color: var(--text-h); font-size: 1.18rem; font-weight: 650; letter-spacing: -.02em; }
 .board-count { margin-left: 5px; color: var(--text-muted); font-size: .82rem; font-weight: 500; }
-.board-section-link { display: inline-flex; align-items: center; gap: 5px; color: var(--accent); font-size: .8rem; text-decoration: none; }
-.board-section-link:hover { color: var(--accent-hover); text-decoration: none; }
-.board-section-link :deep(.n-icon) { font-size: 15px; }
+.board-quick-tabs {
+  display: inline-flex;
+  height: 34px;
+  box-sizing: border-box;
+  padding: 2px;
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--bg-soft) 44%, transparent);
+}
+.board-quick-tab {
+  min-width: 82px;
+  padding: 5px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: .82rem;
+  cursor: pointer;
+}
+.board-quick-tab:hover { color: var(--text-h); }
+.board-quick-tab.is-active {
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg));
+  color: var(--accent);
+  font-weight: 650;
+}
+.board-quick-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.board-quick-empty { display: grid; min-height: 92px; place-items: center; border: 1px dashed color-mix(in srgb, var(--border) 78%, transparent); border-radius: 12px; }
+.board-quick-empty :deep(.n-empty) { padding: 18px; }
 .board-state { display: grid; min-height: 300px; place-items: center; gap: 12px; margin: 0 auto; color: var(--text-muted); text-align: center; }
 .board-error { max-width: 620px; place-items: stretch; text-align: left; }
 .board-error :deep(.n-result) { padding: 0; }
@@ -465,17 +481,24 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
 .board-empty-icon { display: grid; width: 52px; height: 52px; margin-bottom: 6px; place-items: center; border-radius: 15px; background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--accent); font-size: 26px; }
 .board-empty h2 { margin: 0; color: var(--text-h); font-size: 1.15rem; }
 .board-empty p { margin: 0 0 10px; font-size: .85rem; }
-.board-loading { display: grid; gap: 28px; }
-.board-skeleton-summary { display: grid; max-width: 850px; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
-.board-skeleton-summary-card { height: 68px; border-radius: 13px; background: linear-gradient(90deg, var(--bg-soft), color-mix(in srgb, var(--border) 35%, var(--bg-soft)), var(--bg-soft)); background-size: 220% 100%; animation: board-skeleton-pulse 1.4s ease-in-out infinite; }
-.board-skeleton-recent { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
-.board-skeleton-card { display: flex; min-height: 164px; box-sizing: border-box; align-items: center; gap: 18px; padding: 12px; border: 1px solid var(--border); border-radius: 16px; background: var(--bg); }
-.board-skeleton-preview { width: 38%; aspect-ratio: 16 / 10; border-radius: 11px; background: var(--bg-soft); }
-.board-skeleton-lines { display: grid; flex: 1; gap: 9px; }
+.board-loading { display: grid; gap: 32px; }
+.board-skeleton-recent { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; }
+.board-skeleton-card { display: grid; min-width: 0; overflow: hidden; box-sizing: border-box; border: 1px solid color-mix(in srgb, var(--border) 80%, transparent); border-radius: 14px; background: var(--bg); }
+.board-skeleton-preview { width: calc(100% - 24px); margin: 12px 12px 0; aspect-ratio: 16 / 10; border-radius: 11px; background: var(--bg-soft); }
+.board-skeleton-lines { display: grid; gap: 9px; padding: 13px 14px 16px; border-top: 1px solid color-mix(in srgb, var(--border) 74%, transparent); }
 .board-skeleton-lines i { display: block; height: 10px; border-radius: 5px; background: var(--bg-soft); }
 .board-skeleton-lines i:first-child { width: 76%; height: 14px; }
 .board-skeleton-lines i:last-child { width: 48%; }
 @keyframes board-skeleton-pulse { 0%, 100% { background-position: 100% 0; } 50% { background-position: 0 0; } }
+@media (max-width: 1279px) {
+  .board-skeleton-recent { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (max-width: 1023px) {
+  .board-skeleton-recent { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 767px) {
+  .board-skeleton-recent { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 @media (max-width: 600px) {
   .board-home { padding-top: 28px; }
   .board-home-header { align-items: stretch; flex-direction: column; }
@@ -484,8 +507,7 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
   .board-toolbar { align-items: stretch; flex-direction: column; }
   .board-toolbar-controls { justify-content: space-between; }
   .board-sort-select { flex: 1; width: auto; }
-  .board-summary { grid-template-columns: 1fr; }
-  .board-skeleton-summary,
-  .board-skeleton-recent { grid-template-columns: 1fr; }
+  .board-skeleton-recent { display: flex; overflow-x: hidden; }
+  .board-skeleton-card { flex: 0 0 calc((100% - 18px) / 2); }
 }
 </style>
