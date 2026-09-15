@@ -116,7 +116,8 @@ describe('Board Gallery Home', () => {
     expect(wrapper.find('[data-testid="board-summary-all"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="board-summary-recent"]').exists()).toBe(false)
     expect(wrapper.find('.board-section-link').exists()).toBe(false)
-    expect(wrapper.get('[data-testid="board-list-view"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-testid="board-toolbar"]').exists()).toBe(false)
+    expect(wrapper.find('.board-all-search').exists()).toBe(true)
     wrapper.unmount()
   })
 

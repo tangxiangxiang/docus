@@ -76,10 +76,11 @@ function selectMenu(key: string | number): void {
         <span class="board-card-updated">{{ t('board.updated', { date: updatedLabel }) }}</span>
       </span>
     </button>
-    <NDropdown :options="menuOptions" trigger="click" @select="selectMenu">
+    <NDropdown :options="menuOptions" size="small" trigger="click" @select="selectMenu">
       <NButton
         class="board-card-menu"
         attr-type="button"
+        size="small"
         quaternary
         :bordered="false"
         :disabled="busy"

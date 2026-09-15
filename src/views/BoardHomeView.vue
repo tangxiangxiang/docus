@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { NButton, NEmpty, NIcon, NInput, NModal, NResult, NSelect, type InputInst, type SelectOption } from 'naive-ui'
-import { LayoutGrid, List, Plus, Search } from '@vicons/tabler'
+import { LayoutGrid, Plus, Search } from '@vicons/tabler'
 import BoardGallery from '../components/board/BoardGallery.vue'
 import {
   BoardApiError,
@@ -42,7 +42,7 @@ const filteredBoards = computed(() => {
   if (!normalizedQuery.value) return boards.value
   return boards.value.filter((board) => board.title.toLocaleLowerCase().includes(normalizedQuery.value))
 })
-const sortBy = ref<BoardSortKey>('updated')
+const sortBy = ref<BoardSortKey>('name')
 const sortOptions = computed<SelectOption[]>(() => [
   { label: t('board.sort_updated'), value: 'updated' },
   { label: t('board.sort_name'), value: 'name' },
@@ -200,6 +200,7 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
         <NButton
           class="board-new-button"
           attr-type="button"
+          size="small"
           type="primary"
           :loading="mutationBoardIds.includes('__create__')"
           :disabled="mutationBoardIds.includes('__create__')"
@@ -209,55 +210,6 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
           {{ t('board.new') }}
         </NButton>
       </header>
-
-      <div class="board-toolbar" data-testid="board-toolbar">
-        <NInput
-          v-model:value="query"
-          class="board-search-input"
-          clearable
-          size="large"
-          type="text"
-          :placeholder="t('board.search_placeholder')"
-          :input-props="{ 'aria-label': t('board.search_label'), autocomplete: 'off' }"
-        >
-          <template #prefix><NIcon aria-hidden="true"><Search /></NIcon></template>
-        </NInput>
-        <div class="board-toolbar-controls">
-          <NSelect
-            v-model:value="sortBy"
-            class="board-sort-select"
-            size="large"
-            :options="sortOptions"
-            :aria-label="t('board.sort_label')"
-          />
-          <div class="board-view-toggle" role="group" :aria-label="t('board.view_label')">
-            <NButton
-              class="board-view-button is-selected"
-              attr-type="button"
-              quaternary
-              :bordered="false"
-              :aria-label="t('board.view_grid')"
-              aria-pressed="true"
-              data-testid="board-grid-view"
-            >
-              <NIcon aria-hidden="true"><LayoutGrid /></NIcon>
-            </NButton>
-            <NButton
-              class="board-view-button"
-              attr-type="button"
-              quaternary
-              :bordered="false"
-              disabled
-              :aria-label="t('board.view_list_unavailable')"
-              aria-pressed="false"
-              :title="t('board.view_list_unavailable')"
-              data-testid="board-list-view"
-            >
-              <NIcon aria-hidden="true"><List /></NIcon>
-            </NButton>
-          </div>
-        </div>
-      </div>
 
       <section v-if="loading && !hasBoards" class="board-loading" data-testid="board-loading" role="status" aria-live="polite" :aria-label="t('board.loading')">
         <div class="board-skeleton-recent" aria-hidden="true">
@@ -269,9 +221,9 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
       </section>
 
       <section v-else-if="loadError && !hasBoards" class="board-state board-error" data-testid="board-error" role="alert">
-        <NResult status="error" :title="t('board.load_failed')" :description="loadError">
+        <NResult size="small" status="error" :title="t('board.load_failed')" :description="loadError">
           <template #footer>
-            <NButton attr-type="button" type="primary" @click="loadBoards">{{ t('common.retry') }}</NButton>
+            <NButton attr-type="button" size="small" type="primary" @click="loadBoards">{{ t('common.retry') }}</NButton>
           </template>
         </NResult>
       </section>
@@ -319,13 +271,33 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
             @delete="removeBoard"
           />
           <div v-else class="board-quick-empty">
-            <NEmpty :description="t('board.no_favorites')" />
+            <NEmpty size="small" :description="t('board.no_favorites')" />
           </div>
         </section>
 
         <section id="board-all-section" class="board-section board-all-section" aria-labelledby="board-all-heading">
-          <div class="board-section-heading">
+          <div class="board-section-heading board-all-section-heading">
             <h2 id="board-all-heading">{{ hasSearch ? t('board.search_results') : t('board.all_boards') }} <span class="board-count">{{ sortedBoards.length }}</span></h2>
+            <div class="board-all-heading-controls">
+              <NInput
+                v-model:value="query"
+                class="board-search-input board-all-search"
+                clearable
+                size="small"
+                type="text"
+                :placeholder="t('board.search_placeholder')"
+                :input-props="{ 'aria-label': t('board.search_label'), autocomplete: 'off' }"
+              >
+                <template #prefix><NIcon aria-hidden="true"><Search /></NIcon></template>
+              </NInput>
+              <NSelect
+                v-model:value="sortBy"
+                class="board-sort-select"
+                size="small"
+                :options="sortOptions"
+                :aria-label="t('board.sort_label')"
+              />
+            </div>
           </div>
           <BoardGallery
             v-if="sortedBoards.length"
@@ -338,7 +310,7 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
             @rename="openRename"
             @delete="removeBoard"
           />
-          <NEmpty v-else :description="t('board.no_results')" />
+          <NEmpty v-else size="small" :description="t('board.no_results')" />
         </section>
       </template>
 
@@ -346,7 +318,7 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
         <span class="board-empty-icon" aria-hidden="true"><NIcon><LayoutGrid /></NIcon></span>
         <h2>{{ t('board.empty') }}</h2>
         <p>{{ t('board.empty_detail') }}</p>
-        <NButton attr-type="button" type="primary" @click="newBoard">
+        <NButton attr-type="button" size="small" type="primary" @click="newBoard">
           <NIcon aria-hidden="true"><Plus /></NIcon>
           {{ t('board.create_first') }}
         </NButton>
@@ -356,6 +328,7 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
     <NModal
       v-model:show="renameOpen"
       preset="dialog"
+      size="small"
       :title="t('board.rename_title')"
       :show-icon="false"
       :closable="!renameBusy"
@@ -366,14 +339,15 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
       <NInput
         ref="renameInput"
         v-model:value="renameTitle"
+        size="small"
         :disabled="renameBusy"
         :placeholder="t('board.title_placeholder')"
         :input-props="{ 'aria-label': t('board.title_label'), autocomplete: 'off' }"
         @keydown.enter.prevent="submitRename"
       />
       <template #action>
-        <NButton attr-type="button" :disabled="renameBusy" @click="closeRename">{{ t('common.cancel') }}</NButton>
-        <NButton data-testid="board-rename-submit" attr-type="button" type="primary" :loading="renameBusy" @click="submitRename">{{ t('common.save') }}</NButton>
+        <NButton attr-type="button" size="small" :disabled="renameBusy" @click="closeRename">{{ t('common.cancel') }}</NButton>
+        <NButton data-testid="board-rename-submit" attr-type="button" size="small" type="primary" :loading="renameBusy" @click="submitRename">{{ t('common.save') }}</NButton>
       </template>
     </NModal>
   </div>
@@ -399,34 +373,17 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
 .board-home-eyebrow { margin: 0 0 4px; color: var(--accent); font-size: .78rem; font-weight: 650; letter-spacing: .04em; }
 .board-home-header h1 { margin: 0; color: var(--text-h); font-size: clamp(2.5rem, 4vw, 2.75rem); font-weight: 700; letter-spacing: -.035em; line-height: 1.1; }
 .board-home-subtitle { margin: 8px 0 0; color: var(--text-muted); font-size: .92rem; line-height: 1.45; }
-.board-new-button { min-height: 44px; padding-inline: 17px; border-radius: 11px; font-size: .88rem; font-weight: 650; }
-.board-new-button :deep(.n-icon) { margin-right: 2px; font-size: 18px; }
-.board-toolbar {
-  display: flex;
-  min-width: 0;
-  margin-bottom: 34px;
-  align-items: center;
-  gap: 10px;
-}
-.board-search-input { min-width: 0; flex: 1; }
-.board-search-input :deep(.n-input) { min-height: 44px; border-radius: 10px; }
+.board-new-button { border-radius: 9px; font-weight: 650; }
+.board-new-button :deep(.n-icon) { margin-right: 2px; }
+.board-search-input { width: min(100%, 780px); min-width: 0; flex: 0 1 780px; }
+.board-search-input { border-radius: 10px; }
 .board-search-input :deep(.n-input__prefix) { color: var(--text-muted); font-size: 19px; }
 .board-search-input :deep(.n-input__input) { font-size: .9rem; }
-.board-toolbar-controls { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; }
+.board-all-section-heading { align-items: center; }
+.board-all-heading-controls { display: flex; min-width: 0; align-items: center; gap: 8px; }
+.board-all-search { width: min(100%, 360px); flex: 0 1 360px; }
 .board-sort-select { width: 148px; }
-.board-sort-select :deep(.n-base-selection) { min-height: 44px; border-radius: 10px; }
-.board-view-toggle {
-  display: inline-flex;
-  box-sizing: border-box;
-  height: 44px;
-  padding: 3px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: transparent;
-}
-.board-view-button { min-width: 36px; height: 36px; padding: 0; border-radius: 7px; color: var(--text-muted); }
-.board-view-button.is-selected { background: color-mix(in srgb, var(--accent) 11%, var(--bg)); color: var(--accent); }
-.board-view-button:disabled { opacity: .55; }
+.board-sort-select :deep(.n-base-selection) { border-radius: 10px; }
 .board-section { margin: 0 0 38px; }
 .board-section-heading { display: flex; min-height: 34px; margin-bottom: 16px; align-items: center; justify-content: space-between; gap: 16px; }
 .board-section-heading h2 { margin: 0; color: var(--text-h); font-size: 1.18rem; font-weight: 650; letter-spacing: -.02em; }
@@ -504,9 +461,9 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
   .board-home-header { align-items: stretch; flex-direction: column; }
   .board-home-subtitle { max-width: 32rem; }
   .board-new-button { align-self: stretch; }
-  .board-toolbar { align-items: stretch; flex-direction: column; }
-  .board-toolbar-controls { justify-content: space-between; }
-  .board-sort-select { flex: 1; width: auto; }
+  .board-all-section-heading { align-items: stretch; flex-direction: column; gap: 10px; }
+  .board-all-heading-controls { width: 100%; }
+  .board-all-search { width: auto; flex: 1 1 auto; }
   .board-skeleton-recent { display: flex; overflow-x: hidden; }
   .board-skeleton-card { flex: 0 0 calc((100% - 18px) / 2); }
 }
