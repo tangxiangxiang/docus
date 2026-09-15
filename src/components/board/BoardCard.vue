@@ -22,7 +22,7 @@ const emit = defineEmits<{
   delete: [board: BoardMetadata]
 }>()
 
-const { locale, t } = useI18n()
+const { t } = useI18n()
 const thumbnailFailed = ref(false)
 const menuOptions = computed<DropdownOption[]>(() => [
   { label: props.favorite ? t('board.unfavorite') : t('board.favorite'), key: 'favorite' },
@@ -33,14 +33,10 @@ const thumbnailUrl = computed(() => props.board.thumbnailAssetId
   ? boardAssetUrl(props.board.thumbnailAssetId)
   : '')
 const updatedLabel = computed(() => {
-  try {
-    return new Intl.DateTimeFormat(locale.value === 'zh' ? 'zh-CN' : 'en-US', {
-      dateStyle: 'medium',
-      timeStyle: 'short',
-    }).format(new Date(props.board.updatedAt))
-  } catch {
-    return String(props.board.updatedAt)
-  }
+  const date = new Date(props.board.updatedAt)
+  if (Number.isNaN(date.getTime())) return String(props.board.updatedAt)
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${date.getFullYear()}/${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 })
 
 watch(() => props.board.thumbnailAssetId, () => { thumbnailFailed.value = false })
