@@ -1,15 +1,21 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { NButton, NDropdown, type DropdownOption } from 'naive-ui'
+import { NButton, NDropdown, NIcon, type DropdownOption } from 'naive-ui'
+import { Dots } from '@vicons/tabler'
 import type { BoardMetadata } from '../../../shared/boardProtocol'
 import { boardAssetUrl } from '../../features/board/api'
 import { useI18n } from '../../composables/useI18n'
 
+type BoardCardLayout = 'recent' | 'grid'
+
 const props = withDefaults(defineProps<{
   board: BoardMetadata
+  layout?: BoardCardLayout
+  /** Compatibility alias for callers that used the original compact prop. */
   compact?: boolean
   busy?: boolean
 }>(), {
+  layout: undefined,
   compact: false,
   busy: false,
 })
@@ -20,8 +26,9 @@ const emit = defineEmits<{
   delete: [board: BoardMetadata]
 }>()
 
-const { t } = useI18n()
+const { locale, t } = useI18n()
 const thumbnailFailed = ref(false)
+const layout = computed<BoardCardLayout>(() => props.layout ?? (props.compact ? 'grid' : 'recent'))
 const menuOptions = computed<DropdownOption[]>(() => [
   { label: t('board.rename'), key: 'rename' },
   { label: t('board.delete'), key: 'delete' },
@@ -31,7 +38,10 @@ const thumbnailUrl = computed(() => props.board.thumbnailAssetId
   : '')
 const updatedLabel = computed(() => {
   try {
-    return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(props.board.updatedAt))
+    return new Intl.DateTimeFormat(locale.value === 'zh' ? 'zh-CN' : 'en-US', {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    }).format(new Date(props.board.updatedAt))
   } catch {
     return String(props.board.updatedAt)
   }
@@ -46,7 +56,7 @@ function selectMenu(key: string | number): void {
 </script>
 
 <template>
-  <article :class="['board-card', { 'is-compact': compact, 'is-busy': busy }]" :data-board-id="board.id">
+  <article :class="['board-card', `is-${layout}`, { 'is-busy': busy }]" :data-board-id="board.id">
     <button
       class="board-card-open"
       type="button"
@@ -80,7 +90,7 @@ function selectMenu(key: string | number): void {
         :title="t('board.card_menu', { title: board.title })"
         @click.stop
       >
-        <span aria-hidden="true">⋯</span>
+        <NIcon aria-hidden="true"><Dots /></NIcon>
       </NButton>
     </NDropdown>
   </article>
@@ -90,16 +100,17 @@ function selectMenu(key: string | number): void {
 .board-card {
   position: relative;
   min-width: 0;
+  overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 16px;
   background: var(--bg);
-  box-shadow: 0 2px 8px rgb(15 23 42 / 4%);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--text-h) 5%, transparent);
   transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
 }
 .board-card:hover,
 .board-card:focus-within {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
-  box-shadow: 0 8px 20px rgb(15 23 42 / 9%);
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--text-h) 10%, transparent);
   transform: translateY(-1px);
 }
 .board-card.is-busy { opacity: .64; }
@@ -107,9 +118,6 @@ function selectMenu(key: string | number): void {
   display: flex;
   width: 100%;
   min-width: 0;
-  gap: 14px;
-  align-items: center;
-  padding: 14px;
   border: 0;
   border-radius: inherit;
   background: transparent;
@@ -120,32 +128,87 @@ function selectMenu(key: string | number): void {
 }
 .board-card-open:disabled { cursor: default; }
 .board-card-thumbnail {
+  position: relative;
   display: grid;
-  flex: 0 0 96px;
-  width: 96px;
-  height: 72px;
   place-items: center;
   overflow: hidden;
-  border-radius: 8px;
-  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 18%, var(--bg-soft)), var(--bg-soft));
+  border-radius: 11px;
+  background-color: var(--bg-soft);
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--accent) 5%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--accent) 5%, transparent) 1px, transparent 1px),
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 13%, var(--bg-soft)), var(--bg-soft));
+  background-size: 18px 18px, 18px 18px, 100% 100%;
   color: var(--accent);
-  font-size: 1.65rem;
-  font-weight: 700;
 }
-.board-card.is-compact .board-card-thumbnail {
-  flex-basis: 72px;
-  width: 72px;
-  height: 56px;
-  font-size: 1.2rem;
+.board-card.is-recent .board-card-open {
+  min-height: 164px;
+  align-items: center;
+  gap: 18px;
+  padding: 12px;
 }
-.board-card-thumbnail img { display: block; width: 100%; height: 100%; object-fit: cover; }
-.board-card-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 3px; padding-right: 28px; }
-.board-card-title { overflow: hidden; color: var(--text-h); font-size: .98rem; text-overflow: ellipsis; white-space: nowrap; }
-.board-card-updated { overflow: hidden; color: var(--text-muted); font-size: .75rem; text-overflow: ellipsis; white-space: nowrap; }
-.board-card-menu { position: absolute; top: 8px; right: 8px; min-width: 28px; min-height: 28px; padding: 0 6px; color: var(--text-muted); }
-.board-card-menu span { display: block; transform: translateY(-3px); font-size: 1.25rem; line-height: 1; letter-spacing: 2px; }
+.board-card.is-recent .board-card-thumbnail {
+  width: 38%;
+  min-width: 150px;
+  max-width: 250px;
+  aspect-ratio: 16 / 10;
+  flex: 0 1 250px;
+}
+.board-card.is-grid .board-card-open {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+}
+.board-card.is-grid .board-card-thumbnail {
+  width: calc(100% - 24px);
+  margin: 12px 12px 0;
+  aspect-ratio: 16 / 10;
+}
+.board-card-thumbnail img { display: block; width: 100%; height: 100%; box-sizing: border-box; padding: 8px; object-fit: contain; }
+.board-card-placeholder { font-size: 2rem; font-weight: 700; line-height: 1; }
+.board-card-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  padding-right: 32px;
+}
+.board-card.is-grid .board-card-copy {
+  flex: none;
+  padding: 13px 14px 16px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 74%, transparent);
+}
+.board-card-title { overflow: hidden; color: var(--text-h); font-size: 1rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.board-card.is-grid .board-card-title { font-size: .96rem; }
+.board-card-updated { overflow: hidden; color: var(--text-muted); font-size: .78rem; text-overflow: ellipsis; white-space: nowrap; }
+.board-card-menu {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 1;
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 80%, transparent);
+  color: var(--text-muted);
+  opacity: .72;
+  transition: opacity .15s ease, color .15s ease, background .15s ease;
+}
+.board-card-menu:hover { background: var(--bg-soft); color: var(--text-h); opacity: 1; }
+.board-card-menu :deep(.n-icon) { font-size: 18px; }
+@media (hover: hover) and (pointer: fine) {
+  .board-card-menu { opacity: 0; }
+  .board-card:hover .board-card-menu,
+  .board-card:focus-within .board-card-menu { opacity: .82; }
+}
 @media (max-width: 600px) {
-  .board-card-thumbnail { flex-basis: 72px; width: 72px; height: 60px; }
-  .board-card-open { gap: 10px; padding: 12px; }
+  .board-card.is-recent .board-card-open { gap: 12px; }
+  .board-card.is-recent .board-card-thumbnail { min-width: 112px; }
+  .board-card.is-grid .board-card-thumbnail { width: calc(100% - 20px); margin: 10px 10px 0; }
+  .board-card.is-grid .board-card-copy { padding: 12px 12px 14px; }
 }
 </style>

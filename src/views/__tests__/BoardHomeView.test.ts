@@ -75,7 +75,7 @@ describe('Board Gallery Home', () => {
       'Reading List',
     ])
 
-    await wrapper.find('.board-home-search input').setValue('atlas')
+    await wrapper.find('.board-search-input input').setValue('atlas')
     await flushPromises()
     expect(wrapper.findAll('[data-testid="board-card-title"]').map((item) => item.text())).toEqual([
       'Project Atlas',
@@ -83,12 +83,32 @@ describe('Board Gallery Home', () => {
     wrapper.unmount()
   })
 
-  it('shows Board as the eyebrow and Idea canvas as the page title', async () => {
+  it('shows Idea canvas as the eyebrow and Board as the page title', async () => {
     api.listBoards.mockResolvedValue([])
     const { wrapper } = await mountHome()
 
-    expect(wrapper.get('.board-home-eyebrow').text()).toBe('Board')
-    expect(wrapper.get('.board-home-header h1').text()).toBe('Idea canvas')
+    expect(wrapper.get('.board-home-eyebrow').text()).toBe('Idea canvas')
+    expect(wrapper.get('.board-home-header h1').text()).toBe('Board')
+    wrapper.unmount()
+  })
+
+  it('keeps two recent boards above the complete grid and exposes real summary counts', async () => {
+    api.listBoards.mockResolvedValue([
+      board('older', 'Reading List', 10),
+      board('newer', 'Project Atlas', 30),
+      board('middle', 'Sketch Notes', 20),
+    ])
+    const { wrapper } = await mountHome()
+
+    expect(wrapper.findAll('.board-recent-section .board-card')).toHaveLength(2)
+    expect(wrapper.findAll('.board-recent-section .board-card.is-recent')).toHaveLength(2)
+    expect(wrapper.findAll('.board-all-section .board-card')).toHaveLength(3)
+    expect(wrapper.findAll('.board-all-section .board-card.is-grid')).toHaveLength(3)
+    expect(wrapper.find('.board-recent-section [data-testid="board-card-title"]').text()).toBe('Project Atlas')
+    expect(wrapper.get('[data-testid="board-summary-all"]').text()).toContain('3')
+    expect(wrapper.get('[data-testid="board-summary-recent"]').text()).toContain('2')
+    expect(wrapper.get('.board-section-link').attributes('href')).toBe('#board-all-section')
+    expect(wrapper.get('[data-testid="board-list-view"]').attributes('disabled')).toBeDefined()
     wrapper.unmount()
   })
 
