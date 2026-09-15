@@ -2,12 +2,13 @@
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NButton, NIcon } from 'naive-ui'
 import {
-  Book,
   Box,
+  Calendar,
   Edit,
   Eye,
   LayoutSidebarLeftExpand,
   LayoutSidebarRightExpand,
+  Lock,
   Moon,
   Notes,
   Search,
@@ -88,11 +89,11 @@ const themeTitle = computed<string>(() => {
   return t('nav.theme', { current, next })
 })
 
-const SCOPE_CHIPS = [
+const scopeChips = computed(() => [
   { scope: 'note', label: 'note', icon: Notes },
-  { scope: 'diary', label: 'diary', icon: Book },
+  { scope: 'diary', label: 'diary', icon: props.diaryUnlocked ? Calendar : Lock },
   { scope: 'ledger', label: 'ledger', icon: Wallet },
-] as const
+] as const)
 
 function scopeLabel(scope: ScopeKey, label: string): string {
   return isScopeActive(scope)
@@ -283,7 +284,7 @@ onBeforeUnmount(() => {
       <div v-if="isWorkspace" class="workspace-navigation">
         <div v-if="showScopeChips" class="scope-chips" role="tablist" :aria-label="t('nav.scope_label')">
           <NButton
-            v-for="chip in SCOPE_CHIPS"
+            v-for="chip in scopeChips"
             :key="chip.scope"
             class="scope-chip"
             :class="{ active: isScopeActive(chip.scope) }"

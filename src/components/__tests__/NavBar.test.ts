@@ -10,6 +10,7 @@ import { useTheme } from '../../composables/useTheme'
 import { useScopeFilter } from '../../composables/vault/useScopeFilter'
 import { __resetVaultLayoutState } from '../../composables/vault/useVaultLayout'
 import { AppShellContextKey } from '../../composables/appShellContext'
+import { Calendar, Lock } from '@vicons/tabler'
 
 function makeViewModeApi(initial: VaultViewMode = 'edit') {
   const mode = ref<VaultViewMode>(initial)
@@ -241,6 +242,21 @@ describe('NavBar — scope chips', () => {
       'diary',
       'ledger',
     ])
+  })
+
+  it('shows a lock for a locked Diary and a calendar after unlocking', async () => {
+    const wrapper = mount(NavBar, {
+      props: { isVault: true, diaryUnlocked: false },
+    })
+
+    expect(wrapper.findComponent(Lock).exists()).toBe(true)
+    expect(wrapper.findComponent(Calendar).exists()).toBe(false)
+
+    await wrapper.setProps({ diaryUnlocked: true })
+
+    expect(wrapper.findComponent(Lock).exists()).toBe(false)
+    expect(wrapper.findComponent(Calendar).exists()).toBe(true)
+    wrapper.unmount()
   })
 
   it('uses content scopes instead of exposing individual vault roots', async () => {
