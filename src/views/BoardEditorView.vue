@@ -243,7 +243,7 @@ async function mountScene(
       },
       onSaveSucceeded: (event) => {
         scheduler.onServerSaveSucceeded(event)
-        thumbnail.schedule({ runtimeScene: event.runtimeScene, revision: event.savedLocalRevision })
+        thumbnail.schedule({ runtimeScene: event.runtimeScene, revision: event.revision })
       },
       onStateChange: (nextState) => {
         saveState.value = nextState
@@ -641,23 +641,36 @@ async function deleteCurrentBoard(): Promise<void> {
   )
   if (!confirmed || !session.value || session.value.boardId !== id) return
 
+  const currentSaveCoordinator = saveCoordinator.value
+  const currentThumbnailScheduler = thumbnailScheduler.value
+  const currentCheckpointScheduler = checkpointScheduler.value
+  const currentAssetSession = assetSession.value
+  const currentAssetIntakePromise = assetIntakePromise
+  const currentHostChangePromise = hostChangePromise
   deleting.value = true
   try {
     await deleteBoard(id)
-    boardMetadataSource.remove(id)
-    // A delete request is now the lifecycle authority. Drop queued derived
-    // work; an already-running thumbnail job may finish and harmlessly receive
-    // a 404 from the deleted Board. Keeping this after the server call means a
-    // failed delete leaves the editor fully usable.
-    thumbnailScheduler.value?.dispose({ drain: false })
-    const currentCheckpointScheduler = checkpointScheduler.value
-    const currentAssetSession = assetSession.value
-    hostChangeSequence += 1
+
+    // DELETE success is the lifecycle authority. Fence every callback from
+    // this editor before mutating the client metadata snapshot.
+    currentSaveCoordinator?.dispose()
+    saveCoordinator.value = null
+    saveState.value = null
+    currentThumbnailScheduler?.dispose({ drain: false })
+    thumbnailScheduler.value = null
     currentCheckpointScheduler?.dispose({ drain: false })
+    checkpointScheduler.value = null
     currentAssetSession?.dispose()
+    assetSession.value = null
+    hostChangeSequence += 1
+
+    boardMetadataSource.remove(id)
+    // An already-running thumbnail job may finish and harmlessly receive a
+    // 404 from the deleted Board. Keeping this fence after the server call
+    // means a failed delete leaves the editor fully usable.
     await Promise.all([
-      assetIntakePromise.catch(() => {}),
-      hostChangePromise.catch(() => {}),
+      currentAssetIntakePromise.catch(() => {}),
+      currentHostChangePromise.catch(() => {}),
       currentCheckpointScheduler?.waitForIdle() ?? Promise.resolve(),
     ])
     try {
@@ -665,9 +678,6 @@ async function deleteCurrentBoard(): Promise<void> {
     } catch {
       toast.error(t('board.recovery_cleanup_failed'))
     }
-    // Prevent the route guard from trying to save a dirty scene after the
-    // server has already deleted its Board row.
-    disposePersistence()
     await router.push({ name: 'board' })
   } catch (error) {
     toast.error(error instanceof Error && error.message.trim()

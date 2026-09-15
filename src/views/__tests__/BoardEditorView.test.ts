@@ -11,6 +11,7 @@ import { useConfirm } from '../../composables/useConfirm'
 import { boardMetadataSource } from '../../features/board/metadataSource'
 import { excalidrawAdapter } from '../../features/board/engine/excalidrawAdapter'
 import * as boardExport from '../../features/board/boardExport'
+import * as thumbnailSchedulerModule from '../../features/board/thumbnailScheduler'
 
 const api = vi.hoisted(() => ({
   BoardApiError: class BoardApiError extends Error {
@@ -520,6 +521,41 @@ describe('Board Editor B4 lifecycle', () => {
     wrapper.unmount()
   })
 
+  it('passes the server Scene revision to the thumbnail scheduler', async () => {
+    const schedule = vi.fn()
+    const dispose = vi.fn()
+    const createThumbnailScheduler = vi.spyOn(thumbnailSchedulerModule, 'createBoardThumbnailScheduler')
+      .mockImplementation(() => ({ schedule, dispose }) as never)
+    api.getBoard.mockResolvedValueOnce(board('a'))
+    api.saveBoardScene.mockResolvedValueOnce({ revision: 9, updatedAt: 20 })
+    const { wrapper } = await mountEditor()
+    await flushPromises()
+    const host = wrapper.findComponent(ExcalidrawHost)
+    host.vm.$emit('ready')
+
+    vi.useFakeTimers()
+    for (const id of ['rectangle-1', 'rectangle-2', 'rectangle-3']) {
+      host.vm.$emit('change', {
+        elements: [{ id, type: 'rectangle', version: 1, x: 10, y: 10, width: 20, height: 20 }],
+        appState: {},
+        files: {},
+      })
+      await flushPromises()
+    }
+    await vi.advanceTimersByTimeAsync(800)
+    await flushPromises()
+
+    expect(schedule).toHaveBeenCalledWith({
+      runtimeScene: expect.objectContaining({
+        elements: [expect.objectContaining({ id: 'rectangle-3' })],
+      }),
+      revision: 9,
+    })
+    expect(schedule).not.toHaveBeenCalledWith(expect.objectContaining({ revision: 3 }))
+    wrapper.unmount()
+    createThumbnailScheduler.mockRestore()
+  })
+
   it('opens the editor menu and exports the current runtime without persistence', async () => {
     api.getBoard.mockImplementationOnce(async () => {
       const result = board('a', 'My Board')
@@ -597,6 +633,107 @@ describe('Board Editor B4 lifecycle', () => {
     expect(router.currentRoute.value.name).toBe('board-editor')
     expect(wrapper.find('[data-testid="board-editor-surface"]').exists()).toBe(true)
     expect(recovery.store.clearBoardRecovery).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('prevents a late Scene save response from resurrecting metadata after delete success', async () => {
+    const sceneSave = deferred<{ revision: number; updatedAt: number }>()
+    const deleteRequest = deferred<void>()
+    api.getBoard.mockResolvedValueOnce(board('a', 'Delete me'))
+    api.saveBoardScene.mockReturnValueOnce(sceneSave.promise)
+    api.deleteBoard.mockReturnValueOnce(deleteRequest.promise)
+    const { wrapper, router } = await mountEditor()
+    await flushPromises()
+    const host = wrapper.findComponent(ExcalidrawHost)
+    host.vm.$emit('ready')
+
+    vi.useFakeTimers()
+    host.vm.$emit('change', {
+      elements: [{ id: 'rectangle-1', type: 'rectangle', version: 1, x: 10, y: 10, width: 20, height: 20 }],
+      appState: {},
+      files: {},
+    })
+    await vi.advanceTimersByTimeAsync(800)
+    await flushPromises()
+    expect(api.saveBoardScene).toHaveBeenCalledOnce()
+
+    await wrapper.get('[data-testid="board-editor-menu"]').trigger('click')
+    await flushPromises()
+    const deleteOption = Array.from(document.body.querySelectorAll<HTMLElement>('.n-dropdown-option'))
+      .find((element) => element.textContent?.trim() === 'Delete board')
+    deleteOption?.querySelector<HTMLElement>('.n-dropdown-option-body')?.click()
+    await flushPromises()
+    const request = useConfirm().queue.value[0]
+    if (request) useConfirm().answer(request.id, true)
+    await flushPromises()
+
+    expect(api.deleteBoard).toHaveBeenCalledWith('a')
+    expect(router.currentRoute.value.name).toBe('board-editor')
+
+    deleteRequest.resolve(undefined)
+    await flushPromises()
+    expect(boardMetadataSource.getSnapshot()).not.toContainEqual(expect.objectContaining({ id: 'a' }))
+
+    sceneSave.resolve({ revision: 4, updatedAt: 999 })
+    await flushPromises()
+
+    expect(boardMetadataSource.getSnapshot()).not.toContainEqual(expect.objectContaining({ id: 'a' }))
+    expect(router.currentRoute.value.name).toBe('board')
+    wrapper.unmount()
+  })
+
+  it('keeps an in-flight Scene save authoritative when delete fails', async () => {
+    const sceneSave = deferred<{ revision: number; updatedAt: number }>()
+    api.getBoard.mockResolvedValueOnce(board('a', 'Keep me'))
+    api.saveBoardScene
+      .mockReturnValueOnce(sceneSave.promise)
+      .mockResolvedValueOnce({ revision: 5, updatedAt: 21 })
+    api.deleteBoard.mockRejectedValueOnce(new Error('delete failed'))
+    const { wrapper, router } = await mountEditor()
+    await flushPromises()
+    const host = wrapper.findComponent(ExcalidrawHost)
+    host.vm.$emit('ready')
+
+    vi.useFakeTimers()
+    host.vm.$emit('change', {
+      elements: [{ id: 'rectangle-1', type: 'rectangle', version: 1, x: 10, y: 10, width: 20, height: 20 }],
+      appState: {},
+      files: {},
+    })
+    await vi.advanceTimersByTimeAsync(800)
+    await flushPromises()
+    expect(api.saveBoardScene).toHaveBeenCalledOnce()
+
+    await wrapper.get('[data-testid="board-editor-menu"]').trigger('click')
+    await flushPromises()
+    const deleteOption = Array.from(document.body.querySelectorAll<HTMLElement>('.n-dropdown-option'))
+      .find((element) => element.textContent?.trim() === 'Delete board')
+    deleteOption?.querySelector<HTMLElement>('.n-dropdown-option-body')?.click()
+    await flushPromises()
+    const request = useConfirm().queue.value[0]
+    if (request) useConfirm().answer(request.id, true)
+    await flushPromises()
+
+    expect(router.currentRoute.value.name).toBe('board-editor')
+    expect(wrapper.find('[data-testid="board-editor-surface"]').exists()).toBe(true)
+    expect(recovery.store.clearBoardRecovery).not.toHaveBeenCalled()
+
+    sceneSave.resolve({ revision: 4, updatedAt: 20 })
+    await flushPromises()
+    expect(boardMetadataSource.getSnapshot()).toContainEqual(expect.objectContaining({ id: 'a', updatedAt: 20 }))
+
+    host.vm.$emit('change', {
+      elements: [{ id: 'rectangle-2', type: 'rectangle', version: 1, x: 30, y: 30, width: 20, height: 20 }],
+      appState: {},
+      files: {},
+    })
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(800)
+    await flushPromises()
+
+    expect(api.saveBoardScene).toHaveBeenCalledTimes(2)
+    expect(api.saveBoardScene).toHaveBeenLastCalledWith('a', expect.objectContaining({ expectedRevision: 4 }))
+    expect(router.currentRoute.value.name).toBe('board-editor')
     wrapper.unmount()
   })
 })
