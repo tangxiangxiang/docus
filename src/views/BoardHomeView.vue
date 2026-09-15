@@ -418,7 +418,7 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
 .board-home-header {
   display: flex;
   margin: 0 0 24px;
-  align-items: flex-end;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 28px;
 }
@@ -434,6 +434,7 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
   font: inherit;
   font-size: .78rem;
   font-weight: 650;
+  margin-top: 22px;
 }
 .board-new-button :deep(.n-icon) { margin-right: 2px; }
 .board-search-input { width: min(100%, 780px); min-width: 0; flex: 0 1 780px; }
@@ -445,7 +446,7 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
 .board-all-search { width: min(100%, 360px); flex: 0 1 360px; }
 .board-sort-select { width: 148px; }
 .board-sort-select :deep(.n-base-selection) { border-radius: 10px; }
-.board-section { margin: 0 0 38px; }
+.board-section { margin: 0 0 18px; }
 .board-all-section { margin-bottom: 0; }
 .board-pagination {
   display: flex;
@@ -458,6 +459,8 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
   background: color-mix(in srgb, var(--bg) 14%, transparent);
 }
 .board-pagination-meta { color: var(--text-muted); font-size: .74rem; }
+.board-quick-content :deep(.board-card-thumbnail) { aspect-ratio: 16 / 8.5; }
+.board-quick-content :deep(.board-card-copy) { padding-top: 10px; padding-bottom: 11px; }
 .board-section-heading { display: flex; min-height: 34px; margin-bottom: 16px; align-items: center; justify-content: space-between; gap: 16px; }
 .board-section-heading h2 { margin: 0; color: var(--text-h); font-size: 1.18rem; font-weight: 650; letter-spacing: -.02em; }
 .board-quick-tabs {
@@ -538,7 +541,7 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
 @media (max-width: 600px) {
   .board-home-header { align-items: stretch; flex-direction: column; }
   .board-home-subtitle { max-width: 32rem; }
-  .board-new-button { align-self: stretch; }
+  .board-new-button { align-self: stretch; margin-top: 0; }
   .board-all-section-heading { align-items: stretch; flex-direction: column; gap: 10px; }
   .board-all-heading-controls { width: 100%; }
   .board-all-search { width: auto; flex: 1 1 auto; }
