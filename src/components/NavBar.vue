@@ -76,7 +76,7 @@ const showScopeChips = computed(() => isWorkspace.value && !isImmersive.value)
 const showSearchButton = computed(() => (
   isWorkspace.value
   && !isImmersive.value
-  && (props.workspaceKind !== null || !isLedger.value)
+  && !isLedger.value
 ))
 
 /* Sun when current theme is dark (click to lighten),

@@ -41,7 +41,7 @@ describe('CommandPalette Chinese copy', () => {
     input.value = 'Redis'
     input.dispatchEvent(new Event('input', { bubbles: true }))
     await flushPromises()
-    expect(document.body.querySelector('.palette-section-title')?.textContent).toBe('文件')
+    expect(document.body.querySelector('.palette-section-title')).toBeNull()
     expect(document.body.querySelector('.palette-badge')?.textContent).toBe('标题')
     wrapper.unmount()
   })
@@ -55,7 +55,7 @@ describe('CommandPalette Chinese copy', () => {
     expect(input.placeholder).toBe('Search 1 documents…')
     expect(input.getAttribute('aria-label')).toBe('Search all content')
     expect(document.body.querySelector('.palette')?.getAttribute('aria-label')).toBe('Global search')
-    expect(document.body.querySelector('.palette-section-title')?.textContent).toBe('Files')
+    expect(document.body.querySelector('.palette-section-title')).toBeNull()
     expect(document.body.querySelector('.palette-badge')?.textContent).toBe('Title')
     wrapper.unmount()
   })

@@ -36,11 +36,6 @@ const placeholder = computed(() => props.providers
 function matchLabel(match: DocumentSearchPayload['match']): string {
   return t(`search.match.${match}`)
 }
-function sectionLabel(section: SearchResultSection): string {
-  if (section.id === 'files') return t('search.section.files')
-  if (section.id === 'boards') return t('search.section.boards')
-  return section.label
-}
 const documentProvider = createDocumentSearchProvider(() => props.posts ?? [])
 const runLatestSearch = createLatestSearchRunner(
   () => props.providers ?? [documentProvider],
@@ -109,7 +104,6 @@ defineExpose({ show, hide, refresh })
         />
         <div v-if="hits.length" class="palette-list" role="listbox">
           <section v-for="section in sections" :key="section.id" class="palette-section">
-            <h3 class="palette-section-title">{{ sectionLabel(section) }}</h3>
             <div v-for="hit in section.results" :key="hit.id" :class="['palette-item', { active: hits.indexOf(hit) === activeIdx }]" role="option" :aria-selected="hits.indexOf(hit) === activeIdx" @mouseenter="activeIdx = hits.indexOf(hit)" @click="commit(hit)">
               <div class="palette-row"><span class="palette-title">{{ hit.title }}</span><span v-if="hit.type === 'file'" class="palette-badge">{{ matchLabel((hit.payload as DocumentSearchPayload).match) }}</span></div>
               <div v-if="hit.type === 'file' && (hit.payload as DocumentSearchPayload).snippet" class="palette-snippet">{{ (hit.payload as DocumentSearchPayload).snippet }}</div>

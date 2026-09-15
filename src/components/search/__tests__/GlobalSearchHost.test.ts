@@ -28,21 +28,21 @@ describe('App-level GlobalSearchHost', () => {
     document.body.innerHTML = ''
   })
 
-  it('navigates a Board result to the thin Board Editor route', async () => {
+  it('navigates a Board result to the thin Board Editor route from Board workspace', async () => {
     api.listBoards.mockResolvedValue([board('atlas', 'Project Atlas')])
     const router = createRouter({
       history: createMemoryHistory(),
       routes: [
         {
-          path: '/vault',
-          name: 'vault',
+          path: '/board',
+          name: 'board',
           component: { template: '<div />' },
           meta: { workspace: true, chromeStyle: 'workspace' },
         },
         { path: '/board/:boardId', name: 'board-editor', component: { template: '<div />' } },
       ],
     })
-    await router.push('/vault')
+    await router.push('/board')
     await router.isReady()
     const wrapper = mount(GlobalSearchHost, { global: { plugins: [router] } })
 
@@ -62,7 +62,39 @@ describe('App-level GlobalSearchHost', () => {
     wrapper.unmount()
   })
 
-  it.each(['/board', '/ledger'])('loads Document results on a fresh %s route', async (path) => {
+  it('loads Document results on the Vault workspace route', async () => {
+    api.listBoards.mockResolvedValue([board('atlas-board', 'Project Atlas')])
+    api.listPosts.mockResolvedValue([{
+      path: 'inbox/atlas', title: 'Project Atlas', created: '', updated: '', tags: [], size: 0, mtime: 1,
+    }])
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{
+        path: '/:workspace',
+        name: 'workspace',
+        component: { template: '<div />' },
+        meta: { workspace: true, chromeStyle: 'workspace' },
+      }],
+    })
+    await router.push('/vault')
+    await router.isReady()
+    const wrapper = mount(GlobalSearchHost, { global: { plugins: [router] } })
+
+    ;(wrapper.vm as unknown as { show: () => void }).show()
+    await flushPromises()
+    const input = document.body.querySelector<HTMLInputElement>('.palette-input input')!
+    input.value = 'atlas'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await flushPromises()
+
+    expect(document.body.querySelectorAll('[role="option"]')).toHaveLength(1)
+    expect(document.body.querySelector('[role="option"]')?.textContent).toContain('Project Atlas')
+    expect(api.listBoards).not.toHaveBeenCalled()
+    expect(api.listPosts).toHaveBeenCalledOnce()
+    wrapper.unmount()
+  })
+
+  it('does not mix Document results into the Board workspace', async () => {
     api.listBoards.mockResolvedValue([])
     api.listPosts.mockResolvedValue([{
       path: 'inbox/atlas', title: 'Project Atlas', created: '', updated: '', tags: [], size: 0, mtime: 1,
@@ -76,7 +108,7 @@ describe('App-level GlobalSearchHost', () => {
         meta: { workspace: true, chromeStyle: 'workspace' },
       }],
     })
-    await router.push(path)
+    await router.push('/board')
     await router.isReady()
     const wrapper = mount(GlobalSearchHost, { global: { plugins: [router] } })
 
@@ -87,8 +119,29 @@ describe('App-level GlobalSearchHost', () => {
     input.dispatchEvent(new Event('input', { bubbles: true }))
     await flushPromises()
 
-    expect(document.body.querySelector('[role="option"]')?.textContent).toContain('Project Atlas')
-    expect(api.listPosts).toHaveBeenCalledOnce()
+    expect(document.body.querySelector('[role="option"]')).toBeNull()
+    expect(api.listPosts).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('does not open the global search on Ledger workspace', async () => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{
+        path: '/:workspace',
+        name: 'workspace',
+        component: { template: '<div />' },
+        meta: { workspace: true, chromeStyle: 'workspace' },
+      }],
+    })
+    await router.push('/ledger')
+    await router.isReady()
+    const wrapper = mount(GlobalSearchHost, { global: { plugins: [router] } })
+
+    ;(wrapper.vm as unknown as { show: () => void }).show()
+    await flushPromises()
+
+    expect(document.body.querySelector('.palette')).toBeNull()
     wrapper.unmount()
   })
 })

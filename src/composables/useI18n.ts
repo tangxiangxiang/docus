@@ -30,7 +30,7 @@ const STRINGS: Strings = {
   'nav.scope_only': { zh: '只看 {scope}', en: 'Show only {scope}' },
   'nav.search': { zh: '搜索', en: 'Search' },
   'nav.search_hint': { zh: '搜索（Ctrl/Cmd+P）', en: 'Search (Ctrl/Cmd+P)' },
-  'nav.board': { zh: 'Board', en: 'Board' },
+  'nav.board': { zh: 'board', en: 'board' },
   'nav.switch_edit': { zh: '切换到编辑模式', en: 'Switch to edit' },
   'nav.switch_read': { zh: '切换到阅读模式', en: 'Switch to read' },
   'nav.switch_edit_hint': { zh: '切换到编辑模式（Cmd/Ctrl+E）', en: 'Switch to edit (Cmd/Ctrl+E)' },

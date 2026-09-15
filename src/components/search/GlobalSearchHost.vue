@@ -7,14 +7,28 @@ import { documentSearchSource } from '../../lib/documentSearchSource'
 import { boardMetadataSource } from '../../features/board/boardMetadataSource'
 import { createBoardSearchProvider, type BoardSearchPayload } from '../../features/board/searchProvider'
 import { isDocusShortcutBlocked } from '../../lib/keyboard'
+import { workspaceKindForPath, type WorkspaceKind } from '../../lib/workspace'
 
 const router = useRouter()
 const route = useRoute()
 const paletteRef = ref<InstanceType<typeof CommandPalette> | null>(null)
 const documentProvider = createDocumentSearchProvider(documentSearchSource)
 const boardProvider = createBoardSearchProvider(boardMetadataSource)
-const providers = [documentProvider, boardProvider]
-const canOpen = computed(() => route.meta.workspace === true && route.meta.chromeStyle !== 'immersive')
+const workspaceKind = computed<WorkspaceKind>(() => (
+  route.meta.workspaceKind !== undefined
+    ? route.meta.workspaceKind
+    : workspaceKindForPath(route.path)
+))
+const providers = computed(() => {
+  if (workspaceKind.value === 'board') return [boardProvider]
+  if (workspaceKind.value === 'vault') return [documentProvider]
+  return []
+})
+const canOpen = computed(() => (
+  route.meta.workspace === true
+  && route.meta.chromeStyle !== 'immersive'
+  && workspaceKind.value !== 'ledger'
+))
 
 function show(): void {
   if (!canOpen.value) return

@@ -330,6 +330,15 @@ describe('NavBar — scope chips', () => {
     wrapper.unmount()
   })
 
+  it('hides global search when Ledger passes its explicit workspace kind', () => {
+    const wrapper = mount(NavBar, {
+      props: { workspaceKind: 'ledger' },
+    })
+
+    expect(wrapper.find('.nav-search').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('only renders scope chips in the Vault chrome', () => {
     const api = makeViewModeApi()
     const wrapper = mount(NavBar, {
@@ -361,6 +370,7 @@ describe('NavBar — scope chips', () => {
     expect(wrapper.find('.navbar').classes()).toContain('is-workspace')
     expect(wrapper.find('.workspace-board-link').classes()).toContain('active')
     expect(wrapper.find('.workspace-board-link').attributes('aria-current')).toBe('page')
+    expect(wrapper.find('.workspace-board-link-label').text()).toBe('board')
     expect(wrapper.find('.scope-chips').exists()).toBe(true)
     expect(wrapper.findAll('.scope-chip')).toHaveLength(3)
     expect(wrapper.findAll('.scope-chip.active')).toHaveLength(0)
