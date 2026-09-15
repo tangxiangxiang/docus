@@ -162,7 +162,9 @@ function selectMenu(key: string | number): void {
   gap: 6px;
   flex: none;
   padding: 12px 46px 14px 14px;
-  border-top: 1px solid color-mix(in srgb, var(--border) 74%, transparent);
+  margin: 0 12px 12px;
+  border: 1px solid color-mix(in srgb, var(--border) 74%, transparent);
+  border-radius: 11px;
 }
 .board-card-title { overflow: hidden; color: var(--text-h); font-size: .94rem; font-weight: 650; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
 .board-card-updated { overflow: hidden; color: var(--text-muted); font-size: .78rem; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
@@ -190,6 +192,6 @@ function selectMenu(key: string | number): void {
 }
 @media (max-width: 600px) {
   .board-card-thumbnail { width: calc(100% - 20px); margin: 10px 10px 0; }
-  .board-card-copy { padding: 12px 42px 14px 12px; }
+  .board-card-copy { margin: 0 10px 10px; padding: 12px 42px 14px 12px; }
 }
 </style>

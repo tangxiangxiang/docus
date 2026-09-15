@@ -378,23 +378,37 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
 .board-home {
   min-height: calc(100vh - var(--navbar-h, 36px));
   box-sizing: border-box;
-  padding: clamp(30px, 4vw, 56px) clamp(20px, 4vw, 64px) 72px;
+  padding: 42px 0 72px;
   background: var(--bg);
   color: var(--text);
 }
-.board-home-content { width: min(100%, 1440px); margin: 0 auto; container-type: inline-size; }
+.board-home-content {
+  width: min(100%, 1240px);
+  margin: 0 auto;
+  padding-inline: 28px;
+  box-sizing: border-box;
+  container-type: inline-size;
+}
 .board-home-header {
   display: flex;
   margin: 0 0 24px;
-  align-items: flex-start;
+  align-items: flex-end;
   justify-content: space-between;
   gap: 28px;
 }
 .board-home-heading { min-width: 0; }
-.board-home-eyebrow { margin: 0 0 4px; color: var(--accent); font-size: .78rem; font-weight: 650; letter-spacing: .04em; }
-.board-home-header h1 { margin: 0; color: var(--text-h); font-size: clamp(2.5rem, 4vw, 2.75rem); font-weight: 700; letter-spacing: -.035em; line-height: 1.1; }
-.board-home-subtitle { margin: 8px 0 0; color: var(--text-muted); font-size: .92rem; line-height: 1.45; }
-.board-new-button { border-radius: 9px; font-weight: 650; }
+.board-home-eyebrow { margin: 0 0 7px; color: var(--accent); font-size: .7rem; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }
+.board-home-header h1 { margin: 0; color: var(--text-h); font-size: clamp(1.85rem, 3vw, 2.35rem); font-weight: 720; letter-spacing: -.035em; line-height: 1.16; }
+.board-home-subtitle { margin: 8px 0 0; color: var(--text-muted); font-size: .78rem; line-height: 1.45; }
+.board-new-button {
+  min-height: 32px;
+  box-sizing: border-box;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font: inherit;
+  font-size: .78rem;
+  font-weight: 650;
+}
 .board-new-button :deep(.n-icon) { margin-right: 2px; }
 .board-search-input { width: min(100%, 780px); min-width: 0; flex: 0 1 780px; }
 .board-search-input { border-radius: 10px; }
@@ -479,11 +493,12 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
   .board-skeleton-recent { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (max-width: 767px) {
+  .board-home { padding-top: 30px; }
+  .board-home-content { padding-inline: 16px; }
   .board-quick-content { min-height: calc(31.25cqi + 69px); }
   .board-skeleton-recent { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 600px) {
-  .board-home { padding-top: 28px; }
   .board-home-header { align-items: stretch; flex-direction: column; }
   .board-home-subtitle { max-width: 32rem; }
   .board-new-button { align-self: stretch; }
@@ -492,5 +507,8 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
   .board-all-search { width: auto; flex: 1 1 auto; }
   .board-skeleton-recent { display: flex; overflow-x: hidden; }
   .board-skeleton-card { flex: 0 0 calc((100% - 18px) / 2); }
+}
+@media (max-width: 440px) {
+  .board-home-header h1 { font-size: 1.75rem; }
 }
 </style>
