@@ -83,6 +83,15 @@ describe('Board Gallery Home', () => {
     wrapper.unmount()
   })
 
+  it('shows Board as the eyebrow and Idea canvas as the page title', async () => {
+    api.listBoards.mockResolvedValue([])
+    const { wrapper } = await mountHome()
+
+    expect(wrapper.get('.board-home-eyebrow').text()).toBe('Board')
+    expect(wrapper.get('.board-home-header h1').text()).toBe('Idea canvas')
+    wrapper.unmount()
+  })
+
   it('creates a board through the metadata source and opens the editor route', async () => {
     api.listBoards.mockResolvedValue([])
     const created = board('created', 'Untitled Board', 30)

@@ -154,8 +154,8 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
   <div class="board-home" data-testid="board-home">
     <header class="board-home-header">
       <div>
-        <p class="board-home-eyebrow">{{ t('board.workspace_label') }}</p>
-        <h1>{{ t('board.title') }}</h1>
+        <p class="board-home-eyebrow">{{ t('board.title') }}</p>
+        <h1>{{ t('board.workspace_label') }}</h1>
       </div>
       <NButton
         class="board-new-button"
