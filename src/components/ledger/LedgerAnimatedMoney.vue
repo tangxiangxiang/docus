@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { NNumberAnimation as NumberAnimation } from 'naive-ui'
-import { currencyExponentFor } from '../../features/ledger/money'
+import {
+  currencyExponentFor,
+  formatLedgerMoney,
+  formatLedgerSignedMoney,
+} from '../../features/ledger/money'
 
 const props = withDefaults(defineProps<{
   minor: number
@@ -35,11 +39,17 @@ const animationKey = ref(0)
 let resetTimer: ReturnType<typeof setTimeout> | undefined
 const currentParts = computed(() => parts(props.minor, props.currency))
 const fromParts = computed(() => parts(fromMinor.value, props.currency))
+const isStatic = computed(() => !props.animateOnMount && !props.animateOnChange)
+const staticText = computed(() => props.signed
+  ? formatLedgerSignedMoney(props.minor, props.currency)
+  : formatLedgerMoney(props.minor, props.currency))
 // The Vue template compiler consumes these bindings; keep TypeScript's
 // noUnusedLocals check aware of the runtime template references as well.
 void NumberAnimation
 void currentParts
 void fromParts
+void isStatic
+void staticText
 
 watch(() => ({ minor: props.minor, currency: props.currency }), (next, previous) => {
   if (!props.animateOnChange || next.currency !== previous.currency) fromMinor.value = next.minor
@@ -58,7 +68,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <span class="ledger-animated-money">
+  <span v-if="isStatic" class="ledger-animated-money">{{ staticText }}</span>
+  <span v-else class="ledger-animated-money">
     {{ currentParts.prefix }}<component
       :is="NumberAnimation"
       :key="animationKey"

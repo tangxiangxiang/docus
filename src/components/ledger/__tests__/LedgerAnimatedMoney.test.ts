@@ -17,24 +17,26 @@ describe('LedgerAnimatedMoney', () => {
     wrapper.unmount()
   })
 
-  it('can keep record values static while preserving update animations elsewhere', async () => {
+  it('formats static record values exactly without using number animation', async () => {
     const staticWrapper = mount(LedgerAnimatedMoney, {
       props: {
-        minor: 120_000,
+        minor: -3_800,
         currency: 'CNY',
+        signed: true,
         animateOnMount: false,
         animateOnChange: false,
       },
     })
-    const staticAnimation = staticWrapper.findComponent(NumberAnimation)
-    expect(staticAnimation.props('from')).toBe(1200)
-    expect(staticAnimation.props('to')).toBe(1200)
+    expect(staticWrapper.findComponent(NumberAnimation).exists()).toBe(false)
+    expect(staticWrapper.text()).toContain('-¥38.00')
 
-    await staticWrapper.setProps({ minor: 130_000 })
-    expect(staticWrapper.findComponent(NumberAnimation).props('from')).toBe(1300)
-    expect(staticWrapper.findComponent(NumberAnimation).props('to')).toBe(1300)
+    await staticWrapper.setProps({ minor: -13_000 })
+    expect(staticWrapper.findComponent(NumberAnimation).exists()).toBe(false)
+    expect(staticWrapper.text()).toContain('-¥130.00')
     staticWrapper.unmount()
+  })
 
+  it('preserves update animations when only mount animation is disabled', async () => {
     const animatedWrapper = mount(LedgerAnimatedMoney, {
       props: { minor: 120_000, currency: 'CNY', animateOnMount: false },
     })
