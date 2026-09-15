@@ -67,9 +67,15 @@ const recentOrderedBoards = computed(() => [...boards.value]
 )
 const recentBoards = computed(() => recentOrderedBoards.value.slice(0, recentBoardLimit))
 const favoriteBoards = computed(() => recentOrderedBoards.value.filter((board) => isFavorite(board.id)))
+const favoriteBoardLimit = 5
+const favoriteQuickExpanded = ref(false)
 type QuickAccessTab = 'recent' | 'favorites'
 const quickAccessTab = ref<QuickAccessTab>('recent')
-const quickAccessBoards = computed(() => quickAccessTab.value === 'recent' ? recentBoards.value : favoriteBoards.value)
+const quickAccessBoards = computed(() => {
+  if (quickAccessTab.value === 'recent' || favoriteQuickExpanded.value) return quickAccessTab.value === 'recent' ? recentBoards.value : favoriteBoards.value
+  return favoriteBoards.value.slice(0, favoriteBoardLimit)
+})
+const hasMoreFavorites = computed(() => quickAccessTab.value === 'favorites' && !favoriteQuickExpanded.value && favoriteBoards.value.length > favoriteBoardLimit)
 const hasBoards = computed(() => boards.value.length > 0)
 const hasSearch = computed(() => normalizedQuery.value.length > 0)
 function messageFor(error: unknown, fallback: string): string {
@@ -193,8 +199,8 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
     <div class="board-home-content">
       <header class="board-home-header">
         <div class="board-home-heading">
-          <p class="board-home-eyebrow">{{ t('board.workspace_label') }}</p>
-          <h1>{{ t('board.title') }}</h1>
+          <p class="board-home-eyebrow">{{ t('board.title') }}</p>
+          <h1>{{ t('board.workspace_label') }}</h1>
           <p class="board-home-subtitle">{{ t('board.subtitle') }}</p>
         </div>
         <NButton
@@ -259,19 +265,34 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
               </button>
             </div>
           </div>
-          <BoardGallery
-            v-if="quickAccessBoards.length"
-            layout="recent"
-            :boards="quickAccessBoards"
-            :favorite-board-ids="favoriteBoardIds"
-            :busy-board-ids="mutationBoardIds"
-            @open="openBoard"
-            @favorite="toggleFavorite"
-            @rename="openRename"
-            @delete="removeBoard"
-          />
-          <div v-else class="board-quick-empty">
-            <NEmpty size="small" :description="t('board.no_favorites')" />
+          <div class="board-quick-content">
+            <BoardGallery
+              v-if="quickAccessBoards.length"
+              layout="recent"
+              :boards="quickAccessBoards"
+              :favorite-board-ids="favoriteBoardIds"
+              :busy-board-ids="mutationBoardIds"
+              @open="openBoard"
+              @favorite="toggleFavorite"
+              @rename="openRename"
+              @delete="removeBoard"
+            />
+            <div v-else class="board-quick-empty">
+              <NEmpty size="small" :description="t('board.no_favorites')" />
+            </div>
+            <div class="board-quick-more">
+              <NButton
+                v-if="hasMoreFavorites"
+                data-testid="board-quick-more-favorites"
+                attr-type="button"
+                size="small"
+                quaternary
+                type="primary"
+                @click="favoriteQuickExpanded = true"
+              >
+                {{ t('board.view_more') }}
+              </NButton>
+            </div>
           </div>
         </section>
 
@@ -361,7 +382,7 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
   background: var(--bg);
   color: var(--text);
 }
-.board-home-content { width: min(100%, 1440px); margin: 0 auto; }
+.board-home-content { width: min(100%, 1440px); margin: 0 auto; container-type: inline-size; }
 .board-home-header {
   display: flex;
   margin: 0 0 24px;
@@ -415,8 +436,10 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
   font-weight: 650;
 }
 .board-quick-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.board-quick-empty { display: grid; min-height: 92px; place-items: center; border: 1px dashed color-mix(in srgb, var(--border) 78%, transparent); border-radius: 12px; }
+.board-quick-content { min-height: calc(12.5cqi + 60px); }
+.board-quick-empty { display: grid; min-height: inherit; box-sizing: border-box; place-items: center; border: 1px dashed color-mix(in srgb, var(--border) 78%, transparent); border-radius: 12px; }
 .board-quick-empty :deep(.n-empty) { padding: 18px; }
+.board-quick-more { display: grid; min-height: 32px; place-items: center; }
 .board-state { display: grid; min-height: 300px; place-items: center; gap: 12px; margin: 0 auto; color: var(--text-muted); text-align: center; }
 .board-error { max-width: 620px; place-items: stretch; text-align: left; }
 .board-error :deep(.n-result) { padding: 0; }
@@ -448,12 +471,15 @@ async function removeBoard(board: BoardMetadata): Promise<void> {
 .board-skeleton-lines i:last-child { width: 48%; }
 @keyframes board-skeleton-pulse { 0%, 100% { background-position: 100% 0; } 50% { background-position: 0 0; } }
 @media (max-width: 1279px) {
+  .board-quick-content { min-height: calc(15.625cqi + 58px); }
   .board-skeleton-recent { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 @media (max-width: 1023px) {
+  .board-quick-content { min-height: calc(20.833cqi + 56px); }
   .board-skeleton-recent { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (max-width: 767px) {
+  .board-quick-content { min-height: calc(31.25cqi + 69px); }
   .board-skeleton-recent { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 600px) {

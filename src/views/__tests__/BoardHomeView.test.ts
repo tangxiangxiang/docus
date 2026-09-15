@@ -86,12 +86,12 @@ describe('Board Gallery Home', () => {
     wrapper.unmount()
   })
 
-  it('shows Idea canvas as the eyebrow and Board as the page title', async () => {
+  it('shows Board as the eyebrow and Idea canvas as the page title', async () => {
     api.listBoards.mockResolvedValue([])
     const { wrapper } = await mountHome()
 
-    expect(wrapper.get('.board-home-eyebrow').text()).toBe('Idea canvas')
-    expect(wrapper.get('.board-home-header h1').text()).toBe('Board')
+    expect(wrapper.get('.board-home-eyebrow').text()).toBe('Board')
+    expect(wrapper.get('.board-home-header h1').text()).toBe('Idea canvas')
     wrapper.unmount()
   })
 
@@ -139,13 +139,39 @@ describe('Board Gallery Home', () => {
     await wrapper.get('[data-testid="board-quick-tab-favorites"]').trigger('click')
     await flushPromises()
 
-    expect(wrapper.get('.board-home-eyebrow').text()).toBe('Idea canvas')
+    expect(wrapper.get('.board-home-eyebrow').text()).toBe('Board')
     expect(wrapper.get('.board-recent-section h2').text()).toBe('Quick access')
     expect(wrapper.get('[data-testid="board-quick-tab-favorites"]').attributes('aria-selected')).toBe('true')
     expect(wrapper.findAll('.board-recent-section [data-testid="board-card-title"]').map((item) => item.text())).toEqual([
       'Project Atlas',
     ])
     expect(JSON.parse(localStorage.getItem('docus.board.favorites') ?? '[]')).toEqual(['newer'])
+    wrapper.unmount()
+  })
+
+  it('limits favorites to five boards until the user asks to see more', async () => {
+    api.listBoards.mockResolvedValue([
+      board('one', 'Board 1', 1),
+      board('two', 'Board 2', 2),
+      board('three', 'Board 3', 3),
+      board('four', 'Board 4', 4),
+      board('five', 'Board 5', 5),
+      board('six', 'Board 6', 6),
+    ])
+    useBoardFavorites().favoriteBoardIds.value = ['one', 'two', 'three', 'four', 'five', 'six']
+    const { wrapper } = await mountHome()
+
+    await wrapper.get('[data-testid="board-quick-tab-favorites"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('.board-recent-section [data-testid="board-card-title"]')).toHaveLength(5)
+    expect(wrapper.get('[data-testid="board-quick-more-favorites"]').text()).toBe('View more')
+
+    await wrapper.get('[data-testid="board-quick-more-favorites"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('.board-recent-section [data-testid="board-card-title"]')).toHaveLength(6)
+    expect(wrapper.find('[data-testid="board-quick-more-favorites"]').exists()).toBe(false)
     wrapper.unmount()
   })
 

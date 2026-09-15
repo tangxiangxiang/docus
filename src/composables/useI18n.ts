@@ -393,6 +393,7 @@ const STRINGS: Strings = {
   'board.favorited': { zh: '已加入收藏', en: 'Added to favorites' },
   'board.unfavorited': { zh: '已取消收藏', en: 'Removed from favorites' },
   'board.no_favorites': { zh: '还没有收藏的 Board', en: 'No favorite boards yet' },
+  'board.view_more': { zh: '查看更多', en: 'View more' },
   'board.new': { zh: '新建 Board', en: 'New Board' },
   'board.search_placeholder': { zh: '搜索 Board…', en: 'Search boards…' },
   'board.search_label': { zh: '搜索 Board', en: 'Search boards' },
