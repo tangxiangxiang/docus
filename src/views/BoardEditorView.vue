@@ -418,7 +418,7 @@ function onHostChange(nextRuntimeScene: ExcalidrawRuntimeScene): void {
   const currentCoordinator = saveCoordinator.value
   const currentAssetSession = assetSession.value
   const currentIntake = assetIntakePromise
-  const change = currentIntake.catch(() => {}).then(() => currentAssetSession.ensureRuntimeSceneReady(nextRuntimeScene)).then(() => {
+  const change = currentIntake.catch(() => {}).then(() => currentAssetSession.ensureCheckpointAssetsDurable(nextRuntimeScene)).then(() => {
     if (sequence !== hostChangeSequence
       || status.value !== 'ready'
       || currentCoordinator !== saveCoordinator.value

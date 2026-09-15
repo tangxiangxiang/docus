@@ -52,7 +52,7 @@ const assetSession = vi.hoisted(() => {
   const session = {
     seedScene: vi.fn(),
     observeRuntimeAssets: vi.fn(async () => {}),
-    ensureRuntimeSceneReady: vi.fn(async () => {}),
+    ensureCheckpointAssetsDurable: vi.fn(async () => {}),
     ensureAssetReady: vi.fn(async () => {}),
     ensureSceneAssetsReady: vi.fn(async () => {}),
     resolveSceneAssets: vi.fn(async () => []),
@@ -65,7 +65,7 @@ const assetSession = vi.hoisted(() => {
     reset() {
       for (const method of Object.values(session)) method.mockReset()
       session.observeRuntimeAssets.mockResolvedValue(undefined)
-      session.ensureRuntimeSceneReady.mockResolvedValue(undefined)
+      session.ensureCheckpointAssetsDurable.mockResolvedValue(undefined)
       session.ensureAssetReady.mockResolvedValue(undefined)
       session.ensureSceneAssetsReady.mockResolvedValue(undefined)
       session.resolveSceneAssets.mockResolvedValue([])
@@ -319,6 +319,87 @@ describe('Board Editor B4 lifecycle', () => {
         assetRefs: [assetId],
       }),
     }))
+    wrapper.unmount()
+  })
+
+  it('advances local revisions and checkpoints after a durable Pending Blob has an upload failure', async () => {
+    api.getBoard.mockResolvedValueOnce(board('a'))
+    const { wrapper } = await mountEditor()
+    await flushPromises()
+    const host = wrapper.findComponent(ExcalidrawHost)
+    host.vm.$emit('ready')
+    await flushPromises()
+
+    const assetId = '11111111-1111-4111-8111-111111111111'
+    assetSession.session.getFileMap.mockReturnValue({ 'file-1': assetId })
+    assetSession.session.ensureCheckpointAssetsDurable.mockResolvedValue(undefined)
+    const image = {
+      id: 'image-1',
+      type: 'image',
+      fileId: 'file-1',
+      isDeleted: false,
+      version: 1,
+    }
+
+    vi.useFakeTimers()
+    host.vm.$emit('assets-changed', [{ engineFileId: 'file-1', mimeType: 'image/png', blob: new Blob(['image']) }])
+    host.vm.$emit('change', { elements: [image], appState: {}, files: { 'file-1': {} } })
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="board-local-revision"]').attributes('data-local-revision')).toBe('1')
+    await vi.advanceTimersByTimeAsync(250)
+    await flushPromises()
+    expect(recovery.store.put).toHaveBeenCalledWith(expect.objectContaining({
+      scene: expect.objectContaining({
+        engineData: expect.objectContaining({ fileMap: { 'file-1': assetId } }),
+        assetRefs: [assetId],
+      }),
+    }))
+
+    host.vm.$emit('change', {
+      elements: [image, { id: 'rectangle-1', type: 'rectangle', version: 1, x: 1, y: 2, width: 3, height: 4 }],
+      appState: {},
+      files: { 'file-1': {} },
+    })
+    await flushPromises()
+    expect(wrapper.get('[data-testid="board-local-revision"]').attributes('data-local-revision')).toBe('2')
+    await vi.advanceTimersByTimeAsync(250)
+    await flushPromises()
+    expect(recovery.store.put).toHaveBeenLastCalledWith(expect.objectContaining({
+      localRevision: 2,
+      scene: expect.objectContaining({
+        engineData: expect.objectContaining({ fileMap: { 'file-1': assetId } }),
+        assetRefs: [assetId],
+      }),
+    }))
+    wrapper.unmount()
+  })
+
+  it('does not advance local revisions when Pending Blob persistence fails', async () => {
+    api.getBoard.mockResolvedValueOnce(board('a'))
+    const { wrapper } = await mountEditor()
+    await flushPromises()
+    const host = wrapper.findComponent(ExcalidrawHost)
+    host.vm.$emit('ready')
+    await flushPromises()
+
+    const assetIntake = Promise.reject(new Error('IndexedDB is unavailable'))
+    assetSession.session.observeRuntimeAssets.mockReturnValue(assetIntake)
+    assetSession.session.ensureCheckpointAssetsDurable.mockRejectedValue(new Error('Pending is not durable'))
+    assetSession.session.getFileMap.mockReturnValue({ 'file-1': '11111111-1111-4111-8111-111111111111' })
+    vi.useFakeTimers()
+    host.vm.$emit('assets-changed', [{ engineFileId: 'file-1', mimeType: 'image/png', blob: new Blob(['image']) }])
+    host.vm.$emit('change', {
+      elements: [{ id: 'image-1', type: 'image', fileId: 'file-1', isDeleted: false, version: 1 }],
+      appState: {},
+      files: { 'file-1': {} },
+    })
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(250)
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="board-local-revision"]').attributes('data-local-revision')).toBe('0')
+    expect(recovery.store.put).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 

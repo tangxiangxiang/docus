@@ -25,7 +25,9 @@ interface SessionAssetRecord {
   state: BoardAssetState
   pendingPromise: Promise<void> | null
   uploadPromise: Promise<AssetUploadResult> | null
-  lastError: unknown | null
+  pendingDurable: boolean
+  pendingError: unknown | null
+  uploadError: unknown | null
 }
 
 export interface BoardAssetSessionOptions {
@@ -41,7 +43,7 @@ export interface BoardAssetSessionOptions {
 export interface BoardAssetSession {
   seedScene(scene: BoardScene): void
   observeRuntimeAssets(assets: readonly BoardRuntimeAsset[]): Promise<void>
-  ensureRuntimeSceneReady(runtimeScene: ExcalidrawRuntimeScene): Promise<void>
+  ensureCheckpointAssetsDurable(runtimeScene: ExcalidrawRuntimeScene): Promise<void>
   ensureAssetReady(assetId: string): Promise<void>
   ensureSceneAssetsReady(scene: BoardScene): Promise<void>
   resolveSceneAssets(scene: BoardScene): Promise<ResolvedBoardAsset[]>
@@ -171,10 +173,12 @@ export function createBoardAssetSession(options: BoardAssetSessionOptions): Boar
         engineFileId,
         assetId,
         mimeType: '',
-        state: 'error' as const,
+        state: 'pending' as const,
         pendingPromise: null,
         uploadPromise: null,
-        lastError: null,
+        pendingDurable: false,
+        pendingError: null,
+        uploadError: null,
       }
       recordsByFileId.set(engineFileId, record)
       const byAssetId = recordsByAssetId.get(assetId)
@@ -207,10 +211,6 @@ export function createBoardAssetSession(options: BoardAssetSessionOptions): Boar
       }
       existing.mimeType = mimeType
       existing.blob ??= asset.blob
-      if (existing.state === 'error' && existing.lastError instanceof BoardAssetError
-        && existing.lastError.code === 'ASSET_PENDING_INVALID') {
-        existing.lastError = null
-      }
       return existing
     }
 
@@ -227,7 +227,9 @@ export function createBoardAssetSession(options: BoardAssetSessionOptions): Boar
       state: 'pending',
       pendingPromise: null,
       uploadPromise: null,
-      lastError: null,
+      pendingDurable: false,
+      pendingError: null,
+      uploadError: null,
     }
     recordsByFileId.set(record.engineFileId, record)
     recordsByAssetId.set(record.assetId, record)
@@ -238,10 +240,12 @@ export function createBoardAssetSession(options: BoardAssetSessionOptions): Boar
     if (record.pendingPromise) return record.pendingPromise
     if (!record.blob || !isBlob(record.blob)) {
       const error = assetError('ASSET_PENDING_INVALID', `Runtime asset ${record.assetId} has no Blob.`)
-      record.state = 'error'
-      record.lastError = error
+      record.pendingDurable = false
+      record.pendingError = error
       return Promise.reject(error)
     }
+    record.pendingDurable = false
+    record.pendingError = null
     const pending: PendingBoardAsset = {
       assetId: record.assetId,
       boardId: options.boardId,
@@ -256,12 +260,23 @@ export function createBoardAssetSession(options: BoardAssetSessionOptions): Boar
     } catch (error) {
       write = Promise.reject(error)
     }
-    const pendingPromise = write.catch((error: unknown) => {
-      if (record.pendingPromise === pendingPromise) record.pendingPromise = null
-      record.state = 'error'
-      record.lastError = error
-      throw assetError('ASSET_PENDING_INVALID', `Pending asset ${record.assetId} could not be stored locally.`, error)
-    })
+    const pendingPromise = write.then(
+      () => {
+        record.pendingDurable = true
+        record.pendingError = null
+      },
+      (error: unknown) => {
+        if (record.pendingPromise === pendingPromise) record.pendingPromise = null
+        const pendingError = assetError(
+          'ASSET_PENDING_INVALID',
+          `Pending asset ${record.assetId} could not be stored locally.`,
+          error,
+        )
+        record.pendingDurable = false
+        record.pendingError = pendingError
+        throw pendingError
+      },
+    )
     record.pendingPromise = pendingPromise
     void pendingPromise.then(
       () => {
@@ -290,18 +305,19 @@ export function createBoardAssetSession(options: BoardAssetSessionOptions): Boar
     }
     if (!record.blob) {
       const error = assetError('ASSET_PENDING_INVALID', `Pending asset ${record.assetId} has no Blob.`)
-      record.state = 'error'
-      record.lastError = error
+      record.pendingDurable = false
+      record.pendingError = error
       throw error
     }
 
     record.state = 'uploading'
+    record.uploadError = null
     const blob = record.blob
     const uploadPromise = (async () => {
       try {
         const result = await upload(record.assetId, record.mimeType, blob!)
         record.state = 'uploaded'
-        record.lastError = null
+        record.uploadError = null
         try {
           await options.store.deletePendingAsset(record.assetId)
         } catch {
@@ -311,7 +327,10 @@ export function createBoardAssetSession(options: BoardAssetSessionOptions): Boar
         return result
       } catch (error) {
         record.state = 'error'
-        record.lastError = error
+        // A remote upload failure is recoverable as long as the Pending Blob
+        // remains durable. Checkpoint readiness must not treat this as a
+        // local persistence failure.
+        record.uploadError = error
         throw error
       } finally {
         if (disposed) record.blob = undefined
@@ -328,12 +347,18 @@ export function createBoardAssetSession(options: BoardAssetSessionOptions): Boar
     const pendingWrites: Promise<void>[] = []
     for (const asset of assets) {
       const record = ensureRecordForRuntimeAsset(asset)
-      if (record.state !== 'uploaded') pendingWrites.push(persistPending(record))
+      if (record.state !== 'uploaded' && !record.pendingDurable) pendingWrites.push(persistPending(record))
     }
     await Promise.all(pendingWrites)
   }
 
-  async function ensureRuntimeSceneReady(runtimeScene: ExcalidrawRuntimeScene): Promise<void> {
+  /**
+   * Checkpoint readiness is deliberately local-only. A failed remote upload
+   * leaves a durable Pending Blob behind and must not discard the local Scene
+   * mutation; only a Pending persistence failure makes the Scene unsafe to
+   * checkpoint.
+   */
+  async function ensureCheckpointAssetsDurable(runtimeScene: ExcalidrawRuntimeScene): Promise<void> {
     if (disposed) return
     const fileIds = activeImageFileIds(runtimeScene)
     await Promise.all(fileIds.map(async (engineFileId) => {
@@ -342,7 +367,9 @@ export function createBoardAssetSession(options: BoardAssetSessionOptions): Boar
         throw assetError('ASSET_PENDING_INVALID', `Image file ID ${engineFileId} has no Docus asset mapping.`)
       }
       if (record.pendingPromise) await record.pendingPromise
-      if (record.state === 'error' && record.lastError) throw record.lastError
+      if (record.state === 'uploaded' || record.pendingDurable) return
+      if (record.pendingError) throw record.pendingError
+      throw assetError('ASSET_PENDING_INVALID', `Pending asset ${record.assetId} is not durable locally.`)
     }))
   }
 
@@ -369,8 +396,7 @@ export function createBoardAssetSession(options: BoardAssetSessionOptions): Boar
     }
     if (record.state === 'uploaded') return
     if (record.pendingPromise) await record.pendingPromise
-    if (record.state === 'error' && !record.blob) throw record.lastError ?? assetError('ASSET_UPLOAD_FAILED', `Asset ${assetId} is unavailable.`)
-    if (!record.pendingPromise) await persistPending(record)
+    if (!record.pendingDurable) await persistPending(record)
     await startUpload(record)
   }
 
@@ -393,7 +419,9 @@ export function createBoardAssetSession(options: BoardAssetSessionOptions): Boar
           state: 'pending',
           pendingPromise: null,
           uploadPromise: null,
-          lastError: null,
+          pendingDurable: true,
+          pendingError: null,
+          uploadError: null,
         }
         recordsByFileId.set(record.engineFileId, record)
         recordsByAssetId.set(assetId, record)
@@ -431,7 +459,9 @@ export function createBoardAssetSession(options: BoardAssetSessionOptions): Boar
               record.mimeType = mimeType
               record.blob = blob
               record.state = 'uploaded'
-              record.lastError = null
+              record.pendingDurable = false
+              record.pendingError = null
+              record.uploadError = null
             }
           }
           try {
@@ -453,7 +483,9 @@ export function createBoardAssetSession(options: BoardAssetSessionOptions): Boar
           recordForUpload.blob = pending.blob
           recordForUpload.state = 'pending'
           recordForUpload.pendingPromise = null
-          recordForUpload.lastError = null
+          recordForUpload.pendingDurable = true
+          recordForUpload.pendingError = null
+          recordForUpload.uploadError = null
           await startUpload(recordForUpload)
           for (const engineFileId of engineFileIds) {
             const record = recordsByFileId.get(engineFileId)
@@ -461,7 +493,9 @@ export function createBoardAssetSession(options: BoardAssetSessionOptions): Boar
               record.mimeType = recordForUpload.mimeType
               record.blob = pending.blob
               record.state = 'uploaded'
-              record.lastError = null
+              record.pendingDurable = true
+              record.pendingError = null
+              record.uploadError = null
             }
           }
           return { blob: pending.blob, mimeType: recordForUpload.mimeType }
@@ -497,7 +531,7 @@ export function createBoardAssetSession(options: BoardAssetSessionOptions): Boar
   return {
     seedScene,
     observeRuntimeAssets,
-    ensureRuntimeSceneReady,
+    ensureCheckpointAssetsDurable,
     ensureAssetReady,
     ensureSceneAssetsReady,
     resolveSceneAssets,

@@ -126,6 +126,51 @@ describe('Board asset session', () => {
     expect(await store.getPendingAsset(ASSET_A)).toBeNull()
   })
 
+  it('allows checkpointing after a durable Pending Blob even when upload fails', async () => {
+    const store = createMemoryBoardCheckpointStore()
+    const upload = vi.fn().mockRejectedValue(new BoardAssetError('ASSET_UPLOAD_FAILED', 'offline'))
+    const session = createBoardAssetSession({ boardId: 'board-1', store, createAssetId: () => ASSET_A, upload })
+    const runtime = runtimeImage('file-a')
+
+    await session.observeRuntimeAssets([runtime.scene])
+    await vi.waitFor(() => expect(upload).toHaveBeenCalledOnce())
+    await Promise.resolve()
+
+    await expect(session.ensureCheckpointAssetsDurable(runtime.runtime)).resolves.toBeUndefined()
+    expect(await store.getPendingAsset(ASSET_A)).toMatchObject({
+      assetId: ASSET_A,
+      boardId: 'board-1',
+      engineFileId: 'file-a',
+    })
+  })
+
+  it('does not wait for a remote upload before checkpointing a durable Pending Blob', async () => {
+    const store = createMemoryBoardCheckpointStore()
+    const upload = vi.fn(() => new Promise<AssetUploadResult>(() => {}))
+    const session = createBoardAssetSession({ boardId: 'board-1', store, createAssetId: () => ASSET_A, upload })
+    const runtime = runtimeImage('file-a')
+
+    await session.observeRuntimeAssets([runtime.scene])
+
+    await expect(session.ensureCheckpointAssetsDurable(runtime.runtime)).resolves.toBeUndefined()
+    expect(upload).toHaveBeenCalledOnce()
+  })
+
+  it('blocks checkpointing when Pending Blob persistence fails', async () => {
+    const base = createMemoryBoardCheckpointStore()
+    const pendingError = new Error('IndexedDB is unavailable')
+    const putPendingAsset = vi.fn().mockRejectedValue(pendingError)
+    const store = wrappedStore(base, putPendingAsset)
+    const session = createBoardAssetSession({ boardId: 'board-1', store, createAssetId: () => ASSET_A })
+    const runtime = runtimeImage('file-a')
+
+    await expect(session.observeRuntimeAssets([runtime.scene])).rejects.toMatchObject({ code: 'ASSET_PENDING_INVALID' })
+    await expect(session.ensureCheckpointAssetsDurable(runtime.runtime)).rejects.toMatchObject({
+      code: 'ASSET_PENDING_INVALID',
+    })
+    expect(await store.getPendingAsset(ASSET_A)).toBeNull()
+  })
+
   it('reuploads a local Pending Blob when the Server returns 404', async () => {
     const store = createMemoryBoardCheckpointStore()
     await store.putPendingAsset(pendingAsset())
