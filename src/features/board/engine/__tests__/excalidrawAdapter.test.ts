@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   assertSupportedExcalidrawScene,
   excalidrawAdapter,
@@ -10,6 +10,17 @@ import {
   CURRENT_BOARD_SCENE_VERSION,
   type BoardScene,
 } from '../../../../../shared/boardProtocol'
+
+const exportMocks = vi.hoisted(() => ({
+  png: vi.fn(async () => new Blob(['png'], { type: 'image/png' })),
+  svg: vi.fn(async () => new Blob(['<svg />'], { type: 'image/svg+xml' })),
+}))
+
+vi.mock('../excalidraw/export', () => ({
+  EXCALIDRAW_THUMBNAIL_MAX_EDGE: 640,
+  exportExcalidrawPng: exportMocks.png,
+  exportExcalidrawSvg: exportMocks.svg,
+}))
 
 function scene(overrides: Partial<BoardScene> = {}): BoardScene {
   return {
@@ -36,6 +47,45 @@ async function expectCompatibility(action: () => unknown, code: BoardEngineCompa
 }
 
 describe('excalidrawAdapter', () => {
+  it('generates a bounded PNG thumbnail from non-deleted elements and BinaryFiles', async () => {
+    exportMocks.png.mockClear()
+    const runtime = {
+      elements: [
+        { id: 'rectangle-1', type: 'rectangle', isDeleted: false },
+        { id: 'deleted', type: 'rectangle', isDeleted: true },
+      ],
+      appState: { viewBackgroundColor: '#123456', selectedElementIds: { 'rectangle-1': true } },
+      files: { 'file-1': { dataURL: 'data:image/png;base64,abc' } },
+    }
+
+    const thumbnail = await excalidrawAdapter.generateThumbnail(runtime)
+
+    expect(thumbnail).toMatchObject({ type: 'image/png' })
+    expect(exportMocks.png).toHaveBeenCalledWith(runtime, { maxWidthOrHeight: 640 })
+  })
+
+  it('returns no thumbnail for an empty or fully deleted scene', async () => {
+    exportMocks.png.mockClear()
+    await expect(excalidrawAdapter.generateThumbnail({
+      elements: [{ id: 'deleted', isDeleted: true }],
+      appState: {},
+      files: {},
+    })).resolves.toBeNull()
+    expect(exportMocks.png).not.toHaveBeenCalled()
+  })
+
+  it('keeps PNG/SVG export in the engine adapter and forwards the current files', async () => {
+    exportMocks.png.mockClear()
+    exportMocks.svg.mockClear()
+    const runtime = { elements: [{ id: 'image-1', type: 'image' }], appState: {}, files: { 'file-1': {} } }
+
+    await excalidrawAdapter.exportPng(runtime)
+    await excalidrawAdapter.exportSvg(runtime)
+
+    expect(exportMocks.png).toHaveBeenCalledWith(runtime)
+    expect(exportMocks.svg).toHaveBeenCalledWith(runtime)
+  })
+
   it('hydrates the portable empty scene and maps numeric zoom to Excalidraw runtime shape', async () => {
     await expect(excalidrawAdapter.hydrate(scene())).resolves.toEqual({
       elements: [],

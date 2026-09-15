@@ -6,6 +6,7 @@ import { createDocumentSearchProvider, type SearchResult } from '../../lib/searc
 import { documentSearchSource } from '../../lib/documentSearchSource'
 import { boardMetadataSource } from '../../features/board/boardMetadataSource'
 import { createBoardSearchProvider, type BoardSearchPayload } from '../../features/board/searchProvider'
+import { isDocusShortcutBlocked } from '../../lib/keyboard'
 
 const router = useRouter()
 const route = useRoute()
@@ -46,7 +47,7 @@ function commit(result: SearchResult): void {
 
 function onKeydown(event: KeyboardEvent): void {
   const modifier = event.metaKey || event.ctrlKey
-  if (canOpen.value && modifier && event.key.toLowerCase() === 'p') {
+  if (!isDocusShortcutBlocked(event) && canOpen.value && modifier && event.key.toLowerCase() === 'p') {
     event.preventDefault()
     show()
   }

@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 const authFetch = vi.hoisted(() => vi.fn())
 vi.mock('../../../lib/auth-session', () => ({ authFetch }))
 
-import { createBoard, deleteBoard, renameBoard, saveBoardScene } from '../api'
+import { createBoard, deleteBoard, renameBoard, saveBoardScene, setBoardThumbnail } from '../api'
 
 describe('Board API mutation uncertainty', () => {
   it('marks transport failures as uncertain', async () => {
@@ -65,5 +65,31 @@ describe('Board API mutation uncertainty', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ expectedRevision: 3, engine: 'excalidraw', sceneVersion: 1, scene }),
     })
+  })
+
+  it('updates only the thumbnail Asset reference', async () => {
+    authFetch.mockResolvedValueOnce(new Response(JSON.stringify({ thumbnailAssetId: 'asset-2' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }))
+
+    await expect(setBoardThumbnail('board/1', 'asset-2')).resolves.toEqual({ thumbnailAssetId: 'asset-2' })
+    expect(authFetch).toHaveBeenCalledWith('/api/board/board%2F1/thumbnail', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ assetId: 'asset-2' }),
+    })
+  })
+
+  it('supports clearing a thumbnail with a null Asset ID', async () => {
+    authFetch.mockResolvedValueOnce(new Response(JSON.stringify({ thumbnailAssetId: null }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }))
+
+    await expect(setBoardThumbnail('board-1', null)).resolves.toEqual({ thumbnailAssetId: null })
+    expect(authFetch).toHaveBeenCalledWith('/api/board/board-1/thumbnail', expect.objectContaining({
+      body: JSON.stringify({ assetId: null }),
+    }))
   })
 })

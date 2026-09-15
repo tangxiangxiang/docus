@@ -26,6 +26,9 @@ export interface BoardEngineAdapter<TRuntimeScene = unknown> {
   validate(scene: BoardScene): void
   hydrate(scene: BoardScene, resolvedAssets?: readonly ResolvedBoardAsset[]): Promise<TRuntimeScene>
   serialize(runtime: TRuntimeScene, fileMap?: Readonly<Record<string, string>>): BoardScene
+  generateThumbnail(runtime: TRuntimeScene): Promise<Blob | null>
+  exportPng(runtime: TRuntimeScene): Promise<Blob>
+  exportSvg(runtime: TRuntimeScene): Promise<string | Blob>
 }
 
 export type BoardEngineCompatibilityCode =

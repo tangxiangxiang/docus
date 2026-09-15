@@ -151,7 +151,12 @@ describe('Board Save Coordinator', () => {
     expect(coordinator.getSnapshot()).toMatchObject({ localRevision: 8, baseRevision: 3, dirty: true })
     coordinator.schedule()
     await vi.advanceTimersByTimeAsync(800)
-    await vi.waitFor(() => expect(onSaved).toHaveBeenCalledWith({ revision: 4, savedLocalRevision: 8, currentLocalRevision: 8 }))
+    await vi.waitFor(() => expect(onSaved).toHaveBeenCalledWith({
+      revision: 4,
+      savedLocalRevision: 8,
+      currentLocalRevision: 8,
+      runtimeScene: { id: 8 },
+    }))
     expect(save).toHaveBeenCalledWith('board-1', expect.objectContaining({ expectedRevision: 3 }))
     expect(onChange).not.toHaveBeenCalled()
   })

@@ -6,6 +6,7 @@ import { useShortcutDisplay } from '../composables/useShortcutDisplay'
 import { useVaultLayout } from '../composables/vault/useVaultLayout'
 import { useSplitterDrag } from '../composables/vault/useSplitterDrag'
 import { useToast } from '../composables/useToast'
+import { isDocusShortcutBlocked } from '../lib/keyboard'
 import { useConfirm } from '../composables/useConfirm'
 import { useI18n } from '../composables/useI18n'
 import { useAuth, type WorkspaceAuthTransitionAdapter } from '../composables/useAuth'
@@ -1472,6 +1473,7 @@ async function revealWorkspaceTabInTree(path: string): Promise<void> {
 }
 
 function onVaultKeydown(event: KeyboardEvent): void {
+  if (isDocusShortcutBlocked(event)) return
   if (diaryCloseChord.onKeydown(event)) return
 
   if (isDiaryPresentationPrimary.value) {

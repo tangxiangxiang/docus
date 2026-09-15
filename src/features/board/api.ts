@@ -19,6 +19,10 @@ export interface SaveBoardSceneResponse {
   updatedAt: number
 }
 
+export interface SaveBoardThumbnailResponse {
+  thumbnailAssetId: string | null
+}
+
 export class BoardApiError extends Error {
   readonly status: number
   readonly code: string
@@ -126,6 +130,17 @@ export async function saveBoardScene(
     `/api/board/${encodeURIComponent(boardId)}/scene`,
     'PUT',
     request,
+  )
+}
+
+export async function setBoardThumbnail(
+  boardId: string,
+  assetId: string | null,
+): Promise<SaveBoardThumbnailResponse> {
+  return requestJson<SaveBoardThumbnailResponse>(
+    `/api/board/${encodeURIComponent(boardId)}/thumbnail`,
+    'PUT',
+    { assetId },
   )
 }
 

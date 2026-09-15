@@ -24,7 +24,8 @@ export interface BoardCheckpointSaveSucceeded {
 export interface BoardCheckpointScheduler<TRuntimeScene> {
   schedule(runtimeScene: TRuntimeScene, localRevision: number, baseRevision: number): void
   onServerSaveSucceeded(event: BoardCheckpointSaveSucceeded): void
-  dispose(): void
+  dispose(options?: { drain?: boolean }): void
+  waitForIdle(): Promise<void>
   getSnapshot(): BoardRecoveryState
 }
 
@@ -46,6 +47,7 @@ export function createBoardCheckpointScheduler<TRuntimeScene>(
   let queued: PendingOperation | null = null
   let closed = false
   let state: BoardRecoveryState = { status: 'idle', lastError: null }
+  const idleWaiters: Array<() => void> = []
 
   function publish(nextState: BoardRecoveryState): void {
     state = nextState
@@ -94,7 +96,7 @@ export function createBoardCheckpointScheduler<TRuntimeScene>(
       } else if (checkpointRequested && operation.kind === 'delete') {
         enqueueLatestPut()
       }
-      void pump()
+      void pump().then(resolveIdleWaiters)
     }
   }
 
@@ -105,6 +107,17 @@ export function createBoardCheckpointScheduler<TRuntimeScene>(
     } catch (error) {
       publish({ status: 'error', lastError: error })
     }
+  }
+
+  function resolveIdleWaiters(): void {
+    if (inFlight || queued) return
+    const waiters = idleWaiters.splice(0)
+    for (const resolve of waiters) resolve()
+  }
+
+  function waitForIdle(): Promise<void> {
+    if (!inFlight && !queued) return Promise.resolve()
+    return new Promise((resolve) => { idleWaiters.push(resolve) })
   }
 
   function capture(): void {
@@ -143,19 +156,26 @@ export function createBoardCheckpointScheduler<TRuntimeScene>(
     enqueueLatestPut()
   }
 
-  function dispose(): void {
+  function dispose(options: { drain?: boolean } = {}): void {
     if (closed) return
     closed = true
     clearTimer()
+    if (options.drain === false) {
+      checkpointRequested = false
+      queued = null
+      resolveIdleWaiters()
+      return
+    }
     // Closing stops future editor work and UI callbacks, but durable operations
     // already queued must drain so IndexedDB converges to the latest authority.
-    void pump()
+    void pump().then(resolveIdleWaiters)
   }
 
   return {
     schedule,
     onServerSaveSucceeded,
     dispose,
+    waitForIdle,
     getSnapshot: () => state,
   }
 }

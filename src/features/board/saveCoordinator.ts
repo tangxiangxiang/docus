@@ -50,6 +50,7 @@ export interface BoardSaveCoordinatorOptions<TRuntimeScene> {
     revision: number
     savedLocalRevision: number
     currentLocalRevision: number
+    runtimeScene: TRuntimeScene
   }) => void
   onMetadataUpdated?: (updatedAt: number) => void
 }
@@ -197,6 +198,7 @@ export function createBoardSaveCoordinator<TRuntimeScene>(
           revision: response.revision,
           savedLocalRevision: capturedLocalRevision,
           currentLocalRevision: localRevision,
+          runtimeScene: capturedRuntimeScene,
         })
       } catch (error) {
         saveInFlight = false

@@ -9,6 +9,8 @@ import type { BoardScene } from '../../../shared/boardProtocol'
 import { useI18n } from '../../composables/useI18n'
 import { useConfirm } from '../../composables/useConfirm'
 import { boardMetadataSource } from '../../features/board/metadataSource'
+import { excalidrawAdapter } from '../../features/board/engine/excalidrawAdapter'
+import * as boardExport from '../../features/board/boardExport'
 
 const api = vi.hoisted(() => ({
   BoardApiError: class BoardApiError extends Error {
@@ -25,6 +27,8 @@ const api = vi.hoisted(() => ({
   listBoards: vi.fn(),
   getBoard: vi.fn(),
   saveBoardScene: vi.fn(),
+  setBoardThumbnail: vi.fn(),
+  deleteBoard: vi.fn(),
 }))
 
 const recovery = vi.hoisted(() => {
@@ -115,7 +119,10 @@ function deferred<T>(): { promise: Promise<T>; resolve(value: T): void; reject(e
 async function mountEditor(boardId = 'a') {
   const router = createRouter({
     history: createMemoryHistory(),
-    routes: [{ path: '/board/:boardId', name: 'board-editor', component: BoardEditorView }],
+    routes: [
+      { path: '/board', name: 'board', component: { template: '<div data-testid="board-home-route" />' } },
+      { path: '/board/:boardId', name: 'board-editor', component: BoardEditorView },
+    ],
   })
   await router.push(`/board/${boardId}`)
   await router.isReady()
@@ -126,6 +133,10 @@ async function mountEditor(boardId = 'a') {
 describe('Board Editor B4 lifecycle', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    api.getBoard.mockReset()
+    api.saveBoardScene.mockReset()
+    api.setBoardThumbnail.mockReset()
+    api.deleteBoard.mockReset()
     recovery.reset()
     assetSession.reset()
     boardMetadataSource.invalidate()
@@ -506,6 +517,86 @@ describe('Board Editor B4 lifecycle', () => {
     const event = new Event('beforeunload', { cancelable: true }) as BeforeUnloadEvent
     window.dispatchEvent(event)
     expect(event.defaultPrevented).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('opens the editor menu and exports the current runtime without persistence', async () => {
+    api.getBoard.mockImplementationOnce(async () => {
+      const result = board('a', 'My Board')
+      return result
+    })
+    const exportPng = vi.spyOn(excalidrawAdapter, 'exportPng').mockResolvedValue(new Blob(['png'], { type: 'image/png' }))
+    const download = vi.spyOn(boardExport, 'downloadBoardBlob').mockImplementation(() => {})
+    const { wrapper } = await mountEditor()
+    await flushPromises()
+    const host = wrapper.findComponent(ExcalidrawHost)
+    host.vm.$emit('ready')
+    const currentRuntime = { elements: [{ id: 'shape-1' }], appState: {}, files: {} }
+    host.vm.$emit('change', currentRuntime)
+    await flushPromises()
+
+    await wrapper.get('[data-testid="board-editor-menu"]').trigger('click')
+    await flushPromises()
+    expect(document.body.textContent).toContain('Export PNG')
+    expect(document.body.textContent).toContain('Export SVG')
+    expect(document.body.textContent).toContain('Delete board')
+
+    const exportOption = Array.from(document.body.querySelectorAll<HTMLElement>('.n-dropdown-option'))
+      .find((element) => element.textContent?.trim() === 'Export PNG')
+    expect(exportOption).toBeDefined()
+    exportOption?.querySelector<HTMLElement>('.n-dropdown-option-body')?.click()
+    await flushPromises()
+
+    expect(exportPng).toHaveBeenCalledWith(currentRuntime)
+    expect(download).toHaveBeenCalledWith(expect.any(Blob), 'My Board.png')
+    expect(api.saveBoardScene).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-testid="board-local-revision"]').attributes('data-local-revision')).toBe('1')
+    wrapper.unmount()
+  })
+
+  it('deletes the current Board only after confirmation and navigates after cleanup', async () => {
+    api.getBoard.mockResolvedValueOnce(board('a', 'Delete me'))
+    api.deleteBoard.mockResolvedValueOnce(undefined)
+    const { wrapper, router } = await mountEditor()
+    await flushPromises()
+    wrapper.findComponent(ExcalidrawHost).vm.$emit('ready')
+    await wrapper.get('[data-testid="board-editor-menu"]').trigger('click')
+    await flushPromises()
+    const deleteOption = Array.from(document.body.querySelectorAll<HTMLElement>('.n-dropdown-option'))
+      .find((element) => element.textContent?.trim() === 'Delete board')
+    deleteOption?.querySelector<HTMLElement>('.n-dropdown-option-body')?.click()
+    await flushPromises()
+    const request = useConfirm().queue.value[0]
+    expect(request?.message).toBe('Delete “Delete me”?')
+    if (request) useConfirm().answer(request.id, true)
+    await flushPromises()
+
+    expect(api.deleteBoard).toHaveBeenCalledWith('a')
+    expect(recovery.store.clearBoardRecovery).toHaveBeenCalledWith('a')
+    expect(boardMetadataSource.getSnapshot()).not.toContainEqual(expect.objectContaining({ id: 'a' }))
+    expect(router.currentRoute.value.name).toBe('board')
+    wrapper.unmount()
+  })
+
+  it('keeps the editor and recovery store intact when delete fails', async () => {
+    api.getBoard.mockResolvedValueOnce(board('a', 'Keep me'))
+    api.deleteBoard.mockRejectedValueOnce(new Error('delete failed'))
+    const { wrapper, router } = await mountEditor()
+    await flushPromises()
+    wrapper.findComponent(ExcalidrawHost).vm.$emit('ready')
+    await wrapper.get('[data-testid="board-editor-menu"]').trigger('click')
+    await flushPromises()
+    const deleteOption = Array.from(document.body.querySelectorAll<HTMLElement>('.n-dropdown-option'))
+      .find((element) => element.textContent?.trim() === 'Delete board')
+    deleteOption?.querySelector<HTMLElement>('.n-dropdown-option-body')?.click()
+    await flushPromises()
+    const request = useConfirm().queue.value[0]
+    if (request) useConfirm().answer(request.id, true)
+    await flushPromises()
+
+    expect(router.currentRoute.value.name).toBe('board-editor')
+    expect(wrapper.find('[data-testid="board-editor-surface"]').exists()).toBe(true)
+    expect(recovery.store.clearBoardRecovery).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 })

@@ -5,6 +5,7 @@ import type { PostSummary } from '../../lib/api'
 import { createDocumentSearchProvider, createLatestSearchRunner, type DocumentSearchPayload, type SearchProvider, type SearchResult, type SearchResultSection } from '../../lib/searchResults'
 import { useFocusTrap } from '../../composables/useFocusTrap'
 import { useI18n } from '../../composables/useI18n'
+import { isDocusShortcutBlocked } from '../../lib/keyboard'
 
 const props = withDefaults(defineProps<{
   posts?: PostSummary[]
@@ -64,7 +65,7 @@ function commitNew() {
 }
 function onKey(e: KeyboardEvent) {
   const meta = e.metaKey || e.ctrlKey
-  if (props.keyboardShortcut !== false && meta && e.key.toLowerCase() === 'p') { e.preventDefault(); show() }
+  if (props.keyboardShortcut !== false && !isDocusShortcutBlocked(e) && meta && e.key.toLowerCase() === 'p') { e.preventDefault(); show() }
   else if (e.key === 'Escape' && open.value) { e.preventDefault(); hide() }
 }
 function onInputKey(e: KeyboardEvent) {

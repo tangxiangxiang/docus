@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
-import { NButton, NSpin } from 'naive-ui'
+import { NButton, NDropdown, NSpin } from 'naive-ui'
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
 import ExcalidrawHost from '../components/board/ExcalidrawHost.vue'
-import { BoardApiError, getBoard, type BoardAggregate } from '../features/board/api'
+import { BoardApiError, deleteBoard, getBoard, type BoardAggregate } from '../features/board/api'
 import { boardMetadataSource } from '../features/board/boardMetadataSource'
 import {
   assertSupportedExcalidrawScene,
@@ -29,6 +29,8 @@ import { reconcileBoardCheckpoint, type BoardCheckpointReconciliation } from '..
 import type { BoardCheckpoint } from '../features/board/recoveryTypes'
 import { createBoardAssetSession, type BoardAssetSession } from '../features/board/assetSession'
 import { BoardAssetError } from '../features/board/assetClient'
+import { boardExportFilename, downloadBoardBlob, type BoardExportFormat } from '../features/board/boardExport'
+import { createBoardThumbnailScheduler, type BoardThumbnailScheduler } from '../features/board/thumbnailScheduler'
 import {
   createBoardSaveCoordinator,
   type BoardSaveCoordinator,
@@ -67,9 +69,12 @@ const runtimeScene = shallowRef<ExcalidrawRuntimeScene | null>(null)
 const saveCoordinator = shallowRef<BoardSaveCoordinator<ExcalidrawRuntimeScene> | null>(null)
 const saveState = shallowRef<BoardSaveState | null>(null)
 const checkpointScheduler = shallowRef<BoardCheckpointScheduler<ExcalidrawRuntimeScene> | null>(null)
+const thumbnailScheduler = shallowRef<BoardThumbnailScheduler<ExcalidrawRuntimeScene> | null>(null)
 const assetSession = shallowRef<BoardAssetSession | null>(null)
 const pendingRecovery = shallowRef<PendingRecovery | null>(null)
 const recoveryUnavailable = ref(false)
+const exportBusy = ref<BoardExportFormat | null>(null)
+const deleting = ref(false)
 const loadGeneration = ref(0)
 const recoveryStore: BoardCheckpointStore = createIndexedDbBoardCheckpointStore()
 let assetIntakePromise: Promise<void> = Promise.resolve()
@@ -136,6 +141,8 @@ function showLoadError(error: unknown): void {
 }
 
 function disposePersistence(): void {
+  thumbnailScheduler.value?.dispose()
+  thumbnailScheduler.value = null
   checkpointScheduler.value?.dispose()
   checkpointScheduler.value = null
   saveCoordinator.value?.dispose()
@@ -197,6 +204,24 @@ async function mountScene(
       },
     })
     checkpointScheduler.value = scheduler
+    const thumbnail = createBoardThumbnailScheduler<ExcalidrawRuntimeScene>({
+      boardId: id,
+      adapter: excalidrawAdapter,
+      onSuccess: ({ response }) => {
+        if (thumbnailScheduler.value !== thumbnail || aggregate.value?.metadata.id !== id) return
+        const metadata = {
+          ...aggregate.value.metadata,
+          thumbnailAssetId: response.thumbnailAssetId,
+        }
+        aggregate.value = { ...aggregate.value, metadata }
+        boardMetadataSource.upsert(metadata)
+      },
+      onFailure: () => {
+        if (thumbnailScheduler.value !== thumbnail) return
+        toast.error(t('board.editor_thumbnail_failed'))
+      },
+    })
+    thumbnailScheduler.value = thumbnail
     const coordinator = createBoardSaveCoordinator<ExcalidrawRuntimeScene>({
       boardId: id,
       engine: record.engine,
@@ -216,7 +241,10 @@ async function mountScene(
       onMeaningfulChange: ({ runtimeScene: changedScene, localRevision, baseRevision }) => {
         scheduler.schedule(changedScene, localRevision, baseRevision)
       },
-      onSaveSucceeded: (event) => scheduler.onServerSaveSucceeded(event),
+      onSaveSucceeded: (event) => {
+        scheduler.onServerSaveSucceeded(event)
+        thumbnail.schedule({ runtimeScene: event.runtimeScene, revision: event.savedLocalRevision })
+      },
       onStateChange: (nextState) => {
         saveState.value = nextState
         if (!session.value || session.value.boardId !== id) return
@@ -399,6 +427,7 @@ function onHostReady(): void {
 let hostChangeSequence = 0
 
 function onHostAssetsChanged(assets: readonly BoardRuntimeAsset[]): void {
+  if (deleting.value) return
   const currentAssetSession = assetSession.value
   if (!currentAssetSession) return
   const intake = currentAssetSession.observeRuntimeAssets(assets)
@@ -413,7 +442,7 @@ function onHostAssetsChanged(assets: readonly BoardRuntimeAsset[]): void {
 }
 
 function onHostChange(nextRuntimeScene: ExcalidrawRuntimeScene): void {
-  if (status.value !== 'ready' || !session.value || !saveCoordinator.value || !assetSession.value) return
+  if (deleting.value || status.value !== 'ready' || !session.value || !saveCoordinator.value || !assetSession.value) return
   const sequence = ++hostChangeSequence
   const currentCoordinator = saveCoordinator.value
   const currentAssetSession = assetSession.value
@@ -550,6 +579,105 @@ async function retrySave(): Promise<void> {
   await saveCoordinator.value?.retry()
 }
 
+const editorMenuOptions = computed(() => [
+  {
+    label: t('board.editor_export_png'),
+    key: 'export-png',
+    disabled: status.value !== 'ready' || exportBusy.value !== null || deleting.value,
+  },
+  {
+    label: t('board.editor_export_svg'),
+    key: 'export-svg',
+    disabled: status.value !== 'ready' || exportBusy.value !== null || deleting.value,
+  },
+  { type: 'divider', key: 'divider' },
+  {
+    label: t('board.editor_delete'),
+    key: 'delete',
+    disabled: !session.value || deleting.value,
+  },
+])
+
+async function exportBoard(format: BoardExportFormat): Promise<void> {
+  const scene = runtimeScene.value
+  if (exportBusy.value !== null || status.value !== 'ready' || !scene) return
+  exportBusy.value = format
+  try {
+    const output = format === 'png'
+      ? await excalidrawAdapter.exportPng(scene)
+      : await excalidrawAdapter.exportSvg(scene)
+    const blob = typeof output === 'string'
+      ? new Blob([output], { type: 'image/svg+xml;charset=utf-8' })
+      : output
+    downloadBoardBlob(blob, boardExportFilename(boardTitle.value, format))
+  } catch {
+    toast.error(t('board.editor_export_failed'))
+  } finally {
+    exportBusy.value = null
+  }
+}
+
+function onEditorMenuSelect(key: string): void {
+  if (key === 'export-png') {
+    void exportBoard('png')
+  } else if (key === 'export-svg') {
+    void exportBoard('svg')
+  } else if (key === 'delete') {
+    void deleteCurrentBoard()
+  }
+}
+
+async function deleteCurrentBoard(): Promise<void> {
+  if (deleting.value || !session.value) return
+  const id = session.value.boardId
+  const confirmed = await confirm(
+    t('board.editor_delete_title', { title: boardTitle.value }),
+    t('board.editor_delete_detail'),
+    {
+      confirmLabel: t('board.delete'),
+      cancelLabel: t('board.editor_stay'),
+      destructive: true,
+    },
+  )
+  if (!confirmed || !session.value || session.value.boardId !== id) return
+
+  deleting.value = true
+  try {
+    await deleteBoard(id)
+    boardMetadataSource.remove(id)
+    // A delete request is now the lifecycle authority. Drop queued derived
+    // work; an already-running thumbnail job may finish and harmlessly receive
+    // a 404 from the deleted Board. Keeping this after the server call means a
+    // failed delete leaves the editor fully usable.
+    thumbnailScheduler.value?.dispose({ drain: false })
+    const currentCheckpointScheduler = checkpointScheduler.value
+    const currentAssetSession = assetSession.value
+    hostChangeSequence += 1
+    currentCheckpointScheduler?.dispose({ drain: false })
+    currentAssetSession?.dispose()
+    await Promise.all([
+      assetIntakePromise.catch(() => {}),
+      hostChangePromise.catch(() => {}),
+      currentCheckpointScheduler?.waitForIdle() ?? Promise.resolve(),
+    ])
+    try {
+      await recoveryStore.clearBoardRecovery(id)
+    } catch {
+      toast.error(t('board.recovery_cleanup_failed'))
+    }
+    // Prevent the route guard from trying to save a dirty scene after the
+    // server has already deleted its Board row.
+    disposePersistence()
+    await router.push({ name: 'board' })
+  } catch (error) {
+    toast.error(error instanceof Error && error.message.trim()
+      ? error.message
+      : t('board.editor_delete_failed'))
+  } finally {
+    deleting.value = false
+  }
+}
+
 function backToBoards(): void {
   void router.push({ name: 'board' })
 }
@@ -575,6 +703,23 @@ onBeforeUnmount(() => {
         <NButton v-if="displayedSaveStatus === 'error'" text size="tiny" attr-type="button" @click="retrySave">{{ t('board.editor_retry_save') }}</NButton>
         <span v-if="session" class="board-editor-revision" data-testid="board-local-revision" :data-local-revision="session.localRevision">{{ session.localRevision }}</span>
       </div>
+      <NDropdown
+        :options="editorMenuOptions"
+        placement="bottom-end"
+        trigger="click"
+        @select="onEditorMenuSelect"
+      >
+        <NButton
+          class="board-editor-menu"
+          attr-type="button"
+          quaternary
+          :disabled="deleting"
+          :aria-label="t('board.editor_menu')"
+          data-testid="board-editor-menu"
+        >
+          ⋯
+        </NButton>
+      </NDropdown>
     </header>
 
     <section v-if="status === 'loading'" class="board-editor-state" data-testid="board-editor-loading" role="status">
@@ -616,7 +761,7 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <section v-else class="board-editor-surface" data-testid="board-editor-surface" aria-label="Board canvas">
+    <section v-else class="board-editor-surface" data-testid="board-editor-surface" :aria-label="t('board.editor_canvas_label')">
       <div v-if="displayedSaveStatus === 'conflict'" class="board-editor-conflict" data-testid="board-editor-conflict" role="alert">
         <p>{{ t('board.editor_conflict_detail') }}</p>
         <div class="board-editor-actions">
@@ -644,10 +789,11 @@ onBeforeUnmount(() => {
 .board-editor-chrome { display: flex; align-items: center; gap: .75rem; flex: 0 0 52px; box-sizing: border-box; padding: .5rem .75rem; border-bottom: 1px solid var(--border, var(--docus-border, #d1d5db)); background: var(--surface, var(--bg)); }
 .board-editor-title { min-width: 0; flex: 1; overflow: hidden; color: var(--text-h, inherit); font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .board-editor-status { display: flex; align-items: center; gap: .35rem; color: var(--text-muted, #6b7280); font-size: .8rem; }
+.board-editor-menu { flex: 0 0 auto; min-width: 2rem; color: var(--text-h, inherit); font-size: 1.25rem; line-height: 1; }
 .board-editor-revision { display: none; }
 .board-editor-surface { flex: 1 1 auto; min-height: 0; overflow: hidden; }
 .board-editor-surface :deep(.excalidraw-host) { min-height: 0; height: 100%; }
-.board-editor-state { display: grid; flex: 1; place-content: center; justify-items: center; gap: .75rem; padding: 2rem; text-align: center; }
+.board-editor-state { display: grid; flex: 1; place-content: center; justify-items: center; gap: .75rem; min-height: 18rem; padding: 2rem; background: var(--surface, var(--bg)); color: var(--text); text-align: center; }
 .board-editor-state h1, .board-editor-state p { max-width: 36rem; margin: 0; }
 .board-editor-state h1 { color: var(--text-h, inherit); font-size: 1.2rem; }
 .board-editor-state p { color: var(--text-muted, #6b7280); }
@@ -656,4 +802,9 @@ onBeforeUnmount(() => {
 .board-editor-conflict { position: absolute; z-index: 2; top: .75rem; right: .75rem; max-width: 28rem; padding: .75rem; border: 1px solid var(--border, #d1d5db); border-radius: .5rem; background: var(--surface, var(--bg)); box-shadow: 0 .5rem 1.5rem rgb(0 0 0 / 12%); }
 .board-editor-conflict p { margin: 0 0 .75rem; color: var(--text-h, inherit); }
 .board-editor-surface { position: relative; }
+@media (max-width: 640px) {
+  .board-editor-chrome { gap: .4rem; padding-inline: .5rem; }
+  .board-editor-status { min-width: 0; overflow: hidden; }
+  .board-editor-status > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
 </style>

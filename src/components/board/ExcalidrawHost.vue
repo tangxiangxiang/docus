@@ -69,7 +69,12 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="host" class="excalidraw-host" data-testid="excalidraw-host" />
+  <div
+    ref="host"
+    class="excalidraw-host"
+    data-testid="excalidraw-host"
+    data-board-excalidraw-root
+  />
 </template>
 
 <style scoped>

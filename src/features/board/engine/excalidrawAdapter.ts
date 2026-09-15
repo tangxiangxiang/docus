@@ -12,6 +12,11 @@ import {
   type ExcalidrawRuntimeScene,
   type ResolvedBoardAsset,
 } from './types'
+import {
+  EXCALIDRAW_THUMBNAIL_MAX_EDGE,
+  exportExcalidrawPng,
+  exportExcalidrawSvg,
+} from './excalidraw/export'
 
 type RecordValue = Record<string, unknown>
 
@@ -160,6 +165,14 @@ function persistentAppStateFromRuntime(value: unknown): BoardPersistentAppState 
     state.viewBackgroundColor = value.viewBackgroundColor
   }
   return state
+}
+
+function exportableRuntime(runtime: ExcalidrawRuntimeScene): ExcalidrawRuntimeScene {
+  if (!isRecord(runtime)) invalid('runtime scene must be an object')
+  if (!Array.isArray(runtime.elements)) invalid('runtime elements must be an array')
+  if (!isPlainRecord(runtime.files)) invalid('runtime files must be a plain object')
+  if (!isPlainRecord(runtime.appState)) invalid('runtime appState must be a plain object')
+  return runtime
 }
 
 function fingerprintValue(value: unknown): string {
@@ -330,5 +343,19 @@ export const excalidrawAdapter: BoardEngineAdapter<ExcalidrawRuntimeScene> = {
       persistentAppState: persistentAppStateFromRuntime(runtime.appState),
       assetRefs,
     }
+  },
+
+  async generateThumbnail(runtime) {
+    const prepared = exportableRuntime(runtime)
+    if (prepared.elements.every((element) => !isRecord(element) || element.isDeleted === true)) return null
+    return exportExcalidrawPng(prepared, { maxWidthOrHeight: EXCALIDRAW_THUMBNAIL_MAX_EDGE })
+  },
+
+  async exportPng(runtime) {
+    return exportExcalidrawPng(exportableRuntime(runtime))
+  },
+
+  async exportSvg(runtime) {
+    return exportExcalidrawSvg(exportableRuntime(runtime))
   },
 }
