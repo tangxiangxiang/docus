@@ -892,7 +892,14 @@ onBeforeUnmount(() => {
 
 <template>
   <main class="board-editor" data-testid="board-editor">
-    <div class="board-editor-status-sr" :data-status="status" data-testid="board-editor-status" role="status" aria-live="polite">
+    <div
+      class="board-editor-status-sr"
+      :data-status="status"
+      :data-save-status="displayedSaveStatus"
+      data-testid="board-editor-status"
+      role="status"
+      aria-live="polite"
+    >
       <span>{{ status === 'ready' ? t('board.editor_ready') : status }}</span>
       <span v-if="session" data-testid="board-local-revision" :data-local-revision="session.localRevision">{{ session.localRevision }}</span>
     </div>

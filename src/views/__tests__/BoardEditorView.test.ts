@@ -171,6 +171,7 @@ describe('Board Editor B4 lifecycle', () => {
     wrapper.findComponent(ExcalidrawHost).vm.$emit('ready')
     await flushPromises()
     expect(wrapper.get('[data-testid="board-editor-status"]').text()).toContain('Ready')
+    expect(wrapper.get('[data-testid="board-editor-status"]').attributes('data-save-status')).toBe('saved')
     expect(wrapper.findComponent(ExcalidrawHost).props('initialScene')).toEqual({ elements: [], appState: {}, files: {} })
     wrapper.unmount()
   })

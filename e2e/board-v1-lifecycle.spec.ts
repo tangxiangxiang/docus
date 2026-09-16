@@ -16,6 +16,7 @@ import {
   readCheckpoint,
   renameBoardThroughUi,
   uniqueBoardTitle,
+  waitForBoardSaved,
   waitForEditorReady,
   waitForLocalRevision,
   waitForServerRevision,
@@ -54,7 +55,7 @@ test('Board V1 persists a drawn scene across reload and exposes it in Gallery/Se
     await drawRectangle(page)
     const localRevision = await waitForLocalRevision(page, 1)
     expect(localRevision).toBeGreaterThan(0)
-    await expect(page.locator('[data-save-status="saved"]')).toBeVisible({ timeout: 15_000 })
+    await waitForBoardSaved(page)
     const saved = await waitForServerRevision(request, boardId, initial.sceneRecord.revision + 1)
     const savedElements = (saved.sceneRecord.scene.engineData as { elements: Array<Record<string, unknown>> }).elements
     expect(savedElements.length).toBeGreaterThan(0)
@@ -122,7 +123,7 @@ test('Board V1 persists image assets and exports the restored runtime', async ({
 
     await waitForLocalRevision(page, 1)
     const saved = await waitForServerRevision(request, boardId, 1)
-    await expect(page.locator('[data-save-status="saved"]')).toBeVisible({ timeout: 15_000 })
+    await waitForBoardSaved(page)
     const engineData = saved.sceneRecord.scene.engineData as { elements: Array<Record<string, unknown>>; fileMap: Record<string, string> }
     const image = engineData.elements.find((element) => element.type === 'image' && element.isDeleted !== true)
     expect(image).toBeTruthy()
@@ -236,7 +237,7 @@ test('Board V1 recovers a durable local checkpoint after an interrupted save', a
       await reopened.getByRole('button', { name: /恢复本地修改|Recover local changes/ }).click()
       await waitForEditorReady(reopened)
       await waitForLocalRevision(reopened, localRevision)
-      await expect(reopened.locator('[data-save-status="saved"]')).toBeVisible({ timeout: 15_000 })
+      await waitForBoardSaved(reopened)
       const recovered = await waitForServerRevision(request, boardId, initial.sceneRecord.revision + 1)
       expect((recovered.sceneRecord.scene.engineData as { elements: Array<Record<string, unknown>> }).elements)
         .toEqual(expect.arrayContaining([expect.objectContaining({ type: 'rectangle', isDeleted: false })]))
@@ -266,7 +267,7 @@ test('Board V1 permanently deletes an editor Board without ghost metadata', asyn
     await drawRectangle(page)
     await waitForLocalRevision(page, 1)
     await waitForServerRevision(request, boardId, 1)
-    await expect(page.locator('[data-save-status="saved"]')).toBeVisible({ timeout: 15_000 })
+    await waitForBoardSaved(page)
 
     await openEditorMenuItem(page, /删除 Board|Delete board/)
     const dialog = page.getByRole('dialog', { name: /删除.*Board|Delete.*Board/ }).last()

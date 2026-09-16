@@ -220,6 +220,10 @@ export async function waitForEditorReady(page: Page): Promise<void> {
   await expect(page.locator('[data-board-excalidraw-root] .excalidraw')).toBeVisible()
 }
 
+export async function waitForBoardSaved(page: Page, timeout = 15_000): Promise<void> {
+  await expect(page.getByTestId('board-editor-status')).toHaveAttribute('data-save-status', 'saved', { timeout })
+}
+
 export async function createBoardThroughUi(page: Page): Promise<string> {
   await expect(page.getByTestId('board-home')).toBeVisible()
   const createButton = page.getByRole('button', { name: /新建 Board|New Board|创建第一个 Board|Create your first board/ }).first()
@@ -294,7 +298,7 @@ export function boardCard(page: Page, boardId: string) {
 }
 
 export async function goBackToBoardHome(page: Page): Promise<void> {
-  await page.getByRole('button', { name: /返回 Board|Back to boards/ }).click()
+  await openEditorMenuItem(page, /返回 Board|Back to boards/)
   await expect(page).toHaveURL(/\/board$/)
   await expect(page.getByTestId('board-home')).toBeVisible()
 }
@@ -327,7 +331,7 @@ export async function openGlobalSearchAndBoard(page: Page, title: string, boardI
 }
 
 export async function openEditorMenuItem(page: Page, name: RegExp): Promise<void> {
-  await page.getByTestId('board-editor-menu').click()
+  await page.getByTestId('main-menu-trigger').click()
   const item = page.getByText(name).last()
   await expect(item).toBeVisible()
   await item.click()
